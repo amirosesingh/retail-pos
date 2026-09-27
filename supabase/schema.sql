@@ -3032,8 +3032,8 @@ CREATE OR REPLACE FUNCTION public.current_app_user() RETURNS TABLE(id uuid, user
   SELECT a.id, a.user_id::text, a.full_name::text, a.role, a.store_id::text,
          a.email::text, a.permissions, a.is_active
   FROM public.app_users a
-  WHERE a.auth_user_id = auth.uid()
-     OR lower(a.email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+  WHERE a.auth_user_id = (SELECT auth.uid())
+     OR lower(a.email) = lower(coalesce((SELECT auth.jwt()) ->> 'email', ''))
   LIMIT 1
 $$;
 
@@ -5904,7 +5904,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL;
 
 DROP POLICY IF EXISTS "Admins manage roles" ON public.user_roles;
 
-CREATE POLICY "Admins manage roles" ON public.user_roles TO authenticated USING (public.has_role(auth.uid(), 'admin'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'admin'::public.app_role));
+CREATE POLICY "Admins manage roles" ON public.user_roles TO authenticated USING (public.has_role((SELECT auth.uid()), 'admin'::public.app_role)) WITH CHECK (public.has_role((SELECT auth.uid()), 'admin'::public.app_role));
 
 DROP POLICY IF EXISTS "Anyone can read public flags" ON public.public_flags;
 
@@ -6316,11 +6316,11 @@ CREATE POLICY "Supervisors read the audit trail" ON public.system_audit_logs FOR
 
 DROP POLICY IF EXISTS "Users can read their own roles" ON public.user_roles;
 
-CREATE POLICY "Users can read their own roles" ON public.user_roles FOR SELECT TO authenticated USING ((user_id = auth.uid()));
+CREATE POLICY "Users can read their own roles" ON public.user_roles FOR SELECT TO authenticated USING ((user_id = (SELECT auth.uid())));
 
 DROP POLICY IF EXISTS "Users can read their own staff record" ON public.app_users;
 
-CREATE POLICY "Users can read their own staff record" ON public.app_users FOR SELECT TO authenticated USING ((auth_user_id = auth.uid()));
+CREATE POLICY "Users can read their own staff record" ON public.app_users FOR SELECT TO authenticated USING ((auth_user_id = (SELECT auth.uid())));
 
 ALTER TABLE public.activity_events ENABLE ROW LEVEL SECURITY;
 

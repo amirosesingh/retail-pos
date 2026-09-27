@@ -52,6 +52,7 @@ import {
   isDuplicateBillNumber,
   loadActiveShift,
   loadCloudState,
+  loadLocationDirectory,
   loadPrimaryState,
   loadLocalSales,
   loadCloudMember,
@@ -70,6 +71,8 @@ import { useAuth } from "@/lib/pos-auth";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { reserveBillNumber } from "./bill-number";
 import { loadCashierToken, loadSessionToken } from "./pos-credentials";
+import { beginAutoLockOperation } from "./auto-lock";
+import { markStartupStage } from "./startup-timing";
 import {
   activeBranchId,
   bindTerminalBranch,
@@ -466,6 +469,21 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
   };
 }
 
+function applyLocationDirectory(s: PosState, stores: Store[]): PosState {
+  const canonical = canonicalLocations(stores);
+  const bound = activeBranchId(null);
+  return {
+    ...s,
+    stores: canonical,
+    currentStoreId:
+      bound && canonical.some((store) => store.id === bound)
+        ? bound
+        : canonical.some((store) => store.id === s.currentStoreId)
+          ? s.currentStoreId
+          : (canonical[0]?.id ?? s.currentStoreId),
+  };
+}
+
 /** Replace one branch's receipt window without hiding unsynced local sales. */
 function applySalesSnapshot(
   current: PosState,
@@ -503,10 +521,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [storesLoaded, setStoresLoaded] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
   const retryLoad = useCallback(() => {
+    setStoresLoaded(false);
     setLoadPhase("loading");
     setReloadTick((v) => v + 1);
   }, []);
-  const { authUserId, terminalUser, user, isAdmin, isSupervisor, can, ready: authReady } = useAuth();
+  const {
+    authUserId,
+    terminalUser,
+    user,
+    isAdmin,
+    isSupervisor,
+    can,
+    ready: authReady,
+  } = useAuth();
   // Nothing is fetched from the cloud until a cashier or supervisor session
   // exists — visitors never receive catalogue, member or sales data.
   const signedIn = Boolean(authUserId || terminalUser);
@@ -574,9 +601,27 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // The PIN/session proofs live in encrypted device storage. Load them
         // before branch discovery decides whether the protected relay exists.
         await Promise.all([loadCashierToken(), loadSessionToken()]);
-        const cloud = await loadPrimaryState();
+        // On web/mobile the tiny location request and the heavier business
+        // snapshot start together. The location gate can open as soon as its
+        // authoritative answer arrives; catalogue size no longer controls it.
+        const locationTask = isOnlineOnly() ? loadLocationDirectory() : null;
+        const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined);
+        const directory = locationTask ? await locationTask : null;
         if (cancelled) return;
+        if (directory?.ok) {
+          markStartupStage("location");
+          setState((s) => applyLocationDirectory(s, directory.stores));
+          setStoresLoaded(true);
+          setReady(true);
+          setLoadPhase("ready");
+          markStartupStage("essential-pos-ready");
+        }
+        const loaded = await cloudTask;
+        if (cancelled) return;
+        if (directory && !directory.ok && !loaded.stores.length) throw directory.error;
+        const cloud = directory?.ok ? { ...loaded, stores: directory.stores } : loaded;
         setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
+        markStartupStage("remaining-data-ready");
         // The locations question now has a real answer, empty or not.
         setStoresLoaded(true);
         setLoadPhase("ready");
@@ -1490,23 +1535,28 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // attempt is already stored the sale is simply complete; otherwise a fresh
       // number is minted and the bill goes through, instead of the cashier being
       // stuck on a "duplicate bill" error.
-      for (let attempt = 0; ; attempt++) {
-        try {
-          await db.commitSale(sale, touchedProducts, updatedMember);
-          break;
-        } catch (error) {
-          if (attempt >= 2 || !isDuplicateBillNumber(error)) throw error;
-          if (sale.clientTxnId && (await db.saleAttemptExists(sale.clientTxnId)) === "yes") break;
-          const nextNo = await reserveBillNumber(
-            store?.receiptPrefix?.trim() || store?.code || "R",
-            [...snapshot.sales.map((s) => s.receiptNo), sale.receiptNo],
-            {
-              ...(snapshot.settings.integrations.billNumbering ?? {}),
-              timeZone: snapshot.settings.integrations.timeZone || undefined,
-            },
-          );
-          sale = { ...sale, receiptNo: nextNo };
+      const endCommitProtection = beginAutoLockOperation();
+      try {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await db.commitSale(sale, touchedProducts, updatedMember);
+            break;
+          } catch (error) {
+            if (attempt >= 2 || !isDuplicateBillNumber(error)) throw error;
+            if (sale.clientTxnId && (await db.saleAttemptExists(sale.clientTxnId)) === "yes") break;
+            const nextNo = await reserveBillNumber(
+              store?.receiptPrefix?.trim() || store?.code || "R",
+              [...snapshot.sales.map((s) => s.receiptNo), sale.receiptNo],
+              {
+                ...(snapshot.settings.integrations.billNumbering ?? {}),
+                timeZone: snapshot.settings.integrations.timeZone || undefined,
+              },
+            );
+            sale = { ...sale, receiptNo: nextNo };
+          }
         }
+      } finally {
+        endCommitProtection();
       }
 
       pendingSalesRef.current.add(sale.id);

@@ -11,7 +11,15 @@ import { useEffect, useRef } from "react";
 const KEY = "pos.autoLock.seconds";
 const LAST_ACTIVITY_KEY = "pos.autoLock.lastActivityAt";
 export const DEFAULT_AUTO_LOCK_SECONDS = 180;
-const ACTIVITY_WRITE_THROTTLE_MS = 5_000;
+const ACTIVITY_WRITE_THROTTLE_MS = 1_000;
+const SERVER_ACTIVITY_THROTTLE_MS = 30_000;
+const ACTIVITY_EVENT = "pos:auto-lock-activity";
+const OPERATION_EVENT = "pos:auto-lock-operation";
+const MAX_OPERATION_GRACE_MS = 2 * 60_000;
+
+let lastLocalActivityAt = 0;
+let lastServerActivityAt = 0;
+let operationGraceUntil = 0;
 
 const listeners = new Set<() => void>();
 
@@ -66,18 +74,59 @@ function storedActivityAt(): number {
 /** A successful interactive sign-in starts a fresh idle window. */
 export function markAutoLockActivity(at = Date.now()): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(LAST_ACTIVITY_KEY, String(at));
+  lastLocalActivityAt = Math.max(lastLocalActivityAt, at);
+  window.localStorage.setItem(LAST_ACTIVITY_KEY, String(lastLocalActivityAt));
+  window.dispatchEvent(new CustomEvent(ACTIVITY_EVENT, { detail: lastLocalActivityAt }));
+}
+
+/**
+ * A real operator action refreshes the local clock immediately. Persistence of
+ * that activity to the revocable server session is deliberately throttled:
+ * polling, sync and token refresh never call this function and therefore can
+ * never keep an abandoned till signed in.
+ */
+export function noteOperatorActivity(at = Date.now()): void {
+  markAutoLockActivity(at);
+  if (at - lastServerActivityAt < SERVER_ACTIVITY_THROTTLE_MS) return;
+  lastServerActivityAt = at;
+  void import("@/lib/pos-credentials")
+    .then(({ loadSessionToken }) => loadSessionToken())
+    .then((sessionToken) => {
+      if (!sessionToken) return;
+      return import("@/lib/user-sessions.functions").then(({ recordDeviceActivity }) =>
+        recordDeviceActivity({ data: { sessionToken } }),
+      );
+    })
+    .catch(() => undefined);
+}
+
+/** Keep auto-lock out of the unsafe middle of a user-initiated commit. */
+export function beginAutoLockOperation(maxMs = MAX_OPERATION_GRACE_MS): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  noteOperatorActivity();
+  operationGraceUntil = Math.max(operationGraceUntil, Date.now() + Math.max(1, maxMs));
+  window.dispatchEvent(new Event(OPERATION_EVENT));
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    operationGraceUntil = 0;
+    window.dispatchEvent(new Event(OPERATION_EVENT));
+  };
 }
 
 /** Explicit logout/lock removes the previous person's activity marker. */
 export function clearAutoLockActivity(): void {
   if (typeof window === "undefined") return;
+  lastLocalActivityAt = 0;
+  lastServerActivityAt = 0;
+  operationGraceUntil = 0;
   window.localStorage.removeItem(LAST_ACTIVITY_KEY);
 }
 
 // Capture every genuine user interaction that can change application state.
 // `input`/`change` also cover keyboard-less scanners and native form controls.
-const EVENTS = [
+export const OPERATOR_ACTIVITY_EVENTS = [
   "pointerdown",
   "pointermove",
   "keydown",
@@ -108,11 +157,33 @@ export function useAutoLock(active: boolean, onLock: () => void, ruleSeconds?: n
       // per-machine value is only a fallback while they have not arrived.
       const seconds = effectiveLockSeconds(ruleSeconds);
       if (!seconds || stopped) return;
-      const remaining = remainingAutoLockMs(seconds, storedActivityAt());
-      timer = window.setTimeout(() => {
-        stopped = true;
-        lockRef.current();
-      }, remaining);
+      const now = Date.now();
+      const remaining = remainingAutoLockMs(
+        seconds,
+        Math.max(storedActivityAt(), lastLocalActivityAt),
+        now,
+      );
+      const operationRemaining = Math.max(0, operationGraceUntil - now);
+      timer = window.setTimeout(
+        () => {
+          if (Date.now() < operationGraceUntil) {
+            schedule();
+            return;
+          }
+          if (
+            remainingAutoLockMs(
+              effectiveLockSeconds(ruleSeconds),
+              Math.max(storedActivityAt(), lastLocalActivityAt),
+            ) > 0
+          ) {
+            schedule();
+            return;
+          }
+          stopped = true;
+          lockRef.current();
+        },
+        Math.max(remaining, operationRemaining),
+      );
     };
 
     const activity = () => {
@@ -120,16 +191,14 @@ export function useAutoLock(active: boolean, onLock: () => void, ruleSeconds?: n
       // Mouse movement is noisy. Reset the live timer immediately but write
       // the durable marker at a bounded rate.
       if (now - lastWrittenAt >= ACTIVITY_WRITE_THROTTLE_MS) {
-        markAutoLockActivity(now);
+        noteOperatorActivity(now);
         lastWrittenAt = now;
+      } else {
+        // Keep the exact in-memory deadline responsive without turning raw
+        // pointer movement into storage or network write amplification.
+        lastLocalActivityAt = now;
       }
-      window.clearTimeout(timer);
-      const seconds = effectiveLockSeconds(ruleSeconds);
-      if (!seconds || stopped) return;
-      timer = window.setTimeout(() => {
-        stopped = true;
-        lockRef.current();
-      }, seconds * 1000);
+      schedule();
     };
 
     // No marker means a fresh sign-in. A restored login keeps its previous
@@ -138,14 +207,33 @@ export function useAutoLock(active: boolean, onLock: () => void, ruleSeconds?: n
       markAutoLockActivity();
       lastWrittenAt = storedActivityAt();
     }
-    for (const e of EVENTS) window.addEventListener(e, activity, { passive: true });
+    for (const e of OPERATOR_ACTIVITY_EVENTS)
+      window.addEventListener(e, activity, { passive: true });
+    const onStoredActivity = (event: StorageEvent) => {
+      if (event.key !== LAST_ACTIVITY_KEY || !event.newValue) return;
+      const at = Number(event.newValue);
+      if (Number.isFinite(at)) lastLocalActivityAt = Math.max(lastLocalActivityAt, at);
+      schedule();
+    };
+    const onSharedActivity = () => schedule();
+    const onResume = () => schedule();
+    window.addEventListener("storage", onStoredActivity);
+    window.addEventListener(ACTIVITY_EVENT, onSharedActivity);
+    window.addEventListener(OPERATION_EVENT, onSharedActivity);
+    window.addEventListener("focus", onResume);
+    document.addEventListener("visibilitychange", onResume);
     const offSetting = subscribeAutoLock(schedule);
     schedule();
 
     return () => {
       stopped = true;
       window.clearTimeout(timer);
-      for (const e of EVENTS) window.removeEventListener(e, activity);
+      for (const e of OPERATOR_ACTIVITY_EVENTS) window.removeEventListener(e, activity);
+      window.removeEventListener("storage", onStoredActivity);
+      window.removeEventListener(ACTIVITY_EVENT, onSharedActivity);
+      window.removeEventListener(OPERATION_EVENT, onSharedActivity);
+      window.removeEventListener("focus", onResume);
+      document.removeEventListener("visibilitychange", onResume);
       offSetting();
     };
   }, [active, ruleSeconds]);

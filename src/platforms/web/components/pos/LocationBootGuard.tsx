@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
+import { activeLocations } from "@/lib/locations";
 
 /**
  * Launch check: a till with no active location has nowhere to book stock or
@@ -20,11 +21,10 @@ export function LocationBootGuard({ children }: { children?: ReactNode }) {
   const { isAdmin } = useAuth();
   const { pathname } = useLocation();
 
-  if (stores.length > 0 || pathname.startsWith("/stores")) return <>{children}</>;
+  if (activeLocations(stores).length > 0 || pathname.startsWith("/stores")) return <>{children}</>;
 
   // Still waiting on the answer — say so rather than claiming there is nothing.
-  if (!storesLoaded && loadPhase !== "failed")
-    return <TillLoader message="Loading locations…" />;
+  if (!storesLoaded && loadPhase !== "failed") return <TillLoader message="Loading locations…" />;
 
   if (!storesLoaded)
     return (

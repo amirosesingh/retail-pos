@@ -18,7 +18,7 @@ import { logSync } from "@/lib/sync-log";
 import { recordDiagnostic, reasonCode } from "@/lib/diagnostics";
 import { applyStockDeltaBatch } from "@/lib/stock-recovery";
 import { canRelay, hasStaffSession, relayActiveShift, relayStores } from "@/core/api/sync-relay";
-import { hydrateTerminalConfig } from "@/core/activation/terminal-tokens";
+import { hydrateTerminalConfig, readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { isOperationalTable } from "@/lib/pos-auth-route";
 import { keyset, nextCursor, PAGE_SIZE, type Cursor, type Page } from "@/lib/keyset";
 import { readAllPages } from "@/lib/paged-read";
@@ -975,7 +975,88 @@ export async function importSampleData() {
 }
 
 /** Load every cloud-backed slice of the POS state. */
-export async function loadCloudState(storeId?: string | null): Promise<CloudSlice> {
+export type LocationDirectoryResult =
+  { ok: true; stores: Store[]; source: "relay" | "direct" } | { ok: false; error: Error };
+
+/**
+ * Resolve the small location directory independently of catalogue bootstrap.
+ * Registered terminals prefer the proven relay. In particular, an anonymous
+ * RLS-filtered `200 []` must never overwrite a relay-visible directory.
+ */
+export async function loadLocationDirectory(): Promise<LocationDirectoryResult> {
+  await hydrateTerminalConfig();
+  const registered = Boolean(readTerminalConfig()?.tokenId);
+  const cashierToken = await loadCashierToken();
+  const relayAvailable = canRelay() && (registered || Boolean(cashierToken));
+  let relayError: Error | null = null;
+
+  const relayed = async (): Promise<LocationDirectoryResult | null> => {
+    if (!relayAvailable) return null;
+    const result = await relayStores();
+    if (!result.ok) {
+      relayError = new Error(result.error || "Could not verify terminal location access");
+      return null;
+    }
+    return {
+      ok: true,
+      stores: ((result.rows ?? []) as Row[]).map(rowToStore),
+      source: "relay",
+    };
+  };
+
+  try {
+    // PIN-only and registered devices may not yet have a Supabase Auth bearer.
+    // The relay already proves both person and terminal, so it is the correct
+    // first source and avoids treating an anonymous RLS result as truth.
+    const relayFirst = await relayed();
+    if (relayFirst) return relayFirst;
+
+    // An RLS-filtered anonymous SELECT can legitimately answer `200 []`.
+    // Remember whether this request carries a real user session so that empty
+    // can only mean "no locations" when access was actually established.
+    const { data: auth } = await supabase.auth.getSession();
+    const directAuthenticated = Boolean(auth.session?.access_token);
+    const direct = await readAllPages<Row>((from, to, withCount) =>
+      supabase
+        .from("stores")
+        .select("*", withCount ? { count: "exact" } : {})
+        .is("deleted_at", null)
+        .order("name")
+        .order("id")
+        .range(from, to),
+    );
+    if (!direct.error) {
+      // A terminal with a relay must corroborate an empty direct result. This
+      // is the exact failure mode produced by a cashier bootstrap race.
+      if (!(direct.data ?? []).length) {
+        const relayFallback = await relayed();
+        if (relayFallback) return relayFallback;
+        if (!directAuthenticated) {
+          return {
+            ok: false,
+            error: relayError ?? new Error("Could not verify access to the location directory"),
+          };
+        }
+      }
+      return { ok: true, stores: (direct.data ?? []).map(rowToStore), source: "direct" };
+    }
+    const relayFallback = await relayed();
+    if (relayFallback) return relayFallback;
+    return { ok: false, error: new Error(direct.error.message || "Could not load locations") };
+  } catch (error) {
+    const relayFallback = await relayed().catch(() => null);
+    if (relayFallback) return relayFallback;
+    return {
+      ok: false,
+      error: error instanceof Error ? error : new Error("Could not load locations"),
+    };
+  }
+}
+
+export async function loadCloudState(
+  storeId?: string | null,
+  locationTask?: Promise<LocationDirectoryResult>,
+): Promise<CloudSlice> {
   await hydrateTerminalConfig();
   // A Windows till with no network must not wait for a cloud timeout before
   // loading its durable SQL Server snapshot. Browser and mobile clients have
@@ -1027,40 +1108,7 @@ export async function loadCloudState(storeId?: string | null): Promise<CloudSlic
         .limit(1000),
 
       supabase.from("pos_settings").select("*").eq("id", 1).maybeSingle(),
-      // The stores table only exists once supabase/schema.sql has been applied; a
-      // missing table must not stop the till from loading. Supabase query
-      // builders are thenables, not Promises, so guard with try/catch.
-      (async (): Promise<{ data: Row[] | null }> => {
-        try {
-          const cashierToken = await loadCashierToken();
-          // A PIN-only cashier has no database auth session, so use the proven
-          // relay immediately instead of accepting an RLS-filtered empty list.
-          if (cashierToken && canRelay()) {
-            const relayed = await relayStores();
-            if (relayed.ok) return { data: (relayed.rows as Row[] | undefined) ?? [] };
-          }
-          const direct = await readAllPages<Row>((from, to, withCount) =>
-            supabase
-              .from("stores")
-              .select("*", withCount ? { count: "exact" } : {})
-              .is("deleted_at", null)
-              .order("name")
-              .order("id")
-              .range(from, to),
-          );
-          if (!direct.error) return { data: direct.data ?? [] };
-
-          // Registered terminals and staff sessions can still recover through
-          // the server relay when a direct RLS read is unavailable.
-          if (canRelay()) {
-            const relayed = await relayStores();
-            if (relayed.ok) return { data: (relayed.rows as Row[] | undefined) ?? [] };
-          }
-          return { data: null };
-        } catch {
-          return { data: null };
-        }
-      })(),
+      locationTask ?? loadLocationDirectory(),
       (async (): Promise<{ data: Row[] | null }> => {
         try {
           const res = await supabase.rpc(
@@ -1085,7 +1133,7 @@ export async function loadCloudState(storeId?: string | null): Promise<CloudSlic
     // Location discovery is critical. `null` means the query did not answer;
     // `[]` is a valid authoritative answer and must be allowed through so stale
     // cached branches are removed instead of being restored.
-    (stores.data === null ? new Error("Could not load the location directory") : null);
+    (!stores.ok ? stores.error : null);
   if (err) return loadLocalState(err);
 
   tierIdByName = {};
@@ -1101,7 +1149,7 @@ export async function loadCloudState(storeId?: string | null): Promise<CloudSlic
     sales: (sales.data ?? []).map(rowToSale),
     promotions: (promotions.data ?? []).map(rowToPromotion),
     settings: rowToSettings(settings.data as Row | null),
-    stores: ((stores.data as Row[] | null) ?? []).map(rowToStore),
+    stores: stores.ok ? stores.stores : [],
     shifts: ((shifts.data as Row[] | null) ?? []).map(rowToShift),
   };
 }
@@ -1114,7 +1162,10 @@ export async function loadCloudState(storeId?: string | null): Promise<CloudSlic
  * desktop installation whose local database is deliberately disabled. This
  * keeps locally committed, not-yet-synced receipts visible after a restart.
  */
-export async function loadPrimaryState(storeId?: string | null): Promise<CloudSlice> {
+export async function loadPrimaryState(
+  storeId?: string | null,
+  locationTask?: Promise<LocationDirectoryResult>,
+): Promise<CloudSlice> {
   const bridge = localDb();
   if (!isOnlineOnly() && bridge?.snapshot) {
     const status = await bridge.database?.getState?.().catch(() => null);
@@ -1129,7 +1180,7 @@ export async function loadPrimaryState(storeId?: string | null): Promise<CloudSl
       );
     }
   }
-  return loadCloudState(storeId);
+  return loadCloudState(storeId, locationTask);
 }
 
 /** Refresh a settings notification without downloading the whole POS state. */
@@ -1159,7 +1210,14 @@ export async function searchCloudMembers(term: string, limit = 10): Promise<Memb
     .from("members")
     .select("*")
     .is("deleted_at", null)
-    .or([`name.ilike.${like}`, `phone.ilike.${like}`, `code.ilike.${like}`, `email.ilike.${like}`].join(","))
+    .or(
+      [
+        `name.ilike.${like}`,
+        `phone.ilike.${like}`,
+        `code.ilike.${like}`,
+        `email.ilike.${like}`,
+      ].join(","),
+    )
     .order("updated_at", { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 50));
   if (res.error || !res.data) return [];
