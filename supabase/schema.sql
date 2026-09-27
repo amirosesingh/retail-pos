@@ -3165,6 +3165,13 @@ BEGIN
     END IF;
   END IF;
 
+  IF TG_OP = 'UPDATE'
+     AND (NEW.payment_type IS DISTINCT FROM OLD.payment_type
+          OR NEW.payments IS DISTINCT FROM OLD.payments)
+     AND NOT public.has_perm('can_edit_tenders') THEN
+    RAISE EXCEPTION 'PERMISSION_DENIED_TENDER_EDIT';
+  END IF;
+
   RETURN NEW;
 END $$;
 
@@ -8903,12 +8910,19 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'That shift no longer exists.'; END IF;
   IF NOT public.store_visible(v.store_id) THEN RAISE EXCEPTION 'That shift belongs to another branch.'; END IF;
 
+  SELECT * INTO v_me FROM public.current_app_user();
+  IF (
+    (v.opened_by_staff_id IS NOT NULL AND v.opened_by_staff_id::text IS DISTINCT FROM v_me.user_id::text)
+    OR (v.terminal_id IS NOT NULL AND v.terminal_id IS DISTINCT FROM p_terminal)
+  ) AND NOT public.has_perm('can_manage_other_shifts') THEN
+    RAISE EXCEPTION 'You do not have permission to close another employee or terminal shift.';
+  END IF;
+
   IF v.state <> 'ACTIVE' THEN
     -- Already closing: never go backwards, just report where it is.
     RETURN v.state;
   END IF;
 
-  SELECT * INTO v_me FROM public.current_app_user();
   PERFORM set_config('pos.shift_fn', 'on', true);
   UPDATE public.shifts
      SET state = 'CASH_COUNT_REQUIRED',
@@ -8919,8 +8933,17 @@ BEGIN
    WHERE id = p_shift;
   PERFORM set_config('pos.shift_fn', '', true);
 
-  PERFORM public.shift_log_event(p_shift, 'closing_started', 'ACTIVE', 'CASH_COUNT_REQUIRED',
-                                 jsonb_build_object('reason', v_reason), p_terminal);
+  PERFORM public.shift_log_event(
+    p_shift, 'closing_started', 'ACTIVE', 'CASH_COUNT_REQUIRED',
+    jsonb_build_object(
+      'reason', v_reason,
+      'forced', (v.opened_by_staff_id IS NOT NULL AND v.opened_by_staff_id::text IS DISTINCT FROM v_me.user_id::text)
+                OR (v.terminal_id IS NOT NULL AND v.terminal_id IS DISTINCT FROM p_terminal),
+      'opened_by_staff_id', v.opened_by_staff_id,
+      'opened_terminal_id', v.terminal_id
+    ),
+    p_terminal
+  );
   RETURN 'CASH_COUNT_REQUIRED';
 END $$;
 GRANT EXECUTE ON FUNCTION public.shift_close_start(uuid, text, text) TO authenticated, service_role;
@@ -8933,6 +8956,7 @@ DECLARE
   v_var_cash numeric; v_var_card numeric; v_var_digital numeric; v_total numeric;
   v_status text; v_threshold numeric := 0; v_state text;
   v_store_name text; v_cashier text; v_terminal text; v_msg text;
+  v_total_sales numeric := 0; v_net_cash_sales numeric := 0;
 BEGIN
   SELECT * INTO v FROM public.shifts WHERE id = p_shift;
   SELECT * INTO e FROM public.shift_expected_totals(p_shift);
@@ -8983,25 +9007,37 @@ BEGIN
       INTO v_cashier
       FROM public.shift_cash_counts WHERE id = p_count_id;
     v_cashier := coalesce(v_cashier, v.opened_by_name, '');
-    v_terminal := coalesce(v.terminal_id, '');
+    v_terminal := coalesce(nullif(btrim(v.terminal_name), ''), v.terminal_id, '');
+    SELECT coalesce(sum(s.total_amount), 0) INTO v_total_sales
+      FROM public.sales s
+     WHERE s.shift_id = p_shift::text AND coalesce(s.is_refunded, false) = false;
+    v_net_cash_sales := round(e.expected_cash - coalesce(v.opening_float, 0), 2);
 
     INSERT INTO public.shift_variance_alerts
       (shift_id, store_id, reconciliation_id, variance_total, variance_status, severity, message)
     VALUES (p_shift, v.store_id, v_rec, v_total, v_status,
             CASE WHEN abs(v_total) > v_threshold THEN 'critical' ELSE 'warning' END,
-            format('Shift at %s closed %s by %s. Cashier %s, terminal %s. Expected %s, counted %s.',
+            format('Shift at %s closed %s by %s. Cashier %s, terminal %s. Opening %s, sales %s, net cash sales %s, expected cash %s, counted cash %s.',
                    v_store_name, lower(v_status), abs(v_total), v_cashier, v_terminal,
+                   to_char(coalesce(v.opening_float, 0), 'FM999999990.00'),
+                   to_char(v_total_sales, 'FM999999990.00'),
+                   to_char(v_net_cash_sales, 'FM999999990.00'),
                    to_char(e.expected_cash, 'FM999999990.00'), to_char(p_cash, 'FM999999990.00')))
     ON CONFLICT (reconciliation_id) DO NOTHING;
 
     v_msg := format(
-      E'Cashier: %s\nBranch: %s\nTerminal: %s\n\nExpected cash: %s\nCounted cash: %s\nVariance: %s\n\nType: Cash %s\nShift: %s',
+      E'Cashier: %s\nBranch: %s\nTerminal: %s\nShift: %s\nClosed: %s\n\nOpening float: %s\nTotal sales: %s\nNet cash sales: %s\nExpected cash: %s\nCounted cash: %s\nCard expected / counted: %s / %s\nDigital expected / counted: %s / %s\nVariance: %s\n\nType: Cash %s',
       v_cashier, v_store_name, v_terminal,
+      p_shift::text, to_char(now(), 'YYYY-MM-DD HH24:MI:SS TZ'),
+      to_char(coalesce(v.opening_float, 0), 'FM999999990.00'),
+      to_char(v_total_sales, 'FM999999990.00'),
+      to_char(v_net_cash_sales, 'FM999999990.00'),
       to_char(e.expected_cash, 'FM999999990.00'),
       to_char(p_cash, 'FM999999990.00'),
+      to_char(e.expected_card, 'FM999999990.00'), coalesce(to_char(p_card, 'FM999999990.00'), 'not counted'),
+      to_char(e.expected_digital, 'FM999999990.00'), coalesce(to_char(p_digital, 'FM999999990.00'), 'not counted'),
       CASE WHEN v_total > 0 THEN '+' ELSE '-' END || to_char(abs(v_total), 'FM999999990.00'),
-      CASE WHEN v_total > 0 THEN 'Overage' ELSE 'Shortage' END,
-      p_shift::text);
+      CASE WHEN v_total > 0 THEN 'Overage' ELSE 'Shortage' END);
 
     -- The shared notification feed: one row per shift, so a replay of the
     -- close after an outage can never raise a second alert.
@@ -9012,7 +9048,13 @@ BEGIN
             CASE WHEN abs(v_total) > v_threshold THEN 'critical' ELSE 'warning' END,
             'Shift cash variance detected', v_msg, nullif(v_cashier, ''),
             nullif(v_terminal, ''), v.store_id, v.store_id, 'shift', p_shift::text, v_total,
-            jsonb_build_object('expected_cash', e.expected_cash, 'counted_cash', p_cash,
+            jsonb_build_object('branch_name', v_store_name, 'terminal_name', v_terminal,
+                               'opened_at', v.opened_at, 'closed_at', now(),
+                               'opening_float', coalesce(v.opening_float, 0),
+                               'total_sales', v_total_sales, 'net_cash_sales', v_net_cash_sales,
+                               'expected_cash', e.expected_cash, 'counted_cash', p_cash,
+                               'expected_card', e.expected_card, 'counted_card', p_card,
+                               'expected_digital', e.expected_digital, 'counted_digital', p_digital,
                                'variance_total', v_total, 'variance_status', v_status,
                                'reconciliation_id', v_rec),
             'shift:' || p_shift::text || ':cash_variance', now())

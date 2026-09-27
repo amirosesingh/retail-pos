@@ -9,11 +9,12 @@
 type Row = Record<string, unknown>;
 
 /** Which record book a row belongs to. */
-export type RecordKind = "stock_count" | "purchase_order";
+export type RecordKind = "stock_count" | "purchase_order" | "sale";
 
 const TABLE: Record<RecordKind, string> = {
   stock_count: "stock_count_drafts",
   purchase_order: "purchase_orders",
+  sale: "sales",
 };
 
 async function rest(path: string, init: RequestInit & { prefer?: string } = {}) {

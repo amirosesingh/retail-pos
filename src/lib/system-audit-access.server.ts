@@ -64,3 +64,29 @@ export async function verifySupervisorToken(accessToken: string): Promise<boolea
         SUPERVISOR_ROLES.has(String(r.role_slug ?? ""))),
   );
 }
+
+/** Destructive operational cleanup is reserved for an active administrator. */
+export async function verifyAdminToken(accessToken: string): Promise<boolean> {
+  const url = process.env["SUPABASE_URL"];
+  const key = process.env["SUPABASE_ANON_KEY"];
+  if (!url || !key) return false;
+  const res = await fetch(`${url}/auth/v1/user`, {
+    headers: { apikey: key, Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) return false;
+  const user = (await res.json()) as { id?: string };
+  if (!user.id) return false;
+  const rows = await serviceRest(
+    `app_users?auth_user_id=eq.${encodeURIComponent(user.id)}&select=role,role_slug,is_active`,
+  );
+  if (!rows.ok) return false;
+  const list = (await rows.json()) as {
+    role?: string;
+    role_slug?: string | null;
+    is_active?: boolean;
+  }[];
+  return list.some((row) => {
+    const role = String(row.role_slug ?? row.role ?? "");
+    return row.is_active !== false && (role === "admin" || role === "owner");
+  });
+}

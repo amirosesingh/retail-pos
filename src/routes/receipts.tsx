@@ -31,6 +31,7 @@ import {
 import type { PaymentMethod, Sale } from "@/core/types/pos-types";
 import { findReceiptExact, loadSalesPage } from "@/core/api/pos-db";
 import type { Cursor } from "@/lib/keyset";
+import { saveRecordEditHistory } from "@/lib/record-edit-flow";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -69,7 +70,7 @@ const TEMPLATES: { key: Template; label: string; icon: typeof Printer }[] = [
 
 function ReceiptVault() {
   const { state, currentStore, activeShift, refundSale, changeSalePayment } = usePos();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const { requirePermission } = useUserPermissions();
   const [query, setQuery] = useState("");
   /** Cashiers land on their own shift; anything older needs a date range. */
@@ -234,7 +235,12 @@ function ReceiptVault() {
 
   async function openPaymentFix() {
     if (!selected) return;
-    if (!(await requirePermission("can_edit_tenders"))) return;
+    // Payment corrections are sensitive posted-record edits. The relay
+    // independently checks this same permission before changing the sale.
+    if (!can("can_edit_tenders")) {
+      toast.error("Administrator permission is required to correct a completed payment.");
+      return;
+    }
     setPayMethod(selected.method);
     setPayReason("");
     setPayOpen(true);
@@ -246,8 +252,26 @@ function ReceiptVault() {
       setPayOpen(false);
       return;
     }
+    const reason = payReason.trim();
+    if (reason.length < 3) {
+      toast.error("Type why this payment record is being corrected.");
+      return;
+    }
     try {
-      await changeSalePayment(selected.id, payMethod, payReason.trim() || undefined);
+      const before = { paymentMethod: selected.method };
+      const after = { paymentMethod: payMethod };
+      const changed = await changeSalePayment(selected.id, payMethod, reason);
+      if (!changed) return;
+      await saveRecordEditHistory({
+        kind: "sale",
+        recordId: selected.id,
+        reference: selected.receiptNo,
+        storeId: selected.storeId,
+        actionKey: "PAYMENT_CORRECTED",
+        before,
+        after,
+        note: reason,
+      });
       setPayOpen(false);
       toast.success(`Bill ${selected.receiptNo} now recorded as ${payMethod.replace("_", " ")}`);
     } catch (error) {
@@ -507,6 +531,14 @@ function ReceiptVault() {
             <span className="font-semibold capitalize">{selected?.method.replace("_", " ")}</span>.
             Pick what the customer actually paid with.
           </p>
+          <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Original → Corrected
+            </p>
+            <p className="mt-1 capitalize">
+              {selected?.method.replace("_", " ")} → {payMethod.replace("_", " ")}
+            </p>
+          </div>
           <div className="grid grid-cols-3 gap-2">
             {METHODS.map((m) => (
               <button
@@ -523,11 +555,11 @@ function ReceiptVault() {
             ))}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="pay-reason">Note (optional)</Label>
-            <Input
+            <Label htmlFor="pay-reason">Reason for correction (required)</Label>
+            <Textarea
               id="pay-reason"
               value={payReason}
-              maxLength={200}
+              maxLength={400}
               placeholder="e.g. cashier pressed card by mistake"
               onChange={(e) => setPayReason(e.target.value)}
             />
@@ -536,7 +568,12 @@ function ReceiptVault() {
             <Button variant="outline" onClick={() => setPayOpen(false)}>
               Close
             </Button>
-            <Button onClick={confirmPaymentFix}>Save correction</Button>
+            <Button
+              disabled={payMethod === selected?.method || payReason.trim().length < 3}
+              onClick={confirmPaymentFix}
+            >
+              Confirm &amp; save correction
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

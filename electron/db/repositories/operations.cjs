@@ -192,6 +192,7 @@ class OperationsRepository {
       .input("shift", String(shiftId));
     const result = await request.query(`
       SELECT
+        CAST(COALESCE(SUM(CASE WHEN COALESCE(s.is_refunded,0)=0 THEN COALESCE(s.total_amount,0) ELSE 0 END),0) AS decimal(38,12)) total_sales,
         CAST(COALESCE(sh.opening_float,0) + COALESCE(SUM(
           CASE
             WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' THEN COALESCE(j.cash,0)

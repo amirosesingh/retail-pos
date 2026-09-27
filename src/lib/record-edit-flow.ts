@@ -19,7 +19,7 @@ import {
   withdrawRecordEdit,
 } from "@/lib/record-edits.functions";
 
-export type RecordKind = "stock_count" | "purchase_order";
+export type RecordKind = "stock_count" | "purchase_order" | "sale";
 
 export type EditGrant = {
   grantToken: string | null;

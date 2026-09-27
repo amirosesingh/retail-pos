@@ -13,7 +13,7 @@ const caller = z.object({
   cashierToken: z.string().min(10).optional(),
 });
 
-const kind = z.enum(["stock_count", "purchase_order"]);
+const kind = z.enum(["stock_count", "purchase_order", "sale"]);
 
 type Caller = { id: string; name: string; role: string; isSupervisor: boolean };
 

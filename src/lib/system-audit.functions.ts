@@ -42,8 +42,11 @@ export const recordSystemAudit = createServerFn({ method: "POST" })
     const { writeSystemAudit } = await import("./system-audit.server");
     await writeSystemAudit({
       ...data,
-      actorId: data.actorId ?? scope.label ?? null,
-      actorRole: data.actorRole ?? scope.role ?? null,
+      // Attribution comes from verified credentials, never editable request
+      // fields. This audit is used for financial and administrative actions.
+      actorId: scope.staffUserId ?? scope.label ?? null,
+      actorName: scope.actorName ?? scope.label ?? null,
+      actorRole: scope.roleSlug ?? scope.role ?? null,
       storeId: scope.isSupervisor ? (data.storeId ?? scope.storeId ?? null) : (scope.storeId ?? null),
     });
     return { ok: true as const };

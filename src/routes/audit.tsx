@@ -57,6 +57,7 @@ import {
   type AuditLog,
 } from "@/lib/audit-log";
 import { useAuth } from "@/lib/pos-auth";
+import { usePos } from "@/lib/pos-store";
 import { describeLog } from "@/lib/audit-format";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -114,6 +115,7 @@ const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(
 
 function AuditPage() {
   const { can, staff } = useAuth();
+  const { stores } = usePos();
   const logs = useAuditLogs();
   const sync = useSyncState();
   const [range, setRange] = useState<RangeKey>("all");
@@ -472,7 +474,14 @@ function AuditPage() {
                 <Row label="Staff" value={`${detail.staffName} (${detail.staffId})`} />
                 <Row label="Category" value={categoryLabel(detail.category)} />
                 <Row label="Route" value={detail.route} />
-                <Row label="Store" value={detail.storeId ?? "all stores"} />
+                <Row
+                  label="Store"
+                  value={
+                    detail.storeId
+                      ? (stores.find((store) => store.id === detail.storeId)?.name ?? "Unknown branch")
+                      : "All branches"
+                  }
+                />
                 <Row
                   label="Cloud sync"
                   value={

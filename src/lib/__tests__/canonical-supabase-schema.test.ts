@@ -37,6 +37,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260927131448_dashboard_category_drilldown.sql",
       "supabase/migrations/20260927134916_fix_secure_shift_reads.sql",
       "supabase/migrations/20260927135206_harden_secure_shift_projection.sql",
+      "supabase/migrations/20260927155845_enrich_shift_variance_alert_details.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -57,6 +58,27 @@ describe("canonical Supabase SQL", () => {
     expect(sql).toContain("CREATE OR REPLACE FUNCTION public.schema_inventory_deep()");
     expect(sql).toContain("Retail schema refused: RLS is disabled for");
     expect(sql).toContain("FUNCTION public.pos_sale_commit");
+  });
+
+  it("enforces completed-sale tender corrections in the database", () => {
+    const sql = read("supabase/schema.sql");
+    const start = sql.indexOf("CREATE OR REPLACE FUNCTION public.enforce_sale_permissions()");
+    const body = sql.slice(start, start + 1_800);
+    expect(body).toContain("NEW.payment_type IS DISTINCT FROM OLD.payment_type");
+    expect(body).toContain("NEW.payments IS DISTINCT FROM OLD.payments");
+    expect(body).toContain("public.has_perm('can_edit_tenders')");
+    expect(body).toContain("PERMISSION_DENIED_TENDER_EDIT");
+  });
+
+  it("enforces and audits cross-user or cross-terminal shift closure in the database", () => {
+    const sql = read("supabase/schema.sql");
+    const start = sql.indexOf("CREATE OR REPLACE FUNCTION public.shift_close_start");
+    const body = sql.slice(start, start + 3_000);
+    expect(body).toContain("public.has_perm('can_manage_other_shifts')");
+    expect(body).toContain("another employee or terminal shift");
+    expect(body).toContain("'forced'");
+    expect(body).toContain("'opened_by_staff_id'");
+    expect(body).toContain("'opened_terminal_id'");
   });
 
   it("closes server-only tables and privileged routines after every definition", () => {
