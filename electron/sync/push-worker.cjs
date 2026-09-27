@@ -18,16 +18,22 @@ function collapseChanges(changes) {
 }
 
 /**
- * Older desktop builds wrote sale_items before branch_id was projected. The
- * aggregate journal already fixes the authoritative branch, so fill only a
- * missing value while preserving a non-empty mismatch for the server to
- * reject as possible cross-branch corruption.
+ * Older desktop builds wrote sale_items before branch_id was projected and
+ * could write audit_logs without the later-added store_id. The aggregate
+ * journal already fixes the authoritative branch, so fill only a missing
+ * value while preserving a non-empty mismatch for the server to reject as
+ * possible cross-branch corruption.
  */
 function rowsForBranch(tableName, rows, branchId) {
-  if (tableName !== "sale_items") return rows;
-  return rows.map((row) => String(row?.branch_id ?? "").trim()
+  const branchColumn = tableName === "sale_items"
+    ? "branch_id"
+    : tableName === "audit_logs"
+      ? "store_id"
+      : null;
+  if (!branchColumn) return rows;
+  return rows.map((row) => String(row?.[branchColumn] ?? "").trim()
     ? row
-    : { ...row, branch_id: branchId });
+    : { ...row, [branchColumn]: branchId });
 }
 
 class PushWorker {

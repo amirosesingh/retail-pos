@@ -54,6 +54,7 @@ export async function queueOfflineSignIn(input: {
           signed_in_at: at.toISOString(),
           source: "local-database",
         },
+        store_id: input.storeId,
         created_at: at.toISOString(),
       },
     ],
