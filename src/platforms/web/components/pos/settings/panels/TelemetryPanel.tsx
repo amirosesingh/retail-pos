@@ -4,7 +4,7 @@
  * settings slide-over.
  */
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,9 +26,13 @@ import {
   health,
   isStale,
   listTelemetry,
+  listTelemetryHistory,
   missingTelemetryColumns,
+  type TelemetryHistoryRow,
   type TelemetryRow,
 } from "@/lib/telemetry";
+import { clearTelemetryHistory } from "@/lib/telemetry.functions";
+import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 
 import {
   COMMAND_LABEL,
@@ -51,8 +55,9 @@ function statusTone(row: TelemetryRow) {
 }
 
 export function TelemetryPanel() {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [rows, setRows] = useState<TelemetryRow[]>([]);
+  const [history, setHistory] = useState<TelemetryHistoryRow[]>([]);
   const [commands, setCommands] = useState<TerminalCommand[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -60,8 +65,13 @@ export function TelemetryPanel() {
 
   const load = useCallback(async () => {
     try {
-      const [t, c] = await Promise.all([listTelemetry(), listCommands()]);
+      const [t, c, h] = await Promise.all([
+        listTelemetry(),
+        listCommands(),
+        listTelemetryHistory(),
+      ]);
       setRows(t);
+      setHistory(h);
       setMissingColumns(missingTelemetryColumns());
 
       setCommands(c);
@@ -73,6 +83,34 @@ export function TelemetryPanel() {
       setLoading(false);
     }
   }, []);
+
+  const clearHistory = async () => {
+    if (
+      !isAdmin ||
+      !window.confirm(
+        "Clear telemetry history? Terminal registrations, sales, shifts, and financial audit records will be kept.",
+      )
+    )
+      return;
+    setBusy("clear-history");
+    try {
+      const auth = await getPosCallerAuth();
+      if (!auth.accessToken)
+        throw new Error("Sign in with an administrator account to clear telemetry history.");
+      const result = await clearTelemetryHistory({ data: { accessToken: auth.accessToken } });
+      if (!result.ok) throw new Error(result.error);
+      toast.success("Telemetry history cleared", {
+        description: "Terminal registrations and financial audit records were not changed.",
+      });
+      await load();
+    } catch (e) {
+      toast.error("Could not clear telemetry history", {
+        description: describeError(e, "Clearing telemetry history"),
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -114,7 +152,7 @@ export function TelemetryPanel() {
       )}
       <section className="rounded-lg border border-border bg-card p-5">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-          <h2 className="truncate text-lg font-semibold">Terminals</h2>
+          <h2 className="truncate text-lg font-semibold">Current Terminals</h2>
           <Button variant="outline" size="sm" onClick={() => void load()}>
             <RefreshCw className="mr-2 size-4" /> Refresh
           </Button>
@@ -165,7 +203,8 @@ export function TelemetryPanel() {
                       ) : null}
                     </TableCell>
                     <TableCell>
-                      {r.staff_name ?? "—"}
+                      {r.staff_name ??
+                        (r.session_status === "never_seen" ? "Never signed in" : "Nobody")}
                       {r.staff_role ? (
                         <div className="text-[11px] capitalize text-muted-foreground">
                           {r.staff_role}
@@ -206,6 +245,76 @@ export function TelemetryPanel() {
                           Refresh data
                         </Button>
                       </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-border bg-card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Telemetry History</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Completed and failed synchronization events. This history is separate from terminal
+              registration and financial audit retention.
+            </p>
+          </div>
+          {isAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy !== null || history.length === 0}
+              onClick={() => void clearHistory()}
+            >
+              <Trash2 className="mr-2 size-4" /> Clear history
+            </Button>
+          )}
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Terminal</TableHead>
+                <TableHead>Direction</TableHead>
+                <TableHead>Data</TableHead>
+                <TableHead className="text-right">Records</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {history.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
+                    No telemetry history recorded.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                history.map((event) => (
+                  <TableRow key={event.id}>
+                    <TableCell className="text-xs">{when(event.created_at)}</TableCell>
+                    <TableCell className="text-xs">
+                      {event.terminal_id ? event.terminal_id.slice(0, 8) : "—"}
+                    </TableCell>
+                    <TableCell className="capitalize">{event.direction}</TableCell>
+                    <TableCell>{event.table_name}</TableCell>
+                    <TableCell className="text-right">{event.records}</TableCell>
+                    <TableCell>
+                      <Badge variant={event.status === "failed" ? "destructive" : "secondary"}>
+                        {event.status}
+                      </Badge>
+                      {event.error_message ? (
+                        <div
+                          className="max-w-xs truncate text-[11px] text-destructive"
+                          title={event.error_message}
+                        >
+                          {event.error_message}
+                        </div>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 ))

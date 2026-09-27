@@ -11,7 +11,9 @@ export type DeviceSession = {
   label: string | null;
   staff_user_id: string | null;
   branch_id: string | null;
+  branch_name?: string | null;
   terminal_id: string | null;
+  terminal_name?: string | null;
   platform: string | null;
   idle_timeout_minutes: number;
   last_activity_at: string;
@@ -113,7 +115,26 @@ export const listDeviceSessions = createServerFn({ method: "POST" })
     );
     if (!res.ok)
       return { ok: false as const, error: "Could not read sessions", sessions: [] as DeviceSession[] };
-    return { ok: true as const, error: "", sessions: (await res.json()) as DeviceSession[] };
+    const sessions = (await res.json()) as DeviceSession[];
+    const [storesRes, terminalsRes] = await Promise.all([
+      serviceRest("stores?select=id,name"),
+      serviceRest("terminal_tokens?select=id,device_name"),
+    ]);
+    const stores = storesRes.ok
+      ? new Map(((await storesRes.json()) as { id: string; name: string }[]).map((row) => [row.id, row.name]))
+      : new Map<string, string>();
+    const terminals = terminalsRes.ok
+      ? new Map(((await terminalsRes.json()) as { id: string; device_name: string }[]).map((row) => [row.id, row.device_name]))
+      : new Map<string, string>();
+    return {
+      ok: true as const,
+      error: "",
+      sessions: sessions.map((session) => ({
+        ...session,
+        branch_name: session.branch_id ? (stores.get(session.branch_id) ?? null) : null,
+        terminal_name: session.terminal_id ? (terminals.get(session.terminal_id) ?? null) : null,
+      })),
+    };
   });
 
 /** Remote reset: end one session, or everything on a terminal or branch. */

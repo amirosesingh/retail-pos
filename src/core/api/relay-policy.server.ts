@@ -149,6 +149,7 @@ const COLUMN_PERMISSIONS: Record<string, Record<string, string>> = {
   sales: {
     is_refunded: "can_process_refund",
     discount_amount: "can_give_discount",
+    payment_type: "can_edit_tenders",
   },
   sale_items: {
     discount_percent: "can_give_discount",

@@ -47,7 +47,9 @@ function createTelemetry({ databaseService, syncCoordinator, jobRepository, conf
         body: JSON.stringify({
           terminalToken: token,
           sqlServerTelemetry: {
-            terminal_id: String(terminal.terminalId ?? token),
+            // The registration token id is the canonical terminal identity used
+            // by terminal_tokens and the current-terminal merge in the UI.
+            terminal_id: String(token),
             store_id: String(store),
             terminal_name: terminal.terminalName ?? terminal.deviceName ?? null,
             branch_code: terminal.storeCode ?? terminal.locationCode ?? null,

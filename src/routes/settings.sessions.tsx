@@ -14,7 +14,9 @@ type Row = {
   label: string | null;
   staff_user_id: string | null;
   branch_id: string | null;
+  branch_name?: string | null;
   terminal_id: string | null;
+  terminal_name?: string | null;
   platform: string | null;
   idle_timeout_minutes: number;
   last_activity_at: string;
@@ -103,8 +105,8 @@ function ActiveSessions() {
             <p className="text-xs text-muted-foreground">
               {[
                 row.platform,
-                row.branch_id ? `Branch ${row.branch_id}` : null,
-                row.terminal_id ? `Terminal ${row.terminal_id.slice(0, 8)}` : null,
+                row.branch_name || (row.branch_id ? "Unknown branch" : null),
+                row.terminal_name || (row.terminal_id ? "Unnamed terminal" : null),
                 `Idle limit ${row.idle_timeout_minutes} min`,
                 `Last seen ${new Date(row.last_activity_at).toLocaleString()}`,
               ]

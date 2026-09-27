@@ -736,6 +736,11 @@ async function startLocalShiftClose(raw) {
   const identity = adminSession.identity();
   const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
   const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  const differentOperator = Boolean(shift.opened_by_staff_id && actor && String(shift.opened_by_staff_id) !== actor);
+  const differentTerminal = Boolean(shift.terminal_id && String(shift.terminal_id) !== terminalId);
+  const forced = differentOperator || differentTerminal;
+  if (forced && !adminSession.hasPermission("can_manage_other_shifts"))
+    throw Object.assign(new Error("You do not have permission to close another employee or terminal shift."), { code: "EFORBIDDEN" });
   const now = new Date().toISOString();
   await operationsRepository.apply("Starting shift close", [
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
@@ -745,7 +750,12 @@ async function startLocalShiftClose(raw) {
     { kind: "insert", table: "shift_close_events", rows: [{
       id: randomUUID(), shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
       event: "closing_started", from_state: "ACTIVE", to_state: "CASH_COUNT_REQUIRED",
-      detail: { reason }, actor_name: actor, actor_staff_id: actor, created_at: now,
+      detail: {
+        reason, forced,
+        opened_by_staff_id: shift.opened_by_staff_id ?? null,
+        opened_terminal_id: shift.terminal_id ?? null,
+      },
+      actor_name: actor, actor_staff_id: actor, created_at: now,
     }] },
   ]);
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
@@ -779,6 +789,7 @@ async function commitLocalShiftCashCount(raw) {
     return { ok: true, state: String(current.rows?.[0]?.state ?? "CLOSED"), replayed: true };
   }
   const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
+  const storeResult = await operationsRepository.query(branchId, "stores", { match: { id: branchId }, limit: 1 });
   const expectedCash = shiftMoney(expected.expected_cash);
   const expectedCard = shiftMoney(expected.expected_card);
   const expectedDigital = shiftMoney(expected.expected_digital);
@@ -796,6 +807,11 @@ async function commitLocalShiftCashCount(raw) {
   const countId = randomUUID();
   const reconciliationId = randomUUID();
   const now = new Date().toISOString();
+  const openingFloat = shiftMoney(shift.opening_float);
+  const totalSales = shiftMoney(expected.total_sales);
+  const netCashSales = shiftMoney(expectedCash - openingFloat);
+  const branchName = String(storeResult.rows?.[0]?.name ?? branchId);
+  const terminalName = String(shift.terminal_name ?? terminalId ?? "");
   const operations = [
     { kind: "insert", table: "shift_cash_counts", rows: [{
       id: countId, shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
@@ -830,15 +846,51 @@ async function commitLocalShiftCashCount(raw) {
       variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now,
     } },
   ];
-  if (varianceStatus !== "NO_VARIANCE") operations.push({
-    kind: "insert", table: "shift_variance_alerts", rows: [{
-      id: randomUUID(), shift_id: shiftId, store_id: branchId,
-      reconciliation_id: reconciliationId, variance_total: varianceTotal,
-      variance_status: varianceStatus, severity: "warning",
-      message: `Shift ${shiftId} closed ${varianceStatus.toLowerCase()} by ${Math.abs(varianceTotal).toFixed(2)}.`,
-      delivery_status: "pending", attempts: 0, created_at: now, updated_at: now,
-    }],
-  });
+  if (varianceStatus !== "NO_VARIANCE") {
+    const message = [
+      `Cashier: ${actor}`,
+      `Branch: ${branchName}`,
+      `Terminal: ${terminalName}`,
+      `Shift: ${shiftId}`,
+      `Closed: ${now}`,
+      `Opening float: ${openingFloat.toFixed(2)}`,
+      `Total sales: ${totalSales.toFixed(2)}`,
+      `Net cash sales: ${netCashSales.toFixed(2)}`,
+      `Expected cash: ${expectedCash.toFixed(2)}`,
+      `Counted cash: ${countedCash.toFixed(2)}`,
+      `Card expected / counted: ${expectedCard.toFixed(2)} / ${countedCard == null ? "not counted" : countedCard.toFixed(2)}`,
+      `Digital expected / counted: ${expectedDigital.toFixed(2)} / ${countedDigital == null ? "not counted" : countedDigital.toFixed(2)}`,
+      `Variance: ${varianceTotal > 0 ? "+" : ""}${varianceTotal.toFixed(2)}`,
+    ].join("\n");
+    operations.push({
+      kind: "insert", table: "shift_variance_alerts", rows: [{
+        id: randomUUID(), shift_id: shiftId, store_id: branchId,
+        reconciliation_id: reconciliationId, variance_total: varianceTotal,
+        variance_status: varianceStatus, severity: "warning", message,
+        delivery_status: "pending", attempts: 0, created_at: now, updated_at: now,
+      }],
+    });
+    operations.push({
+      kind: "insert", table: "activity_events", rows: [{
+        id: randomUUID(), event_type: "shift_cash_variance", severity: "warning",
+        title: "Shift cash variance detected", message, actor_name: actor,
+        terminal_id: terminalId, terminal_name: terminalName, store_id: branchId,
+        branch_id: branchId, entity_type: "shift", entity_id: shiftId,
+        amount: varianceTotal, client_event_id: `shift:${shiftId}:cash_variance`,
+        meta: {
+          branch_name: branchName, terminal_name: terminalName,
+          opened_at: shift.opened_at ?? null, closed_at: now,
+          opening_float: openingFloat, total_sales: totalSales, net_cash_sales: netCashSales,
+          expected_cash: expectedCash, counted_cash: countedCash,
+          expected_card: expectedCard, counted_card: countedCard,
+          expected_digital: expectedDigital, counted_digital: countedDigital,
+          variance_total: varianceTotal, variance_status: varianceStatus,
+          reconciliation_id: reconciliationId,
+        },
+        created_at: now,
+      }],
+    });
+  }
   try {
     await operationsRepository.apply("Closing shift cash count", operations);
   } catch (error) {

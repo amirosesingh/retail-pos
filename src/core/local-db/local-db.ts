@@ -574,6 +574,7 @@ export type PosBridge = {
     expected_cash?: number;
     expected_card?: number;
     expected_digital?: number;
+    total_sales?: number;
     error?: string;
     code?: string;
   }>;

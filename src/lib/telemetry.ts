@@ -42,6 +42,18 @@ export type TelemetryRow = {
   last_seen_at: string;
 };
 
+type TerminalRegistration = {
+  id: string;
+  location_id: string | null;
+  location_name: string | null;
+  device_name: string | null;
+  status: string | null;
+  platform: string | null;
+  app_version: string | null;
+  last_seen_at: string | null;
+  last_sync_at: string | null;
+};
+
 /** Which store keeps this terminal's offline copy of the data. */
 export function storageEngine(): string {
   if (typeof window === "undefined") return "cloud";
@@ -73,7 +85,9 @@ export function snapshot(staff?: { name?: string | null; role?: string | null })
   const cfg = typeof window === "undefined" ? null : readTerminalConfig();
   const now = new Date().toISOString();
   return {
-    terminal_id: terminalId(),
+    // Activated devices report under the registry row id, so the current
+    // terminal list cannot split one physical till into registry + heartbeat.
+    terminal_id: cfg?.tokenId ?? terminalId(),
     store_id: activeBranchId() ?? null,
     terminal_name: cfg?.deviceName ?? cfg?.locationName ?? activeBranchName() ?? null,
     device_name: cfg?.deviceName ?? null,
@@ -136,7 +150,8 @@ export async function publishTelemetry(staff?: { name?: string | null; role?: st
       const column = missingColumn(error as { code?: string; message?: string });
       if (!column || ESSENTIAL.has(column) || droppedColumns.has(column)) return;
       droppedColumns.add(column);
-      if (import.meta.env.DEV) console.warn(`[telemetry] compatibility column unavailable: ${column}`);
+      if (import.meta.env.DEV)
+        console.warn(`[telemetry] compatibility column unavailable: ${column}`);
     } catch {
       /* telemetry never interrupts trading */
       return;
@@ -144,20 +159,105 @@ export async function publishTelemetry(staff?: { name?: string | null; role?: st
   }
 }
 
-
 /** Every terminal's latest status, newest heartbeat first. */
 export async function listTelemetry(): Promise<TelemetryRow[]> {
-  const { data, error } = await supabase
-    .from("branch_telemetry")
-    .select("*")
-    .order("last_seen_at", { ascending: false });
+  const [telemetry, registrations] = await Promise.all([
+    supabase.from("branch_telemetry").select("*").order("last_seen_at", { ascending: false }),
+    supabase
+      .from("terminal_tokens")
+      .select(
+        "id,location_id,location_name,device_name,status,platform,app_version,last_seen_at,last_sync_at",
+      )
+      .is("revoked_at", null)
+      .in("status", ["active", "used"])
+      .order("created_at", { ascending: true }),
+  ]);
+  const { data, error } = telemetry;
   if (error) {
     // A database that has not had the repair script applied yet shows an
     // empty telemetry board rather than taking the settings screen down.
     if (isMissingSchema(error)) return [];
     throw error;
   }
-  return (data ?? []) as unknown as TelemetryRow[];
+  const live = (data ?? []) as unknown as TelemetryRow[];
+  // The registry is authoritative for which terminals exist. A newly-created
+  // terminal therefore appears immediately, even before its first heartbeat.
+  if (registrations.error) return live;
+  return mergeTerminalTelemetry(live, (registrations.data ?? []) as TerminalRegistration[]);
+}
+
+export function mergeTerminalTelemetry(
+  live: TelemetryRow[],
+  registrations: TerminalRegistration[],
+): TelemetryRow[] {
+  const byId = new Map(live.map((row) => [row.terminal_id, row]));
+  for (const terminal of registrations) {
+    const row = byId.get(terminal.id);
+    if (row) {
+      byId.set(terminal.id, {
+        ...row,
+        store_id: row.store_id ?? terminal.location_id,
+        device_name: row.device_name ?? terminal.device_name,
+        terminal_name: row.terminal_name ?? terminal.device_name,
+        location_name: row.location_name ?? terminal.location_name,
+        app_version: row.app_version ?? terminal.app_version,
+        platform: row.platform ?? terminal.platform,
+      });
+      continue;
+    }
+    byId.set(terminal.id, {
+      terminal_id: terminal.id,
+      store_id: terminal.location_id,
+      terminal_name: terminal.device_name,
+      device_name: terminal.device_name,
+      device_type: terminal.platform,
+      location_name: terminal.location_name,
+      session_status: "never_seen",
+      last_heartbeat_at: null,
+      staff_name: null,
+      staff_role: null,
+      db_mode: "unknown",
+      connection_status: "offline",
+      storage_engine: "unknown",
+      pending_count: 0,
+      conflict_count: 0,
+      last_synced_at: terminal.last_sync_at,
+      app_version: terminal.app_version,
+      platform: terminal.platform,
+      last_seen_at: terminal.last_seen_at ?? "",
+    });
+  }
+  return [...byId.values()].sort((a, b) =>
+    (b.last_heartbeat_at ?? b.last_seen_at ?? "").localeCompare(
+      a.last_heartbeat_at ?? a.last_seen_at ?? "",
+    ),
+  );
+}
+
+export type TelemetryHistoryRow = {
+  id: string;
+  terminal_id: string | null;
+  store_id: string | null;
+  direction: string;
+  table_name: string;
+  records: number;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+};
+
+/** Existing central sync ledger, used as telemetry history. */
+export async function listTelemetryHistory(limit = 100): Promise<TelemetryHistoryRow[]> {
+  const { data, error } = await supabase
+    .from("offline_sync_audit_log")
+    .select("id,terminal_id,store_id,direction,table_name,records,status,error_message,created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    if (isMissingSchema(error)) return [];
+    throw error;
+  }
+  return (data ?? []) as unknown as TelemetryHistoryRow[];
 }
 
 /** How this machine presents itself, used when the activation predates naming. */

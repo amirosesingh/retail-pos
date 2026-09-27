@@ -72,6 +72,21 @@ describe("relay authorisation", () => {
     if (!out.ok) expect(out.code).toBe("PERMISSION_DENIED");
   });
 
+  it("enforces tender corrections on the backend", async () => {
+    const denied = await safeAuthorizeRelayOp(
+      { kind: "update", table: "sales", values: { payment_type: "cash" }, match: { id: "s1" } },
+      cashier,
+    );
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) expect(denied.code).toBe("PERMISSION_DENIED");
+
+    const allowed = await safeAuthorizeRelayOp(
+      { kind: "update", table: "sales", values: { payment_type: "cash" }, match: { id: "s1" } },
+      { ...cashier, permissions: { ...cashier.permissions, can_edit_tenders: true } },
+    );
+    expect(allowed.ok).toBe(true);
+  });
+
   it("allows a supervisor across branches", async () => {
     const out = await safeAuthorizeRelayOp(
       { kind: "update", table: "sales", values: { is_refunded: true }, match: { store_id: "STORE-B" } },

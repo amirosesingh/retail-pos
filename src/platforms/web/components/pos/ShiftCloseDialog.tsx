@@ -30,6 +30,7 @@ import { parseAmount, parsePositiveAmount } from "@/core/pricing/amount";
 import { openCashDrawer, printShiftReport } from "@/lib/pos-print";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { localTerminalId } from "@/lib/shift-hours";
+import { logSystemAction } from "@/lib/system-audit";
 import {
   approveVariance,
   loadReconciliations,
@@ -72,6 +73,15 @@ export function ShiftCloseDialog({
   const mayApprove = can("can_shift_variance_approve");
   const mayRecount = can("can_shift_cash_recount");
   const terminalId = readTerminalConfig()?.tokenId ?? localTerminalId();
+  const actorId = user?.staffId ?? null;
+  const differentOperator = activeShift
+    ? activeShift.openedByStaffId && actorId
+      ? activeShift.openedByStaffId !== actorId
+      : activeShift.cashier.trim().toLowerCase() !== (user?.name ?? "").trim().toLowerCase()
+    : false;
+  const differentTerminal = !!activeShift?.terminalId && activeShift.terminalId !== terminalId;
+  const forcedClosure = differentOperator || differentTerminal;
+  const mayForceClose = can("can_manage_other_shifts");
 
   // Reopening the dialog always starts a fresh walk-through.
   useEffect(() => {
@@ -115,7 +125,34 @@ export function ShiftCloseDialog({
       countedCard: counted.card,
       countedDigital: counted.digital,
     });
-    const printed = await printShiftReport(closed ?? shift, state.sales, "zreport", {
+    if (!closed) {
+      toast.error("The shift close was not accepted.");
+      return;
+    }
+    if (forcedClosure) {
+      logSystemAction({
+        actorId,
+        actorName: user?.name ?? null,
+        actorRole: user?.role ?? null,
+        actionType: "SHIFT_FORCE_CLOSED",
+        entityAffected: "shifts",
+        entityId: shift.id,
+        oldValue: {
+          status: shift.status ?? "OPEN",
+          openedBy: shift.cashier,
+          terminalId: shift.terminalId ?? null,
+        },
+        newValue: {
+          status: "CLOSED",
+          countedCash: cashValue ?? shift.countedCash ?? 0,
+          closedBy: user?.name ?? null,
+        },
+        terminalId,
+        storeId: shift.storeId,
+        note: reason.trim(),
+      });
+    }
+    const printed = await printShiftReport(closed, state.sales, "zreport", {
       financialSummary: maySeeFinancialSummary,
       paymentBreakdown: maySeePaymentBreakdown,
       expected: maySeeExpected,
@@ -123,7 +160,9 @@ export function ShiftCloseDialog({
       variance: maySeeVariance,
     });
     toast.success(printed.ok ? "Shift closed · Z report sent to printer" : "Shift closed", {
-      description: printed.ok ? undefined : "The shift is safely closed. Reprint the Z report after checking the printer.",
+      description: printed.ok
+        ? undefined
+        : "The shift is safely closed. Reprint the Z report after checking the printer.",
     });
     setStep("done");
     onOpenChange(false);
@@ -150,7 +189,7 @@ export function ShiftCloseDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Close shift</DialogTitle>
+          <DialogTitle>{forcedClosure ? "Admin shift override" : "Close shift"}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -163,17 +202,29 @@ export function ShiftCloseDialog({
 
           {step === "reason" && (
             <>
+              {forcedClosure && (
+                <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
+                  {mayForceClose
+                    ? `You are closing a shift opened by ${activeShift.cashier}${activeShift.terminalName ? ` on ${activeShift.terminalName}` : ""}. Your identity, reason, and time will be written to the audit history.`
+                    : "This shift belongs to another employee or terminal. The Manage other shifts permission is required to close it."}
+                </div>
+              )}
               <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                 Once closing starts this terminal stops taking sales on this shift. The count is
                 blind: the till will not show you what the drawer should hold.
               </p>
               <div className="space-y-1">
                 <Label>
-                  Reason for closing <span className="text-destructive">*</span>
+                  {forcedClosure ? "Reason for forced closure" : "Reason for closing"}{" "}
+                  <span className="text-destructive">*</span>
                 </Label>
                 <Textarea
                   rows={2}
-                  placeholder="End of day, handover, break…"
+                  placeholder={
+                    forcedClosure
+                      ? "Why the original employee cannot close this shift"
+                      : "End of day, handover, break…"
+                  }
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                 />
@@ -240,20 +291,26 @@ export function ShiftCloseDialog({
               <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning-foreground" />
                 <span>
-                  The count has been recorded and locked. This shift needs a supervisor before it
-                  can finish closing.
+                  This is a legacy in-progress closure. The count is already recorded; resolving it
+                  will not overwrite the original count.
                 </span>
               </div>
 
               {(maySeeExpected || maySeeCounted || maySeeVariance) && recon && (
                 <div className="rounded-md border border-border px-3 py-2 text-xs">
-                  {maySeeExpected && <Row label="Expected cash" value={money(recon.expectedCash)} />}
-                  {maySeeCounted && <Row label="Counted cash" value={money(recon.countedCash ?? 0)} />}
-                  {maySeeVariance && <Row
-                    label="Over / short"
-                    value={money(recon.varianceTotal ?? 0)}
-                    tone={Math.abs(recon.varianceTotal ?? 0) > 0.005 ? "bad" : "good"}
-                  />}
+                  {maySeeExpected && (
+                    <Row label="Expected cash" value={money(recon.expectedCash)} />
+                  )}
+                  {maySeeCounted && (
+                    <Row label="Counted cash" value={money(recon.countedCash ?? 0)} />
+                  )}
+                  {maySeeVariance && (
+                    <Row
+                      label="Over / short"
+                      value={money(recon.varianceTotal ?? 0)}
+                      tone={Math.abs(recon.varianceTotal ?? 0) > 0.005 ? "bad" : "good"}
+                    />
+                  )}
                 </div>
               )}
               {!(maySeeExpected || maySeeCounted || maySeeVariance) && (
@@ -321,9 +378,16 @@ export function ShiftCloseDialog({
 
           {step === "reason" && (
             <Button
-              disabled={busy || !reason.trim()}
+              disabled={busy || reason.trim().length < 3 || (forcedClosure && !mayForceClose)}
               onClick={() => {
                 void (async () => {
+                  if (
+                    forcedClosure &&
+                    !window.confirm(
+                      `Force-close ${activeShift.cashier}'s shift? This action will be audited.`,
+                    )
+                  )
+                    return;
                   setBusy(true);
                   const drawer = await openCashDrawer(reason.trim(), activeShift.id);
                   if (!drawer.ok) {
