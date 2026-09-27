@@ -3,6 +3,7 @@ import {
   Outlet,
   Link,
   createRootRouteWithContext,
+  useLocation,
   useRouter,
   HeadContent,
   Scripts,
@@ -43,6 +44,9 @@ import { subscribeSyncConfig, syncConfig } from "@/lib/sync-config";
 import { DesktopUpdateBanner } from "@/platforms/windows/components/DesktopUpdateBanner";
 import { AndroidUpdateBanner } from "@/platforms/mobile/components/AndroidUpdateBanner";
 import { usePublicHostLanding } from "../lib/coupon-hosts";
+import { AppShell } from "@/platforms/web/components/pos/AppShell";
+import { bypassPersistentAppShell } from "@/lib/app-shell-routes";
+import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
 
 function NotFoundComponent() {
   return (
@@ -119,7 +123,9 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
             : "Something went wrong on our end. You can try refreshing or head back home."}
         </p>
         {import.meta.env.DEV && (
-          <p className="mt-2 break-words text-xs text-muted-foreground/80">{normalizedError.message}</p>
+          <p className="mt-2 break-words text-xs text-muted-foreground/80">
+            {normalizedError.message}
+          </p>
         )}
         {import.meta.env.DEV && normalizedError.stack && (
           <details className="mt-3 text-left">
@@ -230,6 +236,7 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
   usePublicHostLanding();
+  useNativeBackNavigation(router);
 
   // One long-lived owner for connectivity on every platform. Platform-specific
   // configuration remains separate; this only owns the shared heartbeat
@@ -277,35 +284,46 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-      <NativeBoot>
-      <OfflineGate>
-      {/* Single mount point for auth: no route or component may mount its own
+        <NativeBoot>
+          <OfflineGate>
+            {/* Single mount point for auth: no route or component may mount its own
           AuthProvider — a second provider creates a second session tree. */}
-      <AuthProvider>
-        <PermissionsProvider>
-        <PosProvider>
-          <RulesBridge>
-          {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-          <AuditTracker />
-          <TelemetryAgent />
-          <FirstRunSetup>
-            <PrivilegeGate>
-              <Outlet />
-            </PrivilegeGate>
-          </FirstRunSetup>
+            <AuthProvider>
+              <PermissionsProvider>
+                <PosProvider>
+                  <RulesBridge>
+                    {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+                    <AuditTracker />
+                    <TelemetryAgent />
+                    <FirstRunSetup>
+                      <PrivilegeGate>
+                        <PersistentRouteOutlet />
+                      </PrivilegeGate>
+                    </FirstRunSetup>
 
-          <AndroidUpdateBanner />
-          <DesktopUpdateBanner />
-          <Toaster position="top-center" />
-          <ErrorNotifier />
-          </RulesBridge>
-        </PosProvider>
-        </PermissionsProvider>
-      </AuthProvider>
-      </OfflineGate>
-      </NativeBoot>
+                    <AndroidUpdateBanner />
+                    <DesktopUpdateBanner />
+                    <Toaster position="top-center" />
+                    <ErrorNotifier />
+                  </RulesBridge>
+                </PosProvider>
+              </PermissionsProvider>
+            </AuthProvider>
+          </OfflineGate>
+        </NativeBoot>
       </ThemeProvider>
     </QueryClientProvider>
+  );
+}
+
+/** The shell survives every protected in-app route change. */
+function PersistentRouteOutlet() {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  if (bypassPersistentAppShell(pathname)) return <Outlet />;
+  return (
+    <AppShell>
+      <Outlet />
+    </AppShell>
   );
 }
 

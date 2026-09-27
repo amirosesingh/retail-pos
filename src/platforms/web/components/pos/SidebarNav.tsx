@@ -18,6 +18,8 @@ import { useAuth } from "@/lib/pos-auth";
 import { useNavPins } from "@/lib/nav-pins";
 import { SETTINGS_CARDS } from "@/lib/settings-catalog";
 import { cn } from "@/lib/utils";
+import { usePos } from "@/lib/pos-store";
+import { orderWorkspaceGroups } from "@/lib/terminal-workspace";
 
 const COLLAPSE_KEY = "pos.nav.collapsed";
 
@@ -115,14 +117,19 @@ export function SidebarNav({
 }: Props) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const [query, setQuery] = useState("");
-  const { authUserId, isSupervisor, can } = useAuth();
+  const { authUserId, isAdmin, isSupervisor, can } = useAuth();
+  const { state } = usePos();
   const { pins } = useNavPins(authUserId ?? null);
 
   const settingsAllowed = isSupervisor || can("can_access_pos_settings");
 
   /** The seven top-level destinations. */
   const sections: Entry[] = useMemo(() => {
-    const list = navGroups
+    const list = orderWorkspaceGroups(
+      navGroups,
+      state.settings.integrations.terminalPurpose,
+      isAdmin || isSupervisor,
+    )
       .map((g) => ({ ...g, items: g.items.filter(canSee) }))
       .filter((g) => g.items.length > 0)
       .map((g) => ({
@@ -144,7 +151,7 @@ export function SidebarNav({
       });
     }
     return list;
-  }, [canSee, settingsAllowed]);
+  }, [canSee, isAdmin, isSupervisor, settingsAllowed, state.settings.integrations.terminalPurpose]);
 
   /**
    * Pins are rebuilt from the shared lists, so a pin cannot show a screen the

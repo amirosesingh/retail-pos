@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { markHeldWaiting } from "@/lib/held-orders";
 import { terminalId as posTerminalId } from "@/lib/activity-journal";
 import type { TicketSnapshot } from "@/lib/ticket-snapshot";
@@ -41,6 +41,7 @@ import {
   Split,
   Wrench,
   ChefHat,
+  PackageSearch,
 } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
@@ -139,6 +140,8 @@ import {
 import { MemberHistoryDialog } from "@/platforms/web/components/pos/MemberHistoryDialog";
 import { TerminalWorkspaceHome } from "@/platforms/web/components/pos/TerminalWorkspaceHome";
 import { shouldOpenRegister } from "@/lib/terminal-workspace";
+import { searchLocal } from "@/lib/product-search";
+import { frequentRecentProducts } from "@/lib/standard-pos";
 
 export const Route = createFileRoute("/")({
   validateSearch: (
@@ -314,8 +317,7 @@ function Register() {
   });
   /** Cashier-adjustable column widths, remembered on this device. */
 
-  const [billWidth, setBillWidth] = usePanelWidth("pos.register.billWidth", 420);
-  const [deckWidth, setDeckWidth] = usePanelWidth("pos.register.deckWidth", 288);
+  const [lookupWidth, setLookupWidth] = usePanelWidth("pos.register.lookupWidth", 360);
 
   /** Calculator-style discount pad: index of the cart line, or "bill". */
   const [padTarget, setPadTarget] = useState<number | "bill" | null>(null);
@@ -465,6 +467,20 @@ function Register() {
     () => state.products.filter((p) => productVisibleAt(state.settings, p, state.currentStoreId)),
     [state.products, state.settings, state.currentStoreId],
   );
+  const deferredProductQuery = useDeferredValue(query);
+  const recommendedProducts = useMemo(
+    () => frequentRecentProducts(visibleProducts, state.sales, currentStore.id, 8),
+    [visibleProducts, state.sales, currentStore.id],
+  );
+  const standardLookupProducts = useMemo(() => {
+    const needle = deferredProductQuery.trim();
+    if (!needle) return recommendedProducts;
+    return searchLocal(
+      visibleProducts.filter((product) => !product.archived),
+      needle,
+      20,
+    );
+  }, [deferredProductQuery, recommendedProducts, visibleProducts]);
 
   const member = useMemo(
     () =>
@@ -1338,6 +1354,20 @@ function Register() {
 
   const terminalKey = readTerminalConfig()?.tokenId ?? currentStore.id ?? "default";
 
+  const closeShiftFromRegister = async () => {
+    if (!(await requirePermission("can_close_shift"))) return;
+    const grant = await authorize({
+      action: "shift_close",
+      title: "Authorise shift close",
+      reason: "Closing the shift produces the final drawer count and Z report.",
+      storeId: currentStore.id,
+      terminalId: terminalKey,
+      requestedBy: user?.staffId ?? user?.name ?? null,
+    });
+    if (!grant.ok) return;
+    setCloseShiftOpen(true);
+  };
+
   const slot_catalog = (
     <>
       <CatalogPanel
@@ -1348,23 +1378,7 @@ function Register() {
           visible("register.customerDisplay") ? openCustomerDisplay : undefined
         }
         onOpenShift={() => setOpenShiftOpen(true)}
-        onCloseShift={
-          visible("register.closeShift")
-            ? async () => {
-                if (!(await requirePermission("can_close_shift"))) return;
-                const grant = await authorize({
-                  action: "shift_close",
-                  title: "Authorise shift close",
-                  reason: "Closing the shift produces the final drawer count and Z report.",
-                  storeId: currentStore.id,
-                  terminalId: terminalKey,
-                  requestedBy: user?.staffId ?? user?.name ?? null,
-                });
-                if (!grant.ok) return;
-                setCloseShiftOpen(true);
-              }
-            : undefined
-        }
+        onCloseShift={visible("register.closeShift") ? closeShiftFromRegister : undefined}
       />
     </>
   );
@@ -1441,6 +1455,11 @@ function Register() {
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {can("can_close_shift") && (
+          <Button asChild variant="outline" size="sm">
+            <Link to="/shifts">View shift</Link>
+          </Button>
+        )}
         {visible("register.exchange") && (
           <Button
             variant="outline"
@@ -1475,6 +1494,92 @@ function Register() {
         </div>
       </div>
     </>
+  );
+
+  const slot_standardProductLookup = (
+    <section className="flex h-full min-h-0 flex-col bg-background">
+      <div className="space-y-3 border-b border-border p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="font-semibold">Product lookup</p>
+            <p className="truncate text-xs text-muted-foreground">{currentStore.name}</p>
+          </div>
+          {activeShift ? (
+            visible("register.closeShift") && (
+              <Button variant="outline" size="sm" onClick={() => void closeShiftFromRegister()}>
+                Close shift
+              </Button>
+            )
+          ) : (
+            <Button size="sm" onClick={() => setOpenShiftOpen(true)}>
+              Open shift
+            </Button>
+          )}
+        </div>
+        {slot_scanBar}
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            disabled={!activeShift}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search name, SKU, barcode or category…"
+            aria-label="Search products"
+            className="h-11 pl-9"
+          />
+        </div>
+      </div>
+
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-2 p-3">
+          {!deferredProductQuery.trim() && recommendedProducts.length > 0 && (
+            <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Frequent &amp; recent
+            </p>
+          )}
+          {standardLookupProducts.map((product) => (
+            <button
+              key={product.id}
+              type="button"
+              disabled={!activeShift}
+              onClick={() => addLine(product.id)}
+              className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/60 hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{product.name}</span>
+                <span className="numeric block truncate text-[11px] text-muted-foreground">
+                  {product.sku} · {stockAt(product, currentStore.id)} in stock
+                </span>
+              </span>
+              <span className="numeric shrink-0 text-sm font-semibold text-primary">
+                {money(product.price)}
+              </span>
+            </button>
+          ))}
+          {!standardLookupProducts.length && (
+            <div className="px-4 py-10 text-center">
+              <PackageSearch className="mx-auto size-8 text-muted-foreground/60" />
+              <p className="mt-3 text-sm text-muted-foreground">
+                {deferredProductQuery.trim()
+                  ? `No products match “${deferredProductQuery.trim()}”.`
+                  : "Looking for more items? Search above."}
+              </p>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+
+      <div className="grid shrink-0 gap-2 border-t border-border p-3 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
+        <Button variant="outline" disabled={!activeShift} onClick={() => setCatalogOpen(true)}>
+          <PackageSearch className="size-4" /> Advanced search
+        </Button>
+        {visible("register.customerDisplay") && (
+          <Button variant="outline" onClick={openCustomerDisplay}>
+            <MonitorPlay className="size-4" /> Customer screen
+          </Button>
+        )}
+      </div>
+    </section>
   );
 
   const slot_memberSearch = (
@@ -2105,21 +2210,6 @@ function Register() {
     </div>
   ) : null;
 
-  const slot_transactionActions = visible("register.transactionActions") ? (
-    <div className="rounded-lg border border-border bg-card p-3">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Transaction actions
-      </p>
-      <div className="grid auto-rows-fr grid-cols-1 gap-2">
-        {atom_actHold && <div className="h-12">{atom_actHold}</div>}
-        <div className="h-12">{atom_actVoid}</div>
-        {atom_actCoupon && <div className="h-12">{atom_actCoupon}</div>}
-        {atom_actSplit && <div className="h-12">{atom_actSplit}</div>}
-      </div>
-      {atom_heldList}
-    </div>
-  ) : null;
-
   const atom_actDrawer = (
     <div className="flex h-full min-w-0 items-center px-1">
       <ActionButton
@@ -2149,16 +2239,6 @@ function Register() {
         </span>
       </Label>
       <Switch id="live-receipt" checked={receiptPreview} onCheckedChange={setReceiptPreview} />
-    </div>
-  );
-
-  const slot_devicePrinting = (
-    <div className="rounded-lg border border-border bg-card p-3">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Device &amp; printing
-      </p>
-      <div className="h-12">{atom_actDrawer}</div>
-      <div className="mt-3">{atom_receiptToggle}</div>
     </div>
   );
 
@@ -2237,74 +2317,79 @@ function Register() {
             }}
             classic={
               <div className="pos-scaled flex h-full min-h-0 min-w-0 flex-col overflow-hidden lg:flex-row">
-                {/* ── LEFT: product catalog (hidden on narrow windows) ─────────── */}
-                <section className="hidden min-h-0 w-full min-w-0 flex-1 flex-col gap-3 border-b border-border p-4 lg:flex lg:border-b-0">
-                  {slot_catalog}
+                {/* Product lookup stays deliberately smaller than the sale. */}
+                <section
+                  className="flex max-h-[42%] min-h-0 w-full shrink-0 flex-col border-b border-border lg:max-h-none lg:w-[var(--lookup-w)] lg:min-w-[280px] lg:max-w-[42%] lg:border-b-0"
+                  style={{ ["--lookup-w" as string]: `${lookupWidth}px` }}
+                >
+                  {slot_standardProductLookup}
                 </section>
 
-                {/* Drag bar — widens the bill column, Excel style. */}
                 <ColumnResizer
-                  width={billWidth}
-                  onWidth={setBillWidth}
-                  min={320}
-                  max={760}
-                  label="Resize the bill column"
+                  width={lookupWidth}
+                  onWidth={setLookupWidth}
+                  min={280}
+                  max={520}
+                  direction="right"
+                  label="Resize product lookup"
                 />
 
-                {/* ── CENTER: active bill (drag the bar to resize) ──────────────── */}
-                <section
-                  className="flex min-h-0 w-full flex-col bg-sidebar lg:w-[var(--bill-w)] lg:min-w-[var(--bill-w)] lg:max-w-[var(--bill-w)] lg:shrink-0"
-                  style={{ ["--bill-w" as string]: `${billWidth}px` }}
-                >
+                {/* Current sale owns the remaining width. */}
+                <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-sidebar">
                   {slot_billHeader}
 
-                  <div className="@container border-b border-border px-4 py-3">
-                    <div className="grid grid-cols-1 items-start gap-3 @[38rem]:grid-cols-2">
-                      {slot_scanBar}
-                      {slot_memberSearch}
+                  <div className="border-b border-border px-4 py-3">{slot_memberSearch}</div>
+
+                  <div className="border-b border-border bg-background/70 px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {atom_actHold && <div className="h-10 min-w-32 flex-1">{atom_actHold}</div>}
+                      {atom_actCoupon && (
+                        <div className="h-10 min-w-32 flex-1">{atom_actCoupon}</div>
+                      )}
+                      <Button asChild variant="outline" className="h-10 min-w-32 flex-1">
+                        <Link to="/holds">
+                          <PauseCircle className="size-4" /> Held bills
+                          {held.length > 0 && (
+                            <Badge className="ml-1 h-5 min-w-5 justify-center px-1 text-[10px]">
+                              {held.length}
+                            </Badge>
+                          )}
+                        </Link>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 min-w-28 flex-1"
+                        onClick={() => setReceiptPreview((open) => !open)}
+                      >
+                        <Printer className="size-4" /> Receipt
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 min-w-28"
+                        aria-expanded={deckOpen}
+                        onClick={() => setDeckOpen((open) => !open)}
+                      >
+                        More actions
+                        <ChevronUp
+                          className={`size-4 transition-transform ${deckOpen ? "" : "rotate-180"}`}
+                        />
+                      </Button>
                     </div>
+                    {deckOpen && (
+                      <div className="mt-2 grid gap-2 rounded-lg border border-border bg-card p-2 sm:grid-cols-3">
+                        {atom_actSplit && <div className="h-10">{atom_actSplit}</div>}
+                        <div className="h-10">{atom_actDrawer}</div>
+                        <div className="h-10">{atom_actVoid}</div>
+                      </div>
+                    )}
                   </div>
 
                   {slot_cartLines}
 
                   {slot_billFooter}
                 </section>
-
-                {/* ── RIGHT: operation deck. Below lg it collapses into a bar under
-            the totals so it can never overlap the Charge buttons. ───────── */}
-                <ColumnResizer
-                  width={deckWidth}
-                  onWidth={setDeckWidth}
-                  min={220}
-                  max={560}
-                  label="Resize the register actions column"
-                />
-
-                <aside
-                  className="@container flex w-full shrink-0 flex-col border-t border-border bg-background lg:w-[var(--deck-w)] lg:border-l lg:border-t-0"
-                  style={{ ["--deck-w" as string]: `${deckWidth}px` }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setDeckOpen((v) => !v)}
-                    aria-expanded={deckOpen}
-                    className="flex shrink-0 items-center justify-between gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:hidden"
-                  >
-                    <span>Register actions</span>
-                    <ChevronUp
-                      className={`size-4 transition-transform ${deckOpen ? "" : "rotate-180"}`}
-                    />
-                  </button>
-                  <div
-                    className={`${deckOpen ? "flex" : "hidden"} max-h-[45vh] min-h-0 flex-col gap-3 overflow-y-auto p-3 pt-0 lg:flex lg:max-h-none lg:pt-3`}
-                  >
-                    {/* Card 1 · transaction actions */}
-                    {slot_transactionActions}
-
-                    {/* Card 2 · device & printing */}
-                    {slot_devicePrinting}
-                  </div>
-                </aside>
               </div>
             }
           />
