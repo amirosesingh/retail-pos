@@ -205,9 +205,13 @@ export function mergeTerminalTelemetry(
   live: TelemetryRow[],
   registrations: TerminalRegistration[],
 ): TelemetryRow[] {
-  const byId = new Map(live.map((row) => [row.terminal_id, row]));
+  // The registry is the lifecycle authority. A heartbeat without a current
+  // active registration is historical telemetry, not a terminal that should
+  // remain in the current branch tree after revoke/delete/reissue.
+  const liveById = new Map(live.map((row) => [row.terminal_id, row]));
+  const byId = new Map<string, TelemetryRow>();
   for (const terminal of registrations) {
-    const row = byId.get(terminal.id);
+    const row = liveById.get(terminal.id);
     if (row) {
       byId.set(terminal.id, {
         ...row,

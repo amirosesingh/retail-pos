@@ -16,8 +16,7 @@ export type WorkspaceEntryInput = {
  */
 export function shouldOpenRegister(input: WorkspaceEntryInput): boolean {
   if (input.forcedSelling || input.resumeSale || input.bookingFlow) return true;
-  if (input.isAdmin || input.isSupervisor) return false;
-  return (input.purpose ?? "retail") === "retail" && input.isCashier;
+  return false;
 }
 
 const PURPOSE_NAV_ORDER: Record<TerminalPurpose | "management-user", string[]> = {

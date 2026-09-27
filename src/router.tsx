@@ -4,16 +4,16 @@ import { routeTree } from "./routeTree.gen";
 import { isOnlineOnly } from "./lib/live-mode";
 
 export const getRouter = () => {
-  // Web, Android and iOS are live clients: nothing is served from cache, and every screen
-  // refetches when it is opened or the app comes back to the foreground.
+  // Live clients refresh on focus/reconnect, while a short in-memory window prevents
+  // an ordinary tab switch from turning into another cold request waterfall.
   const queryClient = isOnlineOnly()
     ? new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 0,
-            gcTime: 0,
+            staleTime: 30_000,
+            gcTime: 5 * 60_000,
             networkMode: "online",
-            refetchOnMount: "always",
+            refetchOnMount: false,
             refetchOnWindowFocus: true,
             refetchOnReconnect: true,
           },
@@ -25,6 +25,7 @@ export const getRouter = () => {
     routeTree,
     context: { queryClient },
     scrollRestoration: true,
+    defaultPreload: "intent",
     defaultPreloadStaleTime: 0,
   });
 

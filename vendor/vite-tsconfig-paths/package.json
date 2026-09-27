@@ -1,6 +1,0 @@
-{
-  "name": "vite-tsconfig-paths",
-  "version": "6.1.1",
-  "type": "module",
-  "exports": "./index.js"
-}

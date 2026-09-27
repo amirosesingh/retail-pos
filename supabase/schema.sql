@@ -15068,3 +15068,50 @@ GRANT EXECUTE ON FUNCTION public.terminal_token_status(uuid) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_claim(uuid, text, text, text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_heartbeat(uuid, boolean, text, boolean) TO anon;
 GRANT EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb) TO anon;
+-- ---------------------------------------------------------------------------
+-- Device session lifecycle and final least-privilege grants
+-- ---------------------------------------------------------------------------
+-- Sessions are server-managed. Keeping this definition in the canonical
+-- installer prevents a fresh operator database from failing only after the
+-- first successful sign-in.
+CREATE TABLE IF NOT EXISTS public.user_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_token_hash text NOT NULL UNIQUE,
+  user_id uuid,
+  staff_user_id text,
+  kind text NOT NULL DEFAULT 'staff',
+  label text,
+  branch_id text,
+  terminal_id text,
+  platform text,
+  idle_timeout_minutes integer NOT NULL DEFAULT 30,
+  last_activity_at timestamp with time zone NOT NULL DEFAULT now(),
+  is_revoked boolean NOT NULL DEFAULT false,
+  revoked_at timestamp with time zone,
+  revoked_reason text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS user_sessions_branch_idx
+  ON public.user_sessions (branch_id);
+CREATE INDEX IF NOT EXISTS user_sessions_terminal_idx
+  ON public.user_sessions (terminal_id);
+CREATE INDEX IF NOT EXISTS user_sessions_live_idx
+  ON public.user_sessions (is_revoked, last_activity_at);
+
+ALTER TABLE public.user_sessions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Supervisors read sessions" ON public.user_sessions;
+-- Session hashes are deliberately available only to the service-backed app
+-- boundary, which returns a safe projection after supervisor verification.
+REVOKE ALL ON public.user_sessions FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.user_sessions TO service_role;
+
+-- Clear historical broad grants before adding the intended exact privileges.
+REVOKE ALL ON public.branch_telemetry FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.branch_telemetry TO authenticated;
+GRANT ALL ON public.branch_telemetry TO service_role;
+
+REVOKE ALL ON public.shift_notifications FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT ON public.shift_notifications TO authenticated;
+GRANT ALL ON public.shift_notifications TO service_role;

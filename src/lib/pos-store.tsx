@@ -79,7 +79,7 @@ import {
 import { isShiftOverdue, localTerminalId } from "./shift-hours";
 import { beginShiftSession, endShiftSessions } from "./shift-sessions";
 import { setPublicHosts } from "./coupon-hosts";
-import { activeLocations, archiveBlockers } from "./locations";
+import { activeLocations, archiveBlockers, canonicalLocations } from "./locations";
 import { branchPolicy } from "./branch-policy";
 import { setActiveBranchSyncPolicy } from "./sync-policy";
 import { setPosFormats, setPosTimeZone } from "./time-zone";
@@ -445,9 +445,10 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
     // Shifts are central now so every terminal agrees on what is open.
     shifts: cloudShifts.length ? cloudShifts : s.shifts,
     promotions: cloudPromotions.length ? cloudPromotions : s.promotions,
-    // Locations are central now; the local list is the fallback until
-    // the directory has been populated (and gets pushed up below).
-    stores: cloudStores.length ? cloudStores : s.stores,
+    // This is an authoritative snapshot, including an authoritative empty
+    // directory. Keeping the old array when the answer is empty resurrects
+    // deleted branches after reconnect or restart.
+    stores: canonicalLocations(cloudStores),
     // A registered till never drifts to another branch: if the terminal is
     // bound and that branch exists centrally, it wins over anything saved.
     currentStoreId: (() => {

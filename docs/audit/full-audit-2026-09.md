@@ -150,7 +150,7 @@ and the receipt preview in `SettingsFrame.tsx:189-213` each derive subtotal → 
 ### M7 — Database functions broadly executable
 The linter reports 70 `SECURITY DEFINER` functions callable by any signed-in user
 and 7 callable anonymously, plus 2 tables with row security enabled but no policy.
-Note: this ran against the Lovable-managed project; the same review must be run
+Note: this ran against the previously managed project; the same review must be run
 against your own project, which is where the POS actually writes.
 **Fix:** revoke `EXECUTE` from `anon`/`authenticated` on every function not meant
 to be called directly, and add policies (or disable the Data API) for the two

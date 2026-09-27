@@ -70,4 +70,8 @@ describe("current terminal telemetry", () => {
     expect(unseen.session_status).toBe("never_seen");
     expect(health(unseen)).toBe("unknown");
   });
+
+  it("drops orphaned heartbeat rows after a terminal is revoked or deleted", () => {
+    expect(mergeTerminalTelemetry([live], [])).toEqual([]);
+  });
 });

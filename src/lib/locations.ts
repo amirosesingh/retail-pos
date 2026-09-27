@@ -38,6 +38,24 @@ export const isActiveLocation = (s: Store) => s.active !== false;
 
 export const activeLocations = (stores: Store[]) => stores.filter(isActiveLocation);
 
+/**
+ * One authoritative row per location id.
+ *
+ * A reconnect can briefly surface the same shared row from the local snapshot
+ * and the just-arrived cloud page.  Keeping the newest occurrence prevents a
+ * duplicate React key and, more importantly, prevents an obsolete parent copy
+ * from putting a branch back into the visible tree.
+ */
+export function canonicalLocations(stores: Store[]): Store[] {
+  const byId = new Map<string, Store>();
+  for (const store of stores) {
+    const id = store.id?.trim();
+    if (!id) continue;
+    byId.set(id, { ...store, id });
+  }
+  return [...byId.values()];
+}
+
 /** Sub-locations nested directly under `id`. */
 export const childrenOf = (stores: Store[], id: string) =>
   activeLocations(stores).filter((s) => s.parentId === id);
@@ -52,19 +70,37 @@ export const rootLocations = (stores: Store[]) => {
 /** The whole subtree under `id`, including `id` itself. */
 export function descendants(stores: Store[], id: string): Store[] {
   const out: Store[] = [];
-  const self = stores.find((s) => s.id === id);
-  if (self) out.push(self);
-  for (const child of childrenOf(stores, id)) out.push(...descendants(stores, child.id));
+  const live = canonicalLocations(stores);
+  const visited = new Set<string>();
+  const walk = (nodeId: string) => {
+    if (visited.has(nodeId)) return;
+    visited.add(nodeId);
+    const self = live.find((store) => store.id === nodeId);
+    if (!self) return;
+    out.push(self);
+    for (const child of childrenOf(live, nodeId)) walk(child.id);
+  };
+  walk(id);
   return out;
 }
 
 /** Depth-first walk of the active tree with nesting depth for indentation. */
 export function locationTree(stores: Store[]): { store: Store; depth: number }[] {
-  const walk = (node: Store, depth: number): { store: Store; depth: number }[] => [
-    { store: node, depth },
-    ...childrenOf(stores, node.id).flatMap((c) => walk(c, depth + 1)),
-  ];
-  return rootLocations(stores).flatMap((r) => walk(r, 0));
+  const live = activeLocations(canonicalLocations(stores));
+  const visited = new Set<string>();
+  const out: { store: Store; depth: number }[] = [];
+  const walk = (node: Store, depth: number) => {
+    if (visited.has(node.id)) return;
+    visited.add(node.id);
+    out.push({ store: node, depth });
+    for (const child of childrenOf(live, node.id)) walk(child, depth + 1);
+  };
+  for (const root of rootLocations(live)) walk(root, 0);
+  // Corrupt legacy data can contain a parent cycle, which has no natural root.
+  // Keep each live location reachable once instead of recursing forever or
+  // silently losing the whole cycle from the management screen.
+  for (const store of live) if (!visited.has(store.id)) walk(store, 0);
+  return out;
 }
 
 /** The nominated central hub, or the first active location as a fallback. */

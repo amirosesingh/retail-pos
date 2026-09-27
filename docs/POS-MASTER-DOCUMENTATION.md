@@ -9,7 +9,7 @@
 | Source files        | 479 files under `src/`, ~90,200 lines of TS/TSX                                                                     |
 | Routes              | 83 page routes + 11 API routes under `src/routes/api/`                                                              |
 | POS components      | 71 files in `src/components/pos/`                                                                                   |
-| Backend             | Lovable Cloud (Postgres) — 54 tables, 3 views, 133 policies, 91 functions, 101 triggers, 182 indexes, 98 migrations |
+| Backend             | Operator Supabase (Postgres) — schema, policies, functions, triggers and indexes are managed in this repository |
 | Desktop             | Electron shell (`electron/`) with direct local Microsoft SQL Server                                                   |
 | Mobile              | Capacitor Android shell (live-only, no local business data)                                                         |
 | Tests               | 24 suites in `src/lib/__tests__/` (177 assertions passing at last run)                                              |
@@ -82,7 +82,7 @@ file changes were in `docs/`.
 This is a multi-branch retail POS built as a TanStack Start React application
 that ships in three shapes from one codebase: a browser app, a Windows Electron
 till with its own Microsoft SQL Server database, and an Android Capacitor client.
-The central system of record is a Lovable Cloud Postgres database.
+The central system of record is the operator-configured Supabase Postgres database.
 
 **What the system does today (all CONFIRMED):** sells, holds and exchanges
 baskets; splits tenders across payment types; opens and closes shifts with X/Z
@@ -154,7 +154,7 @@ CONFIRMED in `src/lib/native.ts`, `src/lib/live-mode.ts`, `src/lib/local-db.ts`,
 | UI            | React 19, Tailwind CSS v4 (`src/styles.css`), shadcn/ui               | Design tokens only; fonts Space Grotesk + IBM Plex Mono              |
 | Build         | Vite 7, Bun/npm                                                       | `vite.config.ts`, deploy target Cloudflare Worker (`wrangler.jsonc`) |
 | Data fetching | TanStack Query + bespoke `db-query.ts` dedupe layer                   |                                                                      |
-| Backend       | Lovable Cloud Postgres, PostgREST, RLS                                | `src/integrations/supabase/*` (generated — never edit)               |
+| Backend       | Supabase Postgres, PostgREST, RLS                                     | `src/integrations/supabase/*`, `supabase/schema.sql`                 |
 | Server logic  | `createServerFn` (`*.functions.ts` / `*.server.ts`) + API file routes | 11 API routes, `/api/public/*` bypasses site auth                    |
 | Desktop       | Electron + `mssql` / `msnodesqlv8`                                    | `electron/`                                                          |
 | Mobile        | Capacitor (`capacitor.config.ts`, `capacitor-shell/`)                 |                                                                      |
@@ -213,7 +213,7 @@ docs/POS-MASTER-DOCUMENTATION.md   <- this file (the only doc)
 
 ```text
                     ┌──────────────────────────────────────────┐
-                    │  Lovable Cloud Postgres (system of record)│
+                    │  Operator Supabase (system of record)     │
                     │  54 tables · RLS · SECURITY DEFINER RPCs  │
                     └───────▲───────────────▲──────────────────┘
                             │ PostgREST     │ service-role relay
@@ -532,7 +532,7 @@ confusion.
 
 | Identity        | Where it lives                    | How it is proved                                                     | Used for                                         |
 | --------------- | --------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------ |
-| Cloud account   | Lovable Cloud auth                | email/password session                                               | admin/back-office screens, server functions      |
+| Cloud account   | Supabase Auth                     | email/password session                                               | admin/back-office screens, server functions      |
 | Staff / cashier | `app_users` (+ legacy `cashiers`) | PIN via `verify_terminal_pin` / `verify_manager_pin` with throttling | till sign-in, shift ownership, permission set    |
 | Terminal        | `terminal_tokens`                 | AES-256-GCM activation token + heartbeat                             | pairing a device to a branch, remote kill switch |
 
@@ -1107,7 +1107,7 @@ No hardcoded credentials, no client-side admin checks, and no
   "succeed".
 - `AllTargetsFailed` produces the modal that tells the operator the data could
   not be stored anywhere. Nothing continues past it.
-- `src/lib/error-capture.ts`, `ErrorNotifier`, `lovable-error-reporting.ts` and
+- `src/lib/error-capture.ts`, `ErrorNotifier` and
   the root `errorComponent` form the display layer; `pos.health.errors` keeps a
   local ring buffer.
 - **RISK:** ~151 `catch` blocks across `src/` and `electron/` swallow the error

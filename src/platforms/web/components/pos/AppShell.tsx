@@ -237,7 +237,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     };
   }, [profileHydrated]);
 
-  if (!ready) return null;
+  if (!ready) return <TillLoader message="Restoring your workspace…" />;
   // Every activated terminal, including a browser-based till, must finish
   // unsealing its tenant configuration before any data read or write starts.
   // The connection profile is part of that: showing setup while it is still

@@ -11,7 +11,6 @@ import {
 import { useEffect, useMemo, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
-import { reportLovableError } from "../lib/lovable-error-reporting";
 import { reportAppReady } from "@/lib/app-health";
 import { PosProvider } from "@/lib/pos-store";
 import { usePosOptional } from "@/lib/pos-store";
@@ -81,7 +80,6 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
     // Something on screen beats a blank window: the desktop shell must know the
     // build started, or its 60-second watchdog tears the till down.
     reportAppReady();
-    reportLovableError(normalizedError, { boundary: "tanstack_root_error_component" });
   }, [normalizedError]);
 
   const notConfigured = normalizedError.name === "SupabaseConfigError";
@@ -140,9 +138,8 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <button
             onClick={() => {
-              router.invalidate();
               reset();
-              window.location.reload();
+              void router.invalidate();
             }}
             className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
@@ -200,7 +197,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
       {

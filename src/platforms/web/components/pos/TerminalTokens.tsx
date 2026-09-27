@@ -11,9 +11,7 @@ import {
   Camera,
   MonitorSmartphone,
   RefreshCw,
-  RotateCcw,
   ShieldX,
-  Trash2,
 } from "lucide-react";
 import qrcode from "qrcode-generator";
 import { toast } from "sonner";
@@ -44,11 +42,9 @@ import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { usePos } from "@/lib/pos-store";
 import { logger } from "@/lib/audit-log";
 import {
-  deleteTerminalToken,
   issueTerminalToken,
   listTerminalTokens,
   reissueTerminalToken,
-  restoreTerminalToken,
   revokeTerminalToken,
   decodePairingRequest,
   readTerminalConfig,
@@ -115,10 +111,7 @@ export function TerminalTokens({
   const [copied, setCopied] = useState(false);
   const [pendingRevoke, setPendingRevoke] = useState<TerminalToken | null>(null);
   const [pendingReissue, setPendingReissue] = useState<TerminalToken | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<TerminalToken | null>(null);
   const [reissuing, setReissuing] = useState("");
-  const [restoring, setRestoring] = useState("");
-  const restoringRef = useRef("");
   const [reissued, setReissued] = useState<{ token: TerminalToken; code: string } | null>(null);
   const [reissueCopied, setReissueCopied] = useState(false);
   const [pairScan, setPairScan] = useState(false);
@@ -269,40 +262,6 @@ export function TerminalTokens({
     } catch (e) {
       toast.error("Could not revoke the token", {
         description: describeError(e, "Revoking the terminal"),
-      });
-    }
-  };
-
-  const restore = async (token: TerminalToken) => {
-    if (restoringRef.current) return;
-    restoringRef.current = token.id;
-    setRestoring(token.id);
-    try {
-      await restoreTerminalToken(token.id);
-      toast.success(`${token.deviceName} re-enabled`);
-      await refresh();
-    } catch (e) {
-      toast.error("Could not restore the token", {
-        description: describeError(e, "Restoring the terminal"),
-      });
-    } finally {
-      restoringRef.current = "";
-      setRestoring("");
-    }
-  };
-
-  const remove = async (token: TerminalToken) => {
-    try {
-      await deleteTerminalToken(token.id);
-      logger.log("settings_change", "Terminal entry deleted", "terminals", {
-        device: token.deviceName,
-        location: token.locationName,
-      });
-      toast.success(`${token.deviceName} removed`);
-      await refresh();
-    } catch (e) {
-      toast.error("Could not delete the terminal", {
-        description: describeError(e, "Deleting the terminal registration"),
       });
     }
   };
@@ -508,7 +467,7 @@ export function TerminalTokens({
             {loading ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : (
-              <RotateCcw className="size-3.5" />
+              <RefreshCw className="size-3.5" />
             )}{" "}
             {loading ? "Refreshing…" : "Refresh"}
           </Button>
@@ -641,55 +600,14 @@ export function TerminalTokens({
                           )}
                           Re-issue code
                         </Button>
-                        {t.status === "active" ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 border-destructive/40 text-xs text-destructive hover:bg-destructive/10"
-                            onClick={() => setPendingRevoke(t)}
-                          >
-                            <ShieldX className="size-3.5" /> Revoke authenticity
-                          </Button>
-                        ) : (
-                          <>
-                            {t.status === "used" ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 border-destructive/40 text-xs text-destructive hover:bg-destructive/10"
-                                onClick={() => setPendingRevoke(t)}
-                              >
-                                <ShieldX className="size-3.5" /> Revoke authenticity
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 text-xs"
-                                disabled={Boolean(restoring)}
-                                aria-busy={restoring === t.id}
-                                onClick={() => void restore(t)}
-                              >
-                                {restoring === t.id ? (
-                                  <Loader2 className="size-3.5 animate-spin" />
-                                ) : (
-                                  <RotateCcw className="size-3.5" />
-                                )}{" "}
-                                {restoring === t.id ? "Re-enabling…" : "Re-enable"}
-                              </Button>
-                            )}
-                            {t.status === "revoked" && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 text-xs text-destructive hover:bg-destructive/10"
-                                onClick={() => setPendingDelete(t)}
-                              >
-                                <Trash2 className="size-3.5" /> Delete
-                              </Button>
-                            )}
-                          </>
-                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 border-destructive/40 text-xs text-destructive hover:bg-destructive/10"
+                          onClick={() => setPendingRevoke(t)}
+                        >
+                          <ShieldX className="size-3.5" /> Revoke authenticity
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -749,31 +667,6 @@ export function TerminalTokens({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Permanently remove this terminal entry?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingDelete?.deviceName} at {pendingDelete?.locationName || "this location"} is
-              revoked, so nothing is cut off by deleting it. The row disappears from this list for
-              good — issue a new terminal if the counter comes back.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                const token = pendingDelete;
-                setPendingDelete(null);
-                if (token) void remove(token);
-              }}
-            >
-              Delete entry
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
