@@ -23,6 +23,10 @@ export type AuthSessionCheck =
   | { state: "signed-out" | "rejected" | "unavailable"; session: null }
   | { state: "verified" | "unverified"; session: Session };
 
+export type SessionVerifier = (
+  session: Session,
+) => Promise<"verified" | "rejected" | "unavailable">;
+
 const rejected = (error: AuthErrorLike | null | undefined) =>
   Boolean(error && isTokenRejection(Number(error.status ?? 0), error.message));
 
@@ -36,7 +40,17 @@ const rejected = (error: AuthErrorLike | null | undefined) =>
  */
 export async function validateStoredAuthSession(
   auth: AuthSessionApi,
-  options: { online: boolean; now?: number; refreshLeewayMs?: number },
+  options: {
+    online: boolean;
+    now?: number;
+    refreshLeewayMs?: number;
+    /**
+     * Hosted clients validate through the app server. It performs the same
+     * GoTrue `/user` check without exposing an expected revoked-session 403
+     * as a failed browser resource in DevTools.
+     */
+    verifySession?: SessionVerifier;
+  },
 ): Promise<AuthSessionCheck> {
   let current: Session | null;
   try {
@@ -63,6 +77,19 @@ export async function validateStoredAuthSession(
       }
       if (!refreshed.data.session) return { state: "rejected", session: null };
       current = refreshed.data.session;
+    } catch {
+      return { state: "unverified", session: current };
+    }
+  }
+
+  if (options.verifySession) {
+    try {
+      const state = await options.verifySession(current);
+      return state === "verified"
+        ? { state, session: current }
+        : state === "rejected"
+          ? { state, session: null }
+          : { state: "unverified", session: current };
     } catch {
       return { state: "unverified", session: current };
     }

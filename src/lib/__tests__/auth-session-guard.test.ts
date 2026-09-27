@@ -72,4 +72,30 @@ describe("persisted Supabase session validation", () => {
     expect(api.refreshSession).toHaveBeenCalledTimes(1);
     expect(api.getUser).toHaveBeenCalledTimes(1);
   });
+
+  it("can validate through the app server without a browser /auth/v1/user request", async () => {
+    const api = auth();
+    const verifySession = vi.fn(async () => "rejected" as const);
+
+    await expect(
+      validateStoredAuthSession(api, { online: true, verifySession }),
+    ).resolves.toEqual({ state: "rejected", session: null });
+    expect(verifySession).toHaveBeenCalledWith(expect.objectContaining({ access_token: "access" }));
+    expect(api.getUser).not.toHaveBeenCalled();
+  });
+
+  it("keeps the local session when server-side validation is unavailable", async () => {
+    const saved = session();
+    const api = auth({
+      getSession: vi.fn(async () => ({ data: { session: saved }, error: null })),
+    });
+
+    await expect(
+      validateStoredAuthSession(api, {
+        online: true,
+        verifySession: vi.fn(async () => "unavailable" as const),
+      }),
+    ).resolves.toEqual({ state: "unverified", session: saved });
+    expect(api.getUser).not.toHaveBeenCalled();
+  });
 });
