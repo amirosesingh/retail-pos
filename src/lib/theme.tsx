@@ -16,9 +16,26 @@ import {
 export type ThemeChoice = "system" | "light" | "dark";
 
 const KEY = "pos.theme";
-const PALETTE_KEY = "pos.color-theme";
+export const THEME_PALETTE_STORAGE_KEY = "pos.color-theme";
 /** Older builds wrote the same preference here; read once, then forget it. */
 const LEGACY_KEY = "pos.ui.theme";
+
+export function readStoredPalette(): ThemePalette {
+  try {
+    const stored = localStorage.getItem(THEME_PALETTE_STORAGE_KEY);
+    return isThemePalette(stored) ? stored : DEFAULT_THEME_PALETTE;
+  } catch {
+    return DEFAULT_THEME_PALETTE;
+  }
+}
+
+export function persistThemePalette(palette: ThemePalette) {
+  try {
+    localStorage.setItem(THEME_PALETTE_STORAGE_KEY, palette);
+  } catch {
+    /* private mode */
+  }
+}
 
 /** Reads the choice from the current key, adopting an older device's value. */
 const readStoredTheme = (): ThemeChoice | null => {
@@ -53,7 +70,7 @@ const ThemeContext = createContext<Ctx>({
 });
 
 /** Runs before paint so the terminal never flashes the wrong palette. */
-export const themeBootScript = `(function(){try{var t=localStorage.getItem("${KEY}")||"system";var d=t==="dark"||(t==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);var p=localStorage.getItem("${PALETTE_KEY}")||"${DEFAULT_THEME_PALETTE}";document.documentElement.classList.toggle("dark",d);document.documentElement.setAttribute("data-pos-theme",p);}catch(e){}
+export const themeBootScript = `(function(){try{var t=localStorage.getItem("${KEY}")||"system";var d=t==="dark"||(t==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);var p=localStorage.getItem("${THEME_PALETTE_STORAGE_KEY}")||"${DEFAULT_THEME_PALETTE}";document.documentElement.classList.toggle("dark",d);document.documentElement.setAttribute("data-pos-theme",p);}catch(e){}
 try{var a=localStorage.getItem("pos.accent-color");if(a&&/^#[0-9a-fA-F]{6}$/.test(a)){var n=parseInt(a.slice(1),16);var ch=[(n>>16)&255,(n>>8)&255,n&255].map(function(c){var s=c/255;return s<=0.03928?s/12.92:Math.pow((s+0.055)/1.055,2.4);});var L=0.2126*ch[0]+0.7152*ch[1]+0.0722*ch[2];var f=L>0.45?"#10131a":"#ffffff";var r=document.documentElement.style;r.setProperty("--primary",a);r.setProperty("--primary-foreground",f);r.setProperty("--sidebar-primary",a);r.setProperty("--sidebar-primary-foreground",f);r.setProperty("--ring",a);r.setProperty("--chart-1",a);}}catch(e){}})();`;
 
 const systemDark = () =>
@@ -73,12 +90,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const stored = readStoredTheme();
     if (stored === "light" || stored === "dark" || stored === "system") setThemeState(stored);
-    try {
-      const storedPalette = localStorage.getItem(PALETTE_KEY);
-      if (isThemePalette(storedPalette)) setPaletteState(storedPalette);
-    } catch {
-      /* private mode */
-    }
+    setPaletteState(readStoredPalette());
 
 
     setPrefersDark(systemDark());
@@ -113,11 +125,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setPalette = useCallback((next: ThemePalette) => {
     setPaletteState(next);
-    try {
-      localStorage.setItem(PALETTE_KEY, next);
-    } catch {
-      /* private mode */
-    }
+    persistThemePalette(next);
   }, []);
 
   const value = useMemo(

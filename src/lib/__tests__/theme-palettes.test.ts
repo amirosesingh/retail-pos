@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_THEME_PALETTE,
   THEME_PALETTES,
   isThemePalette,
   themePalette,
 } from "@/lib/theme-palettes";
+import {
+  persistThemePalette,
+  readStoredPalette,
+  THEME_PALETTE_STORAGE_KEY,
+} from "@/lib/theme";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("shared POS colour themes", () => {
   it("offers the six approved palettes through one registry", () => {
@@ -23,5 +30,18 @@ describe("shared POS colour themes", () => {
     expect(isThemePalette("midnight")).toBe(true);
     expect(isThemePalette("unknown")).toBe(false);
     expect(themePalette("unknown").id).toBe(DEFAULT_THEME_PALETTE);
+  });
+
+  it("saves a selected palette and restores it after reload", () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    });
+
+    persistThemePalette("violet");
+
+    expect(values.get(THEME_PALETTE_STORAGE_KEY)).toBe("violet");
+    expect(readStoredPalette()).toBe("violet");
   });
 });
