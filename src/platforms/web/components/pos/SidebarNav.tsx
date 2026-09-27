@@ -189,7 +189,13 @@ export function SidebarNav({
   const registerEntry: Entry | null = useMemo(() => {
     const item = navGroups.flatMap((g) => g.items).find((i) => i.to === "/");
     if (!item || !canSee(item)) return null;
-    return { key: "register-pos", label: item.label, icon: item.icon, to: "/" };
+    return {
+      key: "register-pos",
+      label: item.label,
+      icon: item.icon,
+      to: "/",
+      search: item.search,
+    };
   }, [canSee]);
 
   const q = query.trim().toLowerCase();
@@ -272,9 +278,11 @@ export function SidebarNav({
           />
         ))}
 
-        {visibleSections.length === 0 && visiblePinned.length === 0 && !(registerEntry && match(registerEntry)) && (
-          <p className="px-2 py-4 text-center text-xs text-muted-foreground">No matches</p>
-        )}
+        {visibleSections.length === 0 &&
+          visiblePinned.length === 0 &&
+          !(registerEntry && match(registerEntry)) && (
+            <p className="px-2 py-4 text-center text-xs text-muted-foreground">No matches</p>
+          )}
       </nav>
 
       {footer}
@@ -285,7 +293,10 @@ export function SidebarNav({
             variant="ghost"
             size="sm"
             onClick={onToggleCollapse}
-            className={cn("h-8 w-full text-xs", collapsed ? "justify-center px-0" : "justify-start")}
+            className={cn(
+              "h-8 w-full text-xs",
+              collapsed ? "justify-center px-0" : "justify-start",
+            )}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}

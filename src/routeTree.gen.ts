@@ -105,6 +105,7 @@ import { Route as SettingsTypeRouteImport } from './routes/settings.type'
 import { Route as SettingsUpdatesRouteImport } from './routes/settings.updates'
 import { Route as SettingsVisibilityRouteImport } from './routes/settings.visibility'
 import { Route as SettingsWhatsappRouteImport } from './routes/settings.whatsapp'
+import { Route as SettingsWorkspaceRouteImport } from './routes/settings.workspace'
 import { Route as TransfersIndexRouteImport } from './routes/transfers.index'
 import { Route as TransfersIdRouteImport } from './routes/transfers.$id'
 import { Route as TransfersNewRouteImport } from './routes/transfers.new'
@@ -607,6 +608,11 @@ const SettingsWhatsappRoute = SettingsWhatsappRouteImport.update({
   path: '/settings/whatsapp',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsWorkspaceRoute = SettingsWorkspaceRouteImport.update({
+  id: '/settings/workspace',
+  path: '/settings/workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TransfersIndexRoute = TransfersIndexRouteImport.update({
   id: '/transfers/',
   path: '/transfers/',
@@ -803,6 +809,7 @@ export interface FileRoutesByFullPath {
   '/settings/updates': typeof SettingsUpdatesRoute
   '/settings/visibility': typeof SettingsVisibilityRoute
   '/settings/whatsapp': typeof SettingsWhatsappRoute
+  '/settings/workspace': typeof SettingsWorkspaceRoute
   '/transfers/$id': typeof TransfersIdRoute
   '/transfers/new': typeof TransfersNewRoute
   '/receiving/': typeof ReceivingIndexRoute
@@ -921,6 +928,7 @@ export interface FileRoutesByTo {
   '/settings/updates': typeof SettingsUpdatesRoute
   '/settings/visibility': typeof SettingsVisibilityRoute
   '/settings/whatsapp': typeof SettingsWhatsappRoute
+  '/settings/workspace': typeof SettingsWorkspaceRoute
   '/transfers/$id': typeof TransfersIdRoute
   '/transfers/new': typeof TransfersNewRoute
   '/receiving': typeof ReceivingIndexRoute
@@ -1040,6 +1048,7 @@ export interface FileRoutesById {
   '/settings/updates': typeof SettingsUpdatesRoute
   '/settings/visibility': typeof SettingsVisibilityRoute
   '/settings/whatsapp': typeof SettingsWhatsappRoute
+  '/settings/workspace': typeof SettingsWorkspaceRoute
   '/transfers/$id': typeof TransfersIdRoute
   '/transfers/new': typeof TransfersNewRoute
   '/receiving/': typeof ReceivingIndexRoute
@@ -1160,6 +1169,7 @@ export interface FileRouteTypes {
     | '/settings/updates'
     | '/settings/visibility'
     | '/settings/whatsapp'
+    | '/settings/workspace'
     | '/transfers/$id'
     | '/transfers/new'
     | '/receiving/'
@@ -1278,6 +1288,7 @@ export interface FileRouteTypes {
     | '/settings/updates'
     | '/settings/visibility'
     | '/settings/whatsapp'
+    | '/settings/workspace'
     | '/transfers/$id'
     | '/transfers/new'
     | '/receiving'
@@ -1396,6 +1407,7 @@ export interface FileRouteTypes {
     | '/settings/updates'
     | '/settings/visibility'
     | '/settings/whatsapp'
+    | '/settings/workspace'
     | '/transfers/$id'
     | '/transfers/new'
     | '/receiving/'
@@ -1515,6 +1527,7 @@ export interface RootRouteChildren {
   SettingsUpdatesRoute: typeof SettingsUpdatesRoute
   SettingsVisibilityRoute: typeof SettingsVisibilityRoute
   SettingsWhatsappRoute: typeof SettingsWhatsappRoute
+  SettingsWorkspaceRoute: typeof SettingsWorkspaceRoute
   TransfersIdRoute: typeof TransfersIdRoute
   TransfersNewRoute: typeof TransfersNewRoute
   ReceivingIndexRoute: typeof ReceivingIndexRoute
@@ -2212,6 +2225,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsWhatsappRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/workspace': {
+      id: '/settings/workspace'
+      path: '/settings/workspace'
+      fullPath: '/settings/workspace'
+      preLoaderRoute: typeof SettingsWorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/transfers/': {
       id: '/transfers/'
       path: '/transfers'
@@ -2473,6 +2493,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsUpdatesRoute: SettingsUpdatesRoute,
   SettingsVisibilityRoute: SettingsVisibilityRoute,
   SettingsWhatsappRoute: SettingsWhatsappRoute,
+  SettingsWorkspaceRoute: SettingsWorkspaceRoute,
   TransfersIdRoute: TransfersIdRoute,
   TransfersNewRoute: TransfersNewRoute,
   ReceivingIndexRoute: ReceivingIndexRoute,

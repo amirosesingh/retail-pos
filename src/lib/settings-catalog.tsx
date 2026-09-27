@@ -19,6 +19,7 @@ import {
   Landmark,
   Layers,
   ListPlus,
+  LayoutDashboard,
   MessageCircle,
   MonitorCog,
   MonitorSmartphone,
@@ -160,7 +161,7 @@ export type SettingsCard = {
   /**
    * True when `panel` is a bare panel rather than a settings page, so the sheet
    * has to supply the surrounding frame (save bar, shared settings context).
-  */
+   */
   raw?: boolean;
   /** Extra words the search box should match. */
   keywords?: string;
@@ -173,6 +174,18 @@ const page = (load: () => Promise<{ Route: { options: { component?: unknown } } 
 export const SETTINGS_CARDS: SettingsCard[] = [
   /* ---- Terminal --------------------------------------------- */
   {
+    id: "workspace",
+    label: "Terminal workspace",
+    blurb: "Choose this terminal's operational home and register layout.",
+    icon: LayoutDashboard,
+    category: "terminal",
+    scope: "terminal",
+    to: "/settings/workspace",
+    panel: page(() => import("@/routes/settings.workspace")),
+    keywords:
+      "purpose retail warehouse inventory receiving management standard canvas register home",
+  },
+  {
     id: "display",
     label: "Appearance",
     blurb: "Color theme, brightness, interface scale and density.",
@@ -181,7 +194,8 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     scope: "terminal",
     to: "/settings/display",
     panel: page(() => import("@/routes/settings.display")),
-    keywords: "font scaling zoom theme dark light ocean emerald sunset violet candy midnight appearance",
+    keywords:
+      "font scaling zoom theme dark light ocean emerald sunset violet candy midnight appearance",
   },
   {
     id: "updates",

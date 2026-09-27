@@ -26,13 +26,23 @@ describe("self-privilege guards", () => {
     expect(schema).toContain("user_has_store_access(from_store_id)");
   });
 
-  it("redacts shift financials in permission-aware invoker RPCs", () => {
+  it("redacts shift financials in a restricted, branch-checked RPC", () => {
     expect(schema).toContain("CREATE OR REPLACE FUNCTION public.shift_list_secure");
-    expect(schema).toContain("SECURITY INVOKER");
+    expect(schema).toMatch(
+      /FUNCTION private\.shift_list_secure_impl[\s\S]*?SECURITY DEFINER[\s\S]*?SET search_path = ''/,
+    );
+    expect(schema).toMatch(
+      /FUNCTION public\.shift_list_secure[\s\S]*?SECURITY INVOKER[\s\S]*?SET search_path = ''/,
+    );
+    expect(schema).toContain("AND public.is_terminal_active()");
+    expect(schema).toContain("AND public.store_visible(s.store_id)");
     expect(schema).toContain("can_shift_expected_cash_view");
     expect(schema).toContain("can_shift_counted_cash_view");
     expect(schema).toContain("can_shift_variance_view");
     expect(schema).toContain("REVOKE SELECT ON public.shifts FROM authenticated");
+    expect(schema).toContain(
+      "REVOKE ALL ON FUNCTION public.shift_list_secure(text, integer) FROM PUBLIC, anon",
+    );
     expect(schema).toContain("REVOKE ALL ON FUNCTION public.shift_active_for_branch(text) FROM PUBLIC, anon, authenticated");
   });
 

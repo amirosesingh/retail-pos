@@ -137,15 +137,18 @@ import {
   type DisplaySnapshot,
 } from "@/lib/customer-display";
 import { MemberHistoryDialog } from "@/platforms/web/components/pos/MemberHistoryDialog";
+import { TerminalWorkspaceHome } from "@/platforms/web/components/pos/TerminalWorkspaceHome";
+import { shouldOpenRegister } from "@/lib/terminal-workspace";
 
 export const Route = createFileRoute("/")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { resume?: string; booking?: "general" | "racket" } => ({
+  ): { resume?: string; booking?: "general" | "racket"; sell?: boolean } => ({
     ...(typeof search["resume"] === "string" ? { resume: search["resume"] as string } : {}),
     ...(search["booking"] === "general" || search["booking"] === "racket"
       ? { booking: search["booking"] as "general" | "racket" }
       : {}),
+    ...(search["sell"] === true || search["sell"] === "1" ? { sell: true } : {}),
   }),
   head: () => ({
     meta: [
@@ -159,8 +162,27 @@ export const Route = createFileRoute("/")({
       { property: "og:description", content: "Fast touch checkout with receipts and members." },
     ],
   }),
-  component: Register,
+  component: RegisterEntry,
 });
+
+function RegisterEntry() {
+  const { state } = usePos();
+  const { isAdmin, isSupervisor, isCashier } = useAuth();
+  const search = Route.useSearch();
+  return shouldOpenRegister({
+    purpose: state.settings.integrations.terminalPurpose,
+    isAdmin,
+    isSupervisor,
+    isCashier,
+    forcedSelling: search.sell,
+    resumeSale: !!search.resume,
+    bookingFlow: !!search.booking,
+  }) ? (
+    <Register />
+  ) : (
+    <TerminalWorkspaceHome />
+  );
+}
 
 function Register() {
   const {
@@ -173,6 +195,7 @@ function Register() {
     closeShift,
     currentStore,
     upsertProduct,
+    updateSettings,
   } = usePos();
   useUiScale();
   const { user, can } = useAuth();
@@ -444,7 +467,8 @@ function Register() {
   );
 
   const member = useMemo(
-    () => state.members.find((m) => m.id === memberId) ??
+    () =>
+      state.members.find((m) => m.id === memberId) ??
       (selectedMember?.id === memberId ? selectedMember : null),
     [state.members, memberId, selectedMember],
   );
@@ -460,17 +484,26 @@ function Register() {
       return;
     }
     const lower = q.toLowerCase();
-    setMemberMatches(state.members.filter((m) =>
-      m.name.toLowerCase().includes(lower) ||
-      m.phone.replace(/\s/g, "").includes(lower.replace(/\s/g, "")) ||
-      m.code.toLowerCase().includes(lower)).slice(0, 5));
+    setMemberMatches(
+      state.members
+        .filter(
+          (m) =>
+            m.name.toLowerCase().includes(lower) ||
+            m.phone.replace(/\s/g, "").includes(lower.replace(/\s/g, "")) ||
+            m.code.toLowerCase().includes(lower),
+        )
+        .slice(0, 5),
+    );
     let alive = true;
     const timer = window.setTimeout(() => {
       void searchCloudMembers(q, 5).then((rows) => {
         if (alive && rows.length) setMemberMatches(rows);
       });
     }, 250);
-    return () => { alive = false; window.clearTimeout(timer); };
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
   }, [memberQuery, state.members]);
 
   useEffect(() => {
@@ -485,7 +518,10 @@ function Register() {
         if (alive) setBookMemberMatches(rows);
       });
     }, 250);
-    return () => { alive = false; window.clearTimeout(timer); };
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
   }, [bookMemberQuery]);
 
   /* ── Sticky ticket ──────────────────────────────────────────────────────
@@ -1248,7 +1284,7 @@ function Register() {
   useEffect(() => {
     if (!resume) return;
     resumeHeld(resume);
-    void navigate({ to: "/", search: {}, replace: true });
+    void navigate({ to: "/", search: { sell: true }, replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resume]);
 
@@ -1257,7 +1293,7 @@ function Register() {
     if (!bookingFlow) return;
     if (bookingFlow === "racket") startRacketBooking();
     else startCartBooking();
-    void navigate({ to: "/", search: {}, replace: true });
+    void navigate({ to: "/", search: { sell: true }, replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingFlow]);
 
@@ -2171,6 +2207,12 @@ function Register() {
         <RegisterActionsProvider handlers={registerActionHandlers}>
           <RegisterWorkspace
             terminalKey={terminalKey}
+            mode={state.settings.integrations.sellingLayout}
+            onModeChange={(sellingLayout) =>
+              updateSettings({
+                integrations: { ...state.settings.integrations, sellingLayout },
+              })
+            }
             slots={{
               catalog: slot_catalog,
               billNumber: atom_billNumber,
@@ -3230,25 +3272,25 @@ function Register() {
               {bookMemberQuery.trim() && !member ? (
                 <div className="space-y-1">
                   {bookMemberMatches.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        className="flex w-full items-center justify-between rounded-md border border-border px-2 py-1.5 text-left text-xs hover:bg-muted"
-                        onClick={() => {
-                          attachMember(m);
-                          setBookName(m.name);
-                          setBookPhone(m.phone);
-                          setBookMemberQuery("");
-                        }}
-                      >
-                        <span className="truncate">
-                          {m.name} · {m.phone}
-                        </span>
-                        <Badge variant="outline">
-                          {m.code} · {m.tier}
-                        </Badge>
-                      </button>
-                    ))}
+                    <button
+                      key={m.id}
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-md border border-border px-2 py-1.5 text-left text-xs hover:bg-muted"
+                      onClick={() => {
+                        attachMember(m);
+                        setBookName(m.name);
+                        setBookPhone(m.phone);
+                        setBookMemberQuery("");
+                      }}
+                    >
+                      <span className="truncate">
+                        {m.name} · {m.phone}
+                      </span>
+                      <Badge variant="outline">
+                        {m.code} · {m.tier}
+                      </Badge>
+                    </button>
+                  ))}
                 </div>
               ) : null}
               {member ? (

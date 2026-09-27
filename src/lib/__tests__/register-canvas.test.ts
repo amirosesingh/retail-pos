@@ -43,6 +43,16 @@ describe("register canvas pointer alignment", () => {
 });
 
 describe("register canvas persistence", () => {
+  it("keeps layout switching separate from deleting the saved canvas", () => {
+    const workspace = readFileSync(
+      resolve(process.cwd(), "src/platforms/web/components/pos/layout/RegisterWorkspace.tsx"),
+      "utf8",
+    );
+    expect(workspace).toContain('onModeChange?.("standard")');
+    expect(workspace).toContain('effectiveMode === "canvas" && !!layout.saved');
+    expect(workspace).toContain("Delete custom layout");
+  });
+
   it("clamps malformed saved geometry to the canvas", () => {
     const layout = sanitiseLayout({
       canvas: { cols: 12, rowHeight: 20, baseWidth: 1280, aspect: "16:9" },

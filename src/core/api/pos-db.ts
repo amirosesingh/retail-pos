@@ -1249,18 +1249,10 @@ export async function loadActiveShift(storeId: string): Promise<Shift | null> {
       const row = (Array.isArray(rpc.data) ? rpc.data[0] : rpc.data) as Row | null;
       return row?.id ? rowToShift(row) : null;
     }
-    const res = await supabase
-      .from("shifts" as never)
-      .select("*")
-      .eq("store_id", storeId)
-      .eq("status", "OPEN")
-      .order("opened_at", { ascending: false })
-      .limit(1);
-    if (!res.error) {
-      const rows = (res.data as Row[] | null) ?? [];
-      return rows.length ? rowToShift(rows[0]) : null;
-    }
-    if (!canRelay()) throw res.error;
+    // Direct `select=*` is intentionally forbidden because tender/count
+    // columns are permission-redacted by the secure RPC. Relay if the RPC is
+    // unavailable; retrying the forbidden table query only creates 403 noise.
+    if (!canRelay()) throw rpc.error;
   }
 
   if (!canRelay()) {

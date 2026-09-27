@@ -83,6 +83,7 @@ export const defaultTradingHours: TradingHours = {
 
 /** Public domains and operational switches, editable in System & Integrations. */
 export const defaultIntegrations: AppSettings["integrations"] = {
+  terminalPurpose: "retail",
   autoLockTimeoutSeconds: 90,
   memberDomain: "",
   redeemDomain: "",
