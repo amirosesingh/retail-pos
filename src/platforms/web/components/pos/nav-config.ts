@@ -75,6 +75,7 @@ export const navGroups: NavGroup[] = [
     items: [
       {
         to: "/",
+        search: { sell: "1" },
         label: "Register POS",
         icon: LayoutGrid,
         keywords: "checkout cart sale",

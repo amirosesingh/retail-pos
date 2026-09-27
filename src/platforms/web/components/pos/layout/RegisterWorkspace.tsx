@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/lib/pos-auth";
+import type { SellingLayout } from "@/core/types/pos-types";
 import { useUiScalePrefs } from "@/lib/use-ui-scale";
 import { boundedInputNumber } from "@/lib/number-input";
 import {
@@ -129,13 +130,18 @@ export function RegisterWorkspace({
   slots,
   terminalKey,
   classic,
+  mode,
+  onModeChange,
 }: {
   slots: RegisterSlots;
   terminalKey: string;
   /** The untouched factory screen, used whenever no custom layout is saved. */
   classic: ReactNode;
+  /** Optional preference. When absent, an existing saved canvas remains active. */
+  mode?: SellingLayout;
+  onModeChange?: (mode: SellingLayout) => void;
 }) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, can } = useAuth();
   const { registerZoom } = useUiScalePrefs();
   const layout = useRegisterLayout(terminalKey);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -183,7 +189,10 @@ export function RegisterWorkspace({
   );
 
   const editing = isAdmin && layout.editing;
-  const showCanvas = !!layout.active && (editing || layout.previewing || !!layout.saved);
+  const effectiveMode: SellingLayout = mode ?? (layout.saved ? "canvas" : "standard");
+  const showCanvas =
+    !!layout.active &&
+    (editing || layout.previewing || (effectiveMode === "canvas" && !!layout.saved));
   const canvas = layout.active?.canvas;
   const metrics = useMemo(
     () => (canvas ? canvasMetrics(canvas, { width: view.width, height: view.height }) : null),
@@ -211,13 +220,28 @@ export function RegisterWorkspace({
 
   return (
     <div className="relative flex h-full min-h-0 w-full min-w-0 flex-col">
-      {isAdmin && layout.loaded && (
+      {(isAdmin || can("can_access_pos_settings")) && layout.loaded && (
         <CustomizeBar
           editing={editing}
           previewing={layout.previewing}
           custom={!!layout.saved}
           canvas={canvas ?? null}
           scale={metrics?.scale ?? 1}
+          mode={effectiveMode}
+          canEdit={isAdmin}
+          onModeChange={(next) => {
+            if (next === "canvas" && !layout.saved) {
+              if (!isAdmin) {
+                toast.info("An administrator must create this terminal's Custom Canvas first.");
+                return;
+              }
+              onModeChange?.("canvas");
+              layout.startEdit();
+              setPaletteOpen(true);
+              return;
+            }
+            onModeChange?.(next);
+          }}
           onCanvas={layout.setCanvas}
           onEdit={() => {
             layout.startEdit();
@@ -243,6 +267,7 @@ export function RegisterWorkspace({
             setPaletteOpen(false);
             setDragging(null);
             setSelected([]);
+            onModeChange?.("canvas");
             toast.success("Layout saved for this terminal");
           }}
           onReset={async () => {
@@ -254,7 +279,8 @@ export function RegisterWorkspace({
             setPaletteOpen(false);
             setDragging(null);
             setSelected([]);
-            toast.success("Restored the factory register layout");
+            onModeChange?.("standard");
+            toast.success("Custom Canvas deleted; Standard POS is active");
           }}
         />
       )}
@@ -722,6 +748,9 @@ function CustomizeBar({
   custom,
   canvas,
   scale,
+  mode,
+  canEdit,
+  onModeChange,
   onCanvas,
   onEdit,
   onCancel,
@@ -738,6 +767,9 @@ function CustomizeBar({
   custom: boolean;
   canvas: CanvasConfig | null;
   scale: number;
+  mode: SellingLayout;
+  canEdit: boolean;
+  onModeChange: (mode: SellingLayout) => void;
   onCanvas: (patch: Partial<CanvasConfig>) => void;
   onEdit: () => void;
   onCancel: () => void;
@@ -753,14 +785,34 @@ function CustomizeBar({
   // taking a full toolbar row.
   if (!editing && !previewing) {
     return (
-      <Button
-        size="sm"
-        variant="outline"
-        className="absolute right-2 top-2 z-40 h-7 gap-1 bg-background/80 px-2 text-[11px] opacity-60 backdrop-blur transition-opacity hover:opacity-100"
-        onClick={onEdit}
-      >
-        <Pencil className="size-3" /> {custom ? "Edit layout" : "Customize layout"}
-      </Button>
+      <div className="absolute right-2 top-2 z-40 flex items-center gap-1 rounded-lg border border-border bg-background/90 p-1 opacity-75 shadow-sm backdrop-blur transition-opacity hover:opacity-100">
+        <Button
+          size="sm"
+          variant={mode === "standard" ? "default" : "ghost"}
+          className="h-7 px-2 text-[11px]"
+          onClick={() => onModeChange("standard")}
+        >
+          Standard POS
+        </Button>
+        <Button
+          size="sm"
+          variant={mode === "canvas" ? "default" : "ghost"}
+          className="h-7 px-2 text-[11px]"
+          onClick={() => onModeChange("canvas")}
+        >
+          Custom Canvas
+        </Button>
+        {canEdit && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 px-2 text-[11px]"
+            onClick={onEdit}
+          >
+            <Pencil className="size-3" /> {custom ? "Edit" : "Create"}
+          </Button>
+        )}
+      </div>
     );
   }
   return (
@@ -885,7 +937,7 @@ function CustomizeBar({
         </Button>
       )}
       <Button size="sm" variant="outline" className="h-8" disabled={saving} onClick={onReset}>
-        <RotateCcw className="size-3.5" /> Factory default
+        <RotateCcw className="size-3.5" /> Delete custom layout
       </Button>
       <Button size="sm" className="h-8" disabled={saving} onClick={onSave}>
         <Save className="size-3.5" /> {saving ? "Saving…" : "Save layout"}

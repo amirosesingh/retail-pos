@@ -4,6 +4,7 @@ import { ScopePanel } from "@/platforms/web/components/pos/settings/ScopeControl
 import { SETTINGS_SECTIONS, type SettingsSectionId } from "@/lib/settings-sections";
 
 const SECTION_ROUTE: Record<SettingsSectionId, string> = {
+  workspace: "/settings/workspace",
   display: "/settings/display",
   printer: "/settings/printer",
   terminalSecurity: "/settings/rules",

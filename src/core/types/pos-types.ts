@@ -943,8 +943,14 @@ export type AppSettings = {
 /** Operational switches an admin can change from System & Integrations. */
 export type DateFormat = "dmy" | "mdy" | "ymd";
 export type TimeFormat = "12h" | "24h";
+export type TerminalPurpose = "retail" | "warehouse" | "inventory" | "receiving" | "management";
+export type SellingLayout = "standard" | "canvas";
 
 export type IntegrationSettings = {
+  /** Operational home shown on this terminal. It never grants user permissions. */
+  terminalPurpose?: TerminalPurpose;
+  /** Register presentation only; both options use the same cart and checkout engine. */
+  sellingLayout?: SellingLayout;
   displayProfile?: import("@/lib/display-profile").DisplayProfile;
   /** Printer profile resolved using the selected settings scope. */
   receiptPrinter?: import("@/lib/receipt-printer").PrinterPrefs;

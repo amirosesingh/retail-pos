@@ -9,6 +9,7 @@
 import type { AppSettings } from "@/core/types/pos-types";
 
 export type SettingsSectionId =
+  | "workspace"
   | "display"
   | "printer"
   | "terminalSecurity"
@@ -48,6 +49,14 @@ export type SettingsSectionDef = {
 };
 
 export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
+  {
+    id: "workspace",
+    label: "Terminal workspace",
+    blurb: "Operational home and selling layout for this terminal.",
+    paths: ["integrations.terminalPurpose", "integrations.sellingLayout"],
+    lockedByDefault: false,
+    scopeFamily: "terminal",
+  },
   {
     id: "display",
     label: "Display & appearance",

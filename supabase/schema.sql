@@ -14822,8 +14822,9 @@ END $$;
 
 
 -- Never expose shift tender totals through an unrestricted row SELECT. The
--- invoker functions below apply RLS and redact each financial group using the
--- caller's current permission matrix.
+-- public invoker wrappers below call a non-exposed helper that repeats the
+-- authenticated staff, active-terminal, and visible-store checks, then redacts
+-- each financial group using the caller's current permission matrix.
 REVOKE SELECT ON public.shifts FROM authenticated;
 GRANT SELECT (
   id, store_id, terminal_id, terminal_name, opened_by_name, opened_by_staff_id,
@@ -14832,15 +14833,19 @@ GRANT SELECT (
   state, close_reason, closing_started_at, closing_started_by
 ) ON public.shifts TO authenticated;
 
-CREATE OR REPLACE FUNCTION public.shift_list_secure(
+CREATE SCHEMA IF NOT EXISTS private;
+REVOKE ALL ON SCHEMA private FROM PUBLIC, anon, authenticated;
+GRANT USAGE ON SCHEMA private TO authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION private.shift_list_secure_impl(
   p_store_id text DEFAULT NULL,
   p_limit integer DEFAULT 300
 )
 RETURNS SETOF jsonb
-LANGUAGE sql STABLE SECURITY INVOKER
-SET search_path = public, pg_temp
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = ''
 AS $$
-  SELECT to_jsonb(s) || jsonb_build_object(
+  SELECT pg_catalog.to_jsonb(s) || pg_catalog.jsonb_build_object(
     'opening_float', CASE WHEN public.has_perm('can_shift_expected_cash_view') THEN s.opening_float END,
     'expected_cash', CASE WHEN public.has_perm('can_shift_expected_cash_view') THEN s.expected_cash END,
     'expected_card', CASE WHEN public.has_perm('can_shift_expected_cash_view') THEN s.expected_card END,
@@ -14858,10 +14863,26 @@ AS $$
   )
   FROM public.shifts s
   WHERE public.is_staff((SELECT auth.uid()))
+    AND public.is_terminal_active()
     AND public.store_visible(s.store_id)
     AND (p_store_id IS NULL OR s.store_id = p_store_id)
   ORDER BY s.opened_at DESC, s.id
   LIMIT LEAST(GREATEST(COALESCE(p_limit, 300), 1), 1000);
+$$;
+REVOKE ALL ON FUNCTION private.shift_list_secure_impl(text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION private.shift_list_secure_impl(text, integer) TO authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.shift_list_secure(
+  p_store_id text DEFAULT NULL,
+  p_limit integer DEFAULT 300
+)
+RETURNS SETOF jsonb
+LANGUAGE sql STABLE SECURITY INVOKER
+SET search_path = ''
+AS $$
+  SELECT secure_row
+  FROM private.shift_list_secure_impl(p_store_id, p_limit)
+    AS secure_rows(secure_row);
 $$;
 REVOKE ALL ON FUNCTION public.shift_list_secure(text, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.shift_list_secure(text, integer) TO authenticated, service_role;
@@ -14869,7 +14890,7 @@ GRANT EXECUTE ON FUNCTION public.shift_list_secure(text, integer) TO authenticat
 CREATE OR REPLACE FUNCTION public.shift_active_secure(p_store_id text)
 RETURNS jsonb
 LANGUAGE sql STABLE SECURITY INVOKER
-SET search_path = public, pg_temp
+SET search_path = ''
 AS $$
   SELECT secure_row
   FROM public.shift_list_secure(p_store_id, 1000) AS secure_rows(secure_row)
