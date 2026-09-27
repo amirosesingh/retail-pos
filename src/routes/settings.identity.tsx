@@ -1,5 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import {
+  SettingsFrame,
+  useSettingsCtx,
+} from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,7 +22,11 @@ export const Route = createFileRoute("/settings/identity")({
   head: () => ({
     meta: [
       { title: "Business Identity — Retail" },
-      { name: "description", content: "Company name, tax and registration numbers, contact details, receipt header and thank-you footer, per branch or globally." },
+      {
+        name: "description",
+        content:
+          "Company name, tax and registration numbers, contact details, receipt header and thank-you footer, per branch or globally.",
+      },
       { property: "og:title", content: "Business Identity — Retail" },
       { property: "og:description", content: "Company details printed on every receipt." },
       { property: "og:type", content: "website" },
@@ -30,7 +37,7 @@ export const Route = createFileRoute("/settings/identity")({
     <SettingsFrame
       title="Business identity"
       description="Company details printed at the top and bottom of every slip."
-      branchAware
+      scopeSections={["receiptIdentity"]}
       showPreview
     >
       <IdentityForm />
@@ -54,9 +61,7 @@ function IdentityForm() {
   return (
     <div className="space-y-3">
       <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">
-          Terminal name (this machine only)
-        </Label>
+        <Label className="text-xs text-muted-foreground">Terminal name (this machine only)</Label>
         <Input
           value={terminal}
           onChange={(e) => setTerminal(e.target.value)}
@@ -78,11 +83,19 @@ function IdentityForm() {
       </div>
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">Header text (address / extra info)</Label>
-        <Textarea rows={2} value={effective.headerText} onChange={(e) => setField("headerText", e.target.value)} />
+        <Textarea
+          rows={2}
+          value={effective.headerText}
+          onChange={(e) => setField("headerText", e.target.value)}
+        />
       </div>
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">Footer / thank-you note</Label>
-        <Textarea rows={2} value={effective.footerText} onChange={(e) => setField("footerText", e.target.value)} />
+        <Textarea
+          rows={2}
+          value={effective.footerText}
+          onChange={(e) => setField("footerText", e.target.value)}
+        />
       </div>
     </div>
   );

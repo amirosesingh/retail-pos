@@ -4,7 +4,12 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { emptyBranchSettings, resolveScopedSettings, type BranchSettingsState } from "../branch-settings";
+import {
+  emptyBranchSettings,
+  resolveScopedSettings,
+  type BranchSettingsState,
+} from "../branch-settings";
+import { SETTINGS_SECTIONS, sectionOfPath } from "../settings-sections";
 
 type Bag = Record<string, unknown>;
 const merge = (target: Bag, patch: unknown) => ({ ...target, ...(patch as Bag) });
@@ -38,7 +43,11 @@ describe("resolveScopedSettings", () => {
     const out = resolveScopedSettings(
       { taxRate: 5 },
       scope({
-        overrides: { CLUSTER: { tax: { taxRate: 7 } }, BRANCH: { tax: { taxRate: 9 } }, TERMINAL: {} },
+        overrides: {
+          CLUSTER: { tax: { taxRate: 7 } },
+          BRANCH: { tax: { taxRate: 9 } },
+          TERMINAL: {},
+        },
       }),
       merge,
     );
@@ -64,7 +73,11 @@ describe("resolveScopedSettings", () => {
     const out = resolveScopedSettings(
       { taxRate: 5 },
       scope({
-        overrides: { CLUSTER: { tax: { taxRate: 7 } }, BRANCH: { tax: { taxRate: 9 } }, TERMINAL: {} },
+        overrides: {
+          CLUSTER: { tax: { taxRate: 7 } },
+          BRANCH: { tax: { taxRate: 9 } },
+          TERMINAL: {},
+        },
         locks: { tax: true } as never,
       }),
       merge,
@@ -93,16 +106,45 @@ describe("resolveScopedSettings", () => {
 
 it("resolves terminal settings above clusters and ignores branch settings", () => {
   const base = { printer: "global" };
-  const shared = scope({ overrides: {
-    ...emptyBranchSettings.overrides,
-    CLUSTER: { printer: { printer: "cluster" } },
-    BRANCH: { printer: { printer: "branch" } },
-  } });
-  const terminal = scope({ overrides: {
-    ...shared.overrides,
-    TERMINAL: { printer: { printer: "terminal" } },
-  } });
+  const shared = scope({
+    overrides: {
+      ...emptyBranchSettings.overrides,
+      CLUSTER: { printer: { printer: "cluster" } },
+      BRANCH: { printer: { printer: "branch" } },
+    },
+  });
+  const terminal = scope({
+    overrides: {
+      ...shared.overrides,
+      TERMINAL: { printer: { printer: "terminal" } },
+    },
+  });
   expect(resolveScopedSettings(base, terminal, merge).settings.printer).toBe("terminal");
   expect(resolveScopedSettings(base, shared, merge).settings.printer).toBe("cluster");
   expect(base.printer).toBe("global");
+});
+
+describe("settings section ownership", () => {
+  it.each([
+    ["receipt.companyName", "receiptIdentity"],
+    ["receipt.customLines", "receiptIdentity"],
+    ["receipt.paper", "receiptLayout"],
+    ["receipt.fonts.header", "receiptLayout"],
+    ["integrations.bookingRules", "booking"],
+    ["integrations.paymentAccounts", "paymentAccounts"],
+    ["integrations.billNumbering", "numbering"],
+    ["integrations.stockNumbering", "stockNumbering"],
+    ["integrations.country", "region"],
+    ["integrations.rounding", "rounding"],
+  ])("routes %s to only the %s block", (path, section) => {
+    expect(sectionOfPath(path)?.id).toBe(section);
+  });
+
+  it("does not let a terminal receipt layout snapshot capture branch identity", () => {
+    const layout = SETTINGS_SECTIONS.find((section) => section.id === "receiptLayout");
+    expect(layout?.paths).not.toContain("receipt");
+    expect(layout?.paths).not.toContain("receipt.companyName");
+    expect(sectionOfPath("receipt.companyName")?.scopeFamily).toBe("business");
+    expect(sectionOfPath("receipt.paper")?.scopeFamily).toBe("terminal");
+  });
 });

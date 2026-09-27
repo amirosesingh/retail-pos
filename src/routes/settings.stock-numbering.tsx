@@ -51,6 +51,7 @@ function NumberingPage() {
     <SettingsFrame
       title="Document numbering"
       description="Every stock count and every goods received entry gets its reference the moment the draft is created, so it can be quoted before it is posted."
+      scopeSections={["stockNumbering"]}
     >
       <SettingsTabs current="/settings/stock-numbering" />
 
@@ -163,7 +164,10 @@ function SeriesCard({
             ariaLabel="Running number length"
             value={String(pad)}
             onChange={(value) => onPatch({ padding: Number(value) })}
-            options={[3, 4, 5, 6].map((value) => ({ value: String(value), label: `${value} digits` }))}
+            options={[3, 4, 5, 6].map((value) => ({
+              value: String(value),
+              label: `${value} digits`,
+            }))}
           />
           <p className="text-[11px] text-muted-foreground">Between 3 and 6 digits.</p>
         </div>

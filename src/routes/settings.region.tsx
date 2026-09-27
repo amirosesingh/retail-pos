@@ -55,13 +55,13 @@ function RegionPage() {
   const { state, updateSettings } = usePos();
   const it = state.settings.integrations;
 
-  const patch = (next: Partial<typeof it>) =>
-    updateSettings({ integrations: { ...it, ...next } });
+  const patch = (next: Partial<typeof it>) => updateSettings({ integrations: { ...it, ...next } });
 
   return (
     <SettingsFrame
       title="Region & time"
       description="Terminal clocks drift and travel. Pick the region here and every displayed and printed time follows it, whatever the PC thinks."
+      scopeSections={["region"]}
     >
       <div className="space-y-5">
         <div className="grid gap-4 md:grid-cols-2">

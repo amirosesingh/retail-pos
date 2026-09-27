@@ -20,6 +20,13 @@ export type SettingsSectionId =
   | "payment"
   | "whatsapp"
   | "booking"
+  | "paymentAccounts"
+  | "numbering"
+  | "stockNumbering"
+  | "region"
+  | "rounding"
+  | "publicDomains"
+  | "transferApproval"
   | "categoryMap"
   | "integrations"
   | "visibility";
@@ -41,9 +48,30 @@ export type SettingsSectionDef = {
 };
 
 export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
-  { id: "display", label: "Display & appearance", blurb: "Theme, accent, text size, density and register zoom.", paths: ["integrations.displayProfile"], lockedByDefault: false, scopeFamily: "terminal" },
-  { id: "printer", label: "Printer profile", blurb: "Printer, encoding, drawer and paper calibration.", paths: ["integrations.receiptPrinter"], lockedByDefault: false, scopeFamily: "terminal" },
-  { id: "terminalSecurity", label: "Terminal security", blurb: "Idle screen locking for the selected terminal.", paths: ["integrations.autoLockTimeoutSeconds"], lockedByDefault: false, scopeFamily: "terminal" },
+  {
+    id: "display",
+    label: "Display & appearance",
+    blurb: "Theme, accent, text size, density and register zoom.",
+    paths: ["integrations.displayProfile"],
+    lockedByDefault: false,
+    scopeFamily: "terminal",
+  },
+  {
+    id: "printer",
+    label: "Printer profile",
+    blurb: "Printer, encoding, drawer and paper calibration.",
+    paths: ["integrations.receiptPrinter"],
+    lockedByDefault: false,
+    scopeFamily: "terminal",
+  },
+  {
+    id: "terminalSecurity",
+    label: "Terminal security",
+    blurb: "Idle screen locking for the selected terminal.",
+    paths: ["integrations.autoLockTimeoutSeconds"],
+    lockedByDefault: false,
+    scopeFamily: "terminal",
+  },
   {
     id: "tax",
     label: "Tax policy",
@@ -99,7 +127,18 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     id: "receiptLayout",
     label: "Receipt layout",
     blurb: "Paper size, typography and what is printed on the slip.",
-    paths: ["receipt"],
+    // Keep this disjoint from receiptIdentity. A whole `receipt` snapshot here
+    // would silently copy company/branch wording into a terminal override.
+    paths: [
+      "receipt.paper",
+      "receipt.showLogo",
+      "receipt.logo",
+      "receipt.showPoints",
+      "receipt.showBarcode",
+      "receipt.showTax",
+      "receipt.fonts",
+      "receipt.css",
+    ],
     lockedByDefault: false,
     scopeFamily: "terminal",
   },
@@ -129,6 +168,9 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
       "integrations.serviceTypes",
       "integrations.useServiceTypes",
       "integrations.allowCustomServiceType",
+      "integrations.bookingRules",
+      "integrations.racketModels",
+      "integrations.stringModels",
     ],
     lockedByDefault: false,
     scopeFamily: "business",
@@ -147,6 +189,67 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     blurb: "Domains, approval switches, numbering and regional formats.",
     paths: ["integrations"],
     lockedByDefault: false,
+    scopeFamily: "business",
+  },
+  {
+    id: "paymentAccounts",
+    label: "Payment accounts",
+    blurb: "Card machines, bank accounts and e-wallets available at checkout.",
+    paths: ["integrations.paymentAccounts", "integrations.usePaymentAccounts"],
+    lockedByDefault: false,
+    scopeFamily: "business",
+  },
+  {
+    id: "numbering",
+    label: "Bill numbering",
+    blurb: "Receipt prefix, branch and terminal parts, padding and reset cycle.",
+    paths: ["integrations.billNumbering"],
+    lockedByDefault: false,
+    scopeFamily: "business",
+  },
+  {
+    id: "stockNumbering",
+    label: "Inventory document numbering",
+    blurb: "Stock-count and goods-received reference formats.",
+    paths: ["integrations.stockNumbering", "integrations.goodsReceivedNumbering"],
+    lockedByDefault: false,
+    scopeFamily: "business",
+  },
+  {
+    id: "region",
+    label: "Region & time",
+    blurb: "Country, time zone, date order and clock format.",
+    paths: [
+      "integrations.country",
+      "integrations.timeZone",
+      "integrations.dateFormat",
+      "integrations.timeFormat",
+    ],
+    lockedByDefault: false,
+    scopeFamily: "business",
+  },
+  {
+    id: "rounding",
+    label: "Cash rounding",
+    blurb: "Rounding increment, mode and receipt label used at checkout.",
+    paths: ["integrations.rounding"],
+    lockedByDefault: true,
+    scopeFamily: "business",
+  },
+  {
+    id: "publicDomains",
+    label: "Public domains",
+    blurb: "Member signup and voucher redemption addresses.",
+    paths: ["integrations.memberDomain", "integrations.redeemDomain"],
+    lockedByDefault: true,
+    scopeFamily: "business",
+  },
+  {
+    id: "transferApproval",
+    label: "Transfer approval",
+    blurb: "Whether stock transfers require supervisor approval before dispatch.",
+    paths: ["integrations.requireTransferApproval"],
+    lockedByDefault: true,
     scopeFamily: "business",
   },
 ];

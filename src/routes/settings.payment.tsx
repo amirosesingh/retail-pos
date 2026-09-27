@@ -1,5 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import {
+  SettingsFrame,
+  useSettingsCtx,
+} from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,9 +13,16 @@ export const Route = createFileRoute("/settings/payment")({
   head: () => ({
     meta: [
       { title: "Bank Transfer Details — Retail" },
-      { name: "description", content: "Bank account, WhatsApp number and payment QR shown on the customer display and printed on booking slips." },
+      {
+        name: "description",
+        content:
+          "Bank account, WhatsApp number and payment QR shown on the customer display and printed on booking slips.",
+      },
       { property: "og:title", content: "Bank Transfer Details — Retail" },
-      { property: "og:description", content: "Bank account and payment QR for customer transfers." },
+      {
+        property: "og:description",
+        content: "Bank account and payment QR for customer transfers.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -21,6 +31,7 @@ export const Route = createFileRoute("/settings/payment")({
     <SettingsFrame
       title="Bank transfer details"
       description="Shown on the customer-facing display and printed on booking slips so shoppers can settle a balance by bank transfer."
+      scopeSections={["payment"]}
     >
       <PaymentForm />
     </SettingsFrame>
@@ -43,7 +54,9 @@ function PaymentForm() {
           <Label className="text-xs text-muted-foreground">Account name</Label>
           <Input
             value={payment.accountName}
-            onChange={(e) => updateSettings({ payment: { ...payment, accountName: e.target.value } })}
+            onChange={(e) =>
+              updateSettings({ payment: { ...payment, accountName: e.target.value } })
+            }
           />
         </div>
         <div className="space-y-1">
@@ -78,9 +91,7 @@ function PaymentForm() {
         <Switch
           aria-label="Print transfer details on booking slips"
           checked={payment.showOnBookingSlip}
-          onCheckedChange={(v) =>
-            updateSettings({ payment: { ...payment, showOnBookingSlip: v } })
-          }
+          onCheckedChange={(v) => updateSettings({ payment: { ...payment, showOnBookingSlip: v } })}
         />
       </div>
 
@@ -102,7 +113,10 @@ function PaymentForm() {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Caption</Label>
-            <Input value={paymentQr.label} onChange={(e) => setPaymentQr({ label: e.target.value })} />
+            <Input
+              value={paymentQr.label}
+              onChange={(e) => setPaymentQr({ label: e.target.value })}
+            />
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Mode</Label>

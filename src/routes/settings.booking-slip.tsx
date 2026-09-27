@@ -1,6 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
-import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import {
+  SettingsFrame,
+  useSettingsCtx,
+} from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -30,7 +33,7 @@ export const Route = createFileRoute("/settings/booking-slip")({
     <SettingsFrame
       title="Booking slip wording"
       description="Terms & conditions and the customer signature line printed on racket bookings and pay-later slips."
-      branchAware
+      scopeSections={["receiptIdentity"]}
     >
       <SettingsTabs current="/settings/booking-slip" />
 
@@ -63,11 +66,14 @@ function BookingSlipForm() {
           rows={8}
           className="font-mono text-xs"
           value={cfg.terms}
-          placeholder={"1. Rackets left over 30 days may be disposed of.\n2. Old frames may break during stringing."}
+          placeholder={
+            "1. Rackets left over 30 days may be disposed of.\n2. Old frames may break during stringing."
+          }
           onChange={(e) => patch({ terms: e.target.value })}
         />
         <p className="text-xs text-muted-foreground">
-          Each line prints as its own line on the slip. Keep lines short so they fit the paper width.
+          Each line prints as its own line on the slip. Keep lines short so they fit the paper
+          width.
         </p>
       </div>
 
@@ -114,9 +120,7 @@ String            BG65 Ti
 Tension           24 / 26 lb
 Ready by          ${new Date().toLocaleDateString()}
 `}
-          {cfg.showTerms && cfg.terms.trim()
-            ? `\nTERMS & CONDITIONS\n${cfg.terms.trim()}\n`
-            : ""}
+          {cfg.showTerms && cfg.terms.trim() ? `\nTERMS & CONDITIONS\n${cfg.terms.trim()}\n` : ""}
           {cfg.showSignature
             ? `\n${cfg.signatureCaption}\n____________________\nCustomer signature\n____________________\nDate`
             : ""}

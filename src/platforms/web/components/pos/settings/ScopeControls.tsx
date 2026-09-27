@@ -19,7 +19,12 @@ import {
   type SettingSource,
   type SettingTier,
 } from "@/lib/branch-settings";
-import { SECTION_BY_ID, sectionAllowsTier, sectionOfPath, type SettingsSectionId } from "@/lib/settings-sections";
+import {
+  SECTION_BY_ID,
+  sectionAllowsTier,
+  sectionOfPath,
+  type SettingsSectionId,
+} from "@/lib/settings-sections";
 
 const TONE: Record<SettingSource, string> = {
   GLOBAL: "bg-muted text-muted-foreground",
@@ -37,10 +42,14 @@ export function ScopeBadge({ path, className = "" }: { path: string; className?:
       ? `Branch: ${currentStore.name}`
       : source === "CLUSTER"
         ? `Cluster: ${scopeIds.CLUSTER || "—"}`
-        : source === "TERMINAL" ? `Terminal: ${scopeIds.TERMINAL || "—"}`
+        : source === "TERMINAL"
+          ? `Terminal: ${scopeIds.TERMINAL || "—"}`
           : "Global";
   return (
-    <Badge variant="outline" className={`h-5 border-transparent text-[10px] ${TONE[source]} ${className}`}>
+    <Badge
+      variant="outline"
+      className={`h-5 border-transparent text-[10px] ${TONE[source]} ${className}`}
+    >
       {label}
     </Badge>
   );
@@ -48,7 +57,15 @@ export function ScopeBadge({ path, className = "" }: { path: string; className?:
 
 /** Scope selector for one block: pick which tier owns it, or lock it globally. */
 export function SectionScope({ section }: { section: SettingsSectionId }) {
-  const { settingsScope, setSectionScope, setSectionLocked, scopeIds, currentStore, saveConfiguredSettings, settingsScopeLoading } = usePos();
+  const {
+    settingsScope,
+    setSectionScope,
+    setSectionLocked,
+    scopeIds,
+    currentStore,
+    saveConfiguredSettings,
+    settingsScopeLoading,
+  } = usePos();
   const { isAdmin } = useAuth();
   const def = SECTION_BY_ID[section];
   if (!def) return null;
@@ -64,12 +81,17 @@ export function SectionScope({ section }: { section: SettingsSectionId }) {
       const order: SettingSource[] = ["GLOBAL", ...allowedTiers];
       // Keep inherited lower scopes; remove only overrides above the chosen tier.
       for (const existing of [...allowedTiers].reverse()) {
-        if (order.indexOf(existing) > order.indexOf(tier) && settingsScope.overrides[existing]?.[section])
+        if (
+          order.indexOf(existing) > order.indexOf(tier) &&
+          settingsScope.overrides[existing]?.[section]
+        )
           await setSectionScope(section, false, existing);
       }
       if (tier !== "GLOBAL") await setSectionScope(section, true, tier as SettingTier);
       toast.success(
-        tier === "GLOBAL" ? `${def.label} follows the global rule` : `${def.label} → ${TIER_LABELS[tier]}`,
+        tier === "GLOBAL"
+          ? `${def.label} follows the global rule`
+          : `${def.label} → ${TIER_LABELS[tier]}`,
       );
     } catch (e) {
       toast.error((e as Error).message);
@@ -77,9 +99,12 @@ export function SectionScope({ section }: { section: SettingsSectionId }) {
   };
 
   const scopeName = (tier: SettingSource) =>
-    tier === "BRANCH" ? currentStore.name
-      : tier === "CLUSTER" ? scopeIds.CLUSTER || "no cluster"
-        : tier === "TERMINAL" ? scopeIds.TERMINAL || "no terminal"
+    tier === "BRANCH"
+      ? currentStore.name
+      : tier === "CLUSTER"
+        ? scopeIds.CLUSTER || "no cluster"
+        : tier === "TERMINAL"
+          ? scopeIds.TERMINAL || "no terminal"
           : "";
 
   return (
@@ -95,7 +120,11 @@ export function SectionScope({ section }: { section: SettingsSectionId }) {
             size="sm"
             variant={active === tier ? "default" : "outline"}
             className="h-7 text-[11px]"
-            disabled={settingsScopeLoading || (locked && tier !== "GLOBAL") || (tier !== "GLOBAL" && !scopeIds[tier])}
+            disabled={
+              settingsScopeLoading ||
+              (locked && tier !== "GLOBAL") ||
+              (tier !== "GLOBAL" && !scopeIds[tier])
+            }
             title={scopeName(tier)}
             onClick={() => void choose(tier)}
           >
@@ -120,35 +149,73 @@ export function SectionScope({ section }: { section: SettingsSectionId }) {
 
 /** Scope selectors for a whole settings page. */
 export function ScopePanel({ sections }: { sections: SettingsSectionId[] }) {
-  const { currentStore, settingsTerminalId, setSettingsTerminalId, saveConfiguredSettings } = usePos();
+  const { currentStore, settingsTerminalId, setSettingsTerminalId, saveConfiguredSettings } =
+    usePos();
   const [terminals, setTerminals] = useState<TerminalToken[]>([]);
   const [terminalError, setTerminalError] = useState("");
-  const terminalScoped = sections.some((section) => SECTION_BY_ID[section]?.scopeFamily === "terminal");
+  const terminalScoped = sections.some(
+    (section) => SECTION_BY_ID[section]?.scopeFamily === "terminal",
+  );
+  const businessScoped = sections.some(
+    (section) => SECTION_BY_ID[section]?.scopeFamily === "business",
+  );
   useEffect(() => {
     if (!terminalScoped) return;
     let cancelled = false;
-    void listTerminalTokens().then((rows) => { if (!cancelled) setTerminals(rows); })
-      .catch((error) => { if (!cancelled) setTerminalError((error as Error).message); });
-    return () => { cancelled = true; setSettingsTerminalId(""); };
+    void listTerminalTokens()
+      .then((rows) => {
+        if (!cancelled) setTerminals(rows);
+      })
+      .catch((error) => {
+        if (!cancelled) setTerminalError((error as Error).message);
+      });
+    return () => {
+      cancelled = true;
+      setSettingsTerminalId("");
+    };
   }, [setSettingsTerminalId, terminalScoped]);
   if (!sections.length) return null;
   return (
     <div className="space-y-2 rounded-lg border border-border bg-card p-3">
       <p className="text-xs font-medium">Applies to</p>
       <p className="text-[11px] text-muted-foreground">
-        {terminalScoped
-          ? "Terminal overrides Cluster; Cluster overrides Global."
-          : "Branch overrides Cluster; Cluster overrides Global."}
+        {terminalScoped && businessScoped
+          ? "Business blocks use Branch → Cluster → Global. Terminal blocks use Terminal → Cluster → Global."
+          : terminalScoped
+            ? "Terminal overrides Cluster; Cluster overrides Global."
+            : "Branch overrides Cluster; Cluster overrides Global."}
       </p>
-      {terminalScoped && <label className="grid gap-1 text-xs">Terminal to configure
-        <select aria-label="Terminal to configure" className="h-9 rounded border border-input bg-background px-2" value={settingsTerminalId}
-          onChange={(event) => { const id = event.target.value; void saveConfiguredSettings().then(() => setSettingsTerminalId(id)).catch((error) => toast.error((error as Error).message)); }}>
-          <option value="">This registered terminal</option>
-          {terminals.filter((terminal) => terminal.locationId === currentStore.id && terminal.status !== "revoked").map((terminal) =>
-            <option key={terminal.id} value={terminal.id}>{terminal.deviceName || terminal.id} ({terminal.platform})</option>)}
-        </select>
-        {terminalError && <span className="text-destructive">Terminal list unavailable: {terminalError}</span>}
-      </label>}
+      {terminalScoped && (
+        <label className="grid gap-1 text-xs">
+          Terminal to configure
+          <select
+            aria-label="Terminal to configure"
+            className="h-9 rounded border border-input bg-background px-2"
+            value={settingsTerminalId}
+            onChange={(event) => {
+              const id = event.target.value;
+              void saveConfiguredSettings()
+                .then(() => setSettingsTerminalId(id))
+                .catch((error) => toast.error((error as Error).message));
+            }}
+          >
+            <option value="">This registered terminal</option>
+            {terminals
+              .filter(
+                (terminal) =>
+                  terminal.locationId === currentStore.id && terminal.status !== "revoked",
+              )
+              .map((terminal) => (
+                <option key={terminal.id} value={terminal.id}>
+                  {terminal.deviceName || terminal.id} ({terminal.platform})
+                </option>
+              ))}
+          </select>
+          {terminalError && (
+            <span className="text-destructive">Terminal list unavailable: {terminalError}</span>
+          )}
+        </label>
+      )}
       {sections.map((id) => (
         <SectionScope key={id} section={id} />
       ))}

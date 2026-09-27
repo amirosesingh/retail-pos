@@ -1,35 +1,16 @@
 import { useEffect, useState } from "react";
-import {
-  Activity,
-  ClipboardCopy,
-  Copy,
-  Eraser,
-  PlugZap,
-  RefreshCw,
-  WifiOff,
-} from "lucide-react";
+import { Activity, ClipboardCopy, Copy, Eraser, PlugZap, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { UnpairTerminalCard } from "@/platforms/web/components/pos/UnpairTerminal";
-import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import { TIME_ZONES, effectiveTimeZone } from "@/lib/time-zone";
+import { ScopePanel } from "@/platforms/web/components/pos/settings/ScopeControls";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { usePos } from "@/lib/pos-store";
-import {
-  MEMBER_FLAG,
-  REDEEM_FLAG,
-  setPublicFlag,
-  usePublicFlags,
-} from "@/lib/public-flags";
+import { MEMBER_FLAG, REDEEM_FLAG, setPublicFlag, usePublicFlags } from "@/lib/public-flags";
 import { cn } from "@/lib/utils";
 import {
   clearHealthErrors,
@@ -77,9 +58,7 @@ function DomainSwitch({
           setSaving(true);
           void setPublicFlag(flagKey, v)
             .then(() => toast.success(v ? `${label} is now live` : `${label} is switched off`))
-            .catch((e: unknown) =>
-              notifyError(e, "Could not save the switch"),
-            )
+            .catch((e: unknown) => notifyError(e, "Could not save the switch"))
             .finally(() => setSaving(false));
         }}
       />
@@ -88,7 +67,7 @@ function DomainSwitch({
 }
 
 export function SystemStatusPanel() {
-  const { state, updateSettings } = usePos();
+  const { state, updateSettings, saveConfiguredSettings } = usePos();
   const integrations = state.settings.integrations;
   const [checks, setChecks] = useState<ServiceCheck[]>([]);
   const [busy, setBusy] = useState(false);
@@ -98,6 +77,11 @@ export function SystemStatusPanel() {
   const [memberDomain, setMemberDomain] = useState(integrations.memberDomain);
   const [redeemDomain, setRedeemDomain] = useState(integrations.redeemDomain);
   const { flags } = usePublicFlags();
+
+  useEffect(() => {
+    setMemberDomain(integrations.memberDomain);
+    setRedeemDomain(integrations.redeemDomain);
+  }, [integrations.memberDomain, integrations.redeemDomain]);
 
   const refresh = () => setErrors(listHealthErrors());
 
@@ -143,6 +127,22 @@ export function SystemStatusPanel() {
     window.setTimeout(() => window.location.reload(), 600);
   };
 
+  const saveDomains = async () => {
+    try {
+      updateSettings({
+        integrations: {
+          ...integrations,
+          memberDomain: memberDomain.trim(),
+          redeemDomain: redeemDomain.trim(),
+        },
+      });
+      await saveConfiguredSettings();
+      toast.success("Domains saved");
+    } catch (error) {
+      notifyError(error, "Domains could not be saved");
+    }
+  };
+
   const dnsInstructions = `Cloudflare DNS
 CNAME  member   -> your Pages deployment
 CNAME  redeem   -> your Pages deployment
@@ -154,7 +154,6 @@ Both subdomains serve the same build; only the landing path differs.`;
 
   return (
     <div className="w-full max-w-full space-y-5">
-
       <section className="space-y-3">
         <div className="flex items-center gap-2">
           <Activity className="size-4 text-primary" />
@@ -218,40 +217,6 @@ Both subdomains serve the same build; only the landing path differs.`;
               {showErrors ? "Hide" : "View"} error logs ({errors.length})
             </Button>
           </div>
-          <div className="space-y-1 rounded-md border border-border bg-card px-3 py-2">
-            <p className="text-sm font-medium">Time zone</p>
-            <p className="text-[11px] text-muted-foreground">
-              Every displayed and printed time uses this region instead of the clock on this PC.
-            </p>
-            <ThemedSelect
-              ariaLabel="Time zone"
-              className="max-w-xs"
-              value={integrations.timeZone ?? ""}
-              onChange={(v) => updateSettings({ integrations: { ...integrations, timeZone: v } })}
-              options={[
-                { value: "", label: `Use this computer (${effectiveTimeZone()})` },
-                ...TIME_ZONES.map((z) => ({ value: z, label: z.replace(/_/g, " ") })),
-              ]}
-            />
-          </div>
-          <div className="flex items-center justify-between rounded-md border border-border bg-card px-3 py-2">
-            <div className="flex items-center gap-2">
-              <WifiOff className="size-4 text-muted-foreground" />
-              <div>
-                <p className="text-sm font-medium">Offline mode</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Keep selling and looking up members from the local cache.
-                </p>
-              </div>
-            </div>
-            <Switch
-              aria-label="Offline mode"
-              checked={integrations.offlineMode}
-              onCheckedChange={(v) =>
-                updateSettings({ integrations: { ...integrations, offlineMode: v } })
-              }
-            />
-          </div>
           {showErrors && (
             <div className="max-h-64 space-y-2 overflow-auto rounded-md border border-border bg-card p-3">
               {errors.map((e) => (
@@ -282,6 +247,8 @@ Both subdomains serve the same build; only the landing path differs.`;
         </section>
       )}
 
+      <ScopePanel sections={["publicDomains", "transferApproval"]} />
+
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">Subdomains & API configuration</h2>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -309,19 +276,7 @@ Both subdomains serve the same build; only the landing path differs.`;
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            onClick={() => {
-              updateSettings({
-                integrations: {
-                  ...integrations,
-                  memberDomain: memberDomain.trim(),
-                  redeemDomain: redeemDomain.trim(),
-                },
-              });
-              toast.success("Domains saved");
-            }}
-          >
+          <Button size="sm" onClick={() => void saveDomains()}>
             Save domains
           </Button>
           <Button size="sm" variant="outline" onClick={() => setDnsOpen(true)}>
@@ -350,21 +305,6 @@ Both subdomains serve the same build; only the landing path differs.`;
             checked={integrations.requireTransferApproval}
             onCheckedChange={(v) =>
               updateSettings({ integrations: { ...integrations, requireTransferApproval: v } })
-            }
-          />
-        </div>
-        <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-          <div>
-            <p className="text-sm font-medium">Issue the welcome coupon automatically</p>
-            <p className="text-[11px] text-muted-foreground">
-              Off means new members get no coupon until you issue one by hand.
-            </p>
-          </div>
-          <Switch
-            aria-label="Issue the welcome coupon automatically"
-            checked={integrations.autoIssueWelcome}
-            onCheckedChange={(v) =>
-              updateSettings({ integrations: { ...integrations, autoIssueWelcome: v } })
             }
           />
         </div>

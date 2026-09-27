@@ -1,7 +1,10 @@
 import { PresetNumber } from "@/components/ui/preset-number";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
-import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import {
+  SettingsFrame,
+  useSettingsCtx,
+} from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,7 +15,11 @@ export const Route = createFileRoute("/settings/qr")({
   head: () => ({
     meta: [
       { title: "Receipt QR Code — Retail" },
-      { name: "description", content: "Print a QR code on receipts for feedback forms, loyalty sign-up or a payment link, with size and placement control." },
+      {
+        name: "description",
+        content:
+          "Print a QR code on receipts for feedback forms, loyalty sign-up or a payment link, with size and placement control.",
+      },
       { property: "og:title", content: "Receipt QR Code — Retail" },
       { property: "og:description", content: "QR code printed on receipts." },
       { property: "og:type", content: "website" },
@@ -23,7 +30,7 @@ export const Route = createFileRoute("/settings/qr")({
     <SettingsFrame
       title="Receipt QR code"
       description="Link shoppers to feedback, loyalty sign-up or a payment page."
-      branchAware
+      scopeSections={["receiptIdentity"]}
       showPreview
     >
       <SettingsTabs current="/settings/qr" />
@@ -56,9 +63,17 @@ function QrForm() {
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">Size (px)</Label>
-          <PresetNumber label="QR size" value={effective.qr.size} min={48} max={220}
+          <PresetNumber
+            label="QR size"
+            value={effective.qr.size}
+            min={48}
+            max={220}
             onChange={(size) => setField("qr", { ...effective.qr, size })}
-            options={[48, 64, 80, 96, 128, 160, 192, 220].map((value) => ({ value, label: `${value} px` }))} />
+            options={[48, 64, 80, 96, 128, 160, 192, 220].map((value) => ({
+              value,
+              label: `${value} px`,
+            }))}
+          />
         </div>
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">Placement</Label>
