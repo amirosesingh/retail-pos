@@ -83,6 +83,7 @@ export const RELAY_TABLES = new Set([
   "activity_events",
   "entity_status_history",
   "member_verifications",
+  "shift_notifications",
 ]);
 
 /** Conflict keys are owned by the server; callers cannot choose arbitrary unique columns. */
@@ -93,6 +94,7 @@ const RELAY_CONFLICT_KEYS: Readonly<Record<string, string>> = {
   item_activity_logs: "id",
   stock_count_drafts: "id",
   pos_store_settings: "store_id",
+  shift_notifications: "shift_id",
 };
 
 function conflictKey(table: string): string {

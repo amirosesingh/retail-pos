@@ -89,7 +89,7 @@ describe("authoritative central schema definition", () => {
   });
 
   it("never demands local-only tables centrally (Test D)", () => {
-    const localOnlyTables = ["sync_state", "system_settings", "transfers", "shift_notifications"];
+    const localOnlyTables = ["sync_state", "system_settings", "transfers"];
     for (const t of localOnlyTables) {
       expect(CENTRAL_SCHEMA.some((s) => s.table === t)).toBe(false);
     }

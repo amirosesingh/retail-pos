@@ -22,7 +22,7 @@ The previous engine derived "expected central columns" from the **local** master
 schema narrowed by the push contract. The local schema carries till-only
 bookkeeping (`is_synced`, `sync_status`, `last_error_at`, `branch_id`,
 `updated_at`, …) and till-only tables (`sync_state`, `system_settings`,
-`transfers`, `shift_notifications`). Any mismatch in that narrowing raised
+`transfers`). Any mismatch in that narrowing raised
 false "missing column" alarms, while genuinely wrong central types went
 unnoticed. The comparison direction is now fixed: the authoritative central
 definition is the only yardstick, and the local schema is never consulted for

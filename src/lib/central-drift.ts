@@ -8,7 +8,7 @@
  *
  * The local till schema plays no part here. Till-only bookkeeping columns
  * (is_synced, sync_status, last_error_at, …) and till-only tables
- * (sync_state, system_settings, transfers, shift_notifications) are not in
+ * (sync_state, system_settings, transfers) are not in
  * the authoritative definition, so they can never raise a false alarm.
  *
  * Columns found centrally but not in the definition are NOT drift: they are

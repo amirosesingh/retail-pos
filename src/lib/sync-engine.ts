@@ -276,7 +276,19 @@ function versionedOp(entry: QueuedOp): SyncOp {
  * report the result. Nothing is stored or retried on the device.
  */
 export async function runOpLive(context: string, op: SyncOp): Promise<void> {
-  if ((op.table === "stores" || refusedTables.has(op.table) || preferRelay()) && canRelay()) {
+  // Shift rows intentionally expose only a safe SELECT projection, while a
+  // generic PostgREST upsert requires table-wide SELECT. Day-end summaries
+  // also need to work for PIN sessions that have no Supabase Auth token. Both
+  // already have a branch-scoped server relay, so avoid a guaranteed 403/401
+  // direct attempt before using it.
+  if (
+    (op.table === "stores" ||
+      op.table === "shifts" ||
+      op.table === "shift_notifications" ||
+      refusedTables.has(op.table) ||
+      preferRelay()) &&
+    canRelay()
+  ) {
     const relayed = await viaRelay(context, op);
     if (relayed.ok) return;
     throw new Error(relayed.error ?? "The server could not save this change");

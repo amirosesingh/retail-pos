@@ -10,6 +10,7 @@ import { supabaseExternal as supabase } from "@/integrations/supabase/external-c
 import type { Sale, Shift } from "@/core/types/pos-types";
 import { getPosCallerAuth } from "./pos-caller-auth";
 import { sendWhatsAppBill } from "./whatsapp.functions";
+import { runOpLive } from "./sync-engine";
 
 export type ShiftSummary = {
   id: string;
@@ -146,11 +147,10 @@ export function buildShiftSummary(
 type Row = Record<string, unknown>;
 
 /**
- * `shift_notifications` may not be in generated types yet, so reach it through
- * a loose handle. The canonical central installer is supabase/schema.sql.
+ * `shift_notifications` may not be in generated types yet, so reach its read
+ * query through a loose handle. Writes use the existing authenticated relay.
  */
 type LooseTable = {
-  insert: (values: Row) => Promise<{ error: { message: string } | null }>;
   select: (columns: string) => {
     order: (
       column: string,
@@ -194,23 +194,30 @@ export async function publishShiftSummary(
   channels: string[],
 ): Promise<void> {
   try {
-    await notifications().insert({
-      shift_id: input.shiftId,
-      store_id: input.storeId,
-      store_name: input.storeName,
-      terminal_name: input.terminalName,
-      closed_by: input.closedBy,
-      opened_at: input.openedAt,
-      closed_at: input.closedAt,
-      total_sales: input.totalSales,
-      transactions: input.transactions,
-      discounts: input.discounts,
-      refunds: input.refunds,
-      expected_cash: input.expectedCash,
-      counted_cash: input.countedCash,
-      payment_breakdown: input.paymentBreakdown,
-      summary: input.summary,
-      channels,
+    await runOpLive("Publishing shift summary", {
+      kind: "upsert",
+      table: "shift_notifications",
+      onConflict: "shift_id",
+      rows: [
+        {
+          shift_id: input.shiftId,
+          store_id: input.storeId,
+          store_name: input.storeName,
+          terminal_name: input.terminalName,
+          closed_by: input.closedBy,
+          opened_at: input.openedAt,
+          closed_at: input.closedAt,
+          total_sales: input.totalSales,
+          transactions: input.transactions,
+          discounts: input.discounts,
+          refunds: input.refunds,
+          expected_cash: input.expectedCash,
+          counted_cash: input.countedCash,
+          payment_breakdown: input.paymentBreakdown,
+          summary: input.summary,
+          channels,
+        },
+      ],
     });
   } catch {
     /* the summary is still shown on this device */
