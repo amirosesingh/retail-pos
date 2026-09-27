@@ -5079,7 +5079,20 @@ EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL;
           WHEN duplicate_column THEN NULL; WHEN invalid_table_definition THEN NULL;
           WHEN unique_violation THEN NULL; END $do$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS activity_events_client_event_id_key ON public.activity_events USING btree (client_event_id) WHERE (client_event_id IS NOT NULL);
+DO $do$ BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM pg_index ix
+      JOIN pg_class idx ON idx.oid = ix.indexrelid
+      JOIN pg_namespace ns ON ns.oid = idx.relnamespace
+     WHERE ns.nspname = 'public'
+       AND idx.relname = 'activity_events_client_event_id_key'
+       AND ix.indpred IS NOT NULL
+  ) THEN
+    DROP INDEX public.activity_events_client_event_id_key;
+  END IF;
+END $do$;
+CREATE UNIQUE INDEX IF NOT EXISTS activity_events_client_event_id_key ON public.activity_events USING btree (client_event_id);
 
 CREATE INDEX IF NOT EXISTS activity_events_created_idx ON public.activity_events USING btree (created_at DESC);
 
