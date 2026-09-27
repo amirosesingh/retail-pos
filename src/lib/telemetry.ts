@@ -136,10 +136,25 @@ function withoutDropped(row: TelemetryRow): Record<string, unknown> {
   return out;
 }
 
+type TelemetrySession = { access_token?: string | null } | null;
+
+/** Anonymous Data API writes are rejected; do not start one during sign-out. */
+export const hasTelemetryAuthSession = (session: TelemetrySession): boolean =>
+  Boolean(session?.access_token);
+
 /** Send this terminal's status up. Failures are silent — it is only telemetry. */
 export async function publishTelemetry(staff?: { name?: string | null; role?: string | null }) {
   if (typeof window === "undefined") return;
   if (!isOnline()) return;
+  // The POS identity can outlive the Supabase session for a few milliseconds
+  // while logout/sign-in effects settle. Re-check at the write boundary so a
+  // stale React identity cannot emit an anonymous heartbeat and a noisy 401.
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !hasTelemetryAuthSession(data.session)) return;
+  } catch {
+    return;
+  }
   const row = snapshot(staff);
   for (let attempt = 0; attempt < 8; attempt++) {
     try {

@@ -8714,8 +8714,21 @@ CREATE TABLE IF NOT EXISTS public.shift_variance_alerts (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+DO $do$ BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM pg_index ix
+      JOIN pg_class idx ON idx.oid = ix.indexrelid
+      JOIN pg_namespace ns ON ns.oid = idx.relnamespace
+     WHERE ns.nspname = 'public'
+       AND idx.relname = 'shift_variance_alerts_recon_uidx'
+       AND ix.indpred IS NOT NULL
+  ) THEN
+    DROP INDEX public.shift_variance_alerts_recon_uidx;
+  END IF;
+END $do$;
 CREATE UNIQUE INDEX IF NOT EXISTS shift_variance_alerts_recon_uidx
-  ON public.shift_variance_alerts (reconciliation_id) WHERE reconciliation_id IS NOT NULL;
+  ON public.shift_variance_alerts (reconciliation_id);
 
 GRANT SELECT, UPDATE ON public.shift_variance_alerts TO authenticated;
 GRANT ALL ON public.shift_variance_alerts TO service_role;

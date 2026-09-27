@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { health, mergeTerminalTelemetry, type TelemetryRow } from "../telemetry";
+import {
+  hasTelemetryAuthSession,
+  health,
+  mergeTerminalTelemetry,
+  type TelemetryRow,
+} from "../telemetry";
 
 const live: TelemetryRow = {
   terminal_id: "terminal-live",
@@ -20,6 +25,12 @@ const live: TelemetryRow = {
 };
 
 describe("current terminal telemetry", () => {
+  it("does not publish during the Supabase sign-out transition", () => {
+    expect(hasTelemetryAuthSession(null)).toBe(false);
+    expect(hasTelemetryAuthSession({ access_token: "" })).toBe(false);
+    expect(hasTelemetryAuthSession({ access_token: "authenticated-jwt" })).toBe(true);
+  });
+
   it("shows every registered terminal, including one that has never checked in", () => {
     const rows = mergeTerminalTelemetry(
       [live],

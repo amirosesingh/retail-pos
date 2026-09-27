@@ -81,3 +81,14 @@ describe("card and digital totals cannot be negative", () => {
     });
   }
 });
+
+describe("variance alert idempotency", () => {
+  it("keeps a full unique reconciliation index for the existing ON CONFLICT target", () => {
+    expect(sql).toContain(
+      "ON public.shift_variance_alerts (reconciliation_id);",
+    );
+    expect(sql).not.toContain(
+      "ON public.shift_variance_alerts (reconciliation_id) WHERE reconciliation_id IS NOT NULL;",
+    );
+  });
+});
