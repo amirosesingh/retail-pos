@@ -42,6 +42,7 @@ import {
   Wrench,
   ChefHat,
   PackageSearch,
+  ArrowLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
@@ -2283,7 +2284,18 @@ function Register() {
 
   return (
     <AppShell>
-      <ZoomCanvas>
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex shrink-0 items-center border-b border-border bg-background px-3 py-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void navigate({ to: "/", search: {}, replace: true })}
+          >
+            <ArrowLeft className="size-4" /> Back to workspace
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1">
+          <ZoomCanvas>
         <RegisterActionsProvider handlers={registerActionHandlers}>
           <RegisterWorkspace
             terminalKey={terminalKey}
@@ -2445,7 +2457,9 @@ function Register() {
             setQuery("");
           }}
         />
-      </ZoomCanvas>
+          </ZoomCanvas>
+        </div>
+      </div>
 
       {/* Live receipt preview overlay */}
       <Sheet open={receiptPreview} onOpenChange={setReceiptPreview}>

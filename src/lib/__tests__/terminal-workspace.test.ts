@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { orderWorkspaceGroups, shouldOpenRegister } from "@/lib/terminal-workspace";
 
 describe("terminal workspace landing", () => {
-  it("opens retail cashiers directly into the shared register", () => {
+  it("opens retail cashiers in the workspace until Sell now is explicit", () => {
     expect(
       shouldOpenRegister({
         purpose: "retail",
@@ -10,7 +10,7 @@ describe("terminal workspace landing", () => {
         isSupervisor: false,
         isCashier: true,
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it.each(["warehouse", "inventory", "receiving", "management"] as const)(

@@ -75,7 +75,18 @@ export function clearAutoLockActivity(): void {
   window.localStorage.removeItem(LAST_ACTIVITY_KEY);
 }
 
-const EVENTS = ["pointerdown", "keydown", "wheel", "touchstart", "mousemove"] as const;
+// Capture every genuine user interaction that can change application state.
+// `input`/`change` also cover keyboard-less scanners and native form controls.
+const EVENTS = [
+  "pointerdown",
+  "pointermove",
+  "keydown",
+  "wheel",
+  "touchstart",
+  "input",
+  "change",
+  "submit",
+] as const;
 
 /**
  * Lock `onLock` in when the screen has been left alone. Nothing happens while

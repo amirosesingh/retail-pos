@@ -1,10 +1,8 @@
-// @lovable.dev/vite-tanstack-config already includes the following — do NOT add them manually
-// or the app will break with duplicate plugins:
-//   - TanStack devtools (dev-only, first), tanstackStart, viteReact, tailwindcss, tsConfigPaths,
-//     nitro (build-only using cloudflare as a default target), VITE_* env injection, @ path alias,
-//     React/TanStack dedupe, error logger plugins, and sandbox detection (port/host/strictPort).
-// You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
-import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import tailwindcss from "@tailwindcss/vite";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import { nitro } from "nitro/vite";
+import { defineConfig } from "vite";
 import type { Plugin } from "vite";
 import webOnlyEnv from "./scripts/web-only-env-names.json" with { type: "json" };
 
@@ -59,8 +57,6 @@ const isMobile = Boolean(process.env["MOBILE_BUILD"]);
  * preset and output layout that wrangler.jsonc points at, so CI never falls
  * back to a Node target.
  */
-const isCloudflare = Boolean(process.env["CLOUDFLARE_BUILD"]);
-
 /**
  * Android and Windows are shipped artifacts handed to other shops, so no web
  * deployment value may end up inside them. Two guards, both build-time:
@@ -82,70 +78,53 @@ const blankWebEnv = Object.fromEntries(
 );
 
 export default defineConfig({
-  plugins: [stripThirdPartyRscMarkers(), alignNitroRolldownOutput()],
-  ...(isCloudflare
-    ? {
-        nitro: {
-          preset: "cloudflare-module" as const,
-          output: {
-            dir: "dist",
-            serverDir: "dist/server",
-            publicDir: "dist/client",
-          },
-          cloudflare: { nodeCompat: true },
-        },
-      }
-    : {}),
-  // The desktop (Electron) build targets a plain Node server that the Electron
-  // main process starts on 127.0.0.1 — this app is SSR, so there is no static
-  // index.html to load over file://. The browser/cloud build is unchanged.
-  ...(isDesktop
-    ? {
-        nitro: {
-          preset: "node-server" as const,
-          output: {
-            dir: "dist-desktop",
-            serverDir: "dist-desktop/server",
-            publicDir: "dist-desktop/public",
-          },
-        },
-      }
-    : {}),
-  // Android build: a plain Node server output that scripts/mobile-build.cjs
-  // renders once into a static app shell, which is what ships inside the APK.
-  ...(isMobile
-    ? {
-        nitro: {
-          preset: "node-server" as const,
-          output: {
-            dir: "dist",
-            serverDir: "dist/server",
-            publicDir: "dist/client",
-          },
-        },
-      }
-    : {}),
+  server: { host: "::", port: 8080 },
+  css: { transformer: "lightningcss" },
+  resolve: {
+    tsconfigPaths: true,
+    dedupe: ["react", "react-dom", "@tanstack/react-router", "@tanstack/react-query"],
+  },
+  plugins: [
+    stripThirdPartyRscMarkers(),
+    tanstackStart({ server: { entry: "server" } }),
+    nitro(
+      isDesktop
+        ? {
+            preset: "node-server",
+            output: {
+              dir: "dist-desktop",
+              serverDir: "dist-desktop/server",
+              publicDir: "dist-desktop/public",
+            },
+          }
+        : isMobile
+          ? {
+              preset: "node-server",
+              output: {
+                dir: "dist",
+                serverDir: "dist/server",
+                publicDir: "dist/client",
+              },
+            }
+          : {
+              preset: "cloudflare-module",
+              output: {
+                dir: "dist",
+                serverDir: "dist/server",
+                publicDir: "dist/client",
+              },
+              cloudflare: { nodeCompat: true },
+            },
+    ),
+    alignNitroRolldownOutput(),
+    tailwindcss(),
+    viteReact(),
+  ],
   ...(isTerminalBuild
     ? {
-        // Deny by default: the Lovable wrapper otherwise runs
-        // loadEnv(mode, process.cwd(), "VITE_") and defines EVERY VITE_* name
-        // it finds in the repository's .env — ignoring `envDir`. Turning
-        // envDefine off means a new VITE_* variable added to the web
-        // environment in the future cannot reach Android or Windows either.
-        envDefine: false as const,
-        vite: {
-          // No .env file in this repository is visible to a device build.
-          envDir: "scripts/no-env",
-          define: blankWebEnv,
-        },
+        // No repository or CI web environment value is visible to a device build.
+        envDir: "scripts/no-env",
+        define: blankWebEnv,
       }
     : {}),
-  tanstackStart: {
-    // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
-    // nitro/vite builds from this
-    server: { entry: "server" },
-    // The phone build renders entirely on the device: prerender the shell once
-    // and let the client router take every route from there (file:// has no
-    // server to ask for HTML).
-  },
 });

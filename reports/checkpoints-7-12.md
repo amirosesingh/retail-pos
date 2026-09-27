@@ -24,7 +24,7 @@ disabled pending live acceptance and the later rollout checkpoints.
 - No production SQLite dependency, database-file fallback, SQL Browser lookup,
   UDP 1434 discovery, named-instance path, arbitrary renderer SQL channel, or
   network scan is present.
-- The generated Lovable Supabase clients are not imported by application code.
+- Legacy generated Supabase clients are not imported by application code.
 - The Windows rollout switches remain off until the later acceptance and
   release checkpoints.
 

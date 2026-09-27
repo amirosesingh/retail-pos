@@ -250,7 +250,13 @@ const rowToToken = (r: Record<string, any>): TerminalToken => ({
 /* ----------------------------- admin surface ---------------------------- */
 
 export async function listTerminalTokens(): Promise<TerminalToken[]> {
-  const { data, error } = await table().select("*").order("created_at", { ascending: false });
+  const { data, error } = await table()
+    .select(
+      "id,location_id,location_name,device_name,platform,status,created_at,activated_at,revoked_at,last_seen_at,reissued_at,replaced_by,claimed_by_device,claimed_at,is_claimed,expires_at,app_version,last_sync_at",
+    )
+    .is("revoked_at", null)
+    .in("status", ["active", "used"])
+    .order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []).map(rowToToken);
 }
@@ -345,20 +351,6 @@ export async function reissueTerminalToken(
       platform: token.platform,
     }),
   };
-}
-
-export async function restoreTerminalToken(id: string): Promise<void> {
-  const { error } = await table().update({ status: "active", revoked_at: null }).eq("id", id);
-  if (error) throw error;
-}
-
-/**
- * Remove a retired entry from the table. Only a revoked or already-spent code
- * can be deleted, so a live till is never cut off by a stray click.
- */
-export async function deleteTerminalToken(id: string): Promise<void> {
-  const { error } = await table().delete().eq("id", id).eq("status", "revoked");
-  if (error) throw error;
 }
 
 /* --------------------------- terminal surface --------------------------- */

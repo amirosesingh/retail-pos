@@ -2,7 +2,7 @@
 
 /** Fast, deterministic checks that catch incomplete conflict resolution. */
 const { execFileSync } = require("node:child_process");
-const { readFileSync } = require("node:fs");
+const { existsSync, readFileSync } = require("node:fs");
 
 const git = (...args) => execFileSync("git", args, { encoding: "utf8" });
 const fail = (message) => {
@@ -20,7 +20,10 @@ if (git("ls-files", "-u").trim()) fail("the Git index contains unresolved files"
 
 const textExtensions = /\.(?:cjs|js|jsx|mjs|ts|tsx|css|md|json|sql|toml|ya?ml)$/i;
 for (const file of git("ls-files", "-z").split("\0").filter(Boolean)) {
-  if (!textExtensions.test(file) || file === "package-lock.json") continue;
+  // A readiness check commonly runs while obsolete tracked files are staged
+  // for deletion. They are no longer part of the candidate tree and cannot be
+  // read from disk, so inspect only files that still exist.
+  if (!existsSync(file) || !textExtensions.test(file) || file === "package-lock.json") continue;
   const contents = readFileSync(file, "utf8");
   if (/^(?:<<<<<<<|=======|>>>>>>>)(?: |$)/m.test(contents)) fail(`${file} contains a conflict marker`);
   if (/\.inputValidator\(/.test(contents)) fail(`${file} still uses deprecated inputValidator()`);

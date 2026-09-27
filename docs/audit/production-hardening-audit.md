@@ -16,7 +16,7 @@ rebuilt, duplicated or replaced. Emergency access was kept.
 | Duplicate sale writer | **Fixed** (was dead + risky) | `db.recordSale` was fire-and-forget; the register uses the awaited `pos-store` path. The unawaited copy is removed. |
 | Idempotency | Implemented | Client-generated ids with `on_conflict` merge (`pos-relay.server.ts:347-368`), per-tender `client_transaction_id` 409 reconciliation, movement-id dedupe in `stock_apply_deltas`. |
 | Approvals | Implemented | Ticket snapshot + fingerprint verified at claim time; single-use grant. |
-| Secrets / `.env` | No action needed | `.env` holds only the Lovable-managed publishable key, URL and project id, and is git-ignored (`.gitignore:39`). No service-role key, JWT or `sb_secret_` value present, so nothing requires rotation. |
+| Secrets / `.env` | No action needed | `.env` held only a public publishable key, URL and project id, and is git-ignored (`.gitignore:39`). No service-role key, JWT or `sb_secret_` value was present, so nothing required rotation. |
 | Emergency access | Untouched | Device-clock code, independent of network, registration and cloud config, as specified. |
 
 ## Fixes applied

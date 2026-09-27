@@ -1,15 +1,10 @@
 import { createStart, createCsrfMiddleware, createMiddleware } from "@tanstack/react-start";
 
 import { renderErrorPage } from "./lib/error-page";
-// Auth helpers target the Supabase project named by the environment,
-// not the managed Cloud backend.
+// Auth helpers target only the operator-configured Supabase project.
 import { attachExternalSupabaseAuth } from "@/integrations/supabase/external-auth-attacher";
-// The Lovable-managed attacher (`@/integrations/supabase/auth-attacher`) is
-// deliberately NOT registered: it builds the managed client from
-// VITE_SUPABASE_* / SUPABASE_*, which a till or APK never carries, so every
-// server-function call raised "Missing Supabase environment variable(s)".
-// The operator's own project is the only one this app talks to, and its
-// bearer comes from `attachExternalSupabaseAuth` below.
+// Device builds deliberately carry no baked-in VITE_SUPABASE_* values. The
+// operator's project and bearer are resolved by this attacher at runtime.
 import { sessionExpiryMiddleware } from "@/lib/session-expiry.middleware";
 
 const errorMiddleware = createMiddleware().server(async ({ next }) => {

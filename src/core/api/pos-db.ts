@@ -1081,7 +1081,11 @@ export async function loadCloudState(storeId?: string | null): Promise<CloudSlic
     members.error ||
     sales.error ||
     promotions.error ||
-    settings.error;
+    settings.error ||
+    // Location discovery is critical. `null` means the query did not answer;
+    // `[]` is a valid authoritative answer and must be allowed through so stale
+    // cached branches are removed instead of being restored.
+    (stores.data === null ? new Error("Could not load the location directory") : null);
   if (err) return loadLocalState(err);
 
   tierIdByName = {};

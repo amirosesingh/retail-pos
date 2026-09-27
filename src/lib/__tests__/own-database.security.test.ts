@@ -2,9 +2,8 @@
  * This POS talks to the operator's own database only.
  *
  * Every read and write must go through `supabaseExternal` (their Supabase) or
- * the server relay that uses their service key. The Lovable-managed client is
- * generated into `src/integrations/supabase/` and must stay unimported by the
- * application, so it can never quietly become the store of record again.
+ * the server relay that uses their service key. Legacy generated clients must
+ * stay absent so they can never quietly become the store of record again.
  */
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -23,7 +22,7 @@ const FORBIDDEN = [
   /from\s+["']@\/integrations\/supabase\/client["']/,
   /from\s+["']@\/integrations\/supabase\/client\.server["']/,
   /from\s+["']@\/integrations\/supabase\/auth-middleware["']/,
-  // The managed bearer attacher instantiates the managed client on every
+  // A generated bearer attacher would instantiate the wrong client on every
   // server-fn call, which is what produced "Missing Supabase environment
   // variable(s)" on tills and APKs. Only the external attacher may be used.
   /from\s+["']@\/integrations\/supabase\/auth-attacher["']/,
@@ -53,7 +52,7 @@ const HARDCODED = [
 ];
 
 describe("database ownership", () => {
-  it("no application file imports the Lovable-managed database client", () => {
+  it("no application file imports a legacy generated database client", () => {
     const offenders = walk(ROOT).filter((file) => {
       const source = readFileSync(file, "utf8");
       return FORBIDDEN.some((pattern) => pattern.test(source));
