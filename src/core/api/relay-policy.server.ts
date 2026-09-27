@@ -45,6 +45,7 @@ export type RelayDenial = {
 const STORE_COLUMN: Record<string, string> = {
   sales: "store_id",
   shifts: "store_id",
+  shift_notifications: "store_id",
   shift_sessions: "store_id",
   held_orders: "store_id",
   bookings: "store_id",
@@ -355,6 +356,7 @@ export async function authorizeRelayOp(
     "activity_events",
     "entity_status_history",
     "member_verifications",
+    "shift_notifications",
   ]);
   if (appendOnlyTables.has(op.table) && op.kind !== "insert" && op.kind !== "upsert")
     return deny("PERMISSION_DENIED", `"${op.table}" is append-only through terminal sync.`);

@@ -5,7 +5,7 @@
  * This file is hand-maintained. It is intentionally NOT derived at runtime
  * from the local till schema: the till carries local-only bookkeeping
  * columns (is_synced, sync_status, last_error_at, …) and local-only tables
- * (sync_state, system_settings, transfers, shift_notifications) that must
+ * (sync_state, system_settings, transfers) that must
  * never be demanded of the central database.
  *
  * Bump CENTRAL_SCHEMA_VERSION whenever this definition changes. It is
@@ -16,7 +16,7 @@
  *   optional — used by some flows; reported but never blocks.
  *   legacy   — kept for historical data; never repaired, never dropped.
  */
-export const CENTRAL_SCHEMA_VERSION = 1;
+export const CENTRAL_SCHEMA_VERSION = 2;
 
 export type CentralColumnClass = "required" | "optional" | "legacy";
 
@@ -305,6 +305,52 @@ export const CENTRAL_SCHEMA: CentralTableSchema[] = [
       { name: "variance_card", pgType: "numeric(18,4)" },
       { name: "variance_digital", pgType: "numeric(18,4)" },
       { name: "variance_total", pgType: "numeric(18,4)" },
+    ],
+  },
+  {
+    table: "shift_notifications",
+    label: "Shift summaries",
+    primaryKey: "id",
+    columns: [
+      { name: "id", pgType: "uuid" },
+      { name: "shift_id", pgType: "uuid" },
+      { name: "store_id", pgType: "text" },
+      { name: "store_name", pgType: "text" },
+      { name: "terminal_name", pgType: "text" },
+      { name: "closed_by", pgType: "text" },
+      { name: "opened_at", pgType: "timestamptz" },
+      { name: "closed_at", pgType: "timestamptz" },
+      { name: "total_sales", pgType: "numeric" },
+      { name: "transactions", pgType: "integer" },
+      { name: "discounts", pgType: "numeric" },
+      { name: "refunds", pgType: "numeric" },
+      { name: "expected_cash", pgType: "numeric" },
+      { name: "counted_cash", pgType: "numeric" },
+      { name: "payment_breakdown", pgType: "jsonb" },
+      { name: "summary", pgType: "text" },
+      { name: "channels", pgType: "text[]" },
+      { name: "created_at", pgType: "timestamptz" },
+    ],
+    indexes: [
+      {
+        name: "shift_notifications_store_closed_idx",
+        sql: "CREATE INDEX IF NOT EXISTS shift_notifications_store_closed_idx ON public.shift_notifications (store_id, closed_at DESC);",
+        dependsOnColumns: ["store_id", "closed_at"],
+        always: true,
+      },
+    ],
+    constraints: [
+      { name: "shift_notifications_shift_key", definition: "unique (shift_id)" },
+    ],
+    policies: [
+      {
+        name: "Branch staff publish shift summaries",
+        sql: "CREATE POLICY \"Branch staff publish shift summaries\" ON public.shift_notifications FOR INSERT TO authenticated WITH CHECK (public.is_staff_now() AND public.store_visible(store_id));",
+      },
+      {
+        name: "Variance viewers read shift summaries",
+        sql: "CREATE POLICY \"Variance viewers read shift summaries\" ON public.shift_notifications FOR SELECT TO authenticated USING (public.has_perm('can_shift_variance_view') AND public.store_visible(store_id));",
+      },
     ],
   },
   {

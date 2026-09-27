@@ -116,4 +116,11 @@ describe("per-user notification state", () => {
     expect(route).toContain("withCors(Response.json");
     expect(route).toContain("OPTIONS: async ({ request }) => corsPreflight(request)");
   });
+
+  it("reuses the canonical relay identity scope for supervisor access", () => {
+    const route = readFileSync("src/routes/api/v1/pos/activity-preferences.ts", "utf8");
+    expect(route).toContain("resolveRelayScope(caller)");
+    expect(route).toContain("scope.isSupervisor || scope.permissions.can_view_audit_trail === true");
+    expect(route).not.toContain("const identities = [");
+  });
 });

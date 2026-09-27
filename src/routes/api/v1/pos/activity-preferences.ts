@@ -38,39 +38,30 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         if (!parsed.success) return reply({ ok: false, error: "Invalid request" }, 400);
         const input = parsed.data;
         const { verifyRelayCaller, serviceRest } = await import("@/core/api/pos-relay.server");
+        const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
         let caller: Awaited<ReturnType<typeof verifyRelayCaller>>;
         try {
           caller = await verifyRelayCaller(input);
         } catch {
           return reply({ ok: false, error: "Sign in is required" }, 401);
         }
-        // Resolve from the live account row. A terminal token or cached role
-        // claim alone must never read this feed or clear another user's row.
-        const identities = [
-          caller.authUserId && `auth_user_id=eq.${encodeURIComponent(caller.authUserId)}`,
-          caller.staffUserId && `user_id=eq.${encodeURIComponent(caller.staffUserId)}`,
-          caller.email && `email=eq.${encodeURIComponent(caller.email)}`,
-        ].filter((value): value is string => Boolean(value));
-        type Account = { user_id: string; role: string; role_slug: string | null; permissions: Record<string, boolean> | null; store_id: string | null; is_active: boolean };
-        let account: Account | undefined;
-        for (const identity of identities) {
-          const response = await serviceRest(`app_users?${identity}&select=user_id,role,role_slug,permissions,store_id,is_active&limit=1`);
-          if (!response.ok) return reply({ ok: false, error: "Account lookup failed" }, 503);
-          account = ((await response.json()) as Account[])[0];
-          if (account) break;
-        }
-        if (!account?.is_active || !(
-          account.role === "admin" || account.role === "manager" ||
-          account.role_slug === "admin" || account.role_slug === "supervisor" ||
-          account.permissions?.can_view_audit_trail === true
-        )) return reply({ ok: false, error: "Activity access denied" }, 403);
+        // Reuse the relay's canonical account resolver. Besides Auth id, staff
+        // id and email, it safely falls back to the verified session label and
+        // signed claims. The former hand-rolled lookup missed those legitimate
+        // supervisor sessions and returned a false 403.
+        const scope = await resolveRelayScope(caller);
+        if (
+          scope.stale ||
+          !scope.staffUserId ||
+          !(scope.isSupervisor || scope.permissions.can_view_audit_trail === true)
+        ) return reply({ ok: false, error: "Activity access denied" }, 403);
 
         if (input.action === "clear") {
           if (!input.eventId || input.cleared === undefined)
             return reply({ ok: false, error: "Event and clear state are required" }, 400);
           const response = await serviceRest("rpc/pos_set_activity_event_cleared", {
             method: "POST",
-            body: JSON.stringify({ p_event_id: input.eventId, p_user_id: account.user_id, p_cleared: input.cleared }),
+            body: JSON.stringify({ p_event_id: input.eventId, p_user_id: scope.staffUserId, p_cleared: input.cleared }),
           });
           if (!response.ok) return reply({ ok: false, error: "Could not save notification state" }, 503);
           return reply({ ok: true });
@@ -84,8 +75,8 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         });
         if (input.types?.length) params.set("event_type", `in.(${input.types.join(",")})`);
         if (input.severities?.length) params.set("severity", `in.(${input.severities.join(",")})`);
-        const branch = account.store_id ?? caller.storeId ?? null;
-        if (branch && account.role !== "admin" && account.role_slug !== "admin") {
+        const branch = scope.storeId;
+        if (branch && scope.role !== "admin" && scope.roleSlug !== "admin") {
           if (input.storeId && input.storeId !== branch)
             return reply({ ok: false, error: "Branch access denied" }, 403);
           params.set("store_id", `eq.${branch}`);
