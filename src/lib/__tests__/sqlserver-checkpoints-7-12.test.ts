@@ -15,6 +15,18 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(migration).toContain("unexpected sale_items guard; migration stopped safely");
   });
 
+  it("deploys the canonical explicit-branch guard to change-tracked sale items", () => {
+    const schema = readFileSync("supabase/schema.sql", "utf8");
+    const migration = readFileSync(
+      "supabase/migrations/20260927090830_fix_sale_item_batch_branch_guard.sql",
+      "utf8",
+    );
+    const guard = "COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id";
+    expect(schema).toContain(guard);
+    expect(migration).toContain(guard);
+    expect(migration).toContain("unexpected sale_items guard; migration stopped safely");
+  });
+
   it("stamps only missing legacy audit branches before enforcing isolation", () => {
     const schema = readFileSync("supabase/schema.sql", "utf8");
     const migration = readFileSync(
