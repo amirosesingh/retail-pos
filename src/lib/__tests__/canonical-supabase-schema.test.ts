@@ -38,6 +38,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260927134916_fix_secure_shift_reads.sql",
       "supabase/migrations/20260927135206_harden_secure_shift_projection.sql",
       "supabase/migrations/20260927155845_enrich_shift_variance_alert_details.sql",
+      "supabase/migrations/20260927162020_fix_shift_variance_conflict.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
