@@ -108,7 +108,11 @@ export function profitOf(sales: Sale[], products: Product[] = []): ProfitTotals 
 export type HourlyProfit = { hour: string; revenue: number; cogs: number; profit: number };
 
 /** Revenue and profit per hour of the day, for the trading-pattern chart. */
-export function hourlyProfit(sales: Sale[], products: Product[] = []): HourlyProfit[] {
+export function hourlyProfit(
+  sales: Sale[],
+  products: Product[] = [],
+  hourOf: (value: string) => number = (value) => new Date(value).getHours(),
+): HourlyProfit[] {
   const hours: HourlyProfit[] = Array.from({ length: 24 }, (_, h) => ({
     hour: `${h}:00`,
     revenue: 0,
@@ -117,7 +121,7 @@ export function hourlyProfit(sales: Sale[], products: Product[] = []): HourlyPro
   }));
   for (const sale of sales) {
     if (sale.refunded) continue;
-    const bucket = hours[new Date(sale.createdAt).getHours()];
+    const bucket = hours[hourOf(sale.createdAt)];
     if (!bucket) continue;
     bucket.revenue += saleNetRevenue(sale);
     for (const line of sale.lines) bucket.cogs += lineCost(line, products);

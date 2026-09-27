@@ -4203,6 +4203,7 @@ export type Database = {
           cost: number | null
           product_id: string | null
           product_name: string | null
+          product_category: string | null
           profit: number | null
           revenue: number | null
           sale_day: string | null

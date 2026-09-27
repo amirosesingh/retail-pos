@@ -81,3 +81,32 @@ export function formatDate(value: string | number | Date, extra: Intl.DateTimeFo
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString(localeForOrder(), opts(extra));
 }
+
+/** Stable YYYY-MM-DD key in the configured trading zone. */
+export function posDayKey(value: string | number | Date = new Date()): string {
+  const d = asDate(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    ...(zone ? { timeZone: zone } : {}),
+  }).formatToParts(d);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+/** Trading-zone hour for bucketing live dashboard activity. */
+export function posHour(value: string | number | Date): number {
+  const d = asDate(value);
+  if (Number.isNaN(d.getTime())) return 0;
+  const hour = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    hourCycle: "h23",
+    ...(zone ? { timeZone: zone } : {}),
+  })
+    .formatToParts(d)
+    .find((entry) => entry.type === "hour")?.value;
+  return Math.min(23, Math.max(0, Number(hour) || 0));
+}

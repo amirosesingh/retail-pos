@@ -1,21 +1,15 @@
 /**
  * The settings window.
  *
- * Desktop and Electron get a two-panel layout: a navigation rail that stays put
- * while the page on the right scrolls. Phones and tablets get the same
- * navigation as a slide-over from the header, so no page is a dead end.
+ * Keeps one compact category toolbar above the current settings page. The main
+ * application shell remains the only sidebar on every platform.
  */
 import { Link, useRouterState } from "@tanstack/react-router";
-import { ChevronLeft, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { ChevronLeft } from "lucide-react";
+import { useEffect, type ReactNode } from "react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
-import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import {
-  readNavCollapsed,
-  SettingsLink,
-  SettingsNavTree,
-  writeNavCollapsed,
-} from "@/platforms/web/components/pos/settings/SettingsNavTree";
+import { SettingsLink } from "@/platforms/web/components/pos/settings/SettingsNavTree";
+import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import {
   cardForLocation,
   useSettingsNav,
@@ -24,7 +18,7 @@ import {
 export { SettingsLink };
 
 /**
- * Wraps a settings page. `home` drops the breadcrumb and the rail highlight for
+ * Wraps a settings page. `home` drops the breadcrumb and category toolbar for
  * the settings landing page, which draws its own header.
  */
 export function SettingsShell({ children, home = false }: { children: ReactNode; home?: boolean }) {
@@ -34,22 +28,7 @@ export function SettingsShell({ children, home = false }: { children: ReactNode;
   const tab = typeof search["tab"] === "string" ? search["tab"] : undefined;
   const active = home ? null : cardForLocation(cards, pathname, tab);
   const category = categories.find((g) => g.id === active?.category);
-  const [drawer, setDrawer] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-
-  // Read on the client only, so the first paint matches what the server sent.
-  useEffect(() => setCollapsed(readNavCollapsed()), []);
-
-  const setRail = (next: boolean) => {
-    setCollapsed(next);
-    writeNavCollapsed(next);
-  };
-
-  useEffect(() => setDrawer(false), [pathname, tab]);
-
-  // The app shell and this settings shell each have fixed-height panels. Keep
-  // the document itself still so expanding navigation groups cannot create a
-  // second browser/window scrollbar beside the panel scrollbars.
+  // The app shell owns the viewport; settings content owns its single scrollbar.
   useEffect(() => {
     const htmlOverflow = document.documentElement.style.overflow;
     const bodyOverflow = document.body.style.overflow;
@@ -63,66 +42,16 @@ export function SettingsShell({ children, home = false }: { children: ReactNode;
 
   return (
     <AppShell>
-      <div className="flex h-full max-h-full min-h-0 w-full overflow-hidden">
-        <nav
-          aria-label="Settings navigation"
+      <div className="flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden">
+        <div
           className={
-            "hidden h-full min-h-0 shrink-0 flex-col border-r border-border bg-sidebar/40 px-2 py-3 lg:flex " +
-            (collapsed ? "w-14" : "w-64 xl:w-72")
+            "z-20 shrink-0 border-b border-border bg-background/95 px-3 py-2 text-xs backdrop-blur " +
+            (home ? "hidden" : "block")
           }
         >
-          <div className={"mb-1 flex " + (collapsed ? "justify-center" : "justify-end")}>
-            <button
-              type="button"
-              onClick={() => setRail(!collapsed)}
-              title={collapsed ? "Widen the settings list" : "Narrow the settings list"}
-              aria-label={collapsed ? "Widen the settings list" : "Narrow the settings list"}
-              aria-pressed={collapsed}
-              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              {collapsed ? (
-                <PanelLeftOpen className="size-4" />
-              ) : (
-                <PanelLeftClose className="size-4" />
-              )}
-            </button>
-          </div>
-          <div className="min-h-0 flex-1">
-            <SettingsNavTree
-              activeId={active?.id}
-              activeCategory={active?.category}
-              collapsed={collapsed}
-              onExpand={() => setRail(false)}
-            />
-          </div>
-        </nav>
-
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div
-            className={
-              "z-20 shrink-0 items-center gap-1.5 border-b border-border bg-background/95 px-3 py-2 text-xs backdrop-blur " +
-              (home ? "flex lg:hidden" : "flex")
-            }
-          >
-            <Sheet open={drawer} onOpenChange={setDrawer}>
-              <SheetTrigger
-                aria-label="Open settings navigation"
-                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
-              >
-                <Menu className="size-4" />
-              </SheetTrigger>
-              <SheetContent side="left" className="w-72 px-2 py-3">
-                <SheetTitle className="sr-only">Settings navigation</SheetTitle>
-                <SettingsNavTree
-                  activeId={active?.id}
-                  activeCategory={active?.category}
-                  onNavigate={() => setDrawer(false)}
-                />
-              </SheetContent>
-            </Sheet>
-
-            {!home && (
-              <>
+          {!home && (
+            <div className="mx-auto w-full max-w-7xl space-y-2">
+              <div className="flex min-w-0 items-center gap-1.5">
                 <Link
                   to="/settings"
                   search={category ? ({ cat: category.id } as never) : ({} as never)}
@@ -143,13 +72,13 @@ export function SettingsShell({ children, home = false }: { children: ReactNode;
                     <span className="truncate font-medium">{active.label}</span>
                   </>
                 )}
-              </>
-            )}
-            {home && <span className="font-medium text-muted-foreground lg:hidden">Settings</span>}
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+              </div>
+              <SettingsTabs current={pathname} activeTab={tab} placement="shell" />
+            </div>
+          )}
         </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       </div>
     </AppShell>
   );

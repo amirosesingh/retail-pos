@@ -60,6 +60,8 @@ describe("phone storage hygiene", () => {
     "pos.terminal.token",
     "pos.secure.cloud",
     "pos.theme",
+    "pos.color-theme",
+    "pos.accent-color",
     "pos.cart.draft.1",
     "pos.ui.webBundle",
     "pos.report.cache",
@@ -72,6 +74,8 @@ describe("phone storage hygiene", () => {
     expect(removed).not.toContain("pos.terminal.token");
     expect(removed).not.toContain("pos.secure.cloud");
     expect(removed).not.toContain("pos.theme");
+    expect(removed).not.toContain("pos.color-theme");
+    expect(removed).not.toContain("pos.accent-color");
     expect(removed).not.toContain("pos.cart.draft.1");
     expect(removed).not.toContain("pos.shell.version");
   });

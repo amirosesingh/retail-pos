@@ -23,6 +23,8 @@ export const UI_STORAGE_KEYS = [
   // Canonical interface preference keys — see theme.tsx and use-ui-scale.ts.
   "pos.ui-scale",
   "pos.theme",
+  "pos.color-theme",
+  "pos.accent-color",
   // Retired spellings, still listed so an older device's values are not purged
   // before the read-through migration has had a chance to move them.
   "pos.ui.scale",

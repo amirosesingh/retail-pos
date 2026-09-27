@@ -51,7 +51,7 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   {
     id: "display",
     label: "Display & appearance",
-    blurb: "Theme, accent, text size, density and register zoom.",
+    blurb: "Color theme, brightness, accent, text size, density and register zoom.",
     paths: ["integrations.displayProfile"],
     lockedByDefault: false,
     scopeFamily: "terminal",
