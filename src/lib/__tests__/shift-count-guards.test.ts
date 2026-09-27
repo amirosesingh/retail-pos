@@ -91,4 +91,13 @@ describe("variance alert idempotency", () => {
       "ON public.shift_variance_alerts (reconciliation_id) WHERE reconciliation_id IS NOT NULL;",
     );
   });
+
+  it("keeps a full unique activity-event index for the existing ON CONFLICT target", () => {
+    expect(sql).toContain(
+      "CREATE UNIQUE INDEX IF NOT EXISTS activity_events_client_event_id_key ON public.activity_events USING btree (client_event_id);",
+    );
+    expect(sql).not.toContain(
+      "activity_events USING btree (client_event_id) WHERE (client_event_id IS NOT NULL)",
+    );
+  });
 });
