@@ -10,7 +10,7 @@ import {
   Settings as SettingsIcon,
   Store,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { usePos } from "@/lib/pos-store";
 import { useAuth, type PermissionFlag } from "@/lib/pos-auth";
 import { Link, useLocation } from "@tanstack/react-router";
@@ -87,7 +87,20 @@ function requiredPermission(pathname: string): PermissionFlag | null | "unknown"
   return routePermissionForPath(pathname) ?? "unknown";
 }
 
+const AppShellContext = createContext(false);
+
+/**
+ * Route components still wrap their content in AppShell for backwards
+ * compatibility. Inside the root-owned shell those wrappers become a no-op,
+ * which lets us move the ownership without rewriting every route at once.
+ */
 export function AppShell({ children }: { children: ReactNode }) {
+  const nested = useContext(AppShellContext);
+  if (nested) return <>{children}</>;
+  return <AppShellFrame>{children}</AppShellFrame>;
+}
+
+function AppShellFrame({ children }: { children: ReactNode }) {
   const { activeShift, stores, currentStore, setCurrentStore, state, ready: dataReady } = usePos();
   useEffect(() => {
     setSharedPrinterPrefs(state.settings.integrations.receiptPrinter);
@@ -580,7 +593,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                         : required === "unknown"
                           ? isAdmin
                           : can(required);
-                  if (allowed && visibleRoute(location.pathname)) return children;
+                  if (allowed && visibleRoute(location.pathname))
+                    return <AppShellContext.Provider value>{children}</AppShellContext.Provider>;
                   if (allowed) return <PermissionDenied title="Hidden for your role" flag={null} />;
                   return <PermissionDenied flag={required === "unknown" ? null : required} />;
                 })()}

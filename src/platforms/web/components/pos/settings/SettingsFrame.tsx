@@ -7,7 +7,7 @@
  * share: save state, confirmed scope loading and live preview. Scope ownership
  * is managed only from Settings inheritance.
  */
-import { Link } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import {
   createContext,
   useContext,
@@ -90,6 +90,7 @@ export function SettingsFrame({
   terminalManagement = false,
   showSaveBar = true,
 }: Props) {
+  const router = useRouter();
   const {
     state,
     currentStore,
@@ -300,9 +301,24 @@ export function SettingsFrame({
           {embedded ? (
             <div />
           ) : (
-            <div className="min-w-0 space-y-1">
-              <h1 className="text-2xl font-semibold">{title}</h1>
-              <p className="text-sm text-muted-foreground">{description}</p>
+            <div className="flex min-w-0 items-start gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="mt-0.5 shrink-0"
+                aria-label="Back to previous page"
+                onClick={() => {
+                  if (window.history.length > 1) router.history.back();
+                  else void router.navigate({ to: "/" });
+                }}
+              >
+                <ArrowLeft className="size-4" />
+              </Button>
+              <div className="min-w-0 space-y-1">
+                <h1 className="text-2xl font-semibold">{title}</h1>
+                <p className="text-sm text-muted-foreground">{description}</p>
+              </div>
             </div>
           )}
           {showPreview && (
