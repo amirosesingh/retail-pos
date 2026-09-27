@@ -31,6 +31,36 @@ export async function branchExists(storeId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+type StaffTokenCheck =
+  | { state: "verified"; storeId: string | null }
+  | { state: "revoked" | "unavailable" };
+
+/**
+ * Validate a browser account on the server so an expected revoked-session
+ * answer never appears as a failed `/auth/v1/user` resource in DevTools.
+ */
+async function verifyStaffAccessToken(accessToken: string): Promise<StaffTokenCheck> {
+  const { supabaseConfig } = await import("./external-supabase-config");
+  const config = supabaseConfig();
+  let response: Response;
+  try {
+    response = await fetch(`${config.url}/auth/v1/user`, {
+      headers: {
+        apikey: config.key,
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+  } catch {
+    return { state: "unavailable" };
+  }
+  if (!response.ok) {
+    return response.status >= 500 || response.status === 429
+      ? { state: "unavailable" }
+      : { state: "revoked" };
+  }
+  return { state: "verified", storeId: null };
+}
+
 export async function verifySessionServer(input: VerifyInput): Promise<VerifyResult> {
   if (!hasServiceKey()) return { ok: true, reason: "unavailable" };
   if (!input.sessionToken && !input.cashierToken && !input.terminalToken && !input.accessToken)
@@ -46,6 +76,28 @@ export async function verifySessionServer(input: VerifyInput): Promise<VerifyRes
       if (checked.reason === "unavailable") return { ok: false, reason: "unavailable" };
       return { ok: false, reason: "revoked" };
     }
+  }
+
+  // Browser account validation is intentionally proxied through this endpoint:
+  // the response remains a normal typed 200 while a revoked GoTrue session is
+  // reported as `reason: "revoked"`. This keeps expected logout races out of
+  // the browser console without trusting a locally persisted JWT.
+  if (
+    input.accessToken &&
+    !input.sessionToken &&
+    !input.cashierToken &&
+    !input.terminalToken
+  ) {
+    const checked = await verifyStaffAccessToken(input.accessToken);
+    if (checked.state !== "verified")
+      return {
+        ok: false,
+        reason: checked.state === "unavailable" ? "unavailable" : "revoked",
+      };
+    const storeId = input.storeId?.trim() || checked.storeId || null;
+    if (storeId && !(await branchExists(storeId)))
+      return { ok: false, reason: "branch_missing", kind: "staff", storeId };
+    return { ok: true, kind: "staff", storeId };
   }
 
   let caller: Awaited<ReturnType<typeof verifyRelayCaller>>;

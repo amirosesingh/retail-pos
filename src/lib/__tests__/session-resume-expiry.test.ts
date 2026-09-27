@@ -20,6 +20,13 @@ vi.mock("@/lib/session-guard.server", () => ({
   ),
 }));
 
+vi.mock("@/lib/external-supabase-config", () => ({
+  supabaseConfig: () => ({
+    url: "https://project-ref.supabase.co",
+    key: "sb_publishable_test",
+  }),
+}));
+
 import { verifySessionServer } from "@/lib/session-verify.server";
 
 describe("session verification after resume", () => {
@@ -47,6 +54,36 @@ describe("session verification after resume", () => {
     ).resolves.toEqual({ ok: false, reason: "unavailable" });
     expect(mocks.relay).not.toHaveBeenCalled();
   });
+
+  it("maps a server-side GoTrue refusal to a clean revoked result", async () => {
+    const request = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response('{"code":"session_not_found"}', { status: 403 }),
+    );
+
+    await expect(verifySessionServer({ accessToken: "revoked-token" })).resolves.toEqual({
+      ok: false,
+      reason: "revoked",
+    });
+    expect(request).toHaveBeenCalledWith(
+      "https://project-ref.supabase.co/auth/v1/user",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer revoked-token" }),
+      }),
+    );
+    expect(mocks.relay).not.toHaveBeenCalled();
+    request.mockRestore();
+  });
+
+  it("does not sign out when server-side Auth validation is unavailable", async () => {
+    const request = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new TypeError("offline"));
+
+    await expect(verifySessionServer({ accessToken: "saved-token" })).resolves.toEqual({
+      ok: false,
+      reason: "unavailable",
+    });
+    expect(mocks.relay).not.toHaveBeenCalled();
+    request.mockRestore();
+  });
 });
 
 describe("logout scope", () => {
@@ -57,5 +94,12 @@ describe("logout scope", () => {
     expect(activation).not.toContain(".auth.signOut();");
     expect(auth).toContain('.auth.signOut({ scope: "local" })');
     expect(activation).toContain('.auth.signOut({ scope: "local" })');
+  });
+
+  it("validates restored browser sessions behind the app server boundary", () => {
+    const auth = readFileSync("src/lib/pos-auth.tsx", "utf8");
+    expect(auth).toContain('import("@/lib/session-verify.functions")');
+    expect(auth).toContain("data: { accessToken: current.access_token }");
+    expect(auth).toContain("validateCentralAuthSession(");
   });
 });

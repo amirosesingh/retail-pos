@@ -74,6 +74,20 @@ import {
   type StaffRole,
 } from "@/lib/permissions";
 
+async function validateCentralAuthSession(online: boolean) {
+  return validateStoredAuthSession(supabase.auth, {
+    online,
+    verifySession: async (current) => {
+      const { verifySession } = await import("@/lib/session-verify.functions");
+      const checked = await verifySession({
+        data: { accessToken: current.access_token },
+      });
+      if (checked.reason === "unavailable") return "unavailable";
+      return checked.ok ? "verified" : "rejected";
+    },
+  });
+}
+
 export {
   CASHIER_PERMISSIONS,
   FULL_PERMISSIONS,
@@ -329,7 +343,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
       if (!active) return;
       // INITIAL_SESSION is only the token restored from storage. Do not expose
-      // it to the application until getUser() has proved that its server-side
+      // it to the application until the server has proved that its Supabase
       // session still exists. This also keeps sync/telemetry quiet on boot.
       if (event === "INITIAL_SESSION") {
         if (!next) setCentralAuthSessionPresent(false);
@@ -354,9 +368,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
     void (async () => {
-      const checked = await validateStoredAuthSession(supabase.auth, {
-        online: typeof navigator === "undefined" || navigator.onLine !== false,
-      });
+      const checked = await validateCentralAuthSession(
+        typeof navigator === "undefined" || navigator.onLine !== false,
+      );
       if (!active) return;
       bootstrapped = true;
       const next = checked.session;
@@ -1130,7 +1144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // systems suspend timers, so validate explicitly after a foreground
         // resume; a definite token refusal expires the login, while a network
         // or server failure leaves the user's work and session untouched.
-        const authCheck = await validateStoredAuthSession(supabase.auth, { online: true });
+        const authCheck = await validateCentralAuthSession(true);
         setCentralAuthSessionPresent(Boolean(authCheck.session));
         if (authCheck.state === "rejected") {
           notifySessionExpired();
