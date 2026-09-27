@@ -3,7 +3,6 @@ import { Activity, ClipboardCopy, Copy, Eraser, PlugZap, RefreshCw } from "lucid
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { UnpairTerminalCard } from "@/platforms/web/components/pos/UnpairTerminal";
-import { ScopePanel } from "@/platforms/web/components/pos/settings/ScopeControls";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -246,8 +245,6 @@ Both subdomains serve the same build; only the landing path differs.`;
           )}
         </section>
       )}
-
-      <ScopePanel sections={["publicDomains", "transferApproval"]} />
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">Subdomains & API configuration</h2>

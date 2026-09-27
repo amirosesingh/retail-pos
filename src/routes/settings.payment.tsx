@@ -31,7 +31,6 @@ export const Route = createFileRoute("/settings/payment")({
     <SettingsFrame
       title="Bank transfer details"
       description="Shown on the customer-facing display and printed on booking slips so shoppers can settle a balance by bank transfer."
-      scopeSections={["payment"]}
     >
       <PaymentForm />
     </SettingsFrame>

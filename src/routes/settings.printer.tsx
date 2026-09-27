@@ -13,7 +13,10 @@ export const Route = createFileRoute("/settings/printer")({
           "Choose the thermal printer for this till, set encoding, line endings, page margins and the cash drawer kick pin, then print a test slip.",
       },
       { property: "og:title", content: "Receipt Printer — Retail" },
-      { property: "og:description", content: "Printer, margins and cash drawer settings for this terminal." },
+      {
+        property: "og:description",
+        content: "Printer, margins and cash drawer settings for this terminal.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -21,8 +24,7 @@ export const Route = createFileRoute("/settings/printer")({
   component: () => (
     <SettingsFrame
       title="Receipt printer"
-      scopeSections={["printer"]}
-      description="Printer profile shared with the selected scope: device, encoding, margins and cash drawer."
+      description="Edit the printer profile for the ownership selected in Settings inheritance: device, encoding, margins and cash drawer."
     >
       <SettingsTabs current="/settings/printer" />
 

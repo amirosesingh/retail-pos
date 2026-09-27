@@ -61,7 +61,6 @@ function RegionPage() {
     <SettingsFrame
       title="Region & time"
       description="Terminal clocks drift and travel. Pick the region here and every displayed and printed time follows it, whatever the PC thinks."
-      scopeSections={["region"]}
     >
       <div className="space-y-5">
         <div className="grid gap-4 md:grid-cols-2">

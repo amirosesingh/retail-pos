@@ -37,8 +37,7 @@ function TaxSettingsPage() {
   return (
     <SettingsFrame
       title="Tax & pricing"
-      description="Tax rules apply to every register instantly."
-      scopeSections={["tax", "rounding"]}
+      description="Edit tax and rounding values for the ownership selected in Settings inheritance."
     >
       <SettingsTabs current="/settings/tax" />
 

@@ -4,7 +4,8 @@
  * Each area (display, tax, receipt typography, …) is now its own route, so a
  * page opens as a real window instead of an accordion panel that scrolls the
  * rest of the menu past the user. This frame owns the state all of those pages
- * share: the authoritative scope controls, save state and live preview.
+ * share: save state, confirmed scope loading and live preview. Scope ownership
+ * is managed only from Settings inheritance.
  */
 import { Link } from "@tanstack/react-router";
 import {
@@ -21,7 +22,6 @@ import { toast } from "sonner";
 import { SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
 import { SaveIndicator } from "@/platforms/web/components/pos/settings/SaveIndicator";
 import { useEmbeddedSettings } from "@/platforms/web/components/pos/settings/embed";
-import { ScopePanel } from "@/platforms/web/components/pos/settings/ScopeControls";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { usePos } from "@/lib/pos-store";
@@ -41,7 +41,6 @@ import type {
   ReceiptSettings,
   Sale,
 } from "@/core/types/pos-types";
-import type { SettingsSectionId } from "@/lib/settings-sections";
 import { computeTax } from "@/core/pricing/tax";
 
 type Ctx = {
@@ -74,8 +73,6 @@ type Props = {
   description: string;
   children: ReactNode;
   showPreview?: boolean;
-  /** Scopable blocks this page edits — renders the sole authoritative scope selector. */
-  scopeSections?: SettingsSectionId[];
   /** Diagnostics pages need the whole window: tables and graphs, no reading column. */
   wide?: boolean;
   /** Device registration may also be managed by supervisors. */
@@ -89,7 +86,6 @@ export function SettingsFrame({
   description,
   children,
   showPreview = false,
-  scopeSections,
   wide = false,
   terminalManagement = false,
   showSaveBar = true,
@@ -336,8 +332,6 @@ export function SettingsFrame({
             </Sheet>
           )}
         </header>
-
-        {scopeSections?.length ? <ScopePanel sections={scopeSections} /> : null}
 
         <fieldset
           disabled={settingsScopeLoading}

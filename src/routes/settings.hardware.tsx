@@ -27,8 +27,7 @@ function HardwareSettings() {
   return (
     <SettingsFrame
       title="Terminal hardware"
-      scopeSections={["printer"]}
-      description="Choose Global, Cluster or Terminal to manage the synchronized printer and drawer profile."
+      description="Manage the synchronized printer and drawer profile selected in Settings inheritance."
     >
       <HardwarePanel />
     </SettingsFrame>
