@@ -128,8 +128,10 @@ it("resolves terminal settings above clusters and ignores branch settings", () =
 describe("settings section ownership", () => {
   it.each([
     ["receipt.companyName", "receiptIdentity"],
+    ["receipt.logo", "receiptIdentity"],
     ["receipt.customLines", "receiptIdentity"],
     ["receipt.paper", "receiptLayout"],
+    ["receipt.logoLayout", "receiptLayout"],
     ["receipt.fonts.header", "receiptLayout"],
     ["integrations.bookingRules", "booking"],
     ["integrations.paymentAccounts", "paymentAccounts"],
@@ -146,7 +148,31 @@ describe("settings section ownership", () => {
     expect(layout?.paths).not.toContain("receipt");
     expect(layout?.paths).not.toContain("receipt.companyName");
     expect(sectionOfPath("receipt.companyName")?.scopeFamily).toBe("business");
+    expect(sectionOfPath("receipt.logo")?.scopeFamily).toBe("business");
     expect(sectionOfPath("receipt.paper")?.scopeFamily).toBe("terminal");
+  });
+
+  it("ignores a logo image left inside a legacy terminal layout override", () => {
+    const out = resolveScopedSettings(
+      { receipt: { logo: "business-logo", showLogo: true } },
+      scope({
+        overrides: {
+          ...emptyBranchSettings.overrides,
+          TERMINAL: {
+            receiptLayout: { receipt: { logo: "legacy-terminal-logo", showLogo: false } },
+          },
+        },
+      }),
+      (target, patch) => ({
+        ...target,
+        receipt: {
+          ...target.receipt,
+          ...((patch as { receipt?: object }).receipt ?? {}),
+        },
+      }),
+    );
+    expect(out.settings.receipt.logo).toBe("business-logo");
+    expect(out.settings.receipt.showLogo).toBe(false);
   });
 });
 

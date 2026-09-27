@@ -23,6 +23,7 @@ import { isOperationalTable } from "@/lib/pos-auth-route";
 import { keyset, nextCursor, PAGE_SIZE, type Cursor, type Page } from "@/lib/keyset";
 import { readAllPages } from "@/lib/paged-read";
 import { loadCashierToken, readCredentials } from "@/lib/pos-credentials";
+import { normalizeReceiptLogoLayout } from "@/lib/receipt-logo";
 
 import { isLinkedRecordError, usageBlock, type ProductUsage } from "@/lib/product-delete";
 import type {
@@ -340,6 +341,9 @@ const rowToSettings = (r: Row | null): AppSettings =>
           footerText: r.footer_text ?? "",
           showLogo: r.show_logo ?? true,
           logo: (r as { logo_data_url?: string | null }).logo_data_url ?? "",
+          logoLayout: normalizeReceiptLogoLayout(
+            (r as { receipt_design?: { logoLayout?: unknown } | null }).receipt_design?.logoLayout,
+          ),
           showPoints: r.show_points ?? true,
           showBarcode: r.show_barcode ?? true,
           showTax: r.show_tax_details ?? true,
@@ -422,6 +426,7 @@ const buildSettingsRow = (s: AppSettings): Row => ({
   footer_text: s.receipt.footerText,
   show_logo: s.receipt.showLogo,
   logo_data_url: s.receipt.logo ?? "",
+  receipt_design: { logoLayout: s.receipt.logoLayout },
   show_points: s.receipt.showPoints,
   show_barcode: s.receipt.showBarcode,
   show_tax_details: s.receipt.showTax,
@@ -657,7 +662,10 @@ const rowToSale = (r: Row): Sale => ({
   roundingLabel: r.rounding_label ?? undefined,
 });
 
-export async function findReceiptExact(value: string, branchId: string): Promise<{ sale: Sale; source: "local" | "cloud" } | null> {
+export async function findReceiptExact(
+  value: string,
+  branchId: string,
+): Promise<{ sale: Sale; source: "local" | "cloud" } | null> {
   const lookup = value.trim();
   if (!lookup || !branchId) return null;
   const local = localDb();
@@ -665,12 +673,24 @@ export async function findReceiptExact(value: string, branchId: string): Promise
   const state = await local.database?.getState?.().catch(() => null);
   if (!state?.connected) return null;
   const { sessionToken, cashierToken, accessToken } = await readCredentials();
-  const result = await local.findReceipt(lookup, branchId, { sessionToken, cashierToken, accessToken });
+  const result = await local.findReceipt(lookup, branchId, {
+    sessionToken,
+    cashierToken,
+    accessToken,
+  });
   if (!result?.sale) return null;
-  const payments = Array.isArray(result.sale.payments) && result.sale.payments.length
-    ? result.sale.payments
-    : (result.payments ?? []).map((payment) => ({ method: payment.method ?? "cash", amount: num(payment.amount), reference: payment.reference ?? undefined }));
-  return { source: result.source, sale: rowToSale({ ...result.sale, sale_items: result.items ?? [], payments }) };
+  const payments =
+    Array.isArray(result.sale.payments) && result.sale.payments.length
+      ? result.sale.payments
+      : (result.payments ?? []).map((payment) => ({
+          method: payment.method ?? "cash",
+          amount: num(payment.amount),
+          reference: payment.reference ?? undefined,
+        }));
+  return {
+    source: result.source,
+    sale: rowToSale({ ...result.sale, sale_items: result.items ?? [], payments }),
+  };
 }
 
 const saleToRow = (s: Sale): Row => ({
@@ -846,24 +866,50 @@ const receivingActivityRows = (inv: ReceivingInvoice, storeId: string | null) =>
     }));
 
 /** Pricing never writes absolute stock: movement commits own quantities. */
-export const receivingPriceOps = (inv: ReceivingInvoice): SyncOp[] => inv.status !== "posted" ? [] :
-  inv.lines.filter((line) => line.productId).map((line) => ({
-    kind: "update", table: "products", match: { id: line.productId },
-    values: { cost_price: safeNum(line.cost), selling_price: safeNum(line.price) },
-  }));
+export const receivingPriceOps = (inv: ReceivingInvoice): SyncOp[] =>
+  inv.status !== "posted"
+    ? []
+    : inv.lines
+        .filter((line) => line.productId)
+        .map((line) => ({
+          kind: "update",
+          table: "products",
+          match: { id: line.productId },
+          values: { cost_price: safeNum(line.cost), selling_price: safeNum(line.price) },
+        }));
 
 /** Corrections get new movement IDs; retries of the same edit reuse them. */
-export function receivingCorrectionOps(inv: ReceivingInvoice, previous: ReceivingInvoice, attemptId: string): SyncOp[] {
+export function receivingCorrectionOps(
+  inv: ReceivingInvoice,
+  previous: ReceivingInvoice,
+  attemptId: string,
+): SyncOp[] {
   const delta = new Map<string, number>();
-  for (const line of previous.lines) if (line.productId) delta.set(line.productId, (delta.get(line.productId) ?? 0) - line.qty);
-  for (const line of inv.lines) if (line.productId) delta.set(line.productId, (delta.get(line.productId) ?? 0) + line.qty);
-  const rows = [...delta].filter(([, qty]) => qty !== 0).sort(([a], [b]) => a.localeCompare(b)).map(([productId, qty], index) => ({
-    id: stableChildId(attemptId, "5", index), product_id: productId,
-    product_name: inv.lines.find((line) => line.productId === productId)?.name ?? previous.lines.find((line) => line.productId === productId)?.name ?? "",
-    store_id: inv.storeId, activity_type: "receive", reference: inv.reference || inv.invoiceNo,
-    quantity_delta: Math.round(qty), staff_name: inv.operator, note: "Receiving correction", created_at: new Date().toISOString(),
-  }));
-  return rows.length ? [{ kind: "upsert", table: "item_activity_logs", rows, onConflict: "id" }] : [];
+  for (const line of previous.lines)
+    if (line.productId) delta.set(line.productId, (delta.get(line.productId) ?? 0) - line.qty);
+  for (const line of inv.lines)
+    if (line.productId) delta.set(line.productId, (delta.get(line.productId) ?? 0) + line.qty);
+  const rows = [...delta]
+    .filter(([, qty]) => qty !== 0)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([productId, qty], index) => ({
+      id: stableChildId(attemptId, "5", index),
+      product_id: productId,
+      product_name:
+        inv.lines.find((line) => line.productId === productId)?.name ??
+        previous.lines.find((line) => line.productId === productId)?.name ??
+        "",
+      store_id: inv.storeId,
+      activity_type: "receive",
+      reference: inv.reference || inv.invoiceNo,
+      quantity_delta: Math.round(qty),
+      staff_name: inv.operator,
+      note: "Receiving correction",
+      created_at: new Date().toISOString(),
+    }));
+  return rows.length
+    ? [{ kind: "upsert", table: "item_activity_logs", rows, onConflict: "id" }]
+    : [];
 }
 
 /** The movement rows for a receiving commit, or nothing for an unposted one. */
@@ -938,103 +984,111 @@ export async function loadCloudState(storeId?: string | null): Promise<CloudSlic
     return loadLocalState(new Error("Central database is offline."));
   // These reads are independent. Start membership tiers alongside the other
   // slices so a full network round trip is not added to every sign-in.
-  const [tiers, products, members, sales, promotions, settings, stores, shifts] = await Promise.all([
-    supabase.from("membership_tiers").select("id, name").is("deleted_at", null),
-    // Whole-catalogue reads are paged: a single request is capped at 1,000
-    // rows by the database, which used to hide every item past the first
-    // thousand without reporting anything.
-    readAllPages<Row>((from, to, withCount) =>
-      supabase
-        .from("products")
-        .select("*", withCount ? { count: "exact" } : {})
-        .is("deleted_at", null)
-        .order("name")
-        .order("id")
-        .range(from, to),
-    ),
-    readAllPages<Row>((from, to, withCount) =>
-      supabase
-        .from("members")
-        .select("*", withCount ? { count: "exact" } : {})
-        .is("deleted_at", null)
-        .order("created_at")
-        .order("id")
-        .range(from, to),
-    ),
+  const [tiers, products, members, sales, promotions, settings, stores, shifts] = await Promise.all(
+    [
+      supabase.from("membership_tiers").select("id, name").is("deleted_at", null),
+      // Whole-catalogue reads are paged: a single request is capped at 1,000
+      // rows by the database, which used to hide every item past the first
+      // thousand without reporting anything.
+      readAllPages<Row>((from, to, withCount) =>
+        supabase
+          .from("products")
+          .select("*", withCount ? { count: "exact" } : {})
+          .is("deleted_at", null)
+          .order("name")
+          .order("id")
+          .range(from, to),
+      ),
+      readAllPages<Row>((from, to, withCount) =>
+        supabase
+          .from("members")
+          .select("*", withCount ? { count: "exact" } : {})
+          .is("deleted_at", null)
+          .order("created_at")
+          .order("id")
+          .range(from, to),
+      ),
 
-    (async () => {
-      const read = () => {
-        let query = supabase.from("sales").select(saleColumns());
-        if (storeId) query = query.eq("store_id", storeId);
-        return query.order("created_at", { ascending: false }).limit(500);
-      };
-      const first = await read();
-      if (first.error && isMissingTxnColumn(first.error.message)) {
-        forgetTxnColumn(first.error.message);
-        return await read();
-      }
-      return first;
-    })(),
-    readAllPages<Row>((from, to, withCount) =>
-      supabase
-        .from("promotions")
-        .select("*", withCount ? { count: "exact" } : {})
-        .is("deleted_at", null)
-        .order("created_at")
-        .order("id")
-        .range(from, to),
-    ),
-
-    supabase.from("pos_settings").select("*").eq("id", 1).maybeSingle(),
-    // The stores table only exists once supabase/schema.sql has been applied; a
-    // missing table must not stop the till from loading. Supabase query
-    // builders are thenables, not Promises, so guard with try/catch.
-    (async (): Promise<{ data: Row[] | null }> => {
-      try {
-        const cashierToken = await loadCashierToken();
-        // A PIN-only cashier has no database auth session, so use the proven
-        // relay immediately instead of accepting an RLS-filtered empty list.
-        if (cashierToken && canRelay()) {
-          const relayed = await relayStores();
-          if (relayed.ok) return { data: (relayed.rows as Row[] | undefined) ?? [] };
+      (async () => {
+        const read = () => {
+          let query = supabase.from("sales").select(saleColumns());
+          if (storeId) query = query.eq("store_id", storeId);
+          return query.order("created_at", { ascending: false }).limit(500);
+        };
+        const first = await read();
+        if (first.error && isMissingTxnColumn(first.error.message)) {
+          forgetTxnColumn(first.error.message);
+          return await read();
         }
-        const direct = await readAllPages<Row>((from, to, withCount) =>
-          supabase
-            .from("stores")
-            .select("*", withCount ? { count: "exact" } : {})
-            .is("deleted_at", null)
-            .order("name")
-            .order("id")
-            .range(from, to),
-        );
-        if (!direct.error) return { data: direct.data ?? [] };
+        return first;
+      })(),
+      readAllPages<Row>((from, to, withCount) =>
+        supabase
+          .from("promotions")
+          .select("*", withCount ? { count: "exact" } : {})
+          .is("deleted_at", null)
+          .order("created_at")
+          .order("id")
+          .range(from, to),
+      ),
 
-        // Registered terminals and staff sessions can still recover through
-        // the server relay when a direct RLS read is unavailable.
-        if (canRelay()) {
-          const relayed = await relayStores();
-          if (relayed.ok) return { data: (relayed.rows as Row[] | undefined) ?? [] };
+      supabase.from("pos_settings").select("*").eq("id", 1).maybeSingle(),
+      // The stores table only exists once supabase/schema.sql has been applied; a
+      // missing table must not stop the till from loading. Supabase query
+      // builders are thenables, not Promises, so guard with try/catch.
+      (async (): Promise<{ data: Row[] | null }> => {
+        try {
+          const cashierToken = await loadCashierToken();
+          // A PIN-only cashier has no database auth session, so use the proven
+          // relay immediately instead of accepting an RLS-filtered empty list.
+          if (cashierToken && canRelay()) {
+            const relayed = await relayStores();
+            if (relayed.ok) return { data: (relayed.rows as Row[] | undefined) ?? [] };
+          }
+          const direct = await readAllPages<Row>((from, to, withCount) =>
+            supabase
+              .from("stores")
+              .select("*", withCount ? { count: "exact" } : {})
+              .is("deleted_at", null)
+              .order("name")
+              .order("id")
+              .range(from, to),
+          );
+          if (!direct.error) return { data: direct.data ?? [] };
+
+          // Registered terminals and staff sessions can still recover through
+          // the server relay when a direct RLS read is unavailable.
+          if (canRelay()) {
+            const relayed = await relayStores();
+            if (relayed.ok) return { data: (relayed.rows as Row[] | undefined) ?? [] };
+          }
+          return { data: null };
+        } catch {
+          return { data: null };
         }
-        return { data: null };
-      } catch {
-        return { data: null };
-      }
-    })(),
-    (async (): Promise<{ data: Row[] | null }> => {
-      try {
-        const res = await supabase
-          .from("shifts" as never)
-          .select("*")
-          .order("opened_at", { ascending: false })
-          .limit(300);
-        return { data: (res.data as Row[] | null) ?? null };
-      } catch {
-        return { data: null };
-      }
-    })(),
-  ]);
+      })(),
+      (async (): Promise<{ data: Row[] | null }> => {
+        try {
+          const res = await supabase
+            .from("shifts" as never)
+            .select("*")
+            .order("opened_at", { ascending: false })
+            .limit(300);
+          return { data: (res.data as Row[] | null) ?? null };
+        } catch {
+          return { data: null };
+        }
+      })(),
+    ],
+  );
 
-  const err = tiers.error || products.error || members.error || sales.error || promotions.error || settings.error;
+  const err =
+    tiers.error ||
+    products.error ||
+    members.error ||
+    sales.error ||
+    promotions.error ||
+    settings.error;
   if (err) return loadLocalState(err);
 
   tierIdByName = {};
@@ -1068,7 +1122,9 @@ export async function loadPrimaryState(storeId?: string | null): Promise<CloudSl
   if (!isOnlineOnly() && bridge?.snapshot) {
     const status = await bridge.database?.getState?.().catch(() => null);
     if (status?.enabled && status.connected && (status.tradingReady ?? status.connected)) {
-      return loadLocalState(new Error("The connected local SQL Server snapshot could not be read."));
+      return loadLocalState(
+        new Error("The connected local SQL Server snapshot could not be read."),
+      );
     }
     if (status?.enabled && status.tradingReady === false) {
       throw new Error(
@@ -1110,7 +1166,9 @@ async function loadLocalState(cause: unknown): Promise<CloudSlice> {
   if (!result.ok) {
     throw new Error(
       result.error ??
-        (cause instanceof Error ? cause.message : "The local SQL Server snapshot could not be read."),
+        (cause instanceof Error
+          ? cause.message
+          : "The local SQL Server snapshot could not be read."),
     );
   }
   tierIdByName = {};
@@ -1259,16 +1317,21 @@ export async function loadSalesPage(
   limit = PAGE_SIZE,
 ): Promise<Page<Sale>> {
   if (localDb()?.query) {
-    const heads = await routedQuery("sales", {
+    const heads = (await routedQuery("sales", {
       match: { store_id: storeId },
       orderBy: { column: "created_at", ascending: false },
       ...(cursor ? { cursor: { column: "created_at", value: cursor.ts, id: cursor.id } } : {}),
       limit,
-    }) as Row[];
+    })) as Row[];
     const items: Row[] = [];
     const ids = heads.map((row) => String(row.id));
     for (let start = 0; start < ids.length; start += 50) {
-      items.push(...await routedQuery("sale_items", { in: { column: "sale_id", values: ids.slice(start, start + 50) }, limit: 2000 }) as Row[]);
+      items.push(
+        ...((await routedQuery("sale_items", {
+          in: { column: "sale_id", values: ids.slice(start, start + 50) },
+          limit: 2000,
+        })) as Row[]),
+      );
     }
     const bySale = new Map<string, Row[]>();
     for (const item of items) {
@@ -1276,7 +1339,11 @@ export async function loadSalesPage(
       bySale.set(saleId, [...(bySale.get(saleId) ?? []), item]);
     }
     const complete = heads.map((row) => ({ ...row, sale_items: bySale.get(String(row.id)) ?? [] }));
-    return { rows: complete.map(rowToSale), cursor: nextCursor(complete, "created_at", limit), hasMore: complete.length >= limit };
+    return {
+      rows: complete.map(rowToSale),
+      cursor: nextCursor(complete, "created_at", limit),
+      hasMore: complete.length >= limit,
+    };
   }
   const query = () => {
     let q = supabase.from("sales").select(saleColumns());
@@ -1472,10 +1539,12 @@ export async function loadProductsByIds(ids: string[]): Promise<Product[]> {
   if (!ids.length) return [];
   const rows: Row[] = [];
   for (let start = 0; start < ids.length; start += 500) {
-    rows.push(...await routedQuery("products", {
-      in: { column: "id", values: ids.slice(start, start + 500) },
-      limit: 500,
-    }) as Row[]);
+    rows.push(
+      ...((await routedQuery("products", {
+        in: { column: "id", values: ids.slice(start, start + 500) },
+        limit: 500,
+      })) as Row[]),
+    );
   }
   return rows.map(rowToProduct);
 }
@@ -1607,28 +1676,64 @@ export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitT
   if (local?.writeBatch) {
     const state = await local.database?.getState?.().catch(() => null);
     if (state?.enabled && state?.connected && (state.tradingReady ?? state.connected)) {
-      const refund = ops.length === 1 && ops[0].kind === "rpc" && ops[0].fn === "sale_refund" ? ops[0] : null;
-      const aggregateKind = /sale/i.test(context) ? "sale"
-        : /payment|tender/i.test(context) ? "payment"
-        : /refund/i.test(context) ? "refund"
-        : /shift/i.test(context) ? "shift"
-        : /receiv|purchase|invoice/i.test(context) ? "receiving"
-        : /stock/i.test(context) ? "stock"
-        : /transfer/i.test(context) ? "transfer"
-        : /booking/i.test(context) ? "booking"
-        : /hold|ticket/i.test(context) ? "held_order" : "general";
-      const branchRow = ops.flatMap((op): Row[] => {
-        if (op.kind === "insert" || op.kind === "upsert") return op.rows as Row[];
-        if (op.kind === "update") return [{ ...op.match, ...op.values } as Row];
-        if (op.kind === "delete") return [op.match as Row];
-        return [op.args as Row];
-      }).find((row) => row && ("store_id" in row || "branch_id" in row || "from_store_id" in row || "to_store_id" in row));
-      const branchId = String(branchRow?.store_id ?? branchRow?.branch_id ?? branchRow?.from_store_id ?? branchRow?.to_store_id ?? "");
-      const stored = refund && local.refundReceipt
-        ? await local.refundReceipt({ saleId: String(refund.args._sale_id), refundId: String(refund.args._client_refund_id), branchId: String((refund.args as Record<string, unknown>)._branch_id ?? ""), reason: refund.args._reason == null ? null : String(refund.args._reason) })
-        : local.commitAggregate
-          ? await local.commitAggregate({ kind: aggregateKind, branchId: branchId || undefined, operations: ops })
-          : await local.writeBatch(context, ops);
+      const refund =
+        ops.length === 1 && ops[0].kind === "rpc" && ops[0].fn === "sale_refund" ? ops[0] : null;
+      const aggregateKind = /sale/i.test(context)
+        ? "sale"
+        : /payment|tender/i.test(context)
+          ? "payment"
+          : /refund/i.test(context)
+            ? "refund"
+            : /shift/i.test(context)
+              ? "shift"
+              : /receiv|purchase|invoice/i.test(context)
+                ? "receiving"
+                : /stock/i.test(context)
+                  ? "stock"
+                  : /transfer/i.test(context)
+                    ? "transfer"
+                    : /booking/i.test(context)
+                      ? "booking"
+                      : /hold|ticket/i.test(context)
+                        ? "held_order"
+                        : "general";
+      const branchRow = ops
+        .flatMap((op): Row[] => {
+          if (op.kind === "insert" || op.kind === "upsert") return op.rows as Row[];
+          if (op.kind === "update") return [{ ...op.match, ...op.values } as Row];
+          if (op.kind === "delete") return [op.match as Row];
+          return [op.args as Row];
+        })
+        .find(
+          (row) =>
+            row &&
+            ("store_id" in row ||
+              "branch_id" in row ||
+              "from_store_id" in row ||
+              "to_store_id" in row),
+        );
+      const branchId = String(
+        branchRow?.store_id ??
+          branchRow?.branch_id ??
+          branchRow?.from_store_id ??
+          branchRow?.to_store_id ??
+          "",
+      );
+      const stored =
+        refund && local.refundReceipt
+          ? await local.refundReceipt({
+              saleId: String(refund.args._sale_id),
+              refundId: String(refund.args._client_refund_id),
+              branchId: String((refund.args as Record<string, unknown>)._branch_id ?? ""),
+              reason: refund.args._reason == null ? null : String(refund.args._reason),
+            })
+          : local.commitAggregate
+            ? await local.commitAggregate({
+                kind: aggregateKind,
+                branchId: branchId || undefined,
+                operations: ops,
+              })
+            : await local.writeBatch(context, ops);
       if (!stored.ok) {
         throw Object.assign(new Error(stored.error ?? `${context} was not committed locally.`), {
           code: stored.code,
@@ -1640,7 +1745,9 @@ export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitT
       return noteCommitTarget("local");
     }
     if (state?.enabled && state?.connected && state.tradingReady === false) {
-      throw new Error("Local SQL Server is connected, but its POS schema is not ready. Open Database & Cloud Connection and apply the current local database update before taking payment.");
+      throw new Error(
+        "Local SQL Server is connected, but its POS schema is not ready. Open Database & Cloud Connection and apply the current local database update before taking payment.",
+      );
     }
   }
 
@@ -1888,20 +1995,22 @@ export const db = {
     }[],
   ) {
     if (localDb()?.writeBatch) {
-      await commitOps("Saving audit logs", [{
-        kind: "upsert",
-        table: "audit_logs",
-        rows: rows.map((r) => ({
-          id: r.id,
-          user_name: r.staffName,
-          action_category: r.category,
-          action_name: r.action,
-          target_module: r.module,
-          details: r.details,
-          store_id: typeof r.details.storeId === "string" ? r.details.storeId : null,
-          created_at: r.at,
-        })),
-      }]);
+      await commitOps("Saving audit logs", [
+        {
+          kind: "upsert",
+          table: "audit_logs",
+          rows: rows.map((r) => ({
+            id: r.id,
+            user_name: r.staffName,
+            action_category: r.category,
+            action_name: r.action,
+            target_module: r.module,
+            details: r.details,
+            store_id: typeof r.details.storeId === "string" ? r.details.storeId : null,
+            created_at: r.at,
+          })),
+        },
+      ]);
       return rows.map((r) => r.id);
     }
     const { error } = await supabase.from("audit_logs").upsert(
@@ -2008,7 +2117,9 @@ export const db = {
         table: "purchase_order_items",
         match: { id },
       })),
-      ...(correction ? receivingCorrectionOps(inv, correction.previous, correction.attemptId) : receivingActivityOps(inv, movementStoreId)),
+      ...(correction
+        ? receivingCorrectionOps(inv, correction.previous, correction.attemptId)
+        : receivingActivityOps(inv, movementStoreId)),
       ...receivingPriceOps(inv),
     ]),
 
@@ -2037,7 +2148,8 @@ export const db = {
     // A retry may find the header already committed. Reuse its real id and
     // reconcile every required child rather than mistaking a partial sale for completion.
     const onlineOnly = isOnlineOnly();
-    const storedId = onlineOnly && sale.clientTxnId ? await db.saleAttemptId(sale.clientTxnId) : null;
+    const storedId =
+      onlineOnly && sale.clientTxnId ? await db.saleAttemptId(sale.clientTxnId) : null;
     if (storedId) sale.id = storedId;
     // SQL Server enforces these foreign keys immediately. Materialize parent
     // records before the sale graph so a newly synced member or product cannot

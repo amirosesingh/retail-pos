@@ -885,6 +885,13 @@ export type ReceiptSettings = {
   showLogo: boolean;
   /** transparent PNG logo as a data URL; falls back to initials when empty */
   logo?: string;
+  /** responsive placement and sizing for the logo on printed receipts */
+  logoLayout: {
+    position: "above-name" | "below-name" | "after-details";
+    alignment: "left" | "center" | "right";
+    widthPercent: number;
+    maxHeightMm: number;
+  };
   showPoints: boolean;
   showBarcode: boolean;
   showTax: boolean;
@@ -912,6 +919,7 @@ export type ReceiptOverride = Partial<
     | "website"
     | "headerText"
     | "footerText"
+    | "logo"
     | "customLines"
     | "qr"
     | "css"

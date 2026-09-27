@@ -1,7 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useRef, useState } from "react";
-import { ImageUp, Plus, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
+import { Plus, Trash2 } from "lucide-react";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import {
   SettingsFrame,
@@ -11,10 +10,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { PresetNumber } from "@/components/ui/preset-number";
+import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { useAuth } from "@/lib/pos-auth";
 import { RECEIPT_FIELDS, fieldTag, type ReceiptFieldToken } from "@/lib/receipt-template";
 import { receiptCssWarnings } from "@/lib/receipt-css";
-import type { ReceiptCustomLine } from "@/core/types/pos-types";
+import type { ReceiptCustomLine, ReceiptSettings } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/settings/receipt-designer")({
   head: () => ({
@@ -23,12 +24,12 @@ export const Route = createFileRoute("/settings/receipt-designer")({
       {
         name: "description",
         content:
-          "Insert dynamic receipt fields, upload a branch logo and style the printed slip with scoped CSS, with a live sample preview.",
+          "Position and size the business logo, insert dynamic receipt fields and style the printed slip with a live sample preview.",
       },
       { property: "og:title", content: "Receipt Designer — Retail" },
       {
         property: "og:description",
-        content: "Dynamic fields, logo upload and scoped CSS for printed receipts.",
+        content: "Logo layout, dynamic fields and scoped CSS for printed receipts.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -37,7 +38,7 @@ export const Route = createFileRoute("/settings/receipt-designer")({
   component: () => (
     <SettingsFrame
       title="Receipt designer"
-      description="Content, dynamic fields, logo and styling for every printed slip. The preview uses sample transaction data."
+      description="Logo placement and size, dynamic content and styling for every printed slip. The preview uses sample transaction data."
       showPreview
     >
       <SettingsTabs current="/settings/receipt-designer" />
@@ -53,7 +54,6 @@ function Designer() {
   const { isAdmin, can } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
   const [target, setTarget] = useState<Target>({ kind: "footer" });
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const lines = effective.customLines ?? [];
   const warnings = receiptCssWarnings(effective.css);
@@ -61,7 +61,7 @@ function Designer() {
   if (!mayEdit) {
     return (
       <p className="rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
-        Editing the receipt template, logo and stylesheet needs the settings permission.
+        Editing the receipt template, logo layout and stylesheet needs the settings permission.
       </p>
     );
   }
@@ -78,18 +78,9 @@ function Designer() {
     setLines(lines.map((l) => (l.id === target.id ? { ...l, text: `${l.text}${tag}` } : l)));
   };
 
-  const readLogo = (file: File) => {
-    if (!/^image\/(png|jpeg|webp|svg\+xml)$/.test(file.type))
-      return toast.error("Use a PNG, JPEG, WebP or SVG image");
-    if (file.size > 400_000) return toast.error("Logo must be under 400 KB so it prints quickly");
-    const reader = new FileReader();
-    reader.onload = () => {
-      setGlobal({ logo: String(reader.result), showLogo: true });
-      toast.success("Logo updated — save settings to keep it");
-    };
-    reader.onerror = () => toast.error("Could not read that image");
-    reader.readAsDataURL(file);
-  };
+  const logoLayout = receipt.logoLayout;
+  const setLogoLayout = (patch: Partial<ReceiptSettings["logoLayout"]>) =>
+    setGlobal({ logoLayout: { ...logoLayout, ...patch } });
 
   const targetLabel =
     target.kind === "header"
@@ -102,42 +93,108 @@ function Designer() {
     <div className="space-y-6">
       {/* ---------------- logo ---------------- */}
       <section className="space-y-2 rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-semibold">Logo</h3>
-        <p className="text-xs text-muted-foreground">
-          Stored on the receipt profile, not on individual sales. Branch overrides keep their own
-          header text; the logo is shared across the company profile.
-        </p>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="grid h-16 w-32 place-items-center rounded-md border border-dashed border-border bg-muted/40 p-1">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold">Logo layout</h3>
+            <p className="text-xs text-muted-foreground">
+              Position and size respond to the selected paper width. The logo image itself is owned
+              by Business identity.
+            </p>
+          </div>
+          <Button asChild size="sm" variant="outline">
+            <Link to="/settings/identity">Edit logo image</Link>
+          </Button>
+        </div>
+        <div className="flex min-h-24 items-center rounded-md border border-dashed border-border bg-muted/40 p-3">
+          <div
+            className={`flex w-full ${
+              logoLayout.alignment === "left"
+                ? "justify-start"
+                : logoLayout.alignment === "right"
+                  ? "justify-end"
+                  : "justify-center"
+            }`}
+          >
             {receipt.logo ? (
               <img
                 src={receipt.logo}
                 alt="Current receipt logo"
-                className="max-h-full max-w-full object-contain"
+                className="object-contain"
+                style={{
+                  width: `${logoLayout.widthPercent}%`,
+                  maxHeight: `${logoLayout.maxHeightMm * 2}px`,
+                }}
               />
             ) : (
-              <span className="text-[11px] text-muted-foreground">No logo</span>
+              <span className="text-[11px] text-muted-foreground">
+                Upload a logo in Business identity
+              </span>
             )}
           </div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/svg+xml"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) readLogo(file);
-              e.target.value = "";
-            }}
-          />
-          <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-            <ImageUp className="mr-2 size-4" /> {receipt.logo ? "Replace logo" : "Upload logo"}
-          </Button>
-          {receipt.logo && (
-            <Button variant="ghost" size="sm" onClick={() => setGlobal({ logo: "" })}>
-              Remove
-            </Button>
-          )}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Position</Label>
+            <ThemedSelect
+              ariaLabel="Logo position"
+              value={logoLayout.position}
+              onChange={(position) =>
+                setLogoLayout({ position: position as ReceiptSettings["logoLayout"]["position"] })
+              }
+              options={[
+                { value: "above-name", label: "Above business name" },
+                { value: "below-name", label: "Below business name" },
+                { value: "after-details", label: "After business details" },
+              ]}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Alignment</Label>
+            <ThemedSelect
+              ariaLabel="Logo alignment"
+              value={logoLayout.alignment}
+              onChange={(alignment) =>
+                setLogoLayout({
+                  alignment: alignment as ReceiptSettings["logoLayout"]["alignment"],
+                })
+              }
+              options={[
+                { value: "left", label: "Left" },
+                { value: "center", label: "Centre" },
+                { value: "right", label: "Right" },
+              ]}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Width</Label>
+            <PresetNumber
+              label="Logo width percentage"
+              value={logoLayout.widthPercent}
+              min={20}
+              max={100}
+              step={5}
+              onChange={(widthPercent) => setLogoLayout({ widthPercent })}
+              options={[25, 40, 60, 80, 100].map((value) => ({
+                value,
+                label: `${value}% of paper`,
+              }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Maximum height</Label>
+            <PresetNumber
+              label="Logo maximum height in millimetres"
+              value={logoLayout.maxHeightMm}
+              min={6}
+              max={40}
+              step={1}
+              onChange={(maxHeightMm) => setLogoLayout({ maxHeightMm })}
+              options={[10, 15, 22, 30, 40].map((value) => ({
+                value,
+                label: `${value} mm`,
+              }))}
+            />
+          </div>
         </div>
       </section>
 

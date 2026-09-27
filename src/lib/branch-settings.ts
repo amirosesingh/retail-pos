@@ -46,7 +46,10 @@ type OverrideRow = { section: string; patch: unknown };
 type LockRow = { section: string; locked: boolean };
 
 /** Overrides for every tier this terminal belongs to, plus the lock table. */
-export async function loadBranchSettings(ids: ScopeIds, strict = false): Promise<BranchSettingsState> {
+export async function loadBranchSettings(
+  ids: ScopeIds,
+  strict = false,
+): Promise<BranchSettingsState> {
   const state: BranchSettingsState = {
     overrides: { CLUSTER: {}, BRANCH: {}, TERMINAL: {} },
     locks: {},
@@ -153,9 +156,20 @@ export function resolveScopedSettings<T>(
   let settings = base;
   let touched = false;
   for (const tier of SETTING_TIERS) {
-    for (const key of Object.keys((scope.overrides[tier] ?? {})) as SettingsSectionId[]) {
+    for (const key of Object.keys(scope.overrides[tier] ?? {}) as SettingsSectionId[]) {
       if (scope.locks[key] || !sectionAllowsTier(key, tier)) continue;
-      settings = merge(settings, scope.overrides[tier][key]);
+      let patch = scope.overrides[tier][key];
+      if (key === "receiptLayout") {
+        // Logo ownership moved to the business identity block. Ignore only
+        // the legacy terminal copy while retaining every real layout field.
+        const receipt = patch?.receipt;
+        if (receipt && typeof receipt === "object" && !Array.isArray(receipt)) {
+          const cleanReceipt = { ...(receipt as Record<string, unknown>) };
+          delete cleanReceipt.logo;
+          patch = { ...patch, receipt: cleanReceipt };
+        }
+      }
+      settings = merge(settings, patch);
       touched = true;
     }
   }
