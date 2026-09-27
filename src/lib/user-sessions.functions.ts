@@ -72,13 +72,20 @@ export const startDeviceSession = createServerFn({ method: "POST" })
 
 /** Sign out: the record stops proving anything immediately. */
 export const endDeviceSession = createServerFn({ method: "POST" })
-  .validator((input: unknown) =>
-    z.object({ sessionToken: z.string().max(400) }).parse(input),
-  )
+  .validator((input: unknown) => z.object({ sessionToken: z.string().max(400) }).parse(input))
   .handler(async ({ data }) => {
     const { revokeSession } = await import("./session-guard.server");
     await revokeSession(data.sessionToken);
     return { ok: true as const };
+  });
+
+/** Record throttled human activity; ordinary authenticated traffic is not activity. */
+export const recordDeviceActivity = createServerFn({ method: "POST" })
+  .validator((input: unknown) => z.object({ sessionToken: z.string().max(400) }).parse(input))
+  .handler(async ({ data }) => {
+    const { touchSession } = await import("./session-guard.server");
+    const checked = await touchSession(data.sessionToken, { operatorActivity: true });
+    return { ok: checked.ok };
   });
 
 async function assertSupervisor(accessToken: string): Promise<void> {
@@ -98,9 +105,7 @@ async function assertSupervisor(accessToken: string): Promise<void> {
 
 /** Everything currently signed in, newest activity first. */
 export const listDeviceSessions = createServerFn({ method: "POST" })
-  .validator((input: unknown) =>
-    z.object({ accessToken: z.string().max(4000) }).parse(input),
-  )
+  .validator((input: unknown) => z.object({ accessToken: z.string().max(4000) }).parse(input))
   .handler(async ({ data }) => {
     const { serviceRest } = await import("@/core/api/pos-relay.server");
     try {
@@ -114,17 +119,31 @@ export const listDeviceSessions = createServerFn({ method: "POST" })
         "&order=last_activity_at.desc&limit=200",
     );
     if (!res.ok)
-      return { ok: false as const, error: "Could not read sessions", sessions: [] as DeviceSession[] };
+      return {
+        ok: false as const,
+        error: "Could not read sessions",
+        sessions: [] as DeviceSession[],
+      };
     const sessions = (await res.json()) as DeviceSession[];
     const [storesRes, terminalsRes] = await Promise.all([
       serviceRest("stores?select=id,name"),
       serviceRest("terminal_tokens?select=id,device_name"),
     ]);
     const stores = storesRes.ok
-      ? new Map(((await storesRes.json()) as { id: string; name: string }[]).map((row) => [row.id, row.name]))
+      ? new Map(
+          ((await storesRes.json()) as { id: string; name: string }[]).map((row) => [
+            row.id,
+            row.name,
+          ]),
+        )
       : new Map<string, string>();
     const terminals = terminalsRes.ok
-      ? new Map(((await terminalsRes.json()) as { id: string; device_name: string }[]).map((row) => [row.id, row.device_name]))
+      ? new Map(
+          ((await terminalsRes.json()) as { id: string; device_name: string }[]).map((row) => [
+            row.id,
+            row.device_name,
+          ]),
+        )
       : new Map<string, string>();
     return {
       ok: true as const,

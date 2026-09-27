@@ -70,6 +70,7 @@ import { hydrateConnectionProfile, isConnectionProfileHydrated } from "@/lib/con
 import { CloudSetupGate } from "@/platforms/web/components/pos/CloudSetupGate";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { LocationBootGuard } from "@/platforms/web/components/pos/LocationBootGuard";
+import { activeLocations } from "@/lib/locations";
 
 /** The only screens any signed-in account may open. Everything else must have
  *  an entry above — unknown paths are denied, never silently allowed. */
@@ -307,7 +308,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   if (!dataReady && !offlineBypass)
     return <TillLoader onContinueOffline={() => setOfflineBypass(true)} />;
   // Nothing can be sold, received or moved without somewhere to book it to.
-  if (!stores.length && !location.pathname.startsWith("/stores")) return <LocationBootGuard />;
+  if (!activeLocations(stores).length && !location.pathname.startsWith("/stores"))
+    return <LocationBootGuard />;
 
   // Anything that needs a hand here: goods on their way in, or notes this
   // branch still has to authorise or send.

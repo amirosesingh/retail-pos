@@ -11,16 +11,9 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
 import { type MetaRole } from "@/lib/pos-users";
-import {
-  clearStoredCredentials,
-  readCredentials,
-  saveCashierToken,
-} from "@/lib/pos-credentials";
+import { clearStoredCredentials, readCredentials, saveCashierToken } from "@/lib/pos-credentials";
 import { issueCashierSession } from "@/lib/pos-session.functions";
-import {
-  startDeviceSession,
-  endDeviceSession,
-} from "@/lib/user-sessions.functions";
+import { startDeviceSession, endDeviceSession } from "@/lib/user-sessions.functions";
 import { loadSessionToken, saveSessionToken } from "@/lib/pos-credentials";
 import { preparePinAccount } from "@/lib/staff-admin";
 import { toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
@@ -28,25 +21,16 @@ import { activeBranchId, activeBranchName, bindTerminalBranch } from "@/lib/acti
 import { cacheCredential, verifyCachedPin } from "@/lib/offline-credentials";
 import { recordSignIn } from "@/lib/shift-attendance";
 import { endShiftSessions } from "@/lib/shift-sessions";
-import {
-  isTokenRejection,
-  notifySessionExpired,
-  onSessionExpired,
-} from "@/lib/session-expiry";
+import { isTokenRejection, notifySessionExpired, onSessionExpired } from "@/lib/session-expiry";
 import { validateStoredAuthSession } from "@/lib/auth-session-guard";
 import { setCentralAuthSessionPresent } from "@/lib/session-presence";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 import { clearAutoLockActivity, markAutoLockActivity } from "@/lib/auto-lock";
+import { markStartupStage, resetStartupTiming } from "@/lib/startup-timing";
 import { bumpSessionEpoch, isCurrentEpoch, sessionEpoch } from "@/lib/session-epoch";
 import { awaitProfileHydrated } from "@/lib/connection-profile";
-import {
-  hydrateTerminalConfig,
-  readTerminalConfig,
-} from "@/core/activation/terminal-tokens";
-import {
-  hasRequiredPlatformConfig,
-  subscribeConfigReady,
-} from "@/lib/platform-config-ready";
+import { hydrateTerminalConfig, readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { hasRequiredPlatformConfig, subscribeConfigReady } from "@/lib/platform-config-ready";
 import { isTerminalApp } from "@/platform-config/platform";
 import {
   failureFromAuthError,
@@ -110,7 +94,9 @@ export type AppRole = "admin" | "manager" | "staff";
 export const APP_ROLES: AppRole[] = ["admin", "manager", "staff"];
 
 const offlineAppRole = (roleSlug: string | null | undefined): AppRole => {
-  const role = String(roleSlug ?? "").trim().toLowerCase();
+  const role = String(roleSlug ?? "")
+    .trim()
+    .toLowerCase();
   if (role === "admin") return "admin";
   if (role === "manager" || role === "supervisor") return "manager";
   return "staff";
@@ -408,16 +394,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .from("user_roles")
       .select("role")
       .eq("user_id", userId)
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        setRoles(error ? [] : ((data ?? []) as { role: AppRole }[]).map((r) => r.role));
-        setRolesReady(true);
-      }, () => {
-        if (!cancelled) {
-          setRoles([]);
+      .then(
+        ({ data, error }) => {
+          if (cancelled) return;
+          setRoles(error ? [] : ((data ?? []) as { role: AppRole }[]).map((r) => r.role));
           setRolesReady(true);
-        }
-      });
+          markStartupStage("roles");
+        },
+        () => {
+          if (!cancelled) {
+            setRoles([]);
+            setRolesReady(true);
+          }
+        },
+      );
     return () => {
       cancelled = true;
     };
@@ -432,24 +422,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     setProfileReady(false);
-    void supabase.rpc("current_app_user" as never).then(({ data, error }) => {
-      if (cancelled) return;
-      if (error) {
-        setAppUser(null);
+    void supabase.rpc("current_app_user" as never).then(
+      ({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          setAppUser(null);
+          setProfileReady(true);
+          return;
+        }
+        const row = (Array.isArray(data) ? data[0] : data) as unknown as AppUserProfile | undefined;
+        setAppUser(row ?? null);
         setProfileReady(true);
-        return;
-      }
-      const row = (Array.isArray(data) ? data[0] : data) as unknown as
-        | AppUserProfile
-        | undefined;
-      setAppUser(row ?? null);
-      setProfileReady(true);
-    }, () => {
-      if (!cancelled) {
-        setAppUser(null);
-        setProfileReady(true);
-      }
-    });
+        markStartupStage("profile");
+      },
+      () => {
+        if (!cancelled) {
+          setAppUser(null);
+          setProfileReady(true);
+        }
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -480,64 +472,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persist, staff],
   );
 
-  const login = useCallback(
-    async (email: string, password: string) => {
-      // Terminal credentials are restored asynchronously from DPAPI/Keystore.
-      // Never construct the lazy cloud client until the current saved profile
-      // has replaced any older cloud pair carried by terminal activation.
-      await awaitProfileHydrated();
-      // A missing or half-saved connection is a configuration problem, and
-      // must never be reported as a wrong password.
-      const readiness = await hasRequiredPlatformConfig();
-      const configFailure = failureFromReadiness(readiness);
-      if (configFailure)
-        return {
-          ok: false,
-          code: configFailure,
-          error: loginFailureMessage(configFailure),
-        };
-      // This is an interactive sign-in, not a restored browser session.
-      // Start its idle allowance before Auth publishes SIGNED_IN so the old
-      // user's timestamp cannot race the new account onto the lock screen.
-      markAutoLockActivity();
-      // Check the account after authentication. A pre-login app_users read
-      // sends an old bearer token (or no user token) to a protected table and
-      // produces a noisy 401 before the password is even submitted.
-      // One handler for both worlds: a plain username belongs to a terminal
-      // account and is mapped onto its hidden internal address; anything with
-      // an "@" is used exactly as typed.
-      const address = toLoginAddress(email);
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: address,
-        password,
-      });
-      if (error) {
-        const code = failureFromAuthError(error.message);
-        return { ok: false, code, error: loginFailureMessage(code) };
-      }
-      // The account must resolve to a profile with a role before it is let in.
-      try {
-        const { data: profileRows, error: profileError } = await supabase.rpc("current_app_user");
-        const profile = (Array.isArray(profileRows) ? profileRows[0] : null) as
-          | Record<string, unknown>
-          | null;
-        if (profileError || !profile) {
-          await supabase.auth.signOut({ scope: "local" });
-          return {
-            ok: false,
-            code: "permission-denied" as const,
-            error: loginFailureMessage("permission-denied"),
-          };
-        }
-        if (profile["is_active"] === false) {
-          await supabase.auth.signOut({ scope: "local" });
-          return {
-            ok: false,
-            code: "account-inactive" as const,
-            error: loginFailureMessage("account-inactive"),
-          };
-        }
-      } catch {
+  const login = useCallback(async (email: string, password: string) => {
+    // Terminal credentials are restored asynchronously from DPAPI/Keystore.
+    // Never construct the lazy cloud client until the current saved profile
+    // has replaced any older cloud pair carried by terminal activation.
+    await awaitProfileHydrated();
+    // A missing or half-saved connection is a configuration problem, and
+    // must never be reported as a wrong password.
+    const readiness = await hasRequiredPlatformConfig();
+    const configFailure = failureFromReadiness(readiness);
+    if (configFailure)
+      return {
+        ok: false,
+        code: configFailure,
+        error: loginFailureMessage(configFailure),
+      };
+    // This is an interactive sign-in, not a restored browser session.
+    // Start its idle allowance before Auth publishes SIGNED_IN so the old
+    // user's timestamp cannot race the new account onto the lock screen.
+    markAutoLockActivity();
+    resetStartupTiming();
+    // Check the account after authentication. A pre-login app_users read
+    // sends an old bearer token (or no user token) to a protected table and
+    // produces a noisy 401 before the password is even submitted.
+    // One handler for both worlds: a plain username belongs to a terminal
+    // account and is mapped onto its hidden internal address; anything with
+    // an "@" is used exactly as typed.
+    const address = toLoginAddress(email);
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: address,
+      password,
+    });
+    if (error) {
+      const code = failureFromAuthError(error.message);
+      return { ok: false, code, error: loginFailureMessage(code) };
+    }
+    markStartupStage("authentication");
+    // The account must resolve to a profile with a role before it is let in.
+    try {
+      const { data: profileRows, error: profileError } = await supabase.rpc("current_app_user");
+      const profile = (Array.isArray(profileRows) ? profileRows[0] : null) as Record<
+        string,
+        unknown
+      > | null;
+      if (profileError || !profile) {
         await supabase.auth.signOut({ scope: "local" });
         return {
           ok: false,
@@ -545,45 +523,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           error: loginFailureMessage("permission-denied"),
         };
       }
-
-      // Whoever signs in on this device trades in the terminal's branch.
-      bindTerminalBranch();
-      // Register this device so it can be listed and reset remotely, and so
-      // it signs itself out once it has been left idle for too long.
-      try {
-        const token = data.session?.access_token;
-        if (token) {
-          const started = await startDeviceSession({
-            data: {
-              kind: "staff",
-              accessToken: token,
-              label: data.user?.email ?? email.trim(),
-              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
-            },
-          });
-          if (started.ok) await saveSessionToken(started.token);
-        }
-      } catch {
-        /* the account token still works on its own */
+      if (profile["is_active"] === false) {
+        await supabase.auth.signOut({ scope: "local" });
+        return {
+          ok: false,
+          code: "account-inactive" as const,
+          error: loginFailureMessage("account-inactive"),
+        };
       }
-      return { ok: true };
-    },
-    [],
-  );
+    } catch {
+      await supabase.auth.signOut({ scope: "local" });
+      return {
+        ok: false,
+        code: "permission-denied" as const,
+        error: loginFailureMessage("permission-denied"),
+      };
+    }
+
+    // Whoever signs in on this device trades in the terminal's branch.
+    bindTerminalBranch();
+    // Register this device so it can be listed and reset remotely, and so
+    // it signs itself out once it has been left idle for too long.
+    try {
+      const token = data.session?.access_token;
+      if (token) {
+        const started = await startDeviceSession({
+          data: {
+            kind: "staff",
+            accessToken: token,
+            label: data.user?.email ?? email.trim(),
+            platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+          },
+        });
+        if (started.ok) await saveSessionToken(started.token);
+      }
+    } catch {
+      /* the account token still works on its own */
+    }
+    return { ok: true };
+  }, []);
 
   /**
    * Finish a PIN sign-in that produced a real account session: read the
    * person's profile, pin the branch, and remember them for offline use.
    */
   const finishAccountPinSignIn = useCallback(
-    async (
-      code: string,
-      pin: string,
-    ): Promise<{ ok: boolean; error?: string } | null> => {
+    async (code: string, pin: string): Promise<{ ok: boolean; error?: string } | null> => {
       const { data } = await supabase.rpc("current_app_user");
-      const profile = (Array.isArray(data) ? data[0] : null) as
-        | Record<string, unknown>
-        | null;
+      const profile = (Array.isArray(data) ? data[0] : null) as Record<string, unknown> | null;
       if (profile && profile["is_active"] === false) {
         await supabase.auth.signOut({ scope: "local" });
         return { ok: false, error: "Account deactivated. Please contact an administrator." };
@@ -594,8 +581,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         fromDbRole(dbRole),
       );
       const bound =
-        bindTerminalBranch() ??
-        activeBranchId((profile?.["store_id"] as string | null) ?? null);
+        bindTerminalBranch() ?? activeBranchId((profile?.["store_id"] as string | null) ?? null);
       const next: TerminalUser = {
         userCode: String(profile?.["user_id"] ?? code),
         name: String(profile?.["full_name"] ?? code),
@@ -629,8 +615,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               kind: "staff",
               accessToken: token,
               label: next.name,
-              platform:
-                typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
             },
           });
           if (started.ok) await saveSessionToken(started.token);
@@ -643,263 +628,269 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const cashierLogin = useCallback(async (userId: string, pin: string) => {
-    const code = usernameFromAddress(userId);
-    if (!code) return { ok: false, error: "Enter your username" };
-    // Accounts are provisioned with a 4-32 character credential, so the till
-    // accepts the same range: short numeric PINs and longer passcodes alike.
-    if (pin.length < 4 || pin.length > 32)
-      return { ok: false, error: "Enter your PIN or passcode" };
-    // A till that was never connected has nowhere to check a PIN against.
-    // Saying "PIN not recognised" there sends people hunting for the wrong
-    // fix, so the configuration problem is named instead.
-    const readiness = await hasRequiredPlatformConfig();
-    const configFailure = failureFromReadiness(readiness);
-    if (configFailure)
-      return {
-        ok: false,
-        code: configFailure,
-        error: loginFailureMessage(configFailure),
-      };
-    markAutoLockActivity();
-
-    let offline = false;
-    if (typeof navigator !== "undefined" && !navigator.onLine) offline = true;
-
-    // The stored PIN hash is the authority: it is checked on the server with
-    // the internal key. The Auth password is only aligned afterwards, so a
-    // stale password can no longer refuse a person with the right PIN.
-    type ServerLogin = {
-      ok?: boolean;
-      error?: string;
-      cashierToken?: string;
-      sessionToken?: string;
-      cashier?: {
-        id: string;
-        username: string;
-        full_name: string;
-        store_id: string | null;
-        role: AppRole;
-        role_slug: string | null;
-        permissions: Record<string, boolean>;
-      };
-    };
-    let verified: ServerLogin | null = null;
-    let failure = "";
-    /** True when the server never got to judge the credential itself. */
-    let unreachable = offline;
-    if (!offline) {
-      try {
-        const { serverUrl } = await import("@/lib/server-origin");
-        // A till on a flaky line must not hang on the keypad: after six
-        // seconds the local database answers instead.
-        const abort = new AbortController();
-        const timer = window.setTimeout(() => abort.abort(), 6_000);
-        const res = await fetch(serverUrl("/api/public/cashier-login"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: abort.signal,
-          body: JSON.stringify({
-            username: code,
-            pin,
-            platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
-            // An all-branches account has no branch of its own, so the
-            // terminal's branch is what the session is stamped with.
-            branchId: activeBranchId(null),
-          }),
-        }).finally(() => window.clearTimeout(timer));
-        const payload = (await res.json().catch(() => null)) as ServerLogin | null;
-        if (payload?.ok) verified = payload;
-        else {
-          failure = payload?.error ?? "";
-          // A server that cannot reach the central database (missing key,
-          // 5xx, gateway) has not rejected anyone — fall through to the local
-          // database. A 401 is a real rejection and must stay one.
-          const code503 = (payload as { code?: string } | null)?.code;
-          if (res.status >= 500 || code503 === "no_service_key") unreachable = true;
-        }
-      } catch {
-        unreachable = true;
-      }
-    }
-
-    let next: TerminalUser;
-    let signedInOffline = false;
-    if (!verified && unreachable) {
-      // Tier 1: the till's own local SQL database.
-      const { verifyLocalPin } = await import("@/core/local-db/local-staff");
-      const local = await verifyLocalPin(code, pin);
-      if (local.ok) {
-        signedInOffline = true;
-        next = {
-          userCode: local.staff.username,
-          name: local.staff.full_name,
-          role: offlineAppRole(local.staff.roleSlug),
-          roleSlug: local.staff.roleSlug,
-          storeId: activeBranchId(null) ?? (local.staff.store_id?.trim() || null),
-          email: "",
-          cashierId: local.staff.id,
-          permissions: local.staff.permissions as unknown as TerminalUser["permissions"],
+  const cashierLogin = useCallback(
+    async (userId: string, pin: string) => {
+      const code = usernameFromAddress(userId);
+      if (!code) return { ok: false, error: "Enter your username" };
+      // Accounts are provisioned with a 4-32 character credential, so the till
+      // accepts the same range: short numeric PINs and longer passcodes alike.
+      if (pin.length < 4 || pin.length > 32)
+        return { ok: false, error: "Enter your PIN or passcode" };
+      // A till that was never connected has nowhere to check a PIN against.
+      // Saying "PIN not recognised" there sends people hunting for the wrong
+      // fix, so the configuration problem is named instead.
+      const readiness = await hasRequiredPlatformConfig();
+      const configFailure = failureFromReadiness(readiness);
+      if (configFailure)
+        return {
+          ok: false,
+          code: configFailure,
+          error: loginFailureMessage(configFailure),
         };
-      } else if (local.reason === "inactive") {
-        return { ok: false, error: "Account deactivated" };
-      } else {
-        // Tier 2: the browser-storage verifier kept by earlier builds.
-        const cached = await verifyCachedPin(code, pin);
-        if (!cached)
-          return {
-            ok: false,
-            error:
-              local.reason === "invalid" || local.reason === "bad-pin"
-                ? "Invalid username or PIN"
-                : local.reason === "locked"
-                  ? local.error
-                : "No connection and this account has not signed in on this terminal before. Connect once, then you can sign in offline.",
+      markAutoLockActivity();
+      resetStartupTiming();
+
+      let offline = false;
+      if (typeof navigator !== "undefined" && !navigator.onLine) offline = true;
+
+      // The stored PIN hash is the authority: it is checked on the server with
+      // the internal key. The Auth password is only aligned afterwards, so a
+      // stale password can no longer refuse a person with the right PIN.
+      type ServerLogin = {
+        ok?: boolean;
+        error?: string;
+        cashierToken?: string;
+        sessionToken?: string;
+        cashier?: {
+          id: string;
+          username: string;
+          full_name: string;
+          store_id: string | null;
+          role: AppRole;
+          role_slug: string | null;
+          permissions: Record<string, boolean>;
+        };
+      };
+      let verified: ServerLogin | null = null;
+      let failure = "";
+      /** True when the server never got to judge the credential itself. */
+      let unreachable = offline;
+      if (!offline) {
+        try {
+          const { serverUrl } = await import("@/lib/server-origin");
+          // A till on a flaky line must not hang on the keypad: after six
+          // seconds the local database answers instead.
+          const abort = new AbortController();
+          const timer = window.setTimeout(() => abort.abort(), 6_000);
+          const res = await fetch(serverUrl("/api/public/cashier-login"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: abort.signal,
+            body: JSON.stringify({
+              username: code,
+              pin,
+              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+              // An all-branches account has no branch of its own, so the
+              // terminal's branch is what the session is stamped with.
+              branchId: activeBranchId(null),
+            }),
+          }).finally(() => window.clearTimeout(timer));
+          const payload = (await res.json().catch(() => null)) as ServerLogin | null;
+          if (payload?.ok) verified = payload;
+          else {
+            failure = payload?.error ?? "";
+            // A server that cannot reach the central database (missing key,
+            // 5xx, gateway) has not rejected anyone — fall through to the local
+            // database. A 401 is a real rejection and must stay one.
+            const code503 = (payload as { code?: string } | null)?.code;
+            if (res.status >= 500 || code503 === "no_service_key") unreachable = true;
+          }
+        } catch {
+          unreachable = true;
+        }
+      }
+
+      let next: TerminalUser;
+      let signedInOffline = false;
+      if (!verified && unreachable) {
+        // Tier 1: the till's own local SQL database.
+        const { verifyLocalPin } = await import("@/core/local-db/local-staff");
+        const local = await verifyLocalPin(code, pin);
+        if (local.ok) {
+          signedInOffline = true;
+          next = {
+            userCode: local.staff.username,
+            name: local.staff.full_name,
+            role: offlineAppRole(local.staff.roleSlug),
+            roleSlug: local.staff.roleSlug,
+            storeId: activeBranchId(null) ?? (local.staff.store_id?.trim() || null),
+            email: "",
+            cashierId: local.staff.id,
+            permissions: local.staff.permissions as unknown as TerminalUser["permissions"],
           };
-        signedInOffline = true;
-        next = {
-          userCode: cached.username,
-          name: cached.fullName,
-          role: offlineAppRole(cached.roleSlug),
-          roleSlug: cached.roleSlug ?? "staff",
-          storeId: activeBranchId(null) ?? (cached.storeId?.trim() || null),
-          email: "",
-          cashierId: cached.cashierId,
-          permissions: cached.permissions as unknown as TerminalUser["permissions"],
-        };
-      }
-    } else if (verified?.cashier) {
-      const account = verified.cashier;
-      next = {
-        userCode: account.username,
-        name: account.full_name || account.username,
-        // The protected PIN endpoint reads this from public.app_users. This
-        // preserves an administrator's existing session for the desktop gate;
-        // the desktop process independently verifies it before granting IPC.
-        role: account.role,
-        roleSlug: account.role_slug,
-        storeId: activeBranchId(account.store_id ?? null),
-        email: "",
-        cashierId: account.id,
-        permissions: account.permissions as unknown as TerminalUser["permissions"],
-      };
-      // The PIN is only in hand at this moment: keep a verifier and the
-      // profile in the local database so the next outage is survivable.
-      try {
-        const { cacheStaffRoster, rememberLocalPin } = await import("@/core/local-db/local-staff");
-        await cacheStaffRoster([
-          {
-            id: account.id,
-            user_id: account.username,
-            full_name: account.full_name,
-            store_id: account.store_id,
-            permissions: account.permissions,
-            role_slug: account.role_slug ?? account.role,
-            is_active: true,
-            pin_length: pin.length,
-          },
-        ]);
-        await rememberLocalPin(account.username, pin);
-      } catch {
-        /* offline sign-in stays on the browser-storage tier */
-      }
-    } else {
-      return { ok: false, error: failure || "Invalid username or PIN" };
-    }
-    if (signedInOffline) {
-      // Queue the sign-in so head office sees it once the line is back. The id
-      // is derived from terminal + person + minute, so a replay is an upsert.
-      try {
-        const { queueOfflineSignIn } = await import("@/lib/offline-sign-ins");
-        await queueOfflineSignIn({
-          username: next.userCode,
-          fullName: next.name,
-          storeId: next.storeId,
-        });
-      } catch {
-        /* the sign-in itself still stands */
-      }
-    }
-
-    bumpSessionEpoch();
-    setTerminalUser(next);
-    // The branch is in place before the register mounts, so nothing renders
-    // against an unresolved branch.
-    try {
-      const { writeBranch } = await import("@/core/local-db/local-db");
-      if (next.storeId)
-        writeBranch({ branchId: next.storeId, branchName: activeBranchName(null) });
-    } catch {
-      /* branch mirroring is best-effort */
-    }
-    try {
-      window.sessionStorage.setItem(TERMINAL_KEY, JSON.stringify(next));
-    } catch {
-      /* session storage unavailable */
-    }
-    // Signed terminal session so privileged server functions can verify the
-    // cashier — the PIN is re-checked server-side when minting it.
-    try {
-      // Preferred path: the server endpoint checks the PIN with the internal
-      // key and opens the device session in one call.
-      // The sign-in call above already opened the device session; reuse it.
-      let cashierToken = verified?.cashierToken ?? "";
-      const sessionToken = verified?.sessionToken ?? "";
-
-      if (!cashierToken) {
-        const issued = await issueCashierSession({ data: { username: next.userCode, pin } });
-        if (issued.ok) cashierToken = issued.token;
-      }
-
-      if (cashierToken) {
-        await saveCashierToken(cashierToken);
-        if (sessionToken) {
-          await saveSessionToken(sessionToken);
+        } else if (local.reason === "inactive") {
+          return { ok: false, error: "Account deactivated" };
         } else {
-        const started = await startDeviceSession({
-          data: {
-            kind: "cashier",
-            cashierToken,
-            label: next.name,
-            staffUserId: next.userCode,
-            ...(next.cashierId ? { cashierId: next.cashierId } : {}),
-            ...(next.storeId ? { branchId: next.storeId } : {}),
-            platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
-          },
-        });
-        if (started.ok) await saveSessionToken(started.token);
+          // Tier 2: the browser-storage verifier kept by earlier builds.
+          const cached = await verifyCachedPin(code, pin);
+          if (!cached)
+            return {
+              ok: false,
+              error:
+                local.reason === "invalid" || local.reason === "bad-pin"
+                  ? "Invalid username or PIN"
+                  : local.reason === "locked"
+                    ? local.error
+                    : "No connection and this account has not signed in on this terminal before. Connect once, then you can sign in offline.",
+            };
+          signedInOffline = true;
+          next = {
+            userCode: cached.username,
+            name: cached.fullName,
+            role: offlineAppRole(cached.roleSlug),
+            roleSlug: cached.roleSlug ?? "staff",
+            storeId: activeBranchId(null) ?? (cached.storeId?.trim() || null),
+            email: "",
+            cashierId: cached.cashierId,
+            permissions: cached.permissions as unknown as TerminalUser["permissions"],
+          };
+        }
+      } else if (verified?.cashier) {
+        markStartupStage("authentication");
+        const account = verified.cashier;
+        next = {
+          userCode: account.username,
+          name: account.full_name || account.username,
+          // The protected PIN endpoint reads this from public.app_users. This
+          // preserves an administrator's existing session for the desktop gate;
+          // the desktop process independently verifies it before granting IPC.
+          role: account.role,
+          roleSlug: account.role_slug,
+          storeId: activeBranchId(account.store_id ?? null),
+          email: "",
+          cashierId: account.id,
+          permissions: account.permissions as unknown as TerminalUser["permissions"],
+        };
+        // The PIN is only in hand at this moment: keep a verifier and the
+        // profile in the local database so the next outage is survivable.
+        try {
+          const { cacheStaffRoster, rememberLocalPin } =
+            await import("@/core/local-db/local-staff");
+          await cacheStaffRoster([
+            {
+              id: account.id,
+              user_id: account.username,
+              full_name: account.full_name,
+              store_id: account.store_id,
+              permissions: account.permissions,
+              role_slug: account.role_slug ?? account.role,
+              is_active: true,
+              pin_length: pin.length,
+            },
+          ]);
+          await rememberLocalPin(account.username, pin);
+        } catch {
+          /* offline sign-in stays on the browser-storage tier */
+        }
+      } else {
+        return { ok: false, error: failure || "Invalid username or PIN" };
+      }
+      if (signedInOffline) {
+        // Queue the sign-in so head office sees it once the line is back. The id
+        // is derived from terminal + person + minute, so a replay is an upsert.
+        try {
+          const { queueOfflineSignIn } = await import("@/lib/offline-sign-ins");
+          await queueOfflineSignIn({
+            username: next.userCode,
+            fullName: next.name,
+            storeId: next.storeId,
+          });
+        } catch {
+          /* the sign-in itself still stands */
         }
       }
-    } catch {
-      /* messaging features stay locked without a terminal token */
-    }
-    // Sign the till itself in to the central database (machine account), so
-    // shifts, sessions and sales are accepted instead of being refused.
-    try {
-      const { ensureTerminalSession } = await import("@/lib/terminal-session");
-      void ensureTerminalSession();
-    } catch {
-      /* the server relay still carries the writes */
-    }
-    // Last: line the Auth password up with the PIN so the till also holds a
-    // real session, and let the account's own profile (role, branch, rights)
-    // replace the summary above when it arrives.
-    if (verified?.cashier) {
+
+      // Establish the proven relay credentials before publishing terminalUser.
+      // PosProvider starts bootstrap as soon as terminalUser exists; publishing
+      // it first raced the encrypted credential write and produced an anonymous
+      // `stores` request whose RLS-filtered `200 []` looked authoritative.
       try {
-        const prepared = await preparePinAccount(next.userCode, pin);
-        if (prepared.ok) {
-          const { error } = await supabase.auth.signInWithPassword({
-            email: prepared.email,
-            password: pin,
-          });
-          if (!error) await finishAccountPinSignIn(next.userCode, pin);
+        let cashierToken = verified?.cashierToken ?? "";
+        const sessionToken = verified?.sessionToken ?? "";
+        if (!cashierToken) {
+          const issued = await issueCashierSession({ data: { username: next.userCode, pin } });
+          if (issued.ok) cashierToken = issued.token;
+        }
+        if (cashierToken) {
+          await saveCashierToken(cashierToken);
+          if (sessionToken) {
+            await saveSessionToken(sessionToken);
+          } else {
+            const started = await startDeviceSession({
+              data: {
+                kind: "cashier",
+                cashierToken,
+                label: next.name,
+                staffUserId: next.userCode,
+                ...(next.cashierId ? { cashierId: next.cashierId } : {}),
+                ...(next.storeId ? { branchId: next.storeId } : {}),
+                platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+              },
+            });
+            if (started.ok) await saveSessionToken(started.token);
+          }
         }
       } catch {
-        /* the signed device session already keeps the till working */
+        /* Auth fallback below may still establish a direct database session. */
       }
-    }
-    return { ok: true };
-  }, [finishAccountPinSignIn]);
+
+      bumpSessionEpoch();
+      setTerminalUser(next);
+      // The branch is in place before the register mounts, so nothing renders
+      // against an unresolved branch.
+      try {
+        const { writeBranch } = await import("@/core/local-db/local-db");
+        if (next.storeId)
+          writeBranch({ branchId: next.storeId, branchName: activeBranchName(null) });
+      } catch {
+        /* branch mirroring is best-effort */
+      }
+      try {
+        window.sessionStorage.setItem(TERMINAL_KEY, JSON.stringify(next));
+      } catch {
+        /* session storage unavailable */
+      }
+      // Sign the till itself in to the central database (machine account), so
+      // shifts, sessions and sales are accepted instead of being refused.
+      try {
+        const { ensureTerminalSession } = await import("@/lib/terminal-session");
+        void ensureTerminalSession();
+      } catch {
+        /* the server relay still carries the writes */
+      }
+      // Last: line the Auth password up with the PIN so the till also holds a
+      // real session, and let the account's own profile (role, branch, rights)
+      // replace the summary above when it arrives.
+      if (verified?.cashier) {
+        void (async () => {
+          try {
+            const prepared = await preparePinAccount(next.userCode, pin);
+            if (prepared.ok) {
+              const { error } = await supabase.auth.signInWithPassword({
+                email: prepared.email,
+                password: pin,
+              });
+              if (!error) await finishAccountPinSignIn(next.userCode, pin);
+            }
+          } catch {
+            /* the signed device session already keeps the till working */
+          }
+        })();
+      }
+      return { ok: true };
+    },
+    [finishAccountPinSignIn],
+  );
 
   /**
    * End the person's session. `startedAt` is the sign-in generation this
@@ -982,14 +973,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             ? "admin"
             : terminalUser.role === "manager"
               ? "supervisor"
-              : (terminalUser.roleSlug as MetaRole | null | undefined) ?? "cashier",
+              : ((terminalUser.roleSlug as MetaRole | null | undefined) ?? "cashier"),
         roles: [terminalUser.role],
         storeId: isLocalAdmin ? null : terminalUser.storeId,
         permissions: isLocalAdmin
           ? FULL_PERMISSIONS
           : isLocalSupervisor
             ? SUPERVISOR_PERMISSIONS
-          : normalizePermissions(terminalUser.permissions ?? {}, "cashier"),
+            : normalizePermissions(terminalUser.permissions ?? {}, "cashier"),
       };
     }
     const email = account.email ?? "";
@@ -1009,8 +1000,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       terminalUser?.role === "manager" ||
       terminalUser?.roleSlug === "supervisor";
     const found = email ? staff.find((s) => s.email && norm(s.email) === norm(email)) : undefined;
-    const fallbackName =
-      (meta["full_name"] as string | undefined) || email.split("@")[0] || "User";
+    const fallbackName = (meta["full_name"] as string | undefined) || email.split("@")[0] || "User";
     return {
       staffId:
         appUser?.user_id ??
@@ -1028,24 +1018,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         : isElevated
           ? (appUser?.store_id ?? (meta["store_id"] as string | null | undefined) ?? null)
           : (appUser?.store_id ??
-          (meta["store_id"] as string | null | undefined) ??
-          terminalUser?.storeId ??
-          found?.storeId ??
-          null),
+            (meta["store_id"] as string | null | undefined) ??
+            terminalUser?.storeId ??
+            found?.storeId ??
+            null),
       permissions: isTrueAdmin
         ? { ...FULL_PERMISSIONS }
         : isElevated
           ? normalizePermissions(appUser?.permissions ?? null, "supervisor")
-        : // public.app_users is the source of truth when the account has a row.
-          normalizePermissions(
-            Object.keys({
-              ...(found?.permissions ?? {}),
-              ...(appUser?.permissions ?? {}),
-            }).length
-              ? { ...(found?.permissions ?? {}), ...(appUser?.permissions ?? {}) }
-              : null,
-            fromDbRole(appUser?.role ?? null),
-          ),
+          : // public.app_users is the source of truth when the account has a row.
+            normalizePermissions(
+              Object.keys({
+                ...(found?.permissions ?? {}),
+                ...(appUser?.permissions ?? {}),
+              }).length
+                ? { ...(found?.permissions ?? {}), ...(appUser?.permissions ?? {}) }
+                : null,
+              fromDbRole(appUser?.role ?? null),
+            ),
     };
   }, [session, roles, staff, terminalUser, appUser]);
 
@@ -1078,8 +1068,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         void import("sonner").then(({ toast }) =>
           toast.error("Session ended", {
             id: "pos-session-expired",
-            description:
-              "Your session or branch is no longer active. Please sign in again.",
+            description: "Your session or branch is no longer active. Please sign in again.",
           }),
         );
       })();
@@ -1202,6 +1191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       bindTerminalBranch(config?.locationId, config?.locationName);
       setTerminalStoreId(config?.locationId?.trim() || null);
       setTerminalStoreName(config?.locationName?.trim() || null);
+      markStartupStage("terminal");
     };
     void read();
     return () => {

@@ -94,7 +94,7 @@ describe("Electron sales visibility", () => {
     const sync = readFileSync("src/lib/sync-engine.ts", "utf8");
     const database = readFileSync("src/core/api/pos-db.ts", "utf8");
 
-    expect(store).toContain("const cloud = await loadPrimaryState()");
+    expect(store).toContain("const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined)");
     expect(store).toContain(".then(() => loadPrimaryState(active ?? undefined))");
     expect(store).toContain(".then(() => loadLocalSales())");
     expect(database).toContain("branch_id: s.storeId");

@@ -67,9 +67,7 @@ export async function resolveIdleMinutes(input: {
       }
     }
 
-    const scopes = [input.branchId?.trim() || "", ""].filter(
-      (v, i, a) => a.indexOf(v) === i,
-    );
+    const scopes = [input.branchId?.trim() || "", ""].filter((v, i, a) => a.indexOf(v) === i);
     for (const scope of scopes) {
       const res = await serviceRest(
         `pos_store_settings?store_id=eq.${encodeURIComponent(scope)}&select=idle_timeout_minutes&limit=1`,
@@ -138,10 +136,14 @@ async function markRevoked(hash: string, reason: string): Promise<void> {
 }
 
 /**
- * Validate a raw token and stamp it as used. Any answer other than `ok` means
- * the caller must be refused with 401.
+ * Validate a raw token. Only a separately identified human/operator action may
+ * stamp it as active; background reads, sync, polling and token validation must
+ * not extend an abandoned session.
  */
-export async function touchSession(raw: string | undefined | null): Promise<SessionCheck> {
+export async function touchSession(
+  raw: string | undefined | null,
+  options: { operatorActivity?: boolean } = {},
+): Promise<SessionCheck> {
   if (!raw?.trim()) return { ok: false, reason: "unknown" };
   const hash = hashSessionToken(raw);
 
@@ -166,11 +168,13 @@ export async function touchSession(raw: string | undefined | null): Promise<Sess
     return { ok: false, reason: "idle" };
   }
 
-  await serviceRest(`user_sessions?session_token_hash=eq.${encodeURIComponent(hash)}`, {
-    method: "PATCH",
-    prefer: "return=minimal",
-    body: JSON.stringify({ last_activity_at: new Date().toISOString() }),
-  }).catch(() => undefined);
+  if (options.operatorActivity) {
+    await serviceRest(`user_sessions?session_token_hash=eq.${encodeURIComponent(hash)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: JSON.stringify({ last_activity_at: new Date().toISOString() }),
+    }).catch(() => undefined);
+  }
 
   return { ok: true, session: row };
 }
