@@ -103,7 +103,7 @@ describe("Electron sales visibility", () => {
     expect(sync).toContain("desktopBridge.sync?.getStatus");
   });
 
-  it("repairs only missing sale-item branches before upload", async () => {
+  it("repairs only missing legacy branch fields before upload", async () => {
     const { rowsForBranch } = await import("../../../electron/sync/push-worker.cjs");
     const rows = rowsForBranch("sale_items", [
       { id: "missing", branch_id: null },
@@ -116,7 +116,22 @@ describe("Electron sales visibility", () => {
       { id: "correct", branch_id: "branch-1" },
       { id: "wrong", branch_id: "branch-2" },
     ]);
+    expect(rowsForBranch("audit_logs", [
+      { id: "missing", store_id: null },
+      { id: "correct", store_id: "branch-1" },
+      { id: "wrong", store_id: "branch-2" },
+    ], "branch-1")).toEqual([
+      { id: "missing", store_id: "branch-1" },
+      { id: "correct", store_id: "branch-1" },
+      { id: "wrong", store_id: "branch-2" },
+    ]);
     expect(rowsForBranch("sales", [{ id: "sale" }], "branch-1")).toEqual([{ id: "sale" }]);
+  });
+
+  it("stores the branch on offline sign-in audit rows", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("src/lib/offline-sign-ins.ts", "utf8");
+    expect(source).toContain("store_id: input.storeId");
   });
 
   it("preserves the PostgREST reason behind an HTTP 400", async () => {

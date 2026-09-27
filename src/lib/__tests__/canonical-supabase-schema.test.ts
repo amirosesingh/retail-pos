@@ -29,6 +29,8 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260925130000_fix_sale_member_dependency_order.sql",
       "supabase/migrations/20260926090000_add_missing_pos_store_approval_columns.sql",
       "supabase/migrations/20260926105538_allow_offline_shift_sync.sql",
+      "supabase/migrations/20260927085119_fix_sale_item_aggregate_branch_guard.sql",
+      "supabase/migrations/20260927085816_normalize_legacy_audit_log_branch.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

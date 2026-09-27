@@ -164,4 +164,15 @@ describe("local SQL Server wizard server step", () => {
     expect(operations).toContain("conflict.reason");
     expect(operations.match(/await mirrorTerminalConfigToDesktop\(\)/g)).toHaveLength(4);
   });
+
+  it("reports reconciliation drift as a completed comparison", () => {
+    const main = readFileSync("electron/main.cjs", "utf8");
+    const handler = main.slice(
+      main.indexOf('ipcMain.handle("sync:reconcile"'),
+      main.indexOf('ipcMain.handle("telemetry:presence"'),
+    );
+    expect(handler).toContain("{ok:true,matched:differences.length===0,differences");
+    expect(handler).toContain("{ok:true,verified:report.verified,differences");
+    expect(handler).toContain('{ok:false,code:error?.code??"ERECONCILE"');
+  });
 });
