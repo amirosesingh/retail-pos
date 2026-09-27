@@ -6,8 +6,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { ImageUp, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { readBranding, useBranding, writeBranding } from "@/lib/branding";
+import { prepareReceiptLogo } from "@/lib/receipt-logo";
 import type { ReceiptOverride, ReceiptSettings } from "@/core/types/pos-types";
 
 const IDENTITY_FIELDS: { key: keyof ReceiptOverride; label: string; placeholder: string }[] = [
@@ -48,6 +52,8 @@ function IdentityForm() {
   const { effective, setField } = useSettingsCtx();
   const brand = useBranding();
   const [terminal, setTerminal] = useState("");
+  const [logoBusy, setLogoBusy] = useState(false);
+  const logoInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => setTerminal(brand.terminal), [brand.terminal]);
 
@@ -56,6 +62,20 @@ function IdentityForm() {
     const name = (effective.companyName ?? "").trim();
     if (name && name !== readBranding().company) writeBranding({ company: name });
   }, [effective.companyName]);
+
+  const pickLogo = async (file: File | null) => {
+    if (!file) return;
+    setLogoBusy(true);
+    try {
+      setField("logo", await prepareReceiptLogo(file));
+      toast.success("Business logo ready — save settings to publish it");
+    } catch (error) {
+      toast.error("Could not use that logo", { description: (error as Error).message });
+    } finally {
+      setLogoBusy(false);
+      if (logoInput.current) logoInput.current.value = "";
+    }
+  };
 
   return (
     <div className="space-y-3">
@@ -68,6 +88,50 @@ function IdentityForm() {
           placeholder="POS Terminal 01"
         />
       </div>
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <div>
+          <h2 className="text-sm font-semibold">Business logo</h2>
+          <p className="text-xs text-muted-foreground">
+            Upload the logo here once. Receipt designer controls its position and size; Receipt
+            elements controls whether it prints.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="grid h-20 w-36 place-items-center rounded-md border border-dashed border-border bg-muted/40 p-2">
+            {effective.logo ? (
+              <img
+                src={effective.logo}
+                alt="Current business logo"
+                className="max-h-full max-w-full object-contain"
+              />
+            ) : (
+              <span className="text-[11px] text-muted-foreground">No logo uploaded</span>
+            )}
+          </div>
+          <input
+            ref={logoInput}
+            type="file"
+            accept="image/png"
+            className="hidden"
+            onChange={(event) => void pickLogo(event.target.files?.[0] ?? null)}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={logoBusy}
+            onClick={() => logoInput.current?.click()}
+          >
+            <ImageUp className="size-4" />
+            {logoBusy ? "Preparing…" : effective.logo ? "Replace PNG" : "Upload PNG"}
+          </Button>
+          {effective.logo ? (
+            <Button type="button" size="sm" variant="ghost" onClick={() => setField("logo", "")}>
+              <Trash2 className="size-4" /> Remove
+            </Button>
+          ) : null}
+        </div>
+      </section>
       <div className="grid gap-3 sm:grid-cols-2">
         {IDENTITY_FIELDS.map((f) => (
           <div key={f.key} className="space-y-1">

@@ -284,7 +284,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   {
     id: "receipt-designer",
     label: "Receipt designer",
-    blurb: "Dynamic fields, logo upload and scoped receipt CSS.",
+    blurb: "Logo placement and size, dynamic fields and scoped receipt CSS.",
     icon: ListPlus,
     category: "receipts",
     scope: "company",

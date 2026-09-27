@@ -22,6 +22,7 @@ import {
   TRANSFER_STATUS_LABELS,
 } from "@/core/types/pos-types";
 import { defaultReceiptSettings } from "./pos-seed";
+import { normalizeReceiptLogoLayout } from "./receipt-logo";
 import { roundingOf, showsRoundingLine } from "@/core/pricing/rounding";
 import qrcode from "qrcode-generator";
 import { toast } from "sonner";
@@ -62,10 +63,7 @@ let taxCfg: TaxSettings = { enabled: true, rate: 5, mode: "exclusive" };
 let roundingCfg: RoundingSettings = roundingOf(undefined);
 
 /** Merge the global receipt profile with any branch-level overrides. */
-export function resolveReceiptCfg(
-  receipt: ReceiptSettings,
-  store?: Store | null,
-): ReceiptSettings {
+export function resolveReceiptCfg(receipt: ReceiptSettings, store?: Store | null): ReceiptSettings {
   const o: ReceiptOverride = store?.receiptOverrides ?? {};
   const clean = Object.fromEntries(
     Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ""),
@@ -177,8 +175,7 @@ export type ReceiptKind =
   | "transfer";
 
 const fmt = (n: number) => n.toFixed(2);
-const esc = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const FONT_STACKS: Record<string, string> = {
   mono: `"IBM Plex Mono", ui-monospace, monospace`,
@@ -245,7 +242,8 @@ export function barcodeSvg(value: string, height = 44) {
     if (!pattern) return;
     for (let i = 0; i < pattern.length; i++) {
       const w = pattern[i] === "1" ? WIDE : NARROW;
-      if (i % 2 === 0) rects += `<rect x="${x}" y="0" width="${w}" height="${height}" fill="#000"/>`;
+      if (i % 2 === 0)
+        rects += `<rect x="${x}" y="0" width="${w}" height="${height}" fill="#000"/>`;
       x += w;
     }
     if (idx < chars.length - 1) x += NARROW; // inter-character gap
@@ -257,17 +255,49 @@ export function barcodeSvg(value: string, height = 44) {
 
 /** Code 39 patterns: 9 elements per character, 1 = wide, 0 = narrow. */
 const CODE39: Record<string, string> = {
-  "0": "000110100", "1": "100100001", "2": "001100001", "3": "101100000",
-  "4": "000110001", "5": "100110000", "6": "001110000", "7": "000100101",
-  "8": "100100100", "9": "001100100", A: "100001001", B: "001001001",
-  C: "101001000", D: "000011001", E: "100011000", F: "001011000",
-  G: "000001101", H: "100001100", I: "001001100", J: "000011100",
-  K: "100000011", L: "001000011", M: "101000010", N: "000010011",
-  O: "100010010", P: "001010010", Q: "000000111", R: "100000110",
-  S: "001000110", T: "000010110", U: "110000001", V: "011000001",
-  W: "111000000", X: "010010001", Y: "110010000", Z: "011010000",
-  "-": "010000101", ".": "110000100", " ": "011000100", $: "010101000",
-  "/": "010100010", "+": "010001010", "%": "000101010",
+  "0": "000110100",
+  "1": "100100001",
+  "2": "001100001",
+  "3": "101100000",
+  "4": "000110001",
+  "5": "100110000",
+  "6": "001110000",
+  "7": "000100101",
+  "8": "100100100",
+  "9": "001100100",
+  A: "100001001",
+  B: "001001001",
+  C: "101001000",
+  D: "000011001",
+  E: "100011000",
+  F: "001011000",
+  G: "000001101",
+  H: "100001100",
+  I: "001001100",
+  J: "000011100",
+  K: "100000011",
+  L: "001000011",
+  M: "101000010",
+  N: "000010011",
+  O: "100010010",
+  P: "001010010",
+  Q: "000000111",
+  R: "100000110",
+  S: "001000110",
+  T: "000010110",
+  U: "110000001",
+  V: "011000001",
+  W: "111000000",
+  X: "010010001",
+  Y: "110010000",
+  Z: "011010000",
+  "-": "010000101",
+  ".": "110000100",
+  " ": "011000100",
+  $: "010101000",
+  "/": "010100010",
+  "+": "010001010",
+  "%": "000101010",
 };
 
 /** Strip anything Code 39 cannot represent. */
@@ -303,11 +333,13 @@ function printMargins() {
 export function printableWidthMm(paper: PaperSize) {
   const prefs = getPrinterPrefs();
   const band =
-    paper === "30mm" ? (prefs.printWidth?.["30mm"] ?? 24) : paper === "58mm"
-      ? (prefs.printWidth?.["58mm"] ?? 48)
-      : paper === "80mm"
-        ? (prefs.printWidth?.["80mm"] ?? 72)
-        : (PAPER_MM[paper] ?? 80);
+    paper === "30mm"
+      ? (prefs.printWidth?.["30mm"] ?? 24)
+      : paper === "58mm"
+        ? (prefs.printWidth?.["58mm"] ?? 48)
+        : paper === "80mm"
+          ? (prefs.printWidth?.["80mm"] ?? 72)
+          : (PAPER_MM[paper] ?? 80);
   const m = printMargins();
   return Math.max(paper === "30mm" ? 8 : 20, band - m.left - m.right);
 }
@@ -338,9 +370,9 @@ const shell = (title: string, body: string, autoPrint = true) => {
   h1 { ${fontCss(f.header)} font-size: ${Math.round(f.header.size * 1.25)}px; text-align: center; margin: 0 0 2px; }
   .c { text-align: center; }
   .muted { font-size: 0.85em; }
-  .logo { text-align: center; margin-bottom: 4px; }
+  .logo { margin: 2px 0 4px; }
   .logo span { display: inline-block; border: 2px solid #000; border-radius: 4px; padding: 3px 8px; font-weight: 700; letter-spacing: 3px; font-size: 1.1em; }
-  .logo img { max-width: 60%; max-height: 22mm; object-fit: contain; }
+  .logo img { display: inline-block; max-width: 100%; object-fit: contain; }
   hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
   table { width: 100%; border-collapse: collapse; }
   td { vertical-align: top; padding: 1px 0; }
@@ -380,16 +412,19 @@ const header = (subtitle?: string) => {
     receiptCfg.regNumber ? `Reg. No. ${receiptCfg.regNumber}` : "",
     receiptCfg.website || "",
   ].filter(Boolean);
+  const logoLayout = normalizeReceiptLogoLayout(receiptCfg.logoLayout);
+  const logo = receiptCfg.showLogo
+    ? receiptCfg.logo
+      ? `<div class="logo" style="text-align:${logoLayout.alignment}"><img src="${esc(receiptCfg.logo)}" alt="" style="width:${logoLayout.widthPercent}%;max-height:${logoLayout.maxHeightMm}mm"></div>`
+      : `<div class="logo" style="text-align:${logoLayout.alignment}"><span>${esc(initials || "POS")}</span></div>`
+    : "";
+  const logoAt = (position: ReceiptSettings["logoLayout"]["position"]) =>
+    logoLayout.position === position ? logo : "";
   return `
   <div class="rcpt-head">
-  ${
-    receiptCfg.showLogo
-      ? receiptCfg.logo
-        ? `<div class="logo"><img src="${esc(receiptCfg.logo)}" alt=""></div>`
-        : `<div class="logo"><span>${esc(initials || "POS")}</span></div>`
-      : ""
-  }
+  ${logoAt("above-name")}
   <h1>${esc(receiptCfg.companyName || STORE.name)}</h1>
+  ${logoAt("below-name")}
   </div>
   <div class="c muted">${esc(
     activeBranch ? `${activeBranch.name} (${activeBranch.code})` : STORE.line1,
@@ -400,6 +435,7 @@ const header = (subtitle?: string) => {
     .map((l) => `<div class="c muted">${esc(l)}</div>`)
     .join("")}
   ${info.map((l) => `<div class="c muted">${esc(l)}</div>`).join("")}
+  ${logoAt("after-details")}
   ${customLines("header")}
   ${qrBlock("header")}
   ${subtitle ? `<div class="c tag">${esc(subtitle)}</div>` : ""}
@@ -438,15 +474,16 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
   const sign = kind === "refund" ? -1 : 1;
   const rows = sale.lines
     .map(
-      (l) => `<tr><td>${esc(l.name)}${l.credit ? ' <span class="tag">CREDIT</span>' : ""}<div class="muted">${l.qty} x ${fmt(l.price)}${
-        l.discount
-          ? ` - ${l.discountType === "percent" ? `${l.discount}%` : fmt(l.discount)} disc`
-          : ""
-      }</div></td>${
-        hidePrices
-          ? ""
-          : `<td class="r">${fmt(sign * (l.price - lineUnitDiscount(l)) * l.qty)}</td>`
-      }</tr>`,
+      (l) =>
+        `<tr><td>${esc(l.name)}${l.credit ? ' <span class="tag">CREDIT</span>' : ""}<div class="muted">${l.qty} x ${fmt(l.price)}${
+          l.discount
+            ? ` - ${l.discountType === "percent" ? `${l.discount}%` : fmt(l.discount)} disc`
+            : ""
+        }</div></td>${
+          hidePrices
+            ? ""
+            : `<td class="r">${fmt(sign * (l.price - lineUnitDiscount(l)) * l.qty)}</td>`
+        }</tr>`,
     )
     .join("");
 
@@ -649,7 +686,8 @@ function printHtml(title: string, body: string, slip = true, barcode?: string) {
     if (!printed.ok) toast.error("Printing failed", { description: printed.error });
   })().catch((error: unknown) => {
     toast.error("Printing failed", {
-      description: error instanceof Error ? error.message : "The printer did not accept the receipt.",
+      description:
+        error instanceof Error ? error.message : "The printer did not accept the receipt.",
     });
   });
 }
@@ -666,11 +704,7 @@ function browserPrint(html: string) {
   setTimeout(() => frame.remove(), 4000);
 }
 
-export function printSaleReceipt(
-  sale: Sale,
-  member: Member | null,
-  kind: ReceiptKind = "sale",
-) {
+export function printSaleReceipt(sale: Sale, member: Member | null, kind: ReceiptKind = "sale") {
   printHtml(
     `${sale.receiptNo} ${kind}`,
     saleBody(sale, member, kind),
@@ -692,7 +726,9 @@ export function printTestReceipt() {
   const width = printableWidthMm(receiptCfg.paper);
   // Edge ruler: if the first or last tick is missing, the slip is clipped.
   const ticks = Array.from({ length: Math.floor(width / 5) + 1 }, (_, i) => i * 5)
-    .map((mmv) => `<span style="display:inline-block;width:5mm">${mmv % 10 === 0 ? "|" : "."}</span>`)
+    .map(
+      (mmv) => `<span style="display:inline-block;width:5mm">${mmv % 10 === 0 ? "|" : "."}</span>`,
+    )
     .join("");
   const body = `${header("TEST RECEIPT")}
     <table>
@@ -723,8 +759,12 @@ function transferBlock(pay: PaymentDetails | null) {
   if (!pay) return "";
   const rows = [
     pay.bankName ? `<tr><td>Bank</td><td class="r">${esc(pay.bankName)}</td></tr>` : "",
-    pay.accountName ? `<tr><td>Account name</td><td class="r">${esc(pay.accountName)}</td></tr>` : "",
-    pay.accountNumber ? `<tr><td>Account no.</td><td class="r b">${esc(pay.accountNumber)}</td></tr>` : "",
+    pay.accountName
+      ? `<tr><td>Account name</td><td class="r">${esc(pay.accountName)}</td></tr>`
+      : "",
+    pay.accountNumber
+      ? `<tr><td>Account no.</td><td class="r b">${esc(pay.accountNumber)}</td></tr>`
+      : "",
     pay.whatsapp ? `<tr><td>WhatsApp</td><td class="r">${esc(pay.whatsapp)}</td></tr>` : "",
   ].filter(Boolean);
   if (!rows.length) return "";
@@ -906,34 +946,36 @@ function jobCardRows(booking: Booking) {
     collection: "Settle on collection",
   };
   const rows = [
-    booking.serviceName ? `<tr><td>Service</td><td class="r">${esc(booking.serviceName)}</td></tr>` : "",
+    booking.serviceName
+      ? `<tr><td>Service</td><td class="r">${esc(booking.serviceName)}</td></tr>`
+      : "",
     j.racketModel ? `<tr><td>Racket</td><td class="r">${esc(j.racketModel)}</td></tr>` : "",
     j.stringType ? `<tr><td>String</td><td class="r">${esc(j.stringType)}</td></tr>` : "",
     j.tensionMain || j.tensionCross
       ? `<tr class="b"><td>Tension (main / cross)</td><td class="r b">${esc(String(j.tensionMain ?? "—"))} / ${esc(String(j.tensionCross ?? j.tensionMain ?? "—"))} ${esc(unit)}</td></tr>`
       : "",
-    j.grommetNotes ? `<tr><td>Grommet / grip</td><td class="r">${esc(j.grommetNotes)}</td></tr>` : "",
+    j.grommetNotes
+      ? `<tr><td>Grommet / grip</td><td class="r">${esc(j.grommetNotes)}</td></tr>`
+      : "",
     j.droppedOffAt
       ? `<tr><td>Dropped off</td><td class="r">${esc(new Date(j.droppedOffAt).toLocaleString())}</td></tr>`
       : "",
     j.promisedAt
       ? `<tr><td>Ready by</td><td class="r b">${esc(new Date(j.promisedAt).toLocaleString())}</td></tr>`
       : "",
-    booking.jobStatus ? `<tr><td>Status</td><td class="r">${esc(booking.jobStatus.toUpperCase())}</td></tr>` : "",
+    booking.jobStatus
+      ? `<tr><td>Status</td><td class="r">${esc(booking.jobStatus.toUpperCase())}</td></tr>`
+      : "",
     booking.paymentTiming
       ? `<tr><td>Payment</td><td class="r">${esc(timing[booking.paymentTiming] ?? booking.paymentTiming)}</td></tr>`
       : "",
-    j.notifyWhatsApp
-      ? `<tr><td>Notify</td><td class="r">WhatsApp when ready</td></tr>`
-      : "",
+    j.notifyWhatsApp ? `<tr><td>Notify</td><td class="r">WhatsApp when ready</td></tr>` : "",
   ]
     .filter(Boolean)
     .join("");
   if (!rows) return "";
   return `<hr><div class="c b">RACKET JOB CARD</div><table>${rows}</table>${
-    j.jobNotes
-      ? `<div class="muted">Notes: ${esc(j.jobNotes)}</div>`
-      : ""
+    j.jobNotes ? `<div class="muted">Notes: ${esc(j.jobNotes)}</div>` : ""
   }`;
 }
 
@@ -982,14 +1024,8 @@ export function shiftReportPreview(shift: Shift, sales: Sale[]) {
   return shell("Z report", shiftBody(shift, sales, "zreport"), false);
 }
 
-function transferBody(
-  transfer: Transfer,
-  products: Product[],
-  from: Store,
-  to: Store,
-) {
-  const label =
-    transfer.kind === "request" ? "STOCK REQUEST NOTE" : "STOCK TRANSFER NOTE";
+function transferBody(transfer: Transfer, products: Product[], from: Store, to: Store) {
+  const label = transfer.kind === "request" ? "STOCK REQUEST NOTE" : "STOCK TRANSFER NOTE";
   const lines = transfer.items.map((item) => ({
     item,
     product: products.find((p) => p.id === item.productId) ?? null,
@@ -1027,12 +1063,7 @@ function transferBody(
     <div class="c muted">${esc(transfer.ref)}</div>`;
 }
 
-export function printTransferNote(
-  transfer: Transfer,
-  products: Product[],
-  from: Store,
-  to: Store,
-) {
+export function printTransferNote(transfer: Transfer, products: Product[], from: Store, to: Store) {
   printHtml(transfer.ref, transferBody(transfer, products, from, to), false);
 }
 
@@ -1051,28 +1082,28 @@ export function openCashDrawer(reason = "Cash drawer opened") {
   }
   const bytes = drawerPulseBytes();
   void rawPulse(bytes).then((res) => {
-    if (res.handled) {
-      // Desktop shell: never print a slip — that is the symptom, not a fallback.
-      if (!res.ok) {
-        toast.error("Drawer did not open", {
-          description:
-            res.error ||
-            "The printer refused the raw drawer pulse. Check the printer selection in Receipt printer settings.",
-        });
+      if (res.handled) {
+        // Desktop shell: never print a slip — that is the symptom, not a fallback.
+        if (!res.ok) {
+          toast.error("Drawer did not open", {
+            description:
+              res.error ||
+              "The printer refused the raw drawer pulse. Check the printer selection in Receipt printer settings.",
+          });
+        }
+        return;
       }
-      return;
-    }
-    // Browser fallback: the pulse rides along on a tiny printed slip.
-    const kick = String.fromCharCode(...bytes);
-    browserPrint(
-      shell(
-        "drawer",
-        `<pre style="font-size:1px;line-height:1px">${kick}</pre><div class="c muted">${esc(reason)}</div>`,
-      ),
-    );
+      // Browser fallback: the pulse rides along on a tiny printed slip.
+      const kick = String.fromCharCode(...bytes);
+      browserPrint(
+        shell(
+          "drawer",
+          `<pre style="font-size:1px;line-height:1px">${kick}</pre><div class="c muted">${esc(reason)}</div>`,
+        ),
+      );
   }).catch((error: unknown) => {
-    toast.error("Drawer did not open", {
-      description: error instanceof Error ? error.message : "The printer connection failed.",
-    });
+      toast.error("Drawer did not open", {
+        description: error instanceof Error ? error.message : "The printer connection failed.",
+      });
   });
 }

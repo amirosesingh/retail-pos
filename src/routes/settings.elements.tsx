@@ -11,7 +11,7 @@ import { PAPER_LABELS } from "@/lib/pos-print";
 import type { PaperSize, ReceiptSettings } from "@/core/types/pos-types";
 
 const TOGGLES: { key: keyof ReceiptSettings; label: string }[] = [
-  { key: "showLogo", label: "Store logo" },
+  { key: "showLogo", label: "Show business logo / initials" },
   { key: "showPoints", label: "Member points balance" },
   { key: "showBarcode", label: "Barcode" },
   { key: "showTax", label: "Tax details" },

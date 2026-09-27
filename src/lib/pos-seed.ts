@@ -8,6 +8,7 @@ import type {
   WhatsAppSettings,
 } from "@/core/types/pos-types";
 import { defaultPaymentQr } from "@/core/types/pos-types";
+import { DEFAULT_RECEIPT_LOGO_LAYOUT } from "@/lib/receipt-logo";
 
 export const defaultPaymentDetails: PaymentDetails = {
   accountName: "",
@@ -30,6 +31,7 @@ export const defaultReceiptSettings: ReceiptSettings = {
   footerText: "Thank you — see you again soon",
   showLogo: true,
   logo: "",
+  logoLayout: DEFAULT_RECEIPT_LOGO_LAYOUT,
   showPoints: true,
   showBarcode: true,
   showTax: true,

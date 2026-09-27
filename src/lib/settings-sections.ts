@@ -116,6 +116,7 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
       "receipt.website",
       "receipt.headerText",
       "receipt.footerText",
+      "receipt.logo",
       "receipt.customLines",
       "receipt.bookingSlip",
       "receipt.qr",
@@ -132,7 +133,7 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     paths: [
       "receipt.paper",
       "receipt.showLogo",
-      "receipt.logo",
+      "receipt.logoLayout",
       "receipt.showPoints",
       "receipt.showBarcode",
       "receipt.showTax",
