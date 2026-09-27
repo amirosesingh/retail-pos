@@ -4,8 +4,7 @@
  * Each area (display, tax, receipt typography, …) is now its own route, so a
  * page opens as a real window instead of an accordion panel that scrolls the
  * rest of the menu past the user. This frame owns the state all of those pages
- * share: which branch is being edited, whether that branch overrides the global
- * receipt profile, and the live preview.
+ * share: the authoritative scope controls, save state and live preview.
  */
 import { Link } from "@tanstack/react-router";
 import {
@@ -19,16 +18,11 @@ import {
 } from "react";
 import { ArrowLeft, Eye, Loader2, RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
-import { notifyError } from "@/lib/notify";
 import { SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
 import { SaveIndicator } from "@/platforms/web/components/pos/settings/SaveIndicator";
 import { useEmbeddedSettings } from "@/platforms/web/components/pos/settings/embed";
 import { ScopePanel } from "@/platforms/web/components/pos/settings/ScopeControls";
-import { ScopeChip } from "@/platforms/web/components/pos/settings/ScopeChip";
-import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
@@ -36,7 +30,6 @@ import { defaultPaymentDetails, defaultWhatsApp } from "@/lib/pos-seed";
 import {
   PAPER_LABELS,
   paperCss,
-  resolveReceiptCfg,
   saleReceiptPreview,
   setPreviewReceiptCfg,
   setPrintSettings,
@@ -57,7 +50,6 @@ type Ctx = {
   tax: ReturnType<typeof usePos>["state"]["settings"]["tax"];
   payment: NonNullable<ReturnType<typeof usePos>["state"]["settings"]["payment"]>;
   whatsapp: NonNullable<ReturnType<typeof usePos>["state"]["settings"]["whatsapp"]>;
-  overrideOn: boolean;
   updateSettings: ReturnType<typeof usePos>["updateSettings"];
   setField: <K extends keyof ReceiptOverride>(key: K, value: ReceiptOverride[K]) => void;
   setGlobal: (patch: Partial<ReceiptSettings>) => void;
@@ -81,10 +73,8 @@ type Props = {
   title: string;
   description: string;
   children: ReactNode;
-  /** Branch picker + receipt preview only make sense for receipt-shaped pages. */
-  branchAware?: boolean;
   showPreview?: boolean;
-  /** Scopable blocks this page edits — renders the Global/Cluster/Branch/Private selector. */
+  /** Scopable blocks this page edits — renders the sole authoritative scope selector. */
   scopeSections?: SettingsSectionId[];
   /** Diagnostics pages need the whole window: tables and graphs, no reading column. */
   wide?: boolean;
@@ -98,7 +88,6 @@ export function SettingsFrame({
   title,
   description,
   children,
-  branchAware = false,
   showPreview = false,
   scopeSections,
   wide = false,
@@ -107,12 +96,12 @@ export function SettingsFrame({
 }: Props) {
   const {
     state,
-    stores,
     currentStore,
     updateSettings,
     saveConfiguredSettings,
+    settingsScope,
+    scopeIds,
     settingsScopeLoading,
-    upsertStore,
   } = usePos();
   const { isAdmin, isSupervisor, can } = useAuth();
   const canSettings =
@@ -131,6 +120,26 @@ export function SettingsFrame({
   const dirty = JSON.stringify(state.settings) !== snapshot;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+
+  // Changing branch/terminal or enabling an override replaces the effective
+  // settings record. That is a new editing baseline, not an unsaved user edit.
+  const scopeSignature = JSON.stringify({
+    scopeIds,
+    locks: settingsScope.locks,
+    owners: Object.fromEntries(
+      Object.entries(settingsScope.overrides).map(([tier, sections]) => [
+        tier,
+        Object.keys(sections).sort(),
+      ]),
+    ),
+  });
+  const previousScopeSignature = useRef(scopeSignature);
+  useEffect(() => {
+    if (previousScopeSignature.current === scopeSignature) return;
+    previousScopeSignature.current = scopeSignature;
+    setSnapshot(JSON.stringify(state.settings));
+    setSaveError("");
+  }, [scopeSignature, state.settings]);
 
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
@@ -170,24 +179,12 @@ export function SettingsFrame({
   const whatsapp = state.settings.whatsapp ?? defaultWhatsApp;
   const paymentQr = payment.paymentQr ?? defaultPaymentQr;
 
-  const [branchId, setBranchId] = useState(currentStore.id);
-  const branch = stores.find((s) => s.id === branchId) ?? currentStore;
-  const overrideOn = !!branch.receiptOverrides;
-
-  const effective = useMemo(
-    () => resolveReceiptCfg(receipt, overrideOn ? branch : null),
-    [receipt, branch, overrideOn],
-  );
+  // `state.settings` has already been resolved by the central scope engine.
+  // Receipt pages must not layer a second, branch-only override system on top.
+  const effective = receipt;
 
   const setField = <K extends keyof ReceiptOverride>(key: K, value: ReceiptOverride[K]) => {
-    if (overrideOn) {
-      void upsertStore({
-        ...branch,
-        receiptOverrides: { ...branch.receiptOverrides, [key]: value },
-      }).catch((error) => notifyError(error, "Saving branch receipt setting"));
-    } else {
-      updateSettings({ receipt: { ...receipt, [key]: value } as ReceiptSettings });
-    }
+    updateSettings({ receipt: { ...receipt, [key]: value } as ReceiptSettings });
   };
 
   const setGlobal = (patch: Partial<ReceiptSettings>) =>
@@ -201,19 +198,6 @@ export function SettingsFrame({
 
   const setPaymentQr = (patch: Partial<typeof paymentQr>) =>
     updateSettings({ payment: { ...payment, paymentQr: { ...paymentQr, ...patch } } });
-
-  const toggleOverride = (on: boolean) => {
-    void upsertStore({
-      ...branch,
-      receiptOverrides: on
-        ? {
-            companyName: receipt.companyName,
-            headerText: receipt.headerText,
-            footerText: receipt.footerText,
-          }
-        : undefined,
-    }).catch((error) => notifyError(error, "Saving branch receipt override"));
-  };
 
   const sample: Sale = useMemo(() => {
     const lines = [
@@ -298,7 +282,6 @@ export function SettingsFrame({
     tax,
     payment,
     whatsapp,
-    overrideOn,
     updateSettings,
     setField,
     setGlobal,
@@ -322,10 +305,7 @@ export function SettingsFrame({
             <div />
           ) : (
             <div className="min-w-0 space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-2xl font-semibold">{title}</h1>
-                <ScopeChip />
-              </div>
+              <h1 className="text-2xl font-semibold">{title}</h1>
               <p className="text-sm text-muted-foreground">{description}</p>
             </div>
           )}
@@ -356,31 +336,6 @@ export function SettingsFrame({
             </Sheet>
           )}
         </header>
-
-        {branchAware && (
-          <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-card px-3 py-2">
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">Editing branch</Label>
-              <ThemedSelect
-                ariaLabel="Editing branch"
-                className="h-8 w-56"
-                value={branchId}
-                onChange={setBranchId}
-                options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
-              />
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">
-                {overrideOn ? "Custom for this branch" : "Using global profile"}
-              </span>
-              <Switch
-                aria-label="Override for this branch"
-                checked={overrideOn}
-                onCheckedChange={toggleOverride}
-              />
-            </div>
-          </div>
-        )}
 
         {scopeSections?.length ? <ScopePanel sections={scopeSections} /> : null}
 

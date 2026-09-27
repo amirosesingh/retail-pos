@@ -46,13 +46,13 @@ function NumberingPage() {
     cfg.branchCode && !/^[A-Za-z0-9]{1,8}$/.test(cfg.branchCode)
       ? "Letters and numbers only, up to 8 characters."
       : "";
-  const tillError =
-    cfg.terminalNo && !/^\d{1,2}$/.test(cfg.terminalNo) ? "One or two digits." : "";
+  const tillError = cfg.terminalNo && !/^\d{1,2}$/.test(cfg.terminalNo) ? "One or two digits." : "";
 
   return (
     <SettingsFrame
       title="Bill numbering"
       description="Every receipt number is branch, till, day and a running number, so two registers can never mint the same bill — even offline."
+      scopeSections={["numbering"]}
     >
       <SettingsTabs current="/settings/numbering" />
 
@@ -86,7 +86,9 @@ function NumberingPage() {
               pattern="[0-9]*"
               value={cfg.terminalNo ?? ""}
               placeholder={terminalNumber()}
-              onChange={(e) => patch({ terminalNo: e.target.value.replace(/\D+/g, "").slice(0, 2) })}
+              onChange={(e) =>
+                patch({ terminalNo: e.target.value.replace(/\D+/g, "").slice(0, 2) })
+              }
             />
             <p className="text-[11px] text-muted-foreground">
               {tillError || "Leave blank to take it from this device's activation."}

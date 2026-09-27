@@ -158,6 +158,7 @@ function AccessSettingsPage() {
         showSaveBar={false}
         title="Roles & access"
         description="What each role may do, and what it can see."
+        scopeSections={["visibility"]}
       >
         <p className="text-sm text-muted-foreground">
           Your role does not allow staff permission management.
@@ -191,6 +192,7 @@ function AccessSettingsPage() {
       showSaveBar={false}
       title="Roles & access"
       description="Pick a role, then set what it may do and what it can see. Administrators always keep full access, so nothing here can lock you out."
+      scopeSections={["visibility"]}
     >
       <div className="space-y-5">
         <div className="flex flex-wrap items-end gap-3">

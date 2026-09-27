@@ -3,7 +3,10 @@ import { useRef, useState } from "react";
 import { ImageUp, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
-import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import {
+  SettingsFrame,
+  useSettingsCtx,
+} from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,7 +38,7 @@ export const Route = createFileRoute("/settings/receipt-designer")({
     <SettingsFrame
       title="Receipt designer"
       description="Content, dynamic fields, logo and styling for every printed slip. The preview uses sample transaction data."
-      branchAware
+      scopeSections={["receiptIdentity", "receiptLayout"]}
       showPreview
     >
       <SettingsTabs current="/settings/receipt-designer" />
@@ -69,8 +72,10 @@ function Designer() {
   /** Append the chosen field's tag to whichever block is selected. */
   const insert = (token: ReceiptFieldToken) => {
     const tag = fieldTag(token);
-    if (target.kind === "header") return setField("headerText", `${effective.headerText ?? ""}${tag}`);
-    if (target.kind === "footer") return setField("footerText", `${effective.footerText ?? ""}${tag}`);
+    if (target.kind === "header")
+      return setField("headerText", `${effective.headerText ?? ""}${tag}`);
+    if (target.kind === "footer")
+      return setField("footerText", `${effective.footerText ?? ""}${tag}`);
     setLines(lines.map((l) => (l.id === target.id ? { ...l, text: `${l.text}${tag}` } : l)));
   };
 
@@ -92,7 +97,7 @@ function Designer() {
       ? "Header text"
       : target.kind === "footer"
         ? "Footer text"
-        : (lines.find((l) => l.id === target.id)?.text || "Custom line");
+        : lines.find((l) => l.id === target.id)?.text || "Custom line";
 
   return (
     <div className="space-y-6">
@@ -106,7 +111,11 @@ function Designer() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="grid h-16 w-32 place-items-center rounded-md border border-dashed border-border bg-muted/40 p-1">
             {receipt.logo ? (
-              <img src={receipt.logo} alt="Current receipt logo" className="max-h-full max-w-full object-contain" />
+              <img
+                src={receipt.logo}
+                alt="Current receipt logo"
+                className="max-h-full max-w-full object-contain"
+              />
             ) : (
               <span className="text-[11px] text-muted-foreground">No logo</span>
             )}
@@ -170,7 +179,9 @@ function Designer() {
                 placeholder="Served by {{cashier}} on {{terminal_name}}"
                 onFocus={() => setTarget({ kind: "line", id: line.id })}
                 onChange={(e) =>
-                  setLines(lines.map((l) => (l.id === line.id ? { ...l, text: e.target.value } : l)))
+                  setLines(
+                    lines.map((l) => (l.id === line.id ? { ...l, text: e.target.value } : l)),
+                  )
                 }
               />
               <Button

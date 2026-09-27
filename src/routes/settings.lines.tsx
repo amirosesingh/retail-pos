@@ -1,7 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import { Plus, Trash2 } from "lucide-react";
-import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import {
+  SettingsFrame,
+  useSettingsCtx,
+} from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +14,11 @@ export const Route = createFileRoute("/settings/lines")({
   head: () => ({
     meta: [
       { title: "Receipt Extra Lines — Retail" },
-      { name: "description", content: "Add policy notes, promotions or opening hours above the footer or below the header of every printed receipt." },
+      {
+        name: "description",
+        content:
+          "Add policy notes, promotions or opening hours above the footer or below the header of every printed receipt.",
+      },
       { property: "og:title", content: "Receipt Extra Lines — Retail" },
       { property: "og:description", content: "Custom note lines printed on receipts." },
       { property: "og:type", content: "website" },
@@ -22,7 +29,7 @@ export const Route = createFileRoute("/settings/lines")({
     <SettingsFrame
       title="Receipt extra lines"
       description="Policy notes, promotions or opening hours printed with each slip."
-      branchAware
+      scopeSections={["receiptIdentity"]}
       showPreview
     >
       <SettingsTabs current="/settings/lines" />
@@ -89,7 +96,12 @@ function LinesForm() {
             variant="ghost"
             size="icon"
             aria-label="Remove line"
-            onClick={() => setField("customLines", lines.filter((l) => l.id !== line.id))}
+            onClick={() =>
+              setField(
+                "customLines",
+                lines.filter((l) => l.id !== line.id),
+              )
+            }
           >
             <Trash2 className="size-4" />
           </Button>

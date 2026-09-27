@@ -435,7 +435,9 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
     sales: (() => {
       if (!pendingSales?.size) return cloudSales;
       const incoming = new Set(cloudSales.map((sale) => sale.id));
-      const preserved = s.sales.filter((sale) => pendingSales.has(sale.id) && !incoming.has(sale.id));
+      const preserved = s.sales.filter(
+        (sale) => pendingSales.has(sale.id) && !incoming.has(sale.id),
+      );
       return [...preserved, ...cloudSales]
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(0, 500);
@@ -519,7 +521,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Scoped business/terminal overrides and global locks.
   const [scope, setScope] = useState<BranchSettingsState>(emptyBranchSettings);
   const settingsWrites = useRef(new SettingsWriteQueue());
-  const trackSettingsWrite = (key: string, save: () => Promise<unknown>) => settingsWrites.current.enqueue(key, save);
+  const trackSettingsWrite = (key: string, save: () => Promise<unknown>) =>
+    settingsWrites.current.enqueue(key, save);
   const saveConfiguredSettings = () => settingsWrites.current.flush();
   const [settingsTerminalId, setSettingsTerminalId] = useState("");
   const loadedScopeKey = useRef("");
@@ -632,12 +635,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const revision = settingsWrites.current.revision;
       try {
         const next = await loadBranchSettings(scopeIds, true);
-        if (!cancelled && !settingsWrites.current.pending && revision === settingsWrites.current.revision) {
+        if (
+          !cancelled &&
+          !settingsWrites.current.pending &&
+          revision === settingsWrites.current.revision
+        ) {
           setScope(next);
           setConfirmedScopeKey(scopeKey);
         }
-      } catch { /* Preserve confirmed scope on a failed refresh. */ }
-      finally { running = false; }
+      } catch {
+        /* Preserve confirmed scope on a failed refresh. */
+      } finally {
+        running = false;
+      }
     };
     void refreshScope();
     const interval = window.setInterval(() => void refreshScope(), 60_000);
@@ -825,7 +835,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
           .catch(() => {
             /* the offline gate takes over if the connection is gone */
           })
-          .finally(() => { loading = false; });
+          .finally(() => {
+            loading = false;
+          });
         void refreshActiveShift();
       }, 200);
     };
@@ -892,47 +904,63 @@ export function PosProvider({ children }: { children: ReactNode }) {
     if (!signedIn) return;
     const timers = new Map<string, number>();
     const unsubscribe = subscribeDataChange((change) => {
-      if (!change.entityId || !["products", "product_barcodes", "members", "promotions"].includes(change.table)) return;
+      if (
+        !change.entityId ||
+        !["products", "product_barcodes", "members", "promotions"].includes(change.table)
+      )
+        return;
       const kind = change.table === "product_barcodes" ? "products" : change.table;
       const key = `${kind}:${change.entityId}`;
       const previous = timers.get(key);
       if (previous) window.clearTimeout(previous);
-      timers.set(key, window.setTimeout(() => {
-        timers.delete(key);
-        const read = kind === "products"
-          ? loadCloudProduct(change.entityId!)
-          : kind === "members"
-            ? loadCloudMember(change.entityId!)
-            : loadCloudPromotion(change.entityId!);
-        void read.then((record) => {
-          setState((current) => {
-            if (kind === "products") {
-              const products = record
-                ? current.products.some((row) => row.id === record.id)
-                  ? current.products.map((row) => row.id === record.id ? record as Product : row)
-                  : [record as Product, ...current.products]
-                : current.products.filter((row) => row.id !== change.entityId);
-              return { ...current, products };
-            }
-            if (kind === "members") {
-              const members = record
-                ? current.members.some((row) => row.id === record.id)
-                  ? current.members.map((row) => row.id === record.id ? record as Member : row)
-                  : [record as Member, ...current.members]
-                : current.members.filter((row) => row.id !== change.entityId);
-              return { ...current, members };
-            }
-            const promotions = record
-              ? current.promotions.some((row) => row.id === record.id)
-                ? current.promotions.map((row) => row.id === record.id ? record as Promotion : row)
-                : [record as Promotion, ...current.promotions]
-              : current.promotions.filter((row) => row.id !== change.entityId);
-            return { ...current, promotions };
-          });
-        }).catch(() => {
-          /* the next reconnect snapshot remains the recovery path */
-        });
-      }, 150));
+      timers.set(
+        key,
+        window.setTimeout(() => {
+          timers.delete(key);
+          const read =
+            kind === "products"
+              ? loadCloudProduct(change.entityId!)
+              : kind === "members"
+                ? loadCloudMember(change.entityId!)
+                : loadCloudPromotion(change.entityId!);
+          void read
+            .then((record) => {
+              setState((current) => {
+                if (kind === "products") {
+                  const products = record
+                    ? current.products.some((row) => row.id === record.id)
+                      ? current.products.map((row) =>
+                          row.id === record.id ? (record as Product) : row,
+                        )
+                      : [record as Product, ...current.products]
+                    : current.products.filter((row) => row.id !== change.entityId);
+                  return { ...current, products };
+                }
+                if (kind === "members") {
+                  const members = record
+                    ? current.members.some((row) => row.id === record.id)
+                      ? current.members.map((row) =>
+                          row.id === record.id ? (record as Member) : row,
+                        )
+                      : [record as Member, ...current.members]
+                    : current.members.filter((row) => row.id !== change.entityId);
+                  return { ...current, members };
+                }
+                const promotions = record
+                  ? current.promotions.some((row) => row.id === record.id)
+                    ? current.promotions.map((row) =>
+                        row.id === record.id ? (record as Promotion) : row,
+                      )
+                    : [record as Promotion, ...current.promotions]
+                  : current.promotions.filter((row) => row.id !== change.entityId);
+                return { ...current, promotions };
+              });
+            })
+            .catch(() => {
+              /* the next reconnect snapshot remains the recovery path */
+            });
+        }, 150),
+      );
     });
     return () => {
       for (const timer of timers.values()) window.clearTimeout(timer);
@@ -974,10 +1002,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
                   applySalesSnapshot(current, rows, active, pendingSalesRef.current, true),
                 );
               });
-        void refresh
-          .catch(() => {
-            /* reconnect/pull remains the eventual-convergence fallback */
-          });
+        void refresh.catch(() => {
+          /* reconnect/pull remains the eventual-convergence fallback */
+        });
       }, 250);
     });
     return () => {
@@ -1005,7 +1032,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       try {
         const rows = await loadLocalSales();
         if (cancelled) return;
-        const active = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
+        const active =
+          activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
         setState((current) =>
           applySalesSnapshot(current, rows, active, pendingSalesRef.current, true),
         );
@@ -1020,7 +1048,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       }
     };
     const unsubscribe = bridge.onBusinessChanged((change) => {
-      const active = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
+      const active =
+        activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
       if (change.kind !== "sale") return;
       if (change.branchId && active && change.branchId !== active) return;
       void refresh();
@@ -1043,14 +1072,28 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const revision = settingsWrites.current.revision;
       try {
         const settings = await loadCloudSettings();
-        if (!cancelled && !settingsWrites.current.pending && revision === settingsWrites.current.revision)
+        if (
+          !cancelled &&
+          !settingsWrites.current.pending &&
+          revision === settingsWrites.current.revision
+        )
           setState((current) => ({ ...current, settings: mergeCloudSettings(settings) }));
-      } catch { /* Keep the last confirmed settings until a later refresh. */ }
-      finally { running = false; }
+      } catch {
+        /* Keep the last confirmed settings until a later refresh. */
+      } finally {
+        running = false;
+      }
     };
-    const wake = () => { void refresh(); };
+    const wake = () => {
+      void refresh();
+    };
     const unsubscribe = subscribeSettingsChange((change) => {
-      if (change.table !== "pos_settings" && change.reason !== "reconnect" && change.reason !== "realtime:subscribed") return;
+      if (
+        change.table !== "pos_settings" &&
+        change.reason !== "reconnect" &&
+        change.reason !== "realtime:subscribed"
+      )
+        return;
       wake();
     });
     const interval = window.setInterval(wake, 60_000);
@@ -1119,7 +1162,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
       staffName: name,
       role: user?.role ?? terminalUser?.role ?? null,
     });
-  }, [activeShift, user?.staffId, user?.name, user?.role, terminalUser?.userCode, terminalUser?.name, terminalUser?.role]);
+  }, [
+    activeShift,
+    user?.staffId,
+    user?.name,
+    user?.role,
+    terminalUser?.userCode,
+    terminalUser?.name,
+    terminalUser?.role,
+  ]);
 
   // Signing in on a shift somebody else already opened is never interrupted by
   // the opening screen — say so once, then get out of the way.
@@ -1492,40 +1543,46 @@ export function PosProvider({ children }: { children: ReactNode }) {
           sale.exchangeOfReceiptNo ? "Exchange bill created" : "Bill created",
           "register",
           {
-          receiptNo: sale.receiptNo,
-          storeId: sale.storeId,
-          paymentMethod: sale.method,
-          subtotal: sale.subtotal,
-          discount: sale.discount,
-          tax: sale.tax,
-          total: sale.total,
-          paid: sale.paid,
-          memberId: sale.memberId ?? null,
-          pointsEarned: sale.pointsEarned,
-          exchangeOfReceiptNo: sale.exchangeOfReceiptNo ?? null,
-          cart: sale.lines.map((l) => ({
-            productId: l.productId,
-            name: l.name,
-            qty: l.qty,
-            price: l.price,
-            discount: l.discount,
-            discountType: l.discountType,
-            credit: !!l.credit,
-          })),
+            receiptNo: sale.receiptNo,
+            storeId: sale.storeId,
+            paymentMethod: sale.method,
+            subtotal: sale.subtotal,
+            discount: sale.discount,
+            tax: sale.tax,
+            total: sale.total,
+            paid: sale.paid,
+            memberId: sale.memberId ?? null,
+            pointsEarned: sale.pointsEarned,
+            exchangeOfReceiptNo: sale.exchangeOfReceiptNo ?? null,
+            cart: sale.lines.map((l) => ({
+              productId: l.productId,
+              name: l.name,
+              qty: l.qty,
+              price: l.price,
+              discount: l.discount,
+              discountType: l.discountType,
+              credit: !!l.credit,
+            })),
           },
         );
-      } catch { /* post-commit audit failures never change the sale result */ }
-      try { recordActivity({
-        type: "sale_complete",
-        title: sale.exchangeOfReceiptNo ? "Exchange bill created" : "Sale completed",
-        message: `Bill ${sale.receiptNo} for ${sale.total} paid by ${sale.method}.`,
-        actorName: sale.cashier ?? null,
-        storeId: sale.storeId,
-        entityType: "sale",
-        entityId: sale.receiptNo,
-        amount: sale.total,
-        meta: { lines: sale.lines.length, discount: sale.discount },
-      }); } catch { /* post-commit activity failures never change the sale result */ }
+      } catch {
+        /* post-commit audit failures never change the sale result */
+      }
+      try {
+        recordActivity({
+          type: "sale_complete",
+          title: sale.exchangeOfReceiptNo ? "Exchange bill created" : "Sale completed",
+          message: `Bill ${sale.receiptNo} for ${sale.total} paid by ${sale.method}.`,
+          actorName: sale.cashier ?? null,
+          storeId: sale.storeId,
+          entityType: "sale",
+          entityId: sale.receiptNo,
+          amount: sale.total,
+          meta: { lines: sale.lines.length, discount: sale.discount },
+        });
+      } catch {
+        /* post-commit activity failures never change the sale result */
+      }
       return sale;
     },
     [],
@@ -2225,63 +2282,64 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
         const persist = async (
           slice: Array<{ row: ImportRow; record: Product; existing: boolean }>,
-        ): Promise<void> => persistBatchWithIsolation(
-          slice,
-          (part) => db.commitProducts(part.map((entry) => entry.record)),
-          async (saved) => {
-            const records = saved.map((entry) => entry.record);
-            const keys = saved.map((entry) => entry.row.key);
-            const created = saved.filter((entry) => !entry.existing).length;
-            const restocked = saved.length - created;
-            result.created += created;
-            result.restocked += restocked;
-            result.savedKeys.push(...keys);
-            result.savedProducts.push(...records);
-            for (const entry of saved) {
-              byCode.set(entry.row.key, entry.record);
-              if (privateCatalogue && !entry.existing) newOwners[entry.record.id] = storeId;
-            }
+        ): Promise<void> =>
+          persistBatchWithIsolation(
+            slice,
+            (part) => db.commitProducts(part.map((entry) => entry.record)),
+            async (saved) => {
+              const records = saved.map((entry) => entry.record);
+              const keys = saved.map((entry) => entry.row.key);
+              const created = saved.filter((entry) => !entry.existing).length;
+              const restocked = saved.length - created;
+              result.created += created;
+              result.restocked += restocked;
+              result.savedKeys.push(...keys);
+              result.savedProducts.push(...records);
+              for (const entry of saved) {
+                byCode.set(entry.row.key, entry.record);
+                if (privateCatalogue && !entry.existing) newOwners[entry.record.id] = storeId;
+              }
 
-            logger.log("inventory_edit", "Products imported", "inventory", {
-              importId: options.importId ?? null,
-              storeId,
-              created,
-              restocked,
-              lines: `${saved[0]?.row.line}-${saved[saved.length - 1]?.row.line}`,
-              names: saved.slice(0, 5).map((entry) => entry.row.name),
-            });
-
-            const merged = new Map(records.map((product) => [product.id, product]));
-            setState((state) => {
-              const next = state.products.map((product) => merged.get(product.id) ?? product);
-              const known = new Set(state.products.map((product) => product.id));
-              const fresh = records.filter((product) => !known.has(product.id));
-              return { ...state, products: fresh.length ? [...fresh, ...next] : next };
-            });
-
-            done += saved.length;
-            options.onProgress?.(done, todo.length);
-            options.onBatchSaved?.(keys, {
-              created: result.created,
-              restocked: result.restocked,
-            });
-          },
-          async (failed, error) => {
-            const reason = importFailureReason(error);
-            for (const entry of failed) {
-              result.failed.push({
-                line: entry.row.line,
-                barcode: entry.row.barcode,
-                name: entry.row.name,
-                reason,
+              logger.log("inventory_edit", "Products imported", "inventory", {
+                importId: options.importId ?? null,
+                storeId,
+                created,
+                restocked,
+                lines: `${saved[0]?.row.line}-${saved[saved.length - 1]?.row.line}`,
+                names: saved.slice(0, 5).map((entry) => entry.row.name),
               });
-            }
-            done += failed.length;
-            options.onProgress?.(done, todo.length);
-            if (options.stopOnBatchFailure) halted = true;
-          },
-          !options.stopOnBatchFailure,
-        );
+
+              const merged = new Map(records.map((product) => [product.id, product]));
+              setState((state) => {
+                const next = state.products.map((product) => merged.get(product.id) ?? product);
+                const known = new Set(state.products.map((product) => product.id));
+                const fresh = records.filter((product) => !known.has(product.id));
+                return { ...state, products: fresh.length ? [...fresh, ...next] : next };
+              });
+
+              done += saved.length;
+              options.onProgress?.(done, todo.length);
+              options.onBatchSaved?.(keys, {
+                created: result.created,
+                restocked: result.restocked,
+              });
+            },
+            async (failed, error) => {
+              const reason = importFailureReason(error);
+              for (const entry of failed) {
+                result.failed.push({
+                  line: entry.row.line,
+                  barcode: entry.row.barcode,
+                  name: entry.row.name,
+                  reason,
+                });
+              }
+              done += failed.length;
+              options.onProgress?.(done, todo.length);
+              if (options.stopOnBatchFailure) halted = true;
+            },
+            !options.stopOnBatchFailure,
+          );
 
         await persist(entries);
         if (halted) {
@@ -2714,18 +2772,23 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const writeGlobalSettings = useCallback((patch: Partial<AppSettings>) => {
     {
       const prev = stateRef.current.settings;
-      trackSettingsWrite("GLOBAL", () => db
-        .saveSettingsNow({
-          tax: { ...prev.tax, ...(patch.tax ?? {}) },
-          receipt: { ...prev.receipt, ...(patch.receipt ?? {}) },
-          payment: { ...prev.payment, ...(patch.payment ?? {}) },
-          whatsapp: { ...prev.whatsapp, ...(patch.whatsapp ?? {}) },
-          review: { ...prev.review, ...(patch.review ?? {}) },
-          hours: { ...prev.hours, ...(patch.hours ?? {}) },
-          integrations: { ...prev.integrations, ...(patch.integrations ?? {}) },
-          visibility: { ...prev.visibility, ...(patch.visibility ?? {}) },
-        })
-        .catch((error) => { dbError("Saving display settings", error); throw error; }));
+      trackSettingsWrite("GLOBAL", () =>
+        db
+          .saveSettingsNow({
+            tax: { ...prev.tax, ...(patch.tax ?? {}) },
+            receipt: { ...prev.receipt, ...(patch.receipt ?? {}) },
+            payment: { ...prev.payment, ...(patch.payment ?? {}) },
+            whatsapp: { ...prev.whatsapp, ...(patch.whatsapp ?? {}) },
+            review: { ...prev.review, ...(patch.review ?? {}) },
+            hours: { ...prev.hours, ...(patch.hours ?? {}) },
+            integrations: { ...prev.integrations, ...(patch.integrations ?? {}) },
+            visibility: { ...prev.visibility, ...(patch.visibility ?? {}) },
+          })
+          .catch((error) => {
+            dbError("Saving display settings", error);
+            throw error;
+          }),
+      );
     }
     setState((s) => ({
       ...s,
@@ -2761,7 +2824,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const byTier = new Map<SettingTier, Map<SettingsSectionId, Record<string, unknown>>>();
       let globalPatch: Record<string, unknown> = {};
       let hasGlobal = false;
-      const effective = resolveScopedSettings(stateRef.current.settings, scope, mergePatch).settings;
+      const effective = resolveScopedSettings(
+        stateRef.current.settings,
+        scope,
+        mergePatch,
+      ).settings;
       for (const path of patchPaths(patch as Record<string, unknown>)) {
         const value = getPath(patch, path);
         if (JSON.stringify(value) === JSON.stringify(getPath(effective, path))) continue;
@@ -2769,9 +2836,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // Strongest tier that already owns this block wins the write.
         const tier =
           section && !scope.locks[section.id]
-            ? [...SETTING_TIERS].reverse().find(
-                (t) => sectionAllowsTier(section.id, t) && scope.overrides[t][section.id] && ids[t],
-              )
+            ? [...SETTING_TIERS]
+                .reverse()
+                .find(
+                  (t) =>
+                    sectionAllowsTier(section.id, t) && scope.overrides[t][section.id] && ids[t],
+                )
             : undefined;
         if (section && tier) {
           const bag = byTier.get(tier) ?? new Map<SettingsSectionId, Record<string, unknown>>();
@@ -2800,7 +2870,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
             saveSectionOverride(tier, targetId, section, sectionPatch, actor).catch((error) => {
               toast.error(`Scoped settings not saved: ${(error as Error).message}`);
               throw error;
-            }));
+            }),
+          );
         }
       }
     },
@@ -2837,9 +2908,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
       settingsWrites.current.revision++;
       try {
         if (on) {
-          const patch = pickSection(resolveScopedSettings(stateRef.current.settings, scopeRef.current, mergePatch).settings, def);
+          const patch = pickSection(
+            resolveScopedSettings(stateRef.current.settings, scopeRef.current, mergePatch).settings,
+            def,
+          );
           await saveSectionOverride(tier, target, section, patch, whoRef.current);
-          setScope((s) => ({ ...s, overrides: { ...s.overrides, [tier]: { ...s.overrides[tier], [section]: patch } } }));
+          setScope((s) => ({
+            ...s,
+            overrides: { ...s.overrides, [tier]: { ...s.overrides[tier], [section]: patch } },
+          }));
         } else {
           await clearSectionOverride(tier, target, section);
           setScope((s) => {
@@ -2848,7 +2925,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
             return { ...s, overrides: { ...s.overrides, [tier]: tierBag } };
           });
         }
-      } finally { settingsWrites.current.revision++; }
+      } finally {
+        settingsWrites.current.revision++;
+      }
       logger.log("settings", on ? "Scope override enabled" : "Override removed", "settings", {
         section,
         tier,
@@ -3258,8 +3337,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   const reset = useCallback(() => setState(emptyState), []);
 
-  // Every consumer sees the resolved record:
-  // Private > Branch > Cluster > Global > shipped default.
+  // Every consumer sees the resolved record. Business sections use Branch >
+  // Cluster > Global; terminal sections use Terminal > Cluster > Global.
   const effectiveState = useMemo(() => {
     const { settings, touched } = resolveScopedSettings(state.settings, scope, mergePatch);
     if (!touched) return state;

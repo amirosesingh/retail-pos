@@ -66,8 +66,7 @@ function RulesSettings() {
     rowVersion,
   } = usePosRules();
 
-
-  const { currentStore, state, updateSettings } = usePos();
+  const { currentStore, state, updateSettings, saveConfiguredSettings } = usePos();
   const { isAdmin, can } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
 
@@ -77,25 +76,51 @@ function RulesSettings() {
   const [idleScope, setIdleScope] = useState<"branch" | "global">("branch");
   const [savingIdle, setSavingIdle] = useState(false);
   const [idleLoaded, setIdleLoaded] = useState(false);
+  const [savingScoped, setSavingScoped] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setIdleLoaded(false);
     void requestIdleTimeout(currentStore.id, undefined, idleScope)
-      .then((result) => { if (!cancelled && typeof result.minutes === "number") { setIdle(result.minutes); setIdleLoaded(true); } })
-      .catch((error) => { if (!cancelled) notifyError(error, "Could not load the idle limit"); });
-    return () => { cancelled = true; };
+      .then((result) => {
+        if (!cancelled && typeof result.minutes === "number") {
+          setIdle(result.minutes);
+          setIdleLoaded(true);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) notifyError(error, "Could not load the idle limit");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [currentStore.id, idleScope]);
 
   async function saveIdle() {
     setSavingIdle(true);
     try {
       await requestIdleTimeout(currentStore.id, idle, idleScope);
-      toast.success(idleScope === "global" ? "Global idle limit saved for new sign-ins" : "Branch idle limit saved for new sign-ins");
+      toast.success(
+        idleScope === "global"
+          ? "Global idle limit saved for new sign-ins"
+          : "Branch idle limit saved for new sign-ins",
+      );
     } catch (e) {
       notifyError(e, "Could not save the idle limit");
     } finally {
       setSavingIdle(false);
+    }
+  }
+
+  async function saveScopedSettings() {
+    setSavingScoped(true);
+    try {
+      await saveConfiguredSettings();
+      toast.success("Trading hours and review thresholds saved");
+    } catch (error) {
+      notifyError(error, "Could not save the scoped settings");
+    } finally {
+      setSavingScoped(false);
     }
   }
 
@@ -112,7 +137,8 @@ function RulesSettings() {
    * Used when the central system cannot be reached right now.
    */
   async function keepLocally(reason: string) {
-    if (!isWindowsShell()) throw new Error("Rules can only be saved while connected on this device.");
+    if (!isWindowsShell())
+      throw new Error("Rules can only be saved while connected on this device.");
     await queueRulesSave({
       terminalId: terminal,
       branchId: branchId || currentStore.id,
@@ -158,7 +184,9 @@ function RulesSettings() {
       if (!res.ok) {
         if (/STALE_RULES/i.test(res.error ?? "")) {
           await refresh();
-          toast.error("These settings were changed on another terminal. The latest version has been loaded.");
+          toast.error(
+            "These settings were changed on another terminal. The latest version has been loaded.",
+          );
           return;
         }
         // A refusal is a refusal; only an unreachable system is queued.
@@ -205,10 +233,12 @@ function RulesSettings() {
               the server for every till action — never cached in the browser.
             </p>
           </div>
-          {loading && <Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />}
+          {loading && (
+            <Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
+          )}
         </header>
 
-        <ScopePanel sections={["terminalSecurity"]} />
+        <ScopePanel sections={["review", "hours", "terminalSecurity"]} />
 
         {!mayEdit && (
           <p className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
@@ -222,7 +252,9 @@ function RulesSettings() {
             {failureText || "The saved rules could not be read."} The strictest built-in settings
             are being enforced right now, and anything you save here may not take effect until the
             connection is back.
-            {backendError ? <span className="mt-1 block text-xs opacity-80">{backendError}</span> : null}
+            {backendError ? (
+              <span className="mt-1 block text-xs opacity-80">{backendError}</span>
+            ) : null}
           </p>
         )}
 
@@ -231,7 +263,9 @@ function RulesSettings() {
             {failureText || "The saved rules could not be refreshed."} The last confirmed settings
             {lastSyncedAt ? ` (read ${new Date(lastSyncedAt).toLocaleTimeString()})` : ""} are still
             in force, and this page will catch up on its own once the connection returns.
-            {backendError ? <span className="mt-1 block text-xs opacity-80">{backendError}</span> : null}
+            {backendError ? (
+              <span className="mt-1 block text-xs opacity-80">{backendError}</span>
+            ) : null}
           </p>
         )}
 
@@ -277,9 +311,6 @@ function RulesSettings() {
           <p className="mt-2 text-xs text-muted-foreground">{statusText}</p>
         </section>
 
-
-
-
         <section className="rounded-lg border border-border bg-card px-5">
           <SettingsSections
             storageKey="rules"
@@ -289,45 +320,182 @@ function RulesSettings() {
               blurb: group.blurb,
               content: (
                 <div className="space-y-3 pb-2">
-              {group.fields.map((field) => (
-                <div
-                  key={field.key}
-                  className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-border/60 pt-3 first:border-0 first:pt-0"
-                >
-                  <div className="min-w-0">
-                    <Label className="text-sm">{field.label}</Label>
-                    <p className="text-xs text-muted-foreground">{field.blurb}</p>
-                  </div>
-                  {field.kind === "switch" ? (
-                    <Switch
-                      aria-label={field.label}
-                      disabled={!mayEdit}
-                      checked={Boolean(draft[field.key])}
-                      onCheckedChange={(v) => set(field.key, v)}
-                    />
-                  ) : field.key === "auto_lock_timeout_seconds" ? (
-                    <PresetNumber label={field.label} disabled={!mayEdit}
-                      value={state.settings.integrations.autoLockTimeoutSeconds ?? Number(draft[field.key])}
-                      onChange={(v) => updateSettings({ integrations: { ...state.settings.integrations, autoLockTimeoutSeconds: v } })}
-                      min={0} max={86400}
-                      options={[0, 30, 60, 90, 180, 300, 600, 900, 1800, 3600].map((value) => ({ value,
-                        label: value === 0 ? "Disabled" : value < 60 ? `${value} seconds` : `${value / 60} minutes` }))} />
-                  ) : (
-                    <Input
-                      aria-label={field.label}
-                      className="numeric h-8 w-28 shrink-0"
-                      inputMode="decimal"
-                      disabled={!mayEdit}
-                      value={String(draft[field.key])}
-                      onChange={(e) => set(field.key, Number(e.target.value) || 0)}
-                    />
-                  )}
-                </div>
-              ))}
+                  {group.fields.map((field) => (
+                    <div
+                      key={field.key}
+                      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-border/60 pt-3 first:border-0 first:pt-0"
+                    >
+                      <div className="min-w-0">
+                        <Label className="text-sm">{field.label}</Label>
+                        <p className="text-xs text-muted-foreground">{field.blurb}</p>
+                      </div>
+                      {field.kind === "switch" ? (
+                        <Switch
+                          aria-label={field.label}
+                          disabled={!mayEdit}
+                          checked={Boolean(draft[field.key])}
+                          onCheckedChange={(v) => set(field.key, v)}
+                        />
+                      ) : field.key === "auto_lock_timeout_seconds" ? (
+                        <PresetNumber
+                          label={field.label}
+                          disabled={!mayEdit}
+                          value={
+                            state.settings.integrations.autoLockTimeoutSeconds ??
+                            Number(draft[field.key])
+                          }
+                          onChange={(v) =>
+                            updateSettings({
+                              integrations: {
+                                ...state.settings.integrations,
+                                autoLockTimeoutSeconds: v,
+                              },
+                            })
+                          }
+                          min={0}
+                          max={86400}
+                          options={[0, 30, 60, 90, 180, 300, 600, 900, 1800, 3600].map((value) => ({
+                            value,
+                            label:
+                              value === 0
+                                ? "Disabled"
+                                : value < 60
+                                  ? `${value} seconds`
+                                  : `${value / 60} minutes`,
+                          }))}
+                        />
+                      ) : (
+                        <Input
+                          aria-label={field.label}
+                          className="numeric h-8 w-28 shrink-0"
+                          inputMode="decimal"
+                          disabled={!mayEdit}
+                          value={String(draft[field.key])}
+                          onChange={(e) => set(field.key, Number(e.target.value) || 0)}
+                        />
+                      )}
+                    </div>
+                  ))}
                 </div>
               ),
             }))}
           />
+        </section>
+
+        <section className="space-y-5 rounded-lg border border-border bg-card p-5">
+          <div>
+            <h2 className="text-sm font-semibold">Trading hours &amp; review thresholds</h2>
+            <p className="text-xs text-muted-foreground">
+              These values use the scope selected above and are consumed by checkout, shift alerts
+              and the manager review dashboard.
+            </p>
+          </div>
+          <div className="grid gap-4 border-t border-border/60 pt-4 sm:grid-cols-2">
+            <label className="space-y-1 text-sm">
+              <span>Trading day starts</span>
+              <Input
+                type="time"
+                disabled={!mayEdit}
+                value={state.settings.hours.dayStart}
+                onChange={(event) =>
+                  updateSettings({
+                    hours: { ...state.settings.hours, dayStart: event.target.value },
+                  })
+                }
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span>Trading day ends</span>
+              <Input
+                type="time"
+                disabled={!mayEdit}
+                value={state.settings.hours.dayEnd}
+                onChange={(event) =>
+                  updateSettings({ hours: { ...state.settings.hours, dayEnd: event.target.value } })
+                }
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span>Maximum shift hours</span>
+              <Input
+                type="number"
+                min={1}
+                max={48}
+                disabled={!mayEdit}
+                value={state.settings.hours.maxShiftHours}
+                onChange={(event) =>
+                  updateSettings({
+                    hours: {
+                      ...state.settings.hours,
+                      maxShiftHours: Math.min(48, Math.max(1, Number(event.target.value) || 1)),
+                    },
+                  })
+                }
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span>Shift reminder (minutes)</span>
+              <Input
+                type="number"
+                min={0}
+                max={240}
+                disabled={!mayEdit}
+                value={state.settings.hours.reminderMinutes}
+                onChange={(event) =>
+                  updateSettings({
+                    hours: {
+                      ...state.settings.hours,
+                      reminderMinutes: Math.min(240, Math.max(0, Number(event.target.value) || 0)),
+                    },
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="grid gap-4 border-t border-border/60 pt-4 sm:grid-cols-2 lg:grid-cols-3">
+            {(
+              [
+                ["maxVoids", "Voids before review"],
+                ["maxRefunds", "Refunds before review"],
+                ["maxRefundValue", "Refund value before review"],
+                ["maxNoSaleOpens", "No-sale opens before review"],
+                ["maxDiscountPct", "Discount % before review"],
+              ] as const
+            ).map(([key, label]) => (
+              <label key={key} className="space-y-1 text-sm">
+                <span>{label}</span>
+                <Input
+                  type="number"
+                  min={0}
+                  disabled={!mayEdit}
+                  value={state.settings.review[key]}
+                  onChange={(event) =>
+                    updateSettings({
+                      review: {
+                        ...state.settings.review,
+                        [key]: Math.max(0, Number(event.target.value) || 0),
+                      },
+                    })
+                  }
+                />
+              </label>
+            ))}
+          </div>
+          {mayEdit && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={savingScoped}
+              onClick={() => void saveScopedSettings()}
+            >
+              {savingScoped ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Save className="size-4" />
+              )}
+              Save trading &amp; review settings
+            </Button>
+          )}
         </section>
 
         <AuthorizationRulesPanel
@@ -340,24 +508,49 @@ function RulesSettings() {
           <div>
             <h2 className="text-sm font-semibold">Idle session timeout</h2>
             <p className="text-xs text-muted-foreground">
-              Server session idle limit for new sign-ins at this branch (1–1440 minutes).
-              Existing sessions keep the limit assigned at sign-in. Use Auto-lock under Terminal
-              security & access above to set when the screen returns to sign-in.
+              Server session idle limit for new sign-ins at this branch (1–1440 minutes). Existing
+              sessions keep the limit assigned at sign-in. Use Auto-lock under Terminal security &
+              access above to set when the screen returns to sign-in.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-3">
-            {isAdmin && <select aria-label="Idle timeout scope" value={idleScope} disabled={savingIdle}
-              className="h-9 rounded border border-input bg-background px-2 text-sm"
-              onChange={(event) => setIdleScope(event.target.value as "branch" | "global")}>
-              <option value="branch">This branch</option><option value="global">Global default</option>
-            </select>}
+            {isAdmin && (
+              <select
+                aria-label="Idle timeout scope"
+                value={idleScope}
+                disabled={savingIdle}
+                className="h-9 rounded border border-input bg-background px-2 text-sm"
+                onChange={(event) => setIdleScope(event.target.value as "branch" | "global")}
+              >
+                <option value="branch">This branch</option>
+                <option value="global">Global default</option>
+              </select>
+            )}
             <Label className="text-sm">Minutes of inactivity</Label>
-            <PresetNumber label="Idle session timeout in minutes" disabled={!mayEdit || savingIdle || !idleLoaded}
-              value={idle} onChange={setIdle} min={1} max={1440}
-              options={[1, 5, 10, 15, 30, 60, 120, 240, 480, 1440].map((value) => ({ value, label: `${value} minutes` }))} />
+            <PresetNumber
+              label="Idle session timeout in minutes"
+              disabled={!mayEdit || savingIdle || !idleLoaded}
+              value={idle}
+              onChange={setIdle}
+              min={1}
+              max={1440}
+              options={[1, 5, 10, 15, 30, 60, 120, 240, 480, 1440].map((value) => ({
+                value,
+                label: `${value} minutes`,
+              }))}
+            />
             {mayEdit && (
-              <Button size="sm" variant="outline" disabled={savingIdle || !idleLoaded} onClick={() => void saveIdle()}>
-                {savingIdle ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={savingIdle || !idleLoaded}
+                onClick={() => void saveIdle()}
+              >
+                {savingIdle ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Save className="size-4" />
+                )}
                 Save limit
               </Button>
             )}

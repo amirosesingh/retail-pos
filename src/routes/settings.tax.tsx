@@ -1,6 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
-import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import {
+  SettingsFrame,
+  useSettingsCtx,
+} from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -13,9 +16,16 @@ export const Route = createFileRoute("/settings/tax")({
   head: () => ({
     meta: [
       { title: "Tax & Pricing — Retail" },
-      { name: "description", content: "Set the global tax rate and choose whether prices include tax or have it added at checkout." },
+      {
+        name: "description",
+        content:
+          "Set the global tax rate and choose whether prices include tax or have it added at checkout.",
+      },
       { property: "og:title", content: "Tax & Pricing — Retail" },
-      { property: "og:description", content: "Global tax rate and inclusive / exclusive pricing mode." },
+      {
+        property: "og:description",
+        content: "Global tax rate and inclusive / exclusive pricing mode.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -28,7 +38,7 @@ function TaxSettingsPage() {
     <SettingsFrame
       title="Tax & pricing"
       description="Tax rules apply to every register instantly."
-      scopeSections={["tax"]}
+      scopeSections={["tax", "rounding"]}
     >
       <SettingsTabs current="/settings/tax" />
 
@@ -51,7 +61,8 @@ function RoundingForm() {
       <div>
         <h2 className="text-sm font-semibold">Billing &amp; totals</h2>
         <p className="text-[11px] text-muted-foreground">
-          Rounding applies to the final total only — after discounts, coupons and tax. Line items are never changed.
+          Rounding applies to the final total only — after discounts, coupons and tax. Line items
+          are never changed.
         </p>
       </div>
 

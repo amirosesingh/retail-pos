@@ -31,7 +31,10 @@ export const Route = createFileRoute("/settings/accounts")({
           "Name every card machine, bank account and e-wallet so cashiers can record exactly where each payment landed.",
       },
       { property: "og:title", content: "Payment Accounts — Retail" },
-      { property: "og:description", content: "Card machines, bank accounts and e-wallets for the till." },
+      {
+        property: "og:description",
+        content: "Card machines, bank accounts and e-wallets for the till.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -40,6 +43,7 @@ export const Route = createFileRoute("/settings/accounts")({
     <SettingsFrame
       title="Payment accounts"
       description="List your card machines, bank accounts and e-wallets. Cashiers pick one when taking a card, transfer or wallet payment."
+      scopeSections={["paymentAccounts"]}
     >
       <AccountsForm />
     </SettingsFrame>

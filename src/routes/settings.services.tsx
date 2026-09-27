@@ -36,6 +36,7 @@ export const Route = createFileRoute("/settings/services")({
     <SettingsFrame
       title="Booking services"
       description="What customers book in for, and what you normally charge. The fee can still be changed on the booking itself."
+      scopeSections={["booking"]}
     >
       <SettingsTabs current="/settings/services" />
 
