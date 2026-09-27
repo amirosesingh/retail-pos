@@ -1005,17 +1005,20 @@ CREATE OR REPLACE VIEW public.v_sale_line_facts WITH (security_invoker='true') A
      JOIN public.sales s ON ((s.id = si.sale_id)));
 
 CREATE OR REPLACE VIEW public.v_daily_item_sales WITH (security_invoker='true') AS
- SELECT sale_day,
-    sale_month,
-    store_id,
-    product_id,
-    product_name,
-    round((sum(quantity))::numeric, 2) AS units,
-    round(sum(line_revenue), 2) AS revenue,
-    round(sum(line_cost), 2) AS cost,
-    round(sum((line_revenue - line_cost)), 2) AS profit
-   FROM public.v_sale_line_facts f
-  GROUP BY sale_day, sale_month, store_id, product_id, product_name;
+ SELECT f.sale_day,
+    f.sale_month,
+    f.store_id,
+    f.product_id,
+    f.product_name,
+    round((sum(f.quantity))::numeric, 2) AS units,
+    round(sum(f.line_revenue), 2) AS revenue,
+    round(sum(f.line_cost), 2) AS cost,
+    round(sum((f.line_revenue - f.line_cost)), 2) AS profit,
+    COALESCE(NULLIF(btrim(p.category), ''), 'Uncategorized') AS product_category
+   FROM (public.v_sale_line_facts f
+     LEFT JOIN public.products p ON ((p.id = f.product_id)))
+  GROUP BY f.sale_day, f.sale_month, f.store_id, f.product_id, f.product_name,
+    COALESCE(NULLIF(btrim(p.category), ''), 'Uncategorized');
 
 CREATE OR REPLACE VIEW public.v_daily_store_sales WITH (security_invoker='true') AS
  SELECT sale_day,
@@ -7474,12 +7477,16 @@ SELECT
   round(sum(f.quantity), 2)                       AS units,
   round(sum(f.line_revenue), 2)                   AS revenue,
   round(sum(f.line_cost), 2)                      AS cost,
-  round(sum(f.line_revenue - f.line_cost), 2)     AS profit
+  round(sum(f.line_revenue - f.line_cost), 2)     AS profit,
+  COALESCE(NULLIF(btrim(p.category), ''), 'Uncategorized') AS product_category
 FROM public.v_sale_line_facts f
-GROUP BY f.sale_day, f.sale_month, f.store_id, f.product_id, f.product_name;
+LEFT JOIN public.products p ON p.id = f.product_id
+GROUP BY f.sale_day, f.sale_month, f.store_id, f.product_id, f.product_name,
+  COALESCE(NULLIF(btrim(p.category), ''), 'Uncategorized');
 
-GRANT SELECT ON public.v_daily_item_sales TO authenticated;
-GRANT ALL ON public.v_daily_item_sales TO service_role;
+REVOKE ALL ON TABLE public.v_daily_item_sales FROM anon;
+GRANT SELECT ON TABLE public.v_daily_item_sales TO authenticated;
+GRANT ALL ON TABLE public.v_daily_item_sales TO service_role;
 
 -- ------------------------------------------------------------------
 -- Per-branch POS rules (pos_store_settings) + rules routines

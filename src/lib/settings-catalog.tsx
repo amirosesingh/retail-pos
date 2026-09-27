@@ -174,14 +174,14 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   /* ---- Terminal --------------------------------------------- */
   {
     id: "display",
-    label: "Display & text size",
-    blurb: "Interface scale, density and light / dark theme.",
+    label: "Appearance",
+    blurb: "Color theme, brightness, interface scale and density.",
     icon: MonitorCog,
     category: "terminal",
     scope: "terminal",
     to: "/settings/display",
     panel: page(() => import("@/routes/settings.display")),
-    keywords: "font scaling zoom theme dark light",
+    keywords: "font scaling zoom theme dark light ocean emerald sunset violet candy midnight appearance",
   },
   {
     id: "updates",

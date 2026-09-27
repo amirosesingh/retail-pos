@@ -14,7 +14,7 @@ export const Route = createFileRoute("/settings/display")({
       { property: "og:title", content: "Display & Text Size — Retail" },
       {
         property: "og:description",
-        content: "Interface scaling, density and theme controls for the register.",
+        content: "Color themes, interface scaling and density controls for the register.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -22,8 +22,8 @@ export const Route = createFileRoute("/settings/display")({
   }),
   component: () => (
     <SettingsFrame
-      title="Display & text size"
-      description="Scale the interface for the screen this till runs on, and pick a light or dark theme."
+      title="Appearance"
+      description="Choose a colorful theme and tune sizing for this screen without changing the POS canvas."
     >
       <DisplayScalingSettings bare />
     </SettingsFrame>

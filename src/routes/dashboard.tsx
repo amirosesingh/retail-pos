@@ -27,6 +27,7 @@ import { money, usePos } from "@/lib/pos-store";
 import { useDrawerEvents } from "@/lib/drawer-events";
 import { hourlyProfit, profitOf } from "@/core/pricing/profit";
 import { paymentsLabel } from "@/core/types/pos-types";
+import { formatTime, posDayKey, posHour } from "@/lib/time-zone";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -49,19 +50,17 @@ export const Route = createFileRoute("/dashboard")({
   component: Dashboard,
 });
 
-const todayKey = () => new Date().toISOString().slice(0, 10);
-
 function Dashboard() {
   const { state, currentStore } = usePos();
   const drawer = useDrawerEvents();
   const thresholds = state.settings.review;
 
-  const today = todayKey();
+  const today = posDayKey();
   const sales = useMemo(
     () => state.sales.filter((s) => s.storeId === currentStore.id),
     [state.sales, currentStore.id],
   );
-  const todaySales = sales.filter((s) => s.createdAt.slice(0, 10) === today);
+  const todaySales = sales.filter((s) => posDayKey(s.createdAt) === today);
   const live = todaySales.filter((s) => !s.refunded);
 
   const revenue = live.reduce((a, s) => a + s.total, 0);
@@ -72,7 +71,7 @@ function Dashboard() {
 
   /** Revenue against gross profit, hour by hour. */
   const profitByHour = useMemo(
-    () => hourlyProfit(live, state.products),
+    () => hourlyProfit(live, state.products, posHour),
     [live, state.products],
   );
 
@@ -80,12 +79,12 @@ function Dashboard() {
   const daily = useMemo(() => {
     const buckets = new Map<string, number>();
     for (let i = 13; i >= 0; i--) {
-      buckets.set(new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10), 0);
+      buckets.set(posDayKey(new Date(Date.now() - i * 86_400_000)), 0);
     }
     sales
       .filter((s) => !s.refunded)
       .forEach((s) => {
-        const k = s.createdAt.slice(0, 10);
+        const k = posDayKey(s.createdAt);
         if (buckets.has(k)) buckets.set(k, (buckets.get(k) ?? 0) + s.total);
       });
     return Array.from(buckets, ([day, total]) => ({ day: day.slice(5), total: Number(total.toFixed(2)) }));
@@ -95,7 +94,7 @@ function Dashboard() {
   const hourly = useMemo(() => {
     const hours = Array.from({ length: 24 }, (_, h) => ({ hour: `${h}:00`, bills: 0, value: 0 }));
     live.forEach((s) => {
-      const h = new Date(s.createdAt).getHours();
+      const h = posHour(s.createdAt);
       hours[h]!.bills += 1;
       hours[h]!.value = Number((hours[h]!.value + s.total).toFixed(2));
     });
@@ -104,7 +103,10 @@ function Dashboard() {
   const peak = hourly.reduce((a, h) => (h.bills > a.bills ? h : a), hourly[0]!);
 
   const todayDrawer = drawer.filter(
-    (d) => d.at.slice(0, 10) === today && d.storeId === currentStore.id,
+    (d) => posDayKey(d.at) === today && d.storeId === currentStore.id,
+  );
+  const splitSales = live.filter(
+    (sale) => (sale.payments?.length ?? 0) > 1 || sale.payments?.some((payment) => payment.bankName),
   );
 
   /** Per-cashier behaviour with fixed thresholds plus relative outliers. */
@@ -297,7 +299,7 @@ function Dashboard() {
               {todayDrawer.map((d) => (
                 <TableRow key={d.id}>
                   <TableCell className="text-muted-foreground">
-                    {new Date(d.at).toLocaleTimeString()}
+                    {formatTime(d.at)}
                   </TableCell>
                   <TableCell>
                     {d.staffName} <span className="text-[11px] text-muted-foreground">({d.role})</span>
@@ -331,19 +333,17 @@ function Dashboard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {live
-                .filter((s) => (s.payments?.length ?? 0) > 1 || s.payments?.some((p) => p.bankName))
-                .map((s) => (
+              {splitSales.map((s) => (
                   <TableRow key={s.id}>
                     <TableCell className="numeric">{s.receiptNo}</TableCell>
                     <TableCell className="text-muted-foreground">
-                      {new Date(s.createdAt).toLocaleTimeString()}
+                      {formatTime(s.createdAt)}
                     </TableCell>
                     <TableCell>{paymentsLabel(s.payments)}</TableCell>
                     <TableCell className="numeric text-right">{money(s.total)}</TableCell>
                   </TableRow>
                 ))}
-              {!live.some((s) => (s.payments?.length ?? 0) > 1) && (
+              {!splitSales.length && (
                 <TableRow>
                   <TableCell colSpan={4} className="py-10 text-center text-muted-foreground">
                     No split-tender bills today.

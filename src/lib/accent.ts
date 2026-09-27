@@ -22,12 +22,12 @@ export const ACCENT_PRESETS: AccentPreset[] = [
 export const DEFAULT_ACCENT = ACCENT_PRESETS[0]!.hex;
 
 const KEY = "pos.accent-color";
-let accent = DEFAULT_ACCENT;
+let accent: string | null = null;
 let hydrated = false;
 const listeners = new Set<() => void>();
 
-const clean = (hex: string) =>
-  /^#[0-9a-f]{6}$/i.test(hex.trim()) ? hex.trim().toLowerCase() : DEFAULT_ACCENT;
+const clean = (hex: string | null | undefined) =>
+  hex && /^#[0-9a-f]{6}$/i.test(hex.trim()) ? hex.trim().toLowerCase() : null;
 
 /** Relative luminance decides whether text on the accent is black or white. */
 function readableForeground(hex: string): string {
@@ -40,10 +40,23 @@ function readableForeground(hex: string): string {
   return luminance > 0.45 ? "#10131a" : "#ffffff";
 }
 
-export function applyAccent(hex: string) {
+const ACCENT_PROPERTIES = [
+  "--primary",
+  "--primary-foreground",
+  "--sidebar-primary",
+  "--sidebar-primary-foreground",
+  "--ring",
+  "--chart-1",
+] as const;
+
+export function applyAccent(hex: string | null) {
   if (typeof document === "undefined") return;
   const value = clean(hex);
   const root = document.documentElement.style;
+  if (!value) {
+    for (const property of ACCENT_PROPERTIES) root.removeProperty(property);
+    return;
+  }
   const fg = readableForeground(value);
   root.setProperty("--primary", value);
   root.setProperty("--primary-foreground", fg);
@@ -57,18 +70,19 @@ function ensureHydrated() {
   if (hydrated || typeof window === "undefined") return;
   hydrated = true;
   try {
-    accent = clean(window.localStorage.getItem(KEY) ?? DEFAULT_ACCENT);
+    accent = clean(window.localStorage.getItem(KEY));
   } catch {
-    accent = DEFAULT_ACCENT;
+    accent = null;
   }
   applyAccent(accent);
 }
 
-export function setAccent(hex: string) {
+export function setAccent(hex: string | null) {
   ensureHydrated();
   accent = clean(hex);
   try {
-    window.localStorage.setItem(KEY, accent);
+    if (accent) window.localStorage.setItem(KEY, accent);
+    else window.localStorage.removeItem(KEY);
   } catch {
     /* private mode — the colour lasts for this session only */
   }
@@ -76,7 +90,7 @@ export function setAccent(hex: string) {
   listeners.forEach((l) => l());
 }
 
-export function useAccent(): string {
+export function useAccent(): string | null {
   return useSyncExternalStore(
     (fn) => {
       ensureHydrated();
@@ -87,6 +101,6 @@ export function useAccent(): string {
       ensureHydrated();
       return accent;
     },
-    () => DEFAULT_ACCENT,
+    () => null,
   );
 }

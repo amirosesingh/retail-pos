@@ -22,6 +22,7 @@ export type ItemDayRow = {
   store_id: string | null;
   product_id: string | null;
   product_name: string | null;
+  product_category: string;
   units: number;
   revenue: number;
   cost: number;
@@ -96,7 +97,7 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
       .lte("sale_day", to),
     supabase
       .from("v_daily_item_sales")
-      .select("sale_day, store_id, product_id, product_name, units, revenue, cost, profit")
+      .select("sale_day, store_id, product_id, product_name, units, revenue, cost, profit, product_category")
       .gte("sale_day", from)
       .lte("sale_day", to),
     supabase
@@ -133,6 +134,7 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
       store_id: r.store_id,
       product_id: r.product_id,
       product_name: r.product_name,
+      product_category: String(r.product_category || "Uncategorized"),
       units: n(r.units),
       revenue: n(r.revenue),
       cost: n(r.cost),
@@ -237,6 +239,36 @@ export function shopSlices(
 }
 
 export type ItemSlice = { name: string; revenue: number; units: number };
+export type CategorySlice = ItemSlice & { itemCount: number };
+
+/** Category-first summary. Products are intentionally exposed only after a category opens. */
+export function topCategories(
+  rows: ItemDayRow[],
+  by: "revenue" | "units",
+  limit = 10,
+): CategorySlice[] {
+  const map = new Map<
+    string,
+    { name: string; revenue: number; units: number; productIds: Set<string> }
+  >();
+  for (const row of rows) {
+    const name = row.product_category.trim() || "Uncategorized";
+    const current = map.get(name) ?? { name, revenue: 0, units: 0, productIds: new Set<string>() };
+    current.revenue += row.revenue;
+    current.units += row.units;
+    current.productIds.add(row.product_id ?? row.product_name ?? "?");
+    map.set(name, current);
+  }
+  return [...map.values()]
+    .map((category) => ({
+      name: category.name,
+      revenue: r2(category.revenue),
+      units: r2(category.units),
+      itemCount: category.productIds.size,
+    }))
+    .sort((a, b) => b[by] - a[by])
+    .slice(0, limit);
+}
 
 /** Top sellers, with everything past the cut folded into one slice. */
 export function topItems(

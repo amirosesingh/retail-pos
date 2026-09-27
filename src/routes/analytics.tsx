@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { FolderOpen, Package, RefreshCw, X } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -29,6 +29,7 @@ import { AnalyticsErrorPanel } from "@/platforms/web/components/pos/AnalyticsErr
 import {
   fetchBoard,
   shopSlices,
+  topCategories,
   topItems,
   trendSeries,
   type ItemDayRow,
@@ -41,12 +42,12 @@ export const Route = createFileRoute("/analytics")({
       {
         name: "description",
         content:
-          "One live board for the whole group: top selling items per shop and combined, revenue share, margin, and every ringgit given away in discounts, coupons and free items.",
+          "One live board for the whole group: category performance with item drilldown, revenue share, margin, and every ringgit given away in discounts, coupons and free items.",
       },
       { property: "og:title", content: "Live Business Board — every shop combined" },
       {
         property: "og:description",
-        content: "Top items, revenue share, margin and giveaways for every shop in one page.",
+        content: "Category performance, item drilldown, revenue share, margin and giveaways for every shop.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -81,6 +82,7 @@ function LiveBoard() {
   const [topBy, setTopBy] = useState<"revenue" | "units">("revenue");
   const [grain, setGrain] = useState<"daily" | "monthly">("daily");
   const [picked, setPicked] = useState<string[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   const applyPreset = (p: "today" | "7" | "30") => {
     setPreset(p);
@@ -113,7 +115,22 @@ function LiveBoard() {
     [data, filter],
   );
 
-  const combinedTop = useMemo(() => topItems(itemRows, topBy, 8), [itemRows, topBy]);
+  const combinedCategories = useMemo(
+    () => topCategories(itemRows, topBy, 10),
+    [itemRows, topBy],
+  );
+  const categoryItems = useMemo(
+    () =>
+      selectedCategory
+        ? topItems(
+            itemRows.filter((row) => row.product_category === selectedCategory),
+            topBy,
+            12,
+            false,
+          )
+        : [],
+    [itemRows, selectedCategory, topBy],
+  );
   const trend = useMemo(
     () =>
       data
@@ -189,7 +206,7 @@ function LiveBoard() {
             </Link>
             <h1 className="text-2xl font-semibold tracking-tight">Live Business Board</h1>
             <p className="text-sm text-muted-foreground">
-              Every shop combined — top sellers, revenue share, margin and what we gave away.
+              Every shop combined — categories first, item drilldown, revenue share, margin and what we gave away.
               Refreshes on its own every minute.
             </p>
           </div>
@@ -303,7 +320,7 @@ function LiveBoard() {
             <div className="grid gap-4 lg:grid-cols-2">
               <section className="rounded-lg border border-border p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold">Top items — all shops combined</h2>
+                  <h2 className="text-sm font-semibold">Top categories — all shops combined</h2>
                   <div className="flex gap-1">
                     <Button
                       size="sm"
@@ -321,26 +338,38 @@ function LiveBoard() {
                     </Button>
                   </div>
                 </div>
-                <ResponsiveContainer width="100%" height={320}>
-                  <PieChart>
-                    <Pie
-                      data={combinedTop}
-                      dataKey={topBy}
-                      nameKey="name"
-                      innerRadius={70}
-                      outerRadius={115}
-                      paddingAngle={2}
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {combinedCategories.map((category, index) => (
+                    <button
+                      key={category.name}
+                      type="button"
+                      onClick={() => setSelectedCategory(category.name)}
+                      className={`group flex min-w-0 items-center gap-3 rounded-lg border p-3 text-left transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-primary/60 ${
+                        selectedCategory === category.name
+                          ? "border-primary bg-primary/10"
+                          : "border-border bg-card"
+                      }`}
                     >
-                      {combinedTop.map((s, i) => (
-                        <Cell key={s.name} fill={PALETTE[i % PALETTE.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(v) => (topBy === "revenue" ? money(Number(v ?? 0)) : `${Number(v ?? 0)} units`)}
-                    />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
+                      <span
+                        className="grid size-9 shrink-0 place-items-center rounded-lg text-white"
+                        style={{ background: PALETTE[index % PALETTE.length] }}
+                      >
+                        <FolderOpen className="size-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{category.name}</span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {category.itemCount} item{category.itemCount === 1 ? "" : "s"} · {topBy === "revenue" ? money(category.revenue) : `${category.units} units`}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                  {!combinedCategories.length && (
+                    <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                      No category sales in this range.
+                    </p>
+                  )}
+                </div>
               </section>
 
               <section className="rounded-lg border border-border p-4">
@@ -366,11 +395,54 @@ function LiveBoard() {
               </section>
             </div>
 
+            {selectedCategory && (
+              <section className="rounded-lg border border-primary/40 bg-primary/5 p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">
+                      Category opened
+                    </p>
+                    <h2 className="flex items-center gap-2 text-sm font-semibold">
+                      <Package className="size-4 text-primary" /> Items in {selectedCategory}
+                    </h2>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setSelectedCategory(null)}
+                  >
+                    <X className="size-4" /> Close items
+                  </Button>
+                </div>
+                {categoryItems.length ? (
+                  <ResponsiveContainer width="100%" height={Math.max(240, categoryItems.length * 34)}>
+                    <BarChart data={categoryItems} layout="vertical" margin={{ left: 12, right: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" fontSize={11} />
+                      <YAxis type="category" dataKey="name" width={130} fontSize={11} />
+                      <Tooltip
+                        formatter={(value) =>
+                          topBy === "revenue"
+                            ? money(Number(value ?? 0))
+                            : `${Number(value ?? 0)} units`
+                        }
+                      />
+                      <Bar dataKey={topBy} fill="var(--pos-pay)" radius={[0, 5, 5, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    No items were sold in this category for the selected range.
+                  </p>
+                )}
+              </section>
+            )}
+
             <section className="rounded-lg border border-border p-4">
-              <h2 className="mb-3 text-sm font-semibold">Top items per shop</h2>
+              <h2 className="mb-3 text-sm font-semibold">Top categories per shop</h2>
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {shops.map((shop) => {
-                  const rows = topItems(
+                  const rows = topCategories(
                     itemRows.filter((r) => (r.store_id ?? "") === shop.storeId),
                     topBy,
                     5,
@@ -381,27 +453,28 @@ function LiveBoard() {
                       <p className="mb-1 text-[11px] text-muted-foreground">
                         {money(shop.revenue)} · {shop.sharePct.toFixed(1)}% of group
                       </p>
-                      <ResponsiveContainer width="100%" height={200}>
-                        <PieChart>
-                          <Pie
-                            data={rows}
-                            dataKey={topBy}
-                            nameKey="name"
-                            innerRadius={40}
-                            outerRadius={70}
-                            paddingAngle={2}
+                      <div className="mt-3 space-y-1.5">
+                        {rows.map((category, index) => (
+                          <button
+                            key={category.name}
+                            type="button"
+                            onClick={() => setSelectedCategory(category.name)}
+                            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
                           >
-                            {rows.map((s, i) => (
-                              <Cell key={s.name} fill={PALETTE[i % PALETTE.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip
-                            formatter={(v) =>
-                              topBy === "revenue" ? money(Number(v ?? 0)) : `${Number(v ?? 0)} units`
-                            }
-                          />
-                        </PieChart>
-                      </ResponsiveContainer>
+                            <span
+                              className="size-2.5 shrink-0 rounded-full"
+                              style={{ background: PALETTE[index % PALETTE.length] }}
+                            />
+                            <span className="min-w-0 flex-1 truncate">{category.name}</span>
+                            <span className="numeric shrink-0 text-muted-foreground">
+                              {topBy === "revenue" ? money(category.revenue) : category.units}
+                            </span>
+                          </button>
+                        ))}
+                        {!rows.length && (
+                          <p className="py-5 text-center text-xs text-muted-foreground">No category sales</p>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

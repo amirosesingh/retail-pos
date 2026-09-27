@@ -34,6 +34,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260927090830_fix_sale_item_batch_branch_guard.sql",
       "supabase/migrations/20260927115034_secure_shift_approvals_realtime.sql",
       "supabase/migrations/20260927123117_consolidate_shift_transfer_security.sql",
+      "supabase/migrations/20260927131448_dashboard_category_drilldown.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -103,6 +104,17 @@ describe("canonical Supabase SQL", () => {
     expect(sql).toContain("'products', 'product_barcodes', 'members', 'promotions'");
     expect(sql).toContain("'purchase_orders', 'purchase_order_items'");
     expect(sql).toContain("ALTER PUBLICATION supabase_realtime ADD TABLE");
+  });
+
+  it("keeps the business board category-first view invoker-secured", () => {
+    const sql = read("supabase/schema.sql");
+    const migration = read("supabase/migrations/20260927131448_dashboard_category_drilldown.sql");
+    for (const source of [sql, migration]) {
+      expect(source).toContain("public.v_daily_item_sales");
+      expect(source).toContain("security_invoker");
+      expect(source).toContain("AS product_category");
+      expect(source).toContain("REVOKE ALL ON TABLE public.v_daily_item_sales FROM anon");
+    }
   });
 
   it("lets the database scheduler run the guarded security self-check", () => {

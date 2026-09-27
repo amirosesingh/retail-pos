@@ -1,11 +1,13 @@
+import { useEffect, useState } from "react";
 import { usePos } from "@/lib/pos-store";
 import { PresetNumber } from "@/components/ui/preset-number";
-import { ThemedSelect } from "./ThemedSelect";
 import type { DisplayProfile } from "@/lib/display-profile";
-import { Monitor, MonitorCog, Moon, Sun } from "lucide-react";
+import { Check, Monitor, MonitorCog, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Slider } from "@/components/ui/slider";
 import {
   computeUiScale,
@@ -16,7 +18,13 @@ import {
   type UiDensity,
 } from "@/lib/use-ui-scale";
 import { useTheme, type ThemeChoice } from "@/lib/theme";
-import { ACCENT_PRESETS, DEFAULT_ACCENT, useAccent } from "@/lib/accent";
+import { ACCENT_PRESETS, setAccent, useAccent } from "@/lib/accent";
+import {
+  THEME_PALETTES,
+  isThemePalette,
+  themePalette,
+  type ThemePalette,
+} from "@/lib/theme-palettes";
 
 const THEMES: { value: ThemeChoice; label: string; icon: typeof Sun }[] = [
   { value: "system", label: "System", icon: Monitor },
@@ -37,16 +45,48 @@ const DENSITIES: { value: UiDensity; label: string }[] = [
 /** Terminal-local control for font size and control height across the app. */
 export function DisplayScalingSettings({ bare = false }: { bare?: boolean }) {
   const prefs = useUiScalePrefs();
-  const { theme } = useTheme();
+  const {
+    theme,
+    palette,
+    setTheme: applyTheme,
+    setPalette: applyPalette,
+  } = useTheme();
   const accent = useAccent();
   const { state, updateSettings } = usePos();
   const saveProfile = (patch: Partial<DisplayProfile>) => updateSettings({ integrations: {
     ...state.settings.integrations,
-    displayProfile: { scale: prefs, theme, accent, ...state.settings.integrations.displayProfile, ...patch },
+    displayProfile: {
+      ...state.settings.integrations.displayProfile,
+      scale: prefs,
+      theme,
+      palette,
+      accent,
+      ...patch,
+    },
   } });
-  const setTheme = (value: ThemeChoice) => saveProfile({ theme: value });
-  const setAccent = (value: string) => { if (/^#[0-9a-f]{6}$/i.test(value)) saveProfile({ accent: value }); };
+  const setTheme = (value: ThemeChoice) => {
+    applyTheme(value);
+    saveProfile({ theme: value });
+  };
+  const setPalette = (value: ThemePalette) => {
+    applyPalette(value);
+    setAccent(null);
+    saveProfile({ palette: value, accent: null });
+  };
+  const setAccentOverride = (value: string | null) => {
+    if (value === null || /^#[0-9a-f]{6}$/i.test(value)) {
+      setAccent(value);
+      saveProfile({ accent: value });
+    }
+  };
   const setUiScalePrefs = (patch: Partial<typeof prefs>) => saveProfile({ scale: { ...prefs, ...patch } });
+  const palettePrimary = themePalette(palette).preview.primary;
+  const [accentDraft, setAccentDraft] = useState(accent ?? palettePrimary);
+  useEffect(() => setAccentDraft(accent ?? palettePrimary), [accent, palettePrimary]);
+  const commitAccentDraft = () => {
+    if (/^#[0-9a-f]{6}$/i.test(accentDraft)) setAccentOverride(accentDraft);
+    else setAccentDraft(accent ?? palettePrimary);
+  };
   const auto =
     typeof window === "undefined" ? 1 : computeUiScale(window.innerWidth, window.innerHeight);
   const effective = prefs.mode === "manual" ? prefs.scale : auto;
@@ -64,15 +104,93 @@ export function DisplayScalingSettings({ bare = false }: { bare?: boolean }) {
         Applies to the selected settings scope. Buttons never drop below a touch-safe size.
       </p>
 
-      <div className="mt-4 space-y-1">
-        <Label className="text-xs text-muted-foreground">Appearance</Label>
-        <ThemedSelect ariaLabel="Appearance" value={theme} onChange={(value) => setTheme(value as ThemeChoice)} options={THEMES.map(({ value, label }) => ({ value, label }))} />
+      <div className="mt-5 space-y-3">
+        <div>
+          <Label className="text-sm font-medium">Color theme</Label>
+          <p className="text-[11px] text-muted-foreground">
+            Preview and apply one shared palette. Canvas positions and sizes never change.
+          </p>
+        </div>
+        <RadioGroup
+          value={palette}
+          onValueChange={(value) => {
+            if (isThemePalette(value)) setPalette(value);
+          }}
+          className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+          aria-label="Color theme"
+        >
+          {THEME_PALETTES.map((option) => {
+            const selected = option.id === palette;
+            return (
+              <Label
+                key={option.id}
+                htmlFor={`palette-${option.id}`}
+                className={`group relative cursor-pointer overflow-hidden rounded-xl border bg-card p-3 transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-sm ${
+                  selected ? "border-primary ring-2 ring-primary/20" : "border-border"
+                }`}
+              >
+                <RadioGroupItem
+                  id={`palette-${option.id}`}
+                  value={option.id}
+                  className="sr-only"
+                />
+                <div
+                  className="mb-3 overflow-hidden rounded-lg border"
+                  style={{ background: option.preview.background, borderColor: option.preview.secondary }}
+                >
+                  <div className="flex h-12 items-end gap-1 p-2">
+                    <span className="h-7 flex-1 rounded" style={{ background: option.preview.primary }} />
+                    <span className="h-5 flex-1 rounded" style={{ background: option.preview.secondary }} />
+                    <span className="h-6 flex-1 rounded" style={{ background: option.preview.accent }} />
+                  </div>
+                </div>
+                <span className="flex items-center gap-2 text-sm font-semibold">
+                  {option.label}
+                  {selected && (
+                    <Badge className="ml-auto gap-1 px-1.5 py-0 text-[10px]">
+                      <Check className="size-3" /> Selected
+                    </Badge>
+                  )}
+                </span>
+                <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">
+                  {option.description}
+                </span>
+              </Label>
+            );
+          })}
+        </RadioGroup>
       </div>
 
-      <div className="mt-4 space-y-2">
-        <Label className="text-xs text-muted-foreground">Accent colour</Label>
+      <div className="mt-5 space-y-2">
+        <Label className="text-sm font-medium">Brightness</Label>
+        <RadioGroup
+          value={theme}
+          onValueChange={(value) => setTheme(value as ThemeChoice)}
+          className="grid grid-cols-3 gap-2"
+          aria-label="Brightness"
+        >
+          {THEMES.map(({ value, label, icon: Icon }) => (
+            <Label
+              key={value}
+              htmlFor={`brightness-${value}`}
+              className={`flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                theme === value
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              <RadioGroupItem id={`brightness-${value}`} value={value} className="sr-only" />
+              <Icon className="size-4" /> {label}
+            </Label>
+          ))}
+        </RadioGroup>
+      </div>
+
+      <details className="mt-5 rounded-lg border border-border bg-muted/20 p-3">
+        <summary className="cursor-pointer text-sm font-medium">Advanced accent override</summary>
+        <div className="mt-3 space-y-2">
         <p className="text-[11px] text-muted-foreground">
-          Colours the buttons, icons and highlights in this scope.
+          Optionally replace the palette's main action colour. Reset returns to the selected palette.
         </p>
         <div className="flex flex-wrap gap-2">
           {ACCENT_PRESETS.map((p) => (
@@ -81,7 +199,7 @@ export function DisplayScalingSettings({ bare = false }: { bare?: boolean }) {
               type="button"
               title={p.label}
               aria-label={p.label}
-              onClick={() => setAccent(p.hex)}
+              onClick={() => setAccentOverride(p.hex)}
               style={{ background: p.hex }}
               className={`size-8 rounded-full border-2 ${
                 accent === p.hex ? "border-foreground" : "border-transparent"
@@ -93,26 +211,31 @@ export function DisplayScalingSettings({ bare = false }: { bare?: boolean }) {
           <input
             type="color"
             aria-label="Custom accent colour"
-            value={accent}
-            onChange={(e) => setAccent(e.target.value)}
+            value={accent ?? palettePrimary}
+            onChange={(e) => setAccentOverride(e.target.value)}
             className="size-9 shrink-0 cursor-pointer rounded-md border border-border bg-transparent p-1"
           />
           <Input
-            value={accent}
+            value={accentDraft}
             aria-label="Accent colour hex"
-            onChange={(e) => setAccent(e.target.value)}
+            onChange={(e) => setAccentDraft(e.target.value)}
+            onBlur={commitAccentDraft}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitAccentDraft();
+            }}
             className="numeric h-9 min-w-0 text-xs"
           />
           <Button
             variant="ghost"
             size="sm"
             className="shrink-0"
-            onClick={() => setAccent(DEFAULT_ACCENT)}
+            onClick={() => setAccentOverride(null)}
           >
-            Reset
+            Use palette
           </Button>
         </div>
-      </div>
+        </div>
+      </details>
 
       <details className="mt-4" open><summary className="cursor-pointer text-sm font-medium">Sizing & density</summary>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
