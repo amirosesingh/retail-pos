@@ -34,7 +34,7 @@ export type SettingsNav = {
 
 export function useSettingsNav(): SettingsNav {
   const { visibleRoute } = useVisibility();
-  const { isAdmin, isSupervisor, can } = useAuth();
+  const { isAdmin, can } = useAuth();
   const cards = useMemo(
     () =>
       SETTINGS_CARDS.filter(
@@ -42,10 +42,10 @@ export function useSettingsNav(): SettingsNav {
           visibleRoute(routeOf(c)) &&
           (isAdmin ||
             ((routeOf(c) === "/settings/terminals" || routeOf(c) === "/settings/mobile-terminals")
-              ? isSupervisor
+              ? can("can_manage_terminals")
               : can(routePermissionForPath(routeOf(c)) ?? "can_access_pos_settings"))),
       ),
-    [visibleRoute, isAdmin, isSupervisor, can],
+    [visibleRoute, isAdmin, can],
   );
 
   const categories = useMemo(

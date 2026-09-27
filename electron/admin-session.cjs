@@ -27,4 +27,16 @@ function status() {
   return current ? { ok: true, unlocked: true, level: current.level, subject: current.subject } : { ok: true, unlocked: false };
 }
 
-module.exports = { clear, grant, hasLevel, hasPermission, hasPosAuthority, branchId, touch, status, recoveryActive: () => false, recoveryTouch: () => {} };
+/** Trusted identity details for main-process audit records. Never exposed to the renderer. */
+function identity() {
+  const current = active();
+  return current ? {
+    level: current.level,
+    subject: current.subject,
+    permissions: { ...current.permissions },
+    source: current.source,
+    branchId: current.branchId,
+  } : null;
+}
+
+module.exports = { clear, grant, hasLevel, hasPermission, hasPosAuthority, branchId, touch, status, identity, recoveryActive: () => false, recoveryTouch: () => {} };

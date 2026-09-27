@@ -26,7 +26,6 @@ import {
   endSyncRun,
   markTableSync,
 } from "./sync-progress";
-import { mirrorToLocal } from "./sync-audit";
 
 /**
  * The central project rejecting this device's keys (HTTP 401, "Invalid
@@ -57,25 +56,6 @@ function noteCredentialsInvalid(detail: string) {
   recordSync({ direction: "system", entity: "credentials", status: "failed", error: detail });
 }
 
-/**
- * Copy the freshly pulled catalogue into the embedded local database.
- * Catalogue is server-wins, so a straight overwrite is the correct merge.
- */
-async function mirrorCloudState(state: unknown) {
-  const source = (state ?? {}) as Record<string, unknown>;
-  const map: Record<string, string> = {
-    products: "products",
-    members: "customers",
-    bookings: "service_jobs",
-  };
-  for (const [key, entity] of Object.entries(map)) {
-    const rows = source[key];
-    if (!Array.isArray(rows) || !rows.length) continue;
-    const written = await mirrorToLocal(entity, rows);
-    if (written) recordSync({ direction: "mirror", entity, records: written, status: "success" });
-  }
-}
-import { loadCloudState } from "@/core/api/pos-db";
 import { localDb, type LocalSyncStatus } from "@/core/local-db/local-db";
 import {
   checkHealth,
@@ -364,21 +344,33 @@ let pulling = false;
  */
 const stampColumn = new Map<string, "updated_at" | "created_at">();
 
-async function countChangedSince(table: (typeof PULL_TABLES)[number], since: string) {
+async function readChangedPage(
+  table: (typeof PULL_TABLES)[number],
+  since: string,
+  through: string,
+  from: number,
+) {
   const ask = (column: string) =>
-    supabaseExternal.from(table).select("id", { count: "exact", head: true }).gt(column, since);
+    supabaseExternal
+      .from(table)
+      .select(`id,${column}`)
+      .gt(column, since)
+      .lte(column, through)
+      .order(column)
+      .order("id")
+      .range(from, from + 499);
 
   const known = stampColumn.get(table);
-  if (known) return await ask(known);
+  if (known) return { ...(await ask(known)), column: known };
 
   let res = await ask("updated_at");
   if (!res.error) {
     stampColumn.set(table, "updated_at");
-    return res;
+    return { ...res, column: "updated_at" as const };
   }
   res = await ask("created_at");
   if (!res.error) stampColumn.set(table, "created_at");
-  return res;
+  return { ...res, column: "created_at" as const };
 }
 
 /**
@@ -402,39 +394,47 @@ export async function pullDelta(): Promise<{ merged: number }> {
       // Each table resumes from its own mark, so one failing table never
       // drags the rest back or hides their changes.
       const since = lastTablePull(table) ?? fallbackSince;
-      // Only ask how many rows moved; the full refresh below does the reading.
-      const { count, error } = await countChangedSince(table, since);
-      if (error) {
-        if (isCredentialError(error)) {
-          noteCredentialsInvalid(error.message);
+      let tableChanged = 0;
+      let offset = 0;
+      let tableError: { message: string; status?: number } | null = null;
+      for (;;) {
+        const page = await readChangedPage(table, since, startedAt, offset);
+        if (page.error) {
+          tableError = page.error;
+          break;
+        }
+        const rows = (page.data ?? []) as unknown as Array<Record<string, unknown>>;
+        for (const row of rows) {
+          const entityId = String(row.id ?? "").trim() || null;
+          announceDataChange({ reason: `pull:${table}`, table, storeId: null, entityId });
+        }
+        tableChanged += rows.length;
+        if (rows.length < 500) break;
+        offset += rows.length;
+      }
+      if (tableError) {
+        if (isCredentialError(tableError)) {
+          noteCredentialsInvalid(tableError.message);
           return { merged: changed };
         }
-        logSync("pull", table, false, error.message);
-        recordSync({ direction: "pull", entity: table, status: "failed", error: error.message });
+        logSync("pull", table, false, tableError.message);
+        recordSync({ direction: "pull", entity: table, status: "failed", error: tableError.message });
         markTableSync(
           table,
-          /does not exist|not found|schema cache/i.test(error.message) ? "missing" : "failed",
-          error.message,
+          /does not exist|not found|schema cache/i.test(tableError.message) ? "missing" : "failed",
+          tableError.message,
         );
         continue;
       }
       clean.push(table);
-      if (!count) {
+      if (!tableChanged) {
         markTableSync(table, "synced", "Already up to date");
         continue;
       }
-      changed += count;
-      logSync("pull", table, true, `${count} row(s) changed centrally`);
-      recordSync({ direction: "pull", entity: table, records: count, status: "success" });
-      markTableSync(table, "synced", `${count} row(s) updated`);
-    }
-    // Something moved centrally: refresh the local copy in one consistent read.
-    if (changed) {
-      const state = await loadCloudState();
-      // Server-wins mirror into the embedded database, so the till can open
-      // its catalogue with no network at all.
-      await mirrorCloudState(state);
-      window.dispatchEvent(new CustomEvent("pos:cloud-refreshed"));
+      changed += tableChanged;
+      logSync("pull", table, true, `${tableChanged} row(s) changed centrally`);
+      recordSync({ direction: "pull", entity: table, records: tableChanged, status: "success" });
+      markTableSync(table, "synced", `${tableChanged} row(s) updated`);
     }
     // Marks only advance for tables that answered and were merged cleanly.
     for (const table of clean) setLastTablePull(table, startedAt);
@@ -564,6 +564,7 @@ const LIVE_TABLES = [
   "pos_store_settings",
   "settings_overrides",
   "settings_locks",
+  "settings_scoped",
   "sales",
   "sale_items",
   "payment_transactions",
@@ -663,7 +664,7 @@ function flushLiveChanges(): void {
   // consume the changed records directly without reloading the whole dataset.
   if (localDb()) void syncNow(`live:${[...new Set(changes.map((change) => change.table))].join(",")}`);
   for (const change of changes) {
-    if (["pos_settings", "pos_store_settings", "settings_overrides", "settings_locks"].includes(change.table)) {
+    if (["pos_settings", "pos_store_settings", "settings_overrides", "settings_locks", "settings_scoped"].includes(change.table)) {
       announceSettingsChange(change.reason, change.storeId, change.table);
     }
     if (["sales", "sale_items", "payment_transactions"].includes(change.table)) {

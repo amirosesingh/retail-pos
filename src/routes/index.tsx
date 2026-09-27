@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
-import { commitLabel } from "@/core/api/pos-db";
+import { commitLabel, searchCloudMembers } from "@/core/api/pos-db";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { ActionButton } from "@/platforms/web/components/pos/ActionButton";
 import { CatalogPanel } from "@/platforms/web/components/pos/CatalogPanel";
@@ -94,6 +94,7 @@ import type {
   CartLine,
   DiscountType,
   IntakeCharge,
+  Member,
   PaymentMethod,
   Sale,
 } from "@/core/types/pos-types";
@@ -347,6 +348,9 @@ function Register() {
   const [waNumber, setWaNumber] = useState("");
   const [waSending, setWaSending] = useState(false);
   const [memberQuery, setMemberQuery] = useState("");
+  const [memberMatches, setMemberMatches] = useState<Member[]>([]);
+  const [bookMemberMatches, setBookMemberMatches] = useState<Member[]>([]);
+  const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [quickMemberOpen, setQuickMemberOpen] = useState(false);
   const memberInputRef = useRef<HTMLInputElement>(null);
   const [historyMemberId, setHistoryMemberId] = useState<string | null>(null);
@@ -440,9 +444,49 @@ function Register() {
   );
 
   const member = useMemo(
-    () => state.members.find((m) => m.id === memberId) ?? null,
-    [state.members, memberId],
+    () => state.members.find((m) => m.id === memberId) ??
+      (selectedMember?.id === memberId ? selectedMember : null),
+    [state.members, memberId, selectedMember],
   );
+
+  useEffect(() => {
+    if (!memberId) setSelectedMember(null);
+  }, [memberId]);
+
+  useEffect(() => {
+    const q = memberQuery.trim();
+    if (!q) {
+      setMemberMatches([]);
+      return;
+    }
+    const lower = q.toLowerCase();
+    setMemberMatches(state.members.filter((m) =>
+      m.name.toLowerCase().includes(lower) ||
+      m.phone.replace(/\s/g, "").includes(lower.replace(/\s/g, "")) ||
+      m.code.toLowerCase().includes(lower)).slice(0, 5));
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      void searchCloudMembers(q, 5).then((rows) => {
+        if (alive && rows.length) setMemberMatches(rows);
+      });
+    }, 250);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [memberQuery, state.members]);
+
+  useEffect(() => {
+    const q = bookMemberQuery.trim();
+    if (!q) {
+      setBookMemberMatches([]);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      void searchCloudMembers(q, 5).then((rows) => {
+        if (alive) setBookMemberMatches(rows);
+      });
+    }, 250);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [bookMemberQuery]);
 
   /* ── Sticky ticket ──────────────────────────────────────────────────────
      The open ticket is stored per store so a refresh, a trip to another page
@@ -675,19 +719,6 @@ function Register() {
   }, [lines.length]);
   const detail = state.products.find((p) => p.id === detailId) ?? null;
 
-  const memberMatches = memberQuery.trim()
-    ? state.members
-        .filter((m) => {
-          const q = memberQuery.trim().toLowerCase();
-          return (
-            m.name.toLowerCase().includes(q) ||
-            m.phone.replace(/\s/g, "").includes(q.replace(/\s/g, "")) ||
-            m.code.toLowerCase().includes(q)
-          );
-        })
-        .slice(0, 5)
-    : [];
-
   /** Adds the product matching a scanned/typed code to the ticket. */
   function scanCode(raw: string) {
     const code = raw.trim();
@@ -715,7 +746,8 @@ function Register() {
   }
 
   /** Attaches a member to the ticket and surfaces any vouchers they hold. */
-  function attachMember(m: { id: string; name: string }) {
+  function attachMember(m: Member) {
+    setSelectedMember(m);
     setMemberId(m.id);
     setMemberQuery("");
     toast.success(`${m.name} attached to receipt`);
@@ -3197,17 +3229,7 @@ function Register() {
               />
               {bookMemberQuery.trim() && !member ? (
                 <div className="space-y-1">
-                  {state.members
-                    .filter((m) => {
-                      const q = bookMemberQuery.trim().toLowerCase();
-                      return (
-                        m.name.toLowerCase().includes(q) ||
-                        m.phone.replace(/\s/g, "").includes(q.replace(/\s/g, "")) ||
-                        m.code.toLowerCase().includes(q)
-                      );
-                    })
-                    .slice(0, 5)
-                    .map((m) => (
+                  {bookMemberMatches.map((m) => (
                       <button
                         key={m.id}
                         type="button"

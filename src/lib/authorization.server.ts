@@ -209,24 +209,21 @@ export async function decideRequest(input: {
   approvedAmount?: number | null;
   approvedPayload?: AuthPayload;
 }): Promise<AuthorizationRequest | null> {
-  const res = await rest(
-    `authorization_requests?id=eq.${encodeURIComponent(input.id)}&status=eq.pending`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({
-        status: input.approve ? "approved" : "rejected",
-        decided_by: input.decidedBy,
-        decided_by_name: input.decidedByName,
-        decided_at: new Date().toISOString(),
-        decision_note: input.note,
-        // The granted value is written by the server from the approver's own
-        // decision; the till never supplies it.
-        approved_amount: input.approve ? (input.approvedAmount ?? null) : null,
-        approved_payload: input.approve ? (input.approvedPayload ?? {}) : {},
-      }),
-      prefer: "return=representation",
-    },
-  );
+  const res = await rest("rpc/authorization_decide_request", {
+    method: "POST",
+    body: JSON.stringify({
+      p_id: input.id,
+      p_approve: input.approve,
+      p_decided_by: input.decidedBy,
+      p_decided_by_name: input.decidedByName,
+      p_note: input.note,
+      // The granted value is written by the trusted server after its current
+      // authority check; the till never calls this service-role RPC directly.
+      p_approved_amount: input.approve ? (input.approvedAmount ?? null) : null,
+      p_approved_payload: input.approve ? (input.approvedPayload ?? {}) : {},
+    }),
+    prefer: "return=representation",
+  });
   if (!res.ok) throw new Error((await res.text()).slice(0, 300) || "Could not record the decision");
   const rows = (await res.json()) as Row[];
   return rows[0] ? normalizeRequest(rows[0]) : null;

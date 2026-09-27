@@ -31,6 +31,7 @@ import {
   canPrintReceipts,
   drawerPulseBytes,
   getPrinterPrefs,
+  protectedDrawerOpen,
   rawPulse,
   silentPrint,
 } from "./receipt-printer";
@@ -571,7 +572,28 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
     <div class="c muted">${esc(sale.receiptNo)}</div>`;
 }
 
-function shiftBody(shift: Shift, sales: Sale[], kind: "xreport" | "zreport") {
+export type ShiftReportAccess = {
+  financialSummary: boolean;
+  paymentBreakdown: boolean;
+  expected: boolean;
+  counted: boolean;
+  variance: boolean;
+};
+
+const fullShiftReportAccess: ShiftReportAccess = {
+  financialSummary: true,
+  paymentBreakdown: true,
+  expected: true,
+  counted: true,
+  variance: true,
+};
+
+function shiftBody(
+  shift: Shift,
+  sales: Sale[],
+  kind: "xreport" | "zreport",
+  access: ShiftReportAccess = fullShiftReportAccess,
+) {
   const active = sales.filter((s) => s.shiftId === shift.id && !s.refunded);
   const byMethod = ["cash", "card", "wallet", "points"].map((m) => ({
     m,
@@ -589,20 +611,20 @@ function shiftBody(shift: Shift, sales: Sale[], kind: "xreport" | "zreport") {
       <tr><td>Opened</td><td class="r">${new Date(shift.openedAt).toLocaleString()}</td></tr>
       <tr><td>Closed</td><td class="r">${shift.closedAt ? new Date(shift.closedAt).toLocaleString() : "—"}</td></tr>
     </table><hr>
-    <table>
+    ${access.financialSummary ? `<table>
       <tr><td>Transactions</td><td class="r">${active.length}</td></tr>
-      ${byMethod
+      ${access.paymentBreakdown ? byMethod
         .map((b) => `<tr><td>${b.m.toUpperCase()} (${b.n})</td><td class="r">${fmt(b.v)}</td></tr>`)
-        .join("")}
+        .join("") : ""}
       <tr><td>Tax collected</td><td class="r">${fmt(tax)}</td></tr>
       <tr class="b big"><td>GROSS</td><td class="r">${fmt(gross)}</td></tr>
-    </table><hr>
-    <table>
-      <tr><td>Opening float</td><td class="r">${fmt(shift.openingFloat)}</td></tr>
-      <tr><td>Expected drawer</td><td class="r">${fmt(expected)}</td></tr>
-      <tr><td>Counted</td><td class="r">${fmt(counted)}</td></tr>
-      <tr class="b"><td>Variance</td><td class="r">${fmt(counted - expected)}</td></tr>
-    </table>
+    </table><hr>` : ""}
+    ${access.expected || access.counted || access.variance ? `<table>
+      ${access.expected ? `<tr><td>Opening float</td><td class="r">${fmt(shift.openingFloat)}</td></tr>
+      <tr><td>Expected drawer</td><td class="r">${fmt(expected)}</td></tr>` : ""}
+      ${access.counted ? `<tr><td>Counted</td><td class="r">${fmt(counted)}</td></tr>` : ""}
+      ${access.variance ? `<tr class="b"><td>Variance</td><td class="r">${fmt(counted - expected)}</td></tr>` : ""}
+    </table>` : ""}
     ${shift.note ? `<hr><div class="muted">Note: ${esc(shift.note)}</div>` : ""}
     ${
       kind === "xreport"
@@ -642,12 +664,14 @@ function memberBody(member: Member, sales: Sale[]) {
  * Desktop `thermal` mode -> ESC/POS text through the RAW spooler (slips only).
  * Browser                -> classic hidden iframe with the print dialog.
  */
-function printHtml(title: string, body: string, slip = true, barcode?: string) {
+export type PrintResult = { ok: boolean; handled: boolean; error?: string };
+
+async function printHtml(title: string, body: string, slip = true, barcode?: string): Promise<PrintResult> {
   if (!canPrintReceipts()) {
     toast.error("Printing not available on this device", {
       description: "Receipts print from the Windows till or a browser with a printer attached.",
     });
-    return;
+    return { ok: false, handled: false, error: "Printing is not available on this device." };
   }
   const desktopHtml = shell(title, body, false);
   const paper = receiptCfg.paper;
@@ -655,9 +679,7 @@ function printHtml(title: string, body: string, slip = true, barcode?: string) {
   const thermal =
     slip && (paper === "30mm" || paper === "80mm" || paper === "58mm") && mode === "thermal";
 
-  const fallbackToBrowser = () => browserPrint(shell(title, body));
-
-  void (async () => {
+  try {
     if (thermal) {
       const prefs = getPrinterPrefs();
       const ref = paper === "30mm" ? 24 : paper === "58mm" ? 50 : 72;
@@ -675,21 +697,23 @@ function printHtml(title: string, body: string, slip = true, barcode?: string) {
       const res = await rawPulse(bytes);
       if (res.handled) {
         if (!res.ok) toast.error("Printing failed", { description: res.error });
-        return;
+        return res;
       }
     }
     const printed = await silentPrint(desktopHtml, paper, mode !== "direct");
     if (!printed.handled) {
-      fallbackToBrowser();
-      return;
+      const ok = browserPrint(shell(title, body));
+      return { ok, handled: ok, ...(ok ? {} : { error: "The browser print window could not be opened." }) };
     }
     if (!printed.ok) toast.error("Printing failed", { description: printed.error });
-  })().catch((error: unknown) => {
+    return printed;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "The printer did not accept the receipt.";
     toast.error("Printing failed", {
-      description:
-        error instanceof Error ? error.message : "The printer did not accept the receipt.",
+      description: message,
     });
-  });
+    return { ok: false, handled: true, error: message };
+  }
 }
 
 function browserPrint(html: string) {
@@ -697,11 +721,12 @@ function browserPrint(html: string) {
   frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
   document.body.appendChild(frame);
   const doc = frame.contentWindow?.document;
-  if (!doc) return;
+  if (!doc) return false;
   doc.open();
   doc.write(html);
   doc.close();
   setTimeout(() => frame.remove(), 4000);
+  return true;
 }
 
 export function printSaleReceipt(sale: Sale, member: Member | null, kind: ReceiptKind = "sale") {
@@ -717,8 +742,13 @@ export function printSaleReceipt(sale: Sale, member: Member | null, kind: Receip
   );
 }
 
-export function printShiftReport(shift: Shift, sales: Sale[], kind: "xreport" | "zreport") {
-  printHtml(kind, shiftBody(shift, sales, kind));
+export function printShiftReport(
+  shift: Shift,
+  sales: Sale[],
+  kind: "xreport" | "zreport",
+  access: ShiftReportAccess = fullShiftReportAccess,
+) {
+  return printHtml(kind, shiftBody(shift, sales, kind, access));
 }
 
 /** Short sample slip used by the printer settings "Test receipt" button. */
@@ -1073,15 +1103,15 @@ export function printTransferNote(transfer: Transfer, products: Product[], from:
  * which is how drawers are wired in practice. If a local ESC/POS bridge agent is
  * installed it is used instead.
  */
-export function openCashDrawer(reason = "Cash drawer opened") {
+export async function openCashDrawer(reason = "Cash drawer opened", shiftId?: string | null) {
   if (!canOpenDrawer()) {
     toast.error("Cash drawer not available on this device", {
       description: "The drawer opens through the receipt printer on the Windows till.",
     });
-    return;
+    return { ok: false, error: "Cash drawer not available on this device" };
   }
   const bytes = drawerPulseBytes();
-  void rawPulse(bytes).then((res) => {
+  return protectedDrawerOpen(reason, shiftId).then((res) => {
       if (res.handled) {
         // Desktop shell: never print a slip — that is the symptom, not a fallback.
         if (!res.ok) {
@@ -1091,7 +1121,7 @@ export function openCashDrawer(reason = "Cash drawer opened") {
               "The printer refused the raw drawer pulse. Check the printer selection in Receipt printer settings.",
           });
         }
-        return;
+        return { ok: res.ok, ...(res.error ? { error: res.error } : {}) };
       }
       // Browser fallback: the pulse rides along on a tiny printed slip.
       const kick = String.fromCharCode(...bytes);
@@ -1101,9 +1131,11 @@ export function openCashDrawer(reason = "Cash drawer opened") {
           `<pre style="font-size:1px;line-height:1px">${kick}</pre><div class="c muted">${esc(reason)}</div>`,
         ),
       );
+      return { ok: true };
   }).catch((error: unknown) => {
       toast.error("Drawer did not open", {
         description: error instanceof Error ? error.message : "The printer connection failed.",
       });
+      return { ok: false, error: error instanceof Error ? error.message : "The printer connection failed." };
   });
 }

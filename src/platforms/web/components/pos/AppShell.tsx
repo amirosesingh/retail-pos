@@ -572,7 +572,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   const settingsHome =
                     location.pathname === "/settings" || location.pathname === "/settings/";
                   const allowed = terminalManagement
-                    ? isSupervisor
+                    ? can("can_manage_terminals")
                     : settingsHome
                       ? isSupervisor || can("can_access_pos_settings")
                       : required === null

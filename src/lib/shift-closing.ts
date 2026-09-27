@@ -8,7 +8,6 @@
  */
 import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
 import type { ShiftState } from "@/core/types/pos-types";
-import { commitOps } from "@/core/api/pos-db";
 import { routedQuery } from "@/core/api/db-query";
 import { localDb } from "@/core/local-db/local-db";
 
@@ -23,8 +22,6 @@ const fail = (e: unknown, fallback: string): ShiftCloseStep => ({
     fallback,
 });
 
-const money = (value: number) => Number(value.toFixed(2));
-
 async function localShift(shiftId: string): Promise<Record<string, unknown>> {
   const rows = await routedQuery("shifts", { match: { id: shiftId }, limit: 1 });
   if (!rows[0]) throw new Error("That shift no longer exists on this terminal.");
@@ -33,24 +30,6 @@ async function localShift(shiftId: string): Promise<Record<string, unknown>> {
 
 const stateOf = (row: Record<string, unknown>) =>
   String(row.state ?? (row.closed_at ? "CLOSED" : "ACTIVE")) as ShiftState;
-
-function closeEvent(input: {
-  shiftId: string;
-  storeId: string;
-  terminalId?: string | null;
-  event: string;
-  from: ShiftState | null;
-  to: ShiftState | null;
-  detail?: Record<string, unknown>;
-  actor?: string | null;
-}) {
-  return {
-    id: crypto.randomUUID(), shift_id: input.shiftId, store_id: input.storeId,
-    terminal_id: input.terminalId ?? null, event: input.event,
-    from_state: input.from, to_state: input.to, detail: input.detail ?? {},
-    actor_name: input.actor ?? null, created_at: new Date().toISOString(),
-  };
-}
 
 async function callState(fn: string, args: Record<string, unknown>): Promise<ShiftCloseStep> {
   try {
@@ -73,28 +52,16 @@ export function startShiftClose(
   reason: string,
   terminalId?: string | null,
 ): Promise<ShiftCloseStep> {
-  if (localDb()?.writeBatch) return (async () => {
+  const bridge = localDb();
+  const shiftCloseStart = bridge?.shiftCloseStart;
+  if (shiftCloseStart) return (async () => {
     try {
       const clean = reason.trim();
       if (!clean) return { ok: false, error: "A reason for closing this shift is required." };
-      const shift = await localShift(shiftId);
-      const current = stateOf(shift);
-      if (current !== "ACTIVE") return { ok: true, state: current };
-      const now = new Date().toISOString();
-      const storeId = String(shift.store_id ?? "");
-      await commitOps("Starting shift close", [
-        { kind: "update", table: "shifts", match: { id: shiftId }, values: {
-          store_id: storeId, state: "CASH_COUNT_REQUIRED", close_reason: clean,
-          closing_started_at: now, closing_started_by: shift.opened_by_name ?? null,
-          updated_at: now,
-        } },
-        { kind: "insert", table: "shift_close_events", rows: [closeEvent({
-          shiftId, storeId, terminalId, event: "closing_started", from: "ACTIVE",
-          to: "CASH_COUNT_REQUIRED", detail: { reason: clean },
-          actor: (shift.opened_by_name as string | null | undefined) ?? null,
-        })] },
-      ]);
-      return { ok: true, state: "CASH_COUNT_REQUIRED" };
+      const result = await shiftCloseStart({ shiftId, reason: clean, terminalId: terminalId ?? null });
+      if (!result.ok || !result.state)
+        return { ok: false, error: result.error ?? "The local shift could not start closing." };
+      return { ok: true, state: result.state };
     } catch (e) { return fail(e, "The local shift could not start closing."); }
   })();
   return callState("shift_close_start", {
@@ -113,7 +80,8 @@ export async function submitCashCount(
   counted: { cash: number; card: number | null; digital: number | null },
   opts: { clientKey?: string; terminalId?: string | null } = {},
 ): Promise<ShiftCloseStep> {
-  if (localDb()?.writeBatch) {
+  const bridge = localDb();
+  if (bridge?.shiftCloseCount) {
     try {
       if (!Number.isFinite(counted.cash) || counted.cash < 0)
         return { ok: false, error: "Enter the cash counted in the drawer." };
@@ -121,84 +89,17 @@ export async function submitCashCount(
         return { ok: false, error: "The card total counted cannot be negative." };
       if (counted.digital != null && (!Number.isFinite(counted.digital) || counted.digital < 0))
         return { ok: false, error: "The digital total counted cannot be negative." };
-      const shift = await localShift(shiftId);
-      const current = stateOf(shift);
-      if (current === "ACTIVE") return { ok: false, error: "Start the closing process before counting the drawer." };
-      if (!["CLOSING_STARTED", "CASH_COUNT_REQUIRED"].includes(current)) return { ok: true, state: current };
-      const existing = await routedQuery("shift_cash_counts", {
-        match: { shift_id: shiftId, kind: "ORIGINAL" }, limit: 1,
+      const result = await bridge.shiftCloseCount({
+        shiftId,
+        cash: counted.cash,
+        card: counted.card,
+        digital: counted.digital,
+        clientKey: opts.clientKey ?? `${shiftId}:original`,
+        terminalId: opts.terminalId ?? null,
       });
-      if (existing.length) return { ok: true, state: stateOf(await localShift(shiftId)) };
-      const expected = await localDb()?.shiftExpectedTotals?.(shiftId);
-      if (!expected?.ok) throw new Error(expected?.error ?? "Expected shift totals could not be calculated locally.");
-      const expectedCash = money(Number(expected.expected_cash ?? 0));
-      const expectedCard = money(Number(expected.expected_card ?? 0));
-      const expectedDigital = money(Number(expected.expected_digital ?? 0));
-      const cash = money(counted.cash);
-      const card = counted.card == null ? null : money(counted.card);
-      const digital = counted.digital == null ? null : money(counted.digital);
-      const varianceCash = money(cash - expectedCash);
-      const varianceCard = card == null ? null : money(card - expectedCard);
-      const varianceDigital = digital == null ? null : money(digital - expectedDigital);
-      const varianceTotal = money(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
-      const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
-      const storeId = String(shift.store_id ?? "");
-      const actor = (shift.opened_by_name as string | null | undefined) ?? null;
-      const terminalId = opts.terminalId ?? (shift.terminal_id as string | null | undefined) ?? null;
-      const countId = crypto.randomUUID();
-      const reconciliationId = crypto.randomUUID();
-      const now = new Date().toISOString();
-      const operations: Parameters<typeof commitOps>[1] = [
-        { kind: "insert", table: "shift_cash_counts", rows: [{
-          id: countId, shift_id: shiftId, store_id: storeId, terminal_id: terminalId,
-          kind: "ORIGINAL", counted_cash: cash, counted_card: card, counted_digital: digital,
-          reason: shift.close_reason ?? null, counted_by_name: actor,
-          client_key: opts.clientKey ?? `${shiftId}:original`, created_at: now,
-        }] },
-        { kind: "insert", table: "shift_reconciliations", rows: [{
-          id: reconciliationId, shift_id: shiftId, store_id: storeId, count_id: countId,
-          expected_cash: expectedCash, expected_card: expectedCard, expected_digital: expectedDigital,
-          counted_cash: cash, counted_card: card, counted_digital: digital,
-          variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
-          variance_total: varianceTotal, variance_status: varianceStatus, created_at: now,
-        }] },
-        { kind: "insert", table: "shift_close_events", rows: [
-          closeEvent({ shiftId, storeId, terminalId, event: "cash_count_submitted", from: current,
-            to: "CASH_COUNT_SUBMITTED", detail: { count_id: countId }, actor }),
-          closeEvent({ shiftId, storeId, terminalId, event: "reconciled", from: "CASH_COUNT_SUBMITTED",
-            to: "CLOSED", detail: { variance_status: varianceStatus, variance_total: varianceTotal }, actor }),
-        ] },
-        { kind: "update", table: "shifts", match: { id: shiftId }, values: {
-          store_id: storeId, state: "CLOSED", status: "CLOSED", closed_at: shift.closed_at ?? now,
-          final_counted_cash: cash, counted_cash: cash, closing_float: cash,
-          counted_card: card, counted_digital: digital,
-          expected_cash: expectedCash, expected_card: expectedCard, expected_digital: expectedDigital,
-          variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
-          variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now,
-        } },
-      ];
-      if (varianceStatus !== "NO_VARIANCE") operations.push(
-        { kind: "insert", table: "shift_variance_alerts", rows: [{
-          id: crypto.randomUUID(), shift_id: shiftId, store_id: storeId,
-          reconciliation_id: reconciliationId, variance_total: varianceTotal,
-          variance_status: varianceStatus, severity: "warning",
-          message: `Shift ${shiftId} closed ${varianceStatus.toLowerCase()} by ${Math.abs(varianceTotal).toFixed(2)}.`,
-          delivery_status: "pending", attempts: 0, created_at: now, updated_at: now,
-        }] },
-        { kind: "insert", table: "activity_events", rows: [{
-          id: crypto.randomUUID(), event_type: "shift_cash_variance", severity: "warning",
-          title: "Shift cash variance detected",
-          message: `Expected cash ${expectedCash.toFixed(2)}, counted ${cash.toFixed(2)}, variance ${varianceTotal.toFixed(2)}.`,
-          actor_name: actor, terminal_id: terminalId, store_id: storeId, branch_id: storeId,
-          entity_type: "shift", entity_id: shiftId, amount: varianceTotal,
-          meta: { expected_cash: expectedCash, counted_cash: cash, variance_total: varianceTotal,
-            variance_status: varianceStatus, reconciliation_id: reconciliationId },
-          client_event_id: `shift:${shiftId}:cash_variance`, created_at: now,
-          whatsapp_status: "pending", cleared_by: "",
-        }] },
-      );
-      await commitOps("Closing shift cash count", operations);
-      return { ok: true, state: "CLOSED" };
+      if (!result.ok || !result.state)
+        return { ok: false, error: result.error ?? "The cash count could not be saved locally." };
+      return { ok: true, state: result.state };
     } catch (e) { return fail(e, "The cash count could not be saved locally."); }
   }
   const args = {
@@ -219,54 +120,19 @@ export function submitRecount(
   reason: string,
   terminalId?: string | null,
 ): Promise<ShiftCloseStep> {
-  if (localDb()?.writeBatch) return (async () => {
+  const bridge = localDb();
+  const shiftRecount = bridge?.shiftRecount;
+  if (shiftRecount) return (async () => {
     try {
       const clean = reason.trim();
       if (!clean) return { ok: false, error: "A reason for the recount is required." };
-      const shift = await localShift(shiftId);
-      const current = stateOf(shift);
-      if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION", "CLOSED"].includes(current))
-        return { ok: false, error: "This shift has not been counted yet." };
-      const expected = await localDb()?.shiftExpectedTotals?.(shiftId);
-      if (!expected?.ok) throw new Error(expected?.error ?? "Expected shift totals could not be calculated locally.");
-      const storeId = String(shift.store_id ?? "");
-      const actor = (shift.opened_by_name as string | null | undefined) ?? null;
-      const terminal = terminalId ?? (shift.terminal_id as string | null | undefined) ?? null;
-      const cash = money(counted.cash);
-      const card = counted.card == null ? null : money(counted.card);
-      const digital = counted.digital == null ? null : money(counted.digital);
-      const expectedCash = money(Number(expected.expected_cash ?? 0));
-      const expectedCard = money(Number(expected.expected_card ?? 0));
-      const expectedDigital = money(Number(expected.expected_digital ?? 0));
-      const varianceCash = money(cash - expectedCash);
-      const varianceCard = card == null ? null : money(card - expectedCard);
-      const varianceDigital = digital == null ? null : money(digital - expectedDigital);
-      const varianceTotal = money(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
-      const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
-      const countId = crypto.randomUUID();
-      const now = new Date().toISOString();
-      await commitOps("Saving shift recount", [
-        { kind: "insert", table: "shift_cash_counts", rows: [{ id: countId, shift_id: shiftId,
-          store_id: storeId, terminal_id: terminal, kind: "RECOUNT", counted_cash: cash,
-          counted_card: card, counted_digital: digital, reason: clean, counted_by_name: actor,
-          created_at: now }] },
-        { kind: "insert", table: "shift_reconciliations", rows: [{ id: crypto.randomUUID(),
-          shift_id: shiftId, store_id: storeId, count_id: countId, expected_cash: expectedCash,
-          expected_card: expectedCard, expected_digital: expectedDigital, counted_cash: cash,
-          counted_card: card, counted_digital: digital, variance_cash: varianceCash,
-          variance_card: varianceCard, variance_digital: varianceDigital, variance_total: varianceTotal,
-          variance_status: varianceStatus, created_at: now }] },
-        { kind: "insert", table: "shift_close_events", rows: [closeEvent({ shiftId, storeId,
-          terminalId: terminal, event: "recount_submitted", from: current, to: "CLOSED",
-          detail: { reason: clean, count_id: countId }, actor })] },
-        { kind: "update", table: "shifts", match: { id: shiftId }, values: { store_id: storeId,
-          state: "CLOSED", status: "CLOSED", counted_cash: cash, final_counted_cash: cash,
-          closing_float: cash, counted_card: card, counted_digital: digital,
-          expected_cash: expectedCash, expected_card: expectedCard, expected_digital: expectedDigital,
-          variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
-          variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now } },
-      ]);
-      return { ok: true, state: "CLOSED" };
+      const result = await shiftRecount({
+        shiftId, cash: counted.cash, card: counted.card, digital: counted.digital,
+        reason: clean, terminalId: terminalId ?? null,
+      });
+      if (!result.ok || !result.state)
+        return { ok: false, error: result.error ?? "The recount could not be saved locally." };
+      return { ok: true, state: result.state };
     } catch (e) { return fail(e, "The recount could not be saved locally."); }
   })();
   return callState("shift_recount_submit", {
@@ -281,24 +147,14 @@ export function submitRecount(
 
 /** A supervisor accepts the difference and the shift finally closes. */
 export function approveVariance(shiftId: string, note?: string): Promise<ShiftCloseStep> {
-  if (localDb()?.writeBatch) return (async () => {
+  const bridge = localDb();
+  const shiftVarianceApprove = bridge?.shiftVarianceApprove;
+  if (shiftVarianceApprove) return (async () => {
     try {
-      const shift = await localShift(shiftId);
-      const current = stateOf(shift);
-      if (current === "CLOSED") return { ok: true, state: "CLOSED" };
-      const storeId = String(shift.store_id ?? "");
-      const now = new Date().toISOString();
-      await commitOps("Approving shift variance", [
-        { kind: "update", table: "shifts", match: { id: shiftId }, values: {
-          store_id: storeId, state: "CLOSED", status: "CLOSED",
-          closed_at: shift.closed_at ?? now, updated_at: now,
-        } },
-        { kind: "insert", table: "shift_close_events", rows: [closeEvent({ shiftId, storeId,
-          terminalId: (shift.terminal_id as string | null | undefined) ?? null,
-          event: "variance_approved", from: current, to: "CLOSED", detail: { note: note ?? null },
-          actor: (shift.opened_by_name as string | null | undefined) ?? null })] },
-      ]);
-      return { ok: true, state: "CLOSED" };
+      const result = await shiftVarianceApprove({ shiftId, note: note ?? null });
+      if (!result.ok || !result.state)
+        return { ok: false, error: result.error ?? "The variance approval could not be saved locally." };
+      return { ok: true, state: result.state };
     } catch (e) { return fail(e, "The variance approval could not be saved locally."); }
   })();
   return callState("shift_variance_approve", { p_shift: shiftId, p_note: note ?? null });
@@ -338,17 +194,15 @@ export type ShiftReconciliation = {
  */
 export async function loadReconciliations(shiftId: string): Promise<ShiftReconciliation[]> {
   try {
-    if (localDb()?.query) {
-      const rows = await routedQuery("shift_reconciliations", {
-        match: { shift_id: shiftId }, orderBy: { column: "created_at", ascending: false }, limit: 200,
-      });
-      return rows.map(mapReconciliation);
+    const bridge = localDb();
+    if (bridge?.shiftReconciliationView) {
+      const result = await bridge.shiftReconciliationView(shiftId);
+      if (!result.ok) return [];
+      return (result.rows ?? []).map(mapReconciliation);
     }
-    const res = await supabase
-      .from("shift_reconciliations" as never)
-      .select("*")
-      .eq("shift_id", shiftId)
-      .order("created_at", { ascending: false });
+    const res = await supabase.rpc("shift_reconciliation_view" as never, {
+      p_shift: shiftId,
+    } as never);
     if (res.error) return [];
     return ((res.data as Record<string, unknown>[] | null) ?? []).map(mapReconciliation);
   } catch {

@@ -25,4 +25,29 @@ describe("self-privilege guards", () => {
     expect(schema).toContain("transfer_in_my_branch");
     expect(schema).toContain("user_has_store_access(from_store_id)");
   });
+
+  it("redacts shift financials in permission-aware invoker RPCs", () => {
+    expect(schema).toContain("CREATE OR REPLACE FUNCTION public.shift_list_secure");
+    expect(schema).toContain("SECURITY INVOKER");
+    expect(schema).toContain("can_shift_expected_cash_view");
+    expect(schema).toContain("can_shift_counted_cash_view");
+    expect(schema).toContain("can_shift_variance_view");
+    expect(schema).toContain("REVOKE SELECT ON public.shifts FROM authenticated");
+    expect(schema).toContain("REVOKE ALL ON FUNCTION public.shift_active_for_branch(text) FROM PUBLIC, anon, authenticated");
+  });
+
+  it("removes broad transfer policies in favour of endpoint-scoped policies", () => {
+    expect(schema).toContain('DROP POLICY IF EXISTS "Staff read transfers"');
+    expect(schema).toContain('CREATE POLICY "Scoped staff read transfers"');
+    expect(schema).toContain("user_has_store_access(to_store_id)");
+    expect(schema).toContain('CREATE POLICY "Scoped staff access transfer items"');
+  });
+
+  it("keeps the pending migration free of patch-marker syntax", () => {
+    const migration = readFileSync(
+      join(process.cwd(), "supabase", "migrations", "20260927115034_secure_shift_approvals_realtime.sql"),
+      "utf8",
+    );
+    expect(migration).not.toMatch(/^\+/m);
+  });
 });

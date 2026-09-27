@@ -11,6 +11,7 @@ import { parsePositiveAmount } from "@/core/pricing/amount";
 import { permissionMessage } from "@/platforms/web/components/pos/PermissionGate";
 import { notifyError } from "@/lib/notify";
 import { commitLabel } from "@/core/api/pos-db";
+import { ShiftCloseDialog } from "@/platforms/web/components/pos/ShiftCloseDialog";
 
 /**
  * Hard terminal lock.
@@ -44,6 +45,21 @@ export function ShiftGuard({ children }: { children: ReactNode }) {
 
   if (activeShift) {
     const opened = new Date(activeShift.openedAt);
+    const closing = (activeShift.state ?? "ACTIVE") !== "ACTIVE";
+    if (closing) {
+      return (
+        <div className="relative flex min-h-0 flex-1">
+          <div
+            {...({ inert: "" } as Record<string, string>)}
+            aria-hidden="true"
+            className="pointer-events-none flex min-h-0 flex-1 select-none opacity-30 blur-[1px]"
+          >
+            {children}
+          </div>
+          <ShiftCloseDialog open onOpenChange={() => undefined} />
+        </div>
+      );
+    }
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-success/30 bg-success/10 px-4 py-1.5 text-[11px] text-success">

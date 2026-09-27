@@ -32,6 +32,8 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260927085119_fix_sale_item_aggregate_branch_guard.sql",
       "supabase/migrations/20260927085816_normalize_legacy_audit_log_branch.sql",
       "supabase/migrations/20260927090830_fix_sale_item_batch_branch_guard.sql",
+      "supabase/migrations/20260927115034_secure_shift_approvals_realtime.sql",
+      "supabase/migrations/20260927123117_consolidate_shift_transfer_security.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

@@ -99,9 +99,9 @@ export function SettingsFrame({
     scopeIds,
     settingsScopeLoading,
   } = usePos();
-  const { isAdmin, isSupervisor, can } = useAuth();
+  const { isAdmin, can } = useAuth();
   const canSettings =
-    isAdmin || can("can_access_pos_settings") || (terminalManagement && isSupervisor);
+    isAdmin || (terminalManagement ? can("can_manage_terminals") : can("can_access_pos_settings"));
   // Rendered inside the settings workspace sheet: no app shell, no back link.
   const embedded = useEmbeddedSettings();
 

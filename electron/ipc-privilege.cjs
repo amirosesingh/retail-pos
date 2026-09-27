@@ -56,11 +56,19 @@ const CHANNEL_LEVELS = {
   /* --- trading: the register cannot sell without these --- */
   "pos:write": OPEN,
   "pos:write-batch": OPEN,
-  "business:write-batch": OPEN,
+  // Legacy fallback only. Current renderers use commit-aggregate, which has
+  // kind-specific permission checks below. An arbitrary batch must never be
+  // available to ordinary renderer code.
+  "business:write-batch": SUPERVISOR,
   "business:commit-aggregate": OPEN,
   "business:snapshot": OPEN,
   "business:query": OPEN,
   "business:shift-expected": OPEN,
+  "business:shift-close-start": OPEN,
+  "business:shift-close-count": OPEN,
+  "business:shift-recount": OPEN,
+  "business:shift-variance-approve": OPEN,
+  "business:shift-reconciliation-view": OPEN,
   "receipts:find-exact": OPEN,
   "receipts:refund": OPEN,
   "pos:status": OPEN,
@@ -86,6 +94,7 @@ const CHANNEL_LEVELS = {
   "db:get-branch": OPEN,
   "print:silent": OPEN,
   "print:raw": OPEN,
+  "drawer:open": OPEN, // permission-refined in allowed()
   "print:list": OPEN,
   "local:info": OPEN,
   "local:mirror": OPEN,
@@ -344,6 +353,12 @@ function levelFor(channel, args = []) {
 let firstRun = () => false;
 
 function refusal(level, channel, args = []) {
+  if (channel === "drawer:open") return {
+    ok: false,
+    code: "EPRIVILEGE",
+    stage: "authorize",
+    error: "This account does not have permission to open the cash drawer.",
+  };
   if (databaseSyncAction(channel, args)) return {
     ok: false,
     code: "EPRIVILEGE",
@@ -364,6 +379,96 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  if (channel === "business:commit-aggregate") {
+    const kind = String(args[0]?.kind ?? "");
+    const permissions = {
+      sale: ["can_process_sale"],
+      payment: ["can_process_sale", "can_collect_booking"],
+      refund: ["can_refund", "can_process_refund"],
+      shift: ["can_open_shift", "can_close_shift"],
+      receiving: ["can_receive_purchase_order"],
+      stock: ["can_adjust_stock"],
+      transfer: ["can_create_transfer", "can_receive_transfer", "can_approve_transfer"],
+      booking: ["can_create_booking", "can_manage_bookings", "can_cancel_booking"],
+      held_order: ["can_hold_cart"],
+    }[kind];
+    if (!adminSession.hasPosAuthority()) return false;
+    if (!permissions) {
+      if (!adminSession.hasLevel(SUPERVISOR)) return false;
+    } else if (!permissions.some((permission) => adminSession.hasPermission(permission))) {
+      return false;
+    }
+    adminSession.touch();
+    return true;
+  }
+  if (channel === "drawer:open") {
+    if (adminSession.hasPosAuthority() && adminSession.hasPermission("can_open_drawer")) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
+  }
+  if (channel === "business:shift-expected") {
+    if (adminSession.hasPosAuthority() && adminSession.hasPermission("can_shift_expected_cash_view")) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
+  }
+  if (channel === "business:shift-close-start") {
+    if (adminSession.hasPosAuthority() && adminSession.hasPermission("can_close_shift")) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
+  }
+  if (channel === "business:shift-close-count") {
+    if (adminSession.hasPosAuthority() &&
+        (adminSession.hasPermission("can_shift_cash_count") || adminSession.hasPermission("can_close_shift"))) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
+  }
+  if (channel === "business:shift-recount") {
+    if (adminSession.hasPosAuthority() && adminSession.hasPermission("can_shift_cash_recount")) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
+  }
+  if (channel === "business:shift-variance-approve") {
+    if (adminSession.hasPosAuthority() && adminSession.hasPermission("can_shift_variance_approve")) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
+  }
+  if (channel === "business:shift-reconciliation-view") {
+    if (adminSession.hasPosAuthority() && [
+      "can_shift_expected_cash_view", "can_shift_counted_cash_view", "can_shift_variance_view",
+    ].some((permission) => adminSession.hasPermission(permission))) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
+  }
+  if (channel === "business:query") {
+    const table = String(args[0] ?? "");
+    if (table === "shift_reconciliations") return false;
+    const permission = table === "shift_close_events"
+      ? "can_shift_closing_history_view"
+      : table === "shift_cash_counts"
+        ? "can_shift_counted_cash_view"
+        : null;
+    if (permission) {
+      if (adminSession.hasPosAuthority() && adminSession.hasPermission(permission)) {
+        adminSession.touch();
+        return true;
+      }
+      return false;
+    }
+  }
   const level = levelFor(channel, args);
   if (level === OPEN) return true;
   if (FIRST_RUN_CHANNELS.has(channel) && firstRun()) return true;
