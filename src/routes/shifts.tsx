@@ -60,7 +60,7 @@ export const Route = createFileRoute("/shifts")({
 
 function Shifts() {
   const { state, activeShift, openShift, closeShift, refundSale, currentStore, stores } = usePos();
-  const { user, isAdmin, isSupervisor } = useAuth();
+  const { user, isAdmin, isSupervisor, can } = useAuth();
   const { requirePermission } = useUserPermissions();
   const { rules } = usePosRules();
   const { authorize } = useManagerGate();
@@ -114,12 +114,13 @@ function Shifts() {
     !activeShift ||
     !activeShift.terminalId ||
     activeShift.terminalId === hereId ||
-    isAdmin ||
-    isSupervisor;
+    can("can_manage_other_shifts");
   const overdueNow = activeShift ? isShiftOverdue(activeShift, state.settings.hours) : false;
 
   /* Mid-shift snapshot: supervisors always, cashiers only when switched on. */
-  const mayPrintXReport = isAdmin || isSupervisor || rules.enable_cashier_x_report;
+  const mayPrintXReport =
+    can("can_shift_financial_summary_view") &&
+    (isAdmin || isSupervisor || rules.enable_cashier_x_report);
   const storeIndex = stores.findIndex((s) => s.id === currentStore.id);
   const storeLabel = `Store ${storeIndex + 1}`;
 
@@ -133,14 +134,20 @@ function Shifts() {
               Drawer control, X / Z reports and full sales history
             </p>
           </div>
-          <Button
-            variant="outline"
-            onClick={async () => {
-              if (await requirePermission("can_open_drawer")) openCashDrawer();
-            }}
-          >
-            <Vault className="size-4" /> Open drawer
-          </Button>
+          {can("can_open_drawer") && (
+            <Button
+              variant="outline"
+              onClick={async () => {
+                if (!(await requirePermission("can_open_drawer"))) return;
+                const reason = window.prompt("Reason for opening the cash drawer")?.trim();
+                if (!reason) return;
+                const result = await openCashDrawer(reason, activeShift?.id);
+                if (!result.ok) toast.error(result.error ?? "The cash drawer did not open.");
+              }}
+            >
+              <Vault className="size-4" /> Open drawer
+            </Button>
+          )}
         </header>
 
         {!isAdmin && (
@@ -183,7 +190,9 @@ function Shifts() {
               <Metric label="Transactions" value={String(shiftSales.length)} />
               <Metric label="Terminal" value={activeShift.terminalName ?? "This PC"} />
               <Metric label="Running for" value={shiftDuration(activeShift)} />
-              <Metric label="Expected drawer" value={money(expected)} highlight />
+              {can("can_shift_expected_cash_view") && (
+                <Metric label="Expected drawer" value={money(expected)} highlight />
+              )}
               {overdueNow && (
                 <p className="md:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                   This shift is past the trading-day window and is flagged as overdue.
@@ -206,7 +215,13 @@ function Shifts() {
                     onClick={() => {
                       // Read-only audit snapshot: derived from recorded sales,
                       // never editable, and every print is logged.
-                      printShiftReport(activeShift, storeSales, "xreport");
+                      void printShiftReport(activeShift, storeSales, "xreport", {
+                        financialSummary: can("can_shift_financial_summary_view"),
+                        paymentBreakdown: can("can_shift_payment_breakdown_view"),
+                        expected: can("can_shift_expected_cash_view"),
+                        counted: can("can_shift_counted_cash_view"),
+                        variance: can("can_shift_variance_view"),
+                      });
                       logSystemAction({
                         actorName: user?.name ?? activeShift.cashier,
                         actorRole: user?.role ?? null,
@@ -269,7 +284,8 @@ function Shifts() {
                       (user?.name ?? cashier).trim() || "Cashier",
                       parsePositiveAmount(float) ?? 0,
                     );
-                    openCashDrawer();
+                    const drawer = await openCashDrawer("Opening float for a new shift");
+                    if (!drawer.ok) toast.warning(drawer.error ?? "The cash drawer did not open.");
                     setFloat("");
                     toast.success(`Shift opened — ${commitLabel(target).toLowerCase()}`);
                   } catch (e) {
@@ -438,7 +454,8 @@ function Shifts() {
                             try {
                               await refundSale(s.id);
                               printSaleReceipt(s, member, "refund");
-                              openCashDrawer();
+                              const drawer = await openCashDrawer(`Refund ${s.receiptNo}`, activeShift?.id);
+                              if (!drawer.ok) toast.warning(drawer.error ?? "The cash drawer did not open.");
                               toast.success(`${s.receiptNo} refunded`);
                             } catch (error) {
                               notifyError(error, "Refunding the sale");
@@ -463,7 +480,7 @@ function Shifts() {
           </Table>
         </section>
 
-        <section className="rounded-lg border border-border bg-card">
+        {can("can_shift_closing_history_view") && <section className="rounded-lg border border-border bg-card">
           <h2 className="px-5 py-3 text-sm font-semibold">Shift history</h2>
           <Separator />
           <Table>
@@ -477,9 +494,9 @@ function Shifts() {
                 <TableHead>Terminal</TableHead>
                 <TableHead>Duration</TableHead>
                 <TableHead className="text-right">Float</TableHead>
-                <TableHead className="text-right">Closing float</TableHead>
-                <TableHead className="text-right">Over / short</TableHead>
-                <TableHead className="text-right">Z report</TableHead>
+                {can("can_shift_counted_cash_view") && <TableHead className="text-right">Closing float</TableHead>}
+                {can("can_shift_variance_view") && <TableHead className="text-right">Over / short</TableHead>}
+                {can("can_shift_report_reprint") && <TableHead className="text-right">Z report</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -515,12 +532,12 @@ function Shifts() {
                     {shiftDuration(sh)}
                   </TableCell>
                   <TableCell className="numeric text-right">{money(sh.openingFloat)}</TableCell>
-                  <TableCell className="numeric text-right">
+                  {can("can_shift_counted_cash_view") && <TableCell className="numeric text-right">
                     {(sh.closingFloat ?? sh.countedCash) == null
                       ? "—"
                       : money((sh.closingFloat ?? sh.countedCash) as number)}
-                  </TableCell>
-                  <TableCell className="numeric text-right">
+                  </TableCell>}
+                  {can("can_shift_variance_view") && <TableCell className="numeric text-right">
                     {sh.varianceTotal == null ? (
                       "—"
                     ) : (
@@ -536,16 +553,22 @@ function Shifts() {
                         {money(sh.varianceTotal)}
                       </span>
                     )}
-                  </TableCell>
-                  <TableCell className="text-right">
+                  </TableCell>}
+                  {can("can_shift_report_reprint") && <TableCell className="text-right">
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => printShiftReport(sh, storeSales, "zreport")}
+                      onClick={() => void printShiftReport(sh, storeSales, "zreport", {
+                        financialSummary: can("can_shift_financial_summary_view"),
+                        paymentBreakdown: can("can_shift_payment_breakdown_view"),
+                        expected: can("can_shift_expected_cash_view"),
+                        counted: can("can_shift_counted_cash_view"),
+                        variance: can("can_shift_variance_view"),
+                      })}
                     >
                       <Printer className="size-4" />
                     </Button>
-                  </TableCell>
+                  </TableCell>}
                 </TableRow>
               ))}
               {!storeShifts.length && (
@@ -557,7 +580,7 @@ function Shifts() {
               )}
             </TableBody>
           </Table>
-        </section>
+        </section>}
       </div>
 
       <ShiftCloseDialog open={closeOpen} onOpenChange={setCloseOpen} />

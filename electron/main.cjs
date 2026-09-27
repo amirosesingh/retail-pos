@@ -2,6 +2,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 const net = require("node:net");
+const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage } = require("electron");
 
@@ -719,6 +720,293 @@ async function printRaw(bytes, options = {}) {
   }
 }
 
+const shiftMoney = (value) => Math.round(Number(value ?? 0) * 100) / 100;
+
+async function startLocalShiftClose(raw) {
+  const branchId = localBranchId();
+  if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
+  const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
+  const reason = guard.text(raw.reason, { name: "shift close reason", max: 400 }).trim();
+  if (!reason) throw new Error("A reason for closing this shift is required.");
+  const result = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
+  const shift = result.rows?.[0];
+  if (!shift) throw new Error("That shift no longer exists on this terminal.");
+  const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
+  if (state !== "ACTIVE") return { ok: true, state, replayed: true };
+  const identity = adminSession.identity();
+  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
+  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  const now = new Date().toISOString();
+  await operationsRepository.apply("Starting shift close", [
+    { kind: "update", table: "shifts", match: { id: shiftId }, values: {
+      store_id: branchId, state: "CASH_COUNT_REQUIRED", close_reason: reason,
+      closing_started_at: now, closing_started_by: actor, updated_at: now,
+    } },
+    { kind: "insert", table: "shift_close_events", rows: [{
+      id: randomUUID(), shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
+      event: "closing_started", from_state: "ACTIVE", to_state: "CASH_COUNT_REQUIRED",
+      detail: { reason }, actor_name: actor, actor_staff_id: actor, created_at: now,
+    }] },
+  ]);
+  publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
+  scheduleAutomaticSync(250);
+  return { ok: true, state: "CASH_COUNT_REQUIRED" };
+}
+
+/**
+ * Trusted offline close. Expected totals and variance never cross into the renderer;
+ * only the resulting workflow state is returned.
+ */
+async function commitLocalShiftCashCount(raw) {
+  const branchId = localBranchId();
+  if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
+  const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
+  const cash = Number(raw.cash);
+  const card = raw.card == null ? null : Number(raw.card);
+  const digital = raw.digital == null ? null : Number(raw.digital);
+  if (!Number.isFinite(cash) || cash < 0) throw new Error("Enter the cash counted in the drawer.");
+  if (card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
+  if (digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
+  const shifts = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
+  const shift = shifts.rows?.[0];
+  if (!shift) throw new Error("That shift no longer exists on this terminal.");
+  const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
+  if (state === "ACTIVE") throw new Error("Start the closing process before counting the drawer.");
+  if (!["CLOSING_STARTED", "CASH_COUNT_REQUIRED"].includes(state)) return { ok: true, state };
+  const prior = await operationsRepository.query(branchId, "shift_cash_counts", { match: { shift_id: shiftId, kind: "ORIGINAL" }, limit: 1 });
+  if (prior.rows?.length) {
+    const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
+    return { ok: true, state: String(current.rows?.[0]?.state ?? "CLOSED"), replayed: true };
+  }
+  const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
+  const expectedCash = shiftMoney(expected.expected_cash);
+  const expectedCard = shiftMoney(expected.expected_card);
+  const expectedDigital = shiftMoney(expected.expected_digital);
+  const countedCash = shiftMoney(cash);
+  const countedCard = card == null ? null : shiftMoney(card);
+  const countedDigital = digital == null ? null : shiftMoney(digital);
+  const varianceCash = shiftMoney(countedCash - expectedCash);
+  const varianceCard = countedCard == null ? null : shiftMoney(countedCard - expectedCard);
+  const varianceDigital = countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
+  const varianceTotal = shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
+  const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
+  const identity = adminSession.identity();
+  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
+  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  const countId = randomUUID();
+  const reconciliationId = randomUUID();
+  const now = new Date().toISOString();
+  const operations = [
+    { kind: "insert", table: "shift_cash_counts", rows: [{
+      id: countId, shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
+      kind: "ORIGINAL", counted_cash: countedCash, counted_card: countedCard,
+      counted_digital: countedDigital, reason: shift.close_reason ?? null,
+      counted_by_name: actor, counted_by_staff_id: actor,
+      client_key: String(raw.clientKey ?? `${shiftId}:original`), created_at: now,
+    }] },
+    { kind: "insert", table: "shift_reconciliations", rows: [{
+      id: reconciliationId, shift_id: shiftId, store_id: branchId, count_id: countId,
+      expected_cash: expectedCash, expected_card: expectedCard, expected_digital: expectedDigital,
+      counted_cash: countedCash, counted_card: countedCard, counted_digital: countedDigital,
+      variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
+      variance_total: varianceTotal, variance_status: varianceStatus, created_at: now,
+    }] },
+    { kind: "insert", table: "shift_close_events", rows: [
+      { id: randomUUID(), shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
+        event: "cash_count_submitted", from_state: state, to_state: "CASH_COUNT_SUBMITTED",
+        detail: { count_id: countId }, actor_name: actor, actor_staff_id: actor, created_at: now },
+      { id: randomUUID(), shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
+        event: "reconciled", from_state: "CASH_COUNT_SUBMITTED", to_state: "CLOSED",
+        detail: { variance_status: varianceStatus, variance_total: varianceTotal },
+        actor_name: actor, actor_staff_id: actor, created_at: now },
+    ] },
+    { kind: "update", table: "shifts", match: { id: shiftId }, values: {
+      store_id: branchId, state: "CLOSED", status: "CLOSED",
+      closed_at: shift.closed_at ?? now, final_counted_cash: countedCash,
+      counted_cash: countedCash, closing_float: countedCash, counted_card: countedCard,
+      counted_digital: countedDigital, expected_cash: expectedCash, expected_card: expectedCard,
+      expected_digital: expectedDigital, variance_cash: varianceCash,
+      variance_card: varianceCard, variance_digital: varianceDigital,
+      variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now,
+    } },
+  ];
+  if (varianceStatus !== "NO_VARIANCE") operations.push({
+    kind: "insert", table: "shift_variance_alerts", rows: [{
+      id: randomUUID(), shift_id: shiftId, store_id: branchId,
+      reconciliation_id: reconciliationId, variance_total: varianceTotal,
+      variance_status: varianceStatus, severity: "warning",
+      message: `Shift ${shiftId} closed ${varianceStatus.toLowerCase()} by ${Math.abs(varianceTotal).toFixed(2)}.`,
+      delivery_status: "pending", attempts: 0, created_at: now, updated_at: now,
+    }],
+  });
+  try {
+    await operationsRepository.apply("Closing shift cash count", operations);
+  } catch (error) {
+    if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
+    const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
+    return { ok: true, state: String(current.rows?.[0]?.state ?? "CLOSED"), replayed: true };
+  }
+  publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
+  scheduleAutomaticSync(250);
+  return { ok: true, state: "CLOSED" };
+}
+
+async function commitLocalShiftRecount(raw) {
+  const branchId = localBranchId();
+  if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
+  const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
+  const reason = guard.text(raw.reason, { name: "recount reason", max: 400 }).trim();
+  if (!reason) throw new Error("A reason for the recount is required.");
+  const cash = Number(raw.cash);
+  const card = raw.card == null ? null : Number(raw.card);
+  const digital = raw.digital == null ? null : Number(raw.digital);
+  if (!Number.isFinite(cash) || cash < 0) throw new Error("Enter the recounted cash amount.");
+  if (card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
+  if (digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
+  const result = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
+  const shift = result.rows?.[0];
+  if (!shift) throw new Error("That shift no longer exists on this terminal.");
+  const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
+  if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION", "CLOSED"].includes(state))
+    throw new Error("This shift has not been counted yet.");
+  const clientKey = String(raw.clientKey ?? `${shiftId}:recount:${cash}:${card ?? ""}:${digital ?? ""}:${reason}`);
+  const prior = await operationsRepository.query(branchId, "shift_cash_counts", { match: { client_key: clientKey }, limit: 1 });
+  if (prior.rows?.length) return { ok: true, state: "CLOSED", replayed: true };
+  const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
+  const expectedCash = shiftMoney(expected.expected_cash);
+  const expectedCard = shiftMoney(expected.expected_card);
+  const expectedDigital = shiftMoney(expected.expected_digital);
+  const countedCash = shiftMoney(cash);
+  const countedCard = card == null ? null : shiftMoney(card);
+  const countedDigital = digital == null ? null : shiftMoney(digital);
+  const varianceCash = shiftMoney(countedCash - expectedCash);
+  const varianceCard = countedCard == null ? null : shiftMoney(countedCard - expectedCard);
+  const varianceDigital = countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
+  const varianceTotal = shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
+  const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
+  const identity = adminSession.identity();
+  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
+  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  const countId = randomUUID();
+  const now = new Date().toISOString();
+  try {
+    await operationsRepository.apply("Saving shift recount", [
+      { kind: "insert", table: "shift_cash_counts", rows: [{
+        id: countId, shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
+        kind: "RECOUNT", counted_cash: countedCash, counted_card: countedCard,
+        counted_digital: countedDigital, reason, counted_by_name: actor,
+        counted_by_staff_id: actor, client_key: clientKey, created_at: now,
+      }] },
+      { kind: "insert", table: "shift_reconciliations", rows: [{
+        id: randomUUID(), shift_id: shiftId, store_id: branchId, count_id: countId,
+        expected_cash: expectedCash, expected_card: expectedCard, expected_digital: expectedDigital,
+        counted_cash: countedCash, counted_card: countedCard, counted_digital: countedDigital,
+        variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
+        variance_total: varianceTotal, variance_status: varianceStatus, created_at: now,
+      }] },
+      { kind: "insert", table: "shift_close_events", rows: [{
+        id: randomUUID(), shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
+        event: "recount_submitted", from_state: state, to_state: "CLOSED",
+        detail: { reason, count_id: countId }, actor_name: actor,
+        actor_staff_id: actor, created_at: now,
+      }] },
+      { kind: "update", table: "shifts", match: { id: shiftId }, values: {
+        store_id: branchId, state: "CLOSED", status: "CLOSED", closed_at: shift.closed_at ?? now,
+        counted_cash: countedCash, final_counted_cash: countedCash, closing_float: countedCash,
+        counted_card: countedCard, counted_digital: countedDigital,
+        expected_cash: expectedCash, expected_card: expectedCard, expected_digital: expectedDigital,
+        variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
+        variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now,
+      } },
+    ]);
+  } catch (error) {
+    if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
+    return { ok: true, state: "CLOSED", replayed: true };
+  }
+  publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
+  scheduleAutomaticSync(250);
+  return { ok: true, state: "CLOSED" };
+}
+
+async function approveLocalShiftVariance(raw) {
+  const branchId = localBranchId();
+  if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
+  const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
+  const result = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
+  const shift = result.rows?.[0];
+  if (!shift) throw new Error("That shift no longer exists on this terminal.");
+  const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
+  if (state === "CLOSED") return { ok: true, state: "CLOSED", replayed: true };
+  if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION"].includes(state))
+    throw new Error("This shift is not waiting for variance approval.");
+  const identity = adminSession.identity();
+  const actor = identity?.subject ?? "";
+  const now = new Date().toISOString();
+  await operationsRepository.apply("Approving shift variance", [
+    { kind: "update", table: "shifts", match: { id: shiftId }, values: {
+      store_id: branchId, state: "CLOSED", status: "CLOSED", closed_at: shift.closed_at ?? now,
+      closed_by_name: actor, updated_at: now,
+    } },
+    { kind: "insert", table: "shift_close_events", rows: [{
+      id: randomUUID(), shift_id: shiftId, store_id: branchId, terminal_id: shift.terminal_id ?? null,
+      event: "variance_approved", from_state: state, to_state: "CLOSED",
+      detail: { note: String(raw.note ?? "").slice(0, 400) }, actor_name: actor,
+      actor_staff_id: actor, created_at: now,
+    }] },
+  ]);
+  publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
+  scheduleAutomaticSync(250);
+  return { ok: true, state: "CLOSED" };
+}
+
+function redactShiftRow(row) {
+  const copy = { ...row };
+  if (!adminSession.hasPermission("can_shift_expected_cash_view"))
+    for (const key of ["expected_cash", "expected_card", "expected_digital"]) delete copy[key];
+  if (!adminSession.hasPermission("can_shift_counted_cash_view"))
+    for (const key of ["counted_cash", "counted_card", "counted_digital", "final_counted_cash", "closing_float"]) delete copy[key];
+  if (!adminSession.hasPermission("can_shift_variance_view"))
+    for (const key of ["variance_cash", "variance_card", "variance_digital", "variance_total", "variance_status"]) delete copy[key];
+  return copy;
+}
+
+async function localShiftReconciliationView(shiftId) {
+  const branchId = localBranchId();
+  if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
+  const result = await operationsRepository.query(branchId, "shift_reconciliations", {
+    match: { shift_id: guard.uuid(shiftId, { name: "shift id" }) },
+    orderBy: { column: "created_at", ascending: false }, limit: 200,
+  });
+  const expected = adminSession.hasPermission("can_shift_expected_cash_view");
+  const counted = adminSession.hasPermission("can_shift_counted_cash_view");
+  const variance = adminSession.hasPermission("can_shift_variance_view");
+  return { ok: true, rows: (result.rows ?? []).map((row) => ({
+    id: row.id, shift_id: row.shift_id, store_id: row.store_id, count_id: row.count_id,
+    expected_cash: expected ? row.expected_cash : null,
+    expected_card: expected ? row.expected_card : null,
+    expected_digital: expected ? row.expected_digital : null,
+    counted_cash: counted ? row.counted_cash : null,
+    counted_card: counted ? row.counted_card : null,
+    counted_digital: counted ? row.counted_digital : null,
+    variance_cash: variance ? row.variance_cash : null,
+    variance_card: variance ? row.variance_card : null,
+    variance_digital: variance ? row.variance_digital : null,
+    variance_total: variance ? row.variance_total : null,
+    variance_status: variance ? row.variance_status : null,
+    created_at: row.created_at,
+  })) };
+}
+
+/** ESC/POS drawer pulses must use drawer:open, where identity and permission are checked. */
+function containsDrawerPulse(bytes) {
+  const values = Array.from(bytes ?? []);
+  for (let index = 0; index <= values.length - 5; index += 1) {
+    if (values[index] === 0x1b && values[index + 1] === 0x70 &&
+        (values[index + 2] === 0 || values[index + 2] === 1)) return true;
+  }
+  return false;
+}
+
 
 function authorizationServerUrl() {
   const configured = String(configStore.get("backendUrl") ?? "").trim().replace(/\/+$/, "");
@@ -800,8 +1088,13 @@ function registerIpc() {
   ipcMain.handle("business:commit-aggregate", (_e, value) => guard.guarded(async() => {
     const aggregate=guard.aggregate(value);
     try {
-      const result=await aggregateRepository.commit(aggregate.kind,aggregate);
-      publishBusinessChange({kind:aggregate.kind,branchId:aggregate.branchId??localBranchId(),operationId:result.operationId??null});
+      const branchId=localBranchId();
+      if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});
+      if(adminSession.branchId()&&String(adminSession.branchId())!==String(branchId))
+        throw Object.assign(new Error("The signed-in account is not authorized for this terminal branch."),{code:"SYNC_BRANCH_FORBIDDEN"});
+      const trustedAggregate={...aggregate,branchId};
+      const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
+      publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null});
       scheduleAutomaticSync(250);
       return result;
     } catch(error) {
@@ -809,14 +1102,34 @@ function registerIpc() {
       return {ok:false,code:error?.code??"ESQLSERVER_WRITE",error:error?.message??"The local SQL Server transaction failed.",stage:error?.stage??null,table:error?.table??null,sqlNumber:error?.sqlNumber??null};
     }
   }));
-  ipcMain.handle("business:snapshot", () => guard.guarded(() => operationsRepository.snapshot(localBranchId())));
-  ipcMain.handle("business:query", (_e, table, options) => guard.guarded(() => operationsRepository.query(
-    localBranchId(),
-    guard.text(table, { name: "business table", max: 80 }),
-    guard.queryOptions(options),
-  )));
+  ipcMain.handle("business:snapshot", () => guard.guarded(async () => {
+    const snapshot = await operationsRepository.snapshot(localBranchId());
+    return { ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) };
+  }));
+  ipcMain.handle("business:query", (_e, table, options) => guard.guarded(async () => {
+    const safeTable = guard.text(table, { name: "business table", max: 80 });
+    const result = await operationsRepository.query(localBranchId(), safeTable, guard.queryOptions(options));
+    return safeTable === "shifts"
+      ? { ...result, rows: (result.rows ?? []).map(redactShiftRow) }
+      : result;
+  }));
   ipcMain.handle("business:shift-expected", (_e, shiftId) => guard.guarded(() =>
     operationsRepository.shiftExpectedTotals(localBranchId(), guard.uuid(shiftId, { name: "shift id" })),
+  ));
+  ipcMain.handle("business:shift-close-start", (_e, value) => guard.guarded(() =>
+    startLocalShiftClose(guard.options(value, { name: "shift close start", max: 3 })),
+  ));
+  ipcMain.handle("business:shift-close-count", (_e, value) => guard.guarded(() =>
+    commitLocalShiftCashCount(guard.options(value, { name: "shift cash count", max: 6 })),
+  ));
+  ipcMain.handle("business:shift-recount", (_e, value) => guard.guarded(() =>
+    commitLocalShiftRecount(guard.options(value, { name: "shift recount", max: 7 })),
+  ));
+  ipcMain.handle("business:shift-variance-approve", (_e, value) => guard.guarded(() =>
+    approveLocalShiftVariance(guard.options(value, { name: "shift variance approval", max: 2 })),
+  ));
+  ipcMain.handle("business:shift-reconciliation-view", (_e, shiftId) => guard.guarded(() =>
+    localShiftReconciliationView(shiftId),
   ));
   ipcMain.handle("receipts:find-exact", (_e, value, branchId, proof) => guard.guarded(() => {
     const input = guard.options(proof, { name: "receipt authorization", max: 3 });
@@ -911,10 +1224,57 @@ function registerIpc() {
   }));
   ipcMain.handle("print:raw", async (_e, bytes, options) => guard.guarded(async () => {
     const opts = guard.plainObject(options, { name: "print options" });
-    return printRaw(guard.bytes(bytes), {
+    const checked = guard.bytes(bytes);
+    if (containsDrawerPulse(checked)) return {
+      ok: false,
+      code: "EDRAWER_CHANNEL",
+      error: "Cash drawer pulses must use the protected drawer command.",
+    };
+    return printRaw(checked, {
       deviceName: guard.shellSafeText(opts.deviceName, { name: "printer name" }),
       share: guard.shellSafeText(opts.share, { name: "printer share" }),
     });
+  }));
+  ipcMain.handle("drawer:open", async (_e, value) => guard.guarded(async () => {
+    const input = guard.options(value, { name: "drawer request", max: 5 });
+    const reason = guard.text(input.reason, { name: "drawer reason", max: 400 });
+    if (reason.trim().length < 3) return { ok: false, code: "EREASON", error: "A drawer-opening reason is required." };
+    const branchId = localBranchId();
+    if (!branchId) return { ok: false, code: "EBRANCH", error: "The terminal branch is not configured." };
+    if (!databaseManager.pool) return { ok: false, code: "EDATABASE", error: "The local SQL database must be connected before the drawer can open." };
+    const identity = adminSession.identity();
+    if (!identity) return { ok: false, code: "EAUTH", error: "A verified signed-in user is required." };
+    const terminal = terminalStore.read() ?? {};
+    const eventId = randomUUID();
+    const terminalId = String(terminal.tokenId ?? terminal.terminalId ?? "").trim() || null;
+    const shiftId = input.shiftId ? guard.uuid(input.shiftId, { name: "shift id" }) : null;
+    const printer = guard.plainObject(input.printer, { name: "printer options" });
+    await operationsRepository.apply("Recording cash drawer request", [{
+      kind: "insert", table: "drawer_events", rows: [{
+        id: eventId,
+        store_id: branchId,
+        terminal_id: terminalId,
+        shift_id: shiftId,
+        staff_id: identity.subject,
+        staff_name: identity.subject,
+        role: identity.level,
+        reason: reason.trim(),
+        note: "OPEN_REQUESTED",
+        approved_by: null,
+        created_at: new Date().toISOString(),
+      }],
+    }]);
+    const result = await printRaw([0x1b, 0x70, Number(input.pin) === 5 ? 1 : 0, 0x19, 0xfa], {
+      deviceName: guard.shellSafeText(printer.deviceName, { name: "printer name" }),
+      share: guard.shellSafeText(printer.share, { name: "printer share" }),
+    });
+    await operationsRepository.apply("Recording cash drawer result", [{
+      kind: "update", table: "drawer_events", match: { id: eventId },
+      values: { note: result.ok ? "OPENED" : `FAILED: ${String(result.error ?? "Printer refused the drawer pulse").slice(0, 300)}` },
+    }]);
+    publishBusinessChange({ kind: "drawer", branchId, operationId: eventId });
+    scheduleAutomaticSync(250);
+    return { ...result, eventId };
   }));
   ipcMain.handle("print:list", async () => {
     try {

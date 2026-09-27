@@ -505,7 +505,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setLoadPhase("loading");
     setReloadTick((v) => v + 1);
   }, []);
-  const { authUserId, terminalUser, user, isAdmin, isSupervisor, ready: authReady } = useAuth();
+  const { authUserId, terminalUser, user, isAdmin, isSupervisor, can, ready: authReady } = useAuth();
   // Nothing is fetched from the cloud until a cashier or supervisor session
   // exists — visitors never receive catalogue, member or sales data.
   const signedIn = Boolean(authUserId || terminalUser);
@@ -1347,7 +1347,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // admin is signed in, who can close from anywhere.
       const here = readTerminalConfig()?.tokenId ?? localTerminalId();
       const sameTerminal = !activeShift.terminalId || activeShift.terminalId === here;
-      if (!sameTerminal && !isAdmin && !isSupervisor) return null;
+      if (!sameTerminal && !can("can_manage_other_shifts")) return null;
       const closed: Shift = {
         ...activeShift,
         ...extras,
@@ -1361,7 +1361,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
         closedByRole: user?.role ?? terminalUser?.role,
         overdue: isShiftOverdue(activeShift, stateRef.current.settings.hours),
       };
-      await db.commitShift(closed);
+      // Electron's trusted shift-count/approval IPC has already committed the
+      // financial close atomically. Rewriting it from the untrusted renderer
+      // would both duplicate the operation and reopen a privilege bypass.
+      if (!localDb()) await db.commitShift(closed);
       // Everyone who was signed in on this shift is signed out with it.
       endShiftSessions({ shiftId: closed.id });
       setState((s) => ({
@@ -1419,7 +1422,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       })();
       return closed;
     },
-    [activeShift, user, terminalUser, isAdmin, isSupervisor],
+    [activeShift, user, terminalUser, can],
   );
 
   const recordSale = useCallback(

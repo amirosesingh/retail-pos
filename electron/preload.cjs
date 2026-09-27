@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld("pos", {
   snapshot: () => invoke("business:snapshot"),
   query: (table, options) => invoke("business:query", table, options),
   shiftExpectedTotals: (shiftId) => invoke("business:shift-expected", shiftId),
+  shiftCloseStart: (value) => invoke("business:shift-close-start", value),
+  shiftCloseCount: (value) => invoke("business:shift-close-count", value),
+  shiftRecount: (value) => invoke("business:shift-recount", value),
+  shiftVarianceApprove: (value) => invoke("business:shift-variance-approve", value),
+  shiftReconciliationView: (shiftId) => invoke("business:shift-reconciliation-view", shiftId),
   onBusinessChanged: (cb) => {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("business:changed", handler);
@@ -74,6 +79,7 @@ contextBridge.exposeInMainWorld("pos", {
   },
   print: (html, options) => invoke("print:silent", html, options),
   printRaw: (bytes, options) => invoke("print:raw", bytes, options),
+  openDrawer: (value) => invoke("drawer:open", value),
   listPrinters: () => invoke("print:list"),
   appVersion: () => invoke("app:version"),
   netGetJson: (url) => invoke("net:get-json", url),

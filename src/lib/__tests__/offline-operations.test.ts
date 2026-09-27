@@ -109,4 +109,17 @@ describe("offline terminal operations", () => {
     expect(rendererSync).toContain('runExclusive("network")');
     expect(rendererSync).toContain('live.on("postgres_changes"');
   });
+
+  it("binds renderer aggregates to the verified terminal branch", () => {
+    const main = readFileSync("electron/main.cjs", "utf8");
+    const aggregates = readFileSync("electron/db/repositories/aggregates.cjs", "utf8");
+    const privilege = readFileSync("electron/ipc-privilege.cjs", "utf8");
+    expect(main).toContain("const trustedAggregate={...aggregate,branchId}");
+    expect(main).toContain("adminSession.branchId()");
+    expect(main).toContain('code:"SYNC_BRANCH_FORBIDDEN"');
+    expect(aggregates).toContain("async assertBranch(transaction, table, record, match, branchId)");
+    expect(aggregates).toContain('code: "SYNC_BRANCH_FORBIDDEN"');
+    expect(privilege).toContain('"business:write-batch": SUPERVISOR');
+    expect(privilege).toContain('channel === "business:commit-aggregate"');
+  });
 });

@@ -260,7 +260,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [staff, setStaff] = useState<StaffMember[]>(SEED_STAFF);
   const [session, setSession] = useState<Session | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
-  const [ready, setReady] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
+  const [rolesReady, setRolesReady] = useState(false);
+  const [profileReady, setProfileReady] = useState(false);
   const [authEnabled, setAuthEnabled] = useState(() => !isTerminalApp());
   const [terminalUser, setTerminalUser] = useState<TerminalUser | null>(null);
   const [appUser, setAppUser] = useState<AppUserProfile | null>(null);
@@ -302,7 +304,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(null);
         setRoles([]);
         setAppUser(null);
-        setReady(true);
+        setAuthReady(true);
+        setRolesReady(true);
+        setProfileReady(true);
       }
     };
     void awaitProfileHydrated()
@@ -342,6 +346,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!next) {
         setRoles([]);
         setAppUser(null);
+        setRolesReady(true);
+        setProfileReady(true);
+      } else {
+        setRolesReady(false);
+        setProfileReady(false);
       }
     });
     void (async () => {
@@ -356,8 +365,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!next) {
         setRoles([]);
         setAppUser(null);
+        setRolesReady(true);
+        setProfileReady(true);
+      } else {
+        setRolesReady(false);
+        setProfileReady(false);
       }
-      setReady(true);
+      setAuthReady(true);
       if (checked.state === "rejected") notifySessionExpired();
     })();
     return () => {
@@ -372,14 +386,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     if (!userId) {
       setRoles([]);
+      setRolesReady(true);
       return;
     }
+    setRolesReady(false);
     void supabase
       .from("user_roles")
       .select("role")
       .eq("user_id", userId)
-      .then(({ data }) => {
-        if (!cancelled) setRoles(((data ?? []) as { role: AppRole }[]).map((r) => r.role));
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        setRoles(error ? [] : ((data ?? []) as { role: AppRole }[]).map((r) => r.role));
+        setRolesReady(true);
+      }, () => {
+        if (!cancelled) {
+          setRoles([]);
+          setRolesReady(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -391,18 +414,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     if (!userId) {
       setAppUser(null);
+      setProfileReady(true);
       return;
     }
+    setProfileReady(false);
     void supabase.rpc("current_app_user" as never).then(({ data, error }) => {
       if (cancelled) return;
       if (error) {
         setAppUser(null);
+        setProfileReady(true);
         return;
       }
       const row = (Array.isArray(data) ? data[0] : data) as unknown as
         | AppUserProfile
         | undefined;
       setAppUser(row ?? null);
+      setProfileReady(true);
+    }, () => {
+      if (!cancelled) {
+        setAppUser(null);
+        setProfileReady(true);
+      }
     });
     return () => {
       cancelled = true;
@@ -1162,6 +1194,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       alive = false;
     };
   }, [user?.staffId]);
+
+  const ready = authReady && (!userId || (rolesReady && profileReady));
 
   const value = useMemo<AuthCtx>(
     () => ({

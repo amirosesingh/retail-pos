@@ -10,7 +10,7 @@
  * separate, permission-gated table and are only fetched for staff allowed to
  * see them.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Lock } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -62,10 +62,13 @@ export function ShiftCloseDialog({
   const [busy, setBusy] = useState(false);
   const [serverState, setServerState] = useState<ShiftState | null>(null);
   const [recon, setRecon] = useState<ShiftReconciliation | null>(null);
-  const drawerOpenedForShift = useRef<string | null>(null);
 
   const mayCount = can("can_shift_cash_count") || can("can_close_shift");
+  const maySeeExpected = can("can_shift_expected_cash_view");
+  const maySeeCounted = can("can_shift_counted_cash_view");
   const maySeeVariance = can("can_shift_variance_view");
+  const maySeeFinancialSummary = can("can_shift_financial_summary_view");
+  const maySeePaymentBreakdown = can("can_shift_payment_breakdown_view");
   const mayApprove = can("can_shift_variance_approve");
   const mayRecount = can("can_shift_cash_recount");
   const terminalId = readTerminalConfig()?.tokenId ?? localTerminalId();
@@ -88,22 +91,12 @@ export function ShiftCloseDialog({
     setRecountReason("");
   }, [open, activeShift?.id, activeShift?.state, activeShift?.closeReason]);
 
-  // Open once, as soon as the irreversible server transition reaches the
-  // count stage. Keeping the shift id in a ref prevents rerenders and dialog
-  // state updates from firing a second no-sale pulse.
-  useEffect(() => {
-    if (!open || !activeShift || step !== "count") return;
-    if (drawerOpenedForShift.current === activeShift.id) return;
-    drawerOpenedForShift.current = activeShift.id;
-    openCashDrawer("Shift closing cash count");
-  }, [open, step, activeShift]);
-
   // Managers see the numbers; the database refuses everyone else.
   useEffect(() => {
-    if (!open || !activeShift || !maySeeVariance) return;
+    if (!open || !activeShift || !(maySeeExpected || maySeeCounted || maySeeVariance)) return;
     if (step !== "review" && step !== "done") return;
     void loadReconciliations(activeShift.id).then((rows) => setRecon(rows[0] ?? null));
-  }, [open, step, activeShift, maySeeVariance]);
+  }, [open, step, activeShift, maySeeExpected, maySeeCounted, maySeeVariance]);
 
   if (!activeShift) return null;
 
@@ -122,8 +115,16 @@ export function ShiftCloseDialog({
       countedCard: counted.card,
       countedDigital: counted.digital,
     });
-    printShiftReport(closed ?? shift, state.sales, "zreport");
-    toast.success("Shift closed · Z report printed");
+    const printed = await printShiftReport(closed ?? shift, state.sales, "zreport", {
+      financialSummary: maySeeFinancialSummary,
+      paymentBreakdown: maySeePaymentBreakdown,
+      expected: maySeeExpected,
+      counted: maySeeCounted,
+      variance: maySeeVariance,
+    });
+    toast.success(printed.ok ? "Shift closed · Z report sent to printer" : "Shift closed", {
+      description: printed.ok ? undefined : "The shift is safely closed. Reprint the Z report after checking the printer.",
+    });
     setStep("done");
     onOpenChange(false);
   }
@@ -140,7 +141,13 @@ export function ShiftCloseDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        const locked = (activeShift.state ?? "ACTIVE") !== "ACTIVE" || step !== "reason";
+        if (!busy && (next || !locked)) onOpenChange(next);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Close shift</DialogTitle>
@@ -238,18 +245,18 @@ export function ShiftCloseDialog({
                 </span>
               </div>
 
-              {maySeeVariance && recon && (
+              {(maySeeExpected || maySeeCounted || maySeeVariance) && recon && (
                 <div className="rounded-md border border-border px-3 py-2 text-xs">
-                  <Row label="Expected cash" value={money(recon.expectedCash)} />
-                  <Row label="Counted cash" value={money(recon.countedCash ?? 0)} />
-                  <Row
+                  {maySeeExpected && <Row label="Expected cash" value={money(recon.expectedCash)} />}
+                  {maySeeCounted && <Row label="Counted cash" value={money(recon.countedCash ?? 0)} />}
+                  {maySeeVariance && <Row
                     label="Over / short"
                     value={money(recon.varianceTotal ?? 0)}
                     tone={Math.abs(recon.varianceTotal ?? 0) > 0.005 ? "bad" : "good"}
-                  />
+                  />}
                 </div>
               )}
-              {!maySeeVariance && (
+              {!(maySeeExpected || maySeeCounted || maySeeVariance) && (
                 <p className="text-xs text-muted-foreground">
                   The difference is only visible to a supervisor.
                 </p>
@@ -306,9 +313,11 @@ export function ShiftCloseDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
-            {step === "reason" ? "Cancel" : "Later"}
-          </Button>
+          {step === "reason" && (
+            <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+          )}
 
           {step === "reason" && (
             <Button
@@ -316,6 +325,12 @@ export function ShiftCloseDialog({
               onClick={() => {
                 void (async () => {
                   setBusy(true);
+                  const drawer = await openCashDrawer(reason.trim(), activeShift.id);
+                  if (!drawer.ok) {
+                    setBusy(false);
+                    toast.error("The drawer did not open", { description: drawer.error });
+                    return;
+                  }
                   const res = await startShiftClose(activeShift.id, reason.trim(), terminalId);
                   setBusy(false);
                   if (!res.ok) {

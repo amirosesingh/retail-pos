@@ -1,4 +1,5 @@
 const { createHash } = require("node:crypto");
+const { branchPredicate } = require("../branch-scope.cjs");
 
 const AGGREGATE_KINDS = new Set([
   "sale", "payment", "refund", "shift", "receiving", "stock",
@@ -39,6 +40,32 @@ class AggregateRepository {
     this.operationsRepository = operationsRepository;
   }
 
+  async assertBranch(transaction, table, record, match, branchId) {
+    if (table.scope !== "branch") return;
+    if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
+    const predicate = branchPredicate(this.operationsRepository.registry, table, "candidate");
+    // Some catalogue tables are marked branch-aware but intentionally carry
+    // stock for several stores in one shared row. Their generated registry has
+    // no row predicate; server-side stock movement RPCs protect those writes.
+    if (!predicate) return;
+    const primary = table.columns.filter((column) => column.primaryKey).map((column) => column.sqlServerColumn);
+    const source = { ...(match ?? {}), ...(record ?? {}) };
+    if (!primary.length || primary.some((column) => source[column] == null))
+      throw Object.assign(new Error(`A complete stable key is required for ${table.sqlServerTable}.`), { code: "EBRANCH_SCOPE" });
+    const request = new (this.connectionManager.sql().Request)(transaction).input("branch", String(branchId));
+    const key = primary.map((column, index) => {
+      request.input(`scope${index}`, source[column]);
+      return `candidate.[${column}]=@scope${index}`;
+    }).join(" AND ");
+    const result = await request.query(`SELECT CASE WHEN EXISTS(
+      SELECT 1 FROM dbo.[${table.sqlServerTable}] candidate WHERE ${key} AND (${predicate})
+    ) THEN 1 ELSE 0 END allowed;`);
+    if (Number(result.recordset?.[0]?.allowed ?? 0) !== 1)
+      throw Object.assign(new Error(`${table.cloudTable} does not belong to this terminal branch.`), {
+        code: "SYNC_BRANCH_FORBIDDEN", table: table.cloudTable,
+      });
+  }
+
   async commit(kind, aggregate) {
     if (!AGGREGATE_KINDS.has(kind)) throw new Error("Unsupported aggregate type.");
     const operations = this.operationsRepository.validate(aggregate?.operations);
@@ -66,9 +93,18 @@ class AggregateRepository {
         tableName = operation.table;
         if (this.operationsRepository.tables.get(operation.table)?.direction === "pull")
           throw new Error(`${operation.table} is centrally managed and cannot be changed by the local database.`);
-        affected += await this.operationsRepository.applyOperation(transaction, operation);
         const table = this.operationsRepository.tables.get(operation.table);
         const records = operation.rows?.length ? operation.rows : [operation.values ?? operation.match];
+        // Deletes must be checked while their owner row still exists. Inserts
+        // and updates are checked after application so child ownership can be
+        // resolved through a parent written earlier in the same aggregate.
+        if (operation.kind === "delete") {
+          for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId);
+        }
+        affected += await this.operationsRepository.applyOperation(transaction, operation);
+        if (operation.kind !== "delete") {
+          for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId);
+        }
         for (const record of records) {
           const request = new sql.Request(transaction)
             .input("entity_type", operation.table)

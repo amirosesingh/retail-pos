@@ -15,6 +15,7 @@ describe("checkout post-commit safety", () => {
     const printing = readFileSync("src/lib/pos-print.ts", "utf8");
     expect(printing).toContain('toast.error("Printing failed"');
     expect(printing).toContain('toast.error("Drawer did not open"');
-    expect(printing).toMatch(/rawPulse\(bytes\)\.then[\s\S]*?\.catch/);
+    expect(printing).toContain("const res = await rawPulse(bytes)");
+    expect(printing).toMatch(/async function printHtml[\s\S]*?try \{[\s\S]*?catch \(error: unknown\)/);
   });
 });

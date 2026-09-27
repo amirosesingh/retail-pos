@@ -22,6 +22,12 @@ type PrintBridge = {
     bytes: number[],
     options?: { deviceName?: string; share?: string },
   ) => Promise<PrintResult>;
+  openDrawer?: (value: {
+    reason: string;
+    shiftId?: string | null;
+    pin?: 2 | 5;
+    printer?: { deviceName?: string; share?: string };
+  }) => Promise<PrintResult & { eventId?: string; code?: string }>;
   listPrinters?: () => Promise<{
     ok: boolean;
     printers: { name: string; displayName: string; isDefault: boolean }[];
@@ -208,6 +214,27 @@ export async function rawPulse(bytes: number[]): Promise<PulseResult> {
     const error = err instanceof Error ? err.message : String(err);
     if (import.meta.env.DEV) console.error("Drawer kick failed");
     return { handled: true, ok: false, error };
+  }
+}
+
+/** Protected desktop drawer command. Main rechecks the signed-in permission and records the event. */
+export async function protectedDrawerOpen(
+  reason: string,
+  shiftId?: string | null,
+): Promise<PulseResult & { eventId?: string }> {
+  const bridge = printBridge();
+  if (!bridge?.openDrawer) return { handled: false, ok: false };
+  const { deviceName, share, drawerPin } = getPrinterPrefs();
+  try {
+    const result = await bridge.openDrawer({
+      reason,
+      shiftId: shiftId ?? null,
+      pin: drawerPin === 5 ? 5 : 2,
+      printer: { ...(deviceName ? { deviceName } : {}), ...(share ? { share } : {}) },
+    });
+    return { handled: true, ok: !!result.ok, ...(result.error ? { error: result.error } : {}), ...(result.eventId ? { eventId: result.eventId } : {}) };
+  } catch (error) {
+    return { handled: true, ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 

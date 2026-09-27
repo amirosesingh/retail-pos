@@ -7,6 +7,7 @@
  * live to the central database and never queue business data locally.
  */
 import type { SyncOp } from "@/lib/sync-outbox";
+import type { ShiftState } from "@/core/types/pos-types";
 
 export type LocalDbConfig = {
   server: string;
@@ -373,6 +374,12 @@ export type LocalSyncStatus = {
 };
 
 export type PosBridge = {
+  openDrawer?: (value: {
+    reason: string;
+    shiftId?: string | null;
+    pin?: 2 | 5;
+    printer?: { deviceName?: string; share?: string };
+  }) => Promise<{ ok: boolean; eventId?: string; error?: string; code?: string }>;
   database?: {
     getState: () => Promise<{ enabled: boolean; connected: boolean; tradingReady?: boolean; state: string }>;
   };
@@ -567,6 +574,44 @@ export type PosBridge = {
     expected_cash?: number;
     expected_card?: number;
     expected_digital?: number;
+    error?: string;
+    code?: string;
+  }>;
+  shiftCloseStart?: (value: {
+    shiftId: string;
+    reason: string;
+    terminalId?: string | null;
+  }) => Promise<{ ok: boolean; state?: ShiftState; replayed?: boolean; error?: string; code?: string }>;
+  /** Trusted main-process blind count. Expected amounts never enter the renderer. */
+  shiftCloseCount?: (value: {
+    shiftId: string;
+    cash: number;
+    card: number | null;
+    digital: number | null;
+    clientKey?: string;
+    terminalId?: string | null;
+  }) => Promise<{
+    ok: boolean;
+    state?: ShiftState;
+    replayed?: boolean;
+    error?: string;
+    code?: string;
+  }>;
+  shiftRecount?: (value: {
+    shiftId: string;
+    cash: number;
+    card: number | null;
+    digital: number | null;
+    reason: string;
+    terminalId?: string | null;
+  }) => Promise<{ ok: boolean; state?: ShiftState; error?: string; code?: string }>;
+  shiftVarianceApprove?: (value: {
+    shiftId: string;
+    note?: string | null;
+  }) => Promise<{ ok: boolean; state?: ShiftState; replayed?: boolean; error?: string; code?: string }>;
+  shiftReconciliationView?: (shiftId: string) => Promise<{
+    ok: boolean;
+    rows?: LocalSaleRow[];
     error?: string;
     code?: string;
   }>;

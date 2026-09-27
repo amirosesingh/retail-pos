@@ -987,27 +987,23 @@ export async function loadCloudState(storeId?: string | null): Promise<CloudSlic
   const [tiers, products, members, sales, promotions, settings, stores, shifts] = await Promise.all(
     [
       supabase.from("membership_tiers").select("id, name").is("deleted_at", null),
-      // Whole-catalogue reads are paged: a single request is capped at 1,000
-      // rows by the database, which used to hide every item past the first
-      // thousand without reporting anything.
-      readAllPages<Row>((from, to, withCount) =>
-        supabase
-          .from("products")
-          .select("*", withCount ? { count: "exact" } : {})
-          .is("deleted_at", null)
-          .order("name")
-          .order("id")
-          .range(from, to),
-      ),
-      readAllPages<Row>((from, to, withCount) =>
-        supabase
-          .from("members")
-          .select("*", withCount ? { count: "exact" } : {})
-          .is("deleted_at", null)
-          .order("created_at")
-          .order("id")
-          .range(from, to),
-      ),
+      // Keep bootstrap bounded. Search and barcode resolution query the indexed
+      // database on demand, so a large catalogue is never materialised in a
+      // browser/WebView heap merely to open the register.
+      supabase
+        .from("products")
+        .select("*")
+        .is("deleted_at", null)
+        .order("updated_at", { ascending: false })
+        .order("id")
+        .limit(2000),
+      supabase
+        .from("members")
+        .select("*")
+        .is("deleted_at", null)
+        .order("updated_at", { ascending: false })
+        .order("id")
+        .limit(1000),
 
       (async () => {
         const read = () => {
@@ -1022,15 +1018,13 @@ export async function loadCloudState(storeId?: string | null): Promise<CloudSlic
         }
         return first;
       })(),
-      readAllPages<Row>((from, to, withCount) =>
-        supabase
-          .from("promotions")
-          .select("*", withCount ? { count: "exact" } : {})
-          .is("deleted_at", null)
-          .order("created_at")
-          .order("id")
-          .range(from, to),
-      ),
+      supabase
+        .from("promotions")
+        .select("*")
+        .is("deleted_at", null)
+        .order("updated_at", { ascending: false })
+        .order("id")
+        .limit(1000),
 
       supabase.from("pos_settings").select("*").eq("id", 1).maybeSingle(),
       // The stores table only exists once supabase/schema.sql has been applied; a
@@ -1069,11 +1063,10 @@ export async function loadCloudState(storeId?: string | null): Promise<CloudSlic
       })(),
       (async (): Promise<{ data: Row[] | null }> => {
         try {
-          const res = await supabase
-            .from("shifts" as never)
-            .select("*")
-            .order("opened_at", { ascending: false })
-            .limit(300);
+          const res = await supabase.rpc(
+            "shift_list_secure" as never,
+            { p_store_id: storeId ?? null, p_limit: 300 } as never,
+          );
           return { data: (res.data as Row[] | null) ?? null };
         } catch {
           return { data: null };
@@ -1151,6 +1144,22 @@ export async function loadCloudProduct(id: string): Promise<Product | null> {
 export async function loadCloudMember(id: string): Promise<Member | null> {
   const rows = await routedQuery("members", { match: { id, deleted_at: null }, limit: 1 });
   return rows[0] ? rowToMember(rows[0] as Row, tierName) : null;
+}
+
+/** Bounded, indexed member lookup used when the in-memory bootstrap window is insufficient. */
+export async function searchCloudMembers(term: string, limit = 10): Promise<Member[]> {
+  const needle = term.replace(/[(),*]/g, " ").trim();
+  if (!needle) return [];
+  const like = `%${needle}%`;
+  const res = await supabase
+    .from("members")
+    .select("*")
+    .is("deleted_at", null)
+    .or([`name.ilike.${like}`, `phone.ilike.${like}`, `code.ilike.${like}`, `email.ilike.${like}`].join(","))
+    .order("updated_at", { ascending: false })
+    .limit(Math.min(Math.max(limit, 1), 50));
+  if (res.error || !res.data) return [];
+  return (res.data as Row[]).map((row) => rowToMember(row, tierName));
 }
 
 /** Fetch one changed promotion without re-reading the full promotion set. */
@@ -1231,7 +1240,7 @@ export async function loadActiveShift(storeId: string): Promise<Shift | null> {
     // The server routine answers for every staff account, whatever branch is
     // written on their profile, and hands back the whole row in one call.
     const rpc = await supabase.rpc(
-      "shift_active_for_branch" as never,
+      "shift_active_secure" as never,
       {
         p_store_id: storeId,
       } as never,

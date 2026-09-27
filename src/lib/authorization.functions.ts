@@ -539,6 +539,16 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
           ? { ...existing.payload, approved_amount: approvedAmount }
           : {},
       });
+      if (!updated) {
+        const latest = await getRequest(data.id);
+        return {
+          ok: false as const,
+          error: latest
+            ? `This request is already ${latest.status}`
+            : "That request no longer exists",
+          request: latest,
+        };
+      }
       await writeLog({
         actionKey: existing.actionKey,
         modeUsed: "request",

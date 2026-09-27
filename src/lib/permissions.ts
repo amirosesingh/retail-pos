@@ -15,7 +15,13 @@ export const PERMISSION_GROUPS = [
       "can_bypass_shift_lock",
       "can_shift_cash_count",
       "can_shift_expected_cash_view",
+      "can_shift_counted_cash_view",
       "can_shift_variance_view",
+      "can_shift_financial_summary_view",
+      "can_shift_payment_breakdown_view",
+      "can_shift_closing_history_view",
+      "can_shift_report_reprint",
+      "can_manage_other_shifts",
       "can_shift_variance_approve",
       "can_shift_cash_recount",
     ],
@@ -112,7 +118,13 @@ export type PermissionKey =
   | "can_bypass_shift_lock"
   | "can_shift_cash_count"
   | "can_shift_expected_cash_view"
+  | "can_shift_counted_cash_view"
   | "can_shift_variance_view"
+  | "can_shift_financial_summary_view"
+  | "can_shift_payment_breakdown_view"
+  | "can_shift_closing_history_view"
+  | "can_shift_report_reprint"
+  | "can_manage_other_shifts"
   | "can_shift_variance_approve"
   | "can_shift_cash_recount"
   | "can_delete_line"
@@ -170,7 +182,13 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_bypass_shift_lock: "Use the terminal without an open shift",
   can_shift_cash_count: "Submit the closing cash count",
   can_shift_expected_cash_view: "See expected cash for a shift",
+  can_shift_counted_cash_view: "See cash counted during shift closing",
   can_shift_variance_view: "See shift over/short variance",
+  can_shift_financial_summary_view: "See the financial summary for a shift",
+  can_shift_payment_breakdown_view: "See the payment-method breakdown for a shift",
+  can_shift_closing_history_view: "See completed shift-closing history",
+  can_shift_report_reprint: "Reprint a completed shift closing report",
+  can_manage_other_shifts: "Close or manage another user's or terminal's shift",
   can_shift_variance_approve: "Approve a shift variance and finalise the close",
   can_shift_cash_recount: "Authorise and submit a drawer recount",
   can_delete_line: "Delete a line from the cart",
@@ -489,7 +507,13 @@ export const PERMISSION_TAGS: Record<
       "can_bypass_shift_lock",
       "can_shift_cash_count",
       "can_shift_expected_cash_view",
+      "can_shift_counted_cash_view",
       "can_shift_variance_view",
+      "can_shift_financial_summary_view",
+      "can_shift_payment_breakdown_view",
+      "can_shift_closing_history_view",
+      "can_shift_report_reprint",
+      "can_manage_other_shifts",
       "can_shift_variance_approve",
       "can_shift_cash_recount",
       "can_delete_line",
