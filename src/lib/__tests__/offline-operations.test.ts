@@ -90,4 +90,23 @@ describe("offline terminal operations", () => {
     expect(dialog).toContain("await verifyLocalPin(authorizerId.trim(), pin)");
     expect(dialog).toContain('mode_used: "offline_pin"');
   });
+
+  it("wakes synchronization after every local write and on reconnect", () => {
+    const main = readFileSync("electron/main.cjs", "utf8");
+    const writeHandler = main.slice(
+      main.indexOf('ipcMain.handle("business:write-batch"'),
+      main.indexOf('ipcMain.handle("business:commit-aggregate"'),
+    );
+    const aggregateHandler = main.slice(
+      main.indexOf('ipcMain.handle("business:commit-aggregate"'),
+      main.indexOf('ipcMain.handle("business:snapshot"'),
+    );
+    expect(writeHandler).toContain("scheduleAutomaticSync(250)");
+    expect(aggregateHandler).toContain("scheduleAutomaticSync(250)");
+
+    const rendererSync = readFileSync("src/lib/sync-engine.ts", "utf8");
+    expect(rendererSync).toContain("subscribeConnectivity");
+    expect(rendererSync).toContain('runExclusive("network")');
+    expect(rendererSync).toContain('live.on("postgres_changes"');
+  });
 });
