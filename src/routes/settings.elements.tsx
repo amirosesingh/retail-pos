@@ -1,6 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
-import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import {
+  SettingsFrame,
+  useSettingsCtx,
+} from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -18,7 +21,11 @@ export const Route = createFileRoute("/settings/elements")({
   head: () => ({
     meta: [
       { title: "Receipt Elements — Retail" },
-      { name: "description", content: "Pick the paper size and choose which blocks print on each slip: logo, member points, barcode and tax breakdown." },
+      {
+        name: "description",
+        content:
+          "Pick the paper size and choose which blocks print on each slip: logo, member points, barcode and tax breakdown.",
+      },
       { property: "og:title", content: "Receipt Elements — Retail" },
       { property: "og:description", content: "Paper size and printed receipt blocks." },
       { property: "og:type", content: "website" },
@@ -29,7 +36,6 @@ export const Route = createFileRoute("/settings/elements")({
     <SettingsFrame
       title="Receipt elements"
       description="Paper size and which blocks appear on the printed slip."
-      scopeSections={["receiptLayout"]}
       showPreview
     >
       <SettingsTabs current="/settings/elements" />

@@ -24,7 +24,6 @@ export const Route = createFileRoute("/settings/whatsapp")({
     <SettingsFrame
       title="WhatsApp bills"
       description="Send receipts and booking slips straight to the shopper's phone."
-      scopeSections={["whatsapp"]}
     >
       <WhatsAppForm />
     </SettingsFrame>

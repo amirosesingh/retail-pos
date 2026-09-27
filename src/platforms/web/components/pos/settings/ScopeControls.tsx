@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { listTerminalTokens, type TerminalToken } from "@/core/activation/terminal-tokens";
 /**
@@ -56,7 +57,13 @@ export function ScopeBadge({ path, className = "" }: { path: string; className?:
 }
 
 /** Scope selector for one block: pick which tier owns it, or lock it globally. */
-export function SectionScope({ section }: { section: SettingsSectionId }) {
+export function SectionScope({
+  section,
+  editRoute,
+}: {
+  section: SettingsSectionId;
+  editRoute?: string;
+}) {
   const {
     settingsScope,
     setSectionScope,
@@ -142,13 +149,26 @@ export function SectionScope({ section }: { section: SettingsSectionId }) {
             />
           </label>
         )}
+        {editRoute && (
+          <Button asChild size="sm" variant="ghost" className="h-7 text-[11px]">
+            <Link to={editRoute as never}>Edit values</Link>
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
-/** Scope selectors for a whole settings page. */
-export function ScopePanel({ sections }: { sections: SettingsSectionId[] }) {
+/** Central scope selectors for a group of settings blocks. */
+export function ScopePanel({
+  sections,
+  heading = "Applies to",
+  sectionRoutes,
+}: {
+  sections: SettingsSectionId[];
+  heading?: string;
+  sectionRoutes?: Partial<Record<SettingsSectionId, string>>;
+}) {
   const { currentStore, settingsTerminalId, setSettingsTerminalId, saveConfiguredSettings } =
     usePos();
   const [terminals, setTerminals] = useState<TerminalToken[]>([]);
@@ -171,13 +191,12 @@ export function ScopePanel({ sections }: { sections: SettingsSectionId[] }) {
       });
     return () => {
       cancelled = true;
-      setSettingsTerminalId("");
     };
-  }, [setSettingsTerminalId, terminalScoped]);
+  }, [terminalScoped]);
   if (!sections.length) return null;
   return (
     <div className="space-y-2 rounded-lg border border-border bg-card p-3">
-      <p className="text-xs font-medium">Applies to</p>
+      <p className="text-xs font-medium">{heading}</p>
       <p className="text-[11px] text-muted-foreground">
         {terminalScoped && businessScoped
           ? "Business blocks use Branch → Cluster → Global. Terminal blocks use Terminal → Cluster → Global."
@@ -217,7 +236,7 @@ export function ScopePanel({ sections }: { sections: SettingsSectionId[] }) {
         </label>
       )}
       {sections.map((id) => (
-        <SectionScope key={id} section={id} />
+        <SectionScope key={id} section={id} editRoute={sectionRoutes?.[id]} />
       ))}
     </div>
   );

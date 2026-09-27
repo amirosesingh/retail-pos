@@ -10,7 +10,6 @@ import { SettingsShell } from "@/platforms/web/components/pos/settings/SettingsS
 import { SaveIndicator } from "@/platforms/web/components/pos/settings/SaveIndicator";
 import { SettingsSections } from "@/platforms/web/components/pos/settings/SettingsSection";
 import { AuthorizationRulesPanel } from "@/platforms/web/components/pos/settings/AuthorizationRulesPanel";
-import { ScopePanel } from "@/platforms/web/components/pos/settings/ScopeControls";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -237,8 +236,6 @@ function RulesSettings() {
             <Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
           )}
         </header>
-
-        <ScopePanel sections={["review", "hours", "terminalSecurity"]} />
 
         {!mayEdit && (
           <p className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">

@@ -33,7 +33,6 @@ export const Route = createFileRoute("/settings/booking-slip")({
     <SettingsFrame
       title="Booking slip wording"
       description="Terms & conditions and the customer signature line printed on racket bookings and pay-later slips."
-      scopeSections={["receiptIdentity"]}
     >
       <SettingsTabs current="/settings/booking-slip" />
 

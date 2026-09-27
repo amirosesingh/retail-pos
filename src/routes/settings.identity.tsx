@@ -37,7 +37,6 @@ export const Route = createFileRoute("/settings/identity")({
     <SettingsFrame
       title="Business identity"
       description="Company details printed at the top and bottom of every slip."
-      scopeSections={["receiptIdentity"]}
       showPreview
     >
       <IdentityForm />

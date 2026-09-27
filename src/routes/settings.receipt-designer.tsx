@@ -38,7 +38,6 @@ export const Route = createFileRoute("/settings/receipt-designer")({
     <SettingsFrame
       title="Receipt designer"
       description="Content, dynamic fields, logo and styling for every printed slip. The preview uses sample transaction data."
-      scopeSections={["receiptIdentity", "receiptLayout"]}
       showPreview
     >
       <SettingsTabs current="/settings/receipt-designer" />

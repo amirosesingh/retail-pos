@@ -29,7 +29,6 @@ export const Route = createFileRoute("/settings/lines")({
     <SettingsFrame
       title="Receipt extra lines"
       description="Policy notes, promotions or opening hours printed with each slip."
-      scopeSections={["receiptIdentity"]}
       showPreview
     >
       <SettingsTabs current="/settings/lines" />

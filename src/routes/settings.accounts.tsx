@@ -43,7 +43,6 @@ export const Route = createFileRoute("/settings/accounts")({
     <SettingsFrame
       title="Payment accounts"
       description="List your card machines, bank accounts and e-wallets. Cashiers pick one when taking a card, transfer or wallet payment."
-      scopeSections={["paymentAccounts"]}
     >
       <AccountsForm />
     </SettingsFrame>

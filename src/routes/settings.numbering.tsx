@@ -52,7 +52,6 @@ function NumberingPage() {
     <SettingsFrame
       title="Bill numbering"
       description="Every receipt number is branch, till, day and a running number, so two registers can never mint the same bill — even offline."
-      scopeSections={["numbering"]}
     >
       <SettingsTabs current="/settings/numbering" />
 

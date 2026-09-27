@@ -30,7 +30,6 @@ export const Route = createFileRoute("/settings/qr")({
     <SettingsFrame
       title="Receipt QR code"
       description="Link shoppers to feedback, loyalty sign-up or a payment page."
-      scopeSections={["receiptIdentity"]}
       showPreview
     >
       <SettingsTabs current="/settings/qr" />

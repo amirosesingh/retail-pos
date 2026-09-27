@@ -51,7 +51,6 @@ function NumberingPage() {
     <SettingsFrame
       title="Document numbering"
       description="Every stock count and every goods received entry gets its reference the moment the draft is created, so it can be quoted before it is posted."
-      scopeSections={["stockNumbering"]}
     >
       <SettingsTabs current="/settings/stock-numbering" />
 

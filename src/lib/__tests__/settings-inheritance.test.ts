@@ -3,6 +3,7 @@
  * globally locked section cannot be overridden by anyone.
  */
 import { describe, expect, it } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
 
 import {
   emptyBranchSettings,
@@ -146,5 +147,35 @@ describe("settings section ownership", () => {
     expect(layout?.paths).not.toContain("receipt.companyName");
     expect(sectionOfPath("receipt.companyName")?.scopeFamily).toBe("business");
     expect(sectionOfPath("receipt.paper")?.scopeFamily).toBe("terminal");
+  });
+});
+
+describe("central settings ownership UI", () => {
+  const read = (path: string) => readFileSync(path, "utf8");
+
+  it("keeps every ownership selector on the inheritance page", () => {
+    const inheritance = read(
+      "src/platforms/web/components/pos/settings/panels/InheritancePanel.tsx",
+    );
+    const frame = read("src/platforms/web/components/pos/settings/SettingsFrame.tsx");
+    const rules = read("src/routes/settings.rules.tsx");
+    const system = read("src/platforms/web/components/pos/settings/panels/SystemStatusPanel.tsx");
+    const settingsRoutes = readdirSync("src/routes")
+      .filter((file) => file.startsWith("settings.") && file.endsWith(".tsx"))
+      .map((file) => read(`src/routes/${file}`));
+
+    expect(inheritance.match(/<ScopePanel/g)).toHaveLength(2);
+    expect(frame).not.toContain("scopeSections");
+    expect(rules).not.toContain("<ScopePanel");
+    expect(system).not.toContain("<ScopePanel");
+    expect(settingsRoutes.some((source) => source.includes("scopeSections"))).toBe(false);
+    expect(settingsRoutes.some((source) => source.includes("<ScopePanel"))).toBe(false);
+  });
+
+  it("keeps a centrally selected terminal active while its value page opens", () => {
+    const controls = read("src/platforms/web/components/pos/settings/ScopeControls.tsx");
+    expect(controls).not.toContain('setSettingsTerminalId("");');
+    expect(controls).toContain("sectionRoutes?.[id]");
+    expect(controls).toContain(">Edit values</Link>");
   });
 });

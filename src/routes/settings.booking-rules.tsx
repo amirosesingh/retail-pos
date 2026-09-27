@@ -39,7 +39,6 @@ export const Route = createFileRoute("/settings/booking-rules")({
     <SettingsFrame
       title="Booking rules"
       description="Deposits, turnaround, racket job requirements and who may cancel or re-spec a booking."
-      scopeSections={["booking"]}
     >
       <SettingsTabs current="/settings/booking-rules" />
 
@@ -68,7 +67,15 @@ function Row({
   );
 }
 
-function Section({ title, blurb, children }: { title: string; blurb: string; children: React.ReactNode }) {
+function Section({
+  title,
+  blurb,
+  children,
+}: {
+  title: string;
+  blurb: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="space-y-2">
       <div>
@@ -139,8 +146,14 @@ function BookingRulesForm() {
 
   return (
     <div className="space-y-6">
-      <Section title="Deposits & payment" blurb="What has to be collected before a job leaves the counter.">
-        <Row label="Require a deposit on every booking" hint="A booking cannot be saved with nothing paid.">
+      <Section
+        title="Deposits & payment"
+        blurb="What has to be collected before a job leaves the counter."
+      >
+        <Row
+          label="Require a deposit on every booking"
+          hint="A booking cannot be saved with nothing paid."
+        >
           <Switch
             aria-label="Require a deposit on every booking"
             checked={rules.requireDeposit}
@@ -186,7 +199,10 @@ function BookingRulesForm() {
             onCheckedChange={(v) => patch({ allowPayNow: v })}
           />
         </Row>
-        <Row label="Offer “part deposit”" hint="Take part of the money now, the rest on collection.">
+        <Row
+          label="Offer “part deposit”"
+          hint="Take part of the money now, the rest on collection."
+        >
           <Switch
             aria-label="Offer part deposit"
             checked={rules.allowPayDeposit}
@@ -223,10 +239,15 @@ function BookingRulesForm() {
               onChange={(e) => patch({ defaultTurnaroundHours: num(e.target.value) })}
               placeholder="48"
             />
-            <p className="text-xs text-muted-foreground">Pre-fills the ready-by box. 0 leaves it blank.</p>
+            <p className="text-xs text-muted-foreground">
+              Pre-fills the ready-by box. 0 leaves it blank.
+            </p>
           </div>
         </div>
-        <Row label="Require a ready-by date and time" hint="A racket job cannot be saved without a promised time.">
+        <Row
+          label="Require a ready-by date and time"
+          hint="A racket job cannot be saved without a promised time."
+        >
           <Switch
             aria-label="Require a ready-by date and time"
             checked={rules.requirePromisedAt}
@@ -244,7 +265,9 @@ function BookingRulesForm() {
           />
         </Row>
         <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Flag uncollected bookings after (days)</Label>
+          <Label className="text-xs text-muted-foreground">
+            Flag uncollected bookings after (days)
+          </Label>
           <Input
             className="numeric text-right"
             inputMode="numeric"
@@ -256,8 +279,14 @@ function BookingRulesForm() {
         </div>
       </Section>
 
-      <Section title="Racket / stringing jobs" blurb="What a job card carries before it can be saved.">
-        <Row label="Generate a job tag automatically" hint="Stamps a unique tag on every racket booking.">
+      <Section
+        title="Racket / stringing jobs"
+        blurb="What a job card carries before it can be saved."
+      >
+        <Row
+          label="Generate a job tag automatically"
+          hint="Stamps a unique tag on every racket booking."
+        >
           <Switch
             aria-label="Generate a job tag automatically"
             checked={rules.autoJobTag}
@@ -311,7 +340,10 @@ function BookingRulesForm() {
             onCheckedChange={(v) => patch({ requireRacketModel: v })}
           />
         </Row>
-        <Row label="Require the string type" hint="The string brand / model box cannot be left empty.">
+        <Row
+          label="Require the string type"
+          hint="The string brand / model box cannot be left empty."
+        >
           <Switch
             aria-label="Require the string type"
             checked={rules.requireStringType}
@@ -339,7 +371,9 @@ function BookingRulesForm() {
             inputMode="decimal"
             value={integrations.baseLaborFee || ""}
             onChange={(e) =>
-              updateSettings({ integrations: { ...integrations, baseLaborFee: num(e.target.value) } })
+              updateSettings({
+                integrations: { ...integrations, baseLaborFee: num(e.target.value) },
+              })
             }
             placeholder="0.00"
           />
