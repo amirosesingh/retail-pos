@@ -17,6 +17,7 @@ import {
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
 import { useAuditLogs } from "@/lib/audit-log";
+import { useReportSales } from "@/lib/use-report-sales";
 import {
   ReportHeader,
   StatCard,
@@ -61,7 +62,7 @@ const ALL = "__all__";
 const UNATTRIBUTED = "Unattributed";
 
 function CouponReport() {
-  const { state } = usePos();
+  const { state, stores } = usePos();
   const logs = useAuditLogs();
   const init = defaultRange();
   const [from, setFrom] = useState(init.from);
@@ -72,6 +73,8 @@ function CouponReport() {
   const [status, setStatus] = useState(ALL);
   const [staff, setStaff] = useState(ALL);
   const [store, setStore] = useState(ALL);
+  const reportStoreIds = store === ALL ? stores.map((row) => row.id) : [store];
+  const history = useReportSales(state.sales, reportStoreIds, from, to);
 
   /** Resolve a coupon back to the promotion that issued it, then its partner. */
   const partnerOf = useMemo(() => {
@@ -113,7 +116,7 @@ function CouponReport() {
       });
 
     // Bills already stored with a coupon (covers history synced from cloud).
-    const bills: Row[] = state.sales
+    const bills: Row[] = history.sales
       .filter((s) => s.couponCode && inRange(s.createdAt, from, to))
       .filter((s) => !events.some((e) => e.receipt === s.receiptNo && e.status === "Redeemed"))
       .map((s) => ({
@@ -133,7 +136,7 @@ function CouponReport() {
       }));
 
     return [...events, ...bills].sort((a, b) => b.at.localeCompare(a.at));
-  }, [logs, state.sales, from, to, partnerOf]);
+  }, [logs, history.sales, from, to, partnerOf]);
 
   const partners = useMemo(
     () => [...new Set(allRows.map((r) => r.partner))].sort(),
@@ -298,6 +301,9 @@ function CouponReport() {
             Clear filters
           </Button>
         </ReportHeader>
+
+        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-3">
           <StatCard label="Coupon events" value={String(rows.length)} />

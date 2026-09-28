@@ -16,6 +16,7 @@ import {
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
 import { soldLines, sumLines } from "@/lib/sales-analytics";
+import { useReportSales } from "@/lib/use-report-sales";
 import {
   ReportHeader,
   StatCard,
@@ -52,16 +53,18 @@ function ItemSalesReport() {
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
   const [storeId, setStoreId] = useState("all");
+  const reportStoreIds = storeId === "all" ? stores.map((store) => store.id) : [storeId];
+  const history = useReportSales(state.sales, reportStoreIds, from, to);
   const [cashier, setCashier] = useState("all");
   const [q, setQ] = useState("");
 
   const cashiers = useMemo(
-    () => [...new Set(state.sales.map((s) => s.cashier).filter(Boolean))].sort(),
-    [state.sales],
+    () => [...new Set(history.sales.map((s) => s.cashier).filter(Boolean))].sort(),
+    [history.sales],
   );
 
   const rows = useMemo(() => {
-    const bills = state.sales.filter(
+    const bills = history.sales.filter(
       (s) =>
         !s.refunded &&
         inRange(s.createdAt, from, to) &&
@@ -79,7 +82,7 @@ function ItemSalesReport() {
           l.receiptNo.toLowerCase().includes(needle),
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [state.sales, state.products, from, to, storeId, cashier, q]);
+  }, [history.sales, state.products, from, to, storeId, cashier, q]);
 
   const totals = sumLines(rows);
   const pager = usePagination(rows);
@@ -172,6 +175,9 @@ function ItemSalesReport() {
             />
           </div>
         </ReportHeader>
+
+        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <StatCard label="Lines" value={String(totals.lines)} />

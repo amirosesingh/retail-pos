@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
+import { useReportSales } from "@/lib/use-report-sales";
 import { PAYMENT_LABELS, paymentsLabel, type Payment, type Sale } from "@/core/types/pos-types";
 import {
   ReportHeader,
@@ -68,24 +69,26 @@ function PaymentsReport() {
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
   const [storeId, setStoreId] = useState("all");
+  const reportStoreIds = storeId === "all" ? stores.map((store) => store.id) : [storeId];
+  const history = useReportSales(state.sales, reportStoreIds, from, to);
   const [cashier, setCashier] = useState("all");
   const [tender, setTender] = useState("all");
   const [q, setQ] = useState("");
 
   const cashiers = useMemo(
-    () => [...new Set(state.sales.map((s) => s.cashier).filter(Boolean))].sort(),
-    [state.sales],
+    () => [...new Set(history.sales.map((s) => s.cashier).filter(Boolean))].sort(),
+    [history.sales],
   );
 
   const tenderOptions = useMemo(() => {
     const keys = new Set<string>();
-    state.sales.forEach((s) => tendersOf(s).forEach((p) => keys.add(tenderKey(p))));
+    history.sales.forEach((s) => tendersOf(s).forEach((p) => keys.add(tenderKey(p))));
     return [...keys].sort();
-  }, [state.sales]);
+  }, [history.sales]);
 
   const rows = useMemo(
     () =>
-      state.sales
+      history.sales
         .filter((s) => inRange(s.createdAt, from, to))
         .filter((s) => storeId === "all" || s.storeId === storeId)
         .filter((s) => cashier === "all" || s.cashier === cashier)
@@ -100,7 +103,7 @@ function PaymentsReport() {
           );
         })
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [state.sales, from, to, storeId, cashier, tender, q],
+    [history.sales, from, to, storeId, cashier, tender, q],
   );
 
   /** Takings per cashier, split by tender. */
@@ -204,6 +207,9 @@ function PaymentsReport() {
             />
           </div>
         </ReportHeader>
+
+        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-4">
           <StatCard label="Transactions" value={String(rows.length)} />

@@ -45,6 +45,7 @@ import {
   type DiscountType,
 } from "@/core/types/pos-types";
 import { logger } from "./audit-log";
+import { receiptSequence } from "./report-data-safety";
 import { toast } from "sonner";
 import {
   db,
@@ -463,7 +464,7 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
     settings: mergeCloudSettings(cloudSettings),
     // Keep the bill counter ahead of every receipt already in the cloud.
     counter: cloudSales.reduce(
-      (max, sale) => Math.max(max, Number(sale.receiptNo.split("-").pop()) || 0),
+      (max, sale) => Math.max(max, receiptSequence(sale.receiptNo)),
       s.counter,
     ),
   };
@@ -505,7 +506,7 @@ function applySalesSnapshot(
     ...current,
     sales,
     counter: rows.reduce(
-      (max, sale) => Math.max(max, Number(sale.receiptNo.split("-").pop()) || 0),
+      (max, sale) => Math.max(max, receiptSequence(sale.receiptNo)),
       current.counter,
     ),
   };

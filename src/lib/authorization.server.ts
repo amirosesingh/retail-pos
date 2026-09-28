@@ -87,31 +87,40 @@ export async function writeLog(entry: {
   modeUsed: "pin" | "request" | "admin_auto";
   requestId?: string | null;
   requestedBy?: string | null;
+  requestedByName?: string | null;
   authorizedBy?: string | null;
+  authorizedByName?: string | null;
   authorizerRole?: string | null;
   storeId?: string | null;
   terminalId?: string | null;
   outcome: "approved" | "rejected" | "failed_pin" | "denied";
+  purpose?: string | null;
   detail?: Record<string, unknown>;
 }): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await rest("authorization_log", {
+    // One service-owned transaction feeds the immutable authorisation ledger,
+    // the operational audit log and the Edit History report. A direct table
+    // insert would leave the latter two histories incomplete.
+    const res = await rest("rpc/log_manager_override", {
       method: "POST",
-      body: JSON.stringify([
-        {
-          action_key: entry.actionKey,
-          mode_used: entry.modeUsed,
+      body: JSON.stringify({
+        _action: entry.actionKey,
+        _rule_key: entry.actionKey,
+        _requested_by: entry.requestedBy ?? null,
+        _approved_by: entry.authorizedBy ?? null,
+        _approved_role: entry.authorizerRole ?? null,
+        _store_id: entry.storeId ?? "",
+        _terminal_id: entry.terminalId ?? "",
+        _outcome: entry.outcome,
+        _mode_used: entry.modeUsed,
+        _detail: JSON.stringify({
+          ...(entry.detail ?? {}),
           request_id: entry.requestId ?? null,
-          requested_by: entry.requestedBy ?? null,
-          authorized_by: entry.authorizedBy ?? null,
-          authorizer_role: entry.authorizerRole ?? null,
-          store_id: entry.storeId ?? "",
-          terminal_id: entry.terminalId ?? "",
-          outcome: entry.outcome,
-          detail: entry.detail ?? {},
-        },
-      ]),
-      prefer: "return=minimal",
+          requested_by_name: entry.requestedByName ?? null,
+          approved_by_name: entry.authorizedByName ?? null,
+          purpose: entry.purpose ?? null,
+        }),
+      }),
     });
     if (!res.ok) throw new Error((await res.text()).slice(0, 200));
     return { ok: true };
