@@ -36,7 +36,15 @@ const opSchema = z.discriminatedUnion("kind", [
     table: z.string().min(1).max(64),
     // Only routines the relay knows about are accepted, and it re-checks the
     // caller's branch and permission before running one.
-    fn: z.enum(["pos_sale_commit", "sale_refund", "shift_cash_count_submit"]),
+    fn: z.enum([
+      "pos_sale_commit",
+      "sale_refund",
+      "shift_cash_count_submit",
+      "stock_transfer_approve",
+      "stock_transfer_dispatch",
+      "stock_transfer_receive",
+      "stock_transfer_verify",
+    ]),
     args: z.record(z.string(), z.unknown()),
   }),
 ]);

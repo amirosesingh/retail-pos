@@ -9,7 +9,7 @@ const MAX_QUERY_ROWS = 2000;
 // Credentials, recovery secrets, PIN attempts and internal sync tables must
 // never become readable merely because a renderer knows their table name.
 const SAFE_RENDERER_TABLES = new Set([
-  "audit_logs", "booking_payments", "bookings",
+  "activity_events", "audit_logs", "booking_payments", "bookings",
   "coupon_campaigns", "coupon_events", "coupon_redemptions", "expenses", "held_orders", "issued_vouchers",
   "item_activity_logs", "member_tiers", "members", "payment_types",
   "pos_settings", "pos_store_settings", "product_barcodes", "product_categories",

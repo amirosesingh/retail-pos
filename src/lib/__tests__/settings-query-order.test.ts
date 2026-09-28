@@ -19,6 +19,16 @@ describe("scoped settings reads", () => {
       expect(options.orderBy).toEqual({ column: "section", ascending: true });
     }
   });
+
+  it("decodes JSON settings patches returned by SQL Server", async () => {
+    query.mockImplementation(async (table: string, options: { match?: { scope?: string } }) => {
+      if (table === "settings_overrides" && options.match?.scope === "BRANCH")
+        return [{ section: "tax", patch: '{"tax":{"rate":6}}' }];
+      return [];
+    });
+    const settings = await loadBranchSettings({ CLUSTER: "", BRANCH: "branch-1", TERMINAL: "" });
+    expect(settings.overrides.BRANCH.tax).toEqual({ tax: { rate: 6 } });
+  });
 });
 
 it("loads the selected registered terminal as an organizational scope", async () => {

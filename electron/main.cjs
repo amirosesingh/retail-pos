@@ -43,7 +43,7 @@ const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
 const { createLocalStaffStore } = require("./local-staff-store.cjs");
-const { verifySyncedStaffPin } = require("./synced-staff-login.cjs");
+const { listSyncedStaff, verifySyncedStaffPin } = require("./synced-staff-login.cjs");
 
 const databaseConfig = createSecureConfig({ app, safeStorage, configStore });
 const databaseManager = new ConnectionManager();
@@ -107,20 +107,29 @@ async function prepareLocalData({force=false}={}){
 const AUTO_SYNC_OK_MS = 15_000;
 const AUTO_SYNC_RETRY_MS = 60_000;
 const AUTO_VERIFY_MS = 15 * 60_000;
+const SHUTDOWN_SYNC_TIMEOUT_MS = 8_000;
 let automaticSyncTimer = null;
+let automaticSyncQueued = false;
 let lastAutomaticVerification = 0;
 function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
   if (quitting) return;
+  if (syncCoordinator.running && delay <= 250) automaticSyncQueued = true;
   if (automaticSyncTimer) clearTimeout(automaticSyncTimer);
   automaticSyncTimer = setTimeout(() => void runAutomaticSync(), Math.max(250, delay));
   automaticSyncTimer.unref?.();
 }
 async function runAutomaticSync() {
   automaticSyncTimer = null;
-  if (!databaseManager.pool || !localBranchId() || jobManager.running || syncCoordinator.running || syncCoordinator.paused) {
+  if (!databaseManager.pool || !localBranchId() || jobManager.running || syncCoordinator.paused) {
     scheduleAutomaticSync();
     return;
   }
+  if (syncCoordinator.running) {
+    automaticSyncQueued = true;
+    scheduleAutomaticSync(250);
+    return;
+  }
+  automaticSyncQueued = false;
   let result = await syncCoordinator.runNow({ branchId: localBranchId(), batchSize: 500 });
   if (result.code === "ECHANGEGAP") {
     try {
@@ -135,11 +144,32 @@ async function runAutomaticSync() {
     void localDataLifecycle.reconcile(localBranchId(), Number(databaseConfig.profile()?.retentionDays)||90)
       .catch((error) => recordFault("sync.verify-counts", error));
   }
-  scheduleAutomaticSync(result.ok ? AUTO_SYNC_OK_MS : AUTO_SYNC_RETRY_MS);
+  scheduleAutomaticSync(automaticSyncQueued ? 250 : result.ok ? AUTO_SYNC_OK_MS : AUTO_SYNC_RETRY_MS);
 }
 function stopAutomaticSync() {
   if (automaticSyncTimer) clearTimeout(automaticSyncTimer);
   automaticSyncTimer = null;
+}
+
+const shutdownDelay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+async function flushSyncBeforeShutdown() {
+  const branchId = localBranchId();
+  if (!databaseManager.pool || !branchId || syncCoordinator.paused) return { skipped: true };
+  const deadline = Date.now() + SHUTDOWN_SYNC_TIMEOUT_MS;
+  while (syncCoordinator.running && Date.now() < deadline) await shutdownDelay(50);
+  let result = { ok: true, pushed: 0 };
+  do {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0 || syncCoordinator.running) return { ...result, timedOut: true };
+    let timeout;
+    result = await Promise.race([
+      syncCoordinator.runNow({ branchId, batchSize: 500 }),
+      new Promise((resolve) => { timeout = setTimeout(() => resolve({ ok: false, timedOut: true }), remaining); }),
+    ]).finally(() => clearTimeout(timeout));
+    // One run drains every normal change-tracking page. Aggregate journals are
+    // capped at 500 per run, so repeat only when that cap may have been hit.
+  } while (result.ok && Number(result.pushed ?? 0) >= 500);
+  return result;
 }
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
@@ -193,6 +223,10 @@ function recordFault(scope, error) {
   const detail = {
     error: error?.message ?? String(error),
     severity: fatal ? "fatal" : "recoverable",
+    ...(error?.stage ? { stage: String(error.stage).slice(0, 80) } : {}),
+    ...(error?.table ? { table: String(error.table).slice(0, 80) } : {}),
+    ...(error?.sqlNumber != null ? { sqlNumber: Number(error.sqlNumber) } : {}),
+    ...(error?.sqlDetail ? { sqlDetail: String(error.sqlDetail).slice(0, 500) } : {}),
     stack: String(error?.stack ?? "")
       .split("\n")
       .slice(0, 4)
@@ -1144,7 +1178,16 @@ function registerIpc() {
       if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});
       if(adminSession.branchId()&&String(adminSession.branchId())!==String(branchId))
         throw Object.assign(new Error("The signed-in account is not authorized for this terminal branch."),{code:"SYNC_BRANCH_FORBIDDEN"});
-      const trustedAggregate={...aggregate,branchId};
+      // Early-startup governance events may be emitted before the renderer has
+      // learned its branch. Main already owns the verified terminal branch, so
+      // fill only a missing value here. A supplied mismatch remains untouched
+      // and is rejected by AggregateRepository.assertBranch below.
+      const branchStampedTables=new Set(["audit_logs","activity_events","authorization_requests","authorization_log","record_edits","member_verifications","entity_status_history"]);
+      const operations=aggregate.operations.map((operation)=>{
+        if(!branchStampedTables.has(operation.table)||!(operation.kind==="insert"||operation.kind==="upsert"))return operation;
+        return{...operation,rows:operation.rows.map((row)=>String(row?.store_id??"").trim()?row:{...row,store_id:branchId})};
+      });
+      const trustedAggregate={...aggregate,operations,branchId};
       const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null});
       scheduleAutomaticSync(250);
@@ -1217,7 +1260,17 @@ function registerIpc() {
       staffRole: input.staffRole ? guard.text(input.staffRole, { name: "staff role", max: 64 }) : null,
     });
   }));
-  ipcMain.handle("staff:roster", (_e, storeId) => localStaffStore.roster(storeId));
+  ipcMain.handle("staff:roster", async (_e, storeId) => {
+    const branchId=localBranchId()??String(storeId??"").trim();
+    try {
+      const synced=await listSyncedStaff(databaseManager.pool,branchId);
+      if(synced.ok)return synced;
+    } catch {
+      // A temporarily unavailable SQL connection may still use the small,
+      // DPAPI-sealed recent-user fallback below.
+    }
+    return localStaffStore.roster(branchId);
+  });
   ipcMain.handle("staff:cache-roster", (_e, rows) => localStaffStore.cache(rows));
   ipcMain.handle("staff:enroll", async (_e, username, pin) => {
     const authorizationUrl=authorizationServerUrl();
@@ -1233,17 +1286,20 @@ function registerIpc() {
   });
   ipcMain.handle("staff:verify-pin", async (_e, username, pin) => {
     const cached = localStaffStore.verify(username, pin);
-    if (cached.ok || cached.reason === "locked") return cached;
+    // SQL Server carries the cloud-synchronized bcrypt hash. Check it before
+    // the device verifier so a PIN change or account deactivation received by
+    // sync invalidates the old cached PIN immediately on every terminal.
     try {
       const synced = await verifySyncedStaffPin(databaseManager.pool, username, pin, localBranchId());
       if (synced.ok) {
         const enrolled = localStaffStore.enroll(synced.staff, String(pin ?? ""));
         return enrolled?.ok === false ? enrolled : localStaffStore.verify(username, pin);
       }
-      if (synced.reason === "inactive") return synced;
+      if (["inactive", "invalid", "missing"].includes(synced.reason)) return synced;
     } catch {
       /* A missing local SQL connection falls back to the enrolled verifier. */
     }
+    if (cached.reason === "locked") return cached;
     return cached;
   });
   ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
@@ -1472,7 +1528,29 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => { quitting = true; stopAutomaticSync(); mainTelemetry.stop(); closeCustomerDisplay(); void databaseManager.close(); });
+let shutdownFlushStarted = false;
+let shutdownFlushComplete = false;
+app.on("before-quit", (event) => {
+  if (shutdownFlushComplete) return;
+  event.preventDefault();
+  if (shutdownFlushStarted) return;
+  shutdownFlushStarted = true;
+  quitting = true;
+  stopAutomaticSync();
+  mainTelemetry.stop();
+  closeCustomerDisplay();
+  void flushSyncBeforeShutdown()
+    .then((result) => {
+      if (result?.timedOut) recordFault("shutdown.sync-timeout", new Error("Final synchronization exceeded 8 seconds; pending SQL changes remain durable for next launch."));
+      else if (result?.ok === false) recordFault("shutdown.sync", new Error(result.error ?? "Final synchronization failed; pending SQL changes remain durable for next launch."));
+    })
+    .catch((error) => recordFault("shutdown.sync", error))
+    .finally(async () => {
+      await databaseManager.close().catch((error) => recordFault("shutdown.database-close", error));
+      shutdownFlushComplete = true;
+      app.quit();
+    });
+});
 app.on("window-all-closed", () => {
   if (recovery.isOpen()) return;
   markStartupSettled(); updater.stop(); stopAppServer();

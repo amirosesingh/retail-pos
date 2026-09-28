@@ -8,6 +8,7 @@
  * does) and re-reading the profile.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
 
 const secure = vi.hoisted(() => new Map<string, string>());
 const shell = vi.hoisted(() => ({ mobile: true, windows: false }));
@@ -339,5 +340,12 @@ describe("connection profile", () => {
     expect(shown.backendUrl).toBe("https://pos.example.com");
     expect(shown.hasKey).toBe(true);
     expect(shown.keyHint).not.toContain(KEY_A);
+  });
+
+  it("hydrates the secure profile before mounting cloud-dependent root providers", () => {
+    const root = readFileSync("src/routes/__root.tsx", "utf8");
+    expect(root).toContain("<ConnectionProfileBoot>");
+    expect(root.indexOf("<ConnectionProfileBoot>")).toBeLessThan(root.indexOf("<AuthProvider>"));
+    expect(root).toContain("void hydrateConnectionProfile().finally");
   });
 });

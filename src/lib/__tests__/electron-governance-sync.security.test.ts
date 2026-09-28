@@ -210,4 +210,33 @@ describe("Electron supervisor/governance sync relay", () => {
     const [url] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(url).toContain("/rest/v1/rpc/shift_cash_count_submit");
   });
+
+  it("permission- and branch-gates transfer routines and stamps the verified actor", async () => {
+    const denied = await runRelayRpc(
+      {
+        kind: "rpc",
+        table: "stock_transfers",
+        fn: "stock_transfer_approve",
+        args: { p_transfer_id: "transfer-1", p_approved_by: "Spoofed" },
+      },
+      cashier,
+    );
+    expect(denied).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+
+    fetchMock
+      .mockResolvedValueOnce(json([{ from_store_id: "STORE-A" }]))
+      .mockResolvedValueOnce(json({}));
+    const approved = await runRelayRpc(
+      {
+        kind: "rpc",
+        table: "stock_transfers",
+        fn: "stock_transfer_approve",
+        args: { p_transfer_id: "transfer-1", p_approved_by: "Spoofed" },
+      },
+      { ...cashier, permissions: { can_approve_transfer: true } },
+    );
+    expect(approved.ok).toBe(true);
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({ p_approved_by: "Amy" });
+  });
 });

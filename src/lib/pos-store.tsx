@@ -145,7 +145,7 @@ import {
 import { productCodes } from "./product-lookup";
 import { nextSku, readSkuSettings } from "./sku";
 
-const KEY = "pos-state-v2";
+const LEGACY_STATE_KEY = "pos-state-v2";
 
 export const stockAt = (product: Product, storeId: string) => product.stockByStore?.[storeId] ?? 0;
 
@@ -660,9 +660,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     if (isOnlineOnly()) return;
-    const pending = localDb()?.setSetting?.(KEY, JSON.stringify(state));
+    // Business rows already live in SQL Server. Older builds also rewrote the
+    // complete POS state into the encrypted config file on every state change;
+    // large catalogues made that file multi-megabyte and launch/save needlessly
+    // expensive. Remove that obsolete snapshot once and keep SQL authoritative.
+    const pending = localDb()?.setSetting?.(LEGACY_STATE_KEY, null);
     if (pending) void pending.catch(() => undefined);
-  }, [state, ready]);
+  }, [ready]);
 
   // Overrides follow the cluster, branch and selected terminal in context.
   useEffect(() => {

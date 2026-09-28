@@ -12,6 +12,8 @@ import { routedQuery } from "@/core/api/db-query";
 import { describeError } from "./notify";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { isTerminalApp } from "@/platform-config/platform";
+import { relayOp } from "@/core/api/sync-relay";
 
 const sb = supabaseExternal as unknown as SupabaseClient;
 
@@ -89,7 +91,11 @@ const rowToTransfer = (r: Row, items: Row[]): StoredTransfer => ({
   cancelledReason: r.cancelled_reason ?? undefined,
   sourceRequestId: r.source_request_id ?? undefined,
   closedAt: r.closed_at ?? undefined,
-  fulfilment: r.fulfilment ?? undefined,
+  fulfilment: (() => {
+    if (r.fulfilment && typeof r.fulfilment === "object") return r.fulfilment;
+    if (typeof r.fulfilment !== "string" || !r.fulfilment.trim()) return undefined;
+    try { return JSON.parse(r.fulfilment); } catch { return undefined; }
+  })(),
   createdAt: r.created_at,
   updatedAt: r.updated_at ?? r.created_at,
   scope: (r.transfer_scope as TransferScope) ?? "INTRA_GROUP",
@@ -97,13 +103,35 @@ const rowToTransfer = (r: Row, items: Row[]): StoredTransfer => ({
   toGroupId: r.to_group_id ?? "default",
 });
 
+/** Load all requested lines without an unbounded query or a silent 2,000-row cut-off. */
+async function loadTransferLines(ids: string[]): Promise<Row[]> {
+  if (!ids.length) return [];
+  const pageSize = 1000;
+  const rows: Row[] = [];
+  // Keep both the SQL parameter list and the PostgREST URL bounded.
+  for (let start = 0; start < ids.length; start += 100) {
+    const batch = ids.slice(start, start + 100);
+    for (let offset = 0; ; offset += pageSize) {
+      const page = (await routedQuery("stock_transfer_items", {
+        in: { column: "transfer_id", values: batch },
+        orderBy: { column: "id", ascending: true },
+        offset,
+        limit: pageSize,
+      })) as Row[];
+      rows.push(...page);
+      if (page.length < pageSize) break;
+    }
+  }
+  return rows;
+}
+
 /** Every note this branch raised or is due to receive. */
 export async function loadTransfers(): Promise<StoredTransfer[]> {
   try {
     const rows = await routedQuery("stock_transfers", { orderBy: { column: "created_at", ascending: false }, limit: 500 }) as Row[];
     if (!rows.length) return [];
 
-    const lines = await routedQuery("stock_transfer_items", { in: { column: "transfer_id", values: rows.map((r) => r.id) }, limit: 2000 }) as Row[];
+    const lines = await loadTransferLines(rows.map((r) => r.id));
     const byTransfer = new Map<string, Row[]>();
     for (const l of lines) {
       const list = byTransfer.get(l.transfer_id) ?? [];
@@ -124,7 +152,7 @@ export async function loadTransfer(id: string): Promise<StoredTransfer | null> {
   try {
     const row = (await routedQuery("stock_transfers", { match: { id }, limit: 1 }) as Row[])[0] ?? null;
     if (!row) return null;
-    const lines = await routedQuery("stock_transfer_items", { match: { transfer_id: id }, limit: 2000 }) as Row[];
+    const lines = await loadTransferLines([id]);
     return rowToTransfer(row, lines);
   } catch {
     if (import.meta.env.DEV) console.error("[transfers] detail load failed");
@@ -230,6 +258,23 @@ const toLines = (lines: LineQty[] | undefined) =>
 
 export type RpcResult = { success: boolean; error?: string };
 
+async function runTransferRpc(
+  fn:
+    | "stock_transfer_approve"
+    | "stock_transfer_dispatch"
+    | "stock_transfer_receive"
+    | "stock_transfer_verify",
+  args: Record<string, unknown>,
+): Promise<RpcResult> {
+  if (isTerminalApp()) {
+    const result = await relayOp({ kind: "rpc", table: "stock_transfers", fn, args });
+    return result.ok ? { success: true } : { success: false, error: result.error };
+  }
+  const result = await sb.rpc(fn, args as never);
+  if (result.error) throw new Error(result.error.message);
+  return { success: true };
+}
+
 /**
  * Approve: the database checks the note is still waiting, records the allowed
  * quantity per line, and stamps who said yes.
@@ -240,13 +285,11 @@ export async function approveTransferInDb(
   lines?: LineQty[],
 ): Promise<RpcResult> {
   try {
-    const res = await sb.rpc("stock_transfer_approve", {
+    return await runTransferRpc("stock_transfer_approve", {
       p_transfer_id: id,
       p_approved_by: who,
       p_lines: toLines(lines),
     });
-    if (res.error) throw new Error(res.error.message);
-    return { success: true };
   } catch (e) {
     return { success: false, error: describeError(e, "Approving the transfer") };
   }
@@ -262,13 +305,11 @@ export async function dispatchTransferInDb(
   lines?: LineQty[],
 ): Promise<RpcResult> {
   try {
-    const res = await sb.rpc("stock_transfer_dispatch", {
+    return await runTransferRpc("stock_transfer_dispatch", {
       p_transfer_id: id,
       p_dispatched_by: who,
       p_lines: toLines(lines),
     });
-    if (res.error) throw new Error(res.error.message);
-    return { success: true };
   } catch (e) {
     return { success: false, error: describeError(e, "Dispatching the transfer") };
   }
@@ -286,13 +327,11 @@ export async function receiveTransferInDb(
   lines?: LineQty[],
 ): Promise<RpcResult> {
   try {
-    const res = await sb.rpc("stock_transfer_receive", {
+    return await runTransferRpc("stock_transfer_receive", {
       p_transfer_id: id,
       p_received_by: who,
       p_lines: toLines(lines),
     });
-    if (res.error) throw new Error(res.error.message);
-    return { success: true };
   } catch (e) {
     return { success: false, error: describeError(e, "Receiving the transfer") };
   }
@@ -311,14 +350,12 @@ export async function verifyTransferInDb(
   reason?: string,
 ): Promise<RpcResult> {
   try {
-    const res = await sb.rpc("stock_transfer_verify", {
+    return await runTransferRpc("stock_transfer_verify", {
       p_transfer_id: id,
       p_verified_by: who,
       p_lines: toLines(lines),
       p_reason: reason?.trim() || null,
     });
-    if (res.error) throw new Error(res.error.message);
-    return { success: true };
   } catch (e) {
     return { success: false, error: describeError(e, "Verifying the delivery") };
   }

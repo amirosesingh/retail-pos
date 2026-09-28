@@ -99,7 +99,8 @@ async function runQuery(
   // truncate a whole table.
   let data: Row[] | null;
   if (options.limit) {
-    const res = await build(0, options.limit - 1);
+    const offset = Math.max(0, options.offset ?? 0);
+    const res = await build(offset, offset + options.limit - 1);
     if (res.error) throw new Error(res.error.message);
     data = res.data;
   } else {

@@ -67,4 +67,13 @@ describe("online approval primary database", () => {
 
     expect(approvalSources).not.toMatch(/printSaleReceipt|window\.print|receiptPrinter/);
   });
+
+  it("routes packaged-terminal approvals to the hosted backend", () => {
+    const client = source("src/lib/authorization-client.ts");
+    const route = source("src/routes/api/v1/pos/authorization.ts");
+    expect(client).toContain('posFetch("/api/v1/pos/authorization"');
+    expect(client).toContain("if (!isTerminalApp())");
+    expect(route).toContain('z.enum(["authorize_pin", "submit", "list", "decide", "claim", "cancel"])');
+    expect(route).toContain("512 * 1024");
+  });
 });

@@ -24,6 +24,12 @@ import { keyset, nextCursor, PAGE_SIZE, type Cursor, type Page } from "@/lib/key
 import { readAllPages } from "@/lib/paged-read";
 import { loadCashierToken, readCredentials } from "@/lib/pos-credentials";
 import { normalizeReceiptLogoLayout } from "@/lib/receipt-logo";
+import {
+  acknowledgeBrowserBatch,
+  persistBrowserBatch,
+  wakeBrowserOutbox,
+} from "@/lib/browser-sync-outbox";
+import { withRelativeStock, type StockDelta } from "@/lib/sync-stock";
 
 import { isLinkedRecordError, usageBlock, type ProductUsage } from "@/lib/product-delete";
 import type {
@@ -1656,7 +1662,7 @@ export function isDuplicateBillNumber(error: unknown): boolean {
 /* ---------------------------- durable commits --------------------------- */
 
 /** Where a committed change actually landed. */
-export type CommitTarget = "cloud" | "local";
+export type CommitTarget = "cloud" | "local" | "offline";
 
 /**
  * Copy rows that are already safe centrally onto this terminal, in the
@@ -1669,49 +1675,6 @@ export async function mirrorToLocal(context: string, ops: SyncOp[]) {
 }
 
 /** One relative stock change, keyed on the movement row that caused it. */
-type StockDelta = { movementId: string; productId: string; storeId: string | null; delta: number };
-
-/**
- * Split absolute stock out of a batch. When the batch carries stock movement
- * rows, the products upsert loses its stock columns and the movements become
- * relative deltas for the central database to apply.
- *
- * Movements travel as `upsert` (a replayed checkout or a re-posted receiving
- * note must rewrite the same movement row, not add a second one), so both
- * shapes count here. Matching only `insert` used to leave every sale sending
- * a client-calculated absolute stock figure, which two tills selling the same
- * product at the same time would overwrite for each other.
- */
-function withRelativeStock(ops: SyncOp[]): { ops: SyncOp[]; deltas: StockDelta[] } {
-  const movements = ops.flatMap((op) =>
-    (op.kind === "insert" || op.kind === "upsert") && op.table === "item_activity_logs"
-      ? (op.rows as Row[])
-      : [],
-  );
-
-  if (!movements.length) return { ops, deltas: [] };
-
-  const deltas: StockDelta[] = movements
-    .filter((m) => m["product_id"] && Number(m["quantity_delta"] ?? 0) !== 0)
-    .map((m) => ({
-      movementId: String(m["id"]),
-      productId: String(m["product_id"]),
-      storeId: (m["store_id"] as string | null) ?? null,
-      delta: Number(m["quantity_delta"] ?? 0),
-    }));
-  if (!deltas.length) return { ops, deltas: [] };
-
-  const next = ops.map((op) => {
-    if (op.table !== "products" || (op.kind !== "upsert" && op.kind !== "insert")) return op;
-    const rows = (op.rows as Row[]).map((row) => {
-      const { stock_quantity: _q, stock_by_store: _s, ...rest } = row;
-      return rest as Row;
-    });
-    return { ...op, rows };
-  });
-  return { ops: next, deltas };
-}
-
 /** Apply stock movements immediately; an online refusal fails the operation. */
 async function applyStockDeltas(deltas: StockDelta[]) {
   if (deltas.length) await applyStockDeltaBatch(deltas);
@@ -1821,15 +1784,28 @@ export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitT
   }
 
   const operational = ops.every((op) => isOperationalTable(op.table));
+  // Browser/Capacitor has no SQL Server. Keep only this pending batch in
+  // IndexedDB before starting the network request, then remove it immediately
+  // after a confirmed cloud commit. This closes the tab/app-close loss window
+  // without turning the browser cache into a second permanent database.
+  const pendingId = await persistBrowserBatch(context, ops, { wake: false }).catch(() => null);
   try {
     await runBatchLive(context, cloudOps);
     await applyStockDeltas(deltas);
+    if (pendingId) await acknowledgeBrowserBatch(pendingId);
     noteConnectionRestored();
     setCloudDirect(operational);
     return noteCommitTarget("cloud");
   } catch (cloud) {
-    if (!isConnectionError(cloud)) throw cloud;
+    if (!isConnectionError(cloud)) {
+      if (pendingId) await acknowledgeBrowserBatch(pendingId).catch(() => undefined);
+      throw cloud;
+    }
     noteConnectionLost();
+    if (pendingId) {
+      wakeBrowserOutbox();
+      return noteCommitTarget("offline");
+    }
     throw new AllTargetsFailed(context, cloud);
   }
 }

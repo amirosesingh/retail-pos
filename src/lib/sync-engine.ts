@@ -64,6 +64,14 @@ import {
 } from "@/core/activation/connection-health";
 import { subscribeSyncConfig, syncConfig } from "./sync-config";
 import { noteVersions } from "./row-versions";
+import {
+  acknowledgeBrowserBatch,
+  browserPendingCount,
+  failBrowserBatch,
+  pendingBrowserBatches,
+} from "./browser-sync-outbox";
+import { withRelativeStock } from "./sync-stock";
+import { applyStockDeltaBatch } from "./stock-recovery";
 import { TOMBSTONE_TABLES } from "./tombstones";
 import {
   failOp,
@@ -244,7 +252,6 @@ async function execute(op: SyncOp): Promise<QueryResult> {
   }
 }
 
-
 /**
  * Stamp the change with the record version this till was working from. The
  * central database keeps whichever copy is newer, so an edit made from an
@@ -327,9 +334,26 @@ export async function runOpLive(context: string, op: SyncOp): Promise<void> {
   logSync("push", op.table, true, context);
 }
 
-/** Renderer payload queues are retired; Electron main owns Windows sync. */
 export async function drainOutbox(): Promise<{ pushed: number; failed: number }> {
-  return { pushed: 0, failed: 0 };
+  if (localDb()) return { pushed: 0, failed: 0 };
+  let pushed = 0;
+  let failed = 0;
+  for (const batch of await pendingBrowserBatches(25)) {
+    try {
+      const cloud = withRelativeStock(batch.ops);
+      for (const op of cloud.ops) await runOpLive(batch.context, op);
+      if (cloud.deltas.length) await applyStockDeltaBatch(cloud.deltas);
+      await acknowledgeBrowserBatch(batch.id);
+      pushed += batch.ops.length;
+    } catch (error) {
+      failed += 1;
+      await failBrowserBatch(batch.id, error);
+      if (isConnectionError(error)) break;
+    }
+  }
+  setSyncState({ pending: browserPendingCount() });
+  if (pushed) markSynced();
+  return { pushed, failed };
 }
 
 /* ---------------------------- downward sync ---------------------------- */
@@ -664,8 +688,6 @@ function announceDataChange(change: LiveChange): void {
   }
 }
 
-
-
 /** Refresh the offline staff roster so a PIN sign-in works without the cloud. */
 async function refreshStaffMirror(): Promise<void> {
   const { data, error } = await supabaseExternal.rpc("list_app_users");
@@ -722,7 +744,7 @@ export async function syncNow(reason: string, attempt = 0): Promise<void> {
   }
 }
 
-const NETWORK_DEBOUNCE_MS = 5000;
+const NETWORK_DEBOUNCE_MS = 250;
 
 /** Start the background sync loop (called once from the app shell). */
 export function startSyncEngine() {
@@ -782,7 +804,8 @@ export function startSyncEngine() {
     }
   });
   let debounce: number | undefined;
-  // Five seconds of quiet before reacting: network flap protection.
+  // A short debounce collapses duplicate browser/network events without
+  // leaving completed till work waiting behind the periodic safety poll.
   const wake = () => {
     if (debounce) window.clearTimeout(debounce);
     debounce = window.setTimeout(() => {
@@ -818,6 +841,12 @@ export function startSyncEngine() {
       announceSettingsChange("reconnect");
     }
   });
+  const wakeOutbox = () => void runExclusive("local-write");
+  const flushBeforeBackground = () => {
+    if (document.visibilityState === "hidden" && isOnline()) void runExclusive("background");
+  };
+  window.addEventListener("pos:browser-outbox-changed", wakeOutbox);
+  document.addEventListener("visibilitychange", flushBeforeBackground);
 
   // Live listener: an account or settings change made anywhere lands in this
   // shop's own database within a second instead of waiting for the timer.
@@ -856,6 +885,8 @@ export function startSyncEngine() {
     void supabaseExternal.removeChannel(live);
     offDesktopStatus?.();
     offMode();
+    window.removeEventListener("pos:browser-outbox-changed", wakeOutbox);
+    document.removeEventListener("visibilitychange", flushBeforeBackground);
     started = false;
 
   };

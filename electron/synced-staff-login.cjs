@@ -10,6 +10,30 @@ function permissions(value) {
   }
 }
 
+async function listSyncedStaff(pool, branchId) {
+  if (!pool || !branchId) return { ok: false, reason: "unavailable", rows: [] };
+  const result = await pool.request()
+    .input("branch", String(branchId))
+    .query(`SELECT TOP (500)
+      CONVERT(nvarchar(128),id) id,user_id username,full_name,store_id,
+      role,role_slug,permissions,is_active
+      FROM dbo.app_users
+      WHERE is_active=1 AND (store_id IS NULL OR store_id=@branch)
+      ORDER BY full_name,user_id;`);
+  return {
+    ok: true,
+    rows: (result.recordset ?? []).map((row) => ({
+      id: String(row.id ?? row.username),
+      username: String(row.username ?? ""),
+      full_name: String(row.full_name ?? row.username ?? ""),
+      store_id: row.store_id == null ? null : String(row.store_id),
+      role_slug: String(row.role_slug ?? row.role ?? "staff").toLowerCase(),
+      permissions: permissions(row.permissions),
+      is_active: true,
+    })),
+  };
+}
+
 /** Verify the same bcrypt PIN hash Supabase synchronized into local SQL Server. */
 async function verifySyncedStaffPin(pool, username, pin, branchId) {
   if (!pool || !branchId) return { ok: false, reason: "unavailable" };
@@ -43,4 +67,4 @@ async function verifySyncedStaffPin(pool, username, pin, branchId) {
   };
 }
 
-module.exports = { verifySyncedStaffPin };
+module.exports = { listSyncedStaff, verifySyncedStaffPin };

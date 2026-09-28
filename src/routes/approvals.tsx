@@ -25,7 +25,7 @@ import {
   cancelAuthorizationRequest,
   decideAuthorizationRequest,
   listAuthorizationRequests,
-} from "@/lib/authorization.functions";
+} from "@/lib/authorization-client";
 import { AUTH_ACTION_LABEL, type AuthorizationRequest } from "@/lib/authorization";
 import { subscribeApprovals } from "@/lib/approval-centre";
 import { syncNow } from "@/lib/sync-engine";

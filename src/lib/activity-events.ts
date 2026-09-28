@@ -15,6 +15,8 @@ import { readCredentials } from "./pos-credentials";
 import { posFetch } from "./server-origin";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { platformName } from "@/platform-config/platform";
+import { localDb } from "@/core/local-db/local-db";
+import { commitOps } from "@/core/api/pos-db";
 
 export type EventSeverity = "info" | "warning" | "critical";
 
@@ -233,6 +235,32 @@ export const pendingActivityCount = () => readQueue().length;
 type Row = Record<string, unknown>;
 
 function map(row: Row): ActivityEvent {
+  const jsonObject = (value: unknown): Record<string, unknown> => {
+    if (value && typeof value === "object" && !Array.isArray(value))
+      return value as Record<string, unknown>;
+    if (typeof value !== "string" || !value.trim()) return {};
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  };
+  const stringArray = (value: unknown): string[] => {
+    if (Array.isArray(value))
+      return value.filter((item): item is string => typeof item === "string");
+    if (typeof value !== "string" || !value.trim()) return [];
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is string => typeof item === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  };
   return {
     id: String(row["id"] ?? ""),
     type: String(row["event_type"] ?? ""),
@@ -246,15 +274,10 @@ function map(row: Row): ActivityEvent {
     entityType: String(row["entity_type"] ?? ""),
     entityId: String(row["entity_id"] ?? ""),
     amount: row["amount"] === null || row["amount"] === undefined ? null : Number(row["amount"]),
-    meta:
-      row["meta"] && typeof row["meta"] === "object" && !Array.isArray(row["meta"])
-        ? (row["meta"] as Record<string, unknown>)
-        : {},
+    meta: jsonObject(row["meta"]),
     whatsappStatus: String(row["whatsapp_status"] ?? "skipped"),
     createdAt: String(row["created_at"] ?? ""),
-    clearedBy: Array.isArray(row["cleared_by"])
-      ? row["cleared_by"].filter((value): value is string => typeof value === "string")
-      : [],
+    clearedBy: stringArray(row["cleared_by"]),
   };
 }
 
@@ -326,6 +349,53 @@ async function listActivityEventPageDirect(
   return { rows, total: result.count ?? rows.length };
 }
 
+/** Electron-only fallback. The authenticated hosted API remains primary. */
+async function listLocalActivityEventPage(filter: ActivityFilter): Promise<ActivityEventPage> {
+  const bridge = localDb();
+  if (!bridge?.query) return { rows: [], total: 0 };
+  const result = await bridge.query("activity_events", {
+    orderBy: { column: "created_at", ascending: false },
+    limit: 2000,
+  });
+  if (!result.ok) throw new Error(result.error ?? "The local notification log could not be read.");
+  let rows = (result.rows ?? []).map((row) => map(row as Row));
+  if (filter.types?.length) rows = rows.filter((row) => filter.types!.includes(row.type));
+  if (filter.severities?.length)
+    rows = rows.filter((row) => filter.severities!.includes(row.severity));
+  if (filter.storeId) rows = rows.filter((row) => row.storeId === filter.storeId);
+  if (filter.actor) {
+    const actor = filter.actor.toLowerCase();
+    rows = rows.filter((row) => row.actorName.toLowerCase().includes(actor));
+  }
+  if (filter.from) rows = rows.filter((row) => row.createdAt >= filter.from!);
+  if (filter.to) rows = rows.filter((row) => row.createdAt <= filter.to!);
+  if (filter.query) {
+    const needle = filter.query.toLowerCase();
+    rows = rows.filter((row) =>
+      [row.title, row.message, row.actorName, row.terminalName, row.storeId].some((value) =>
+        value.toLowerCase().includes(needle),
+      ),
+    );
+  }
+  const field = filter.sortBy ?? "created_at";
+  const value = (row: ActivityEvent) =>
+    field === "created_at"
+      ? row.createdAt
+      : field === "severity"
+        ? row.severity
+        : field === "event_type"
+          ? row.type
+          : field === "store_id"
+            ? row.storeId
+            : row.title;
+  const direction = (filter.sortDirection ?? "desc") === "asc" ? 1 : -1;
+  rows.sort((left, right) => value(left).localeCompare(value(right)) * direction);
+  const total = rows.length;
+  const offset = Math.max(0, filter.offset ?? 0);
+  const limit = Math.max(1, Math.min(2000, filter.limit ?? 100));
+  return { rows: rows.slice(offset, offset + limit), total };
+}
+
 /**
  * Older databases predate the activity feed. When the table is absent every
  * poll would log a 404, so the first miss switches the feature off for the
@@ -348,6 +418,13 @@ const looksMissing = (error: unknown) => {
 
 /** Newest first. Returns [] when the caller is not an admin or supervisor. */
 export async function listActivityEvents(filter: ActivityFilter = {}): Promise<ActivityEvent[]> {
+  if (localDb()?.query) {
+    try {
+      return (await listLocalActivityEventPage(filter)).rows;
+    } catch {
+      // A broken local connection may still fall back to the hosted history.
+    }
+  }
   if (logMissing) return [];
   try {
     const credentials = await readCredentials();
@@ -371,10 +448,13 @@ export async function listActivityEvents(filter: ActivityFilter = {}): Promise<A
     const result = (await response.json()) as { ok?: boolean; rows?: Row[]; error?: string };
     if (!response.ok || !result.ok) {
       if (looksMissing({ message: result.error })) logMissing = true;
+      if (localDb()?.query) return (await listLocalActivityEventPage(filter)).rows;
       return [];
     }
     return (result.rows ?? []).map(map);
   } catch {
+    if (localDb()?.query)
+      return listLocalActivityEventPage(filter).then((page) => page.rows).catch(() => []);
     return [];
   }
 }
@@ -383,6 +463,13 @@ export async function listActivityEvents(filter: ActivityFilter = {}): Promise<A
 export async function listActivityEventPage(
   filter: ActivityFilter = {},
 ): Promise<ActivityEventPage> {
+  if (localDb()?.query) {
+    try {
+      return await listLocalActivityEventPage(filter);
+    } catch {
+      // Preserve access to hosted history while local SQL reconnects.
+    }
+  }
   if (logMissing) return { rows: [], total: 0 };
   try {
     const credentials = await readCredentials();
@@ -408,6 +495,7 @@ export async function listActivityEventPage(
         logMissing = true;
         return { rows: [], total: 0 };
       }
+      if (localDb()?.query) return listLocalActivityEventPage(filter);
       throw Object.assign(new Error(result.error || "Could not load alerts"), {
         status: response.status,
       });
@@ -418,6 +506,7 @@ export async function listActivityEventPage(
       logMissing = true;
       return { rows: [], total: 0 };
     }
+    if (localDb()?.query) return listLocalActivityEventPage(filter);
     throw error;
   }
 }
@@ -589,8 +678,48 @@ async function syncClearAllEntries(): Promise<boolean> {
   }
 }
 
+async function storeLocalClearedEntries(
+  userId: string,
+  ids: string[],
+  cleared: boolean,
+): Promise<boolean> {
+  const bridge = localDb();
+  if (!bridge?.query || !ids.length) return false;
+  try {
+    const result = await bridge.query("activity_events", {
+      columns: "id,cleared_by",
+      in: { column: "id", values: ids },
+      limit: Math.min(ids.length, 2000),
+    });
+    if (!result.ok) return false;
+    const key = who(userId);
+    const operations = (result.rows ?? [])
+      .map((row) => {
+        const current = map(row as Row).clearedBy;
+        const next = cleared
+          ? [...new Set([...current, userId])]
+          : current.filter((value) => who(value) !== key);
+        return {
+          kind: "update" as const,
+          table: "activity_events",
+          values: { cleared_by: next },
+          match: { id: String(row.id ?? "") },
+        };
+      })
+      .filter((operation) => operation.match.id);
+    if (!operations.length) return false;
+    await commitOps("Saving notification preference", operations);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function clearActivityEntry(userId: string, id: string): Promise<boolean> {
-  if (!(await syncClearedEntry(id, true))) return false;
+  const saved = localDb()?.query
+    ? (await storeLocalClearedEntries(userId, [id], true)) || (await syncClearedEntry(id, true))
+    : (await syncClearedEntry(id, true)) || (await storeLocalClearedEntries(userId, [id], true));
+  if (!saved) return false;
   const map = readClearedMap();
   const key = who(userId);
   const list = map[key] ?? [];
@@ -600,7 +729,10 @@ export async function clearActivityEntry(userId: string, id: string): Promise<bo
 }
 
 export async function reopenActivityEntry(userId: string, id: string): Promise<boolean> {
-  if (!(await syncClearedEntry(id, false))) return false;
+  const saved = localDb()?.query
+    ? (await storeLocalClearedEntries(userId, [id], false)) || (await syncClearedEntry(id, false))
+    : (await syncClearedEntry(id, false)) || (await storeLocalClearedEntries(userId, [id], false));
+  if (!saved) return false;
   const map = readClearedMap();
   const key = who(userId);
   map[key] = (map[key] ?? []).filter((x) => x !== id);
@@ -613,7 +745,10 @@ export async function clearAllActivityEntries(
   userId: string,
   visibleIds: string[],
 ): Promise<boolean> {
-  if (!(await syncClearAllEntries())) return false;
+  const saved = localDb()?.query
+    ? (await storeLocalClearedEntries(userId, visibleIds, true)) || (await syncClearAllEntries())
+    : (await syncClearAllEntries()) || (await storeLocalClearedEntries(userId, visibleIds, true));
+  if (!saved) return false;
   const map = readClearedMap();
   const key = who(userId);
   map[key] = [...new Set([...(map[key] ?? []), ...visibleIds])].slice(-500);

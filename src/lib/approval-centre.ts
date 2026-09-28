@@ -12,7 +12,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import {
   claimAuthorizationRequest,
   listAuthorizationRequests,
-} from "./authorization.functions";
+} from "./authorization-client";
 import { getPosCallerAuth } from "./pos-caller-auth";
 import { markHeldReady } from "./held-orders";
 import type { AuthorizationRequest } from "./authorization";
