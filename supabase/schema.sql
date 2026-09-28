@@ -2859,6 +2859,39 @@ $$;
 REVOKE ALL ON FUNCTION public.pos_set_activity_event_cleared(uuid,text,boolean) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.pos_set_activity_event_cleared(uuid,text,boolean) TO service_role;
 
+-- Bulk clear is still a per-user state transition. The immutable event stays
+-- in the audit log and becomes that person's notification history.
+CREATE OR REPLACE FUNCTION public.pos_set_all_activity_events_cleared(
+  p_user_id text,
+  p_store_id text DEFAULT NULL
+) RETURNS integer
+LANGUAGE plpgsql SECURITY INVOKER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+DECLARE
+  v_count integer;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.app_users WHERE user_id = p_user_id AND is_active
+  ) THEN
+    RAISE EXCEPTION 'Active staff account required';
+  END IF;
+
+  UPDATE public.activity_events
+     SET cleared_by = array(
+       SELECT DISTINCT value FROM unnest(cleared_by || p_user_id) AS value
+     )
+   WHERE (p_store_id IS NULL OR store_id = p_store_id)
+     AND NOT (p_user_id = ANY(cleared_by));
+
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.pos_set_all_activity_events_cleared(text,text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_set_all_activity_events_cleared(text,text) TO service_role;
+
 CREATE OR REPLACE FUNCTION public.app_users_require_store() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
@@ -10742,6 +10775,18 @@ ALTER TABLE public.sales
 
 ALTER TABLE public.activity_events
   ADD COLUMN IF NOT EXISTS cleared_by text[] NOT NULL DEFAULT '{}'::text[];
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'activity_events'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.activity_events;
+  END IF;
+END $$;
 
 DO $$
 BEGIN

@@ -867,3 +867,24 @@
     display: none;
   }
 }
+
+/* Compact activity cards enter and leave at the right edge without delaying work. */
+[data-sonner-toast].activity-notification-toast {
+  transition:
+    transform 220ms ease-out,
+    opacity 180ms ease-out,
+    height 220ms ease-out,
+    box-shadow 160ms ease-out;
+}
+
+[data-sonner-toast].activity-notification-toast:not([data-mounted="true"]),
+[data-sonner-toast].activity-notification-toast[data-removed="true"][data-swipe-out="false"] {
+  --y: translateX(calc(100% + 1rem));
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-sonner-toast].activity-notification-toast {
+    transition-duration: 1ms;
+  }
+}
