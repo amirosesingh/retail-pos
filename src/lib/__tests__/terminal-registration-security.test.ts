@@ -49,6 +49,18 @@ describe("terminal registration trust boundary", () => {
     expect(claim).toContain("is_claimed = true");
   });
 
+  it("keeps the PC/mobile claim boundary fail-closed", () => {
+    const claim = schema.slice(
+      schema.indexOf("CREATE OR REPLACE FUNCTION public.terminal_token_claim"),
+      schema.indexOf("CREATE OR REPLACE FUNCTION public.terminal_token_heartbeat"),
+    );
+    expect(schema).toContain("CONSTRAINT terminal_tokens_platform_check");
+    expect(claim).toContain(") IS NOT TRUE THEN");
+    expect(claim).toContain("t.platform = 'mobile' AND p_platform = 'android'");
+    expect(claim).toContain("t.platform = 'pc' AND p_platform = 'electron'");
+    expect(claim).toContain("TERMINAL_PLATFORM_MISMATCH");
+  });
+
   it("binds heartbeat telemetry to the claiming device and removes direct anon updates", () => {
     const heartbeat = schema.slice(
       schema.indexOf("CREATE OR REPLACE FUNCTION public.terminal_token_heartbeat"),

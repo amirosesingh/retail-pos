@@ -22,6 +22,12 @@ import { recordActivationAttempt } from "@/core/activation/terminal-activation-l
 import { resetHealthCache } from "@/core/activation/connection-health";
 import { canRelay, relayOp } from "@/core/api/sync-relay";
 import { saveBackendUrl } from "@/lib/backend-config";
+import {
+  canRuntimeClaimToken,
+  terminalRuntimePlatform,
+  tokenPlatformForRuntime,
+  type TerminalPlatform,
+} from "@/core/activation/terminal-platform";
 
 import {
   clearTerminalSupabaseOverride,
@@ -30,14 +36,6 @@ import {
 } from "@/lib/external-supabase-config";
 
 export type TokenStatus = "active" | "used" | "revoked";
-
-/** Which shell is claiming the code — recorded for troubleshooting. */
-function claimPlatform(): string {
-  if (typeof window === "undefined") return "server";
-  const cap = (window as { Capacitor?: { getPlatform?: () => string } }).Capacitor;
-  if (cap?.getPlatform) return cap.getPlatform();
-  return (window as { pos?: unknown }).pos ? "electron" : "web";
-}
 
 /** Best-effort operating system name from the browser/shell. */
 function claimOs(): string {
@@ -52,7 +50,7 @@ function claimOs(): string {
 }
 
 /** Which kind of machine the code was issued for. */
-export type TerminalPlatform = "pc" | "mobile";
+export type { TerminalPlatform } from "@/core/activation/terminal-platform";
 
 export type TerminalToken = {
   id: string;
@@ -387,10 +385,10 @@ const parseConfig = (raw: string | null): TerminalConfig | null => {
   try {
     const parsed = JSON.parse(raw) as TerminalConfig;
     if (!parsed?.tokenId) return null;
-    const shell = claimPlatform();
+    const shell = tokenPlatformForRuntime(terminalRuntimePlatform());
     return {
       ...parsed,
-      deviceType: shell === "android" ? "mobile" : shell === "electron" ? "pc" : parsed.deviceType,
+      deviceType: shell ?? parsed.deviceType,
     };
   } catch {
     return null;
@@ -431,10 +429,10 @@ export async function hydrateTerminalConfig(): Promise<TerminalConfig | null> {
   try {
     const sealed = await getDeviceSecret<TerminalConfig>(SEALED_NAME);
     if (sealed?.tokenId) {
-      const shell = claimPlatform();
+      const shell = tokenPlatformForRuntime(terminalRuntimePlatform());
       cachedConfig = {
         ...sealed,
-        deviceType: shell === "android" ? "mobile" : shell === "electron" ? "pc" : sealed.deviceType,
+        deviceType: shell ?? sealed.deviceType,
       };
       applyTenantOverride(cachedConfig);
       await desktopBridge()?.writeTerminalConfig(cachedConfig).catch(() => undefined);
@@ -744,11 +742,8 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     throw new ActivationError("This activation code is not valid.");
   }
 
-  const shell = claimPlatform();
-  if (
-    (payload.platform === "mobile" && shell !== "android") ||
-    (payload.platform === "pc" && shell !== "electron")
-  ) {
+  const shell = terminalRuntimePlatform();
+  if (payload.platform && !canRuntimeClaimToken(payload.platform, shell)) {
     throw new ActivationError(
       "This code is for a different device type. Ask a supervisor for the correct PC or mobile activation code.",
     );
@@ -828,7 +823,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
         p_token_id: payload.token_id,
         p_device: deviceName,
         p_proof_hash: proofHash,
-        p_platform: claimPlatform(),
+        p_platform: shell,
         p_os: claimOs(),
       });
       if (result.error) throw result.error;
@@ -848,7 +843,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
   const config: TerminalConfig = {
     tokenId: payload.token_id,
     deviceName: payload.device_name?.trim() || remote.locationName || "",
-    deviceType: claimPlatform() === "android" ? "mobile" : "pc",
+    deviceType: tokenPlatformForRuntime(shell) ?? "pc",
     locationId: payload.location_id || remote.locationId,
     locationName: remote.locationName || payload.location_name,
     supabaseUrl: payload.supabase_url,
@@ -970,6 +965,7 @@ export function decodePairingRequest(value: string): PairingRequest | null {
  * phone. Same claim-once rules as pasting a code by hand.
  */
 export async function activateWithTokenId(tokenId: string): Promise<TerminalConfig | null> {
+  const shell = terminalRuntimePlatform();
   const remote = await withActivationRetry(() => fetchTokenStatus(tokenId)).catch((e: unknown) => {
     throw new ActivationError(activationFailureMessage(e));
   });
@@ -1001,7 +997,7 @@ export async function activateWithTokenId(tokenId: string): Promise<TerminalConf
         p_token_id: tokenId,
         p_device: deviceName,
         p_proof_hash: proofHash,
-        p_platform: claimPlatform(),
+        p_platform: shell,
         p_os: claimOs(),
       });
       if (response.error) throw response.error;
@@ -1017,7 +1013,7 @@ export async function activateWithTokenId(tokenId: string): Promise<TerminalConf
   const config: TerminalConfig = {
     tokenId,
     deviceName: getPairingRequest().deviceName,
-    deviceType: claimPlatform() === "android" ? "mobile" : "pc",
+    deviceType: tokenPlatformForRuntime(shell) ?? "pc",
     locationId: remote.locationId,
     locationName: remote.locationName,
     supabaseUrl: supabaseConfig().url,
