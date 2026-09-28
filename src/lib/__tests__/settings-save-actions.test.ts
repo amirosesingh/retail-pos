@@ -29,6 +29,22 @@ describe("settings save actions", () => {
     expect(route).toContain("allowWhileScopeLoading");
     expect(frame).toContain("settingsScopeLoading && !allowWhileScopeLoading");
   });
+
+  it("uses each independently authorized page's granular permission", () => {
+    const frame = read("src/platforms/web/components/pos/settings/SettingsFrame.tsx");
+    const database = read("src/routes/settings.database.tsx");
+    const sessions = read("src/routes/settings.sessions.tsx");
+    const cloud = read(
+      "src/platforms/web/components/pos/settings/panels/CloudConnectionPanel.tsx",
+    );
+
+    expect(frame).toContain("permission?: PermissionFlag");
+    expect(frame).toContain("const canSettings = isAdmin || can(requiredPermission)");
+    expect(database).toContain('permission="can_manage_sync_backup"');
+    expect(sessions).toContain('permission="can_manage_terminals"');
+    expect(cloud).toContain('auth?.can("can_manage_sync_backup")');
+    expect(cloud).not.toContain("auth?.isSupervisor || auth?.isAdmin");
+  });
 });
 
 describe("shift status privacy", () => {

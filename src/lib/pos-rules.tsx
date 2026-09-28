@@ -467,7 +467,8 @@ export function PosRulesProvider({
   useEffect(
     () =>
       subscribeSettingsChange((change) => {
-        if (change.table !== "pos_store_settings") return;
+        if (change.table !== "pos_store_settings" && change.reason !== "desktop:pull-complete")
+          return;
         if (change.storeId !== null && change.storeId !== "" && change.storeId !== scope) return;
         void queryClient.invalidateQueries({ queryKey: key });
       }),

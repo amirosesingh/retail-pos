@@ -24,6 +24,7 @@ export const Route = createFileRoute("/settings/database")({
     <SettingsFrame
       showSaveBar={false}
       allowWhileScopeLoading
+      permission="can_manage_sync_backup"
       wide
       title="Database connection"
       description="Manage central connectivity and, on authorized Windows tills, the local Microsoft SQL Server database."

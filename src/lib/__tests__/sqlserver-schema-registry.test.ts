@@ -125,6 +125,32 @@ describe("SQL Server schema registry", () => {
     expect(sql).not.toMatch(/sync_change_journal[\s\S]{0,1000}\bpayload\b/i);
   });
 
+  it("keeps Electron settings current through the SQL Server sync registry", () => {
+    const expectedDirections: Record<string, "bidirectional" | "pull"> = {
+      integration_settings: "bidirectional",
+      pos_settings: "bidirectional",
+      pos_store_settings: "bidirectional",
+      secure_settings: "pull",
+      settings_locks: "pull",
+      settings_overrides: "bidirectional",
+      settings_scoped: "bidirectional",
+    };
+
+    for (const [tableName, direction] of Object.entries(expectedDirections)) {
+      const table = registry.tables.find(
+        (candidate: { cloudTable: string }) => candidate.cloudTable === tableName,
+      );
+      expect(table, `${tableName} must be registered`).toMatchObject({
+        sqlServerTable: tableName,
+        direction,
+      });
+      expect(completeSql).toContain(`dbo.[${tableName}]`);
+      expect(completeSql).toContain(
+        `ALTER TABLE dbo.[${tableName}] ENABLE CHANGE_TRACKING`,
+      );
+    }
+  });
+
   it("records key metadata and generated migration support", () => {
     expect(sql).toContain("dbo.pos_schema_migrations");
     expect(sql).toContain("dbo.local_operation_receipts");

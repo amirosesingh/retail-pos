@@ -46,11 +46,37 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260928041000_bind_terminal_heartbeat_to_device.sql",
       "supabase/migrations/20260928042410_harden_public_data_api_access.sql",
       "supabase/migrations/20260928043000_harden_terminal_claim_recovery.sql",
+      "supabase/migrations/20260928071500_restore_shift_notifications_sync_contract.sql",
       "supabase/migrations/20260928125000_enforce_terminal_platform_contract.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
     ]);
+  });
+
+  it("installs the complete shift-notification sync contract", () => {
+    const migration = read(
+      "supabase/migrations/20260928071500_restore_shift_notifications_sync_contract.sql",
+    );
+
+    expect(migration).toContain("FUNCTION public.sync_apply_shift_notifications");
+    expect(migration).toContain("FUNCTION public.sync_feed_shift_notifications");
+    expect(migration).toContain(
+      "CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public.\"shift_notifications\"",
+    );
+    for (const routine of [
+      "pos_sync_push_batch",
+      "pos_sync_push_aggregate",
+      "pos_sync_pull",
+      "pos_sync_bootstrap",
+    ]) {
+      const start = migration.indexOf(`FUNCTION public.${routine}`);
+      expect(start, `${routine} must be replaced`).toBeGreaterThan(-1);
+      expect(
+        migration.slice(start, migration.indexOf("END $fn$;", start)),
+        `${routine} must dispatch shift_notifications`,
+      ).toContain("shift_notifications");
+    }
   });
 
   it("contains the complete schema and enforces RLS on every app table", () => {
