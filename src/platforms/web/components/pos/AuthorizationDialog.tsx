@@ -30,12 +30,16 @@ import { useAuthOptional } from "@/lib/pos-auth";
 import type { AuthActionKey, AuthMode, AuthPayload, AuthorizationRule } from "@/lib/authorization";
 import { canAuthorizeAmount } from "@/lib/authorization";
 import { verifyLocalPin } from "@/core/local-db/local-staff";
-import type { TicketSnapshot } from "@/lib/ticket-snapshot";
+import { normalizeSnapshot, snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
+import { syncNow } from "@/lib/sync-engine";
 
 const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (token) => {
+        const value = Math.floor(Math.random() * 16);
+        return (token === "x" ? value : (value & 0x3) | 0x8).toString(16);
+      });
 
 export type AuthorizationPrompt = {
   actionKey: string;
@@ -126,8 +130,9 @@ export function AuthorizationDialog({
    * the same id it will have in the cloud, so the approver sees one request,
    * not two, once the line is back.
    */
-  async function parkRequest(message: string) {
-    const id = newId();
+  async function parkRequest(id: string, message: string) {
+    const createdAt = new Date().toISOString();
+    const snapshot = prompt?.snapshot ? normalizeSnapshot(prompt.snapshot) : null;
     const parked = await parkGovernanceRow("authorization_requests", {
       id,
       action_key: prompt?.actionKey ?? "",
@@ -138,6 +143,17 @@ export function AuthorizationDialog({
       reason: note.trim(),
       payload: prompt?.payload ?? {},
       status: "pending",
+      requested_amount: prompt?.requestedAmount ?? snapshot?.requestedValue ?? null,
+      requester_direct_limit: prompt?.requesterDirectLimit ?? null,
+      value_unit: prompt?.valueUnit ?? "number",
+      approved_amount: null,
+      approved_payload: {},
+      bill_snapshot: snapshot ?? {},
+      snapshot_hash: snapshotFingerprint(snapshot),
+      held_order_id: prompt?.heldOrderId ?? null,
+      notified_at: null,
+      created_at: createdAt,
+      updated_at: createdAt,
       expires_at: new Date(Date.now() + 24 * 3600_000).toISOString(),
     });
     if (!parked.parked) {
@@ -200,12 +216,17 @@ export function AuthorizationDialog({
 
   async function submitRequest() {
     if (!prompt) return;
+    // One id follows the request through the direct cloud attempt, a lost
+    // response, and the local offline fallback. Both databases therefore
+    // converge on one request and one eventual decision.
+    const requestId = newId();
     setBusy(true);
     try {
       const auth = await getPosCallerAuth();
       const res = await submitAuthorizationRequest({
         data: {
           ...auth,
+          requestId,
           actionKey: prompt.actionKey,
           reason: note.trim(),
           payload: prompt.payload ?? {},
@@ -223,7 +244,7 @@ export function AuthorizationDialog({
         },
       });
       if (!res.ok || !res.request) {
-        if (looksOffline(res.error)) await parkRequest(res.error ?? "");
+        if (looksOffline(res.error)) await parkRequest(requestId, res.error ?? "");
         else toast.error(res.error ?? "Could not send the request");
         return;
       }
@@ -231,9 +252,13 @@ export function AuthorizationDialog({
         description: "You will be able to continue once it is approved.",
       });
       onFinish({ kind: "submitted", requestId: res.request.id });
+      // Supabase is authoritative online. Mirroring it to SQL Server is an
+      // explicitly background operation and never delays this dialog.
+      void syncNow(`approval-request:${res.request.id}`);
     } catch (e) {
-      if (looksOffline(e)) await parkRequest(String((e as Error)?.message ?? e));
-      else notifyError(e, "Could not send the request");
+      if (looksOffline(e)) {
+        await parkRequest(requestId, String((e as Error)?.message ?? e));
+      } else notifyError(e, "Could not send the request");
     } finally {
       setBusy(false);
     }

@@ -81,6 +81,8 @@ const snapshotInput = z.object({
 });
 
 const submitInput = caller.extend({
+  /** Stable across a lost response and the offline fallback. */
+  requestId: z.string().uuid().optional(),
   actionKey: z.string().min(1).max(64),
   storeId: z.string().max(64).optional(),
   terminalId: z.string().max(64).optional(),
@@ -321,7 +323,8 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       }
       const { normalizeSnapshot, snapshotFingerprint } = await import("./ticket-snapshot");
       const snapshot = data.snapshot ? normalizeSnapshot(data.snapshot) : null;
-      const request = await createRequest({
+      const created = await createRequest({
+        id: data.requestId,
         actionKey: data.actionKey,
         requestedBy: who.id,
         requestedByName: who.name,
@@ -337,8 +340,13 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
         snapshotHash: snapshotFingerprint(snapshot),
         heldOrderId: data.heldOrderId ?? null,
       });
-      await notifyApprovers(request, who).catch(() => undefined);
-      await markRequestNotified(request.id);
+      const request = created.request;
+      // A retry after a lost response returns the existing UUID. Do not send
+      // the approver a second WhatsApp message for the same logical request.
+      if (created.created) {
+        await notifyApprovers(request, who).catch(() => undefined);
+        await markRequestNotified(request.id);
+      }
       return { ok: true as const, request };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300) };
@@ -350,7 +358,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
  * feed. Nobody else is notified.
  */
 async function notifyApprovers(
-  request: Awaited<ReturnType<typeof import("./authorization.server").createRequest>>,
+  request: import("./authorization").AuthorizationRequest,
   who: Caller,
 ): Promise<void> {
   const { writeActivityEvent } = await import("./activity-events.server");

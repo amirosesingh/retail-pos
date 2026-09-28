@@ -592,6 +592,10 @@ const LIVE_TABLES = [
   "promotions",
   "purchase_orders",
   "purchase_order_items",
+  // Approval rows are cloud-owned while online. Their Realtime event wakes
+  // the desktop worker so SQL Server becomes a background mirror, never a
+  // prerequisite for submitting or deciding the request.
+  "authorization_requests",
 ] as const;
 
 export type LiveChange = {
