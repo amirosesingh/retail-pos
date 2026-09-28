@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-09-25T12:57:02.992Z",
-  "tableCount": 67,
-  "columnCount": 1137,
+  "generatedAt": "2026-09-28T02:16:12.257Z",
+  "tableCount": 68,
+  "columnCount": 1155,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -7508,6 +7508,126 @@
       "uniqueKeys": [
         [
           "reconciliation_id"
+        ]
+      ],
+      "foreignKeys": []
+    },
+    {
+      "name": "shift_notifications",
+      "columns": [
+        {
+          "name": "id",
+          "declaration": "uuid PRIMARY KEY DEFAULT gen_random_uuid()",
+          "nullable": true,
+          "hasDefault": true
+        },
+        {
+          "name": "shift_id",
+          "declaration": "uuid NOT NULL REFERENCES public.shifts(id) ON DELETE CASCADE",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "store_id",
+          "declaration": "text NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "store_name",
+          "declaration": "text NOT NULL DEFAULT ''",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "terminal_name",
+          "declaration": "text NOT NULL DEFAULT ''",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "closed_by",
+          "declaration": "text NOT NULL DEFAULT ''",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "opened_at",
+          "declaration": "timestamptz NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "closed_at",
+          "declaration": "timestamptz NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "total_sales",
+          "declaration": "numeric NOT NULL DEFAULT 0",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "transactions",
+          "declaration": "integer NOT NULL DEFAULT 0",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "discounts",
+          "declaration": "numeric NOT NULL DEFAULT 0",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "refunds",
+          "declaration": "numeric NOT NULL DEFAULT 0",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "expected_cash",
+          "declaration": "numeric NOT NULL DEFAULT 0",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "counted_cash",
+          "declaration": "numeric NOT NULL DEFAULT 0",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "payment_breakdown",
+          "declaration": "jsonb NOT NULL DEFAULT '{}'::jsonb",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "summary",
+          "declaration": "text NOT NULL DEFAULT ''",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "channels",
+          "declaration": "text[] NOT NULL DEFAULT '{}'::text[]",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "created_at",
+          "declaration": "timestamptz NOT NULL DEFAULT now()",
+          "nullable": false,
+          "hasDefault": true
+        }
+      ],
+      "primaryKey": [],
+      "uniqueKeys": [
+        [
+          "shift_id"
         ]
       ],
       "foreignKeys": []

@@ -35,6 +35,7 @@ const PULL_ONLY = new Set([
 const APPEND_ONLY = new Set([
   "shift_cash_counts",
   "shift_close_events",
+  "shift_notifications",
   "shift_reconciliations",
 ]);
 
@@ -88,7 +89,7 @@ const tables = report.tables.map((table, tableIndex) => ({
     : "branch",
   direction: PULL_ONLY.has(table.name) ? "pull" : "bidirectional",
   retentionClass:
-    /^(?:sales|sale_items|payment_transactions|refunds|audit_logs|item_activity_logs)/.test(
+    /^(?:sales|sale_items|payment_transactions|refunds|audit_logs|item_activity_logs|shift_notifications)/.test(
       table.name,
     )
       ? "historical"

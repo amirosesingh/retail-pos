@@ -30,6 +30,49 @@ describe("shift sync boundaries", () => {
     expect(sql).toContain("public.store_visible(store_id)");
   });
 
+  it("includes every live shift summary column in the local SQL Server installer", () => {
+    const registry = JSON.parse(read("database/sqlserver/schema-registry.json"));
+    const localSql = read("database/sqlserver/retail-pos-local-database.sql");
+    const table = registry.tables.find(
+      (candidate: { cloudTable: string }) => candidate.cloudTable === "shift_notifications",
+    );
+    const expectedColumns = [
+      "id",
+      "shift_id",
+      "store_id",
+      "store_name",
+      "terminal_name",
+      "closed_by",
+      "opened_at",
+      "closed_at",
+      "total_sales",
+      "transactions",
+      "discounts",
+      "refunds",
+      "expected_cash",
+      "counted_cash",
+      "payment_breakdown",
+      "summary",
+      "channels",
+      "created_at",
+    ];
+
+    expect(table).toMatchObject({
+      scope: "branch",
+      direction: "bidirectional",
+      retentionClass: "historical",
+      updateRule: "append_only",
+      deleteRule: "none",
+    });
+    expect(table.columns.map((column: { cloudColumn: string }) => column.cloudColumn)).toEqual(
+      expectedColumns,
+    );
+    expect(localSql).toContain("dbo.[shift_notifications]");
+    expect(localSql).toContain("[shift_id] uniqueidentifier NOT NULL");
+    expect(localSql).toContain("[payment_breakdown] nvarchar(max) NOT NULL");
+    expect(localSql).toContain("[channels] nvarchar(max) NOT NULL");
+  });
+
   it("publishes idempotently through the relay instead of the missing REST table", () => {
     const alerts = read("src/lib/shift-alerts.ts");
     expect(alerts).toContain('table: "shift_notifications"');

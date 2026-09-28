@@ -51,6 +51,8 @@ function branchPredicate(table, alias = "x", seen = new Set()) {
 
 function incomingBranchGuard(table, rows = "p_rows") {
   const names = columnNames(table);
+  if (table.cloudTable === "audit_logs")
+    return `SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO ${rows} FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;`;
   if (names.has("store_id"))
     return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;`;
   if (names.has("branch_id"))
