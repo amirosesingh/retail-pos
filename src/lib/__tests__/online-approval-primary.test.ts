@@ -6,6 +6,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { handleAuthorizationRequest } from "@/lib/authorization-endpoint.server";
+
 const source = (file: string) => readFileSync(join(process.cwd(), file), "utf8");
 
 describe("online approval primary database", () => {
@@ -71,9 +73,55 @@ describe("online approval primary database", () => {
   it("routes packaged-terminal approvals to the hosted backend", () => {
     const client = source("src/lib/authorization-client.ts");
     const route = source("src/routes/api/v1/pos/authorization.ts");
-    expect(client).toContain('posFetch("/api/v1/pos/authorization"');
+    const syncRoute = source("src/routes/api/v1/pos/sync.ts");
+    const endpoint = source("src/lib/authorization-endpoint.server.ts");
+    expect(client).toContain('posFetch("/api/v1/pos/sync?operation=authorization"');
     expect(client).toContain("if (!isTerminalApp())");
-    expect(route).toContain('z.enum(["authorize_pin", "submit", "list", "decide", "claim", "cancel"])');
-    expect(route).toContain("512 * 1024");
+    expect(syncRoute).toContain('searchParams.get("operation") === "authorization"');
+    expect(endpoint).toContain(
+      'z.enum(["authorize_pin", "submit", "list", "decide", "claim", "cancel"])',
+    );
+    expect(endpoint).toContain("512 * 1024");
+    expect(route).toContain("handleAuthorizationRequest(request)");
+  });
+
+  it("does not remount the workspace for repeated events from the same cloud session", () => {
+    const auth = source("src/lib/pos-auth.tsx");
+    expect(auth).toContain("nextIdentity === centralIdentityRef.current");
+    expect(auth).toContain('event === "TOKEN_REFRESHED" || event === "SIGNED_IN"');
+    const continuing = auth.slice(
+      auth.indexOf("if (continuingSession)"),
+      auth.indexOf("// A refreshed token"),
+    );
+    expect(continuing).toContain("setSession(next)");
+    expect(continuing).not.toContain("setRolesReady(false)");
+    expect(continuing).not.toContain("setProfileReady(false)");
+  });
+
+  it("rejects malformed hosted approval payloads without dispatching them", async () => {
+    const response = await handleAuthorizationRequest(
+      new Request("https://pos.example/api/v1/pos/sync?operation=authorization", {
+        method: "POST",
+        body: "not-json",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ ok: false });
+  });
+
+  it("rejects oversized hosted approval payloads", async () => {
+    const response = await handleAuthorizationRequest(
+      new Request("https://pos.example/api/v1/pos/sync?operation=authorization", {
+        method: "POST",
+        body: "x".repeat(512 * 1024 + 1),
+      }),
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: "Approval request is too large",
+    });
   });
 });

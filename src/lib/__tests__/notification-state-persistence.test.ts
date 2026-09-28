@@ -85,7 +85,7 @@ describe("per-user notification state", () => {
     localBridge.current = {
       query: vi.fn(async () => ({
         ok: true,
-        rows: [{ id: "event-local", cleared_by: "[]" }],
+        rows: [{ id: "event-local", store_id: "branch-1", cleared_by: "[]" }],
       })),
     };
     const activity = await import("../activity-events");
@@ -96,7 +96,7 @@ describe("per-user notification state", () => {
         kind: "update",
         table: "activity_events",
         values: { cleared_by: ["manager-1"] },
-        match: { id: "event-local" },
+        match: { id: "event-local", store_id: "branch-1" },
       })],
     );
     expect(posFetch).not.toHaveBeenCalled();
@@ -202,6 +202,23 @@ describe("per-user notification state", () => {
     expect(migration).toContain(
       "ALTER PUBLICATION supabase_realtime ADD TABLE public.activity_events",
     );
+  });
+
+  it("mirrors local SQL clear and reopen updates through the sync contract", () => {
+    const generator = readFileSync("scripts/generate-supabase-sync-contract.cjs", "utf8");
+    const migration = readFileSync(
+      "supabase/migrations/20260928183500_sync_activity_notification_preferences.sql",
+      "utf8",
+    );
+    const bell = readFileSync("src/platforms/web/components/pos/ActivityBell.tsx", "utf8");
+
+    expect(generator).toContain(
+      'table.cloudTable === "activity_events"\n          ? `UPDATE SET "cleared_by"=EXCLUDED."cleared_by"`',
+    );
+    expect(migration).toContain("ON CONFLICT (id) DO UPDATE");
+    expect(migration).toContain("SET cleared_by = EXCLUDED.cleared_by");
+    expect(bell).toContain("...row.clearedBy, meKey");
+    expect(bell).toContain("row.clearedBy.filter");
   });
 
   it("moves full history into Reports and uses compact dismissible stacked popups", () => {
