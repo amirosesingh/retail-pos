@@ -40,4 +40,14 @@ describe("branch-scoped synchronization reconciliation", () => {
     const second = [first[1], first[0]];
     expect(signatureRows(table, first)).toBe(signatureRows(table, second));
   });
+
+  it("treats SQL Server and Supabase UUID casing as the same value", async () => {
+    const { signatureRows } = await import("../../../electron/sync/verifier.cjs");
+    const table = {
+      columns: [{ cloudColumn: "id", sqlServerColumn: "id", cloudType: "uuid" }],
+    };
+    expect(signatureRows(table, [{ id: "A57D50E1-B20F-44B4-A638-11A0786BF013" }])).toBe(
+      signatureRows(table, [{ id: "a57d50e1-b20f-44b4-a638-11a0786bf013" }]),
+    );
+  });
 });

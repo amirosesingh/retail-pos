@@ -6,7 +6,12 @@ const schemaPath = path.join(root, "supabase", "schema.sql");
 const outputPath = path.join(root, "reports", "supabase-schema-registry-report.json");
 const sql = fs.readFileSync(schemaPath, "utf8");
 const tables = [];
-const CONTROL_TABLES = new Set(["sync_idempotency_receipts", "sync_change_feed"]);
+const CONTROL_TABLES = new Set([
+  "sync_idempotency_receipts",
+  "sync_change_feed",
+  // Server-managed authentication state must never be copied into a till database.
+  "user_sessions",
+]);
 
 // ALTER TABLE may add several columns in one statement. Split its clauses
 // without breaking numeric(18,4), array literals, or quoted JSON defaults.

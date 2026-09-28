@@ -333,7 +333,12 @@ export async function runDbHealth(): Promise<DbHealthReport> {
   });
 
   const tables: TableProbe[] = [];
-  for (const entry of await probeList()) tables.push(await probeTable(entry));
+  // Direct Data API probes are meaningful only with a Supabase Auth session.
+  // PIN-only tills use the protected metadata relay and must not probe every
+  // RLS table as `anon`, which only creates permission-denied log noise.
+  if (session) {
+    for (const entry of await probeList()) tables.push(await probeTable(entry));
+  }
 
   return { at: new Date().toISOString(), header, tables };
 }

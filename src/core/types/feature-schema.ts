@@ -605,7 +605,12 @@ async function loadShapes() {
   return { tables: toShapes(metadata.tables), functions: metadata.functions };
 }
 
-async function probeOp(op: FeatureOp, shapes: Record<string, TableShape>, functions: FunctionShapes): Promise<OpResult> {
+async function probeOp(
+  op: FeatureOp,
+  shapes: Record<string, TableShape>,
+  functions: FunctionShapes,
+  directAccess: boolean,
+): Promise<OpResult> {
   const base: OpResult = { ...op, ok: true, detail: "", missing: [], unmet: [] };
 
   if (op.table.startsWith("rpc:")) {
@@ -635,6 +640,8 @@ async function probeOp(op: FeatureOp, shapes: Record<string, TableShape>, functi
   }
 
   if (op.kind === "read") {
+    if (!directAccess)
+      return { ...base, detail: `${op.columns.length} columns verified through the protected metadata relay` };
     const { error } = await sb()
       .from(op.table)
       .select(op.columns.join(","), { count: "exact", head: true });
@@ -660,6 +667,16 @@ async function probeOp(op: FeatureOp, shapes: Record<string, TableShape>, functi
 
   const payload: Record<string, unknown> = {};
   for (const c of op.columns) payload[c] = null;
+  if (!directAccess) {
+    return {
+      ...base,
+      ok: unmet.length === 0,
+      unmet,
+      detail: unmet.length
+        ? `Payload never sends required field${unmet.length === 1 ? "" : "s"}: ${unmet.join(", ")}`
+        : `${op.columns.length} columns verified through the protected metadata relay`,
+    };
+  }
   const { error } = await sb().from(op.table).update(payload).eq(op.pk ?? "id", NO_ROW);
   if (error) {
     const col = namedColumn(error.message ?? "");
@@ -701,12 +718,13 @@ export async function runFeatureSchemaAudit(): Promise<FeatureSchemaReport> {
     };
   }
 
+  const directAccess = !!(await supabaseExternal.auth.getSession()).data.session;
   const features: FeatureResult[] = [];
   for (const feature of FEATURES) {
     const ops: OpResult[] = [];
     for (const op of feature.ops) {
       try {
-        ops.push(await probeOp(op, metadata.tables, metadata.functions));
+        ops.push(await probeOp(op, metadata.tables, metadata.functions, directAccess));
       } catch (e) {
         ops.push({ ...op, ok: false, detail: (e as Error).message, missing: [], unmet: [] });
       }

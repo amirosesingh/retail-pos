@@ -49,6 +49,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260928071500_restore_shift_notifications_sync_contract.sql",
       "supabase/migrations/20260928074557_online_approval_cloud_primary.sql",
       "supabase/migrations/20260928125000_enforce_terminal_platform_contract.sql",
+      "supabase/migrations/20260928155105_repair_cashier_idle_and_activity_clear.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
