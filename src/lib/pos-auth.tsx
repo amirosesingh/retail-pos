@@ -15,7 +15,6 @@ import { clearStoredCredentials, readCredentials, saveCashierToken } from "@/lib
 import { issueCashierSession } from "@/lib/pos-session.functions";
 import { startDeviceSession, endDeviceSession } from "@/lib/user-sessions.functions";
 import { loadSessionToken, saveSessionToken } from "@/lib/pos-credentials";
-import { preparePinAccount } from "@/lib/staff-admin";
 import { toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
 import { activeBranchId, activeBranchName, bindTerminalBranch } from "@/lib/active-branch";
 import { cacheCredential, verifyCachedPin } from "@/lib/offline-credentials";
@@ -504,7 +503,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
     });
     if (error) {
-      const code = failureFromAuthError(error.message);
+      const code = failureFromAuthError(error);
       return { ok: false, code, error: loginFailureMessage(code) };
     }
     markStartupStage("authentication");
@@ -563,71 +562,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { ok: true };
   }, []);
 
-  /**
-   * Finish a PIN sign-in that produced a real account session: read the
-   * person's profile, pin the branch, and remember them for offline use.
-   */
-  const finishAccountPinSignIn = useCallback(
-    async (code: string, pin: string): Promise<{ ok: boolean; error?: string } | null> => {
-      const { data } = await supabase.rpc("current_app_user");
-      const profile = (Array.isArray(data) ? data[0] : null) as Record<string, unknown> | null;
-      if (profile && profile["is_active"] === false) {
-        await supabase.auth.signOut({ scope: "local" });
-        return { ok: false, error: "Account deactivated. Please contact an administrator." };
-      }
-      const dbRole = String(profile?.["role"] ?? "staff");
-      const permissions = normalizePermissions(
-        (profile?.["permissions"] as Record<string, unknown> | null) ?? null,
-        fromDbRole(dbRole),
-      );
-      const bound =
-        bindTerminalBranch() ?? activeBranchId((profile?.["store_id"] as string | null) ?? null);
-      const next: TerminalUser = {
-        userCode: String(profile?.["user_id"] ?? code),
-        name: String(profile?.["full_name"] ?? code),
-        role: dbRole === "admin" ? "admin" : dbRole === "manager" ? "manager" : "staff",
-        storeId: bound,
-        email: String(profile?.["email"] ?? ""),
-        permissions,
-      };
-      bumpSessionEpoch();
-      setTerminalUser(next);
-      try {
-        window.sessionStorage.setItem(TERMINAL_KEY, JSON.stringify(next));
-      } catch {
-        /* session storage unavailable */
-      }
-      // Same PIN opens this till again with no connection.
-      void cacheCredential(pin, {
-        username: next.userCode,
-        cashierId: "",
-        fullName: next.name,
-        storeId: bound ?? "",
-        permissions: permissions as unknown as Record<string, boolean>,
-        roleSlug: dbRole,
-      });
-      try {
-        const { data: sess } = await supabase.auth.getSession();
-        const token = sess.session?.access_token;
-        if (token) {
-          const started = await startDeviceSession({
-            data: {
-              kind: "staff",
-              accessToken: token,
-              label: next.name,
-              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
-            },
-          });
-          if (started.ok) await saveSessionToken(started.token);
-        }
-      } catch {
-        /* the account session still works on its own */
-      }
-      return { ok: true };
-    },
-    [],
-  );
-
   const cashierLogin = useCallback(
     async (userId: string, pin: string) => {
       const code = usernameFromAddress(userId);
@@ -653,12 +587,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let offline = false;
       if (typeof navigator !== "undefined" && !navigator.onLine) offline = true;
 
-      // The stored PIN hash is the authority: it is checked on the server with
-      // the internal key. The Auth password is only aligned afterwards, so a
-      // stale password can no longer refuse a person with the right PIN.
+      // The stored PIN hash is the authority. The hosted endpoint verifies it
+      // and returns the already-provisioned Auth identity for this account.
       type ServerLogin = {
         ok?: boolean;
         error?: string;
+        authTokenHash?: string;
         cashierToken?: string;
         sessionToken?: string;
         cashier?: {
@@ -844,6 +778,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         /* Auth fallback below may still establish a direct database session. */
       }
 
+      // A PIN login is verified by the hosted endpoint first. It returns a
+      // one-use Auth proof only after that succeeds, so every shell establishes
+      // RLS identity without guessing an address, changing a user's ordinary
+      // password, or invoking a server function against its local app origin.
+      if (verified?.authTokenHash) {
+        const { error } = await supabase.auth.verifyOtp({
+          token_hash: verified.authTokenHash,
+          type: "magiclink",
+        });
+        if (error) {
+          clearStoredCredentials();
+          if (verified.sessionToken) {
+            void endDeviceSession({ data: { sessionToken: verified.sessionToken } }).catch(
+              () => undefined,
+            );
+          }
+          return {
+            ok: false,
+            error: "Your PIN was verified, but the secure database session could not be opened. Ask an administrator to repair this staff login.",
+          };
+        }
+      }
+
       bumpSessionEpoch();
       setTerminalUser(next);
       // The branch is in place before the register mounts, so nothing renders
@@ -868,28 +825,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         /* the server relay still carries the writes */
       }
-      // Last: line the Auth password up with the PIN so the till also holds a
-      // real session, and let the account's own profile (role, branch, rights)
-      // replace the summary above when it arrives.
-      if (verified?.cashier) {
-        void (async () => {
-          try {
-            const prepared = await preparePinAccount(next.userCode, pin);
-            if (prepared.ok) {
-              const { error } = await supabase.auth.signInWithPassword({
-                email: prepared.email,
-                password: pin,
-              });
-              if (!error) await finishAccountPinSignIn(next.userCode, pin);
-            }
-          } catch {
-            /* the signed device session already keeps the till working */
-          }
-        })();
-      }
       return { ok: true };
     },
-    [finishAccountPinSignIn],
+    [],
   );
 
   /**

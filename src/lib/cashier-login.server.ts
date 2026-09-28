@@ -16,6 +16,8 @@ export type CashierLoginResult =
       cashierToken: string;
       sessionToken: string;
       idleMinutes: number;
+      /** One-use Auth proof, minted only after the PIN was verified. */
+      authTokenHash: string;
       cashier: {
         id: string;
         username: string;
@@ -99,21 +101,36 @@ export async function cashierLoginServer(input: {
   }
 
   const profileResponse = await serviceRest(
-    `app_users?user_id=eq.${encodeURIComponent(row.user_id)}&select=id,user_id,full_name,store_id,role,role_slug,permissions,is_active&limit=1`,
+    `app_users?user_id=eq.${encodeURIComponent(row.user_id)}&select=id,user_id,full_name,email,store_id,role,role_slug,permissions,is_active,auth_user_id&limit=1`,
   );
   if (!profileResponse.ok) return { ok: false, error: "Could not load this staff account" };
   const profiles = (await profileResponse.json()) as {
     id: string;
     user_id: string;
     full_name: string;
+    email: string | null;
     store_id: string | null;
     role: "admin" | "manager" | "staff";
     role_slug: string | null;
     permissions: Record<string, boolean> | null;
     is_active: boolean;
+    auth_user_id: string | null;
   }[];
   const profile = profiles[0];
   if (!profile?.is_active) return { ok: false, error: "Account deactivated" };
+  const authEmail = profile.email?.trim().toLowerCase() ?? "";
+  if (!authEmail || !profile.auth_user_id) {
+    return { ok: false, error: "This staff account needs its login identity repaired by an administrator" };
+  }
+  // A PIN is not necessarily this person's email-account password. Mint a
+  // one-use proof instead of changing or guessing that password.
+  const { createVerifiedPinSignInToken } = await import("./staff-admin.server");
+  let authTokenHash: string;
+  try {
+    authTokenHash = await createVerifiedPinSignInToken(authEmail, profile.auth_user_id);
+  } catch {
+    return { ok: false, error: "The secure database session could not be prepared" };
+  }
 
   // An account with no branch of its own works at every branch: the till's
   // own branch decides. It is only trusted once it names a real store.
@@ -167,6 +184,7 @@ export async function cashierLoginServer(input: {
     cashierToken: signCashierSession({ id: cashier.id, username: cashier.username }),
     sessionToken: session.token,
     idleMinutes: session.idleMinutes,
+    authTokenHash,
     cashier,
   };
 }
