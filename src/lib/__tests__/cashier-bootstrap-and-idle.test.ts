@@ -109,6 +109,14 @@ describe("cashier location bootstrap", () => {
     expect(login).not.toContain("password: pin");
   });
 
+  it("does not count a post-PIN Auth handoff failure as a wrong PIN", () => {
+    const auth = read("src/lib/pos-auth.tsx");
+    const keypad = read("src/platforms/web/components/auth/CashierPinLogin.tsx");
+    expect(auth).toContain('code: "session-open-failed"');
+    expect(keypad).toContain('if (res.code === "session-open-failed")');
+    expect(keypad).toContain("clearPinFailures();");
+  });
+
   it("never replaces a real email password with a terminal approval PIN", () => {
     const staff = read("src/lib/staff-admin.server.ts");
     expect(staff).toContain("if (terminalAccount)");

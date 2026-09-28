@@ -210,7 +210,7 @@ type AuthCtx = {
   cashierLogin: (
     userId: string,
     pin: string,
-  ) => Promise<{ ok: boolean; error?: string; code?: LoginFailure }>;
+  ) => Promise<{ ok: boolean; error?: string; code?: LoginFailure | "session-open-failed" }>;
   logout: () => Promise<void>;
   /** Lock the till / switch user — clears the session without losing local data. */
   lock: () => Promise<void>;
@@ -828,6 +828,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           return {
             ok: false,
+            code: "session-open-failed",
             error: "Your PIN was verified, but the secure database session could not be opened. Ask an administrator to repair this staff login.",
           };
         }
