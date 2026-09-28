@@ -47,8 +47,11 @@ jobs:
           git add package.json package-lock.json src/version.ts
           git commit -m "chore: release $tag [release]"
           git tag "$tag"
-          git push origin HEAD:main
-          git push origin "$tag"
+          # Publish the release commit and its immutable tag in one receive.
+          # A split push can advance main and then leave the release untagged
+          # if the server has not made the new commit reachable to a second
+          # receive yet (GitHub reports this as "missing necessary objects").
+          git push --atomic origin HEAD:main "refs/tags/$tag:refs/tags/$tag"
 
       # Pushes made with GITHUB_TOKEN do not start other push workflows.
       # Dispatch both builds against the immutable release tag so Windows,

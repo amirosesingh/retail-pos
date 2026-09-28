@@ -944,9 +944,10 @@ CREATE TABLE IF NOT EXISTS public.terminal_tokens (
     replaced_by uuid,
     claimed_by_device text,
     claimed_at timestamp with time zone,
-    platform text DEFAULT 'unknown'::text NOT NULL,
+    platform text DEFAULT 'pc'::text NOT NULL,
     row_version integer DEFAULT 1 NOT NULL,
-    CONSTRAINT terminal_tokens_status_check CHECK ((status = ANY (ARRAY['active'::text, 'used'::text, 'revoked'::text])))
+    CONSTRAINT terminal_tokens_status_check CHECK ((status = ANY (ARRAY['active'::text, 'used'::text, 'revoked'::text]))),
+    CONSTRAINT terminal_tokens_platform_check CHECK (platform = ANY (ARRAY['pc'::text, 'mobile'::text]))
 );
 
 CREATE TABLE IF NOT EXISTS public.uom_units (
@@ -2617,7 +2618,7 @@ ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS claimed_by_device te
 
 ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS claimed_at timestamp with time zone;
 
-ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS platform text DEFAULT 'unknown'::text NOT NULL;
+ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS platform text DEFAULT 'pc'::text NOT NULL;
 
 ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS row_version integer DEFAULT 1 NOT NULL;
 
@@ -4348,8 +4349,10 @@ BEGIN
     RAISE EXCEPTION 'TERMINAL_TOKEN_EXPIRED';
   END IF;
 
-  IF (t.platform = 'mobile' AND p_platform IS DISTINCT FROM 'android')
-     OR (t.platform = 'pc' AND p_platform IS DISTINCT FROM 'electron') THEN
+  IF (
+    (t.platform = 'mobile' AND p_platform = 'android')
+    OR (t.platform = 'pc' AND p_platform = 'electron')
+  ) IS NOT TRUE THEN
     RAISE EXCEPTION 'TERMINAL_PLATFORM_MISMATCH';
   END IF;
 
@@ -12293,6 +12296,37 @@ ALTER TABLE public.terminal_tokens
   ADD COLUMN IF NOT EXISTS is_claimed boolean NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS expires_at timestamp with time zone,
   ADD COLUMN IF NOT EXISTS claim_proof text;
+
+-- New token rows must use the same two-value contract as the POS, Electron,
+-- Android and the atomic claim helper. Keep the constraint unvalidated only
+-- on an older tenant that still has a legacy value; the claim helper above
+-- fails closed for those rows until they are deliberately reissued.
+ALTER TABLE public.terminal_tokens
+  ALTER COLUMN platform SET DEFAULT 'pc';
+
+DO $terminal_platform_contract$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'public.terminal_tokens'::regclass
+      AND conname = 'terminal_tokens_platform_check'
+  ) THEN
+    ALTER TABLE public.terminal_tokens
+      ADD CONSTRAINT terminal_tokens_platform_check
+      CHECK (platform IN ('pc', 'mobile')) NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.terminal_tokens
+    WHERE platform IS NULL OR platform NOT IN ('pc', 'mobile')
+  ) THEN
+    ALTER TABLE public.terminal_tokens
+      VALIDATE CONSTRAINT terminal_tokens_platform_check;
+  END IF;
+END;
+$terminal_platform_contract$;
 
 ALTER TABLE public.uom_units
   ADD COLUMN IF NOT EXISTS deleted_at text;
