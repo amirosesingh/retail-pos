@@ -39,6 +39,18 @@ describe("sign-in failure categories", () => {
     expect(failureFromAuthError("")).toBe("unknown-error");
   });
 
+  it("prefers stable Supabase Auth codes over changeable response wording", () => {
+    expect(failureFromAuthError({ code: "invalid_credentials", message: "Login refused" })).toBe(
+      "invalid-credentials",
+    );
+    expect(failureFromAuthError({ code: "user_banned", message: "Login refused" })).toBe(
+      "account-inactive",
+    );
+    expect(
+      failureFromAuthError({ code: "validation_failed", message: "missing email or phone" }),
+    ).toBe("configuration-invalid");
+  });
+
   it("offers a way out only for connection problems", () => {
     expect(isConfigurationFailure("cloud-unreachable")).toBe(true);
     expect(isConfigurationFailure("invalid-credentials")).toBe(false);

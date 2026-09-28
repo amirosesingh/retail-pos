@@ -25,6 +25,36 @@ async function adminFetch(path: string, init: RequestInit = {}) {
   return fetch(`${supabaseConfig().url}/auth/v1/${path}`, { ...init, headers });
 }
 
+/**
+ * Create a one-use Auth proof after another server-side credential has already
+ * been verified. This never sends email and, unlike changing the Auth
+ * password to a till PIN, leaves the operator's normal password untouched.
+ */
+export async function createVerifiedPinSignInToken(
+  email: string,
+  expectedAuthUserId: string,
+): Promise<string> {
+  const response = await adminFetch("admin/generate_link", {
+    method: "POST",
+    body: JSON.stringify({ type: "magiclink", email: email.trim().toLowerCase() }),
+  });
+  if (!response.ok) {
+    throw new Error("The secure database session could not be prepared");
+  }
+  const body = (await response.json()) as {
+    properties?: { hashed_token?: string };
+    user?: { id?: string };
+  };
+  // The profile carries both identifiers. Refuse a stale/corrupt email mapping
+  // rather than minting a session for a different Auth user with that address.
+  if (!body.user?.id || body.user.id !== expectedAuthUserId) {
+    throw new Error("The staff login identity does not match its Auth account");
+  }
+  const tokenHash = body.properties?.hashed_token?.trim() ?? "";
+  if (!tokenHash) throw new Error("The secure database session could not be prepared");
+  return tokenHash;
+}
+
 /** Call a database routine with the service key. */
 export async function serviceRpc(name: string, body: Record<string, unknown>) {
   const res = await serviceRest(`rpc/${name}`, {
@@ -387,8 +417,9 @@ async function verifyPin(username: string, pin: string): Promise<VerifiedPin | n
 
 /**
  * Silent healing path. The PIN is checked against the stored hash; when it
- * matches, the real account is created (or its password re-aligned) so the
- * next sign-in is an ordinary one. Returns the address to sign in with.
+ * matches, a missing terminal-only account is created or repaired. A real
+ * email account's ordinary password is never replaced with its approval PIN.
+ * Returns the address to sign in with for legacy callers.
  */
 export async function ensurePinAccount(
   username: string,
@@ -403,26 +434,33 @@ export async function ensurePinAccount(
   // address is only a fallback for rows that never had one.
   const stored = await staffProfile(verified.username);
   const email = stored?.email?.trim().toLowerCase() || internalEmail(verified.username);
+  const terminalAccount = email.endsWith(`@${INTERNAL_EMAIL_DOMAIN}`);
   const existing = await findUserId(email);
   if (existing) {
-    await adminFetch(`admin/users/${existing}`, {
-      method: "PUT",
-      body: JSON.stringify({ password: pin, email_confirm: true }),
-    });
+    if (terminalAccount) {
+      await adminFetch(`admin/users/${existing}`, {
+        method: "PUT",
+        body: JSON.stringify({ password: pin, email_confirm: true }),
+      });
+    }
     await serviceRpc("staff_account_upsert", {
       p_user_id: verified.username,
       p_full_name: verified.fullName,
       p_email: email,
-      p_role: "staff",
-      p_role_slug: null,
+      p_role: stored?.role ?? "staff",
+      p_role_slug: stored?.role_slug ?? null,
       p_store_id: verified.storeId,
-      p_is_active: true,
+      p_is_active: stored?.is_active ?? true,
       p_pin: "",
       p_pin_length: pin.length,
       p_auth_user_id: existing,
-      p_permissions: null,
+      p_permissions: stored?.permissions ?? null,
     });
     return { ok: true, email };
+  }
+
+  if (!terminalAccount) {
+    return { ok: false, error: "This email account needs its login identity repaired by an administrator" };
   }
 
   await provisionStaffAccount({

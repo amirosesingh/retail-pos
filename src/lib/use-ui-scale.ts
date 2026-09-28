@@ -81,7 +81,20 @@ const ensureHydrated = () => {
 
 export function setUiScalePrefs(patch: Partial<UiScalePrefs>) {
   ensureHydrated();
-  prefs = { ...prefs, ...patch };
+  const next = { ...prefs, ...patch };
+  // useSyncExternalStore listeners run synchronously. Re-emitting an
+  // unchanged profile while a Radix control is dispatching onValueChange can
+  // re-enter that control before its event has unwound (most visibly in the
+  // Display settings radio groups). An unchanged value is not an update.
+  if (
+    next.mode === prefs.mode &&
+    next.scale === prefs.scale &&
+    next.textScale === prefs.textScale &&
+    next.density === prefs.density &&
+    next.registerZoom === prefs.registerZoom
+  )
+    return;
+  prefs = next;
   try {
     window.localStorage.setItem(KEY, JSON.stringify(prefs));
   } catch {

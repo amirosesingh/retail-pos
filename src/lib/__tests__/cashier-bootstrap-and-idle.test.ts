@@ -93,6 +93,39 @@ describe("cashier location bootstrap", () => {
     );
   });
 
+  it("establishes the verified account session before POS bootstrap on every shell", () => {
+    const auth = read("src/lib/pos-auth.tsx");
+    const login = auth.slice(auth.indexOf("const cashierLogin"), auth.indexOf("const endSession"));
+    expect(login).toContain("verified?.authTokenHash");
+    expect(login).not.toContain("preparePinAccount");
+    expect(login.indexOf("supabase.auth.verifyOtp")).toBeLessThan(
+      login.indexOf("setTerminalUser(next)"),
+    );
+
+    const server = read("src/lib/cashier-login.server.ts");
+    expect(server).toContain("authTokenHash");
+    expect(server).toContain("email,store_id");
+    expect(server).toContain("createVerifiedPinSignInToken");
+    expect(login).not.toContain("password: pin");
+  });
+
+  it("never replaces a real email password with a terminal approval PIN", () => {
+    const staff = read("src/lib/staff-admin.server.ts");
+    expect(staff).toContain("if (terminalAccount)");
+    expect(staff).toContain('email.endsWith(`@${INTERNAL_EMAIL_DOMAIN}`)');
+    expect(staff).toContain("createVerifiedPinSignInToken");
+    expect(staff.indexOf("if (terminalAccount)")).toBeLessThan(
+      staff.indexOf('body: JSON.stringify({ password: pin, email_confirm: true })'),
+    );
+  });
+
+  it("resolves cashier inactivity from the canonical staff profile without a missing column probe", () => {
+    const guard = read("src/lib/session-guard.server.ts");
+    expect(guard).toContain("app_users?user_id=eq.");
+    expect(guard).not.toContain("cashiers?id=eq.");
+    expect(guard).not.toContain("cashiers?idle_timeout_minutes");
+  });
+
   it("loads the location directory independently of heavy business data", () => {
     const store = read("src/lib/pos-store.tsx");
     expect(store).toContain("const locationTask = isOnlineOnly() ? loadLocationDirectory() : null");
