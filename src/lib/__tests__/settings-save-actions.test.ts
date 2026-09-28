@@ -21,6 +21,14 @@ describe("settings save actions", () => {
   it.each(independentlySaved)("does not add an unrelated global save bar to %s", (file) => {
     expect(read(`src/routes/${file}`)).toContain("showSaveBar={false}");
   });
+
+  it("keeps database recovery editable before scoped settings tables are available", () => {
+    const frame = read("src/platforms/web/components/pos/settings/SettingsFrame.tsx");
+    const route = read("src/routes/settings.database.tsx");
+
+    expect(route).toContain("allowWhileScopeLoading");
+    expect(frame).toContain("settingsScopeLoading && !allowWhileScopeLoading");
+  });
 });
 
 describe("shift status privacy", () => {

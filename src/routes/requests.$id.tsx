@@ -91,7 +91,11 @@ function RequestDetail() {
     mineToApprove &&
     transfer.status === "awaiting_approval" &&
     (can("can_approve_transfer") || can("can_receive_transfer"));
-  const canReject = live && mineToApprove && transfer.status === "awaiting_approval";
+  const canReject =
+    live &&
+    mineToApprove &&
+    transfer.status === "awaiting_approval" &&
+    (can("can_approve_transfer") || can("can_receive_transfer"));
 
   return (
     <AppShell>

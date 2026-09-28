@@ -79,6 +79,12 @@ type Props = {
   terminalManagement?: boolean;
   /** Hide the shared save bar on read-only pages and pages with their own save action. */
   showSaveBar?: boolean;
+  /**
+   * Connection recovery must remain usable before the scoped settings tables
+   * can be read. Only pages whose controls do not write scoped settings should
+   * opt out of the loading interlock.
+   */
+  allowWhileScopeLoading?: boolean;
 };
 
 export function SettingsFrame({
@@ -89,6 +95,7 @@ export function SettingsFrame({
   wide = false,
   terminalManagement = false,
   showSaveBar = true,
+  allowWhileScopeLoading = false,
 }: Props) {
   const router = useRouter();
   const {
@@ -350,10 +357,10 @@ export function SettingsFrame({
         </header>
 
         <fieldset
-          disabled={settingsScopeLoading}
+          disabled={settingsScopeLoading && !allowWhileScopeLoading}
           className="w-full min-w-0 max-w-full space-y-4 rounded-lg border border-border bg-card p-5 disabled:opacity-60"
         >
-          {settingsScopeLoading && (
+          {settingsScopeLoading && !allowWhileScopeLoading && (
             <p role="status" className="text-sm text-muted-foreground">
               Loading settings for this scope. Editing becomes available when loading succeeds.
             </p>
