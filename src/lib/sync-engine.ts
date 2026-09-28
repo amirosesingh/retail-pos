@@ -568,15 +568,21 @@ export const syncBusy = () => cycleRunning;
  * Tables whose changes must reach this shop's own database at once rather
  * than on the next timer tick: staff accounts, roles and settings.
  */
+const LIVE_SETTINGS_TABLES = [
+  "integration_settings",
+  "pos_settings",
+  "pos_store_settings",
+  "secure_settings",
+  "settings_overrides",
+  "settings_locks",
+  "settings_scoped",
+] as const;
+
 const LIVE_TABLES = [
   "app_users",
   "staff_roles",
   "stores",
-  "pos_settings",
-  "pos_store_settings",
-  "settings_overrides",
-  "settings_locks",
-  "settings_scoped",
+  ...LIVE_SETTINGS_TABLES,
   "sales",
   "sale_items",
   "payment_transactions",
@@ -676,7 +682,7 @@ function flushLiveChanges(): void {
   // consume the changed records directly without reloading the whole dataset.
   if (localDb()) void syncNow(`live:${[...new Set(changes.map((change) => change.table))].join(",")}`);
   for (const change of changes) {
-    if (["pos_settings", "pos_store_settings", "settings_overrides", "settings_locks", "settings_scoped"].includes(change.table)) {
+    if ((LIVE_SETTINGS_TABLES as readonly string[]).includes(change.table)) {
       announceSettingsChange(change.reason, change.storeId, change.table);
     }
     if (["sales", "sale_items", "payment_transactions"].includes(change.table)) {
@@ -721,7 +727,13 @@ export function startSyncEngine() {
   // Push queued work first, then bring central changes down, then converge the
   // terminal's own database in both directions — one cycle at a time.
   const desktopBridge = localDb();
+  let lastDesktopPullAt: string | null | undefined;
   const applyDesktopStatus = (status: LocalSyncStatus) => {
+    const completedNewPull =
+      lastDesktopPullAt !== undefined &&
+      Boolean(status.lastPullAt) &&
+      status.lastPullAt !== lastDesktopPullAt;
+    lastDesktopPullAt = status.lastPullAt ?? null;
     const batches = status.businessBatches;
     const failedRow = batches?.rows?.find((row) => row.status !== "pending");
     const centralPending =
@@ -736,6 +748,10 @@ export function startSyncEngine() {
       credentialsInvalid: status.credentialsInvalid ?? false,
       cloudConfigured: status.cloudConfigured ?? null,
     });
+    // The Electron worker has now committed its cloud pull into SQL Server.
+    // Re-read cached rules/settings only after that commit, so the running
+    // till cannot keep using the value that preceded the sync cycle.
+    if (completedNewPull) announceSettingsChange("desktop:pull-complete");
   };
   const offDesktopStatus = desktopBridge?.sync?.subscribe?.(applyDesktopStatus) ??
     desktopBridge?.onStatus?.(applyDesktopStatus);

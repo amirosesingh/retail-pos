@@ -1136,6 +1136,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const unsubscribe = subscribeSettingsChange((change) => {
       if (
         change.table !== "pos_settings" &&
+        change.reason !== "desktop:pull-complete" &&
         change.reason !== "reconnect" &&
         change.reason !== "realtime:subscribed"
       )

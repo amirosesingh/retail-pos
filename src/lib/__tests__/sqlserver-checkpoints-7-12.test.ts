@@ -200,6 +200,51 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(committed).toHaveBeenCalledOnce();
   });
 
+  it("records the table being requested before a bootstrap failure", async () => {
+    const failure = new Error("SYNC_TABLE_FORBIDDEN");
+    const checkpoint = vi.fn();
+    const cloud = {
+      bootstrapPage: vi.fn().mockRejectedValue(failure),
+      applyLocalBatch: vi.fn(),
+    };
+    const context = {
+      job: { dependency_index: 0, last_committed_cursor: null, batch_size: 500 },
+      waitWhilePaused: vi.fn(),
+      checkpoint,
+    };
+    const registry = {
+      tables: [
+        {
+          cloudTable: "shift_notifications",
+          sqlServerTable: "shift_notifications",
+          dependencyOrder: 0,
+          columns: [{ cloudColumn: "id", primaryKey: true }],
+        },
+      ],
+    };
+    const { runBootstrap } = await import("../../../electron/jobs/bootstrap.cjs");
+
+    await expect(
+      runBootstrap({
+        registry,
+        cloud,
+        connectionManager: {},
+        checkpoints: {},
+        branchId: "B1",
+        historyDays: 7300,
+        context,
+      }),
+    ).rejects.toBe(failure);
+
+    expect(checkpoint).toHaveBeenCalledWith({
+      status: "running",
+      phase: "bootstrap",
+      current_table: "shift_notifications",
+      dependency_index: 0,
+      last_committed_cursor: null,
+    });
+  });
+
   it("passes sync checkpoints through the reinstall lifecycle", async () => {
     const checkpoints = { save: vi.fn() };
     const { LocalDataLifecycle } = await import("../../../electron/jobs/lifecycle.cjs");

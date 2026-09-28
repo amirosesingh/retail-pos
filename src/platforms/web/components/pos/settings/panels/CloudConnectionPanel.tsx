@@ -114,10 +114,10 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
   }
 
   // An unconfigured terminal has nothing to protect and nobody to sign in as:
-  // first-run setup is open. Once a connection exists, only a supervisor or
-  // administrator may point this device at a different company.
+  // first-run setup is open. Once a connection exists, the same granular
+  // permission that opens Database Connection controls whether it can change.
   const firstRun = !status?.configured;
-  const privileged = Boolean(auth?.isSupervisor || auth?.isAdmin);
+  const privileged = Boolean(auth?.isAdmin || auth?.can("can_manage_sync_backup"));
   const editable = firstRun || privileged || unlocked;
 
   // An empty key box means "keep the key already sealed on this device", so
@@ -228,11 +228,11 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           <Lock className="size-4" />
           <span>
-            This terminal is already connected. Only a supervisor or administrator may change where
-            it reads and writes.
+            This terminal is already connected. Database-management permission is required to
+            change where it reads and writes.
           </span>
           <Button size="sm" variant="outline" onClick={() => setUnlocked(true)} disabled={!privileged}>
-            {privileged ? "Unlock to change" : "Sign in as a supervisor"}
+            {privileged ? "Unlock to change" : "Ask an administrator for database access"}
           </Button>
         </div>
       )}

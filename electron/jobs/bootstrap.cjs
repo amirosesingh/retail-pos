@@ -21,6 +21,7 @@ async function runBootstrap({registry,cloud,connectionManager,checkpoints,branch
   const tables=[...registry.tables].sort((a,b)=>a.dependencyOrder-b.dependencyOrder||a.cloudTable.localeCompare(b.cloudTable));
   for(let index=startIndex;index<tables.length;index++){
     const table=tables[index]; let cursor=index===startIndex?context.job.last_committed_cursor??null:null;
+    await context.checkpoint({status:"running",phase:"bootstrap",current_table:table.sqlServerTable,dependency_index:index,last_committed_cursor:cursor});
     do{
       await context.waitWhilePaused();
       const batch=await cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit:Number(context.job.batch_size)||500});

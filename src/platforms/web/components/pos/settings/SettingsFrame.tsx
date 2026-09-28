@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
+import type { PermissionFlag } from "@/lib/permissions";
 import { defaultPaymentDetails, defaultWhatsApp } from "@/lib/pos-seed";
 import {
   PAPER_LABELS,
@@ -77,6 +78,8 @@ type Props = {
   wide?: boolean;
   /** Device registration may also be managed by supervisors. */
   terminalManagement?: boolean;
+  /** Match the page-level permission already enforced by AppShell. */
+  permission?: PermissionFlag;
   /** Hide the shared save bar on read-only pages and pages with their own save action. */
   showSaveBar?: boolean;
   /**
@@ -94,6 +97,7 @@ export function SettingsFrame({
   showPreview = false,
   wide = false,
   terminalManagement = false,
+  permission,
   showSaveBar = true,
   allowWhileScopeLoading = false,
 }: Props) {
@@ -108,8 +112,9 @@ export function SettingsFrame({
     settingsScopeLoading,
   } = usePos();
   const { isAdmin, can } = useAuth();
-  const canSettings =
-    isAdmin || (terminalManagement ? can("can_manage_terminals") : can("can_access_pos_settings"));
+  const requiredPermission =
+    permission ?? (terminalManagement ? "can_manage_terminals" : "can_access_pos_settings");
+  const canSettings = isAdmin || can(requiredPermission);
   // Rendered inside the settings workspace sheet: no app shell, no back link.
   const embedded = useEmbeddedSettings();
 

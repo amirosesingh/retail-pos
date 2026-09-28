@@ -9,9 +9,22 @@ describe("sales realtime refresh", () => {
     expect(engine).toContain("announceSalesChange(change.table, change.storeId)");
     expect(engine).toContain("pendingLiveChanges");
     expect(engine).toContain("for (const change of changes)");
+    for (const table of [
+      "integration_settings",
+      "pos_settings",
+      "pos_store_settings",
+      "secure_settings",
+      "settings_overrides",
+      "settings_locks",
+      "settings_scoped",
+    ]) {
+      expect(engine).toContain(`"${table}"`);
+    }
+    expect(engine).toContain('announceSettingsChange("desktop:pull-complete")');
     expect(store).toContain("subscribeSalesChange");
     expect(store).toContain("subscribeSettingsChange");
     expect(store).toContain('change.table !== "pos_settings"');
+    expect(store).toContain('change.reason !== "desktop:pull-complete"');
     expect(store).toContain("loadSalesPage(active, null, 500)");
     expect(store).toContain("loadCloudSettings()");
     expect(store).toContain("subscribeDataChange");
