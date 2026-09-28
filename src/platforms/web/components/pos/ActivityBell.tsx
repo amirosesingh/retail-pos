@@ -83,13 +83,29 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
   const activityInitializedRef = useRef(false);
 
   const updatePreference = useCallback(
-    async (id: string, action: () => Promise<boolean>, failure: string) => {
+    async (id: string, cleared: boolean, action: () => Promise<boolean>, failure: string) => {
       if (preferenceBusyRef.current.has(id)) return;
       preferenceBusyRef.current.add(id);
       setPreferenceBusy(new Set(preferenceBusyRef.current));
       try {
         const saved = await action();
-        if (!saved) toast.error(failure);
+        if (!saved) {
+          toast.error(failure);
+        } else {
+          // Electron keeps business preferences in SQL Server, not
+          // localStorage. Reflect the committed row immediately so removal
+          // and history insertion animate without waiting for the next poll.
+          setRows((current) =>
+            current.map((row) => {
+              if (row.id !== id) return row;
+              const key = meKey.toLowerCase();
+              const next = cleared
+                ? [...new Set([...row.clearedBy, meKey])]
+                : row.clearedBy.filter((value) => value.toLowerCase() !== key);
+              return { ...row, clearedBy: next };
+            }),
+          );
+        }
       } catch {
         toast.error(failure);
       } finally {
@@ -97,7 +113,7 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
         setPreferenceBusy(new Set(preferenceBusyRef.current));
       }
     },
-    [],
+    [meKey],
   );
 
   const refreshCentre = useCallback(async () => {
@@ -118,7 +134,12 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
     }
     setRows(list);
     mergeRemoteActivityPreferences(meKey, list);
-    const hidden = new Set(clearedIds(meKey));
+    const hidden = new Set([
+      ...clearedIds(meKey),
+      ...list
+        .filter((row) => row.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase()))
+        .map((row) => row.id),
+    ]);
     const fresh = unseenEvents(list, meKey).filter((row) => !hidden.has(row.id));
     setUnread(fresh.length);
     const newlyArrived = activityInitializedRef.current
@@ -183,7 +204,12 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
     };
   }, [showActivity, refresh]);
 
-  const hidden = new Set(clearedIds(meKey));
+  const hidden = new Set([
+    ...clearedIds(meKey),
+    ...rows
+      .filter((row) => row.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase()))
+      .map((row) => row.id),
+  ]);
   const visibleRows = rows.filter((r) => !hidden.has(r.id));
   // Unresolved business records never consult notification clear/read preferences.
   const toDecide = centre?.toDecide ?? [];
@@ -324,7 +350,13 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                           );
                           return;
                         }
-                        await refresh();
+                        setRows((current) =>
+                          current.map((row) =>
+                            visibleRows.some((visible) => visible.id === row.id)
+                              ? { ...row, clearedBy: [...new Set([...row.clearedBy, meKey])] }
+                              : row,
+                          ),
+                        );
                       })
                       .finally(() => setClearAllBusy(false));
                   }}
@@ -373,6 +405,7 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                       onClick={() =>
                         void updatePreference(
                           r.id,
+                          true,
                           () => clearActivityEntry(meKey, r.id),
                           "Could not clear notification. Check the connection and try again.",
                         )
@@ -435,6 +468,7 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                         onClick={() =>
                           void updatePreference(
                             id,
+                            false,
                             () => reopenActivityEntry(meKey, id),
                             "Could not reopen notification. Check the connection and try again.",
                           )

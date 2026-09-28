@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Context,
   type ReactNode,
@@ -266,6 +267,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [terminalUser, setTerminalUser] = useState<TerminalUser | null>(null);
   const [appUser, setAppUser] = useState<AppUserProfile | null>(null);
   const [sessionState, setSessionState] = useState<SessionState>("signed-out");
+  const centralIdentityRef = useRef<string | null>(null);
 
   useEffect(() => {
     try {
@@ -337,9 +339,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!bootstrapped) {
         return;
       }
+      const nextIdentity = next?.user?.id ?? null;
+      const continuingSession =
+        !!nextIdentity &&
+        nextIdentity === centralIdentityRef.current &&
+        (event === "TOKEN_REFRESHED" || event === "SIGNED_IN");
+      if (continuingSession) {
+        // Supabase may repeat SIGNED_IN when a window regains focus. The
+        // identity did not change, so retain the already-proven role/profile
+        // instead of replacing the whole POS with its startup loader.
+        setCentralAuthSessionPresent(true);
+        setSession(next);
+        return;
+      }
       // A refreshed token is the same sign-in continuing, not a new one: only
       // a genuine sign-in starts a new generation.
       if (next && event !== "TOKEN_REFRESHED") bumpSessionEpoch();
+      centralIdentityRef.current = nextIdentity;
       setCentralAuthSessionPresent(Boolean(next));
       setSession(next);
       if (!next) {
@@ -359,6 +375,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!active) return;
       bootstrapped = true;
       const next = checked.session;
+      centralIdentityRef.current = next?.user?.id ?? null;
       setCentralAuthSessionPresent(Boolean(next));
       setSession(next);
       if (!next) {

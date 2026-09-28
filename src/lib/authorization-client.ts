@@ -18,7 +18,9 @@ type DirectCall = (input: never) => Promise<unknown>;
 
 async function callHosted<T>(action: string, data: unknown, direct: DirectCall): Promise<T> {
   if (!isTerminalApp()) return direct({ data } as never) as Promise<T>;
-  const response = await posFetch("/api/v1/pos/authorization", {
+  // Reuse the established sync route so a stale hosted route manifest cannot
+  // turn an otherwise valid approval request into an HTML 404/CORS failure.
+  const response = await posFetch("/api/v1/pos/sync?operation=authorization", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action, data }),

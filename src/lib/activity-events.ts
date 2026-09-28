@@ -687,7 +687,7 @@ async function storeLocalClearedEntries(
   if (!bridge?.query || !ids.length) return false;
   try {
     const result = await bridge.query("activity_events", {
-      columns: "id,cleared_by",
+      columns: "id,store_id,cleared_by",
       in: { column: "id", values: ids },
       limit: Math.min(ids.length, 2000),
     });
@@ -703,10 +703,16 @@ async function storeLocalClearedEntries(
           kind: "update" as const,
           table: "activity_events",
           values: { cleared_by: next },
-          match: { id: String(row.id ?? "") },
+          // The aggregate writer validates branch ownership inside the same
+          // SQL transaction. Carry the row's branch in the match so this
+          // preference update is not rolled back as an unscoped write.
+          match: {
+            id: String(row.id ?? ""),
+            store_id: String(row.store_id ?? ""),
+          },
         };
       })
-      .filter((operation) => operation.match.id);
+      .filter((operation) => operation.match.id && operation.match.store_id);
     if (!operations.length) return false;
     await commitOps("Saving notification preference", operations);
     return true;

@@ -146,13 +146,13 @@ for (const table of tables) {
       ? `UPDATE SET "is_refunded"=(public."sales"."is_refunded" OR EXCLUDED."is_refunded"),"row_version"=GREATEST(public."sales"."row_version",EXCLUDED."row_version")`
       : table.cloudTable === "sale_items"
         ? `UPDATE SET "refunded_qty"=GREATEST(public."sale_items"."refunded_qty",EXCLUDED."refunded_qty"),"row_version"=GREATEST(public."sale_items"."row_version",EXCLUDED."row_version")`
-        : ["activity_events", "authorization_requests", "authorization_log"].includes(
-              table.cloudTable,
-            )
-          ? "NOTHING"
-          : updates.length && !immutable
-            ? `UPDATE SET ${updates.join(",")}${versionWhere}`
-            : "NOTHING";
+        : table.cloudTable === "activity_events"
+          ? `UPDATE SET "cleared_by"=EXCLUDED."cleared_by"`
+          : ["authorization_requests", "authorization_log"].includes(table.cloudTable)
+            ? "NOTHING"
+            : updates.length && !immutable
+              ? `UPDATE SET ${updates.join(",")}${versionWhere}`
+              : "NOTHING";
   const refundOn = ["sales", "sale_items"].includes(table.cloudTable)
     ? "PERFORM set_config('pos.refunding','on',true);"
     : "";

@@ -51,6 +51,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260928082540_electron_direct_activity_preferences.sql",
       "supabase/migrations/20260928125000_enforce_terminal_platform_contract.sql",
       "supabase/migrations/20260928155105_repair_cashier_idle_and_activity_clear.sql",
+      "supabase/migrations/20260928183500_sync_activity_notification_preferences.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
