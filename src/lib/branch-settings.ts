@@ -45,6 +45,19 @@ export const emptyBranchSettings: BranchSettingsState = {
 type OverrideRow = { section: string; patch: unknown };
 type LockRow = { section: string; locked: boolean };
 
+const objectPatch = (value: unknown): SectionPatch | null => {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as SectionPatch;
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as SectionPatch)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
 /** Overrides for every tier this terminal belongs to, plus the lock table. */
 export async function loadBranchSettings(
   ids: ScopeIds,
@@ -70,9 +83,8 @@ export async function loadBranchSettings(
     ]);
     for (const { tier, rows } of reads) {
       for (const row of rows) {
-        if (row.patch && typeof row.patch === "object") {
-          state.overrides[tier][row.section as SettingsSectionId] = row.patch as SectionPatch;
-        }
+        const patch = objectPatch(row.patch);
+        if (patch) state.overrides[tier][row.section as SettingsSectionId] = patch;
       }
     }
     const locks = await dbRouter.query("settings_locks", {

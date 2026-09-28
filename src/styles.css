@@ -877,6 +877,94 @@
     box-shadow 160ms ease-out;
 }
 
+@keyframes activity-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(calc(100% + 1rem)) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes activity-row-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transform: translateY(-0.4rem) scale(0.985);
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes activity-row-out {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transform: translateX(0.75rem) scale(0.985);
+  }
+}
+
+[data-sonner-toast].activity-notification-toast[data-mounted="true"] {
+  animation: activity-toast-in 220ms ease-out both;
+}
+
+.ui-animated-list-item {
+  display: grid;
+  grid-template-rows: 1fr;
+  transform-origin: top center;
+  will-change: grid-template-rows, opacity, transform;
+}
+
+.ui-animated-list-item-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ui-animated-list-item[data-state="entering"] {
+  animation: activity-row-in var(--motion-normal) var(--motion-ease-emphasized) both;
+}
+
+.ui-animated-list-item[data-state="exiting"] {
+  pointer-events: none;
+  animation: activity-row-out var(--motion-normal) var(--motion-ease-standard) both;
+}
+
+.ui-animated-table-row[data-state="entering"] {
+  animation: activity-table-row-in var(--motion-normal) var(--motion-ease-emphasized) both;
+}
+
+.ui-animated-table-row[data-state="exiting"] {
+  pointer-events: none;
+  animation: activity-table-row-out var(--motion-normal) var(--motion-ease-standard) both;
+}
+
+@keyframes activity-table-row-in {
+  from { opacity: 0; transform: translateY(-0.35rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes activity-table-row-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(0.75rem); }
+}
+
+.activity-notification-row,
+.activity-notification-history-row {
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-standard),
+    opacity var(--motion-fast) var(--motion-ease-standard);
+}
+
 [data-sonner-toast].activity-notification-toast:not([data-mounted="true"]),
 [data-sonner-toast].activity-notification-toast[data-removed="true"][data-swipe-out="false"] {
   --y: translateX(calc(100% + 1rem));
@@ -885,6 +973,15 @@
 
 @media (prefers-reduced-motion: reduce) {
   [data-sonner-toast].activity-notification-toast {
+    transition-duration: 1ms;
+    animation: none;
+  }
+  .ui-animated-list-item[data-state] {
+    animation-duration: 1ms;
+    transition-duration: 1ms;
+  }
+  .ui-animated-table-row[data-state] {
+    animation-duration: 1ms;
     transition-duration: 1ms;
   }
 }

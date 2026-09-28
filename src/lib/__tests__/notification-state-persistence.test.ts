@@ -5,9 +5,13 @@ const posFetch = vi.fn(() => Promise.resolve({ ok: true, json: async () => ({ ok
 const readCredentials = vi.fn<
   () => Promise<{ sessionToken?: string; cashierToken?: string; accessToken?: string }>
 >(async () => ({ cashierToken: "signed-in" }));
+const localBridge = { current: null as null | { query: ReturnType<typeof vi.fn> } };
+const commitOps = vi.fn(async () => "local");
 vi.mock("../server-origin", () => ({ posFetch }));
 vi.mock("../pos-credentials", () => ({ readCredentials }));
 vi.mock("../activity-events.functions", () => ({ pushActivityEvent: vi.fn() }));
+vi.mock("@/core/local-db/local-db", () => ({ localDb: () => localBridge.current }));
+vi.mock("@/core/api/pos-db", () => ({ commitOps }));
 
 const values = new Map<string, string>();
 const localStorage = {
@@ -23,6 +27,8 @@ describe("per-user notification state", () => {
     posFetch.mockClear();
     readCredentials.mockReset();
     readCredentials.mockResolvedValue({ cashierToken: "signed-in" });
+    localBridge.current = null;
+    commitOps.mockClear();
     Object.assign(globalThis, {
       window: { localStorage, dispatchEvent: vi.fn() },
       localStorage,
@@ -72,6 +78,50 @@ describe("per-user notification state", () => {
     const activity = await import("../activity-events");
     expect(await activity.clearActivityEntry("manager-1", "event-2")).toBe(false);
     expect(activity.isCleared("manager-1", "event-2")).toBe(false);
+  });
+
+  it("commits Electron clears to branch-scoped local SQL before the hosted endpoint", async () => {
+    Object.assign((globalThis as { window: object }).window, { pos: {} });
+    localBridge.current = {
+      query: vi.fn(async () => ({
+        ok: true,
+        rows: [{ id: "event-local", cleared_by: "[]" }],
+      })),
+    };
+    const activity = await import("../activity-events");
+    expect(await activity.clearActivityEntry("manager-1", "event-local")).toBe(true);
+    expect(commitOps).toHaveBeenCalledWith(
+      "Saving notification preference",
+      [expect.objectContaining({
+        kind: "update",
+        table: "activity_events",
+        values: { cleared_by: ["manager-1"] },
+        match: { id: "event-local" },
+      })],
+    );
+    expect(posFetch).not.toHaveBeenCalled();
+  });
+
+  it("reads Electron notifications from local SQL before the hosted endpoint", async () => {
+    Object.assign((globalThis as { window: object }).window, { pos: {} });
+    localBridge.current = {
+      query: vi.fn(async () => ({
+        ok: true,
+        rows: [{
+          id: "event-local",
+          event_type: "stock_adjust",
+          severity: "warning",
+          title: "Local first",
+          cleared_by: "[]",
+          created_at: "2026-09-28T01:00:00.000Z",
+        }],
+      })),
+    };
+    const activity = await import("../activity-events");
+    await expect(activity.listActivityEvents()).resolves.toEqual([
+      expect.objectContaining({ id: "event-local", title: "Local first" }),
+    ]);
+    expect(posFetch).not.toHaveBeenCalled();
   });
 
   it("does not call the protected endpoint without a signed-in person", async () => {
@@ -165,8 +215,17 @@ describe("per-user notification state", () => {
     expect(bell).toContain("newlyArrived.slice(0, 4).reverse()");
     expect(styles).toContain("translateX(calc(100% + 1rem))");
     expect(styles).toContain("transform 220ms ease-out");
+    expect(styles).toContain("@keyframes activity-toast-in");
+    expect(bell).toContain("<AnimatedList");
+    expect(bell).toContain("activity-notification-row");
+    expect(bell).toContain("activity-notification-history-row");
+    expect(styles).toContain("@keyframes activity-row-out");
+    expect(styles).toContain('.ui-animated-list-item[data-state="exiting"]');
+    expect(styles).toContain("prefers-reduced-motion: reduce");
     expect(report).toContain("Active and history");
     expect(report).toContain("Cleared history");
     expect(report).toContain("reopenActivityEntry");
+    expect(report).toContain("useAnimatedItems");
+    expect(report).toContain("ui-animated-table-row");
   });
 });

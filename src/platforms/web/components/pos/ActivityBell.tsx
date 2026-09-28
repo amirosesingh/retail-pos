@@ -9,9 +9,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Bell } from "lucide-react";
+import { Bell, Check, LoaderCircle, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { AnimatedList } from "@/components/ui/animated-list";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/pos-auth";
@@ -341,13 +342,17 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                 The activity log is not set up on this database yet. Run
                 <span className="font-medium"> supabase/schema.sql</span> to switch it on.
               </p>
-            ) : visibleRows.length === 0 ? (
-              <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                Nothing has happened yet today.
-              </p>
             ) : (
-              visibleRows.slice(0, 12).map((r) => (
-                <div key={r.id} className="border-b border-border/60 px-3 py-2 last:border-0">
+              <AnimatedList
+                items={visibleRows.slice(0, 12)}
+                getKey={(row) => row.id}
+                empty={
+                  <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                    Nothing has happened yet today.
+                  </p>
+                }
+                renderItem={(r) => (
+                <div className="activity-notification-row border-b border-border/60 px-3 py-2 last:border-0">
                   <div className="flex items-start gap-2">
                     <span
                       className={cn(
@@ -358,9 +363,11 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                       {EVENT_LABELS[r.type] ? r.severity : r.type}
                     </span>
                     <p className="min-w-0 text-xs font-medium">{eventText(r.title)}</p>
-                    <button
+                    <Button
                       type="button"
-                      className="ml-auto touch-manipulation text-[10px] text-muted-foreground underline disabled:cursor-wait disabled:opacity-60"
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto h-6 touch-manipulation gap-1 px-2 text-[10px] text-muted-foreground"
                       disabled={preferenceBusy.has(r.id)}
                       aria-busy={preferenceBusy.has(r.id)}
                       onClick={() =>
@@ -371,8 +378,13 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                         )
                       }
                     >
+                      {preferenceBusy.has(r.id) ? (
+                        <LoaderCircle className="size-3 animate-spin" />
+                      ) : (
+                        <Check className="size-3" />
+                      )}
                       {preferenceBusy.has(r.id) ? "Saving…" : "Clear"}
-                    </button>
+                    </Button>
                   </div>
                   {r.message && (
                     <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
@@ -388,31 +400,36 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                     {r.whatsappStatus === "sent" ? " · WhatsApp sent" : ""}
                   </p>
                 </div>
-              ))
+                )}
+              />
             )}
           </TabsContent>
 
           <TabsContent value="history" className="m-0 max-h-80 overflow-y-auto">
-            {clearedCount === 0 ? (
-              <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                No notification history yet.
-              </p>
-            ) : (
-              <>
+            <>
+              {clearedCount > 0 && (
                 <p className="px-3 pt-2 text-[10px] text-muted-foreground">
                   Cleared notifications remain here and can be reopened.
                 </p>
-                {clearedEvents.map((row) => {
+              )}
+              <AnimatedList
+                items={clearedEvents}
+                getKey={(row) => row.id}
+                empty={
+                  <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                    No notification history yet.
+                  </p>
+                }
+                renderItem={(row) => {
                   const id = row.id;
                   return (
-                    <div
-                      key={id}
-                      className="flex items-center gap-2 border-b border-border/60 px-3 py-2 last:border-0"
-                    >
+                    <div className="activity-notification-history-row flex items-center gap-2 border-b border-border/60 px-3 py-2 last:border-0">
                       <p className="min-w-0 flex-1 truncate text-xs">{eventText(row.title)}</p>
-                      <button
+                      <Button
                         type="button"
-                        className="touch-manipulation text-[10px] text-primary underline disabled:cursor-wait disabled:opacity-60"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 touch-manipulation gap-1 px-2 text-[10px] text-primary"
                         disabled={preferenceBusy.has(id)}
                         aria-busy={preferenceBusy.has(id)}
                         onClick={() =>
@@ -423,13 +440,18 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                           )
                         }
                       >
+                        {preferenceBusy.has(id) ? (
+                          <LoaderCircle className="size-3 animate-spin" />
+                        ) : (
+                          <RotateCcw className="size-3" />
+                        )}
                         {preferenceBusy.has(id) ? "Saving…" : "Reopen"}
-                      </button>
+                      </Button>
                     </div>
                   );
-                })}
-              </>
-            )}
+                }}
+              />
+            </>
           </TabsContent>
         </Tabs>
 

@@ -340,6 +340,30 @@ const RELAY_RPCS: Record<
     idArg: "_sale_id",
     storeColumn: "store_id",
   },
+  stock_transfer_approve: {
+    permission: "can_approve_transfer",
+    ownerTable: "stock_transfers",
+    idArg: "p_transfer_id",
+    storeColumn: "from_store_id",
+  },
+  stock_transfer_dispatch: {
+    permission: "can_create_transfer",
+    ownerTable: "stock_transfers",
+    idArg: "p_transfer_id",
+    storeColumn: "from_store_id",
+  },
+  stock_transfer_receive: {
+    permission: "can_receive_transfer",
+    ownerTable: "stock_transfers",
+    idArg: "p_transfer_id",
+    storeColumn: "to_store_id",
+  },
+  stock_transfer_verify: {
+    permission: "can_receive_transfer",
+    ownerTable: "stock_transfers",
+    idArg: "p_transfer_id",
+    storeColumn: "to_store_id",
+  },
 };
 
 /**
@@ -427,9 +451,23 @@ export async function runRelayRpc(
       error: "You can only do this for your own branch.",
     };
 
+  // Attribution comes from the verified caller, never from editable renderer
+  // text. Quantities and reasons remain the user's requested operation.
+  const actor = String(scope.actorName ?? scope.staffUserId ?? scope.label ?? "Staff").slice(0, 160);
+  const actorField =
+    op.fn === "stock_transfer_approve"
+      ? "p_approved_by"
+      : op.fn === "stock_transfer_dispatch"
+        ? "p_dispatched_by"
+        : op.fn === "stock_transfer_receive"
+          ? "p_received_by"
+          : op.fn === "stock_transfer_verify"
+            ? "p_verified_by"
+            : null;
+  const args = actorField ? { ...op.args, [actorField]: actor } : op.args;
   const res = await serviceRest(`rpc/${op.fn}`, {
     method: "POST",
-    body: JSON.stringify(op.args),
+    body: JSON.stringify(args),
   });
   if (res.ok) return { ok: true };
   return { ok: false, error: (await res.text()).slice(0, 400) };

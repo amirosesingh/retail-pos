@@ -3,6 +3,9 @@ const { randomBytes, scryptSync, timingSafeEqual } = require("node:crypto");
 const KEY = "offlineStaffCredentials";
 const MAX_FAILURES = 5;
 const LOCK_MS = 5 * 60 * 1000;
+// SQL Server owns the synchronized roster.  This DPAPI-sealed store is only a
+// last-resort verifier cache, so keep a small number of recently used people.
+const MAX_CACHED_USERS = 12;
 
 function createLocalStaffStore(configStore) {
   const failures = new Map();
@@ -10,7 +13,16 @@ function createLocalStaffStore(configStore) {
     const rows = configStore.get(KEY);
     return rows && typeof rows === "object" && !Array.isArray(rows) ? rows : {};
   };
-  const write = (rows) => configStore.set(KEY, rows);
+  const compact = (rows) => Object.fromEntries(
+    Object.entries(rows)
+      .sort(([, a], [, b]) => {
+        const credential = Number(Boolean(b?.verifier)) - Number(Boolean(a?.verifier));
+        if (credential) return credential;
+        return String(b?.cached_at ?? "").localeCompare(String(a?.cached_at ?? ""));
+      })
+      .slice(0, MAX_CACHED_USERS),
+  );
+  const write = (rows) => configStore.set(KEY, compact(rows));
   const key = (value) => String(value ?? "").trim().toLowerCase();
   const profile = (raw) => ({
     id: String(raw.id ?? raw.user_id ?? raw.username ?? "").slice(0, 128),
@@ -24,7 +36,7 @@ function createLocalStaffStore(configStore) {
   function cache(values) {
     const rows = read();
     let written = 0;
-    for (const value of (Array.isArray(values) ? values : []).slice(0,500)) {
+    for (const value of (Array.isArray(values) ? values : []).slice(0, MAX_CACHED_USERS)) {
       const next = profile(value ?? {});
       const name = key(next.username);
       if (!name) continue;
@@ -32,7 +44,9 @@ function createLocalStaffStore(configStore) {
       // Renderer roster data is useful for the picker but cannot change the
       // authority attached to a credential that was enrolled after a live
       // server PIN check.
-      rows[name] = current.verifier ? current : { ...current, ...next };
+      rows[name] = current.verifier
+        ? { ...current, ...next, verifier: current.verifier, cached_at: current.cached_at }
+        : { ...current, ...next, cached_at: new Date().toISOString() };
       written += 1;
     }
     const saved = write(rows);
@@ -46,7 +60,11 @@ function createLocalStaffStore(configStore) {
     if (String(pin ?? "").length < 4 || String(pin ?? "").length > 32) return { ok: false, error: "Enter a valid PIN or passcode." };
     const salt = randomBytes(16);
     const hash = scryptSync(String(pin), salt, 32);
-    rows[name] = { ...current, verifier: `scrypt:${salt.toString("base64")}:${hash.toString("base64")}` };
+    rows[name] = {
+      ...current,
+      verifier: `scrypt:${salt.toString("base64")}:${hash.toString("base64")}`,
+      cached_at: new Date().toISOString(),
+    };
     return write(rows);
   }
   function enroll(raw, pin) {
@@ -57,7 +75,11 @@ function createLocalStaffStore(configStore) {
     if (String(pin ?? "").length < 4 || String(pin ?? "").length > 32) return { ok: false, error: "Enter a valid PIN or passcode." };
     const salt = randomBytes(16);
     const hash = scryptSync(String(pin), salt, 32);
-    rows[name] = { ...next, verifier: `scrypt:${salt.toString("base64")}:${hash.toString("base64")}` };
+    rows[name] = {
+      ...next,
+      verifier: `scrypt:${salt.toString("base64")}:${hash.toString("base64")}`,
+      cached_at: new Date().toISOString(),
+    };
     failures.delete(name);
     return write(rows);
   }

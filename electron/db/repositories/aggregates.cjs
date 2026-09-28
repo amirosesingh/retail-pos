@@ -129,13 +129,18 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
-      if (error?.code === "EIDEMPOTENCY") throw error;
+      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN"].includes(error?.code))
+        throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const sqlNumber = Number.isFinite(Number(error?.number)) ? Number(error.number) : null;
       const suffix = sqlNumber == null ? "" : ` (SQL Server ${sqlNumber})`;
+      const sqlDetail = String(error?.message ?? "")
+        .replace(/[\r\n\t]+/g, " ")
+        .replace(/\s{2,}/g, " ")
+        .slice(0, 500);
       throw Object.assign(
         new Error(`Local SQL Server ${kind} commit failed${target}${suffix}.`),
-        { code: "ESQLSERVER_WRITE", stage, table: tableName, sqlNumber, cause: error },
+        { code: "ESQLSERVER_WRITE", stage, table: tableName, sqlNumber, sqlDetail, cause: error },
       );
     }
   }

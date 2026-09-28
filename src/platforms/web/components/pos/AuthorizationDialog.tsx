@@ -24,7 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { notifyError } from "@/lib/notify";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { authorizeWithPin, submitAuthorizationRequest } from "@/lib/authorization.functions";
+import { authorizeWithPin, submitAuthorizationRequest } from "@/lib/authorization-client";
 import { looksOffline, parkGovernanceRow } from "@/lib/governance-offline";
 import { useAuthOptional } from "@/lib/pos-auth";
 import type { AuthActionKey, AuthMode, AuthPayload, AuthorizationRule } from "@/lib/authorization";

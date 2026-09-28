@@ -98,6 +98,23 @@ describe("canonical Supabase SQL", () => {
     expect(sql).toContain("FUNCTION public.pos_sale_commit");
   });
 
+  it("publishes PIN changes so every terminal replaces its local hash", () => {
+    const sql = read("supabase/schema.sql");
+    const setPin = sql.slice(
+      sql.indexOf("CREATE OR REPLACE FUNCTION public.staff_account_set_pin"),
+      sql.indexOf("CREATE OR REPLACE FUNCTION public.staff_account_upsert"),
+    );
+    expect(setPin).toContain("pin_hash = extensions.crypt(p_pin");
+    expect(setPin).toContain("updated_at = now()");
+    expect(sql).toContain(
+      "CREATE TRIGGER app_users_bump_row_version BEFORE UPDATE ON public.app_users",
+    );
+    expect(sql).toContain("FUNCTION public.sync_feed_app_users()");
+    expect(sql).toContain(
+      'CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."app_users"',
+    );
+  });
+
   it("enforces completed-sale tender corrections in the database", () => {
     const sql = read("supabase/schema.sql");
     const start = sql.indexOf("CREATE OR REPLACE FUNCTION public.enforce_sale_permissions()");

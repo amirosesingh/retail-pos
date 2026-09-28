@@ -8,7 +8,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportAppReady } from "@/lib/app-health";
@@ -46,6 +46,8 @@ import { usePublicHostLanding } from "../lib/coupon-hosts";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { bypassPersistentAppShell } from "@/lib/app-shell-routes";
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
+import { hydrateConnectionProfile } from "@/lib/connection-profile";
+import { TillLoader } from "@/components/shared/TillLoader";
 
 function NotFoundComponent() {
   return (
@@ -285,34 +287,52 @@ function RootComponent() {
       <ThemeProvider>
         <NativeBoot>
           <OfflineGate>
-            {/* Single mount point for auth: no route or component may mount its own
-          AuthProvider — a second provider creates a second session tree. */}
-            <AuthProvider>
-              <PermissionsProvider>
-                <PosProvider>
-                  <RulesBridge>
-                    {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-                    <AuditTracker />
-                    <TelemetryAgent />
-                    <FirstRunSetup>
-                      <PrivilegeGate>
-                        <PersistentRouteOutlet />
-                      </PrivilegeGate>
-                    </FirstRunSetup>
+            <ConnectionProfileBoot>
+              {/* Single mount point for auth: no route or component may mount its own
+            AuthProvider — a second provider creates a second session tree. */}
+              <AuthProvider>
+                <PermissionsProvider>
+                  <PosProvider>
+                    <RulesBridge>
+                      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+                      <AuditTracker />
+                      <TelemetryAgent />
+                      <FirstRunSetup>
+                        <PrivilegeGate>
+                          <PersistentRouteOutlet />
+                        </PrivilegeGate>
+                      </FirstRunSetup>
 
-                    <AndroidUpdateBanner />
-                    <DesktopUpdateBanner />
-                    <Toaster position="top-center" />
-                    <ErrorNotifier />
-                  </RulesBridge>
-                </PosProvider>
-              </PermissionsProvider>
-            </AuthProvider>
+                      <AndroidUpdateBanner />
+                      <DesktopUpdateBanner />
+                      <Toaster position="top-center" />
+                      <ErrorNotifier />
+                    </RulesBridge>
+                  </PosProvider>
+                </PermissionsProvider>
+              </AuthProvider>
+            </ConnectionProfileBoot>
           </OfflineGate>
         </NativeBoot>
       </ThemeProvider>
     </QueryClientProvider>
   );
+}
+
+/** Do not resolve a cloud client before Electron restores its DPAPI values. */
+function ConnectionProfileBoot({ children }: { children: ReactNode }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let current = true;
+    void hydrateConnectionProfile().finally(() => {
+      if (current) setReady(true);
+    });
+    return () => {
+      current = false;
+    };
+  }, []);
+  if (!ready) return <TillLoader message="Restoring secure connection…" />;
+  return children;
 }
 
 /** The shell survives every protected in-app route change. */

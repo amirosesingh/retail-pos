@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, RefreshCw } from "lucide-react";
+import { Check, Download, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
+import { useAnimatedItems } from "@/components/ui/animated-list";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
@@ -122,6 +123,8 @@ function NotificationsReport() {
 
   const page = usePagination(filtered);
   const visible = page.pageItems;
+  const eventKey = useCallback((row: ActivityEvent) => row.id, []);
+  const animated = useAnimatedItems(visible, eventKey);
 
   const exportCsv = () => {
     const url = URL.createObjectURL(
@@ -222,15 +225,22 @@ function NotificationsReport() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visible.length === 0 ? (
+              {animated.rendered.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="py-8 text-center text-xs text-muted-foreground">
                     No events match these filters.
                   </TableCell>
                 </TableRow>
               ) : (
-                visible.map((r) => (
-                  <TableRow key={r.id}>
+                animated.rendered.map(({ key, item: r, phase }) => (
+                  <TableRow
+                    key={key}
+                    className="ui-animated-table-row"
+                    data-state={phase}
+                    onAnimationEnd={(event) => {
+                      if (event.target === event.currentTarget) animated.settle(key, phase);
+                    }}
+                  >
                     <TableCell className="text-xs">{when(r.createdAt)}</TableCell>
                     <TableCell>
                       <span
@@ -275,6 +285,13 @@ function NotificationsReport() {
                         disabled={preferenceBusy === r.id}
                         onClick={() => void updatePreference(r)}
                       >
+                        {preferenceBusy === r.id ? (
+                          <LoaderCircle className="size-3 animate-spin" />
+                        ) : r.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase()) ? (
+                          <RotateCcw className="size-3" />
+                        ) : (
+                          <Check className="size-3" />
+                        )}
                         {preferenceBusy === r.id
                           ? "Saving…"
                           : r.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase())

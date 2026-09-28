@@ -24,6 +24,7 @@ export type CachedCredential = {
 
 const KEY = "pos.offline.credentials.v1";
 export const DEFAULT_MAX_AGE_DAYS = 30;
+export const MAX_CACHED_CREDENTIALS = 8;
 
 const isBrowser = () => typeof window !== "undefined";
 
@@ -49,7 +50,11 @@ export async function derive(pin: string, saltHex: string): Promise<string> {
 function read(): CachedCredential[] {
   if (!isBrowser()) return [];
   try {
-    return JSON.parse(readBusinessValue(KEY) ?? "[]") as CachedCredential[];
+    const rows = JSON.parse(readBusinessValue(KEY) ?? "[]") as CachedCredential[];
+    return rows
+      .filter((row) => row && !isExpired(row))
+      .sort((a, b) => Date.parse(b.cachedAt) - Date.parse(a.cachedAt))
+      .slice(0, MAX_CACHED_CREDENTIALS);
   } catch {
     return [];
   }
@@ -58,7 +63,14 @@ function read(): CachedCredential[] {
 function write(rows: CachedCredential[]) {
   if (!isBrowser()) return;
   try {
-    writeBusinessValue(KEY, JSON.stringify(rows));
+    writeBusinessValue(
+      KEY,
+      JSON.stringify(
+        rows
+          .sort((a, b) => Date.parse(b.cachedAt) - Date.parse(a.cachedAt))
+          .slice(0, MAX_CACHED_CREDENTIALS),
+      ),
+    );
   } catch {
     /* storage full */
   }
