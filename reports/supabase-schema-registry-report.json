@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-09-28T02:16:12.257Z",
+  "generatedAt": "2026-09-28T07:54:18.642Z",
   "tableCount": 68,
-  "columnCount": 1155,
+  "columnCount": 1156,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -1603,6 +1603,12 @@
         {
           "name": "role_slug",
           "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "idle_timeout_minutes",
+          "declaration": "integer",
           "nullable": true,
           "hasDefault": false
         }
@@ -5769,7 +5775,7 @@
         },
         {
           "name": "platform",
-          "declaration": "text DEFAULT 'unknown'::text NOT NULL",
+          "declaration": "text DEFAULT 'pc'::text NOT NULL",
           "nullable": false,
           "hasDefault": true
         },

@@ -1063,6 +1063,12 @@ export async function loadCloudState(
   // no local bridge, so they continue through the normal online path.
   if (typeof navigator !== "undefined" && !navigator.onLine && localDb())
     return loadLocalState(new Error("Central database is offline."));
+  // A PIN-only Electron session intentionally has no Supabase Auth JWT. Its
+  // durable SQL Server snapshot is the data source; probing protected cloud
+  // tables with only the publishable key creates noisy 42501 errors before the
+  // normal fallback runs.
+  if (localDb() && !hasStaffSession())
+    return loadLocalState(new Error("No direct cloud staff session is active."));
   // These reads are independent. Start membership tiers alongside the other
   // slices so a full network round trip is not added to every sign-in.
   const [tiers, products, members, sales, promotions, settings, stores, shifts] = await Promise.all(

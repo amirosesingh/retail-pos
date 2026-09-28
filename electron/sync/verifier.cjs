@@ -22,6 +22,11 @@ function decimal(value) {
 function normalize(column, value) {
   if (value === null || value === undefined) return null;
   const type = String(column.cloudType ?? "").toLowerCase();
+  // SQL Server's ODBC driver commonly returns uniqueidentifier values in
+  // uppercase while PostgreSQL/Supabase serializes uuid values in lowercase.
+  // UUID text is case-insensitive, so canonicalize it before hashing or an
+  // identical row is reported as a completely different primary key.
+  if (type === "uuid") return String(value).toLowerCase();
   if (/timestamp|date|time/.test(type)) {
     const date = value instanceof Date ? value : new Date(String(value));
     return Number.isNaN(date.valueOf()) ? String(value) : date.toISOString();

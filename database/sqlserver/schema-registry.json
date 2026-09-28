@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-09-28T02:16:12.257Z",
+  "generatedAt": "2026-09-28T07:54:18.642Z",
   "tables": [
     {
       "cloudTable": "coupon_campaigns",
@@ -3314,6 +3314,19 @@
           "sqlServerColumn": "role_slug",
           "cloudType": "text",
           "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "idle_timeout_minutes",
+          "sqlServerColumn": "idle_timeout_minutes",
+          "cloudType": "integer",
+          "sqlServerType": "int",
           "nullable": true,
           "defaultRule": null,
           "primaryKey": false,
@@ -11749,7 +11762,7 @@
           "cloudType": "text",
           "sqlServerType": "nvarchar(max)",
           "nullable": false,
-          "defaultRule": "'unknown'",
+          "defaultRule": "'pc'",
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,

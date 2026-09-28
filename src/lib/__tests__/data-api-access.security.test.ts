@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 
 const schema = readFileSync("supabase/schema.sql", "utf8");
 const finalHardening = schema.slice(schema.lastIndexOf("-- Close anonymous table access"));
+const systemHealth = readFileSync("src/lib/system-health.ts", "utf8");
+const dbHealth = readFileSync("src/lib/db-health.ts", "utf8");
+const featureSchema = readFileSync("src/core/types/feature-schema.ts", "utf8");
+const posDb = readFileSync("src/core/api/pos-db.ts", "utf8");
 
 describe("anonymous Data API access", () => {
   it("revokes table and sequence privileges before granting two public read surfaces", () => {
@@ -42,5 +46,13 @@ describe("anonymous Data API access", () => {
     expect(finalHardening).toMatch(
       /CREATE POLICY "settings_overrides_read"[\s\S]*FOR SELECT TO authenticated USING \(true\)/,
     );
+  });
+
+  it("uses the anonymous-safe health surface and avoids protected probes on PIN-only tills", () => {
+    expect(systemHealth).toContain('.from("public_flags")');
+    expect(systemHealth).not.toContain('.from("pos_settings")');
+    expect(dbHealth).toContain("if (session)");
+    expect(featureSchema).toContain("if (!directAccess)");
+    expect(posDb).toContain("if (localDb() && !hasStaffSession())");
   });
 });
