@@ -32,4 +32,20 @@ describe("hosted application security headers", () => {
     expect(secured.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await secured.text()).toBe("ready");
   });
+
+  it("forces HTML to revalidate without changing API cache policy", () => {
+    const html = withWebSecurityHeaders(
+      new Response("<main>ready</main>", {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    const api = withWebSecurityHeaders(
+      new Response("{}", {
+        headers: { "content-type": "application/json", "cache-control": "public, max-age=60" },
+      }),
+    );
+
+    expect(html.headers.get("cache-control")).toBe("no-cache, must-revalidate");
+    expect(api.headers.get("cache-control")).toBe("public, max-age=60");
+  });
 });

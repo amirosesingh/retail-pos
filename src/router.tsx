@@ -2,6 +2,9 @@ import { QueryClient } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
 import { isOnlineOnly } from "./lib/live-mode";
+import { installStaleAssetRecovery } from "./lib/stale-asset-recovery";
+
+installStaleAssetRecovery();
 
 export const getRouter = () => {
   // Live clients refresh on focus/reconnect, while a short in-memory window prevents
