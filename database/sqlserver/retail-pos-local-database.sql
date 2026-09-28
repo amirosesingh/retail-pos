@@ -1816,6 +1816,7 @@ IF OBJECT_ID(N'dbo.cashiers', N'U') IS NULL BEGIN CREATE TABLE dbo.[cashiers] (
   [created_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_cashiers_created_at] DEFAULT (SYSDATETIMEOFFSET()),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_cashiers_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
   [role_slug] nvarchar(max) NULL,
+  [idle_timeout_minutes] int NULL,
   CONSTRAINT [PK_cashiers] PRIMARY KEY ([id])
 
 ); END;
@@ -1915,6 +1916,8 @@ END;
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.cashiers') AND c.name=N'updated_at' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[cashiers] ALTER COLUMN [updated_at] datetimeoffset(7) NOT NULL;
 
 IF COL_LENGTH(N'dbo.cashiers', N'role_slug') IS NULL ALTER TABLE dbo.[cashiers] ADD [role_slug] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.cashiers', N'idle_timeout_minutes') IS NULL ALTER TABLE dbo.[cashiers] ADD [idle_timeout_minutes] int NULL;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.cashiers') AND name=N'IX_cashiers_store_id') CREATE INDEX [IX_cashiers_store_id] ON dbo.[cashiers]([store_id]);
 
@@ -7392,7 +7395,7 @@ IF OBJECT_ID(N'dbo.terminal_tokens', N'U') IS NULL BEGIN CREATE TABLE dbo.[termi
   [replaced_by] uniqueidentifier NULL,
   [claimed_by_device] nvarchar(max) NULL,
   [claimed_at] datetimeoffset(7) NULL,
-  [platform] nvarchar(max) NOT NULL CONSTRAINT [DF_terminal_tokens_platform] DEFAULT ('unknown'),
+  [platform] nvarchar(max) NOT NULL CONSTRAINT [DF_terminal_tokens_platform] DEFAULT ('pc'),
   [row_version] int NOT NULL CONSTRAINT [DF_terminal_tokens_row_version] DEFAULT (1),
   [claim_secret_hash] nvarchar(max) NULL,
   [claim_expires_at] datetimeoffset(7) NULL,
@@ -7484,10 +7487,10 @@ IF OBJECT_ID(N'dbo.terminal_tokens', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.term
   SELECT 1 FROM sys.default_constraints dc
   JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
   WHERE dc.parent_object_id=OBJECT_ID(N'dbo.terminal_tokens') AND c.name=N'platform'
-) ALTER TABLE dbo.[terminal_tokens] ADD CONSTRAINT [DF_terminal_tokens_platform] DEFAULT ('unknown') FOR [platform];
+) ALTER TABLE dbo.[terminal_tokens] ADD CONSTRAINT [DF_terminal_tokens_platform] DEFAULT ('pc') FOR [platform];
 
 IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.terminal_tokens') AND name=N'platform' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[terminal_tokens] SET [platform]=''unknown'' WHERE [platform] IS NULL;';
+  EXEC sys.sp_executesql N'UPDATE dbo.[terminal_tokens] SET [platform]=''pc'' WHERE [platform] IS NULL;';
   ALTER TABLE dbo.[terminal_tokens] ALTER COLUMN [platform] nvarchar(max) NOT NULL;
 END;
 
@@ -11125,6 +11128,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'cashiers', N'created_at'),
   (N'cashiers', N'updated_at'),
   (N'cashiers', N'role_slug'),
+  (N'cashiers', N'idle_timeout_minutes'),
   (N'coupon_events', N'id'),
   (N'coupon_events', N'event_type'),
   (N'coupon_events', N'campaign_id'),
@@ -11880,9 +11884,9 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_requests', N'payload'),
   (N'authorization_requests', N'status'),
   (N'authorization_requests', N'decided_by'),
-  (N'authorization_requests', N'decided_by_name'),
-  (N'authorization_requests', N'decided_at');
+  (N'authorization_requests', N'decided_by_name');
 INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N'authorization_requests', N'decided_at'),
   (N'authorization_requests', N'decision_note'),
   (N'authorization_requests', N'expires_at'),
   (N'authorization_requests', N'consumed_at'),

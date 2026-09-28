@@ -125,6 +125,16 @@ describe("SQL Server schema registry", () => {
     expect(sql).not.toMatch(/sync_change_journal[\s\S]{0,1000}\bpayload\b/i);
   });
 
+  it("keeps server-managed session secrets out of the PC database", () => {
+    expect(
+      registry.tables.some(
+        (table: { cloudTable: string }) => table.cloudTable === "user_sessions",
+      ),
+    ).toBe(false);
+    expect(completeSql).not.toContain("dbo.[user_sessions]");
+    expect(completeSql).not.toContain("session_token_hash");
+  });
+
   it("keeps Electron settings current through the SQL Server sync registry", () => {
     const expectedDirections: Record<string, "bidirectional" | "pull"> = {
       integration_settings: "bidirectional",

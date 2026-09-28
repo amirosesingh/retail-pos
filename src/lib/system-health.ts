@@ -72,8 +72,8 @@ export async function checkDatabase(): Promise<ServiceCheck> {
   const started = Date.now();
   try {
     const { error } = await supabaseExternal
-      .from("pos_settings")
-      .select("id")
+      .from("public_flags")
+      .select("key")
       .limit(1);
     if (error) throw error;
     return {

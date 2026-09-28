@@ -265,7 +265,10 @@ CREATE TABLE IF NOT EXISTS public.cashiers (
     last_login_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    role_slug text
+    role_slug text,
+    idle_timeout_minutes integer,
+    CONSTRAINT cashiers_idle_timeout_minutes_check
+      CHECK (idle_timeout_minutes IS NULL OR idle_timeout_minutes BETWEEN 1 AND 1440)
 );
 
 CREATE TABLE IF NOT EXISTS public.coupon_events (
@@ -2800,7 +2803,6 @@ CREATE OR REPLACE FUNCTION public.activity_events_immutable() RETURNS trigger
     AS $$
 BEGIN
   IF TG_OP = 'UPDATE'
-     AND NEW.cleared_by IS DISTINCT FROM OLD.cleared_by
      AND (to_jsonb(NEW) - 'cleared_by') = (to_jsonb(OLD) - 'cleared_by') THEN
     RETURN NEW;
   END IF;
@@ -12659,9 +12661,9 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."cashiers" ("id","username","full_name","pin_hash","store_id","permissions","is_active","last_login_at","created_at","updated_at","role_slug")
-  SELECT "id","username","full_name","pin_hash","store_id","permissions","is_active","last_login_at","created_at","updated_at","role_slug" FROM jsonb_populate_recordset(NULL::public."cashiers", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "username"=EXCLUDED."username","full_name"=EXCLUDED."full_name","pin_hash"=EXCLUDED."pin_hash","store_id"=EXCLUDED."store_id","permissions"=EXCLUDED."permissions","is_active"=EXCLUDED."is_active","last_login_at"=EXCLUDED."last_login_at","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","role_slug"=EXCLUDED."role_slug";
+  INSERT INTO public."cashiers" ("id","username","full_name","pin_hash","store_id","permissions","is_active","last_login_at","created_at","updated_at","role_slug","idle_timeout_minutes")
+  SELECT "id","username","full_name","pin_hash","store_id","permissions","is_active","last_login_at","created_at","updated_at","role_slug","idle_timeout_minutes" FROM jsonb_populate_recordset(NULL::public."cashiers", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO UPDATE SET "username"=EXCLUDED."username","full_name"=EXCLUDED."full_name","pin_hash"=EXCLUDED."pin_hash","store_id"=EXCLUDED."store_id","permissions"=EXCLUDED."permissions","is_active"=EXCLUDED."is_active","last_login_at"=EXCLUDED."last_login_at","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","role_slug"=EXCLUDED."role_slug","idle_timeout_minutes"=EXCLUDED."idle_timeout_minutes";
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 

@@ -5,7 +5,7 @@ const root = path.resolve(__dirname, "..");
 const registry = JSON.parse(fs.readFileSync(path.join(root, "database", "sqlserver", "schema-registry.json"), "utf8"));
 const tables = [...registry.tables].sort((a, b) => a.dependencyOrder - b.dependencyOrder || a.cloudTable.localeCompare(b.cloudTable));
 const localOnly = ["schema_migrations", "sync_checkpoints", "sync_change_journal", "sync_conflicts", "database_jobs", "local_operation_receipts"];
-const cloudOnly = ["sync_change_feed", "sync_idempotency_receipts"];
+const cloudOnly = ["sync_change_feed", "sync_idempotency_receipts", "user_sessions"];
 const escape = (value) => String(value ?? "—").replaceAll("|", "\\|").replaceAll("\n", " ");
 const sensitive = /settings|security|staff|user_roles|terminal|authorization|cashiers|pin_attempts|public_flags/;
 const owner = (table) => table.direction === "pull" ? "Supabase" : table.conflictRule === "immutable_reversal" || table.conflictRule === "movement_delta" ? "Originating transaction" : "Version policy";
