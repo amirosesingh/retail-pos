@@ -270,6 +270,7 @@ let mainWindow = null;
 let displayWindow = null;
 let serverProcess = null;
 let baseUrl = DEV_URL || null;
+const intentionallyStoppedServers = new WeakSet();
 /** Cleared as soon as the renderer reports that the till actually mounted. */
 let readyWatchdog = null;
 let safeMode = false;
@@ -366,15 +367,23 @@ async function startAppServer() {
   // Older builds sealed a central service key on this machine. It is no longer
   // used or accepted, so it is erased the first time this build starts.
   serverKeys.purgeLegacyServiceKey();
+  const cloud = cloudCredentials.read();
   const port = await choosePort();
   // ELECTRON_RUN_AS_NODE makes the bundled Electron binary behave as plain
   // Node, so the packaged app needs no separate Node.js install.
-  serverProcess = spawn(process.execPath, [serverEntry], {
+  const child = spawn(process.execPath, [serverEntry], {
     env: {
       ...process.env,
       // Without these the bundled server cannot reach the central database and
       // every cashier sign-in fails with "no key configured".
       ...serverKeys.serverEnv(),
+      ...(cloud
+        ? {
+            SUPABASE_URL: cloud.url,
+            SUPABASE_ANON_KEY: cloud.key,
+            SUPABASE_PUBLISHABLE_KEY: cloud.key,
+          }
+        : {}),
       ELECTRON_RUN_AS_NODE: "1",
       NODE_ENV: "production",
       HOST: "127.0.0.1",
@@ -382,27 +391,29 @@ async function startAppServer() {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  serverProcess = child;
 
   // Piped to a file as well as the console: on a shop PC nobody is watching a
   // console, and a server that refuses to start is exactly what the recovery
   // screen needs evidence for.
-  serverProcess.stdout.on("data", (d) => {
+  child.stdout.on("data", (d) => {
     const line = String(d).trimEnd();
     console.log(`[app-server] ${line}`);
     diagnostics.logServer(line);
   });
-  serverProcess.stderr.on("data", (d) => {
+  child.stderr.on("data", (d) => {
     const line = String(d).trimEnd();
     console.error(`[app-server] ${line}`);
     diagnostics.logServer(`ERR ${line}`);
   });
-  serverProcess.on("exit", (code) => {
+  child.on("exit", (code) => {
     console.error(`[app-server] exited with code ${code}`);
     diagnostics.logServer(`exited with code ${code}`);
     diagnostics.logCrash("app-server.exit", { code });
     // The pages the till is showing now point at a dead address. Go to the
     // repair screen instead of leaving a window that can never load again.
-    if (!quitting && !safeMode) enterSafeMode("The local app server stopped");
+    if (!quitting && !safeMode && !intentionallyStoppedServers.has(child))
+      enterSafeMode("The local app server stopped");
   });
 
 
@@ -410,8 +421,45 @@ async function startAppServer() {
   return `http://127.0.0.1:${port}`;
 }
 
+let cloudServerRestartTimer = null;
+function scheduleCloudServerRestart() {
+  if (cloudServerRestartTimer) clearTimeout(cloudServerRestartTimer);
+  cloudServerRestartTimer = setTimeout(async () => {
+    cloudServerRestartTimer = null;
+    if (quitting || safeMode) return;
+    const currentOrigin = baseUrl ? new URL(baseUrl).origin : "";
+    const windows = BrowserWindow.getAllWindows().filter((win) => {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) return false;
+      try {
+        return new URL(win.webContents.getURL()).origin === currentOrigin;
+      } catch {
+        return false;
+      }
+    });
+    const routes = windows.map((win) => {
+      try {
+        const current = new URL(win.webContents.getURL());
+        return `${current.pathname}${current.search}${current.hash}`;
+      } catch {
+        return "/";
+      }
+    });
+    try {
+      stopAppServer();
+      baseUrl = await startAppServer();
+      await Promise.all(windows.map((win, index) => load(win, routes[index])));
+    } catch (error) {
+      recordFault("app-server.cloud-config-restart", error);
+      enterSafeMode("The local app server could not apply the saved cloud connection");
+    }
+  }, 1_000);
+}
+
 function stopAppServer() {
-  if (serverProcess && !serverProcess.killed) serverProcess.kill();
+  if (serverProcess && !serverProcess.killed) {
+    intentionallyStoppedServers.add(serverProcess);
+    serverProcess.kill();
+  }
   serverProcess = null;
 }
 
@@ -1480,9 +1528,15 @@ function registerIpc() {
   });
   ipcMain.handle("cloud:set", (_e, value) => {
     const saved = cloudCredentials.write(value);
-    return saved.ok === false ? saved : { ok: true, ...cloudCredentials.status() };
+    if (saved.ok === false) return saved;
+    scheduleCloudServerRestart();
+    return { ok: true, ...cloudCredentials.status() };
   });
-  ipcMain.handle("cloud:remove", () => cloudCredentials.remove());
+  ipcMain.handle("cloud:remove", () => {
+    const removed = cloudCredentials.remove();
+    if (removed.ok !== false) scheduleCloudServerRestart();
+    return removed;
+  });
   ipcMain.handle("branding:read", () => ({ ok: true, branding: brandingStore.read() }));
   ipcMain.handle("branding:write", (_e, branding) => brandingStore.write(branding));
 

@@ -72,15 +72,37 @@ describe("online approval primary database", () => {
 
   it("routes packaged-terminal approvals to the hosted backend", () => {
     const client = source("src/lib/authorization-client.ts");
+    const panel = source("src/platforms/web/components/pos/settings/AuthorizationRulesPanel.tsx");
+    const gate = source("src/lib/manager-gate.tsx");
+    const electron = source("electron/main.cjs");
     const route = source("src/routes/api/v1/pos/authorization.ts");
     const syncRoute = source("src/routes/api/v1/pos/sync.ts");
     const endpoint = source("src/lib/authorization-endpoint.server.ts");
     expect(client).toContain('posFetch("/api/v1/pos/sync?operation=authorization"');
     expect(client).toContain("if (!isTerminalApp())");
     expect(syncRoute).toContain('searchParams.get("operation") === "authorization"');
-    expect(endpoint).toContain(
-      'z.enum(["authorize_pin", "submit", "list", "decide", "claim", "cancel"])',
-    );
+    for (const action of [
+      "authorize_pin",
+      "submit",
+      "list",
+      "decide",
+      "claim",
+      "cancel",
+      "rules",
+      "save_rule",
+      "set_pin",
+    ]) {
+      expect(endpoint).toContain(`"${action}"`);
+    }
+    expect(client).toContain("getAuthorizationRulesFn");
+    expect(client).toContain("saveAuthorizationRuleFn");
+    expect(client).toContain("setStaffAuthorizationPinFn");
+    expect(panel).toContain('from "@/lib/authorization-client"');
+    expect(gate).toContain('from "@/lib/authorization-client"');
+    expect(electron).toContain("const cloud = cloudCredentials.read()");
+    expect(electron).toContain("SUPABASE_URL: cloud.url");
+    expect(electron).toContain("SUPABASE_ANON_KEY: cloud.key");
+    expect(electron).toContain("scheduleCloudServerRestart()");
     expect(endpoint).toContain("512 * 1024");
     expect(route).toContain("handleAuthorizationRequest(request)");
   });

@@ -28,7 +28,7 @@ import { usePosRules } from "@/lib/pos-rules.tsx";
 import { GATE_RULE_KEY, offlineApprovalMode, type GateAction } from "@/lib/pos-rules";
 import { isOnline } from "@/lib/sync-outbox";
 import { authorizeAsAdmin } from "@/lib/pos-rules.functions";
-import { getAuthorizationRules } from "@/lib/authorization.functions";
+import { getAuthorizationRules } from "@/lib/authorization-client";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import {
   AUTH_ACTION_LABEL,

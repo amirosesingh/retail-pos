@@ -1,6 +1,16 @@
 import { StaffIdleTimeout } from "./StaffIdleTimeout";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { KeyRound, Loader2, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, UserX } from "lucide-react";
+import {
+  KeyRound,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Trash2,
+  UserX,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +55,7 @@ import { getRolesWithPermissions, type RoleDef } from "@/lib/role-admin";
 import { syncNow } from "@/lib/sync-engine";
 import { isExternalEmail, isInternalAddress } from "@/lib/internal-domains";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { setStaffAuthorizationPin } from "@/lib/authorization.functions";
+import { setStaffAuthorizationPin } from "@/lib/authorization-client";
 import {
   createStaffMember,
   looksLikeEmail,
@@ -89,10 +99,14 @@ const EMPTY: Form = {
 
 const friendlyError = (error: unknown): string => {
   const raw = error instanceof Error ? error.message : String(error ?? "Unexpected error");
-  if (raw.includes("DEACTIVATE_ACCOUNT_FIRST")) return "Deactivate this account before deleting it.";
-  if (raw.includes("CANNOT_DELETE_CURRENT_ACCOUNT")) return "You cannot delete the account currently signed in.";
-  if (raw.includes("CANNOT_DELETE_LAST_ADMIN")) return "The last active administrator cannot be deleted.";
-  if (raw.includes("duplicate") || raw.includes("already")) return "That username or email is already in use.";
+  if (raw.includes("DEACTIVATE_ACCOUNT_FIRST"))
+    return "Deactivate this account before deleting it.";
+  if (raw.includes("CANNOT_DELETE_CURRENT_ACCOUNT"))
+    return "You cannot delete the account currently signed in.";
+  if (raw.includes("CANNOT_DELETE_LAST_ADMIN"))
+    return "The last active administrator cannot be deleted.";
+  if (raw.includes("duplicate") || raw.includes("already"))
+    return "That username or email is already in use.";
   if (raw.includes("STAFF_NAME_REQUIRED")) return "Display name is required.";
   if (raw.includes("STAFF_ROLE_REQUIRED")) return "Choose a valid role.";
   return raw;
@@ -150,22 +164,27 @@ export function StaffManager() {
       if (error) throw error;
       setOffline(false);
       setRoles(roleList);
-      setRows(((data ?? []) as Record<string, unknown>[]).map((r) => {
-        const role = fromDbRole(String(r["role"] ?? "staff"));
-        return {
-          auth_user_id: (r["auth_user_id"] as string | null) ?? null,
-          user_id: String(r["user_id"] ?? ""),
-          full_name: String(r["full_name"] ?? ""),
-          role,
-          role_slug: String(r["role_slug"] ?? role),
-          email: String(r["email"] ?? ""),
-          store_id: (r["store_id"] as string | null) ?? null,
-          is_active: r["is_active"] !== false,
-          permissions: normalizePermissions(r["permissions"] as Record<string, unknown> | null, role),
-          pin_length: Number(r["pin_length"] ?? 0),
-          last_login_at: (r["last_login_at"] as string | null) ?? null,
-        };
-      }));
+      setRows(
+        ((data ?? []) as Record<string, unknown>[]).map((r) => {
+          const role = fromDbRole(String(r["role"] ?? "staff"));
+          return {
+            auth_user_id: (r["auth_user_id"] as string | null) ?? null,
+            user_id: String(r["user_id"] ?? ""),
+            full_name: String(r["full_name"] ?? ""),
+            role,
+            role_slug: String(r["role_slug"] ?? role),
+            email: String(r["email"] ?? ""),
+            store_id: (r["store_id"] as string | null) ?? null,
+            is_active: r["is_active"] !== false,
+            permissions: normalizePermissions(
+              r["permissions"] as Record<string, unknown> | null,
+              role,
+            ),
+            pin_length: Number(r["pin_length"] ?? 0),
+            last_login_at: (r["last_login_at"] as string | null) ?? null,
+          };
+        }),
+      );
     } catch (error) {
       // Staff accounts are central by design: say the line is down rather
       // than throwing a red failure at the administrator.
@@ -180,11 +199,17 @@ export function StaffManager() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return rows.filter((row) => `${row.full_name} ${row.user_id} ${row.email} ${row.role_slug}`.toLowerCase().includes(needle));
+    return rows.filter((row) =>
+      `${row.full_name} ${row.user_id} ${row.email} ${row.role_slug}`
+        .toLowerCase()
+        .includes(needle),
+    );
   }, [query, rows]);
 
   const openCreate = () => {
@@ -212,11 +237,12 @@ export function StaffManager() {
   const identifierValid = emailMode
     ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.username.trim())
     : /^[a-z0-9._-]{2,40}$/.test(form.username.trim().toLowerCase());
-  const credentialValid = editing && !form.credential
-    ? true
-    : emailMode
-      ? form.credential.length >= 8
-      : form.credential.length >= 4 && form.credential.length <= 32;
+  const credentialValid =
+    editing && !form.credential
+      ? true
+      : emailMode
+        ? form.credential.length >= 8
+        : form.credential.length >= 4 && form.credential.length <= 32;
   // The branch must be an explicit decision: a real branch, or "all".
   const branchValid = form.branchId === "all" || stores.some((store) => store.id === form.branchId);
   const branchId = form.branchId === "all" ? null : form.branchId;
@@ -307,7 +333,9 @@ export function StaffManager() {
       notifyError(error, "Could not save permissions");
       return;
     }
-    setRows((current) => current.map((row) => row.user_id === permissionsFor.user_id ? permissionsFor : row));
+    setRows((current) =>
+      current.map((row) => (row.user_id === permissionsFor.user_id ? permissionsFor : row)),
+    );
     setPermissionsFor(null);
     toast.success("Permissions updated");
   };
@@ -333,63 +361,177 @@ export function StaffManager() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold">Accounts</h2>
-          <p className="text-xs text-muted-foreground">Create, edit, deactivate and manage every staff sign-in.</p>
+          <p className="text-xs text-muted-foreground">
+            Create, edit, deactivate and manage every staff sign-in.
+          </p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Refresh
+            {loading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <RefreshCw className="size-4" />
+            )}{" "}
+            Refresh
           </Button>
-          <Button size="sm" onClick={openCreate} disabled={offline}><Plus className="size-4" /> New account</Button>
+          <Button size="sm" onClick={openCreate} disabled={offline}>
+            <Plus className="size-4" /> New account
+          </Button>
         </div>
       </header>
       {offline && (
         <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          Connection is down. Staff accounts are held centrally, so they can only be viewed
-          and changed once the line is back — nothing is queued for later.
+          Connection is down. Staff accounts are held centrally, so they can only be viewed and
+          changed once the line is back — nothing is queued for later.
         </p>
       )}
       <Separator />
       <div className="relative max-w-sm">
         <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
-        <Input className="pl-9" placeholder="Search name, username, email or role" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <Input
+          className="pl-9"
+          placeholder="Search name, username, email or role"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[860px] text-sm">
-          <thead><tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="py-2">Staff</th><th>Sign-in</th><th>Role</th><th>Branch</th><th>Last login</th><th>Status</th><th className="text-right">Actions</th>
-          </tr></thead>
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-muted-foreground">
+              <th className="py-2">Staff</th>
+              <th>Sign-in</th>
+              <th>Role</th>
+              <th>Branch</th>
+              <th>Last login</th>
+              <th>Status</th>
+              <th className="text-right">Actions</th>
+            </tr>
+          </thead>
           <tbody>
             {filtered.map((row) => {
               const terminal = isInternalAddress(row.email);
-              return <tr key={row.user_id} className="border-b border-border/60">
-                <td className="py-3 pr-3"><p className="font-medium">{row.full_name}</p><p className="text-xs text-muted-foreground">{row.user_id}</p></td>
-                <td className="pr-3"><Badge variant="outline">{terminal ? `PIN · ${row.pin_length || 4} characters` : "Email & password"}</Badge></td>
-                <td className="pr-3">{roles.find((role) => role.slug === row.role_slug)?.name ?? row.role_slug}</td>
-                <td className="pr-3">{stores.find((store) => store.id === row.store_id)?.name ?? "All branches"}</td>
-                <td className="pr-3 text-xs text-muted-foreground">{row.last_login_at ? new Date(row.last_login_at).toLocaleString() : "Never"}</td>
-                <td className="pr-3"><Switch checked={row.is_active} disabled={busy === row.user_id || row.auth_user_id === authUserId} onCheckedChange={(active) => void setActive(row, active)} aria-label={`${row.full_name} active`} /></td>
-                <td><div className="flex justify-end gap-1">
-                  <Button size="sm" variant="ghost" disabled={offline} onClick={() => setIdleFor(row)}>Idle limit</Button>
-                  <Button size="icon" variant="ghost" title="Edit account" disabled={offline} onClick={() => openEdit(row)}><Pencil className="size-4" /></Button>
-                  <Button size="icon" variant="ghost" title="Set authorisation PIN" disabled={offline} onClick={() => { setPinFor(row); setPinValue(""); }}><ShieldCheck className="size-4" /></Button>
-                  <Button size="icon" variant="ghost" title="Edit permissions" disabled={offline} onClick={() => setPermissionsFor({ ...row, permissions: { ...row.permissions } })}><KeyRound className="size-4" /></Button>
-                  {!row.is_active && <Button size="icon" variant="ghost" title="Delete inactive account" disabled={offline || row.auth_user_id === authUserId} onClick={() => { setDeleteFor(row); setConfirmation(""); }}><Trash2 className="size-4 text-destructive" /></Button>}
-                </div></td>
-              </tr>;
+              return (
+                <tr key={row.user_id} className="border-b border-border/60">
+                  <td className="py-3 pr-3">
+                    <p className="font-medium">{row.full_name}</p>
+                    <p className="text-xs text-muted-foreground">{row.user_id}</p>
+                  </td>
+                  <td className="pr-3">
+                    <Badge variant="outline">
+                      {terminal ? `PIN · ${row.pin_length || 4} characters` : "Email & password"}
+                    </Badge>
+                  </td>
+                  <td className="pr-3">
+                    {roles.find((role) => role.slug === row.role_slug)?.name ?? row.role_slug}
+                  </td>
+                  <td className="pr-3">
+                    {stores.find((store) => store.id === row.store_id)?.name ?? "All branches"}
+                  </td>
+                  <td className="pr-3 text-xs text-muted-foreground">
+                    {row.last_login_at ? new Date(row.last_login_at).toLocaleString() : "Never"}
+                  </td>
+                  <td className="pr-3">
+                    <Switch
+                      checked={row.is_active}
+                      disabled={busy === row.user_id || row.auth_user_id === authUserId}
+                      onCheckedChange={(active) => void setActive(row, active)}
+                      aria-label={`${row.full_name} active`}
+                    />
+                  </td>
+                  <td>
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={offline}
+                        onClick={() => setIdleFor(row)}
+                      >
+                        Idle limit
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        title="Edit account"
+                        disabled={offline}
+                        onClick={() => openEdit(row)}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        title="Set authorisation PIN"
+                        disabled={offline}
+                        onClick={() => {
+                          setPinFor(row);
+                          setPinValue("");
+                        }}
+                      >
+                        <ShieldCheck className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        title="Edit permissions"
+                        disabled={offline}
+                        onClick={() =>
+                          setPermissionsFor({ ...row, permissions: { ...row.permissions } })
+                        }
+                      >
+                        <KeyRound className="size-4" />
+                      </Button>
+                      {!row.is_active && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Delete inactive account"
+                          disabled={offline || row.auth_user_id === authUserId}
+                          onClick={() => {
+                            setDeleteFor(row);
+                            setConfirmation("");
+                          }}
+                        >
+                          <Trash2 className="size-4 text-destructive" />
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
             })}
-            {!loading && filtered.length === 0 && <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">No matching staff accounts.</td></tr>}
+            {!loading && filtered.length === 0 && (
+              <tr>
+                <td colSpan={7} className="py-8 text-center text-muted-foreground">
+                  No matching staff accounts.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
-      {idleFor && <StaffIdleTimeout person={{ key: idleFor.user_id, name: idleFor.full_name, kind: "account" }} onClose={() => setIdleFor(null)} />}
-      <Dialog open={!!pinFor} onOpenChange={(open) => { if (!open) { setPinFor(null); setPinValue(""); } }}>
+      {idleFor && (
+        <StaffIdleTimeout
+          person={{ key: idleFor.user_id, name: idleFor.full_name, kind: "account" }}
+          onClose={() => setIdleFor(null)}
+        />
+      )}
+      <Dialog
+        open={!!pinFor}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPinFor(null);
+            setPinValue("");
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Authorisation PIN</DialogTitle>
             <DialogDescription>
-              A 4–6 digit PIN for {pinFor?.full_name}, used only to approve gated actions at a
-              till. It does not change how they sign in, and it is never shown again.
+              A 4–6 digit PIN for {pinFor?.full_name}, used only to approve gated actions at a till.
+              It does not change how they sign in, and it is never shown again.
             </DialogDescription>
           </DialogHeader>
           <Input
@@ -402,42 +544,254 @@ export function StaffManager() {
             aria-label="New authorisation PIN"
           />
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setPinFor(null); setPinValue(""); }}>Cancel</Button>
-            <Button disabled={!/^\d{4,6}$/.test(pinValue) || busy === "auth-pin"} onClick={() => void saveAuthPin()}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPinFor(null);
+                setPinValue("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={!/^\d{4,6}$/.test(pinValue) || busy === "auth-pin"}
+              onClick={() => void saveAuthPin()}
+            >
               {busy === "auth-pin" && <Loader2 className="size-4 animate-spin" />}Save PIN
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={formOpen} onOpenChange={(open) => { if (!busy) setFormOpen(open); }}>
+      <Dialog
+        open={formOpen}
+        onOpenChange={(open) => {
+          if (!busy) setFormOpen(open);
+        }}
+      >
         <DialogContent className="sm:max-w-lg">
-          <DialogHeader><DialogTitle>{editing ? "Edit account" : "Create account"}</DialogTitle><DialogDescription>{editing ? "Update profile, access and credentials. Leave the credential blank to keep it unchanged." : "Use a username for terminal PIN sign-in or a real email for password sign-in."}</DialogDescription></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{editing ? "Edit account" : "Create account"}</DialogTitle>
+            <DialogDescription>
+              {editing
+                ? "Update profile, access and credentials. Leave the credential blank to keep it unchanged."
+                : "Use a username for terminal PIN sign-in or a real email for password sign-in."}
+            </DialogDescription>
+          </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1 sm:col-span-2"><Label htmlFor="staff-name">Display name *</Label><Input id="staff-name" maxLength={120} value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} aria-invalid={!nameValid} />{!nameValid && <p className="text-xs text-destructive">Display name is required.</p>}</div>
-            <div className="space-y-1"><Label htmlFor="staff-identifier">Username or email *</Label><Input id="staff-identifier" disabled={!!editing} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value.replace(/\s+/g, "") })} aria-invalid={!identifierValid} />{!identifierValid && <p className="text-xs text-destructive">Enter a valid username or email.</p>}</div>
-            <div className="space-y-1"><Label htmlFor="staff-credential">{emailMode ? "Password" : "PIN or passcode (4–32)"}{editing ? "" : " *"}</Label><Input id="staff-credential" type="password" maxLength={emailMode ? 200 : 32} autoComplete="new-password" value={form.credential} onChange={(e) => setForm({ ...form, credential: emailMode ? e.target.value : e.target.value.slice(0, 32) })} aria-invalid={!credentialValid} />{!credentialValid && <p className="text-xs text-destructive">{emailMode ? "Use at least 8 characters." : "Use 4 to 32 characters."}</p>}</div>
-            <div className="space-y-1"><Label>Role *</Label><Select value={form.roleSlug} onValueChange={(roleSlug) => setForm({ ...form, roleSlug })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{roles.map((role) => <SelectItem key={role.slug} value={role.slug}>{role.name}</SelectItem>)}</SelectContent></Select></div>
-            <div className="space-y-1"><Label>Branch *</Label><Select value={form.branchId} onValueChange={(branchId) => setForm({ ...form, branchId })}><SelectTrigger aria-invalid={!branchValid}><SelectValue placeholder="Select a branch" /></SelectTrigger><SelectContent><SelectItem value="all">All branches — terminal decides</SelectItem>{stores.map((store) => <SelectItem key={store.id} value={store.id}>{store.code} · {store.name}</SelectItem>)}</SelectContent></Select>{branchValid ? <p className="text-xs text-muted-foreground">Pick “All branches” for staff who work at any till; every sale is still stamped with the terminal’s branch.</p> : <p className="text-xs text-destructive">Choose a branch, or “All branches”.</p>}</div>
-            <label className="flex items-center justify-between rounded-md border border-border p-3 text-sm sm:col-span-2">Active immediately<Switch checked={form.active} onCheckedChange={(active) => setForm({ ...form, active })} /></label>
+            <div className="space-y-1 sm:col-span-2">
+              <Label htmlFor="staff-name">Display name *</Label>
+              <Input
+                id="staff-name"
+                maxLength={120}
+                value={form.displayName}
+                onChange={(e) => setForm({ ...form, displayName: e.target.value })}
+                aria-invalid={!nameValid}
+              />
+              {!nameValid && <p className="text-xs text-destructive">Display name is required.</p>}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="staff-identifier">Username or email *</Label>
+              <Input
+                id="staff-identifier"
+                disabled={!!editing}
+                value={form.username}
+                onChange={(e) => setForm({ ...form, username: e.target.value.replace(/\s+/g, "") })}
+                aria-invalid={!identifierValid}
+              />
+              {!identifierValid && (
+                <p className="text-xs text-destructive">Enter a valid username or email.</p>
+              )}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="staff-credential">
+                {emailMode ? "Password" : "PIN or passcode (4–32)"}
+                {editing ? "" : " *"}
+              </Label>
+              <Input
+                id="staff-credential"
+                type="password"
+                maxLength={emailMode ? 200 : 32}
+                autoComplete="new-password"
+                value={form.credential}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    credential: emailMode ? e.target.value : e.target.value.slice(0, 32),
+                  })
+                }
+                aria-invalid={!credentialValid}
+              />
+              {!credentialValid && (
+                <p className="text-xs text-destructive">
+                  {emailMode ? "Use at least 8 characters." : "Use 4 to 32 characters."}
+                </p>
+              )}
+            </div>
+            <div className="space-y-1">
+              <Label>Role *</Label>
+              <Select
+                value={form.roleSlug}
+                onValueChange={(roleSlug) => setForm({ ...form, roleSlug })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {roles.map((role) => (
+                    <SelectItem key={role.slug} value={role.slug}>
+                      {role.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Branch *</Label>
+              <Select
+                value={form.branchId}
+                onValueChange={(branchId) => setForm({ ...form, branchId })}
+              >
+                <SelectTrigger aria-invalid={!branchValid}>
+                  <SelectValue placeholder="Select a branch" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All branches — terminal decides</SelectItem>
+                  {stores.map((store) => (
+                    <SelectItem key={store.id} value={store.id}>
+                      {store.code} · {store.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {branchValid ? (
+                <p className="text-xs text-muted-foreground">
+                  Pick “All branches” for staff who work at any till; every sale is still stamped
+                  with the terminal’s branch.
+                </p>
+              ) : (
+                <p className="text-xs text-destructive">Choose a branch, or “All branches”.</p>
+              )}
+            </div>
+            <label className="flex items-center justify-between rounded-md border border-border p-3 text-sm sm:col-span-2">
+              Active immediately
+              <Switch
+                checked={form.active}
+                onCheckedChange={(active) => setForm({ ...form, active })}
+              />
+            </label>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setFormOpen(false)} disabled={busy === "save"}>Cancel</Button><Button onClick={() => void save()} disabled={!canSave || busy === "save"}>{busy === "save" && <Loader2 className="size-4 animate-spin" />}{editing ? "Save changes" : "Create account"}</Button></DialogFooter>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFormOpen(false)} disabled={busy === "save"}>
+              Cancel
+            </Button>
+            <Button onClick={() => void save()} disabled={!canSave || busy === "save"}>
+              {busy === "save" && <Loader2 className="size-4 animate-spin" />}
+              {editing ? "Save changes" : "Create account"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!permissionsFor} onOpenChange={(open) => { if (!open && busy !== "permissions") setPermissionsFor(null); }}>
+      <Dialog
+        open={!!permissionsFor}
+        onOpenChange={(open) => {
+          if (!open && busy !== "permissions") setPermissionsFor(null);
+        }}
+      >
         <DialogContent className="max-h-[86vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader><DialogTitle>Permissions · {permissionsFor?.full_name}</DialogTitle><DialogDescription>Changes apply to this account only. Administrators always retain full access.</DialogDescription></DialogHeader>
-          <div className="space-y-3">{permissionsFor && PERMISSION_GROUPS.map((group) => <section key={group.id} className="rounded-md border border-border"><h3 className="border-b border-border px-3 py-2 text-sm font-semibold">{group.label}</h3><div className="grid gap-2 p-3 sm:grid-cols-2">{group.keys.map((key) => <label key={key} className="flex items-center gap-2 text-sm"><Checkbox checked={permissionsFor.role === "admin" || permissionsFor.permissions[key as PermissionKey]} disabled={permissionsFor.role === "admin"} onCheckedChange={(checked) => setPermissionsFor({ ...permissionsFor, permissions: { ...permissionsFor.permissions, [key]: checked === true } })} /><span>{PERMISSION_LABELS[key as PermissionKey]}</span></label>)}</div></section>)}</div>
-          <DialogFooter><Button variant="outline" onClick={() => setPermissionsFor(null)}>Cancel</Button><Button onClick={() => void savePermissions()} disabled={busy === "permissions"}>{busy === "permissions" && <Loader2 className="size-4 animate-spin" />}Save permissions</Button></DialogFooter>
+          <DialogHeader>
+            <DialogTitle>Permissions · {permissionsFor?.full_name}</DialogTitle>
+            <DialogDescription>
+              Changes apply to this account only. Administrators always retain full access.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {permissionsFor &&
+              PERMISSION_GROUPS.map((group) => (
+                <section key={group.id} className="rounded-md border border-border">
+                  <h3 className="border-b border-border px-3 py-2 text-sm font-semibold">
+                    {group.label}
+                  </h3>
+                  <div className="grid gap-2 p-3 sm:grid-cols-2">
+                    {group.keys.map((key) => (
+                      <label key={key} className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={
+                            permissionsFor.role === "admin" ||
+                            permissionsFor.permissions[key as PermissionKey]
+                          }
+                          disabled={permissionsFor.role === "admin"}
+                          onCheckedChange={(checked) =>
+                            setPermissionsFor({
+                              ...permissionsFor,
+                              permissions: {
+                                ...permissionsFor.permissions,
+                                [key]: checked === true,
+                              },
+                            })
+                          }
+                        />
+                        <span>{PERMISSION_LABELS[key as PermissionKey]}</span>
+                      </label>
+                    ))}
+                  </div>
+                </section>
+              ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPermissionsFor(null)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void savePermissions()} disabled={busy === "permissions"}>
+              {busy === "permissions" && <Loader2 className="size-4 animate-spin" />}Save
+              permissions
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!deleteFor} onOpenChange={(open) => { if (!open && busy !== "delete") setDeleteFor(null); }}>
+      <Dialog
+        open={!!deleteFor}
+        onOpenChange={(open) => {
+          if (!open && busy !== "delete") setDeleteFor(null);
+        }}
+      >
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>Permanently delete account?</DialogTitle><DialogDescription>This inactive account and its login identity will be removed. Sales and audit history keep their recorded staff name.</DialogDescription></DialogHeader>
-          <div className="space-y-2"><Label htmlFor="delete-confirm">Type <span className="font-mono font-semibold">{deleteFor?.user_id}</span> to confirm</Label><Input id="delete-confirm" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} /></div>
-          <DialogFooter><Button variant="outline" onClick={() => setDeleteFor(null)}>Cancel</Button><Button variant="destructive" onClick={() => void remove()} disabled={!deleteFor || confirmation !== deleteFor.user_id || busy === "delete"}>{busy === "delete" ? <Loader2 className="size-4 animate-spin" /> : <UserX className="size-4" />}Delete permanently</Button></DialogFooter>
+          <DialogHeader>
+            <DialogTitle>Permanently delete account?</DialogTitle>
+            <DialogDescription>
+              This inactive account and its login identity will be removed. Sales and audit history
+              keep their recorded staff name.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="delete-confirm">
+              Type <span className="font-mono font-semibold">{deleteFor?.user_id}</span> to confirm
+            </Label>
+            <Input
+              id="delete-confirm"
+              value={confirmation}
+              onChange={(e) => setConfirmation(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteFor(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void remove()}
+              disabled={!deleteFor || confirmation !== deleteFor.user_id || busy === "delete"}
+            >
+              {busy === "delete" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <UserX className="size-4" />
+              )}
+              Delete permanently
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </section>

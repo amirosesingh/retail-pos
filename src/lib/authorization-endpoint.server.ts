@@ -1,7 +1,17 @@
 import { z } from "zod";
 
 const bodySchema = z.object({
-  action: z.enum(["authorize_pin", "submit", "list", "decide", "claim", "cancel"]),
+  action: z.enum([
+    "authorize_pin",
+    "submit",
+    "list",
+    "decide",
+    "claim",
+    "cancel",
+    "rules",
+    "save_rule",
+    "set_pin",
+  ]),
   data: z.record(z.string(), z.unknown()),
 });
 
@@ -24,7 +34,13 @@ export async function handleAuthorizationRequest(request: Request): Promise<Resp
               ? await functions.decideAuthorizationRequest({ data: body.data as never })
               : body.action === "claim"
                 ? await functions.claimAuthorizationRequest({ data: body.data as never })
-                : await functions.cancelAuthorizationRequest({ data: body.data as never });
+                : body.action === "cancel"
+                  ? await functions.cancelAuthorizationRequest({ data: body.data as never })
+                  : body.action === "rules"
+                    ? await functions.getAuthorizationRules({ data: body.data as never })
+                    : body.action === "save_rule"
+                      ? await functions.saveAuthorizationRule({ data: body.data as never })
+                      : await functions.setStaffAuthorizationPin({ data: body.data as never });
     return Response.json(result);
   } catch (error) {
     return Response.json(

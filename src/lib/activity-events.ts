@@ -454,7 +454,9 @@ export async function listActivityEvents(filter: ActivityFilter = {}): Promise<A
     return (result.rows ?? []).map(map);
   } catch {
     if (localDb()?.query)
-      return listLocalActivityEventPage(filter).then((page) => page.rows).catch(() => []);
+      return listLocalActivityEventPage(filter)
+        .then((page) => page.rows)
+        .catch(() => []);
     return [];
   }
 }
@@ -769,16 +771,26 @@ export const isCleared = (userId: string, id: string): boolean => clearedIds(use
  * browsers. Registered PIN-only terminals retain the bounded poll fallback.
  */
 export function subscribeActivityEvents(onChange: () => void): () => void {
+  const cleanups: Array<() => void> = [];
+  const bridge = localDb();
+  if (bridge?.onBusinessChanged) {
+    // Electron commits activity rows and clear/reopen preferences to SQL
+    // Server before cloud synchronization. Refresh from that durable local
+    // commit immediately so offline popups and preference changes never wait
+    // for the 15-second reconciliation poll or Supabase Realtime.
+    cleanups.push(bridge.onBusinessChanged(() => onChange()));
+  }
   try {
     const channel = supabaseExternal.channel("pos-activity-notifications");
     channel.on("postgres_changes", { event: "*", schema: "public", table: "activity_events" }, () =>
       onChange(),
     );
     channel.subscribe();
-    return () => {
+    cleanups.push(() => {
       void supabaseExternal.removeChannel(channel);
-    };
+    });
   } catch {
-    return () => undefined;
+    // Local SQL notifications still work when the cloud channel is offline.
   }
+  return () => cleanups.forEach((cleanup) => cleanup());
 }

@@ -127,9 +127,7 @@ describe("SQL Server schema registry", () => {
 
   it("keeps server-managed session secrets out of the PC database", () => {
     expect(
-      registry.tables.some(
-        (table: { cloudTable: string }) => table.cloudTable === "user_sessions",
-      ),
+      registry.tables.some((table: { cloudTable: string }) => table.cloudTable === "user_sessions"),
     ).toBe(false);
     expect(completeSql).not.toContain("dbo.[user_sessions]");
     expect(completeSql).not.toContain("session_token_hash");
@@ -155,9 +153,7 @@ describe("SQL Server schema registry", () => {
         direction,
       });
       expect(completeSql).toContain(`dbo.[${tableName}]`);
-      expect(completeSql).toContain(
-        `ALTER TABLE dbo.[${tableName}] ENABLE CHANGE_TRACKING`,
-      );
+      expect(completeSql).toContain(`ALTER TABLE dbo.[${tableName}] ENABLE CHANGE_TRACKING`);
     }
   });
 
@@ -226,11 +222,16 @@ describe("SQL Server schema registry", () => {
       "database/sqlserver/migrations/002_sync_pipeline.sql",
       "utf8",
     ).trim();
+    const notificationPreferences = readFileSync(
+      "database/sqlserver/migrations/003_activity_notification_preferences.sql",
+      "utf8",
+    ).trim();
     const normalize = (value: string) => value.replaceAll("\r\n", "\n").trim();
     const normalizedCompleteSql = normalize(completeSql);
 
     expect(normalizedCompleteSql).toContain(normalize(initial));
     expect(normalizedCompleteSql).toContain(normalize(pipeline));
+    expect(normalizedCompleteSql).toContain(normalize(notificationPreferences));
     expect(completeSql).toContain("IF DB_ID(N'POS_Local') IS NULL");
     expect(completeSql).toContain("EXEC(N'CREATE DATABASE [POS_Local]')");
     expect(completeSql).toContain("USE [POS_Local]");
@@ -239,6 +240,9 @@ describe("SQL Server schema registry", () => {
     expect(completeSql).toContain("@MissingColumnCount AS missing_columns");
     expect(completeSql).toContain("Retail POS local database migration history table is missing.");
     expect(completeSql).toContain("WHERE version = 2");
+    expect(completeSql).toContain("WHERE version = 3");
+    expect(completeSql).toContain("CK_activity_events_cleared_by_json_array");
+    expect(completeSql).toContain("IX_activity_events_store_created");
     const columnInserts = [
       ...completeSql.matchAll(
         /INSERT INTO @RequiredColumns \(table_name, column_name\) VALUES([\s\S]*?);/g,

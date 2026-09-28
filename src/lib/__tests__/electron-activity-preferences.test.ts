@@ -23,7 +23,9 @@ describe("Electron activity preferences", () => {
       "supabase/migrations/20260928082540_electron_direct_activity_preferences.sql",
     );
 
-    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.set_all_activity_events_cleared()");
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION public.set_all_activity_events_cleared()",
+    );
     expect(migration).toContain("a.auth_user_id = (SELECT auth.uid())");
     expect(migration).toContain("public.has_perm('can_view_audit_trail')");
     expect(migration).toContain("v_role = 'admin'::public.app_role");
@@ -31,5 +33,16 @@ describe("Electron activity preferences", () => {
     expect(migration).toContain("TO authenticated");
     expect(migration).not.toContain("p_user_id");
     expect(migration).not.toContain("p_store_id");
+  });
+
+  it("refreshes notification popups from durable local SQL commits", () => {
+    const activity = source("src/lib/activity-events.ts");
+    const bell = source("src/platforms/web/components/pos/ActivityBell.tsx");
+
+    expect(activity).toContain("bridge?.onBusinessChanged");
+    expect(activity).toContain("cleanups.push(bridge.onBusinessChanged(() => onChange()))");
+    expect(activity).toContain("Local SQL notifications still work");
+    expect(bell).toContain("toast.dismiss(`activity-${id}`)");
+    expect(bell).toContain("toast.dismiss(`activity-${row.id}`)");
   });
 });

@@ -10,7 +10,10 @@ import {
   cancelAuthorizationRequest as cancelAuthorizationRequestFn,
   claimAuthorizationRequest as claimAuthorizationRequestFn,
   decideAuthorizationRequest as decideAuthorizationRequestFn,
+  getAuthorizationRules as getAuthorizationRulesFn,
   listAuthorizationRequests as listAuthorizationRequestsFn,
+  saveAuthorizationRule as saveAuthorizationRuleFn,
+  setStaffAuthorizationPin as setStaffAuthorizationPinFn,
   submitAuthorizationRequest as submitAuthorizationRequestFn,
 } from "./authorization.functions";
 
@@ -33,40 +36,79 @@ async function callHosted<T>(action: string, data: unknown, direct: DirectCall):
 
 export const authorizeWithPin = (input: NonNullable<Parameters<typeof authorizeWithPinFn>[0]>) =>
   callHosted<Awaited<ReturnType<typeof authorizeWithPinFn>>>(
-    "authorize_pin", input.data, authorizeWithPinFn as DirectCall,
+    "authorize_pin",
+    input.data,
+    authorizeWithPinFn as DirectCall,
   );
 
 export const submitAuthorizationRequest = (
   input: NonNullable<Parameters<typeof submitAuthorizationRequestFn>[0]>,
 ) =>
   callHosted<Awaited<ReturnType<typeof submitAuthorizationRequestFn>>>(
-    "submit", input.data, submitAuthorizationRequestFn as DirectCall,
+    "submit",
+    input.data,
+    submitAuthorizationRequestFn as DirectCall,
   );
 
 export const listAuthorizationRequests = (
   input: NonNullable<Parameters<typeof listAuthorizationRequestsFn>[0]>,
 ) =>
   callHosted<Awaited<ReturnType<typeof listAuthorizationRequestsFn>>>(
-    "list", input.data, listAuthorizationRequestsFn as DirectCall,
+    "list",
+    input.data,
+    listAuthorizationRequestsFn as DirectCall,
   );
 
 export const decideAuthorizationRequest = (
   input: NonNullable<Parameters<typeof decideAuthorizationRequestFn>[0]>,
 ) =>
   callHosted<Awaited<ReturnType<typeof decideAuthorizationRequestFn>>>(
-    "decide", input.data, decideAuthorizationRequestFn as DirectCall,
+    "decide",
+    input.data,
+    decideAuthorizationRequestFn as DirectCall,
   );
 
 export const claimAuthorizationRequest = (
   input: NonNullable<Parameters<typeof claimAuthorizationRequestFn>[0]>,
 ) =>
   callHosted<Awaited<ReturnType<typeof claimAuthorizationRequestFn>>>(
-    "claim", input.data, claimAuthorizationRequestFn as DirectCall,
+    "claim",
+    input.data,
+    claimAuthorizationRequestFn as DirectCall,
   );
 
 export const cancelAuthorizationRequest = (
   input: NonNullable<Parameters<typeof cancelAuthorizationRequestFn>[0]>,
 ) =>
   callHosted<Awaited<ReturnType<typeof cancelAuthorizationRequestFn>>>(
-    "cancel", input.data, cancelAuthorizationRequestFn as DirectCall,
+    "cancel",
+    input.data,
+    cancelAuthorizationRequestFn as DirectCall,
+  );
+
+export const getAuthorizationRules = (
+  input: NonNullable<Parameters<typeof getAuthorizationRulesFn>[0]>,
+) =>
+  callHosted<Awaited<ReturnType<typeof getAuthorizationRulesFn>>>(
+    "rules",
+    input.data,
+    getAuthorizationRulesFn as DirectCall,
+  );
+
+export const saveAuthorizationRule = (
+  input: NonNullable<Parameters<typeof saveAuthorizationRuleFn>[0]>,
+) =>
+  callHosted<Awaited<ReturnType<typeof saveAuthorizationRuleFn>>>(
+    "save_rule",
+    input.data,
+    saveAuthorizationRuleFn as DirectCall,
+  );
+
+export const setStaffAuthorizationPin = (
+  input: NonNullable<Parameters<typeof setStaffAuthorizationPinFn>[0]>,
+) =>
+  callHosted<Awaited<ReturnType<typeof setStaffAuthorizationPinFn>>>(
+    "set_pin",
+    input.data,
+    setStaffAuthorizationPinFn as DirectCall,
   );
