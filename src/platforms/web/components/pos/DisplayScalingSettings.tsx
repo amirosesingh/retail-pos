@@ -18,7 +18,7 @@ import {
   type UiDensity,
 } from "@/lib/use-ui-scale";
 import { useTheme, type ThemeChoice } from "@/lib/theme";
-import { ACCENT_PRESETS, setAccent, useAccent } from "@/lib/accent";
+import { ACCENT_PRESETS, useAccent } from "@/lib/accent";
 import {
   THEME_PALETTES,
   isThemePalette,
@@ -48,34 +48,37 @@ export function DisplayScalingSettings({ bare = false }: { bare?: boolean }) {
   const {
     theme,
     palette,
-    setTheme: applyTheme,
-    setPalette: applyPalette,
   } = useTheme();
   const accent = useAccent();
   const { state, updateSettings } = usePos();
-  const saveProfile = (patch: Partial<DisplayProfile>) => updateSettings({ integrations: {
-    ...state.settings.integrations,
-    displayProfile: {
-      ...state.settings.integrations.displayProfile,
-      scale: prefs,
-      theme,
-      palette,
-      accent,
-      ...patch,
-    },
-  } });
+  const saveProfile = (patch: Partial<DisplayProfile>) =>
+    updateSettings({
+      // Submit only the setting that changed. Copying the complete integrations
+      // record made a display click rewrite and audit unrelated configuration,
+      // and allowed the controlled input to be synchronously re-entered while
+      // its original event was still dispatching.
+      integrations: {
+        displayProfile: {
+          ...state.settings.integrations.displayProfile,
+          scale: prefs,
+          theme,
+          palette,
+          accent,
+          ...patch,
+        },
+      } as typeof state.settings.integrations,
+    });
   const setTheme = (value: ThemeChoice) => {
-    applyTheme(value);
+    if (value === theme) return;
     saveProfile({ theme: value });
   };
   const setPalette = (value: ThemePalette) => {
-    applyPalette(value);
-    setAccent(null);
+    if (value === palette && accent === null) return;
     saveProfile({ palette: value, accent: null });
   };
   const setAccentOverride = (value: string | null) => {
     if (value === null || /^#[0-9a-f]{6}$/i.test(value)) {
-      setAccent(value);
+      if ((value?.toLowerCase() ?? null) === accent) return;
       saveProfile({ accent: value });
     }
   };

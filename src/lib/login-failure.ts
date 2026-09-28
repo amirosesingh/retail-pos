@@ -78,8 +78,20 @@ export function failureFromReadiness(state: ConfigReadiness): LoginFailure | und
  * Classify what the cloud replied to a password sign-in. Only a genuine
  * credential refusal may be reported as a wrong email or password.
  */
-export function failureFromAuthError(message: string | undefined): LoginFailure {
-  const msg = (message ?? "").toLowerCase();
+export function failureFromAuthError(
+  error: string | { code?: string; message?: string; status?: number } | null | undefined,
+): LoginFailure {
+  const code = (typeof error === "string" ? "" : error?.code ?? "").toLowerCase();
+  const msg = (typeof error === "string" ? error : error?.message ?? "").toLowerCase();
+  // Supabase Auth exposes stable machine-readable codes. Prefer them over
+  // wording, which can change without changing the actual failure.
+  if (["invalid_credentials", "email_not_confirmed"].includes(code))
+    return code === "email_not_confirmed" ? "account-inactive" : "invalid-credentials";
+  if (["user_banned", "user_not_found"].includes(code)) return "account-inactive";
+  if (["validation_failed", "bad_json", "bad_jwt", "no_authorization"].includes(code))
+    return "configuration-invalid";
+  if (["over_request_rate_limit", "over_email_send_rate_limit"].includes(code))
+    return "unknown-error";
   if (!msg) return "unknown-error";
   if (/invalid login credentials|invalid email or password|invalid grant/.test(msg))
     return "invalid-credentials";

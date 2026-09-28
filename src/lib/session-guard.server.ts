@@ -46,16 +46,8 @@ export async function resolveIdleMinutes(input: {
   };
 
   try {
-    if (input.cashierId) {
-      const res = await serviceRest(
-        `cashiers?id=eq.${encodeURIComponent(input.cashierId)}&select=idle_timeout_minutes&limit=1`,
-      );
-      if (res.ok) {
-        const row = one<{ idle_timeout_minutes: number | null }>(await res.json());
-        const own = clamp(row?.idle_timeout_minutes);
-        if (own) return own;
-      }
-    }
+    // Cashiers are app_users now. The legacy cashiers table never owned this
+    // column, and probing it produced a guaranteed 400 on every PIN login.
     if (input.staffUserId) {
       const res = await serviceRest(
         `app_users?user_id=eq.${encodeURIComponent(input.staffUserId)}&select=idle_timeout_minutes&limit=1`,

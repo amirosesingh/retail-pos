@@ -45,6 +45,19 @@ describe("settings save actions", () => {
     expect(cloud).toContain('auth?.can("can_manage_sync_backup")');
     expect(cloud).not.toContain("auth?.isSupervisor || auth?.isAdmin");
   });
+
+  it("saves only the display profile and keeps synchronous UI stores idempotent", () => {
+    const display = read("src/platforms/web/components/pos/DisplayScalingSettings.tsx");
+    const scale = read("src/lib/use-ui-scale.ts");
+    const accent = read("src/lib/accent.ts");
+
+    expect(display).not.toContain("...state.settings.integrations,");
+    expect(display).toContain("displayProfile:");
+    expect(display).not.toContain("applyTheme(value)");
+    expect(display).not.toContain("applyPalette(value)");
+    expect(scale).toContain("next.registerZoom === prefs.registerZoom");
+    expect(accent).toContain("if (next === accent) return");
+  });
 });
 
 describe("shift status privacy", () => {

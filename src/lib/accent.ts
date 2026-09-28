@@ -79,7 +79,11 @@ function ensureHydrated() {
 
 export function setAccent(hex: string | null) {
   ensureHydrated();
-  accent = clean(hex);
+  const next = clean(hex);
+  // The accent store is synchronous. Do not notify React (and controlled UI
+  // primitives) when a synchronized profile merely reapplies the same value.
+  if (next === accent) return;
+  accent = next;
   try {
     if (accent) window.localStorage.setItem(KEY, accent);
     else window.localStorage.removeItem(KEY);
