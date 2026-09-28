@@ -273,7 +273,7 @@ async function activationChecks(): Promise<HeaderCheck[]> {
   const probes = [
     { label: "Activation lookup", fn: "terminal_token_status", args: ["p_token_id"] },
     { label: "Activation claim", fn: "terminal_token_claim", args: ["p_token_id", "p_device", "p_proof_hash", "p_platform", "p_os"] },
-    { label: "Terminal check-in", fn: "terminal_token_heartbeat", args: ["p_token_id", "p_activate", "p_version", "p_synced"] },
+    { label: "Terminal check-in", fn: "terminal_token_heartbeat", args: ["p_token_id", "p_activate", "p_version", "p_synced", "p_proof_hash"] },
   ];
   const metadata = await relayTableShapes();
   return probes.map((probe) => ({

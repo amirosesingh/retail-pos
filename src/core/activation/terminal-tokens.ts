@@ -602,13 +602,51 @@ export async function stampHeartbeat(
   // an opaque pre-v1 token; sending it to PostgREST produces a noisy 400 on
   // every revocation interval without updating anything.
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(tokenId)) return;
-  // Keep the call compatible with databases that still expose the original
-  // two-argument function. The current four-argument function supplies
-  // defaults for both omitted telemetry fields.
-  await rpc("terminal_token_heartbeat", { p_token_id: tokenId, p_activate: false });
+  // Named arguments keep installed databases compatible while the current
+  // routine also verifies the durable proof before changing telemetry.
+  const proofHash = await deviceProofHash();
+  if (!proofHash) return;
+  const { error } = await rpc("terminal_token_heartbeat", {
+    p_token_id: tokenId,
+    p_activate: false,
+    p_proof_hash: proofHash,
+  });
+  if (error) throw error;
 }
 
 export class ActivationError extends Error {}
+
+const retryDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Only transport/service failures are safe to retry; a database verdict is final. */
+export function isRetryableActivationError(error: unknown): boolean {
+  const value = error as { code?: string; message?: string; status?: number } | null;
+  const message = value?.message ?? "";
+  if (/TERMINAL_|already.*(used|claimed)|expired|revoked/i.test(message)) return false;
+  if (value?.status === 429 || (value?.status != null && value.status >= 500)) return true;
+  return (
+    error instanceof TypeError ||
+    /failed to fetch|network|load failed|timeout|temporarily unavailable|connection reset/i.test(message)
+  );
+}
+
+/** Bounded retry used by claim/status calls. A lost claim response is safe because claims are idempotent per device. */
+export async function withActivationRetry<T>(
+  work: () => Promise<T>,
+  delays: readonly number[] = [200, 600],
+): Promise<T> {
+  let last: unknown;
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      return await work();
+    } catch (error) {
+      last = error;
+      if (!isRetryableActivationError(error) || attempt === delays.length) throw error;
+      await retryDelay(delays[attempt]);
+    }
+  }
+  throw last;
+}
 
 /**
  * Turn a failed status lookup into a message an operator can act on. The old
@@ -635,6 +673,9 @@ function activationFailureMessage(e: unknown): string {
   }
   if (/TERMINAL_BRANCH_REQUIRED/.test(message)) {
     return "This activation code is not linked to a branch. Ask an administrator to reissue it.";
+  }
+  if (/TERMINAL_DEVICE_PROOF_REQUIRED/.test(message)) {
+    return "Secure device storage is unavailable. Enable local storage for this app, then try again.";
   }
   if (code === "PGRST203" || /could not choose the best candidate/i.test(message)) {
     return "This POS database has two versions of the terminal activation routine. Run supabase/schema33.sql on the POS database, then try again.";
@@ -680,20 +721,6 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
   try {
     if (isEncryptedV1(code)) {
       const v1 = await decryptActivationV1(code);
-      if (Number.isFinite(v1.ts) && Date.now() - v1.ts > ACTIVATION_TTL_MS) {
-        const expired = new ActivationError(
-          "This activation code has expired. Ask an administrator to generate a new one.",
-        );
-        void recordActivationAttempt(
-          createTenantClient(v1.supabaseUrl, v1.supabaseAnonKey),
-          {
-            outcome: "expired",
-            terminalId: v1.pairToken,
-            reason: expired.message,
-          },
-        );
-        throw expired;
-      }
       payload = {
         token_id: v1.pairToken,
         location_id: "",
@@ -724,6 +751,15 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
   ) {
     throw new ActivationError(
       "This code is for a different device type. Ask a supervisor for the correct PC or mobile activation code.",
+    );
+  }
+  // Every successful claim and all later credential recovery are bound to the
+  // same sealed per-device key. Refuse an unbound registration instead of
+  // creating a token that can never be authenticated securely.
+  const proofHash = await deviceProofHash();
+  if (!proofHash) {
+    throw new ActivationError(
+      "Secure device storage is unavailable. Enable local storage for this app, then try again.",
     );
   }
 
@@ -758,7 +794,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
       expiresAt: (row.expires_at ?? null) as string | null,
     };
   };
-  const remote = await statusOf().catch((e: unknown) => {
+  const remote = await withActivationRetry(statusOf).catch((e: unknown) => {
     const message = activationFailureMessage(e);
     note("unreachable", message);
     throw new ActivationError(message);
@@ -772,11 +808,10 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     note("revoked", "This activation code has been revoked by management.", branch);
     throw new ActivationError("This activation code has been revoked by management.");
   }
-  if (remote.status === "used" || remote.isClaimed) {
-    note("already_claimed", "This activation token has already been used.", branch);
-    throw new ActivationError("This activation token has already been used or expired.");
-  }
-  if (remote.expiresAt && new Date(remote.expiresAt).getTime() < Date.now()) {
+  // A used token is still submitted to the atomic claim helper. It succeeds
+  // only for the original device proof, which repairs the interrupted window
+  // between the database claim and local secure persistence.
+  if (!remote.isClaimed && remote.expiresAt && new Date(remote.expiresAt).getTime() < Date.now()) {
     note("expired", "This activation code passed its redemption deadline.", branch);
     throw new ActivationError(
       "This activation code has expired. Ask an administrator to generate a new one.",
@@ -786,18 +821,25 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
   // One-time use: only the till that wins this atomic claim may register.
   const deviceName =
     typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 120) : null;
-  const { data: claimed, error: claimError } = await rpcOn(tenant, "terminal_token_claim", {
-    p_token_id: payload.token_id,
-    p_device: deviceName,
-    p_proof_hash: await deviceProofHash(),
-    p_platform: claimPlatform(),
-    p_os: claimOs(),
-  });
-  if (claimError) {
+  let claimResult: { data: unknown; error: unknown };
+  try {
+    claimResult = await withActivationRetry(async () => {
+      const result = await rpcOn(tenant, "terminal_token_claim", {
+        p_token_id: payload.token_id,
+        p_device: deviceName,
+        p_proof_hash: proofHash,
+        p_platform: claimPlatform(),
+        p_os: claimOs(),
+      });
+      if (result.error) throw result.error;
+      return result;
+    });
+  } catch (claimError) {
     const message = activationFailureMessage(claimError);
     note("unreachable", message, branch);
     throw new ActivationError(message);
   }
+  const claimed = claimResult.data;
   if (claimed !== true) {
     note("already_claimed", "Another device won the one-time claim.", branch);
     throw new ActivationError("This activation token has already been used or expired.");
@@ -820,10 +862,14 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     id: config.locationId,
     name: config.locationName,
   });
-  await rpcOn(tenant, "terminal_token_heartbeat", {
+  const heartbeat = await rpcOn(tenant, "terminal_token_heartbeat", {
     p_token_id: config.tokenId,
     p_activate: true,
+    p_proof_hash: proofHash,
   });
+  if (heartbeat.error) {
+    note("unreachable", activationFailureMessage(heartbeat.error), branch);
+  }
   // Give this till its own machine account so its writes are accepted by the
   // central database even when a cashier signs in with a PIN.
   void import("@/lib/terminal-session").then((m) => m.provisionTerminalAccount(config.tokenId)).catch(() => null);
@@ -924,15 +970,13 @@ export function decodePairingRequest(value: string): PairingRequest | null {
  * phone. Same claim-once rules as pasting a code by hand.
  */
 export async function activateWithTokenId(tokenId: string): Promise<TerminalConfig | null> {
-  const remote = await fetchTokenStatus(tokenId).catch((e: unknown) => {
+  const remote = await withActivationRetry(() => fetchTokenStatus(tokenId)).catch((e: unknown) => {
     throw new ActivationError(activationFailureMessage(e));
   });
   if (!remote) return null; // not approved yet
-  if (remote.status !== "active") {
+  if (remote.status === "revoked") {
     throw new ActivationError(
-      remote.status === "revoked"
-        ? "This terminal has been revoked by management."
-        : "This pairing request was already used. Ask for a new approval.",
+      "This terminal has been revoked by management.",
     );
   }
   if (!remote.locationId) {
@@ -940,15 +984,33 @@ export async function activateWithTokenId(tokenId: string): Promise<TerminalConf
       "This POS database is missing the pairing helper. Run supabase/schema23.sql on the POS database, then try again.",
     );
   }
+  const proofHash = await deviceProofHash();
+  if (!proofHash) {
+    throw new ActivationError(
+      "Secure device storage is unavailable. Enable local storage for this app, then try again.",
+    );
+  }
+  if (!remote.isClaimed && remote.expiresAt && new Date(remote.expiresAt).getTime() < Date.now()) {
+    throw new ActivationError("This pairing request has expired. Ask an administrator to approve it again.");
+  }
   const deviceName = typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 120) : null;
-  const { data: claimed, error } = await rpc("terminal_token_claim", {
-    p_token_id: tokenId,
-    p_device: deviceName,
-    p_proof_hash: await deviceProofHash(),
-    p_platform: claimPlatform(),
-    p_os: claimOs(),
-  });
-  if (error) throw new ActivationError(activationFailureMessage(error));
+  let claimed: unknown;
+  try {
+    const result = await withActivationRetry(async () => {
+      const response = await rpc("terminal_token_claim", {
+        p_token_id: tokenId,
+        p_device: deviceName,
+        p_proof_hash: proofHash,
+        p_platform: claimPlatform(),
+        p_os: claimOs(),
+      });
+      if (response.error) throw response.error;
+      return response;
+    });
+    claimed = result.data;
+  } catch (error) {
+    throw new ActivationError(activationFailureMessage(error));
+  }
   if (claimed !== true) {
     throw new ActivationError("This pairing request was already used on another terminal.");
   }
@@ -967,6 +1029,7 @@ export async function activateWithTokenId(tokenId: string): Promise<TerminalConf
   await rpc("terminal_token_heartbeat", {
     p_token_id: tokenId,
     p_activate: true,
+    p_proof_hash: proofHash,
   });
   void import("@/lib/terminal-session").then((m) => m.provisionTerminalAccount(tokenId)).catch(() => null);
   return config;

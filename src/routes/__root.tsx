@@ -265,6 +265,9 @@ function RootComponent() {
         queryClient.resumePausedMutations(),
         queryClient.refetchQueries({ type: "active" }),
         router.invalidate(),
+        import("@/lib/terminal-session").then(({ ensureTerminalSession }) =>
+          ensureTerminalSession(),
+        ),
       ]).finally(() => {
         refreshing = false;
       });

@@ -7,8 +7,8 @@
  * so ordinary writes succeed under the normal row rules. The relay stays as a
  * fallback for tills that cannot hold a session.
  */
-import { createHmac } from "node:crypto";
-import { supabaseConfig } from "./external-supabase-config";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { runtimeEnvValue, supabaseConfig } from "./external-supabase-config";
 import { serviceRest, serviceKey } from "@/core/api/pos-relay.server";
 
 export type TerminalAccount = { email: string; password: string };
@@ -17,7 +17,11 @@ const emailFor = (tokenId: string) => `terminal.${tokenId}@pos.local`;
 
 /** Deterministic password so the same terminal always recovers its account. */
 function passwordFor(tokenId: string): string {
-  const secret = process.env["SETTINGS_ENCRYPTION_KEY"];
+  // Cloudflare injects secrets per request; unlike Node they are not always
+  // copied into process.env. Reading both paths fixes provisioning in the
+  // hosted worker without ever sending the secret to the terminal.
+  const secret =
+    runtimeEnvValue("SETTINGS_ENCRYPTION_KEY") ?? process.env["SETTINGS_ENCRYPTION_KEY"];
   if (!secret) throw new Error("SETTINGS_ENCRYPTION_KEY is not configured");
   return `T${createHmac("sha256", secret).update(`terminal:${tokenId}`).digest("base64url").slice(0, 40)}`;
 }
@@ -39,10 +43,10 @@ async function adminFetch(path: string, init: RequestInit = {}) {
  */
 export async function ensureTerminalAccount(
   tokenId: string,
-  device: string | null = null,
+  proofHash: string,
 ): Promise<TerminalAccount> {
   const tokenRes = await serviceRest(
-    `terminal_tokens?id=eq.${encodeURIComponent(tokenId)}&select=id,status,location_id,location_name,revoked_at,claimed_by_device`,
+    `terminal_tokens?id=eq.${encodeURIComponent(tokenId)}&select=id,status,location_id,location_name,revoked_at,claimed_at,claim_proof,claimed_proof_hash`,
   );
   if (!tokenRes.ok) throw new Error("Could not reach the central database");
   const token = ((await tokenRes.json()) as {
@@ -50,15 +54,24 @@ export async function ensureTerminalAccount(
     location_id?: string | null;
     location_name?: string | null;
     revoked_at?: string | null;
-    claimed_by_device?: string | null;
+    claimed_at?: string | null;
+    claim_proof?: string | null;
+    claimed_proof_hash?: string | null;
   }[])[0];
   if (!token || token.revoked_at || (token.status !== "active" && token.status !== "used")) {
     throw new Error("This terminal is not activated");
   }
-  // Knowing a token ID is not enough to be handed the branch's machine
-  // credentials: the request must come from the device that claimed it.
-  const claimedBy = token.claimed_by_device?.trim();
-  if (claimedBy && claimedBy.toLowerCase() !== (device ?? "").trim().toLowerCase()) {
+  if (!token.claimed_at) throw new Error("This terminal has not completed activation");
+  // A user-agent is descriptive and spoofable. Credentials are released only
+  // when the caller proves possession of the per-device key used at claim.
+  const expectedProof = token.claim_proof ?? token.claimed_proof_hash;
+  const supplied = Buffer.from(proofHash);
+  const expected = Buffer.from(expectedProof ?? "");
+  if (
+    !expected.length ||
+    supplied.length !== expected.length ||
+    !timingSafeEqual(supplied, expected)
+  ) {
     throw new Error("This activation belongs to another device");
   }
 
@@ -90,14 +103,15 @@ export async function ensureTerminalAccount(
       userId = body.users?.find((u) => u.email?.toLowerCase() === email)?.id ?? null;
     }
     if (!userId) throw new Error("Could not prepare this terminal's account");
-    await adminFetch(`admin/users/${userId}`, {
+    const repaired = await adminFetch(`admin/users/${userId}`, {
       method: "PUT",
       body: JSON.stringify({ password, email_confirm: true }),
     });
+    if (!repaired.ok) throw new Error("Could not repair this terminal's account");
   }
 
   if (userId) {
-    await serviceRest("app_users?on_conflict=user_id", {
+    const profile = await serviceRest("app_users?on_conflict=user_id", {
       method: "POST",
       prefer: "return=minimal,resolution=merge-duplicates",
       body: JSON.stringify([
@@ -112,11 +126,13 @@ export async function ensureTerminalAccount(
         },
       ]),
     });
-    await serviceRest("user_roles?on_conflict=user_id,role", {
+    if (!profile.ok) throw new Error("Could not authorize this terminal account");
+    const role = await serviceRest("user_roles?on_conflict=user_id,role", {
       method: "POST",
       prefer: "return=minimal,resolution=merge-duplicates",
       body: JSON.stringify([{ user_id: userId, role: "staff" }]),
     });
+    if (!role.ok) throw new Error("Could not assign this terminal account role");
   }
 
   return { email, password };
