@@ -73,7 +73,7 @@ describe("SQL Server checkpoints 13 through 15", () => {
 
   it("publishes every synced table and pulls only branch or shared rows", () => {
     const schema = readFileSync("supabase/schema.sql", "utf8");
-    expect(schema.match(/CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE/g)).toHaveLength(67);
+    expect(schema.match(/CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE/g)).toHaveLength(68);
     expect(schema).toContain("f.branch_id IN (p_branch_id,'global')");
     expect(schema).toContain("x.store_id::text=p_branch_id");
     expect(schema).toContain("p_branch_id IN (x.from_store_id::text,x.to_store_id::text)");

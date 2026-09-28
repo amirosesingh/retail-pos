@@ -9643,6 +9643,232 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.shift_v
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.shift_variance_alerts') AND name=N'IX_shift_variance_alerts_updated_at') CREATE INDEX [IX_shift_variance_alerts_updated_at] ON dbo.[shift_variance_alerts]([updated_at]);
 
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NULL BEGIN CREATE TABLE dbo.[shift_notifications] (
+
+  [id] uniqueidentifier NOT NULL CONSTRAINT [DF_shift_notifications_id] DEFAULT (NEWID()),
+  [shift_id] uniqueidentifier NOT NULL,
+  [store_id] nvarchar(450) NOT NULL,
+  [store_name] nvarchar(max) NOT NULL CONSTRAINT [DF_shift_notifications_store_name] DEFAULT (''),
+  [terminal_name] nvarchar(max) NOT NULL CONSTRAINT [DF_shift_notifications_terminal_name] DEFAULT (''),
+  [closed_by] nvarchar(max) NOT NULL CONSTRAINT [DF_shift_notifications_closed_by] DEFAULT (''),
+  [opened_at] datetimeoffset(7) NOT NULL,
+  [closed_at] datetimeoffset(7) NOT NULL,
+  [total_sales] decimal(38,12) NOT NULL CONSTRAINT [DF_shift_notifications_total_sales] DEFAULT (0),
+  [transactions] int NOT NULL CONSTRAINT [DF_shift_notifications_transactions] DEFAULT (0),
+  [discounts] decimal(38,12) NOT NULL CONSTRAINT [DF_shift_notifications_discounts] DEFAULT (0),
+  [refunds] decimal(38,12) NOT NULL CONSTRAINT [DF_shift_notifications_refunds] DEFAULT (0),
+  [expected_cash] decimal(38,12) NOT NULL CONSTRAINT [DF_shift_notifications_expected_cash] DEFAULT (0),
+  [counted_cash] decimal(38,12) NOT NULL CONSTRAINT [DF_shift_notifications_counted_cash] DEFAULT (0),
+  [payment_breakdown] nvarchar(max) NOT NULL CONSTRAINT [DF_shift_notifications_payment_breakdown] DEFAULT (N'{}'),
+  [summary] nvarchar(max) NOT NULL CONSTRAINT [DF_shift_notifications_summary] DEFAULT (''),
+  [channels] nvarchar(max) NOT NULL CONSTRAINT [DF_shift_notifications_channels] DEFAULT (N'[]'),
+  [created_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_shift_notifications_created_at] DEFAULT (SYSDATETIMEOFFSET()),
+  CONSTRAINT [PK_shift_notifications] PRIMARY KEY ([id])
+
+); END;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.change_tracking_tables WHERE object_id=OBJECT_ID(N'dbo.shift_notifications')) ALTER TABLE dbo.[shift_notifications] ENABLE CHANGE_TRACKING;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'id') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [id] uniqueidentifier NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'id') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'id'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_id] DEFAULT (NEWID()) FOR [id];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'id' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [id]=NEWID() WHERE [id] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [id] uniqueidentifier NOT NULL;
+END;
+
+IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [id] uniqueidentifier NOT NULL;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'shift_id') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [shift_id] uniqueidentifier NULL;
+
+IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'shift_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [shift_id] uniqueidentifier NOT NULL;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'store_id') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [store_id] nvarchar(450) NULL;
+
+IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'store_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [store_id] nvarchar(450) NOT NULL;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'store_name') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [store_name] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'store_name') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'store_name'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_store_name] DEFAULT ('') FOR [store_name];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'store_name' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [store_name]='''' WHERE [store_name] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [store_name] nvarchar(max) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'terminal_name') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [terminal_name] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'terminal_name') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'terminal_name'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_terminal_name] DEFAULT ('') FOR [terminal_name];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'terminal_name' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [terminal_name]='''' WHERE [terminal_name] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [terminal_name] nvarchar(max) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'closed_by') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [closed_by] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'closed_by') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'closed_by'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_closed_by] DEFAULT ('') FOR [closed_by];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'closed_by' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [closed_by]='''' WHERE [closed_by] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [closed_by] nvarchar(max) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'opened_at') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [opened_at] datetimeoffset(7) NULL;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'closed_at') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [closed_at] datetimeoffset(7) NULL;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'total_sales') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [total_sales] decimal(38,12) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'total_sales') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'total_sales'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_total_sales] DEFAULT (0) FOR [total_sales];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'total_sales' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [total_sales]=0 WHERE [total_sales] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [total_sales] decimal(38,12) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'transactions') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [transactions] int NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'transactions') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'transactions'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_transactions] DEFAULT (0) FOR [transactions];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'transactions' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [transactions]=0 WHERE [transactions] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [transactions] int NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'discounts') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [discounts] decimal(38,12) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'discounts') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'discounts'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_discounts] DEFAULT (0) FOR [discounts];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'discounts' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [discounts]=0 WHERE [discounts] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [discounts] decimal(38,12) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'refunds') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [refunds] decimal(38,12) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'refunds') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'refunds'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_refunds] DEFAULT (0) FOR [refunds];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'refunds' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [refunds]=0 WHERE [refunds] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [refunds] decimal(38,12) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'expected_cash') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [expected_cash] decimal(38,12) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'expected_cash') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'expected_cash'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_expected_cash] DEFAULT (0) FOR [expected_cash];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'expected_cash' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [expected_cash]=0 WHERE [expected_cash] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [expected_cash] decimal(38,12) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'counted_cash') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [counted_cash] decimal(38,12) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'counted_cash') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'counted_cash'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_counted_cash] DEFAULT (0) FOR [counted_cash];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'counted_cash' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [counted_cash]=0 WHERE [counted_cash] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [counted_cash] decimal(38,12) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'payment_breakdown') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [payment_breakdown] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'payment_breakdown') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'payment_breakdown'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_payment_breakdown] DEFAULT (N'{}') FOR [payment_breakdown];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'payment_breakdown' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [payment_breakdown]=N''{}'' WHERE [payment_breakdown] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [payment_breakdown] nvarchar(max) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'summary') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [summary] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'summary') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'summary'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_summary] DEFAULT ('') FOR [summary];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'summary' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [summary]='''' WHERE [summary] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [summary] nvarchar(max) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'channels') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [channels] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'channels') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'channels'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_channels] DEFAULT (N'[]') FOR [channels];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'channels' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [channels]=N''[]'' WHERE [channels] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [channels] nvarchar(max) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.shift_notifications', N'created_at') IS NULL ALTER TABLE dbo.[shift_notifications] ADD [created_at] datetimeoffset(7) NULL;
+
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'created_at') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND c.name=N'created_at'
+) ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_created_at] DEFAULT (SYSDATETIMEOFFSET()) FOR [created_at];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'created_at' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[shift_notifications] SET [created_at]=SYSDATETIMEOFFSET() WHERE [created_at] IS NULL;';
+  ALTER TABLE dbo.[shift_notifications] ALTER COLUMN [created_at] datetimeoffset(7) NOT NULL;
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'UX_shift_notifications_shift_id') CREATE UNIQUE INDEX [UX_shift_notifications_shift_id] ON dbo.[shift_notifications]([shift_id]);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'IX_shift_notifications_store_id') CREATE INDEX [IX_shift_notifications_store_id] ON dbo.[shift_notifications]([store_id]);
+
 IF OBJECT_ID(N'dbo.entity_status_history', N'U') IS NULL BEGIN CREATE TABLE dbo.[entity_status_history] (
 
   [id] uniqueidentifier NOT NULL CONSTRAINT [DF_entity_status_history_id] DEFAULT (NEWID()),
@@ -10014,6 +10240,8 @@ IF OBJECT_ID(N'dbo.shift_cash_counts',N'U') IS NOT NULL AND NOT EXISTS (SELECT 1
 IF OBJECT_ID(N'dbo.shifts',N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.shift_variance_alerts') AND name=N'FK_shift_variance_alerts_shift_id') ALTER TABLE dbo.[shift_variance_alerts] ADD CONSTRAINT [FK_shift_variance_alerts_shift_id] FOREIGN KEY ([shift_id]) REFERENCES dbo.[shifts]([id]);
 
 IF OBJECT_ID(N'dbo.shift_reconciliations',N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.shift_variance_alerts') AND name=N'FK_shift_variance_alerts_reconciliation_id') ALTER TABLE dbo.[shift_variance_alerts] ADD CONSTRAINT [FK_shift_variance_alerts_reconciliation_id] FOREIGN KEY ([reconciliation_id]) REFERENCES dbo.[shift_reconciliations]([id]);
+
+IF OBJECT_ID(N'dbo.shifts',N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.shift_notifications') AND name=N'FK_shift_notifications_shift_id') ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [FK_shift_notifications_shift_id] FOREIGN KEY ([shift_id]) REFERENCES dbo.[shifts]([id]);
 
 IF OBJECT_ID(N'dbo.activity_events', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.activity_events', N'meta') IS NOT NULL BEGIN
   DECLARE @legacy_json_default_0 sysname = (
@@ -10420,17 +10648,32 @@ IF OBJECT_ID(N'dbo.shift_close_events', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.s
   END;
 END;
 
-IF OBJECT_ID(N'dbo.entity_status_history', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.entity_status_history', N'metadata') IS NOT NULL BEGIN
+IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'payment_breakdown') IS NOT NULL BEGIN
   DECLARE @legacy_json_default_27 sysname = (
+    SELECT dc.name FROM sys.default_constraints dc
+    JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+    WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications')
+      AND c.name=N'payment_breakdown'
+      AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
+  );
+  IF @legacy_json_default_27 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_27_sql nvarchar(max) = N'ALTER TABLE dbo.[shift_notifications] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_27);
+    EXEC sys.sp_executesql @legacy_json_default_27_sql;
+    ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_payment_breakdown] DEFAULT (N'{}') FOR [payment_breakdown];
+  END;
+END;
+
+IF OBJECT_ID(N'dbo.entity_status_history', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.entity_status_history', N'metadata') IS NOT NULL BEGIN
+  DECLARE @legacy_json_default_28 sysname = (
     SELECT dc.name FROM sys.default_constraints dc
     JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
     WHERE dc.parent_object_id=OBJECT_ID(N'dbo.entity_status_history')
       AND c.name=N'metadata'
       AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
   );
-  IF @legacy_json_default_27 IS NOT NULL BEGIN
-    DECLARE @legacy_json_default_27_sql nvarchar(max) = N'ALTER TABLE dbo.[entity_status_history] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_27);
-    EXEC sys.sp_executesql @legacy_json_default_27_sql;
+  IF @legacy_json_default_28 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_28_sql nvarchar(max) = N'ALTER TABLE dbo.[entity_status_history] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_28);
+    EXEC sys.sp_executesql @legacy_json_default_28_sql;
     ALTER TABLE dbo.[entity_status_history] ADD CONSTRAINT [DF_entity_status_history_metadata] DEFAULT (N'{}') FOR [metadata];
   END;
 END;
