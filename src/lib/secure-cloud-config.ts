@@ -278,8 +278,7 @@ export async function saveCloudCredentials(
   if (isWindowsShell() && window.pos?.setCloudCredentials) {
     const res = await window.pos.setCloudCredentials({ url: cleanUrl, key: cleanKey });
     if (!res.ok) return { ok: false, error: res.error ?? "Could not save the credentials." };
-    setTerminalSupabaseOverride(cleanUrl, cleanKey);
-    resetExternalClient();
+    if (setTerminalSupabaseOverride(cleanUrl, cleanKey)) resetExternalClient();
     notifyCloudKeysChanged();
     return { ok: true, encrypted: res.encrypted };
   }
@@ -290,8 +289,7 @@ export async function saveCloudCredentials(
       const store = loaded.value;
       await store.set({ key: ANDROID_URL_KEY, value: cleanUrl });
       await store.set({ key: ANDROID_KEY_KEY, value: cleanKey });
-      setTerminalSupabaseOverride(cleanUrl, cleanKey);
-      resetExternalClient();
+      if (setTerminalSupabaseOverride(cleanUrl, cleanKey)) resetExternalClient();
       notifyCloudKeysChanged();
       return { ok: true, encrypted: true };
     } catch (error) {
@@ -307,8 +305,7 @@ export async function removeCloudCredentials(): Promise<{ ok: boolean; error?: s
   if (isWindowsShell() && window.pos?.removeCloudCredentials) {
     const res = await window.pos.removeCloudCredentials();
     if (!res.ok) return { ok: false, error: res.error ?? "Could not remove the credentials." };
-    clearTerminalSupabaseOverride();
-    resetExternalClient();
+    if (clearTerminalSupabaseOverride()) resetExternalClient();
     notifyCloudKeysChanged();
     setSyncState({ cloudConfigured: false });
     return { ok: true };
@@ -320,8 +317,7 @@ export async function removeCloudCredentials(): Promise<{ ok: boolean; error?: s
       const store = loaded.value;
       await store.remove({ key: ANDROID_URL_KEY });
       await store.remove({ key: ANDROID_KEY_KEY });
-      clearTerminalSupabaseOverride();
-      resetExternalClient();
+      if (clearTerminalSupabaseOverride()) resetExternalClient();
       notifyCloudKeysChanged();
       setSyncState({ cloudConfigured: false });
       return { ok: true };
@@ -344,15 +340,13 @@ export async function initCloudConfigFromShell(): Promise<CloudKeyStatus> {
     // dedicated bootstrap channel so the renderer can configure its client.
     const res = await window.pos.bootstrapCloudCredentials();
     if (res.ok && res.url && res.key) {
-      setTerminalSupabaseOverride(res.url, res.key);
-      resetExternalClient();
+      if (setTerminalSupabaseOverride(res.url, res.key)) resetExternalClient();
     }
     return cloudKeyStatus();
   }
   const saved = await androidRead();
   if (saved) {
-    setTerminalSupabaseOverride(saved.url, saved.key);
-    resetExternalClient();
+    if (setTerminalSupabaseOverride(saved.url, saved.key)) resetExternalClient();
   }
   return cloudKeyStatus();
 }

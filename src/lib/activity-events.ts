@@ -14,6 +14,7 @@ import { pushActivityEvent } from "./activity-events.functions";
 import { readCredentials } from "./pos-credentials";
 import { posFetch } from "./server-origin";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { platformName } from "@/platform-config/platform";
 
 export type EventSeverity = "info" | "warning" | "critical";
 
@@ -273,6 +274,58 @@ export type ActivityFilter = {
 
 export type ActivityEventPage = { rows: ActivityEvent[]; total: number };
 
+type ActivityProfile = {
+  role: string;
+  store_id: string | null;
+  is_active: boolean;
+};
+
+/**
+ * Electron already owns an authenticated connection to the operator-selected
+ * Supabase project. Read the activity feed there instead of routing it through
+ * the hosted POS backend, which may serve a different tenant or have no web
+ * deployment variables at all.
+ */
+async function listActivityEventPageDirect(
+  filter: ActivityFilter = {},
+): Promise<ActivityEventPage> {
+  const profileResult = await supabaseExternal.rpc("current_app_user");
+  if (profileResult.error) throw profileResult.error;
+  const profile = (profileResult.data?.[0] ?? null) as ActivityProfile | null;
+  if (!profile?.is_active) throw new Error("A signed-in staff account is required");
+
+  let query = supabaseExternal.from("activity_events").select("*", { count: "exact" });
+  if (filter.types?.length) query = query.in("event_type", filter.types);
+  if (filter.severities?.length) query = query.in("severity", filter.severities);
+
+  const branch = profile.store_id?.trim() || "";
+  const isAdmin = profile.role === "admin";
+  if (branch && !isAdmin) {
+    if (filter.storeId && filter.storeId !== branch) throw new Error("Branch access denied");
+    query = query.eq("store_id", branch);
+  } else if (filter.storeId) query = query.eq("store_id", filter.storeId);
+
+  if (filter.actor) query = query.ilike("actor_name", `%${filter.actor.replace(/[,*()]/g, "")}%`);
+  if (filter.query) {
+    const term = filter.query.replace(/[,*()]/g, "");
+    if (term)
+      query = query.or(
+        `title.ilike.%${term}%,message.ilike.%${term}%,actor_name.ilike.%${term}%,entity_id.ilike.%${term}%`,
+      );
+  }
+  if (filter.from) query = query.gte("created_at", filter.from);
+  if (filter.to) query = query.lte("created_at", filter.to);
+
+  const offset = filter.offset ?? 0;
+  const limit = filter.limit ?? 200;
+  const result = await query
+    .order(filter.sortBy ?? "created_at", { ascending: filter.sortDirection === "asc" })
+    .range(offset, offset + limit - 1);
+  if (result.error) throw result.error;
+  const rows = (result.data ?? []).map((row) => map(row as Row));
+  return { rows, total: result.count ?? rows.length };
+}
+
 /**
  * Older databases predate the activity feed. When the table is absent every
  * poll would log a 404, so the first miss switches the feature off for the
@@ -303,6 +356,13 @@ export async function listActivityEvents(filter: ActivityFilter = {}): Promise<A
     // out supervisor view must stay quiet instead of polling a guaranteed 401.
     if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
       return [];
+    // A Windows till must use the Supabase project restored from its DPAPI
+    // vault. Never send this preference read to the separately configured web
+    // backend, and never fall back to it when the staff Auth session is absent.
+    if (platformName() === "electron") {
+      if (!credentials.accessToken) return [];
+      return (await listActivityEventPageDirect(filter)).rows;
+    }
     const response = await posFetch("/api/v1/pos/activity-preferences", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -328,6 +388,10 @@ export async function listActivityEventPage(
     const credentials = await readCredentials();
     if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
       return { rows: [], total: 0 };
+    if (platformName() === "electron") {
+      if (!credentials.accessToken) return { rows: [], total: 0 };
+      return await listActivityEventPageDirect(filter);
+    }
     const response = await posFetch("/api/v1/pos/activity-preferences", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -483,6 +547,14 @@ async function syncClearedEntry(id: string, cleared: boolean): Promise<boolean> 
     const credentials = await readCredentials();
     if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
       return false;
+    if (platformName() === "electron") {
+      if (!credentials.accessToken) return false;
+      const { error } = await supabaseExternal.rpc("set_activity_event_cleared", {
+        p_event_id: id,
+        p_cleared: cleared,
+      });
+      return !error;
+    }
     const response = await posFetch("/api/v1/pos/activity-preferences", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -500,6 +572,11 @@ async function syncClearAllEntries(): Promise<boolean> {
     const credentials = await readCredentials();
     if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
       return false;
+    if (platformName() === "electron") {
+      if (!credentials.accessToken) return false;
+      const { error } = await supabaseExternal.rpc("set_all_activity_events_cleared");
+      return !error;
+    }
     const response = await posFetch("/api/v1/pos/activity-preferences", {
       method: "POST",
       headers: { "content-type": "application/json" },

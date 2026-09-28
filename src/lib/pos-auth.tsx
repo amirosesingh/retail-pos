@@ -591,6 +591,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // and returns the already-provisioned Auth identity for this account.
       type ServerLogin = {
         ok?: boolean;
+        status?: number;
+        code?: string;
         error?: string;
         authTokenHash?: string;
         cashierToken?: string;
@@ -611,33 +613,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let unreachable = offline;
       if (!offline) {
         try {
-          const { serverUrl } = await import("@/lib/server-origin");
-          // A till on a flaky line must not hang on the keypad: after six
-          // seconds the local database answers instead.
-          const abort = new AbortController();
-          const timer = window.setTimeout(() => abort.abort(), 6_000);
-          const res = await fetch(serverUrl("/api/public/cashier-login"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal: abort.signal,
-            body: JSON.stringify({
-              username: code,
-              pin,
-              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
-              // An all-branches account has no branch of its own, so the
-              // terminal's branch is what the session is stamped with.
-              branchId: activeBranchId(null),
-            }),
-          }).finally(() => window.clearTimeout(timer));
-          const payload = (await res.json().catch(() => null)) as ServerLogin | null;
+          let payload: ServerLogin | null;
+          let status: number;
+          if (window.pos?.cashierLogin) {
+            // Electron performs the HTTPS request in its main process. The PIN
+            // is still verified and throttled by the hosted backend, but an
+            // expected rejection no longer appears as repeated failed network
+            // resources in Chromium's console.
+            payload = await window.pos.cashierLogin(code, pin);
+            status = payload?.status ?? 503;
+          } else {
+            const { serverUrl } = await import("@/lib/server-origin");
+            // A till on a flaky line must not hang on the keypad: after six
+            // seconds the local database answers instead.
+            const abort = new AbortController();
+            const timer = window.setTimeout(() => abort.abort(), 6_000);
+            const res = await fetch(serverUrl("/api/public/cashier-login"), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: abort.signal,
+              body: JSON.stringify({
+                username: code,
+                pin,
+                platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+                // An all-branches account has no branch of its own, so the
+                // terminal's branch is what the session is stamped with.
+                branchId: activeBranchId(null),
+              }),
+            }).finally(() => window.clearTimeout(timer));
+            status = res.status;
+            payload = (await res.json().catch(() => null)) as ServerLogin | null;
+          }
           if (payload?.ok) verified = payload;
           else {
             failure = payload?.error ?? "";
             // A server that cannot reach the central database (missing key,
             // 5xx, gateway) has not rejected anyone — fall through to the local
             // database. A 401 is a real rejection and must stay one.
-            const code503 = (payload as { code?: string } | null)?.code;
-            if (res.status >= 500 || code503 === "no_service_key") unreachable = true;
+            const code503 = payload?.code;
+            if (status >= 500 || code503 === "no_service_key" || code503 === "no_server")
+              unreachable = true;
           }
         } catch {
           unreachable = true;

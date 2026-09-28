@@ -106,6 +106,10 @@ const CHANNEL_LEVELS = {
   "staff:cache-roster": OPEN,
   "staff:verify-pin": OPEN,
   "staff:enroll": OPEN,
+  // Pre-login bridge: the hosted endpoint still verifies the PIN and applies
+  // its central brute-force throttle; Electron merely keeps expected 401s out
+  // of the renderer network console.
+  "auth:cashier-login": OPEN,
   "sync:auto": OPEN,
   "settings:get": OPEN,
   "config:read": OPEN,

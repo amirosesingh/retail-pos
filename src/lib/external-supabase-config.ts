@@ -44,18 +44,20 @@ export function setRuntimeEnv(env: unknown): void {
  */
 let terminalOverride: Source | undefined;
 
-export function setTerminalSupabaseOverride(url: string, key: string): void {
+export function setTerminalSupabaseOverride(url: string, key: string): boolean {
   const next = { url: clean(url), key: clean(key) };
-  if (!next.url || !next.key) return;
-  if (terminalOverride?.url === next.url && terminalOverride?.key === next.key) return;
+  if (!next.url || !next.key) return false;
+  if (terminalOverride?.url === next.url && terminalOverride?.key === next.key) return false;
   terminalOverride = next;
   cached = undefined;
+  return true;
 }
 
-export function clearTerminalSupabaseOverride(): void {
-  if (!terminalOverride) return;
+export function clearTerminalSupabaseOverride(): boolean {
+  if (!terminalOverride) return false;
   terminalOverride = undefined;
   cached = undefined;
+  return true;
 }
 
 export const hasTerminalSupabaseOverride = () => !!terminalOverride;

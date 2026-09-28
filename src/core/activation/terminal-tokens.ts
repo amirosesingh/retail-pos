@@ -112,12 +112,13 @@ const rpcOn = (client: unknown, fn: string, args: Record<string, unknown>) =>
  * packaged terminal needs no environment variables of its own.
  */
 function applyTenantOverride(config: TerminalConfig | null): void {
+  let changed: boolean;
   if (config?.supabaseUrl && config?.supabaseKey) {
-    setTerminalSupabaseOverride(config.supabaseUrl, config.supabaseKey);
+    changed = setTerminalSupabaseOverride(config.supabaseUrl, config.supabaseKey);
   } else {
-    clearTerminalSupabaseOverride();
+    changed = clearTerminalSupabaseOverride();
   }
-  resetExternalClient();
+  if (changed) resetExternalClient();
   // A probe made for the previous tenant must never make the newly activated
   // tenant look offline for the cache window.
   resetHealthCache();

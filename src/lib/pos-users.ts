@@ -29,7 +29,13 @@ function provisioningClient() {
   const { url, key } = supabaseConfig();
   return createClient(url, key, {
     global: { fetch: signupFetch },
-    auth: { persistSession: false, autoRefreshToken: false, storage: undefined },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      storage: undefined,
+      storageKey: `pos-provisioning-${crypto.randomUUID()}`,
+    },
   });
 }
 
