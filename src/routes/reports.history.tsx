@@ -22,7 +22,7 @@ import {
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
 import { adminAccessToken } from "@/lib/admin-session";
-import { listSystemAudit } from "@/lib/system-audit.functions";
+import { listSystemAudit } from "@/lib/system-audit-client";
 
 export const Route = createFileRoute("/reports/history")({
   head: () => ({

@@ -23,6 +23,14 @@ export const Route = createFileRoute("/api/v1/pos/sync")({
             await import("@/lib/authorization-endpoint.server");
           return withCors(await handleAuthorizationRequest(request), request);
         }
+        if (new URL(request.url).searchParams.get("operation") === "staff_admin") {
+          const { handleStaffAdminRequest } = await import("@/lib/staff-admin-endpoint.server");
+          return withCors(await handleStaffAdminRequest(request), request);
+        }
+        if (new URL(request.url).searchParams.get("operation") === "system_audit") {
+          const { handleSystemAuditRequest } = await import("@/lib/system-audit-endpoint.server");
+          return withCors(await handleSystemAuditRequest(request), request);
+        }
         const { handleSyncRequest } = await import("@/lib/sync-endpoint.server");
         return withCors(await handleSyncRequest(request), request);
       },

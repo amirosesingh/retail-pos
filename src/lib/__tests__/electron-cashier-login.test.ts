@@ -12,7 +12,7 @@ describe("Electron cashier sign in", () => {
 
     expect(preload).toContain('invoke("auth:cashier-login"');
     expect(main).toContain('ipcMain.handle("auth:cashier-login"');
-    expect(main).toContain('/api/public/cashier-login`');
+    expect(main).toContain("/api/public/cashier-login`");
     expect(main).toContain("signal: abort.signal");
     expect(auth).toContain("window.pos?.cashierLogin");
     expect(privilege).toContain('"auth:cashier-login": OPEN');
@@ -32,6 +32,8 @@ describe("Electron cashier sign in", () => {
 
     expect(client).toContain("previous.auth.stopAutoRefresh()");
     expect(client).toContain("pos-transient-auth-");
+    expect(client).toContain("supabaseFetchFor(key)");
+    expect(client).not.toContain("const SUPABASE_PUBLISHABLE_KEY = supabaseConfig().key");
     expect(config).toContain("if (setTerminalSupabaseOverride(res.url, res.key))");
   });
 });
