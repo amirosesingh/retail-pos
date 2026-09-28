@@ -13,6 +13,7 @@ import { readBusinessValue, writeBusinessValue } from "./business-storage";
 import { pushActivityEvent } from "./activity-events.functions";
 import { readCredentials } from "./pos-credentials";
 import { posFetch } from "./server-origin";
+import { supabaseExternal } from "@/integrations/supabase/external-client";
 
 export type EventSeverity = "info" | "warning" | "critical";
 
@@ -319,7 +320,9 @@ export async function listActivityEvents(filter: ActivityFilter = {}): Promise<A
 }
 
 /** Server-paged history for large audit and alert screens. */
-export async function listActivityEventPage(filter: ActivityFilter = {}): Promise<ActivityEventPage> {
+export async function listActivityEventPage(
+  filter: ActivityFilter = {},
+): Promise<ActivityEventPage> {
   if (logMissing) return { rows: [], total: 0 };
   try {
     const credentials = await readCredentials();
@@ -492,6 +495,23 @@ async function syncClearedEntry(id: string, cleared: boolean): Promise<boolean> 
   }
 }
 
+async function syncClearAllEntries(): Promise<boolean> {
+  try {
+    const credentials = await readCredentials();
+    if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
+      return false;
+    const response = await posFetch("/api/v1/pos/activity-preferences", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "clear_all", ...credentials }),
+    });
+    const result = (await response.json()) as { ok?: boolean };
+    return response.ok && result.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function clearActivityEntry(userId: string, id: string): Promise<boolean> {
   if (!(await syncClearedEntry(id, true))) return false;
   const map = readClearedMap();
@@ -511,4 +531,36 @@ export async function reopenActivityEntry(userId: string, id: string): Promise<b
   return true;
 }
 
+/** Move every currently active notification into this person's history. */
+export async function clearAllActivityEntries(
+  userId: string,
+  visibleIds: string[],
+): Promise<boolean> {
+  if (!(await syncClearAllEntries())) return false;
+  const map = readClearedMap();
+  const key = who(userId);
+  map[key] = [...new Set([...(map[key] ?? []), ...visibleIds])].slice(-500);
+  writeClearedMap(map);
+  return true;
+}
+
 export const isCleared = (userId: string, id: string): boolean => clearedIds(userId).includes(id);
+
+/**
+ * Reconcile inserts and clear/reopen updates immediately across authenticated
+ * browsers. Registered PIN-only terminals retain the bounded poll fallback.
+ */
+export function subscribeActivityEvents(onChange: () => void): () => void {
+  try {
+    const channel = supabaseExternal.channel("pos-activity-notifications");
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "activity_events" }, () =>
+      onChange(),
+    );
+    channel.subscribe();
+    return () => {
+      void supabaseExternal.removeChannel(channel);
+    };
+  } catch {
+    return () => undefined;
+  }
+}

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { corsPreflight, withCors } from "@/lib/public-cors";
 
 const bodySchema = z.object({
-  action: z.enum(["list", "clear"]),
+  action: z.enum(["list", "clear", "clear_all"]),
   sessionToken: z.string().max(400).optional(),
   cashierToken: z.string().max(2000).optional(),
   terminalToken: z.string().max(200).optional(),
@@ -15,8 +15,14 @@ const bodySchema = z.object({
   query: z.string().trim().max(160).optional(),
   sortBy: z.enum(["created_at", "severity", "event_type", "store_id", "title"]).optional(),
   sortDirection: z.enum(["asc", "desc"]).optional(),
-  types: z.array(z.string().regex(/^[a-z_]{1,60}$/)).max(30).optional(),
-  severities: z.array(z.enum(["info", "warning", "critical"])).max(3).optional(),
+  types: z
+    .array(z.string().regex(/^[a-z_]{1,60}$/))
+    .max(30)
+    .optional(),
+  severities: z
+    .array(z.enum(["info", "warning", "critical"]))
+    .max(3)
+    .optional(),
   storeId: z.string().max(64).optional(),
   actor: z.string().max(160).optional(),
   from: z.string().datetime().optional(),
@@ -32,8 +38,11 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         const raw = await request.text();
         if (raw.length > 12_000) return reply({ ok: false, error: "Request too large" }, 413);
         let body: unknown;
-        try { body = JSON.parse(raw); }
-        catch { return reply({ ok: false, error: "Invalid JSON" }, 400); }
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          return reply({ ok: false, error: "Invalid JSON" }, 400);
+        }
         const parsed = bodySchema.safeParse(body);
         if (!parsed.success) return reply({ ok: false, error: "Invalid request" }, 400);
         const input = parsed.data;
@@ -54,17 +63,39 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
           scope.stale ||
           !scope.staffUserId ||
           !(scope.isSupervisor || scope.permissions.can_view_audit_trail === true)
-        ) return reply({ ok: false, error: "Activity access denied" }, 403);
+        )
+          return reply({ ok: false, error: "Activity access denied" }, 403);
+
+        const branch = scope.storeId;
+        const isAdmin = scope.role === "admin" || scope.roleSlug === "admin";
 
         if (input.action === "clear") {
           if (!input.eventId || input.cleared === undefined)
             return reply({ ok: false, error: "Event and clear state are required" }, 400);
           const response = await serviceRest("rpc/pos_set_activity_event_cleared", {
             method: "POST",
-            body: JSON.stringify({ p_event_id: input.eventId, p_user_id: scope.staffUserId, p_cleared: input.cleared }),
+            body: JSON.stringify({
+              p_event_id: input.eventId,
+              p_user_id: scope.staffUserId,
+              p_cleared: input.cleared,
+            }),
           });
-          if (!response.ok) return reply({ ok: false, error: "Could not save notification state" }, 503);
+          if (!response.ok)
+            return reply({ ok: false, error: "Could not save notification state" }, 503);
           return reply({ ok: true });
+        }
+
+        if (input.action === "clear_all") {
+          const response = await serviceRest("rpc/pos_set_all_activity_events_cleared", {
+            method: "POST",
+            body: JSON.stringify({
+              p_user_id: scope.staffUserId,
+              p_store_id: isAdmin ? null : branch,
+            }),
+          });
+          if (!response.ok)
+            return reply({ ok: false, error: "Could not clear active notifications" }, 503);
+          return reply({ ok: true, count: Number(await response.json()) || 0 });
         }
 
         const params = new URLSearchParams({
@@ -75,8 +106,7 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         });
         if (input.types?.length) params.set("event_type", `in.(${input.types.join(",")})`);
         if (input.severities?.length) params.set("severity", `in.(${input.severities.join(",")})`);
-        const branch = scope.storeId;
-        if (branch && scope.role !== "admin" && scope.roleSlug !== "admin") {
+        if (branch && !isAdmin) {
           if (input.storeId && input.storeId !== branch)
             return reply({ ok: false, error: "Branch access denied" }, 403);
           params.set("store_id", `eq.${branch}`);

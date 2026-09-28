@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,9 +24,12 @@ import {
   EVENT_CATALOG,
   EVENT_LABELS,
   SEVERITY_TONE,
+  clearActivityEntry,
   isActivityLogMissing,
   listActivityEvents,
   markActivitySeen,
+  mergeRemoteActivityPreferences,
+  reopenActivityEntry,
   toCsv,
   type ActivityEvent,
   type EventSeverity,
@@ -43,6 +47,12 @@ const SEVERITY_OPTIONS = [
   { value: "info", label: "Information" },
 ];
 
+const STATUS_OPTIONS = [
+  { value: "all", label: "Active and history" },
+  { value: "active", label: "Active notifications" },
+  { value: "history", label: "Cleared history" },
+];
+
 const when = (iso: string) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
@@ -58,9 +68,12 @@ function NotificationsReport() {
   const [rows, setRows] = useState<ActivityEvent[]>([]);
   const [type, setType] = useState("all");
   const [severity, setSeverity] = useState("all");
+  const [status, setStatus] = useState("all");
   const [actor, setActor] = useState("");
   const [busy, setBusy] = useState(false);
+  const [preferenceBusy, setPreferenceBusy] = useState("");
   const [missing, setMissing] = useState(false);
+  const meKey = user?.staffId ?? user?.name ?? "";
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -70,13 +83,11 @@ function NotificationsReport() {
       severities: severity === "all" ? undefined : [severity as EventSeverity],
     });
     setRows(list);
+    mergeRemoteActivityPreferences(meKey, list);
     setMissing(isActivityLogMissing());
-    markActivitySeen(
-      list[0]?.createdAt ?? new Date().toISOString(),
-      user?.staffId ?? user?.name ?? "",
-    );
+    markActivitySeen(list[0]?.createdAt ?? new Date().toISOString(), meKey);
     setBusy(false);
-  }, [type, severity, user?.staffId, user?.name]);
+  }, [type, severity, meKey]);
 
   useEffect(() => {
     if (isSupervisor) void load();
@@ -84,14 +95,30 @@ function NotificationsReport() {
 
   const filtered = useMemo(() => {
     const needle = actor.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter(
-      (r) =>
-        r.actorName.toLowerCase().includes(needle) ||
-        r.title.toLowerCase().includes(needle) ||
-        r.message.toLowerCase().includes(needle),
-    );
-  }, [rows, actor]);
+    return rows.filter((row) => {
+      const inHistory = row.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase());
+      if (status === "active" && inHistory) return false;
+      if (status === "history" && !inHistory) return false;
+      if (!needle) return true;
+      return (
+        row.actorName.toLowerCase().includes(needle) ||
+        row.title.toLowerCase().includes(needle) ||
+        row.message.toLowerCase().includes(needle)
+      );
+    });
+  }, [rows, actor, status, meKey]);
+
+  const updatePreference = async (row: ActivityEvent) => {
+    const inHistory = row.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase());
+    setPreferenceBusy(row.id);
+    const saved = inHistory
+      ? await reopenActivityEntry(meKey, row.id)
+      : await clearActivityEntry(meKey, row.id);
+    if (!saved)
+      toast.error("Could not update notification history. Check the connection and try again.");
+    else await load();
+    setPreferenceBusy("");
+  };
 
   const page = usePagination(filtered);
   const visible = page.pageItems;
@@ -154,6 +181,15 @@ function NotificationsReport() {
             />
           </div>
           <div className="space-y-1">
+            <Label className="text-[11px]">Status</Label>
+            <ThemedSelect
+              className="h-9 w-44"
+              value={status}
+              onChange={setStatus}
+              options={STATUS_OPTIONS}
+            />
+          </div>
+          <div className="space-y-1">
             <Label className="text-[11px]">Search</Label>
             <Input
               className="h-9 w-52"
@@ -181,12 +217,14 @@ function NotificationsReport() {
                 <TableHead className="w-32">Terminal</TableHead>
                 <TableHead className="w-24">Branch</TableHead>
                 <TableHead className="w-28">WhatsApp</TableHead>
+                <TableHead className="w-20">Status</TableHead>
+                <TableHead className="w-20 text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {visible.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-8 text-center text-xs text-muted-foreground">
+                  <TableCell colSpan={9} className="py-8 text-center text-xs text-muted-foreground">
                     No events match these filters.
                   </TableCell>
                 </TableRow>
@@ -223,6 +261,27 @@ function NotificationsReport() {
                       {stores.find((store) => store.id === r.storeId)?.name ?? "Unknown branch"}
                     </TableCell>
                     <TableCell className="text-xs capitalize">{r.whatsappStatus}</TableCell>
+                    <TableCell className="text-xs">
+                      {r.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase())
+                        ? "History"
+                        : "Active"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-[10px]"
+                        disabled={preferenceBusy === r.id}
+                        onClick={() => void updatePreference(r)}
+                      >
+                        {preferenceBusy === r.id
+                          ? "Saving…"
+                          : r.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase())
+                            ? "Reopen"
+                            : "Clear"}
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))
               )}

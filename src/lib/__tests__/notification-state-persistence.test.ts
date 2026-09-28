@@ -55,6 +55,18 @@ describe("per-user notification state", () => {
     expect(activity.clearedIds("manager-1")).toContain("event-remote");
   });
 
+  it("clears every active notification through one synchronized server action", async () => {
+    const activity = await import("../activity-events");
+    expect(await activity.clearAllActivityEntries("manager-1", ["event-1", "event-2"])).toBe(true);
+    expect(activity.clearedIds("manager-1")).toEqual(
+      expect.arrayContaining(["event-1", "event-2"]),
+    );
+    expect(posFetch).toHaveBeenCalledWith(
+      "/api/v1/pos/activity-preferences",
+      expect.objectContaining({ body: expect.stringContaining('"action":"clear_all"') }),
+    );
+  });
+
   it("keeps a notification visible when the server cannot save the clear", async () => {
     posFetch.mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false }) });
     const activity = await import("../activity-events");
@@ -120,7 +132,41 @@ describe("per-user notification state", () => {
   it("reuses the canonical relay identity scope for supervisor access", () => {
     const route = readFileSync("src/routes/api/v1/pos/activity-preferences.ts", "utf8");
     expect(route).toContain("resolveRelayScope(caller)");
-    expect(route).toContain("scope.isSupervisor || scope.permissions.can_view_audit_trail === true");
+    expect(route).toContain(
+      "scope.isSupervisor || scope.permissions.can_view_audit_trail === true",
+    );
     expect(route).not.toContain("const identities = [");
+  });
+
+  it("keeps bulk clear branch-scoped and publishes preference changes to Realtime", () => {
+    const route = readFileSync("src/routes/api/v1/pos/activity-preferences.ts", "utf8");
+    const activity = readFileSync("src/lib/activity-events.ts", "utf8");
+    const migration = readFileSync(
+      "supabase/migrations/20260928025126_sync_activity_notification_history.sql",
+      "utf8",
+    );
+    expect(route).toContain('action: z.enum(["list", "clear", "clear_all"])');
+    expect(route).toContain("p_store_id: isAdmin ? null : branch");
+    expect(activity).toContain('table: "activity_events"');
+    expect(migration).toContain("pos_set_all_activity_events_cleared");
+    expect(migration).toContain(
+      "ALTER PUBLICATION supabase_realtime ADD TABLE public.activity_events",
+    );
+  });
+
+  it("moves full history into Reports and uses compact dismissible stacked popups", () => {
+    const bell = readFileSync("src/platforms/web/components/pos/ActivityBell.tsx", "utf8");
+    const report = readFileSync("src/routes/reports.notifications.tsx", "utf8");
+    const styles = readFileSync("src/styles.css", "utf8");
+    expect(bell).not.toContain("Full log");
+    expect(bell).toContain("Clear all");
+    expect(bell).toContain("closeButton: true");
+    expect(bell).toContain('position: "top-right"');
+    expect(bell).toContain("newlyArrived.slice(0, 4).reverse()");
+    expect(styles).toContain("translateX(calc(100% + 1rem))");
+    expect(styles).toContain("transform 220ms ease-out");
+    expect(report).toContain("Active and history");
+    expect(report).toContain("Cleared history");
+    expect(report).toContain("reopenActivityEntry");
   });
 });

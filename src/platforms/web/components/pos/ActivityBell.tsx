@@ -24,9 +24,11 @@ import {
   markActivitySeen,
   mergeRemoteActivityPreferences,
   unseenEvents,
+  clearAllActivityEntries,
   clearActivityEntry,
   clearedIds,
   reopenActivityEntry,
+  subscribeActivityEvents,
   type ActivityEvent,
 } from "@/lib/activity-events";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -42,7 +44,7 @@ import { useSyncSummary } from "@/lib/sync-summary";
 import { attentionCounts } from "@/lib/needs-attention";
 import { humanizeText } from "@/lib/human-readable";
 
-const POLL_MS = 45_000;
+const POLL_MS = 15_000;
 
 const when = (iso: string) => {
   const d = new Date(iso);
@@ -73,8 +75,11 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [missing, setMissing] = useState(false);
+  const [clearAllBusy, setClearAllBusy] = useState(false);
   const [preferenceBusy, setPreferenceBusy] = useState<Set<string>>(() => new Set());
   const preferenceBusyRef = useRef(new Set<string>());
+  const announcedIdsRef = useRef(new Set<string>());
+  const activityInitializedRef = useRef(false);
 
   const updatePreference = useCallback(
     async (id: string, action: () => Promise<boolean>, failure: string) => {
@@ -115,10 +120,32 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
     const hidden = new Set(clearedIds(meKey));
     const fresh = unseenEvents(list, meKey).filter((row) => !hidden.has(row.id));
     setUnread(fresh.length);
-    const critical = fresh.find((r) => r.severity === "critical");
-    if (critical) {
-      toast.warning(eventText(critical.title), {
-        description: critical.message ? eventText(critical.message) : undefined,
+    const newlyArrived = activityInitializedRef.current
+      ? list.filter((row) => !announcedIdsRef.current.has(row.id) && !hidden.has(row.id))
+      : [];
+    for (const row of list) announcedIdsRef.current.add(row.id);
+    activityInitializedRef.current = true;
+    // At most four compact cards are introduced at once. Sonner stacks them
+    // at the right edge and animates both entry and dismissal.
+    for (const row of newlyArrived.slice(0, 4).reverse()) {
+      const show =
+        row.severity === "critical"
+          ? toast.error
+          : row.severity === "warning"
+            ? toast.warning
+            : toast.info;
+      show(eventText(row.title), {
+        id: `activity-${row.id}`,
+        description: row.message ? eventText(row.message) : undefined,
+        closeButton: true,
+        duration: 4_000,
+        position: "top-right",
+        className:
+          "activity-notification-toast !w-[min(20rem,calc(100vw-1rem))] !gap-2 !p-3",
+        classNames: {
+          title: "text-xs font-medium",
+          description: "line-clamp-2 text-[11px] leading-4",
+        },
       });
     }
   }, [eventText, meKey, showActivity]);
@@ -140,6 +167,7 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
   useEffect(() => {
     if (!showActivity) return;
     void refresh();
+    const off = subscribeActivityEvents(() => void refresh());
     const t = setInterval(() => {
       // Stop polling a database that has no activity log.
       if (isActivityLogMissing()) {
@@ -148,7 +176,10 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
       }
       void refresh();
     }, POLL_MS);
-    return () => clearInterval(t);
+    return () => {
+      off();
+      clearInterval(t);
+    };
   }, [showActivity, refresh]);
 
   const hidden = new Set(clearedIds(meKey));
@@ -245,8 +276,8 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
             <TabsTrigger value="activity" className="text-[10px]">
               Activity
             </TabsTrigger>
-            <TabsTrigger value="cleared" className="text-[10px]">
-              Cleared{clearedCount ? ` ${clearedCount}` : ""}
+            <TabsTrigger value="history" className="text-[10px]">
+              History{clearedCount ? ` ${clearedCount}` : ""}
             </TabsTrigger>
           </TabsList>
 
@@ -268,6 +299,39 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
           </TabsContent>
 
           <TabsContent value="activity" className="m-0 max-h-80 overflow-y-auto">
+            {showActivity && visibleRows.length > 0 && (
+              <div className="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
+                <span className="text-[10px] font-medium text-muted-foreground">
+                  Active notifications
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-[10px]"
+                  disabled={clearAllBusy}
+                  onClick={() => {
+                    setClearAllBusy(true);
+                    void clearAllActivityEntries(
+                      meKey,
+                      visibleRows.map((row) => row.id),
+                    )
+                      .then(async (saved) => {
+                        if (!saved) {
+                          toast.error(
+                            "Could not clear notifications. Check the connection and try again.",
+                          );
+                          return;
+                        }
+                        await refresh();
+                      })
+                      .finally(() => setClearAllBusy(false));
+                  }}
+                >
+                  {clearAllBusy ? "Clearing…" : "Clear all"}
+                </Button>
+              </div>
+            )}
             {!showActivity ? (
               <p className="px-3 py-6 text-center text-xs text-muted-foreground">
                 The branch activity feed is for supervisors.
@@ -328,15 +392,15 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
             )}
           </TabsContent>
 
-          <TabsContent value="cleared" className="m-0 max-h-80 overflow-y-auto">
+          <TabsContent value="history" className="m-0 max-h-80 overflow-y-auto">
             {clearedCount === 0 ? (
               <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                Nothing has been cleared.
+                No notification history yet.
               </p>
             ) : (
               <>
                 <p className="px-3 pt-2 text-[10px] text-muted-foreground">
-                  Clearing only hides an entry here. Nothing is deleted.
+                  Cleared notifications remain here and can be reopened.
                 </p>
                 {clearedEvents.map((row) => {
                   const id = row.id;
@@ -369,15 +433,10 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
           </TabsContent>
         </Tabs>
 
-        <div className="grid grid-cols-3 gap-2 border-t border-border p-2">
+        <div className="grid grid-cols-2 gap-2 border-t border-border p-2">
           <Button asChild size="sm" className="text-xs">
             <Link to="/approvals" onClick={() => setOpen(false)}>
               Approvals
-            </Link>
-          </Button>
-          <Button asChild size="sm" variant="secondary" className="text-xs">
-            <Link to="/reports/notifications" onClick={() => setOpen(false)}>
-              Full log
             </Link>
           </Button>
           <Button asChild size="sm" variant="outline" className="text-xs">
