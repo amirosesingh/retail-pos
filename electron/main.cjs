@@ -1246,6 +1246,34 @@ function registerIpc() {
     }
     return cached;
   });
+  ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
+    const input = guard.options(value, { name: "cashier sign in", max: 2 });
+    const username = guard.text(input.username, { name: "username", max: 120 });
+    const pin = guard.text(input.pin, { name: "PIN or passcode", max: 32 });
+    const authorizationUrl = authorizationServerUrl();
+    if (!authorizationUrl)
+      return { ok: false, status: 503, code: "no_server", error: "The hosted POS backend is not configured." };
+    const terminal = terminalStore.read() ?? {};
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 6_000);
+    const response = await fetch(`${authorizationUrl}/api/public/cashier-login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: abort.signal,
+      body: JSON.stringify({
+        username,
+        pin,
+        platform: "electron",
+        terminalId: terminal.tokenId ?? null,
+        branchId: localBranchId(),
+      }),
+    }).finally(() => clearTimeout(timer));
+    const result = await response.json().catch(() => ({
+      ok: false,
+      error: "The sign-in service returned an invalid response.",
+    }));
+    return { ...result, status: response.status };
+  }));
   ipcMain.handle("app:ready", () => {
     markStartupSettled();
     const state = health.markHealthy();

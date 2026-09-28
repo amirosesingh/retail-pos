@@ -71,6 +71,7 @@ export function CashierPinLogin({
   const [error, setError] = useState("");
   const [lockedFor, setLockedFor] = useState(() => lockoutRemaining());
   const pinRef = useRef(pin);
+  const submittingRef = useRef(false);
   pinRef.current = pin;
 
   // Countdown while the keypad is locked after too many wrong PINs.
@@ -141,6 +142,10 @@ export function CashierPinLogin({
 
   const submit = useCallback(
     async (value: string) => {
+      // State updates do not become visible until React renders again. A fast
+      // final keypad tap plus Enter could therefore enter this callback more
+      // than once while `busy` was still false and send duplicate PIN checks.
+      if (submittingRef.current) return;
       if (!username) {
         setError("Choose who is signing in");
         return;
@@ -151,35 +156,39 @@ export function CashierPinLogin({
         setPin("");
         return;
       }
+      submittingRef.current = true;
       setBusy(true);
       setError("");
-      const res = await cashierLogin(username, value);
-      if (!res.ok) {
-        const message = res.error ?? "That PIN was not recognised";
-        const deactivated = /deactivat|not active|blocked/i.test(message);
-        setPin("");
-        // A till that is not connected has not judged the PIN at all, so the
-        // attempt must not count towards the keypad lockout.
-        if (res.code && isConfigurationFailure(res.code)) {
-          setConfigFailure(res.code);
-          setError(message);
-        } else if (deactivated) {
-          setError("Account deactivated. Please contact an administrator.");
+      try {
+        const res = await cashierLogin(username, value);
+        if (!res.ok) {
+          const message = res.error ?? "That PIN was not recognised";
+          const deactivated = /deactivat|not active|blocked/i.test(message);
+          setPin("");
+          // A till that is not connected has not judged the PIN at all, so the
+          // attempt must not count towards the keypad lockout.
+          if (res.code && isConfigurationFailure(res.code)) {
+            setConfigFailure(res.code);
+            setError(message);
+          } else if (deactivated) {
+            setError("Account deactivated. Please contact an administrator.");
+          } else {
+            const locked = notePinFailure();
+            setLockedFor(locked);
+            const left = attemptsLeft();
+            setError(
+              locked
+                ? ""
+                : `${message}${left ? ` — ${left} attempt${left === 1 ? "" : "s"} left` : ""}`,
+            );
+          }
         } else {
-          const locked = notePinFailure();
-          setLockedFor(locked);
-          const left = attemptsLeft();
-          setError(
-            locked
-              ? ""
-              : `${message}${left ? ` — ${left} attempt${left === 1 ? "" : "s"} left` : ""}`,
-          );
+          clearPinFailures();
         }
-      } else {
-        clearPinFailures();
+      } finally {
+        submittingRef.current = false;
+        setBusy(false);
       }
-
-      setBusy(false);
     },
     [cashierLogin, username],
   );

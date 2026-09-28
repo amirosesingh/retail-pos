@@ -652,6 +652,28 @@ export type PosBridge = {
   }>;
   rememberStaffPin?: (username: string, pin: string) => Promise<{ ok: boolean }>;
   forgetStaffPin?: (username: string) => Promise<{ ok: boolean }>;
+  /** Hosted PIN verification performed by Electron main, outside Chromium. */
+  cashierLogin?: (
+    username: string,
+    pin: string,
+  ) => Promise<{
+    ok?: boolean;
+    status?: number;
+    code?: string;
+    error?: string;
+    authTokenHash?: string;
+    cashierToken?: string;
+    sessionToken?: string;
+    cashier?: {
+      id: string;
+      username: string;
+      full_name: string;
+      store_id: string | null;
+      role: "admin" | "manager" | "staff";
+      role_slug: string | null;
+      permissions: Record<string, boolean>;
+    };
+  }>;
 
   /* ---- the bundled app server holds no privileged key: presence only ---- */
   serverKeyStatus?: () => Promise<{ ok: boolean; hasSigningKey: boolean }>;

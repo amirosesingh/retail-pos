@@ -4283,6 +4283,7 @@ export type Database = {
         Args: { p_cleared: boolean; p_event_id: string }
         Returns: undefined
       }
+      set_all_activity_events_cleared: { Args: never; Returns: number }
       assert_supervisor_caller: { Args: never; Returns: undefined }
       authorization_verify_pin: {
         Args: {

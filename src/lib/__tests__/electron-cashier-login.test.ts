@@ -1,0 +1,37 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const read = (file: string) => readFileSync(file, "utf8");
+
+describe("Electron cashier sign in", () => {
+  it("performs the hosted PIN check in Electron main instead of Chromium", () => {
+    const preload = read("electron/preload.cjs");
+    const main = read("electron/main.cjs");
+    const auth = read("src/lib/pos-auth.tsx");
+    const privilege = read("electron/ipc-privilege.cjs");
+
+    expect(preload).toContain('invoke("auth:cashier-login"');
+    expect(main).toContain('ipcMain.handle("auth:cashier-login"');
+    expect(main).toContain('/api/public/cashier-login`');
+    expect(main).toContain("signal: abort.signal");
+    expect(auth).toContain("window.pos?.cashierLogin");
+    expect(privilege).toContain('"auth:cashier-login": OPEN');
+  });
+
+  it("locks the keypad submit path synchronously against duplicate requests", () => {
+    const login = read("src/platforms/web/components/auth/CashierPinLogin.tsx");
+    expect(login).toContain("const submittingRef = useRef(false)");
+    expect(login).toContain("if (submittingRef.current) return");
+    expect(login).toContain("submittingRef.current = true");
+    expect(login).toContain("submittingRef.current = false");
+  });
+
+  it("keeps one live external Auth client and isolates temporary clients", () => {
+    const client = read("src/integrations/supabase/external-client.ts");
+    const config = read("src/lib/secure-cloud-config.ts");
+
+    expect(client).toContain("previous.auth.stopAutoRefresh()");
+    expect(client).toContain("pos-transient-auth-");
+    expect(config).toContain("if (setTerminalSupabaseOverride(res.url, res.key))");
+  });
+});

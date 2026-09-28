@@ -81,10 +81,19 @@ let _client: ReturnType<typeof createExternalClient> | undefined;
  * is activated (or unpaired) so no restart is needed.
  */
 export function resetExternalClient(): void {
+  const previous = _client;
   _client = undefined;
+  if (previous) {
+    // A config refresh must not leave the former Auth client refreshing the
+    // same storage key in the background. That produced duplicate GoTrue
+    // clients and races where one instance restored a stale bearer token.
+    previous.auth.stopAutoRefresh();
+    void previous.removeAllChannels();
+  }
 }
 
 /** A throwaway client for a tenant this machine is not registered to yet. */
+let transientClientSequence = 0;
 export function createTenantClient(url: string, key: string) {
   return createClient<Database>(url, key, {
     global: {
@@ -105,7 +114,15 @@ export function createTenantClient(url: string, key: string) {
         return fetch(input, { ...init, headers });
       },
     },
-    auth: { persistSession: false, autoRefreshToken: false },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      // Supabase warns when independent clients share its default project key
+      // even when persistence is disabled. Probe/activation clients are
+      // deliberately isolated and never own the live staff session.
+      storageKey: `pos-transient-auth-${++transientClientSequence}`,
+    },
   });
 }
 
