@@ -8,6 +8,10 @@
  */
 import { supabaseConfig } from "./external-supabase-config";
 import { serviceRest, serviceKey } from "@/core/api/pos-relay.server";
+import {
+  verifiedPinLinkProof,
+  type GenerateLinkPayload,
+} from "./verified-pin-proof";
 
 export const INTERNAL_EMAIL_DOMAIN = "pos-internal.local";
 
@@ -41,18 +45,10 @@ export async function createVerifiedPinSignInToken(
   if (!response.ok) {
     throw new Error("The secure database session could not be prepared");
   }
-  const body = (await response.json()) as {
-    properties?: { hashed_token?: string };
-    user?: { id?: string };
-  };
+  const body = (await response.json()) as GenerateLinkPayload;
   // The profile carries both identifiers. Refuse a stale/corrupt email mapping
   // rather than minting a session for a different Auth user with that address.
-  if (!body.user?.id || body.user.id !== expectedAuthUserId) {
-    throw new Error("The staff login identity does not match its Auth account");
-  }
-  const tokenHash = body.properties?.hashed_token?.trim() ?? "";
-  if (!tokenHash) throw new Error("The secure database session could not be prepared");
-  return tokenHash;
+  return verifiedPinLinkProof(body, expectedAuthUserId);
 }
 
 /** Call a database routine with the service key. */

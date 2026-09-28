@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
+import { useReportSales } from "@/lib/use-report-sales";
 import { lineCost, saleLineRevenues, saleNetRevenue } from "@/core/pricing/profit";
 import { ReportHeader, StatCard, defaultRange, downloadCsv, inRange } from "@/platforms/web/components/pos/report-kit";
 
@@ -65,17 +66,19 @@ function BusinessReport() {
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
   const [storeId, setStoreId] = useState("all");
+  const reportStoreIds = storeId === "all" ? stores.map((store) => store.id) : [storeId];
+  const history = useReportSales(state.sales, reportStoreIds, from, to);
   const [view, setView] = useState<"products" | "cashiers">("products");
 
   const sales = useMemo(
     () =>
-      state.sales.filter(
+      history.sales.filter(
         (s) =>
           inRange(s.createdAt, from, to) &&
           (storeId === "all" || s.storeId === storeId) &&
           !s.refunded,
       ),
-    [state.sales, from, to, storeId],
+    [history.sales, from, to, storeId],
   );
 
   const days = Math.max(
@@ -229,6 +232,9 @@ function BusinessReport() {
             </div>
           </div>
         </ReportHeader>
+
+        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-4">
           <StatCard label="Revenue" value={money(totals.revenue)} />

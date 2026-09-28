@@ -7865,7 +7865,12 @@ DECLARE
   clean_action text := btrim(COALESCE(_action, ''));
   clean_outcome text := COALESCE(NULLIF(btrim(_outcome), ''), 'approved');
   clean_mode text := COALESCE(NULLIF(btrim(_mode_used), ''), 'admin_auto');
+  input_detail jsonb := '{}'::jsonb;
   audit_detail jsonb;
+  request_uuid uuid;
+  requested_name text;
+  approved_name text;
+  approval_purpose text;
 BEGIN
   IF clean_action = '' THEN
     RAISE EXCEPTION 'ACTION_REQUIRED: an override needs an action' USING ERRCODE = '22023';
@@ -7873,22 +7878,43 @@ BEGIN
   IF clean_mode NOT IN ('pin', 'request', 'admin_auto', 'offline_pin') THEN
     RAISE EXCEPTION 'OVERRIDE_MODE_INVALID' USING ERRCODE = '22023';
   END IF;
-  audit_detail := jsonb_strip_nulls(jsonb_build_object(
+  BEGIN
+    input_detail := COALESCE(NULLIF(_detail, '')::jsonb, '{}'::jsonb);
+    IF jsonb_typeof(input_detail) <> 'object' THEN
+      input_detail := jsonb_build_object('purpose', left(COALESCE(_detail, ''), 400));
+    END IF;
+  EXCEPTION WHEN invalid_text_representation THEN
+    input_detail := jsonb_build_object('purpose', left(COALESCE(_detail, ''), 400));
+  END;
+  IF COALESCE(input_detail ->> 'request_id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN
+    request_uuid := (input_detail ->> 'request_id')::uuid;
+  END IF;
+  requested_name := NULLIF(btrim(input_detail ->> 'requested_by_name'), '');
+  approved_name := COALESCE(NULLIF(btrim(input_detail ->> 'approved_by_name'), ''), _approved_by);
+  approval_purpose := COALESCE(
+    NULLIF(btrim(input_detail ->> 'purpose'), ''),
+    NULLIF(btrim(input_detail ->> 'reason'), ''),
+    NULLIF(btrim(input_detail ->> 'note'), ''),
+    NULLIF(btrim(input_detail ->> 'decision_note'), '')
+  );
+  audit_detail := jsonb_strip_nulls(input_detail || jsonb_build_object(
     'rule_key', _rule_key,
     'requested_by', _requested_by,
+    'requested_by_name', requested_name,
     'approved_by', _approved_by,
+    'approved_by_name', approved_name,
     'approved_role', _approved_role,
     'store_id', _store_id,
     'terminal_id', _terminal_id,
     'outcome', clean_outcome,
     'mode_used', clean_mode,
-    'detail', left(COALESCE(_detail, ''), 400)));
+    'purpose', approval_purpose));
 
   INSERT INTO public.authorization_log(
-    id, action_key, mode_used, requested_by, authorized_by, authorizer_role,
+    id, action_key, mode_used, request_id, requested_by, authorized_by, authorizer_role,
     store_id, terminal_id, outcome, detail)
   VALUES (
-    new_id, clean_action, clean_mode, _requested_by, _approved_by, _approved_role,
+    new_id, clean_action, clean_mode, request_uuid, _requested_by, _approved_by, _approved_role,
     COALESCE(_store_id, ''), COALESCE(_terminal_id, ''), clean_outcome, audit_detail);
 
   INSERT INTO public.audit_logs(
@@ -7899,7 +7925,7 @@ BEGIN
     clean_action,
     'pos',
     _approved_by,
-    _approved_by,
+    approved_name,
     clean_action,
     COALESCE(_rule_key, clean_action),
     audit_detail,
@@ -7909,12 +7935,12 @@ BEGIN
     actor_id, actor_name, actor_role, action_type, entity_affected, entity_id,
     new_value, terminal_id, store_id, note)
   VALUES (
-    _approved_by, _approved_by, _approved_role,
+    _approved_by, approved_name, _approved_role,
     'authorization.override.' || clean_outcome,
     'authorization_log', new_id::text, audit_detail,
     NULLIF(btrim(COALESCE(_terminal_id, '')), ''),
     NULLIF(btrim(COALESCE(_store_id, '')), ''),
-    left(COALESCE(_detail, ''), 400));
+    left(COALESCE(approval_purpose, input_detail ->> 'decision_note', ''), 400));
   RETURN new_id;
 END $$;
 
@@ -7951,7 +7977,9 @@ BEGIN
   IF COALESCE(btrim(p_action), '') <> '' THEN
     PERFORM public.log_manager_override(
       p_action, p_rule_key, p_requested_by, u.user_id::text, u.role::text,
-      p_store_id, p_terminal_id, p_detail, 'approved', 'pin');
+      p_store_id, p_terminal_id,
+      jsonb_build_object('purpose', p_detail, 'approved_by_name', u.full_name)::text,
+      'approved', 'pin');
   END IF;
 
   RETURN QUERY SELECT u.user_id::text, u.full_name::text, u.role;

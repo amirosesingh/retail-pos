@@ -12,6 +12,7 @@ import {
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
 import { saleNetRevenue } from "@/core/pricing/profit";
+import { useReportSales } from "@/lib/use-report-sales";
 import {
   ReportHeader,
   StatCard,
@@ -40,17 +41,18 @@ export const Route = createFileRoute("/reports/sales")({
 });
 
 function SalesReport() {
-  const { state } = usePos();
+  const { state, stores } = usePos();
   const init = defaultRange();
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
+  const history = useReportSales(state.sales, stores.map((store) => store.id), from, to);
 
   const rows = useMemo(
     () =>
-      state.sales
+      history.sales
         .filter((s) => inRange(s.createdAt, from, to))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [state.sales, from, to],
+    [history.sales, from, to],
   );
 
   const totals = rows.filter((sale) => !sale.refunded).reduce(
@@ -91,6 +93,9 @@ function SalesReport() {
             ])
           }
         />
+
+        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <StatCard label="Completed bills" value={String(rows.filter((sale) => !sale.refunded).length)} />

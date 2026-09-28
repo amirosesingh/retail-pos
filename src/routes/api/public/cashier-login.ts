@@ -72,11 +72,21 @@ export async function handleCashierLogin(request: Request): Promise<Response> {
     if (result.ok) {
       await throttleReset(userKey);
       await throttleReset(ipKey);
-    } else {
+    } else if (result.code === "invalid_credentials") {
       await throttleFail(userKey);
       await throttleFail(ipKey);
     }
-    return Response.json(result, { status: result.ok ? 200 : 401 });
+    // Infrastructure/identity preparation failures are not wrong PINs. Do not
+    // consume an attempt; 503 also lets a terminal use its verified local PIN
+    // cache while the hosted Auth handoff is temporarily unavailable.
+    const status = result.ok
+      ? 200
+      : result.code === "session_prepare_failed"
+        ? 503
+        : result.code === "identity_mismatch"
+          ? 409
+          : 401;
+    return Response.json(result, { status });
   } catch (e) {
     return Response.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }

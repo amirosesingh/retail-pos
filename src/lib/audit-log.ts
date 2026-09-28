@@ -1,8 +1,9 @@
 import { readBusinessValue, writeBusinessValue } from "./business-storage";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { db } from "@/core/api/pos-db";
 import { hasSignedInIdentity } from "./session-presence";
 import { replayOrder, stamp } from "./activity-journal";
+import { isTerminalApp } from "@/platform-config/platform";
 
 /**
  * Business-language activity groups.
@@ -175,7 +176,10 @@ const KEY = "pos-audit-logs-v1";
 const MAX_SYNCED = 4000;
 
 let logs: AuditLog[] = [];
+let sqlLogs: AuditLog[] = [];
+let visibleLogs: AuditLog[] = [];
 let loaded = false;
+let sqlHistoryLoaded = false;
 const listeners = new Set<() => void>();
 
 let actor = {
@@ -200,6 +204,14 @@ function load() {
   } catch {
     /* corrupt storage */
   }
+  refreshVisibleLogs();
+}
+
+function refreshVisibleLogs() {
+  const byId = new Map<string, AuditLog>();
+  for (const row of sqlLogs) byId.set(row.id, row);
+  for (const row of logs) byId.set(row.id, row);
+  visibleLogs = [...byId.values()].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
 function persist() {
@@ -222,6 +234,7 @@ function trim(rows: AuditLog[]): AuditLog[] {
 }
 
 function emit() {
+  refreshVisibleLogs();
   persist();
   listeners.forEach((l) => l());
 }
@@ -262,7 +275,7 @@ export const logger = {
   },
   all() {
     load();
-    return logs;
+    return visibleLogs;
   },
   clear() {
     logs = [];
@@ -367,11 +380,76 @@ export function startAuditSync() {
 }
 
 export function useAuditLogs() {
+  // The renderer cache is deliberately small. On Windows, hydrate a bounded
+  // history from SQL Server so reports survive restarts without expanding
+  // browser storage or loading an unbounded audit table into memory.
+  useEffect(() => {
+    if (sqlHistoryLoaded || !isTerminalApp()) return;
+    sqlHistoryLoaded = true;
+    void dbRouterAuditHistory();
+  }, []);
   return useSyncExternalStore(
     logger.subscribe,
     () => logger.all(),
     () => [] as AuditLog[],
   );
+}
+
+async function dbRouterAuditHistory(): Promise<void> {
+  try {
+    const rows = await db.queryAuditLogs(2000);
+    load();
+    const existing = new Set(logs.map((row) => row.id));
+    const mapped = rows
+      .filter((row) => !existing.has(String(row.id)))
+      .map((row): AuditLog => {
+        const rawDetails = row.details;
+        const details =
+          rawDetails && typeof rawDetails === "object"
+            ? (rawDetails as Record<string, unknown>)
+            : typeof rawDetails === "string"
+              ? (() => {
+                  try {
+                    return JSON.parse(rawDetails) as Record<string, unknown>;
+                  } catch {
+                    return {};
+                  }
+                })()
+              : {};
+        const action = String(row.action_name ?? row.action ?? "Recorded activity");
+        const module = String(row.target_module ?? "");
+        const createdAt = String(row.created_at ?? new Date(0).toISOString());
+        const rawCategory = String(row.action_category ?? "other").toLowerCase();
+        const category =
+          AUDIT_CATEGORIES.find((item) => item.label.toLowerCase() === rawCategory)?.value ??
+          rawCategory;
+        return {
+          id: String(row.id),
+          at: createdAt,
+          category: resolveCategory(category, action, module),
+          action,
+          module,
+          staffId: String(row.user_id ?? details.staffId ?? "unknown"),
+          staffName: String(row.user_name ?? "Unknown"),
+          role: String(details.role ?? "unknown"),
+          storeId: typeof row.store_id === "string" ? row.store_id : null,
+          route: String(details.route ?? ""),
+          details,
+          synced_to_cloud: true,
+          syncedAt: null,
+          terminalId: typeof details.terminalId === "string" ? details.terminalId : undefined,
+          seq: typeof details.seq === "number" ? details.seq : undefined,
+          deviceTime: typeof details.deviceTime === "string" ? details.deviceTime : createdAt,
+        };
+      });
+    if (!mapped.length) return;
+    sqlLogs = mapped;
+    refreshVisibleLogs();
+    listeners.forEach((listener) => listener());
+  } catch {
+    // The current renderer cache remains usable when local SQL is unavailable.
+    sqlHistoryLoaded = false;
+  }
 }
 
 export function useSyncState() {

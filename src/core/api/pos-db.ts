@@ -30,6 +30,7 @@ import {
   wakeBrowserOutbox,
 } from "@/lib/browser-sync-outbox";
 import { withRelativeStock, type StockDelta } from "@/lib/sync-stock";
+import { safeCreatedAt, safeReceiptNo } from "@/lib/report-data-safety";
 
 import { isLinkedRecordError, usageBlock, type ProductUsage } from "@/lib/product-delete";
 import type {
@@ -612,9 +613,12 @@ const forgetTxnColumn = (message?: string | null) => {
   }
 };
 
-const rowToSale = (r: Row): Sale => ({
+export const rowToSale = (r: Row): Sale => ({
   id: r.id,
-  receiptNo: r.bill_number,
+  // Historic/imported SQL rows can predate bill numbering. Reports and the
+  // register counter require a string; use the stable row id as a visible,
+  // deterministic fallback instead of letting `.split()` crash the shell.
+  receiptNo: safeReceiptNo(r.bill_number, r.id),
   clientTxnId: r.client_transaction_id ?? undefined,
   storeId: r.store_id ?? "",
   storeName: r.store_name_snapshot ?? undefined,
@@ -655,7 +659,7 @@ const rowToSale = (r: Row): Sale => ({
   memberId: r.member_id ?? null,
   pointsEarned: num(r.points_earned),
   cashier: r.cashier_name ?? "",
-  createdAt: r.created_at,
+  createdAt: safeCreatedAt(r.created_at),
   refunded: !!r.is_refunded,
   exchangeOfReceiptNo: r.original_bill_number ?? undefined,
   exchangedToReceiptNo: r.exchanged_to_bill_number ?? undefined,
@@ -2072,6 +2076,14 @@ export const db = {
     );
     if (error) throw error;
     return rows.map((r) => r.id);
+  },
+
+  /** Bounded local history for audit/report screens; never retained as app cache. */
+  async queryAuditLogs(limit = 2000): Promise<Row[]> {
+    return routedQuery("audit_logs", {
+      orderBy: { column: "created_at", ascending: false },
+      limit: Math.min(Math.max(limit, 1), 2000),
+    });
   },
 
   /** Purchase order / receiving invoice. */

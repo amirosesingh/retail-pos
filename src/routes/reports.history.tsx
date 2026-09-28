@@ -23,6 +23,8 @@ import {
 } from "@/platforms/web/components/pos/report-kit";
 import { adminAccessToken } from "@/lib/admin-session";
 import { listSystemAudit } from "@/lib/system-audit-client";
+import { auditReportFields } from "@/lib/audit-report-format";
+import { useAuth } from "@/lib/pos-auth";
 
 export const Route = createFileRoute("/reports/history")({
   head: () => ({
@@ -62,6 +64,7 @@ type Row = {
 };
 
 function EditHistoryReport() {
+  const { can } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -93,8 +96,9 @@ function EditHistoryReport() {
     const needle = q.trim().toLowerCase();
     const dated = rows.filter((r) => inRange(r.created_at, from, to));
     if (!needle) return dated;
-    return dated.filter((r) =>
-      [
+    return dated.filter((r) => {
+      const display = auditReportFields(r);
+      return [
         r.actor_name,
         r.actor_id,
         r.actor_role,
@@ -102,31 +106,41 @@ function EditHistoryReport() {
         r.entity_affected,
         r.entity_id,
         r.note,
+        r.old_value,
+        r.new_value,
+        display.requestedBy,
+        display.approvedBy,
+        display.purpose,
       ]
         .join(" ")
         .toLowerCase()
-        .includes(needle),
-    );
+        .includes(needle);
+    });
   }, [rows, q, from, to]);
 
   const page = usePagination(filtered);
 
   const exportCsv = () => {
     downloadCsv("edit-history", [
-      ["When", "Who", "Role", "Action", "Affected", "Reference", "Before", "After", "Terminal"],
-      ...filtered.map((r) => [
-        stamp(r.created_at),
-        r.actor_name ?? r.actor_id ?? "",
-        r.actor_role ?? "",
-        r.action_type,
-        r.entity_affected ?? "",
-        r.entity_id ?? "",
-        r.old_value ?? "",
-        r.new_value ?? "",
-        r.terminal_id ?? "",
-      ]),
+      ["When", "Requested by", "Approved / acted by", "Role", "Action", "Outcome", "Purpose", "Reference", "Before", "After", "Terminal"],
+      ...filtered.map((r) => {
+        const display = auditReportFields(r);
+        return [
+          stamp(r.created_at), display.requestedBy, display.approvedBy,
+          r.actor_role ?? "", display.action, display.outcome, display.purpose,
+          display.reference, r.old_value ?? "", r.new_value ?? "", r.terminal_id ?? "",
+        ];
+      }),
     ]);
   };
+
+  if (!can("can_view_audit_trail")) {
+    return (
+      <AppShell>
+        <div className="p-6 text-sm text-destructive">Permission required to view audit history.</div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
@@ -168,41 +182,44 @@ function EditHistoryReport() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>When</TableHead>
-                    <TableHead>Who</TableHead>
+                    <TableHead>Requested by</TableHead>
+                    <TableHead>Approved / acted by</TableHead>
                     <TableHead>Action</TableHead>
-                    <TableHead>Affected</TableHead>
-                    <TableHead>Before → After</TableHead>
+                    <TableHead>Purpose / details</TableHead>
                     <TableHead>Terminal</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {page.pageItems.map((r) => (
-                    <TableRow key={r.id}>
+                  {page.pageItems.map((r) => {
+                    const display = auditReportFields(r);
+                    return <TableRow key={r.id}>
                       <TableCell className="whitespace-nowrap text-xs">
                         {stamp(r.created_at)}
                       </TableCell>
                       <TableCell className="text-sm">
-                        <div className="font-medium">{r.actor_name ?? r.actor_id ?? "Unknown"}</div>
+                        {display.requestedBy || "—"}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        <div className="font-medium">{display.approvedBy}</div>
                         {r.actor_role ? (
                           <Badge variant="outline" className="mt-1">
                             {r.actor_role}
                           </Badge>
                         ) : null}
                       </TableCell>
-                      <TableCell className="text-sm">{r.action_type}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {[r.entity_affected, r.entity_id].filter(Boolean).join(" · ")}
+                      <TableCell className="text-sm">
+                        <div>{display.action}</div>
+                        {display.outcome ? <Badge variant="outline" className="mt-1">{display.outcome}</Badge> : null}
                       </TableCell>
                       <TableCell className="max-w-[26rem] text-xs text-muted-foreground">
-                        <div className="truncate">{r.old_value ?? "—"}</div>
-                        <div className="truncate text-foreground">{r.new_value ?? "—"}</div>
-                        {r.note ? <div className="truncate italic">{r.note}</div> : null}
+                        <div className="text-foreground">{display.purpose}</div>
+                        <div className="truncate">Reference: {display.reference}</div>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {r.terminal_id ? r.terminal_id.slice(0, 8) : "—"}
                       </TableCell>
-                    </TableRow>
-                  ))}
+                    </TableRow>;
+                  })}
                 </TableBody>
               </Table>
             </div>

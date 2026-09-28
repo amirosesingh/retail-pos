@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { money, usePos } from "@/lib/pos-store";
 import { savingsOf, soldLines, sumLines } from "@/lib/sales-analytics";
+import { useReportSales } from "@/lib/use-report-sales";
 import { saleNetRevenue } from "@/core/pricing/profit";
 import { ReportHeader, StatCard, defaultRange, inRange } from "@/platforms/web/components/pos/report-kit";
 
@@ -72,11 +73,12 @@ function AnalyticsBoard() {
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
   const [topBy, setTopBy] = useState<"revenue" | "units">("revenue");
+  const history = useReportSales(state.sales, stores.map((store) => store.id), from, to);
   const [trend, setTrend] = useState<"daily" | "monthly">("daily");
 
   const bills = useMemo(
-    () => state.sales.filter((s) => inRange(s.createdAt, from, to) && !s.refunded),
-    [state.sales, from, to],
+    () => history.sales.filter((s) => inRange(s.createdAt, from, to) && !s.refunded),
+    [history.sales, from, to],
   );
   const lines = useMemo(() => soldLines(bills, state.products), [bills, state.products]);
   const totals = sumLines(lines);
@@ -148,6 +150,9 @@ function AnalyticsBoard() {
           onFrom={setFrom}
           onTo={setTo}
         />
+
+        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <StatCard label="Revenue" value={money(revenue)} hint={`${bills.length} bills`} />

@@ -30,7 +30,11 @@ export type CashierLoginResult =
         permissions: Record<string, boolean>;
       };
     }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      code?: "invalid_credentials" | "session_prepare_failed" | "identity_mismatch";
+    };
 
 export async function cashierLoginServer(input: {
   username: string;
@@ -97,7 +101,7 @@ export async function cashierLoginServer(input: {
       terminalId: input.terminalId ?? null,
       note: "Invalid username or PIN",
     });
-    return { ok: false, error: "Invalid username or PIN" };
+    return { ok: false, code: "invalid_credentials", error: "Invalid username or PIN" };
   }
 
   const profileResponse = await serviceRest(
@@ -128,8 +132,15 @@ export async function cashierLoginServer(input: {
   let authTokenHash: string;
   try {
     authTokenHash = await createVerifiedPinSignInToken(authEmail, profile.auth_user_id);
-  } catch {
-    return { ok: false, error: "The secure database session could not be prepared" };
+  } catch (error) {
+    const mismatch = (error as Error).message.includes("does not match");
+    return {
+      ok: false,
+      code: mismatch ? "identity_mismatch" : "session_prepare_failed",
+      error: mismatch
+        ? "This staff account needs its login identity repaired by an administrator"
+        : "The secure database session could not be prepared",
+    };
   }
 
   // An account with no branch of its own works at every branch: the till's

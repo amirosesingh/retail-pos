@@ -1,4 +1,5 @@
 import { isTerminalApp } from "@/platform-config/platform";
+import { routedQuery } from "@/core/api/db-query";
 import { posFetch } from "./server-origin";
 import {
   listSystemAudit as listSystemAuditFn,
@@ -29,8 +30,38 @@ export const recordSystemAudit = (input: NonNullable<Parameters<typeof recordSys
   );
 
 export const listSystemAudit = (input: NonNullable<Parameters<typeof listSystemAuditFn>[0]>) =>
-  callHosted<Awaited<ReturnType<typeof listSystemAuditFn>>>(
-    "list",
-    input.data,
-    listSystemAuditFn as DirectCall,
-  );
+  (async () => {
+    const data = input.data as { accessToken: string; limit?: number };
+    if (isTerminalApp()) {
+      try {
+        const rows = await routedQuery("system_audit_logs", {
+          orderBy: { column: "created_at", ascending: false },
+          limit: Math.min(data.limit ?? 200, 1000),
+        });
+        const text = (value: unknown) =>
+          value === null || value === undefined
+            ? null
+            : typeof value === "string"
+              ? value
+              : JSON.stringify(value);
+        return {
+          ok: true as const,
+          rows: rows.map((row) => ({
+            ...row,
+            old_value: text(row.old_value),
+            new_value: text(row.new_value),
+          })),
+          source: "local" as const,
+        };
+      } catch {
+        // A terminal with no local SQL connection can still use the hosted
+        // audit service while online. The caller's access token is checked
+        // there before any history is returned.
+      }
+    }
+    return callHosted<Awaited<ReturnType<typeof listSystemAuditFn>>>(
+      "list",
+      data,
+      listSystemAuditFn as DirectCall,
+    );
+  })();
