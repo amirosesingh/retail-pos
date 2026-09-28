@@ -24,6 +24,10 @@ describe("desktop release configuration", () => {
     expect(version).toContain("git fetch --tags --force origin");
     expect(version).toContain("git add package.json package-lock.json src/version.ts");
     expect(version).toContain('git tag "$tag"');
+    expect(version).toContain(
+      'git push --atomic origin HEAD:main "refs/tags/$tag:refs/tags/$tag"',
+    );
+    expect(version).not.toContain('git push origin HEAD:main');
     expect(version).toContain('gh workflow run desktop-release.yml --ref "$tag"');
     expect(version).toContain('gh workflow run android-apk.yml --ref "$tag"');
     expect(version).toContain("[release]");
