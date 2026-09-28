@@ -42,6 +42,12 @@ export function contentSecurityPolicy(supabaseUrl?: string): string {
 /** Clone a response with the hosted application's security boundary applied. */
 export function withWebSecurityHeaders(response: Response, supabaseUrl?: string): Response {
   const headers = new Headers(response.headers);
+  if ((headers.get("content-type") ?? "").toLowerCase().includes("text/html")) {
+    // HTML names the current build's content-hashed chunks. It must be
+    // revalidated after every navigation/deployment; otherwise an old page
+    // can ask a new Workers deployment for chunks that no longer exist.
+    headers.set("Cache-Control", "no-cache, must-revalidate");
+  }
   headers.set("Content-Security-Policy", contentSecurityPolicy(supabaseUrl));
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
