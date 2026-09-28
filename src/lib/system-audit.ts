@@ -2,7 +2,7 @@
  * Client helper for the immutable edit history. Fire-and-forget: recording an
  * action must never slow down or block the person performing it.
  */
-import { recordSystemAudit } from "./system-audit.functions";
+import { recordSystemAudit } from "./system-audit-client";
 import { readCredentials } from "./pos-credentials";
 
 export type SystemAuditInput = {

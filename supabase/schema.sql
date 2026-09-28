@@ -7840,7 +7840,13 @@ BEGIN
   RETURN public.pos_rules_get(sid);
 END $$;
 
--- Override audit. Reuses audit_logs; raises so a lost record is never silent.
+-- Remove the retired signature first. Leaving both signatures makes PostgREST
+-- select the older eight-argument routine and bypass the canonical audit path.
+DROP FUNCTION IF EXISTS public.log_manager_override(text,text,text,text,text,text,text,text);
+DROP FUNCTION IF EXISTS public.log_manager_override(text,text,text,text,text,text,text,text,text);
+
+-- Override audit. One transaction writes the operational audit, immutable
+-- authorisation history and the Edit History report row.
 CREATE OR REPLACE FUNCTION public.log_manager_override(
   _action text,
   _rule_key text DEFAULT NULL,
@@ -7850,34 +7856,65 @@ CREATE OR REPLACE FUNCTION public.log_manager_override(
   _store_id text DEFAULT NULL,
   _terminal_id text DEFAULT NULL,
   _detail text DEFAULT NULL,
-  _outcome text DEFAULT 'approved'
+  _outcome text DEFAULT 'approved',
+  _mode_used text DEFAULT 'admin_auto'
 )
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $$
-DECLARE new_id uuid;
+DECLARE
+  new_id uuid := gen_random_uuid();
+  clean_action text := btrim(COALESCE(_action, ''));
+  clean_outcome text := COALESCE(NULLIF(btrim(_outcome), ''), 'approved');
+  clean_mode text := COALESCE(NULLIF(btrim(_mode_used), ''), 'admin_auto');
+  audit_detail jsonb;
 BEGIN
-  IF COALESCE(btrim(_action), '') = '' THEN
+  IF clean_action = '' THEN
     RAISE EXCEPTION 'ACTION_REQUIRED: an override needs an action' USING ERRCODE = '22023';
   END IF;
+  IF clean_mode NOT IN ('pin', 'request', 'admin_auto', 'offline_pin') THEN
+    RAISE EXCEPTION 'OVERRIDE_MODE_INVALID' USING ERRCODE = '22023';
+  END IF;
+  audit_detail := jsonb_strip_nulls(jsonb_build_object(
+    'rule_key', _rule_key,
+    'requested_by', _requested_by,
+    'approved_by', _approved_by,
+    'approved_role', _approved_role,
+    'store_id', _store_id,
+    'terminal_id', _terminal_id,
+    'outcome', clean_outcome,
+    'mode_used', clean_mode,
+    'detail', left(COALESCE(_detail, ''), 400)));
+
+  INSERT INTO public.authorization_log(
+    id, action_key, mode_used, requested_by, authorized_by, authorizer_role,
+    store_id, terminal_id, outcome, detail)
+  VALUES (
+    new_id, clean_action, clean_mode, _requested_by, _approved_by, _approved_role,
+    COALESCE(_store_id, ''), COALESCE(_terminal_id, ''), clean_outcome, audit_detail);
+
   INSERT INTO public.audit_logs(
-    action_category, action_name, target_module, user_id, user_name, action, entity, details)
+    action_category, action_name, target_module, user_id, user_name, action,
+    entity, details, store_id)
   VALUES (
     'override',
-    btrim(_action),
+    clean_action,
     'pos',
     _approved_by,
     _approved_by,
-    btrim(_action),
-    COALESCE(_rule_key, btrim(_action)),
-    jsonb_strip_nulls(jsonb_build_object(
-      'rule_key', _rule_key,
-      'requested_by', _requested_by,
-      'approved_by', _approved_by,
-      'approved_role', _approved_role,
-      'store_id', _store_id,
-      'terminal_id', _terminal_id,
-      'outcome', COALESCE(NULLIF(btrim(_outcome), ''), 'approved'),
-      'detail', left(COALESCE(_detail, ''), 400))))
-  RETURNING id INTO new_id;
+    clean_action,
+    COALESCE(_rule_key, clean_action),
+    audit_detail,
+    NULLIF(btrim(COALESCE(_store_id, '')), ''));
+
+  INSERT INTO public.system_audit_logs(
+    actor_id, actor_name, actor_role, action_type, entity_affected, entity_id,
+    new_value, terminal_id, store_id, note)
+  VALUES (
+    _approved_by, _approved_by, _approved_role,
+    'authorization.override.' || clean_outcome,
+    'authorization_log', new_id::text, audit_detail,
+    NULLIF(btrim(COALESCE(_terminal_id, '')), ''),
+    NULLIF(btrim(COALESCE(_store_id, '')), ''),
+    left(COALESCE(_detail, ''), 400));
   RETURN new_id;
 END $$;
 
@@ -7914,7 +7951,7 @@ BEGIN
   IF COALESCE(btrim(p_action), '') <> '' THEN
     PERFORM public.log_manager_override(
       p_action, p_rule_key, p_requested_by, u.user_id::text, u.role::text,
-      p_store_id, p_terminal_id, p_detail, 'approved');
+      p_store_id, p_terminal_id, p_detail, 'approved', 'pin');
   END IF;
 
   RETURN QUERY SELECT u.user_id::text, u.full_name::text, u.role;
@@ -7946,12 +7983,17 @@ BEGIN
      WHERE n.nspname = 'public'
        AND p.proname IN ('pos_rules_get', 'pos_rules_save', 'pos_rules_row',
                          'pos_rules_defaults', 'verify_manager_pin',
-                         'log_manager_override', 'held_orders_open_count')
+                         'held_orders_open_count')
   LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon', r.sig);
     EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO authenticated, service_role', r.sig);
   END LOOP;
 END $$;
+
+REVOKE ALL ON FUNCTION public.log_manager_override(text,text,text,text,text,text,text,text,text,text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.log_manager_override(text,text,text,text,text,text,text,text,text,text)
+  TO service_role;
 
 -- The global row must exist so branch rules always have a base to layer over.
 INSERT INTO public.pos_store_settings(store_id) VALUES ('')

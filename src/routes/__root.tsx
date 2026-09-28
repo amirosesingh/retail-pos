@@ -48,6 +48,7 @@ import { bypassPersistentAppShell } from "@/lib/app-shell-routes";
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
 import { hydrateConnectionProfile } from "@/lib/connection-profile";
 import { TillLoader } from "@/components/shared/TillLoader";
+import { staleAssetRecoveryScript } from "@/lib/stale-asset-recovery";
 
 function NotFoundComponent() {
   return (
@@ -218,6 +219,7 @@ function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: staleAssetRecoveryScript }} />
         <HeadContent />
         <script dangerouslySetInnerHTML={{ __html: publicConfigScript() }} />
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />

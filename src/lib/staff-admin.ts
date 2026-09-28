@@ -5,15 +5,14 @@
  * goes to the server, which checks that the person asking is a supervisor.
  */
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { listTerminalStaffAccounts, preparePinSignIn } from "@/lib/staff-admin.functions";
 import {
-  listTerminalStaffAccounts,
-  migrateCashiersToAccounts,
-  preparePinSignIn,
   deleteStaffAccount,
+  migrateCashiersToAccounts,
   saveStaffAccount,
   setStaffAccountActive,
   updateStaffAccount,
-} from "@/lib/staff-admin.functions";
+} from "@/lib/staff-admin-client";
 import type { StaffRole } from "@/lib/permissions";
 import { isExternalEmail } from "@/lib/internal-domains";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
@@ -188,7 +187,6 @@ export async function listTerminalStaff(storeId: string | null): Promise<Termina
     return { staff: [], reason: "unreachable" };
   }
 }
-
 
 /** Ask the server to make sure this person's account matches the PIN typed in. */
 export async function preparePinAccount(

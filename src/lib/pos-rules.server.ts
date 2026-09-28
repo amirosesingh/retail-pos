@@ -30,7 +30,10 @@ export function signOverrideGrant(grant: Omit<OverrideGrant, "exp">): string {
   return `${body}.${sig}`;
 }
 
-export function verifyOverrideGrant(token: string | undefined, action: string): OverrideGrant | null {
+export function verifyOverrideGrant(
+  token: string | undefined,
+  action: string,
+): OverrideGrant | null {
   const [body, sig] = (token || "").split(".");
   if (!body || !sig) return null;
   const expected = createHmac("sha256", secret()).update(body).digest("base64url");
@@ -89,13 +92,7 @@ export type RulesSource = "database" | "defaults";
  * network outage.
  */
 export type RulesFailure =
-  | "none"
-  | "config"
-  | "network"
-  | "auth"
-  | "permission"
-  | "data"
-  | "unknown";
+  "none" | "config" | "network" | "auth" | "permission" | "data" | "unknown";
 
 export type RulesResult = {
   rules: PosRules;
@@ -190,7 +187,6 @@ export async function loadRulesResult(storeId: string): Promise<RulesResult> {
   }
 }
 
-
 export async function loadRules(storeId: string): Promise<PosRules> {
   return (await loadRulesResult(storeId)).rules;
 }
@@ -241,8 +237,7 @@ export async function verifyManagerPinInDb(
       p_detail: audit?.detail ?? null,
     });
     const row = (Array.isArray(rows) ? rows[0] : rows) as
-      | { user_id?: string; full_name?: string; role?: string }
-      | undefined;
+      { user_id?: string; full_name?: string; role?: string } | undefined;
     if (!row?.user_id) return null;
     return { userId: row.user_id, name: row.full_name ?? row.user_id, role: row.role ?? "manager" };
   } catch {
@@ -270,6 +265,8 @@ export async function logOverride(input: {
       _store_id: input.storeId ?? null,
       _terminal_id: input.terminalId ?? null,
       _detail: input.detail ?? null,
+      _outcome: "approved",
+      _mode_used: "admin_auto",
     });
     return { ok: true };
   } catch (e) {

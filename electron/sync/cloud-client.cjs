@@ -66,10 +66,17 @@ class CloudClient {
         return [column.sqlServerColumn, toLocalValue(column, value)];
       });
       if (!entries.length || primary.some((name) => !entries.some(([column]) => column === name))) continue;
+      // user_roles is uniquely identified by the role assignment itself. Old
+      // installs can hold the same (user_id, role) under a different generated
+      // UUID; matching only the UUID makes a replay violate UQ_user_roles_0.
+      // Pull is authoritative, so update that harmless local UUID to the cloud
+      // UUID while preserving one assignment row.
+      const mergeKey = table.cloudTable === "user_roles" ? ["user_id", "role"] : primary;
+      if (mergeKey.some((name) => !entries.some(([column]) => column === name))) continue;
       const request = new sql.Request(transaction); const names = [];
       entries.forEach(([name, value], index) => { const parameter = `v${index}`; request.input(parameter, value); names.push([name, parameter]); });
-      const on = primary.map((name) => `target.[${name}]=source.[${name}]`).join(" AND ");
-      const updates = names.filter(([name]) => !primary.includes(name)).map(([name]) => `target.[${name}]=source.[${name}]`);
+      const on = mergeKey.map((name) => `target.[${name}]=source.[${name}]`).join(" AND ");
+      const updates = names.filter(([name]) => !mergeKey.includes(name)).map(([name]) => `target.[${name}]=source.[${name}]`);
       const versioned = names.some(([name]) => name === "row_version");
       const conflictPolicy = table.conflictRule ?? policy(table.cloudTable);
       const correction = table.cloudTable === "sales" && names.some(([name]) => name === "is_refunded")
