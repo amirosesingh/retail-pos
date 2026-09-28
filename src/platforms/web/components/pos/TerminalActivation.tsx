@@ -23,6 +23,7 @@ import {
   activateTerminal,
   ActivationError,
   activateWithTokenId,
+  clearPairingRequest,
   encodePairingRequest,
   getPairingRequest,
   type TerminalConfig,
@@ -83,6 +84,7 @@ export function TerminalActivation({
   /** Set once this till is registered, so the operator can check the details. */
   const [done, setDone] = useState<TerminalConfig | null>(null);
   const [showPairing, setShowPairing] = useState(false);
+  const [pairingStopped, setPairingStopped] = useState(false);
   // Minted after mount: the id is random, so generating it during SSR would
   // hydrate a different QR than the server drew and blow up the page.
   const [pairing, setPairing] = useState<ReturnType<typeof getPairingRequest> | null>(null);
@@ -117,9 +119,11 @@ export function TerminalActivation({
   // While the operator waits, keep asking whether an administrator approved
   // the pairing request from their phone. Approval activates the till itself.
   useEffect(() => {
-    if (!pairing || !online || done) return;
+    if (!pairing || !online || done || !showPairing || pairingStopped) return;
     let stopped = false;
     let pending = false;
+    let timer: number | undefined;
+    let attempts = 0;
     const tick = async () => {
       if (pending) return;
       pending = true;
@@ -131,18 +135,28 @@ export function TerminalActivation({
           setDone(config);
         }
       } catch (e) {
-        if (!stopped && e instanceof ActivationError) setError(e.message);
+        if (!stopped && e instanceof ActivationError) {
+          setError(e.message);
+          // Network failures recover automatically; token verdicts need a new
+          // request and must not hammer the API every three seconds forever.
+          if (!/cannot reach|connection/i.test(e.message)) setPairingStopped(true);
+        }
       } finally {
         pending = false;
+        attempts += 1;
+        if (!stopped)
+          timer = window.setTimeout(
+            () => void tick(),
+            Math.min(3_000 + attempts * 1_000, 15_000),
+          );
       }
     };
     void tick();
-    const timer = window.setInterval(() => void tick(), 3000);
     return () => {
       stopped = true;
-      window.clearInterval(timer);
+      if (timer) window.clearTimeout(timer);
     };
-  }, [pairing, online, done]);
+  }, [pairing, online, done, showPairing, pairingStopped]);
 
   if (done) {
     return (
@@ -308,7 +322,9 @@ export function TerminalActivation({
                   {pairing ? `${pairing.tokenId.slice(0, 8)}…` : "Preparing…"}
                 </p>
                 <p className="mt-2 flex items-center gap-1">
-                  {online ? (
+                  {pairingStopped ? (
+                    <>Approval expired or belongs to another device.</>
+                  ) : online ? (
                     <>
                       <Loader2 className="size-3 animate-spin" /> Waiting for approval…
                     </>
@@ -316,6 +332,21 @@ export function TerminalActivation({
                     <>Waiting for a connection…</>
                   )}
                 </p>
+                {pairingStopped && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 border-slate-700 bg-slate-900"
+                    onClick={() => {
+                      clearPairingRequest();
+                      setPairing(getPairingRequest());
+                      setPairingStopped(false);
+                      setError("");
+                    }}
+                  >
+                    Start a new pairing request
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -338,7 +369,7 @@ export function TerminalActivation({
 
       <Button
         className="mt-4 h-11 w-full bg-sky-500 text-slate-950 hover:bg-sky-400"
-        disabled={busy}
+        disabled={busy || !online}
         onClick={() => void submit(code)}
       >
         {busy ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}

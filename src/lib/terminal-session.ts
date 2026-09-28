@@ -7,6 +7,8 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { getTerminalAccount } from "./terminal-account.functions";
 import { getDeviceSecret, setDeviceSecret } from "./device-secrets";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { deviceProofHash } from "@/core/activation/device-proof";
+import { logger } from "./audit-log";
 
 type Account = { email: string; password: string };
 
@@ -14,11 +16,20 @@ const SECRET = "terminal-account";
 
 /** Fetch (once) and remember this terminal's machine account, encrypted. */
 export async function provisionTerminalAccount(tokenId: string): Promise<Account | null> {
-  // The same device string that was recorded when the token was claimed, so
-  // the server can tell this is the till the activation belongs to.
-  const device = typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 120) : "";
-  const res = await getTerminalAccount({ data: { tokenId, device } }).catch(() => null);
-  if (!res?.ok) return null;
+  const proofHash = await deviceProofHash();
+  if (!proofHash) {
+    logger.log("security", "Terminal cloud authentication unavailable", "Terminal activation", {
+      reason: "secure-device-proof-unavailable",
+    });
+    return null;
+  }
+  const res = await getTerminalAccount({ data: { tokenId, proofHash } }).catch(() => null);
+  if (!res?.ok) {
+    logger.log("security", "Terminal cloud authentication retry required", "Terminal activation", {
+      reason: res?.error ?? "provisioning-request-failed",
+    });
+    return null;
+  }
   const account: Account = { email: res.email, password: res.password };
   await setDeviceSecret(SECRET, account);
   return account;
@@ -49,8 +60,15 @@ export async function ensureTerminalSession(): Promise<boolean> {
     const fresh = await provisionTerminalAccount(tokenId);
     if (!fresh) return false;
     const retry = await supabaseExternal.auth.signInWithPassword(fresh);
-    return !retry.error;
-  } catch {
+    if (!retry.error) return true;
+    logger.log("security", "Terminal cloud sign-in failed", "Terminal activation", {
+      reason: retry.error.message,
+    });
+    return false;
+  } catch (error) {
+    logger.log("security", "Terminal cloud sign-in failed", "Terminal activation", {
+      reason: error instanceof Error ? error.message : "unknown-error",
+    });
     return false;
   }
 }

@@ -2,9 +2,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const input = z.object({
-  tokenId: z.string().min(8).max(100),
-  /** The device string recorded when this token was claimed. */
-  device: z.string().max(200).optional(),
+  tokenId: z.string().uuid(),
+  /** HMAC made with the key that is sealed on the claiming device. */
+  proofHash: z.string().min(32).max(256),
 });
 
 /**
@@ -18,7 +18,7 @@ export const getTerminalAccount = createServerFn({ method: "POST" })
   > => {
     try {
       const { ensureTerminalAccount } = await import("./terminal-account.server");
-      const account = await ensureTerminalAccount(data.tokenId, data.device ?? null);
+      const account = await ensureTerminalAccount(data.tokenId, data.proofHash);
       return { ok: true, ...account };
     } catch (e) {
       return { ok: false, error: (e as Error).message };

@@ -4296,6 +4296,7 @@ $$;
 -- two-argument heartbeat makes every short call ambiguous (PGRST203).
 DROP FUNCTION IF EXISTS public.terminal_token_claim(uuid, text);
 DROP FUNCTION IF EXISTS public.terminal_token_heartbeat(uuid, boolean);
+DROP FUNCTION IF EXISTS public.terminal_token_heartbeat(uuid, boolean, text, boolean);
 DROP FUNCTION IF EXISTS public.terminal_token_status(uuid);
 
 CREATE OR REPLACE FUNCTION public.terminal_token_claim(p_token_id uuid, p_device text DEFAULT NULL::text, p_proof_hash text DEFAULT NULL::text, p_platform text DEFAULT NULL::text, p_os text DEFAULT NULL::text) RETURNS boolean
@@ -4313,10 +4314,6 @@ BEGIN
     RAISE EXCEPTION 'TERMINAL_TOKEN_REVOKED';
   END IF;
 
-  IF t.expires_at IS NOT NULL AND t.expires_at < now() THEN
-    RAISE EXCEPTION 'TERMINAL_TOKEN_EXPIRED';
-  END IF;
-
   IF btrim(coalesce(t.location_id, '')) = '' THEN
     RAISE EXCEPTION 'TERMINAL_BRANCH_REQUIRED';
   END IF;
@@ -4329,18 +4326,26 @@ BEGIN
     RAISE EXCEPTION 'TERMINAL_BRANCH_INACTIVE';
   END IF;
 
-  -- Already claimed: only the same device may re-present the token, and only
-  -- when a fingerprint was recorded to compare against.
+  IF nullif(btrim(coalesce(p_proof_hash, '')), '') IS NULL THEN
+    RAISE EXCEPTION 'TERMINAL_DEVICE_PROOF_REQUIRED';
+  END IF;
+
+  -- An interrupted client may have committed the claim before it persisted
+  -- its sealed local config. Let that same device recover even after the
+  -- redemption deadline; another device still receives only false.
   IF t.status <> 'active' OR t.claimed_at IS NOT NULL THEN
-    IF p_proof_hash IS NOT NULL
-       AND t.claim_proof IS NOT NULL
-       AND t.claim_proof = p_proof_hash THEN
+    IF coalesce(t.claim_proof, t.claimed_proof_hash) = p_proof_hash THEN
       UPDATE public.terminal_tokens
       SET last_seen_at = now()
       WHERE id = p_token_id;
       RETURN true;
     END IF;
     RETURN false;
+  END IF;
+
+
+  IF t.expires_at IS NOT NULL AND t.expires_at < now() THEN
+    RAISE EXCEPTION 'TERMINAL_TOKEN_EXPIRED';
   END IF;
 
   IF (t.platform = 'mobile' AND p_platform IS DISTINCT FROM 'android')
@@ -4351,8 +4356,11 @@ BEGIN
   UPDATE public.terminal_tokens
   SET status = 'used',
       claimed_by_device = left(coalesce(p_device, claimed_by_device), 120),
-      claim_proof = coalesce(p_proof_hash, claim_proof),
+      claim_proof = p_proof_hash,
+      claimed_proof_hash = p_proof_hash,
+      claimed_platform = coalesce(nullif(btrim(coalesce(p_platform, '')), ''), claimed_platform),
       claimed_os = coalesce(nullif(btrim(coalesce(p_os, '')), ''), claimed_os),
+      is_claimed = true,
       claimed_at = now(),
       activated_at = coalesce(activated_at, now()),
       last_seen_at = now()
@@ -4363,7 +4371,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.terminal_token_heartbeat(p_token_id uuid, p_activate boolean DEFAULT false, p_version text DEFAULT NULL::text, p_synced boolean DEFAULT false) RETURNS void
+CREATE OR REPLACE FUNCTION public.terminal_token_heartbeat(p_token_id uuid, p_activate boolean DEFAULT false, p_version text DEFAULT NULL::text, p_synced boolean DEFAULT false, p_proof_hash text DEFAULT NULL::text) RETURNS void
     LANGUAGE sql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -4372,7 +4380,10 @@ CREATE OR REPLACE FUNCTION public.terminal_token_heartbeat(p_token_id uuid, p_ac
       app_version = coalesce(nullif(btrim(p_version), ''), app_version),
       last_sync_at = CASE WHEN p_synced THEN now() ELSE last_sync_at END,
       activated_at = CASE WHEN p_activate THEN coalesce(activated_at, now()) ELSE activated_at END
-  WHERE id = p_token_id AND status IN ('active', 'used')
+  WHERE id = p_token_id
+    AND status IN ('active', 'used')
+    AND nullif(btrim(coalesce(p_proof_hash, '')), '') IS NOT NULL
+    AND coalesce(claim_proof, claimed_proof_hash) = p_proof_hash
 $$;
 
 CREATE OR REPLACE FUNCTION public.terminal_token_status(p_token_id uuid) RETURNS TABLE(status text, location_name text, location_id text, is_claimed boolean, expires_at timestamp with time zone)
@@ -6128,6 +6139,7 @@ DROP POLICY IF EXISTS "Staff can delete stores" ON public.stores;
 CREATE POLICY "Staff can delete stores" ON public.stores FOR DELETE TO authenticated USING (public.has_perm('can_manage_locations'));
 
 DROP POLICY IF EXISTS "Staff can delete tokens" ON public.terminal_tokens;
+DROP POLICY IF EXISTS "Terminals can stamp their heartbeat" ON public.terminal_tokens;
 
 CREATE POLICY "Staff can delete tokens" ON public.terminal_tokens FOR DELETE TO authenticated USING (( SELECT public.is_app_supervisor() AS is_app_supervisor));
 
@@ -6844,11 +6856,11 @@ GRANT ALL ON FUNCTION public.terminal_token_claim(p_token_id uuid, p_device text
 
 GRANT ALL ON FUNCTION public.terminal_token_claim(p_token_id uuid, p_device text, p_proof_hash text, p_platform text, p_os text) TO authenticated;
 
-GRANT ALL ON FUNCTION public.terminal_token_heartbeat(p_token_id uuid, p_activate boolean, p_version text, p_synced boolean) TO service_role;
+GRANT ALL ON FUNCTION public.terminal_token_heartbeat(p_token_id uuid, p_activate boolean, p_version text, p_synced boolean, p_proof_hash text) TO service_role;
 
-GRANT ALL ON FUNCTION public.terminal_token_heartbeat(p_token_id uuid, p_activate boolean, p_version text, p_synced boolean) TO anon;
+GRANT ALL ON FUNCTION public.terminal_token_heartbeat(p_token_id uuid, p_activate boolean, p_version text, p_synced boolean, p_proof_hash text) TO anon;
 
-GRANT ALL ON FUNCTION public.terminal_token_heartbeat(p_token_id uuid, p_activate boolean, p_version text, p_synced boolean) TO authenticated;
+GRANT ALL ON FUNCTION public.terminal_token_heartbeat(p_token_id uuid, p_activate boolean, p_version text, p_synced boolean, p_proof_hash text) TO authenticated;
 
 GRANT ALL ON FUNCTION public.terminal_token_status(p_token_id uuid) TO service_role;
 
@@ -14801,7 +14813,7 @@ GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.verify_terminal_pin(text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_status(uuid) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_claim(uuid, text, text, text, text) TO anon;
-GRANT EXECUTE ON FUNCTION public.terminal_token_heartbeat(uuid, boolean, text, boolean) TO anon;
+GRANT EXECUTE ON FUNCTION public.terminal_token_heartbeat(uuid, boolean, text, boolean, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb) TO anon;
 
 -- These tables are implementation details behind privileged routines.  RLS
@@ -15144,7 +15156,7 @@ GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.verify_terminal_pin(text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_status(uuid) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_claim(uuid, text, text, text, text) TO anon;
-GRANT EXECUTE ON FUNCTION public.terminal_token_heartbeat(uuid, boolean, text, boolean) TO anon;
+GRANT EXECUTE ON FUNCTION public.terminal_token_heartbeat(uuid, boolean, text, boolean, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb) TO anon;
 -- ---------------------------------------------------------------------------
 -- Device session lifecycle and final least-privilege grants
