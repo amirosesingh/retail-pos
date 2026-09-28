@@ -90,15 +90,14 @@ describe("per-user notification state", () => {
     };
     const activity = await import("../activity-events");
     expect(await activity.clearActivityEntry("manager-1", "event-local")).toBe(true);
-    expect(commitOps).toHaveBeenCalledWith(
-      "Saving notification preference",
-      [expect.objectContaining({
+    expect(commitOps).toHaveBeenCalledWith("Saving notification preference", [
+      expect.objectContaining({
         kind: "update",
         table: "activity_events",
         values: { cleared_by: ["manager-1"] },
         match: { id: "event-local", store_id: "branch-1" },
-      })],
-    );
+      }),
+    ]);
     expect(posFetch).not.toHaveBeenCalled();
   });
 
@@ -107,14 +106,16 @@ describe("per-user notification state", () => {
     localBridge.current = {
       query: vi.fn(async () => ({
         ok: true,
-        rows: [{
-          id: "event-local",
-          event_type: "stock_adjust",
-          severity: "warning",
-          title: "Local first",
-          cleared_by: "[]",
-          created_at: "2026-09-28T01:00:00.000Z",
-        }],
+        rows: [
+          {
+            id: "event-local",
+            event_type: "stock_adjust",
+            severity: "warning",
+            title: "Local first",
+            cleared_by: "[]",
+            created_at: "2026-09-28T01:00:00.000Z",
+          },
+        ],
       })),
     };
     const activity = await import("../activity-events");
@@ -212,8 +213,8 @@ describe("per-user notification state", () => {
     );
     const bell = readFileSync("src/platforms/web/components/pos/ActivityBell.tsx", "utf8");
 
-    expect(generator).toContain(
-      'table.cloudTable === "activity_events"\n          ? `UPDATE SET "cleared_by"=EXCLUDED."cleared_by"`',
+    expect(generator).toMatch(
+      /table\.cloudTable === "activity_events"\s+\? `UPDATE SET "cleared_by"=EXCLUDED\."cleared_by"`/,
     );
     expect(migration).toContain("ON CONFLICT (id) DO UPDATE");
     expect(migration).toContain("SET cleared_by = EXCLUDED.cleared_by");

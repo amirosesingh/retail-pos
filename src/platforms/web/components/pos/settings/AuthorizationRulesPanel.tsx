@@ -16,7 +16,7 @@ import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { SettingsSections } from "@/platforms/web/components/pos/settings/SettingsSection";
 import { notifyError } from "@/lib/notify";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { getAuthorizationRules, saveAuthorizationRule } from "@/lib/authorization.functions";
+import { getAuthorizationRules, saveAuthorizationRule } from "@/lib/authorization-client";
 import {
   AUTH_ACTIONS,
   AUTH_GROUPS,

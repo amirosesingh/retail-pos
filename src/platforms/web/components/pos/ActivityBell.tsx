@@ -92,6 +92,7 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
         if (!saved) {
           toast.error(failure);
         } else {
+          if (cleared) toast.dismiss(`activity-${id}`);
           // Electron keeps business preferences in SQL Server, not
           // localStorage. Reflect the committed row immediately so removal
           // and history insertion animate without waiting for the next poll.
@@ -162,8 +163,7 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
         closeButton: true,
         duration: 4_000,
         position: "top-right",
-        className:
-          "activity-notification-toast !w-[min(20rem,calc(100vw-1rem))] !gap-2 !p-3",
+        className: "activity-notification-toast !w-[min(20rem,calc(100vw-1rem))] !gap-2 !p-3",
         classNames: {
           title: "text-xs font-medium",
           description: "line-clamp-2 text-[11px] leading-4",
@@ -357,6 +357,7 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                               : row,
                           ),
                         );
+                        for (const row of visibleRows) toast.dismiss(`activity-${row.id}`);
                       })
                       .finally(() => setClearAllBusy(false));
                   }}
@@ -384,55 +385,55 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                   </p>
                 }
                 renderItem={(r) => (
-                <div className="activity-notification-row border-b border-border/60 px-3 py-2 last:border-0">
-                  <div className="flex items-start gap-2">
-                    <span
-                      className={cn(
-                        "shrink-0 rounded border px-1.5 py-0.5 text-[9px] uppercase",
-                        SEVERITY_TONE[r.severity],
-                      )}
-                    >
-                      {EVENT_LABELS[r.type] ? r.severity : r.type}
-                    </span>
-                    <p className="min-w-0 text-xs font-medium">{eventText(r.title)}</p>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="ml-auto h-6 touch-manipulation gap-1 px-2 text-[10px] text-muted-foreground"
-                      disabled={preferenceBusy.has(r.id)}
-                      aria-busy={preferenceBusy.has(r.id)}
-                      onClick={() =>
-                        void updatePreference(
-                          r.id,
-                          true,
-                          () => clearActivityEntry(meKey, r.id),
-                          "Could not clear notification. Check the connection and try again.",
-                        )
-                      }
-                    >
-                      {preferenceBusy.has(r.id) ? (
-                        <LoaderCircle className="size-3 animate-spin" />
-                      ) : (
-                        <Check className="size-3" />
-                      )}
-                      {preferenceBusy.has(r.id) ? "Saving…" : "Clear"}
-                    </Button>
-                  </div>
-                  {r.message && (
-                    <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
-                      {eventText(r.message)}
+                  <div className="activity-notification-row border-b border-border/60 px-3 py-2 last:border-0">
+                    <div className="flex items-start gap-2">
+                      <span
+                        className={cn(
+                          "shrink-0 rounded border px-1.5 py-0.5 text-[9px] uppercase",
+                          SEVERITY_TONE[r.severity],
+                        )}
+                      >
+                        {EVENT_LABELS[r.type] ? r.severity : r.type}
+                      </span>
+                      <p className="min-w-0 text-xs font-medium">{eventText(r.title)}</p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="ml-auto h-6 touch-manipulation gap-1 px-2 text-[10px] text-muted-foreground"
+                        disabled={preferenceBusy.has(r.id)}
+                        aria-busy={preferenceBusy.has(r.id)}
+                        onClick={() =>
+                          void updatePreference(
+                            r.id,
+                            true,
+                            () => clearActivityEntry(meKey, r.id),
+                            "Could not clear notification. Check the connection and try again.",
+                          )
+                        }
+                      >
+                        {preferenceBusy.has(r.id) ? (
+                          <LoaderCircle className="size-3 animate-spin" />
+                        ) : (
+                          <Check className="size-3" />
+                        )}
+                        {preferenceBusy.has(r.id) ? "Saving…" : "Clear"}
+                      </Button>
+                    </div>
+                    {r.message && (
+                      <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+                        {eventText(r.message)}
+                      </p>
+                    )}
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      {when(r.createdAt)}
+                      {r.actorName ? ` · ${r.actorName}` : ""}
+                      {r.storeId
+                        ? ` · ${pos?.stores.find((store) => store.id === r.storeId)?.name ?? "Unknown branch"}`
+                        : ""}
+                      {r.whatsappStatus === "sent" ? " · WhatsApp sent" : ""}
                     </p>
-                  )}
-                  <p className="mt-1 text-[10px] text-muted-foreground">
-                    {when(r.createdAt)}
-                    {r.actorName ? ` · ${r.actorName}` : ""}
-                    {r.storeId
-                      ? ` · ${pos?.stores.find((store) => store.id === r.storeId)?.name ?? "Unknown branch"}`
-                      : ""}
-                    {r.whatsappStatus === "sent" ? " · WhatsApp sent" : ""}
-                  </p>
-                </div>
+                  </div>
                 )}
               />
             )}

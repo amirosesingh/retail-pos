@@ -47,6 +47,10 @@ describe("desktop safe mode", () => {
   });
 
   it("goes to the repair screen when the local app server dies", () => {
-    expect(main).toContain("if (!quitting && !safeMode) enterSafeMode");
+    expect(main).toContain(
+      "if (!quitting && !safeMode && !intentionallyStoppedServers.has(child))",
+    );
+    expect(main).toContain('enterSafeMode("The local app server stopped")');
+    expect(main).toContain("intentionallyStoppedServers.add(serverProcess)");
   });
 });

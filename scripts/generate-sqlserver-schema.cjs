@@ -101,9 +101,9 @@ const tables = report.tables.map((table, tableIndex) => ({
     ? "immutable_reversal"
     : APPEND_ONLY.has(table.name)
       ? "immutable_reversal"
-    : /^(?:item_activity_logs|stock_adjustments|stock_delta_applied)$/.test(table.name)
-      ? "movement_delta"
-      : "highest_version",
+      : /^(?:item_activity_logs|stock_adjustments|stock_delta_applied)$/.test(table.name)
+        ? "movement_delta"
+        : "highest_version",
   dependencyOrder: tableIndex,
   testName: `registry_${table.name}`,
   columns: table.columns.map((column) => {
@@ -186,6 +186,13 @@ const registry = {
 };
 const lines = [
   "-- Generated from supabase/schema.sql. Re-runnable and additive.",
+  "SET ANSI_NULLS ON;",
+  "SET QUOTED_IDENTIFIER ON;",
+  "SET ANSI_PADDING ON;",
+  "SET ANSI_WARNINGS ON;",
+  "SET ARITHABORT ON;",
+  "SET CONCAT_NULL_YIELDS_NULL ON;",
+  "SET NUMERIC_ROUNDABORT OFF;",
   "SET XACT_ABORT ON;",
   "IF NOT EXISTS (SELECT 1 FROM sys.change_tracking_databases WHERE database_id=DB_ID()) ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON (CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON);",
   "GO",
@@ -370,6 +377,23 @@ fs.writeFileSync(
 fs.writeFileSync(path.join(outputDir, "schema.sql"), `${lines.join("\n\n")}\n`);
 fs.writeFileSync(path.join(outputDir, "migrations", "001_initial.sql"), `${lines.join("\n\n")}\n`);
 
+const supplementalMigrationFiles = fs
+  .readdirSync(path.join(outputDir, "migrations"))
+  .filter((name) => /^\d+_.+\.sql$/i.test(name) && !name.startsWith("001_"))
+  .sort();
+const supplementalMigrations = supplementalMigrationFiles.map((name) =>
+  fs.readFileSync(path.join(outputDir, "migrations", name), "utf8").trim(),
+);
+const requiredMigrationVersions = [
+  1,
+  ...supplementalMigrationFiles.map((name) => Number(name.split("_", 1)[0])),
+];
+const missingMigrationPredicate = requiredMigrationVersions
+  .map(
+    (version) => `NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = ${version})`,
+  )
+  .join(" OR ");
+
 const installerHeader = `/*
   Retail POS local Microsoft SQL Server schema
   Generated from the migrations loaded by the POS application.
@@ -461,21 +485,19 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
   THROW 51002, 'Retail POS local database migration history table is missing.', 1;
 
-EXEC(N'IF NOT EXISTS (
-  SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1
-) OR NOT EXISTS (
-  SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2
-)
+EXEC(N'IF ${missingMigrationPredicate}
   THROW 51002, ''Retail POS local database migration history is incomplete.'', 1;');
 
 EXEC(N'SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;');
 GO`;
-const pipeline = fs
-  .readFileSync(path.join(outputDir, "migrations", "002_sync_pipeline.sql"), "utf8")
-  .trim();
-const installer = [installerHeader, lines.join("\n\n").trim(), pipeline, validation].join("\n\n");
+const installer = [
+  installerHeader,
+  lines.join("\n\n").trim(),
+  ...supplementalMigrations,
+  validation,
+].join("\n\n");
 fs.writeFileSync(path.join(outputDir, "retail-pos-local-database.sql"), `${installer}\n`);
 console.log(
   `SQL Server schema: ${tables.length} domain tables, ${tables.reduce((n, t) => n + t.columns.length, 0)} columns`,
