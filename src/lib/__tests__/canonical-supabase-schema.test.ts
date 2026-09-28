@@ -47,6 +47,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260928042410_harden_public_data_api_access.sql",
       "supabase/migrations/20260928043000_harden_terminal_claim_recovery.sql",
       "supabase/migrations/20260928071500_restore_shift_notifications_sync_contract.sql",
+      "supabase/migrations/20260928074557_online_approval_cloud_primary.sql",
       "supabase/migrations/20260928125000_enforce_terminal_platform_contract.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",

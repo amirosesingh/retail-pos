@@ -27,6 +27,8 @@ import {
   listAuthorizationRequests,
 } from "@/lib/authorization.functions";
 import { AUTH_ACTION_LABEL, type AuthorizationRequest } from "@/lib/authorization";
+import { subscribeApprovals } from "@/lib/approval-centre";
+import { syncNow } from "@/lib/sync-engine";
 
 export const Route = createFileRoute("/approvals")({
   component: ApprovalsPage,
@@ -115,10 +117,12 @@ function ApprovalsPage() {
   useEffect(() => {
     const timer = window.setInterval(() => void load(), 30_000);
     const onFocus = () => void load();
+    const unsubscribe = subscribeApprovals(() => void load());
     window.addEventListener("focus", onFocus);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("focus", onFocus);
+      unsubscribe();
     };
   }, [load]);
 
@@ -139,7 +143,12 @@ function ApprovalsPage() {
         },
       });
       if (!res.ok) toast.error(res.error ?? "Could not record the decision");
-      else toast.success(approve ? "Approved" : "Rejected");
+      else {
+        toast.success(approve ? "Approved" : "Rejected");
+        // The cloud decision is complete. The local mirror catches up without
+        // holding the approver on this screen.
+        void syncNow(`approval-decision:${row.id}`);
+      }
       await load();
     } catch (e) {
       notifyError(e, "Could not record the decision");
@@ -153,6 +162,7 @@ function ApprovalsPage() {
       const auth = await getPosCallerAuth();
       const res = await cancelAuthorizationRequest({ data: { ...auth, id: row.id } });
       if (!res.ok) toast.error(res.error ?? "Could not cancel");
+      else void syncNow(`approval-cancelled:${row.id}`);
       await load();
     } catch (e) {
       notifyError(e, "Could not cancel");

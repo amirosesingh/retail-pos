@@ -18,6 +18,7 @@ import { markHeldReady } from "./held-orders";
 import type { AuthorizationRequest } from "./authorization";
 
 export const CENTRE_POLL_MS = 45_000;
+let approvalChannelSequence = 0;
 
 export type CentreView = {
   /** requests this person may decide */
@@ -87,7 +88,11 @@ export async function claimApproval(id: string, snapshotHash?: string) {
  */
 export function subscribeApprovals(onChange: () => void): () => void {
   try {
-    const channel = supabaseExternal.channel("pos-approval-centre");
+    // ActivityBell and the approvals page can be mounted together. Distinct
+    // topics keep one subscriber from replacing the other's channel.
+    const channel = supabaseExternal.channel(
+      `pos-approval-centre:${++approvalChannelSequence}`,
+    );
     channel.on(
       "postgres_changes",
       { event: "*", schema: "public", table: "authorization_requests" },

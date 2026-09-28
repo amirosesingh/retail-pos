@@ -125,6 +125,7 @@ export async function writeLog(entry: {
 // --------------------------------------------------------------- requests
 
 export async function createRequest(input: {
+  id?: string;
   actionKey: string;
   requestedBy: string;
   requestedByName: string;
@@ -139,11 +140,13 @@ export async function createRequest(input: {
   snapshot?: TicketSnapshot | null;
   snapshotHash?: string;
   heldOrderId?: string | null;
-}): Promise<AuthorizationRequest> {
-  const res = await rest("authorization_requests", {
+}): Promise<{ request: AuthorizationRequest; created: boolean }> {
+  const path = input.id ? "authorization_requests?on_conflict=id" : "authorization_requests";
+  const res = await rest(path, {
     method: "POST",
     body: JSON.stringify([
       {
+        ...(input.id ? { id: input.id } : {}),
         action_key: input.actionKey,
         requested_by: input.requestedBy,
         requested_by_name: input.requestedByName,
@@ -161,11 +164,27 @@ export async function createRequest(input: {
         expires_at: new Date(Date.now() + input.ttlHours * 3600_000).toISOString(),
       },
     ]),
-    prefer: "return=representation",
+    // A timeout can hide a successful insert from the till. Replaying the
+    // same client-generated id must return the existing request, never create
+    // another approval or replace a decision that already arrived.
+    prefer: input.id
+      ? "return=representation,resolution=ignore-duplicates"
+      : "return=representation",
   });
   if (!res.ok) throw new Error((await res.text()).slice(0, 300) || "Could not send the request");
   const rows = (await res.json()) as Row[];
-  return normalizeRequest(rows[0]);
+  if (rows[0]) return { request: normalizeRequest(rows[0]), created: true };
+  if (input.id) {
+    const existing = await getRequest(input.id);
+    if (
+      existing &&
+      existing.actionKey === input.actionKey &&
+      existing.requestedBy.toLowerCase() === input.requestedBy.toLowerCase()
+    ) {
+      return { request: existing, created: false };
+    }
+  }
+  throw new Error("Could not confirm the approval request");
 }
 
 /** Anything still pending past its window is reported as expired. */

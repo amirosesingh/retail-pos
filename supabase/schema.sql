@@ -14144,7 +14144,7 @@ BEGIN
 
   INSERT INTO public."authorization_requests" ("id","action_key","requested_by","requested_by_name","store_id","terminal_id","reason","payload","status","decided_by","decided_by_name","decided_at","decision_note","expires_at","consumed_at","requester_direct_limit","value_unit","created_at","updated_at","requested_amount","approved_amount","approved_payload","bill_snapshot","snapshot_hash","held_order_id","notified_at")
   SELECT "id","action_key","requested_by","requested_by_name","store_id","terminal_id","reason","payload","status","decided_by","decided_by_name","decided_at","decision_note","expires_at","consumed_at","requester_direct_limit","value_unit","created_at","updated_at","requested_amount","approved_amount","approved_payload","bill_snapshot","snapshot_hash","held_order_id","notified_at" FROM jsonb_populate_recordset(NULL::public."authorization_requests", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "action_key"=EXCLUDED."action_key","requested_by"=EXCLUDED."requested_by","requested_by_name"=EXCLUDED."requested_by_name","store_id"=EXCLUDED."store_id","terminal_id"=EXCLUDED."terminal_id","reason"=EXCLUDED."reason","payload"=EXCLUDED."payload","status"=EXCLUDED."status","decided_by"=EXCLUDED."decided_by","decided_by_name"=EXCLUDED."decided_by_name","decided_at"=EXCLUDED."decided_at","decision_note"=EXCLUDED."decision_note","expires_at"=EXCLUDED."expires_at","consumed_at"=EXCLUDED."consumed_at","requester_direct_limit"=EXCLUDED."requester_direct_limit","value_unit"=EXCLUDED."value_unit","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","requested_amount"=EXCLUDED."requested_amount","approved_amount"=EXCLUDED."approved_amount","approved_payload"=EXCLUDED."approved_payload","bill_snapshot"=EXCLUDED."bill_snapshot","snapshot_hash"=EXCLUDED."snapshot_hash","held_order_id"=EXCLUDED."held_order_id","notified_at"=EXCLUDED."notified_at";
+  ON CONFLICT ("id") DO NOTHING;
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 
@@ -14175,7 +14175,7 @@ BEGIN
 
   INSERT INTO public."authorization_log" ("id","action_key","mode_used","request_id","requested_by","authorized_by","authorizer_role","store_id","terminal_id","outcome","detail","created_at")
   SELECT "id","action_key","mode_used","request_id","requested_by","authorized_by","authorizer_role","store_id","terminal_id","outcome","detail","created_at" FROM jsonb_populate_recordset(NULL::public."authorization_log", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "action_key"=EXCLUDED."action_key","mode_used"=EXCLUDED."mode_used","request_id"=EXCLUDED."request_id","requested_by"=EXCLUDED."requested_by","authorized_by"=EXCLUDED."authorized_by","authorizer_role"=EXCLUDED."authorizer_role","store_id"=EXCLUDED."store_id","terminal_id"=EXCLUDED."terminal_id","outcome"=EXCLUDED."outcome","detail"=EXCLUDED."detail","created_at"=EXCLUDED."created_at";
+  ON CONFLICT ("id") DO NOTHING;
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 
