@@ -109,6 +109,20 @@ describe("route guards", () => {
     expect(NAV).toMatch(/to: "\/reports\/notifications"[\s\S]{0,220}?flag: "can_view_audit_trail"/);
   });
 
+  it("permission-gates every stock transfer lifecycle action in the detail pages", () => {
+    const transfer = readFileSync(join(ROUTES_DIR, "transfers.$id.tsx"), "utf8");
+    const request = readFileSync(join(ROUTES_DIR, "requests.$id.tsx"), "utf8");
+
+    expect(transfer).toMatch(/const canApprove =[\s\S]{0,180}?can\("can_approve_transfer"\)/);
+    expect(transfer).toMatch(/const canDispatch =[\s\S]{0,180}?can\("can_create_transfer"\)/);
+    expect(transfer).toMatch(/const canReceive =[\s\S]{0,180}?can\("can_receive_transfer"\)/);
+    expect(transfer).toMatch(/const canVerify =[\s\S]{0,180}?can\("can_receive_transfer"\)/);
+    expect(transfer).toMatch(/const canReject =[\s\S]{0,220}?can\("can_approve_transfer"\)/);
+    expect(request).toMatch(
+      /const canReject =[\s\S]{0,240}?can\("can_approve_transfer"\)[\s\S]{0,100}?can\("can_receive_transfer"\)/,
+    );
+  });
+
   /** A missing map entry must fail closed, and access must be decided before
    *  the page body renders — a post-render redirect leaks protected data. */
   it("denies unmapped routes instead of falling through to open access", () => {

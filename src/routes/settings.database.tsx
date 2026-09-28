@@ -23,6 +23,7 @@ export const Route = createFileRoute("/settings/database")({
   component: () => (
     <SettingsFrame
       showSaveBar={false}
+      allowWhileScopeLoading
       wide
       title="Database connection"
       description="Manage central connectivity and, on authorized Windows tills, the local Microsoft SQL Server database."

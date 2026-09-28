@@ -96,9 +96,17 @@ function TransferDetail() {
 
   const canApprove =
     live && sending && transfer.status === "awaiting_approval" && can("can_approve_transfer");
-  const canDispatch = live && sending && transfer.status === "approved";
-  const canReceive = live && receiving && transfer.status === "dispatched";
-  const canVerify = live && receiving && transfer.status === "received";
+  const canDispatch =
+    live && sending && transfer.status === "approved" && can("can_create_transfer");
+  const canReceive =
+    live && receiving && transfer.status === "dispatched" && can("can_receive_transfer");
+  const canVerify =
+    live && receiving && transfer.status === "received" && can("can_receive_transfer");
+  const canReject =
+    live &&
+    sending &&
+    transfer.status === "awaiting_approval" &&
+    can("can_approve_transfer");
 
   return (
     <AppShell>
@@ -134,7 +142,7 @@ function TransferDetail() {
                   </Link>
                 </Button>
               )}
-              {live && sending && transfer.status === "awaiting_approval" && (
+              {canReject && (
                 <Button variant="outline" onClick={() => setRejecting(true)}>
                   <X className="size-4 text-destructive" /> Reject
                 </Button>
