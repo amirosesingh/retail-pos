@@ -877,11 +877,10 @@ export function startSyncEngine() {
   // Auth can become ready after this engine starts, so rebuild the channel at
   // that boundary instead of permanently choosing anonymous or staff mode.
   let live: ReturnType<typeof supabaseExternal.channel> | null = null;
-  let liveGeneration = 0;
   let liveHasStaffSession = hasStaffSession();
   const installLiveChannel = (staffPresent: boolean) => {
     const previous = live;
-    const next = supabaseExternal.channel(`pos-live-settings-${++liveGeneration}`);
+    const next = supabaseExternal.channel("pos-live-settings");
     live = next;
     settingsLiveChannel = next;
     next.on("broadcast", { event: "settings_changed" }, (message) => {
