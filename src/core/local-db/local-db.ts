@@ -374,6 +374,12 @@ export type LocalSyncStatus = {
 };
 
 export type PosBridge = {
+  saveAuthorizationRule?: (value: Record<string, unknown>) => Promise<{
+    ok: boolean;
+    rule?: Record<string, unknown>;
+    error?: string;
+    code?: string;
+  }>;
   openDrawer?: (value: {
     reason: string;
     shiftId?: string | null;

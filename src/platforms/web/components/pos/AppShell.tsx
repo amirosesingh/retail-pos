@@ -71,6 +71,7 @@ import { CloudSetupGate } from "@/platforms/web/components/pos/CloudSetupGate";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { LocationBootGuard } from "@/platforms/web/components/pos/LocationBootGuard";
 import { activeLocations } from "@/lib/locations";
+import { startSyncEngine } from "@/lib/sync-engine";
 
 /** The only screens any signed-in account may open. Everything else must have
  *  an entry above — unknown paths are denied, never silently allowed. */
@@ -102,6 +103,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function AppShellFrame({ children }: { children: ReactNode }) {
+  useEffect(() => startSyncEngine(), []);
   const { activeShift, stores, currentStore, setCurrentStore, state, ready: dataReady } = usePos();
   useEffect(() => {
     setSharedPrinterPrefs(state.settings.integrations.receiptPrinter);

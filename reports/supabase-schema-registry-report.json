@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-09-29T00:20:24.970Z",
-  "tableCount": 68,
-  "columnCount": 1160,
+  "generatedAt": "2026-09-29T05:31:09.466Z",
+  "tableCount": 69,
+  "columnCount": 1173,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -6763,6 +6763,18 @@
           "hasDefault": true
         },
         {
+          "name": "row_version",
+          "declaration": "integer NOT NULL DEFAULT 1",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updated_by",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
           "name": "created_at",
           "declaration": "timestamptz NOT NULL DEFAULT now()",
           "nullable": false,
@@ -6783,6 +6795,80 @@
           "scope_id"
         ]
       ],
+      "foreignKeys": []
+    },
+    {
+      "name": "authorization_action_history",
+      "columns": [
+        {
+          "name": "id",
+          "declaration": "uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "action_id",
+          "declaration": "uuid NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "action_key",
+          "declaration": "text NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "scope_type",
+          "declaration": "text NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "scope_id",
+          "declaration": "text NOT NULL DEFAULT ''",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "row_version",
+          "declaration": "integer NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "changed_by",
+          "declaration": "text NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "change_source",
+          "declaration": "text NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "change_kind",
+          "declaration": "text NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "snapshot",
+          "declaration": "jsonb NOT NULL DEFAULT '{}'::jsonb",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "created_at",
+          "declaration": "timestamptz NOT NULL DEFAULT now()",
+          "nullable": false,
+          "hasDefault": true
+        }
+      ],
+      "primaryKey": [],
+      "uniqueKeys": [],
       "foreignKeys": []
     },
     {

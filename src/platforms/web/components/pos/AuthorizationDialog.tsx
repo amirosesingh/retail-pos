@@ -93,6 +93,7 @@ export function AuthorizationDialog({
       return false;
     }
     const rule: AuthorizationRule = {
+      id: "",
       actionKey: prompt.actionKey as AuthActionKey,
       scopeType: "branch" as const,
       scopeId: prompt.storeId ?? "",
@@ -110,6 +111,9 @@ export function AuthorizationDialog({
       requireReason: prompt.requireReason,
       threshold: null,
       isEnabled: true,
+      rowVersion: 0,
+      updatedAt: null,
+      updatedBy: null,
     };
     if (
       !canAuthorizeAmount(

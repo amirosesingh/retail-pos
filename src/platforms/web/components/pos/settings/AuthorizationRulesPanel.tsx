@@ -815,13 +815,9 @@ export function AuthorizationRulesPanel({
     setSaving(action.key);
     try {
       const auth = await getPosCallerAuth();
-      if (!auth.accessToken) {
-        toast.error("Sign in with an account that has POS settings permission");
-        return;
-      }
       const res = await saveAuthorizationRule({
         data: {
-          accessToken: auth.accessToken,
+          ...auth,
           actionKey: action.key,
           scopeType: branchScope ? "branch" : "global",
           scopeId: branchScope ? storeId : "",
@@ -838,13 +834,14 @@ export function AuthorizationRulesPanel({
           escalationRoles: rule.escalationRoles,
           requireReason: rule.requireReason,
           threshold: rule.threshold,
+          expectedVersion: rule.rowVersion,
         },
       });
       if (!res.ok) {
         toast.error(res.error ?? "Could not save the rule");
         return;
       }
-      setRules((current) => ({ ...current, [action.key]: rule }));
+      setRules((current) => ({ ...current, [action.key]: res.rule ?? rule }));
       setEditing(null);
       await queryClient.invalidateQueries({ queryKey: ["authorization-rules"] });
       toast.success(`${action.label} rule saved`);

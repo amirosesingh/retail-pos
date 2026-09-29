@@ -234,6 +234,7 @@ export const AUTH_ACTION_LABEL: Record<string, string> = Object.fromEntries(
 export type AuthScopeType = "global" | "cluster" | "branch";
 
 export type AuthorizationRule = {
+  id: string;
   actionKey: AuthActionKey;
   scopeType: AuthScopeType;
   scopeId: string;
@@ -255,9 +256,13 @@ export type AuthorizationRule = {
   requireReason: boolean;
   threshold: number | null;
   isEnabled: boolean;
+  rowVersion: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
 };
 
 export const defaultRule = (actionKey: AuthActionKey): AuthorizationRule => ({
+  id: "",
   actionKey,
   scopeType: "global",
   scopeId: "",
@@ -275,15 +280,26 @@ export const defaultRule = (actionKey: AuthActionKey): AuthorizationRule => ({
   requireReason: false,
   threshold: null,
   isEnabled: true,
+  rowVersion: 0,
+  updatedAt: null,
+  updatedBy: null,
 });
 
-const asStrings = (raw: unknown): string[] =>
-  Array.isArray(raw) ? raw.map((v) => String(v)).filter(Boolean) : [];
+const parsedJson = (raw: unknown): unknown => {
+  if (typeof raw !== "string") return raw;
+  try { return JSON.parse(raw); } catch { return raw; }
+};
+
+const asStrings = (raw: unknown): string[] => {
+  const value = parsedJson(raw);
+  return Array.isArray(value) ? value.map((v) => String(v)).filter(Boolean) : [];
+};
 
 const asMode = (raw: unknown): AuthMode =>
   raw === "pin" || raw === "request" || raw === "either" ? raw : "none";
 
 const asLimits = (raw: unknown): Record<string, number> => {
+  raw = parsedJson(raw);
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   return Object.fromEntries(
     Object.entries(raw as Record<string, unknown>)
@@ -301,6 +317,7 @@ export function normalizeRule(input: unknown): AuthorizationRule {
   const threshold = row["threshold"];
   return {
     ...base,
+    id: String(row["id"] ?? ""),
     scopeType: scope === "branch" || scope === "cluster" ? scope : "global",
     scopeId: String(row["scope_id"] ?? ""),
     mode: asMode(row["mode"]),
@@ -327,6 +344,9 @@ export function normalizeRule(input: unknown): AuthorizationRule {
     requireReason: row["require_reason"] === true,
     threshold: threshold === null || threshold === undefined ? null : Number(threshold),
     isEnabled: row["is_enabled"] !== false,
+    rowVersion: Math.max(0, Number(row["row_version"] ?? 0) || 0),
+    updatedAt: row["updated_at"] == null ? null : String(row["updated_at"]),
+    updatedBy: row["updated_by"] == null ? null : String(row["updated_by"]),
   };
 }
 

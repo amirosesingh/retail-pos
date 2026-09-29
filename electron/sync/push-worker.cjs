@@ -83,9 +83,14 @@ class PushWorker {
     if (!branchId) throw new Error("A branch is required for synchronization.");
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
     let pushed = await this.pushAggregates(branchId, batchSize);
-    for (const table of [...this.registry.tables].sort((a, b) => a.dependencyOrder - b.dependencyOrder || a.cloudTable.localeCompare(b.cloudTable))) {
+    const governance = new Set(["authorization_actions", "authorization_action_history"]);
+    const governanceOrder = (table) => table.cloudTable === "authorization_actions" ? 1 : table.cloudTable === "authorization_action_history" ? 2 : 0;
+    for (const table of [...this.registry.tables].sort((a, b) => governanceOrder(a) - governanceOrder(b) || a.dependencyOrder - b.dependencyOrder || a.cloudTable.localeCompare(b.cloudTable))) {
       if (table.direction === "pull") continue;
       if (!table.columns.some((column) => column.primaryKey)) continue;
+      // Governance changes remain safely committed in SQL Server until a
+      // currently verified settings administrator is available to upload them.
+      if (governance.has(table.cloudTable) && !this.cloud.hasAuthorizationProof?.()) continue;
       let checkpoint = await this.checkpoints.get(branchId, table.sqlServerTable, "push");
       while (true) {
         const window = await this.reader.changedIds(table, checkpoint?.change_tracking_version ?? 0, batchSize);
@@ -105,7 +110,13 @@ class PushWorker {
           branchId, table: table.cloudTable, from: Number(checkpoint?.change_tracking_version ?? 0),
           changes: changes.map((change) => ({ version: change.version, operation: change.operation, key: change.key })),
         });
-        const acknowledged = await this.retry(() => this.cloud.pushBatch({ batchId, branchId, table: table.cloudTable, changes, rows }));
+        let acknowledged;
+        try {
+          acknowledged = await this.retry(() => this.cloud.pushBatch({ batchId, branchId, table: table.cloudTable, changes, rows }));
+        } catch (error) {
+          if (governance.has(table.cloudTable) && error?.code === "GOVERNANCE_AUTH_REQUIRED") break;
+          throw error;
+        }
         if (!acknowledged?.ok) throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the batch.");
         const version = Math.max(...changes.map((row) => Number(row.version)));
         await this.checkpoints.save(branchId, table.sqlServerTable, "push", { change_tracking_version: version });

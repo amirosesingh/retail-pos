@@ -57,6 +57,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260928194500_fix_manager_override_audit_history.sql",
       "supabase/migrations/20260928213000_complete_authorization_history.sql",
       "supabase/migrations/20260929001126_approval_route_audit_snapshot.sql",
+      "supabase/migrations/20260929060000_local_first_authorization_rules.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

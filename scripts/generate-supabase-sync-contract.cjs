@@ -136,7 +136,9 @@ for (const table of tables) {
         ),
     )
     .map((column) => `${q(column.cloudColumn)}=EXCLUDED.${q(column.cloudColumn)}`);
-  const versionWhere = columnNames(table).has("row_version")
+  const versionWhere = table.cloudTable === "authorization_actions"
+    ? ` WHERE (EXCLUDED."row_version",EXCLUDED."updated_at",COALESCE(EXCLUDED."updated_by",''))>(public.${q(table.cloudTable)}."row_version",public.${q(table.cloudTable)}."updated_at",COALESCE(public.${q(table.cloudTable)}."updated_by",''))`
+    : columnNames(table).has("row_version")
     ? ` WHERE EXCLUDED."row_version">public.${q(table.cloudTable)}."row_version"`
     : "";
   const immutable =
