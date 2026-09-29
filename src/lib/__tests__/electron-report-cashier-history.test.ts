@@ -7,6 +7,34 @@ import { verifiedPinLinkProof } from "../verified-pin-proof";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("cashier secure-session handoff", () => {
+  it("exchanges the one-use PIN proof with the current email verification type", () => {
+    const auth = read("src/lib/pos-auth.tsx");
+    const exchangeStart = auth.indexOf("if (verified?.authTokenHash)");
+    const proofExchange = auth.slice(
+      exchangeStart,
+      auth.indexOf("bumpSessionEpoch()", exchangeStart),
+    );
+
+    expect(proofExchange).toContain('type: "email"');
+    expect(proofExchange).not.toContain('type: "magiclink"');
+  });
+
+  it("keeps Electron's signed relay session when the optional direct Auth exchange fails", () => {
+    const auth = read("src/lib/pos-auth.tsx");
+    const sessionStart = auth.indexOf("let desktopRelaySessionReady = false");
+    const sessionEnd = auth.indexOf("bumpSessionEpoch()", sessionStart);
+    const handoff = auth.slice(sessionStart, sessionEnd);
+
+    expect(handoff).toContain("desktopRelaySessionReady = Boolean(window.pos?.cashierLogin)");
+    expect(handoff).toContain("if (!desktopRelaySessionReady)");
+    expect(handoff.indexOf("recordDiagnostic({")).toBeLessThan(
+      handoff.indexOf("if (!desktopRelaySessionReady)"),
+    );
+    expect(handoff.indexOf("clearStoredCredentials()")).toBeGreaterThan(
+      handoff.indexOf("if (!desktopRelaySessionReady)"),
+    );
+  });
+
   it("accepts the raw GoTrue REST response and the transformed SDK response", () => {
     expect(verifiedPinLinkProof({ id: "auth-1", hashed_token: " raw-proof " }, "auth-1"))
       .toBe("raw-proof");

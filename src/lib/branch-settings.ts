@@ -123,6 +123,8 @@ export async function saveSectionOverride(
     "scope,scope_id,section",
     "Saving a settings override",
   );
+  const { broadcastSettingsChange } = await import("./sync-engine");
+  await broadcastSettingsChange("settings_overrides");
 }
 
 export async function clearSectionOverride(
@@ -138,6 +140,8 @@ export async function clearSectionOverride(
       match: { scope: tier, scope_id: scopeId, section },
     },
   ]);
+  const { broadcastSettingsChange } = await import("./sync-engine");
+  await broadcastSettingsChange("settings_overrides");
 }
 
 export async function setSectionLock(
@@ -151,6 +155,8 @@ export async function setSectionLock(
     "section",
     "Locking a settings section",
   );
+  const { broadcastSettingsChange } = await import("./sync-engine");
+  await broadcastSettingsChange("settings_locks");
 }
 
 /**

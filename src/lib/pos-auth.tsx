@@ -32,6 +32,7 @@ import { awaitProfileHydrated } from "@/lib/connection-profile";
 import { hydrateTerminalConfig, readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { hasRequiredPlatformConfig, subscribeConfigReady } from "@/lib/platform-config-ready";
 import { isTerminalApp } from "@/platform-config/platform";
+import { recordDiagnostic, reasonCode } from "@/lib/diagnostics";
 import {
   failureFromAuthError,
   failureFromReadiness,
@@ -787,6 +788,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // PosProvider starts bootstrap as soon as terminalUser exists; publishing
       // it first raced the encrypted credential write and produced an anonymous
       // `stores` request whose RLS-filtered `200 []` looked authoritative.
+      let desktopRelaySessionReady = false;
       try {
         let cashierToken = verified?.cashierToken ?? "";
         const sessionToken = verified?.sessionToken ?? "";
@@ -798,6 +800,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await saveCashierToken(cashierToken);
           if (sessionToken) {
             await saveSessionToken(sessionToken);
+            // The hosted endpoint has verified the PIN, signed the cashier
+            // identity and opened this server-side device session. In Electron
+            // these are the authoritative credentials used by local SQL and
+            // the relay; the direct Supabase browser session below is an
+            // additional RLS identity, not permission to discard this proof.
+            desktopRelaySessionReady = Boolean(window.pos?.cashierLogin);
           } else {
             const started = await startDeviceSession({
               data: {
@@ -824,20 +832,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (verified?.authTokenHash) {
         const { error } = await supabase.auth.verifyOtp({
           token_hash: verified.authTokenHash,
-          type: "magiclink",
+          // Supabase now treats the former signup and magic-link verification
+          // types as deprecated aliases. Admin generate_link still mints the
+          // proof as a magic link, but token-hash exchange uses the unified
+          // email sign-in type. Keeping the old value makes a correctly
+          // verified PIN fail here with "invalid verification type".
+          type: "email",
         });
         if (error) {
-          clearStoredCredentials();
-          if (verified.sessionToken) {
-            void endDeviceSession({ data: { sessionToken: verified.sessionToken } }).catch(
-              () => undefined,
-            );
+          recordDiagnostic({
+            kind: "soft_write_failed",
+            entity: "cashier_auth_session",
+            code: reasonCode(error),
+            recordId: next.userCode,
+            storeId: next.storeId,
+          });
+          if (!desktopRelaySessionReady) {
+            clearStoredCredentials();
+            if (verified.sessionToken) {
+              void endDeviceSession({ data: { sessionToken: verified.sessionToken } }).catch(
+                () => undefined,
+              );
+            }
+            return {
+              ok: false,
+              code: "session-open-failed",
+              error: "Your PIN was verified, but the secure database session could not be opened. Ask an administrator to repair this staff login.",
+            };
           }
-          return {
-            ok: false,
-            code: "session-open-failed",
-            error: "Your PIN was verified, but the secure database session could not be opened. Ask an administrator to repair this staff login.",
-          };
         }
       }
 
