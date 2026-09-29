@@ -1661,7 +1661,10 @@ export async function invoiceNumberTaken(invoiceNo: string, exceptId?: string): 
 }
 
 /** Latest catalogue rows for a set of products, straight from the database. */
-export async function loadProductsByIds(ids: string[]): Promise<Product[]> {
+export async function loadProductsByIds(
+  ids: string[],
+  scope: { branchId?: string | null; clusterId?: string | null } = {},
+): Promise<Product[]> {
   if (!ids.length) return [];
   const rows: Row[] = [];
   for (let start = 0; start < ids.length; start += 500) {
@@ -1675,8 +1678,9 @@ export async function loadProductsByIds(ids: string[]): Promise<Product[]> {
   const terminal = readTerminalConfig();
   const overrides = await routedQuery("settings_scoped", { limit: 5000 }).catch(() => [] as Row[]);
   return applyScopedProductPrices(rows.map(rowToProduct), overrides as Row[], {
-    branchId: terminal?.locationId,
+    branchId: scope.branchId ?? terminal?.locationId,
     terminalId: terminal?.tokenId,
+    clusterId: scope.clusterId,
   });
 }
 

@@ -2717,7 +2717,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     if (!wanted.length) return;
     try {
       const { loadProductsByIds } = await import("@/core/api/pos-db");
-      const fresh = await loadProductsByIds(wanted);
+      const current = stateRef.current;
+      const branchId = current.currentStoreId;
+      const clusterId = current.stores.find((store) => store.id === branchId)?.groupId;
+      const fresh = await loadProductsByIds(wanted, { branchId, clusterId });
       if (!fresh.length) return;
       const byId = new Map(fresh.map((p) => [p.id, p]));
       setState((s) => ({

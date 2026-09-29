@@ -36,6 +36,7 @@ describe("scoped SQL Server synchronization", () => {
     expect(main).toContain("const branchId=localBranchId()");
     expect(main).not.toContain("branchId:input.branchId??localBranchId()");
     expect(read("supabase/schema.sql")).toContain("SYNC_TERMINAL_SCOPE_FORBIDDEN");
+    expect(read("supabase/schema.sql")).toContain("t.status IN ('active','used')");
   });
 
   it("uses branch-filtered realtime only as a durable-sync wake-up hint", () => {
@@ -77,6 +78,9 @@ describe("scoped SQL Server synchronization", () => {
     expect(inventory).toContain("Use these prices only at {currentStore.name}");
     expect(inventory).toContain("upsertProductPriceOverride(draft.id, draft.price, draft.ecomPrice)");
     expect(store).toContain("db.commitProductPriceOverride");
+    expect(store).toContain("loadProductsByIds(wanted, { branchId, clusterId })");
+    expect(read("supabase/schema.sql")).toContain("NULLIF(r->>'foc_product_id','') IS NOT NULL AND NOT EXISTS");
+    expect(read("supabase/schema.sql")).toContain("NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id");
   });
 
   it("rejects generic local writes aimed at another branch or a central settings scope", () => {

@@ -101,6 +101,7 @@ const TRANSFER_TABLE = "stock_transfers";
  * or edit any branch, and everyone else may only touch their own row.
  */
 const STORES_TABLE = "stores";
+const SCOPED_SETTINGS_TABLE = "settings_scoped";
 
 /**
  * Who did it. These columns are written from the proven caller and any value
@@ -176,6 +177,7 @@ const TABLE_PERMISSIONS: Record<string, { write?: string; remove?: string }> = {
   pos_settings: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
   promotions: { write: "can_manage_promotions", remove: "can_manage_promotions" },
   suppliers: { write: "can_receive_purchase_order", remove: "can_receive_purchase_order" },
+  settings_scoped: { write: "can_edit_product_price" },
 };
 
 export const RELAY_WRITABLE_TABLES = new Set([
@@ -184,6 +186,7 @@ export const RELAY_WRITABLE_TABLES = new Set([
   ...GLOBAL_TABLES,
   TRANSFER_TABLE,
   STORES_TABLE,
+  SCOPED_SETTINGS_TABLE,
 ]);
 
 const deny = (code: RelayDenial["code"], error: string): RelayDenial => ({
@@ -394,6 +397,8 @@ export async function authorizeRelayOp(
 
   if (op.table === STORES_TABLE) return authorizeStores(op, scope);
 
+  if (op.table === SCOPED_SETTINGS_TABLE) return authorizeProductPriceOverride(op, scope);
+
   const storeColumn = STORE_COLUMN[op.table];
   if (storeColumn) return pinToStore(op, scope, storeColumn);
 
@@ -403,6 +408,59 @@ export async function authorizeRelayOp(
 
   // Global catalogue rows: no branch to pin, permissions already checked.
   return { ok: true, op };
+}
+
+/**
+ * The generic relay must not become a service-role settings editor. Its only
+ * scoped-settings use is the existing branch product-price override, pinned
+ * to the proven branch and stripped of client-owned revision/timestamp data.
+ */
+function authorizeProductPriceOverride(
+  op: RelayOp,
+  scope: RelayScope,
+): { ok: true; op: RelayOp } | RelayDenial {
+  if (op.kind !== "insert" && op.kind !== "upsert")
+    return deny("PERMISSION_DENIED", "Branch price overrides must be saved as one complete record.");
+
+  const rows: Record<string, unknown>[] = [];
+  for (const row of op.rows) {
+    const branchId = String(row["scope_id"] ?? "");
+    const key = String(row["key"] ?? "");
+    const value = row["value"];
+    if (
+      String(row["scope"] ?? "").toUpperCase() !== "BRANCH" ||
+      !branchId ||
+      !key.startsWith("product_price:") ||
+      key.length <= "product_price:".length ||
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value)
+    ) return deny("PERMISSION_DENIED", "Only a valid branch product-price override can be saved here.");
+    if (!scope.isSupervisor && branchId !== scope.storeId)
+      return deny("STORE_FORBIDDEN", "You cannot change another branch's prices.");
+
+    const price = value as Record<string, unknown>;
+    const sellingPrice = Number(price["selling_price"]);
+    const rawEcomPrice = price["ecom_price"];
+    const ecomPrice = rawEcomPrice == null ? null : Number(rawEcomPrice);
+    if (!Number.isFinite(sellingPrice) || (ecomPrice !== null && !Number.isFinite(ecomPrice)))
+      return deny("PERMISSION_DENIED", "Enter a valid branch selling price.");
+
+    rows.push({
+      scope: "BRANCH",
+      scope_id: branchId,
+      key,
+      value: { selling_price: sellingPrice, ecom_price: ecomPrice },
+      is_overridden: true,
+      updated_by: scope.staffUserId ?? scope.actorName ?? null,
+    });
+  }
+  return {
+    ok: true,
+    op: op.kind === "upsert"
+      ? { ...op, rows, onConflict: "scope,scope_id,key" }
+      : { ...op, rows },
+  };
 }
 
 /** Overwrite the actor columns from the proven caller. */
