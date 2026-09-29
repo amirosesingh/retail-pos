@@ -65,7 +65,7 @@ import {
 } from "@/core/api/pos-db";
 import { recordActivity } from "./activity-events";
 import type { CloudSlice, CommitTarget } from "@/core/api/pos-db";
-import { isOnlineOnly } from "./live-mode";
+import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 import { platformName } from "@/platform-config/platform";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 import { useAuth } from "@/lib/pos-auth";
@@ -591,7 +591,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         }
         return;
       }
-      if (typeof navigator !== "undefined" && !navigator.onLine && isOnlineOnly()) {
+      if (typeof navigator !== "undefined" && !navigator.onLine && effectiveDatabaseMode() === "online") {
         if (!cancelled) {
           setReady(true);
           setLoadPhase("ready");
@@ -605,7 +605,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // On web/mobile the tiny location request and the heavier business
         // snapshot start together. The location gate can open as soon as its
         // authoritative answer arrives; catalogue size no longer controls it.
-        const locationTask = isOnlineOnly() ? loadLocationDirectory() : null;
+        const locationTask = effectiveDatabaseMode() === "online" ? loadLocationDirectory() : null;
         const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined);
         const directory = locationTask ? await locationTask : null;
         if (cancelled) return;
@@ -645,6 +645,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
             /* offline or not permitted — the local list still works */
           });
       } catch (e) {
+        void localDb()?.logConnection?.("renderer.bootstrap.failed", {
+          scope: "initial-data",
+          code: String((e as { code?: unknown })?.code ?? "ELOAD"),
+          message: e instanceof Error ? e.message : String(e),
+        });
         dbError("Loading data", e);
         if (!cancelled) setLoadPhase("failed");
       } finally {
@@ -660,7 +665,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!ready) return;
-    if (isOnlineOnly()) return;
+    if (effectiveDatabaseMode() === "online") return;
     // Business rows already live in SQL Server. Older builds also rewrote the
     // complete POS state into the encrypted config file on every state change;
     // large catalogues made that file multi-megabyte and launch/save needlessly
@@ -866,7 +871,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Web, Android and iOS hold nothing locally, so returning to the app must re-read the
   // catalogue, members, prices and shift from the backend.
   useEffect(() => {
-    if (!isOnlineOnly() || !signedIn) return;
+    if (effectiveDatabaseMode() !== "online" || !signedIn) return;
     let cancelled = false;
     let loading = false;
     let resumeTimer: number | undefined;
@@ -927,7 +932,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // focus wakes the durable worker and re-reads the branch snapshot; the
   // worker remains responsible for ordered push/pull convergence.
   useEffect(() => {
-    if (isOnlineOnly() || !signedIn) return;
+    if (effectiveDatabaseMode() === "online" || !signedIn) return;
     const focus = () => {
       const bridge = localDb();
       const active =
@@ -1035,7 +1040,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // Electron must re-read SQL Server after the main worker pulls; a
         // cloud-only read would hide locally committed receipts still queued
         // for upload. Browser/mobile continue to read their cloud authority.
-        const refresh = isOnlineOnly()
+        const refresh = effectiveDatabaseMode() === "online"
           ? active
             ? loadSalesPage(active, null, 500).then(({ rows }) => {
                 setState((current) =>
@@ -1068,7 +1073,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // committed it. Re-read just the local receipt set on that signal so every
   // renderer reflects the sale without a restart or a successful cloud push.
   useEffect(() => {
-    if (isOnlineOnly() || !signedIn) return;
+    if (effectiveDatabaseMode() === "online" || !signedIn) return;
     const bridge = localDb();
     if (!bridge?.onBusinessChanged) return;
     let cancelled = false;
@@ -1164,7 +1169,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // row changes above; this snapshot runs only after reconnection, when socket
   // events may have been missed.
   useEffect(() => {
-    if (isOnlineOnly() || !signedIn) return;
+    if (effectiveDatabaseMode() === "online" || !signedIn) return;
     let cancelled = false;
     const pull = () => {
       if (typeof navigator !== "undefined" && !navigator.onLine) return;

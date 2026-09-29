@@ -260,6 +260,16 @@ describe("SQL Server schema registry", () => {
     }
   });
 
+  it("exports a guarded selected-database migration bundle for update recovery", async () => {
+    const { migrationBundleSql } = await import("../../../electron/db/migrations.cjs");
+    const bundle = migrationBundleSql("1.3.288");
+    expect(bundle).toContain("Retail POS local SQL Server migration bundle");
+    expect(bundle).toContain("Select the configured Retail POS database");
+    expect(bundle).toContain("001_initial.sql");
+    expect(bundle).toContain("003_activity_notification_preferences.sql");
+    expect(bundle).toContain("Current additive schema repair");
+  });
+
   it("uses SQL Server-compatible types for every generated index key", () => {
     for (const table of registry.tables) {
       for (const column of table.columns) {

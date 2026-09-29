@@ -144,6 +144,10 @@ describe("local SQL Server discovery privilege", () => {
     expect(wizard).toMatch(
       /const authorization = await authorizeDatabaseChange\(\);[\s\S]{0,220}const migrated = await api\(\)!\.migrateDatabase\(profile\)/,
     );
+    const startup = readFileSync("src/routes/database-startup.tsx", "utf8");
+    const modal = readFileSync("src/platforms/windows/components/DbConnectionModal.tsx", "utf8");
+    expect(startup).toContain("<LocalDatabaseWizard initiallyOpen");
+    expect(modal).toContain('window.location.assign("/database-startup")');
   });
 
   it("accepts legitimate long POS access tokens without relaxing token limits", () => {
@@ -183,6 +187,8 @@ describe("local SQL Server discovery privilege", () => {
     expect(privilege.allowed("database:test-server")).toBe(true);
     expect(privilege.CHANNEL_LEVELS["database:list-databases"]).toBe(privilege.OPEN);
     expect(privilege.CHANNEL_LEVELS["database:validate"]).toBe(privilege.OPEN);
+    expect(privilege.CHANNEL_LEVELS["database:export-migrations"]).toBe(privilege.OPEN);
+    expect(privilege.CHANNEL_LEVELS["database:migrate-saved"]).toBe(privilege.ADMIN);
     expect(privilege.allowed("database:list-databases")).toBe(true);
     expect(privilege.allowed("database:validate")).toBe(true);
     expect(adminSession.status()).toMatchObject({ unlocked: false });

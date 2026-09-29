@@ -90,6 +90,7 @@ export function classifyError(error: unknown): ErrorCategory {
 
 const actionKind = (action: string) => {
   const value = action.toLowerCase();
+  if (/load|read|fetch|refresh|find|search|list/.test(value)) return "read";
   if (/log ?in|sign ?in/.test(value)) return "login";
   if (/terminal.*(?:regist|activat)|regist.*terminal/.test(value)) return "terminal";
   if (/sync|upload|sending.*change/.test(value)) return "sync";
@@ -134,7 +135,9 @@ export function describeError(error: unknown, action = "That action"): string {
   if (category === "database-disconnected") return "The database is not connected. Verify the database connection before continuing.";
   if (category === "database-read") return `${action} could not read the database. Reconnect the database and try again.`;
   if (category === "database-write")
-    return kind === "sale"
+    return kind === "read"
+      ? `${action} could not read the database. Verify the connection and try again.`
+      : kind === "sale"
       ? "The sale could not be saved to the database. No successful save was confirmed. Please try again."
       : kind === "payment" || kind === "refund"
         ? `${action} could not be saved to the database. No successful save was confirmed. Please try again.`

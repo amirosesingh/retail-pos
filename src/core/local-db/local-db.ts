@@ -421,6 +421,8 @@ export type PosBridge = {
   getConnectionAudit?: () => Promise<LocalConnectionAudit>;
   /** Writes one shareable diagnostic report and reveals it in the file manager. */
   collectDiagnostics?: () => Promise<{ ok: boolean; file?: string }>;
+  /** Append a redacted connection/load event to the Electron support log. */
+  logConnection?: (event: string, detail: Record<string, unknown>) => Promise<{ ok: boolean }>;
   openLogFolder?: () => Promise<unknown>;
   /** Forget the saved connection and drop every pool (escape hatch). */
   resetConnection?: () => Promise<{ ok: boolean; error?: string | null }>;

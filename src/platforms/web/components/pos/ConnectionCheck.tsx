@@ -6,6 +6,7 @@ import { ensureTerminalSession } from "@/lib/terminal-session";
 import { probeRelay, syncHealthResult } from "@/core/api/sync-relay";
 import { isDesktop } from "@/lib/branding";
 import { serverUnreachableOnDevice } from "@/lib/server-origin";
+import { describeError } from "@/lib/notify";
 
 import { isNative } from "@/platform-config/platform";
 
@@ -19,6 +20,7 @@ export function ConnectionCheck() {
   const run = async () => {
     setBusy(true);
     const results: Check[] = [];
+    try {
 
     const config = readTerminalConfig();
     // In a plain browser (admins and supervisors sign in with email) no till is
@@ -82,8 +84,17 @@ export function ConnectionCheck() {
     });
 
 
-    setChecks(results);
-    setBusy(false);
+      setChecks(results);
+    } catch (error) {
+      results.push({
+        label: "Connection check",
+        ok: false,
+        detail: describeError(error, "Checking the connection"),
+      });
+      setChecks(results);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

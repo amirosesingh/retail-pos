@@ -73,6 +73,24 @@ class ChangeReader {
   async failAggregate(aggregateId, error) {
     await this.connectionManager.pool.request().input("aggregate", aggregateId).input("error", String(error?.message ?? error).slice(0, 1000)).query("UPDATE dbo.sync_change_journal SET retry_count=retry_count+1,last_error=@error WHERE aggregate_id=@aggregate AND acknowledged_at IS NULL;");
   }
+  async pendingSummary(branchId) {
+    const result = await this.connectionManager.pool.request().input("branch", branchId).query(`SELECT
+      SUM(CASE WHEN last_error IS NULL THEN 1 ELSE 0 END) pending,
+      SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) failed
+      FROM dbo.sync_change_journal
+      WHERE branch_id IN (@branch,'global') AND acknowledged_at IS NULL;`);
+    const row = result.recordset?.[0] ?? {};
+    return { pending: Number(row.pending ?? 0), failed: Number(row.failed ?? 0) };
+  }
+  async failedAggregates(branchId, limit = 100) {
+    const result = await this.connectionManager.pool.request().input("branch", branchId).input("limit", Math.max(1, Math.min(500, limit))).query(`SELECT TOP (@limit)
+      aggregate_id,MAX(entity_type) entity_type,MAX(retry_count) attempts,MAX(last_error) error,
+      MIN(created_at) created_at,MAX(created_at) last_attempt_at,COUNT_BIG(*) rows
+      FROM dbo.sync_change_journal
+      WHERE branch_id IN (@branch,'global') AND acknowledged_at IS NULL AND last_error IS NOT NULL AND aggregate_id IS NOT NULL
+      GROUP BY aggregate_id ORDER BY MAX(created_at) DESC;`);
+    return result.recordset ?? [];
+  }
   async unacknowledged(value, entityIds, transaction) {
     const { table } = this.table(value);
     if (!entityIds.length) return new Set();

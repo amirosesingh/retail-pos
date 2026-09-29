@@ -45,7 +45,7 @@ type DbState = {
   configured: boolean;
   connected: boolean;
   profile?: Partial<Profile> | null;
-  detail?: { error?: string } | null;
+  detail?: { error?: string; status?: string; ready?: boolean } | null;
 };
 type DatabaseApi = {
   getState(): Promise<DbState>;
@@ -61,6 +61,8 @@ type DatabaseApi = {
   }>;
   validateDatabase(profile: Profile): Promise<Record<string, unknown>>;
   migrateDatabase(profile: Profile): Promise<Record<string, unknown>>;
+  migrateSavedDatabase(): Promise<Record<string, unknown>>;
+  exportMigrationSql(): Promise<Record<string, unknown>>;
   saveAndConnect(profile: Profile): Promise<Record<string, unknown>>;
   removeConfiguration(): Promise<DbState>;
   subscribe(cb: (state: DbState) => void): () => void;
@@ -95,7 +97,13 @@ const initial: Profile = {
 };
 const steps = ["Mode", "Server", "Authentication", "Test", "Database", "Validate", "Save"];
 
-export function LocalDatabaseWizard() {
+export function LocalDatabaseWizard({
+  initiallyOpen = false,
+  onRecoveryClose,
+}: {
+  initiallyOpen?: boolean;
+  onRecoveryClose?: () => void;
+} = {}) {
   const [state, setState] = useState<DbState>({
     state: "disabled",
     enabled: false,
@@ -104,7 +112,7 @@ export function LocalDatabaseWizard() {
   });
   const [profile, setProfile] = useState<Profile>(initial);
   const [step, setStep] = useState(0);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [databases, setDatabases] = useState<
@@ -115,16 +123,21 @@ export function LocalDatabaseWizard() {
   const [servers, setServers] = useState<DiscoveredSqlServer[]>([]);
   const [scanning, setScanning] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [migrationExport, setMigrationExport] = useState<Record<string, unknown> | null>(null);
   useEffect(() => {
     const database = api();
     void database?.getState().then((next) => {
       setState(next);
       if (next.profile) setProfile((old) => ({ ...old, ...next.profile, password: "" }));
+      if (initiallyOpen && next.detail?.status === "migration_required") {
+        setStep(5);
+        setResult(next.detail as Record<string, unknown>);
+      }
     });
     return database?.subscribe?.((next) => {
       setState(next);
     });
-  }, []);
+  }, [initiallyOpen]);
   const shown = useMemo(
     () => databases.filter((item) => item.name.toLowerCase().includes(search.toLowerCase())),
     [databases, search],
@@ -161,7 +174,23 @@ export function LocalDatabaseWizard() {
       setScanning(false);
     }
   };
+  const exportMigrations = async () => {
+    if (busy) return;
+    setBusy(true);
+    setMigrationExport(null);
+    try {
+      setMigrationExport(await api()!.exportMigrationSql());
+    } catch (error) {
+      setMigrationExport({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
   const ok = result?.ok === true;
+  const migrationRequired =
+    result?.status === "migration_required" || state.detail?.status === "migration_required";
+  const recoveringSavedMigration =
+    initiallyOpen && state.configured && state.detail?.status === "migration_required";
 
   const toggleLocalMode = (enabled: boolean) => {
     if (enabled) {
@@ -232,7 +261,10 @@ export function LocalDatabaseWizard() {
           </div>
         </CardContent>
       </Card>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) onRecoveryClose?.();
+      }}>
         <DialogContent className="flex max-h-[92dvh] flex-col overflow-hidden sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Connect directly to Microsoft SQL Server</DialogTitle>
@@ -543,23 +575,33 @@ export function LocalDatabaseWizard() {
                     onClick={() => run(() => api()!.validateDatabase(profile))}
                     result={result}
                   />
-                  {result?.status === "migration_required" && (
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() =>
-                        run(async () => {
-                          const authorization = await authorizeDatabaseChange();
-                          if (!authorization.ok) return authorization;
-                          const migrated = await api()!.migrateDatabase(profile);
-                          if (!migrated.ok) return migrated;
-                          return api()!.validateDatabase(profile);
-                        })
-                      }
-                    >
-                      Apply approved migration and validate again
-                    </Button>
+                  {migrationRequired && (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Button
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => void exportMigrations()}
+                      >
+                        Save migration SQL file
+                      </Button>
+                      <Button
+                        disabled={busy}
+                        onClick={() =>
+                          run(async () => {
+                            const authorization = await authorizeDatabaseChange();
+                            if (!authorization.ok) return authorization;
+                            if (recoveringSavedMigration) return api()!.migrateSavedDatabase();
+                            const migrated = await api()!.migrateDatabase(profile);
+                            if (!migrated.ok) return migrated;
+                            return api()!.validateDatabase(profile);
+                          })
+                        }
+                      >
+                        Apply directly and validate again
+                      </Button>
+                    </div>
                   )}
+                  {migrationExport ? <ResultSummary result={migrationExport} /> : null}
                 </div>
               )}
               {step === 6 && (

@@ -5,9 +5,9 @@ import { runOpLive } from "@/lib/sync-engine";
 import { localDb } from "@/core/local-db/local-db";
 import { routedQuery } from "@/core/api/db-query";
 import type { SyncOp } from "@/lib/sync-outbox";
-import { isOnlineOnly } from "@/lib/live-mode";
 import {
   AllTargetsFailed,
+  effectiveDatabaseMode,
   isConnectionError,
   noteConnectionLost,
   noteConnectionRestored,
@@ -1183,7 +1183,7 @@ export async function loadPrimaryState(
   locationTask?: Promise<LocationDirectoryResult>,
 ): Promise<CloudSlice> {
   const bridge = localDb();
-  if (!isOnlineOnly() && bridge?.snapshot) {
+  if (effectiveDatabaseMode() === "local" && bridge?.snapshot) {
     const status = await bridge.database?.getState?.().catch(() => null);
     if (status?.enabled && status.connected && (status.tradingReady ?? status.connected)) {
       return loadLocalState(
@@ -1908,7 +1908,7 @@ export const db = {
       const message = (e as { message?: string })?.message ?? String(e);
       if (isLinkedRecordError(message)) throw e instanceof Error ? e : new Error(message);
       const offline = typeof navigator !== "undefined" && !navigator.onLine;
-      if (!isOnlineOnly() && (offline || /failed to fetch|network|timeout/i.test(message))) {
+      if (effectiveDatabaseMode() === "local" && (offline || /failed to fetch|network|timeout/i.test(message))) {
         await commitOps("Deleting product", [op]);
         return;
       }
@@ -2204,7 +2204,7 @@ export const db = {
   async commitSale(sale: Sale, products: Product[], member: Member | null): Promise<CommitTarget> {
     // A retry may find the header already committed. Reuse its real id and
     // reconcile every required child rather than mistaking a partial sale for completion.
-    const onlineOnly = isOnlineOnly();
+    const onlineOnly = effectiveDatabaseMode() === "online";
     const storedId =
       onlineOnly && sale.clientTxnId ? await db.saleAttemptId(sale.clientTxnId) : null;
     if (storedId) sale.id = storedId;
