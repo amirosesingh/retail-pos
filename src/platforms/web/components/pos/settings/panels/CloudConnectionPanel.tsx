@@ -34,6 +34,13 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isTerminalApp } from "@/platform-config/platform";
@@ -50,7 +57,13 @@ import {
 } from "@/lib/secure-cloud-config";
 import { type BackendTestResult } from "@/lib/backend-config";
 
-export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void | Promise<void> } = {}) {
+export function CloudConnectionPanel({
+  onConnected,
+  presentation = "panel",
+}: {
+  onConnected?: () => void | Promise<void>;
+  presentation?: "panel" | "dialog";
+} = {}) {
   const auth = useAuthOptional();
   const [status, setStatus] = useState<CloudKeyStatus | null>(null);
   const [url, setUrl] = useState("");
@@ -61,6 +74,7 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
   const [backendResult, setBackendResult] = useState<BackendTestResult | null>(null);
   const [busy, setBusy] = useState<"test" | "save" | "remove" | null>(null);
   const [unlocked, setUnlocked] = useState(false);
+  const [configurationOpen, setConfigurationOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const [next, profile] = await Promise.all([cloudKeyStatus(), connectionProfile()]);
@@ -73,7 +87,6 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
     setBackend((value) => value || profile.backendUrl);
   }, []);
 
-
   useEffect(() => {
     void refresh();
     return subscribeCloudKeys(() => void refresh());
@@ -81,15 +94,81 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
 
   const terminal = isTerminalApp();
 
+  const present = (
+    content: React.ReactNode,
+    summary: string,
+    configured: boolean,
+    detail?: string,
+  ) => {
+    if (presentation === "panel") return content;
+    return (
+      <>
+        <section className="rounded-lg border border-border bg-card p-4">
+          <header className="flex items-center gap-2">
+            <CloudCog className="size-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Database &amp; Cloud Connection</h2>
+          </header>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p
+                className={`flex items-center gap-2 text-sm ${
+                  configured ? "text-success" : "text-destructive"
+                }`}
+              >
+                {configured ? (
+                  <ShieldCheck className="size-4 shrink-0" />
+                ) : (
+                  <ShieldAlert className="size-4 shrink-0" />
+                )}
+                {summary}
+              </p>
+              {detail ? <p className="mt-1 text-xs text-muted-foreground">{detail}</p> : null}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setConfigurationOpen(true)}
+            >
+              <CloudCog className="size-4" />
+              {terminal ? "Configure connection" : "View connection details"}
+            </Button>
+          </div>
+        </section>
+        <Dialog open={configurationOpen} onOpenChange={setConfigurationOpen}>
+          <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Database &amp; Cloud Connection</DialogTitle>
+              <DialogDescription>
+                {terminal
+                  ? "Test and save the central database, publishable key, and POS backend as one connection profile."
+                  : "Review the cloud connection supplied by this website’s hosting environment."}
+              </DialogDescription>
+            </DialogHeader>
+            {content}
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  };
+
   // Web build: the deployment carries its own publishable config, so the
   // values are shown for confirmation but cannot be typed over here.
   if (!terminal) {
-    return (
-      <section className="space-y-3 rounded-lg border border-border bg-card p-4">
-        <header className="flex items-center gap-2">
-          <CloudCog className="size-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Database &amp; Cloud Connection</h2>
-        </header>
+    const content = (
+      <section
+        className={
+          presentation === "dialog"
+            ? "space-y-3"
+            : "space-y-3 rounded-lg border border-border bg-card p-4"
+        }
+      >
+        {presentation === "panel" ? (
+          <header className="flex items-center gap-2">
+            <CloudCog className="size-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Database &amp; Cloud Connection</h2>
+          </header>
+        ) : null}
         <p
           className={`flex items-center gap-2 text-sm ${
             status?.configured ? "text-success" : "text-destructive"
@@ -105,11 +184,17 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
             : "Not configured — set the database address and publishable key in this site's hosting variables."}
         </p>
         <p className="text-xs text-muted-foreground">
-          On the website these two values come from the hosting environment, and the site is its
-          own backend, so there is nothing to enter here. On a Windows till or an Android terminal
-          this same screen is where all three connection settings are typed in once.
+          On the website these two values come from the hosting environment, and the site is its own
+          backend, so there is nothing to enter here. On a Windows till or an Android terminal this
+          same screen is where all three connection settings are typed in once.
         </p>
       </section>
+    );
+    return present(
+      content,
+      status?.configured ? "Central database configured" : "Central database not configured",
+      Boolean(status?.configured),
+      status?.configured ? `Connected to ${status.url}` : "Hosting configuration is required.",
     );
   }
 
@@ -135,7 +220,8 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
       const res = await testConnectionProfile(candidate());
       setCloudResult(res.cloud);
       if (res.cloud.stage === "ok") toast.success(`Central database: ${res.cloud.detail}`);
-      else if (res.cloud.stage === "no-schema") toast.warning(`Central database: ${res.cloud.detail}`);
+      else if (res.cloud.stage === "no-schema")
+        toast.warning(`Central database: ${res.cloud.detail}`);
       else toast.error(`Central database: ${res.cloud.detail}`);
 
       setBackendResult(res.backend);
@@ -160,6 +246,7 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
         toast.success(`${res.detail} Saved ✓ Activated ✓ Connected ✓`);
         await refresh();
         await onConnected?.();
+        if (presentation === "dialog") setConfigurationOpen(false);
       } else {
         toast.error(
           res.stage === "save"
@@ -171,7 +258,6 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
       setBusy(null);
     }
   };
-
 
   const remove = async () => {
     setBusy("remove");
@@ -195,18 +281,25 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
   const canTest = editable && complete && busy === null;
   const canSave = editable && complete && busy === null;
 
-
-  return (
-    <section className="space-y-4 rounded-lg border border-border bg-card p-4">
-      <header className="flex items-center gap-2">
-        <CloudCog className="size-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">Database &amp; Cloud Connection</h2>
-      </header>
+  const content = (
+    <section
+      className={
+        presentation === "dialog"
+          ? "space-y-4"
+          : "space-y-4 rounded-lg border border-border bg-card p-4"
+      }
+    >
+      {presentation === "panel" ? (
+        <header className="flex items-center gap-2">
+          <CloudCog className="size-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Database &amp; Cloud Connection</h2>
+        </header>
+      ) : null}
 
       <p className="text-xs text-muted-foreground">
-        Everything this device needs to reach your company is entered here, once. Changing it
-        points the terminal at a different company, so it is tested before it is saved and the
-        three values are always stored together.
+        Everything this device needs to reach your company is entered here, once. Changing it points
+        the terminal at a different company, so it is tested before it is saved and the three values
+        are always stored together.
       </p>
 
       <p
@@ -228,10 +321,15 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           <Lock className="size-4" />
           <span>
-            This terminal is already connected. Database-management permission is required to
-            change where it reads and writes.
+            This terminal is already connected. Database-management permission is required to change
+            where it reads and writes.
           </span>
-          <Button size="sm" variant="outline" onClick={() => setUnlocked(true)} disabled={!privileged}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setUnlocked(true)}
+            disabled={!privileged}
+          >
             {privileged ? "Unlock to change" : "Ask an administrator for database access"}
           </Button>
         </div>
@@ -261,7 +359,6 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
               status?.configured
                 ? `Saved (${status.keyHint}) — leave blank to keep it`
                 : "sb_publishable_…"
-
             }
             value={key}
             onChange={(e) => setKey(e.target.value)}
@@ -308,9 +405,10 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
           {savedBackend
             ? `Sign-in and sync are sent to ${savedBackend}.`
             : "Not configured — this device cannot reach the POS backend for sign-in or sync."}{" "}
-          Enter the web address you open the POS on, for example <code>https://pos.example.com</code>
-          . This is <strong>not</strong> the database address: the till talks to your POS site, and
-          your POS site talks to the database with the key it holds on the server.
+          Enter the web address you open the POS on, for example{" "}
+          <code>https://pos.example.com</code>. This is <strong>not</strong> the database address:
+          the till talks to your POS site, and your POS site talks to the database with the key it
+          holds on the server.
         </p>
         {backendResult && (
           <p
@@ -329,7 +427,11 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
 
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => void testAll()} disabled={!canTest}>
-          {busy === "test" ? <Loader2 className="size-4 animate-spin" /> : <PlugZap className="size-4" />}
+          {busy === "test" ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <PlugZap className="size-4" />
+          )}
           Test connection
         </Button>
         <Button onClick={() => void saveAll()} disabled={!canSave}>
@@ -337,12 +439,30 @@ export function CloudConnectionPanel({ onConnected }: { onConnected?: () => void
           Save &amp; connect
         </Button>
         {status?.configured && (
-          <Button variant="ghost" onClick={() => void remove()} disabled={busy !== null || !editable}>
-            {busy === "remove" ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+          <Button
+            variant="ghost"
+            onClick={() => void remove()}
+            disabled={busy !== null || !editable}
+          >
+            {busy === "remove" ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Trash2 className="size-4" />
+            )}
             Remove saved connection
           </Button>
         )}
       </div>
     </section>
+  );
+  return present(
+    content,
+    status?.configured ? "Central database configured" : "Central database not configured",
+    Boolean(status?.configured),
+    status?.configured
+      ? `${status.url}${savedBackend ? " • POS backend configured" : " • POS backend missing"}`
+      : savedBackend
+        ? "POS backend saved; central database details are still required."
+        : "This terminal continues in offline mode until a connection profile is saved.",
   );
 }
