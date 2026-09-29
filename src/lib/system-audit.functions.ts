@@ -22,8 +22,7 @@ const entryInput = z.object({
 export const recordSystemAudit = createServerFn({ method: "POST" })
   .validator((input: unknown) => entryInput.parse(input))
   .handler(async ({ data }) => {
-    // The edit history is only worth keeping if every line came from a proven
-    // caller, filed against the branch that caller belongs to.
+    // Authenticate the reporter. The reported action itself remains unverified.
     const { verifyRelayCaller } = await import("@/core/api/pos-relay.server");
     const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
     let scope: Awaited<ReturnType<typeof resolveRelayScope>>;
@@ -39,15 +38,12 @@ export const recordSystemAudit = createServerFn({ method: "POST" })
     } catch {
       return { ok: false as const, error: "Not signed in" };
     }
-    const { writeSystemAudit } = await import("./system-audit.server");
-    await writeSystemAudit({
-      ...data,
-      // Attribution comes from verified credentials, never editable request
-      // fields. This audit is used for financial and administrative actions.
+    const { writeSystemAuditReport } = await import("./system-audit.server");
+    await writeSystemAuditReport(data, {
       actorId: scope.staffUserId ?? scope.label ?? null,
       actorName: scope.actorName ?? scope.label ?? null,
       actorRole: scope.roleSlug ?? scope.role ?? null,
-      storeId: scope.isSupervisor ? (data.storeId ?? scope.storeId ?? null) : (scope.storeId ?? null),
+      storeId: scope.storeId ?? null,
     });
     return { ok: true as const };
   });

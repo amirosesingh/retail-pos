@@ -1,6 +1,6 @@
 /**
- * Client helper for the immutable edit history. Fire-and-forget: recording an
- * action must never slow down or block the person performing it.
+ * Client helper for unverified event reports in the immutable history.
+ * Fire-and-forget: reporting must never block the person performing an action.
  */
 import { recordSystemAudit } from "./system-audit-client";
 import { readCredentials } from "./pos-credentials";

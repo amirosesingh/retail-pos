@@ -38,7 +38,7 @@ export const Route = createFileRoute("/reports/history")({
       { property: "og:title", content: "Edit History & Audit Trail — Retail" },
       {
         property: "og:description",
-        content: "Tamper-proof log of every critical action taken in the system.",
+        content: "History of recorded actions and unverified client reports.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -147,7 +147,7 @@ function EditHistoryReport() {
       <div className="space-y-4 p-4">
         <ReportHeader
           title="Edit History"
-          subtitle="A permanent, tamper-proof record of every critical action. Entries can never be changed or removed."
+          subtitle="Permanent history of recorded actions and unverified client reports. Entries cannot be changed or removed."
           from={from}
           to={to}
           onFrom={setFrom}

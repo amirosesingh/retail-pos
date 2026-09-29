@@ -25,6 +25,20 @@ const text = (value: unknown) => (typeof value === "string" ? value.trim() : "")
 /** Human-readable fields shared by the table, search and CSV export. */
 export function auditReportFields(row: AuditDisplayRow) {
   const detail = objectValue(row.new_value);
+  if (row.action_type === "CLIENT_REPORT_UNVERIFIED") {
+    const report = detail.unverified_report;
+    const claims = report && typeof report === "object" && !Array.isArray(report)
+      ? report as Record<string, unknown>
+      : {};
+    return {
+      requestedBy: "",
+      approvedBy: `${row.actor_name || row.actor_id || "Unknown"} (reporter)`,
+      purpose: text(claims.note) || row.note || "Client-reported event",
+      action: `Client report: ${text(claims.actionType) || "Unknown action"}`,
+      outcome: "Unverified",
+      reference: text(claims.entityId) || text(claims.entityAffected) || "—",
+    };
+  }
   return {
     requestedBy: text(detail.requested_by_name) || text(detail.requested_by),
     approvedBy:

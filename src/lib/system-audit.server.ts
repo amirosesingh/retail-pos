@@ -1,8 +1,9 @@
 /**
  * Immutable edit log (`system_audit_logs`).
  *
- * Every entry is written with the internal service key so a till cannot forge
- * or suppress one, and the table itself refuses updates and deletes.
+ * Server operations write their own entries. Client reports use a separate
+ * unverified envelope; authenticating a reporter does not prove an action.
+ * The table itself refuses updates and deletes.
  */
 import { serviceRest } from "@/core/api/pos-relay.server";
 
@@ -20,6 +21,35 @@ export type SystemAuditEntry = {
   storeId?: string | null;
   note?: string | null;
 };
+
+/** Store client claims without turning them into authoritative edit entries. */
+export async function writeSystemAuditReport(
+  report: SystemAuditEntry,
+  reporter: Pick<SystemAuditEntry, "actorId" | "actorName" | "actorRole" | "storeId">,
+): Promise<void> {
+  await writeSystemAudit({
+    actorId: reporter.actorId,
+    actorName: reporter.actorName,
+    actorRole: reporter.actorRole,
+    storeId: reporter.storeId,
+    actionType: "CLIENT_REPORT_UNVERIFIED",
+    note: "Client-reported event; the action and values have not been verified.",
+    // Explicitly select claims: credentials and caller-supplied attribution
+    // must never be copied into the stored report.
+    newValue: {
+      unverified_report: {
+        actionType: report.actionType,
+        entityAffected: report.entityAffected ?? null,
+        entityId: report.entityId ?? null,
+        oldValue: report.oldValue ?? null,
+        newValue: report.newValue ?? null,
+        terminalId: report.terminalId ?? null,
+        storeId: report.storeId ?? null,
+        note: report.note ?? null,
+      },
+    },
+  });
+}
 
 export async function writeSystemAudit(entry: SystemAuditEntry): Promise<void> {
   try {
