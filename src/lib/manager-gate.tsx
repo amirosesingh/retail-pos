@@ -31,7 +31,6 @@ import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import {
   AUTH_ACTION_LABEL,
   authorizationBinding,
-  normalizeRule,
   resolveRules,
   rulesFromLegacy,
   type AuthActionKey,
@@ -92,7 +91,7 @@ export function ManagerGateProvider({
       const caller = await getPosCallerAuth();
       const res = await getAuthorizationRules({ data: { ...caller, storeId: storeId ?? "" } });
       if (!res.ok) throw new Error(res.error);
-      return res.rules.map((r) => normalizeRule({ ...r, action_key: r.actionKey }));
+      return res.rules;
     },
   });
 

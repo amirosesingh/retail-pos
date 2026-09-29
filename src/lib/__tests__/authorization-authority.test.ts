@@ -8,6 +8,7 @@ import {
   effectiveApprovalAuthority,
   isRoutedApprover,
   isAuthorizationRuleConflict,
+  normalizeRule,
   resolveEditableRules,
   resolveRules,
 } from "../authorization";
@@ -118,6 +119,34 @@ describe("central relative approval authority", () => {
       rowVersion: 4,
     };
     expect(resolveEditableRules([branch], "branch", "b1").discount_over_limit).toBe(branch);
+  });
+
+  it("preserves an already-normalized rule across the UI boundary", () => {
+    const stored = normalizeRule({
+      id: "branch-rule",
+      action_key: "discount_over_limit",
+      scope_type: "branch",
+      scope_id: "b1",
+      mode: "request",
+      allowed_roles: ["manager"],
+      allowed_user_ids: ["user-1"],
+      requester_roles: ["cashier"],
+      requester_user_ids: ["user-2"],
+      authority_limits: { "role:manager": 25 },
+      extra_authority: { "role:manager": 10 },
+      absolute_ceilings: { "role:manager": 40 },
+      approval_timeout_minutes: 20,
+      escalation_after_minutes: 5,
+      escalation_roles: ["area_manager"],
+      require_reason: true,
+      threshold: 12,
+      is_enabled: false,
+      row_version: 8,
+      updated_at: "2026-09-30T00:00:00.000Z",
+      updated_by: "admin-1",
+    });
+
+    expect(normalizeRule(stored)).toEqual(stored);
   });
 
   it("recognizes cloud and desktop optimistic-lock conflicts", () => {

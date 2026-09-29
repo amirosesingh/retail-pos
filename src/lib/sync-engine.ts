@@ -2,6 +2,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { logSync } from "./sync-log";
 import { hasRequiredPlatformConfig } from "./platform-config-ready";
 import { hasSignedInIdentity } from "./session-presence";
+import { createSerialChannelReplacer } from "./realtime-channel-replacer";
 
 import { tableSyncAllowed } from "./sync-policy";
 import { canRelay, hasStaffSession, relayOp } from "@/core/api/sync-relay";
@@ -885,66 +886,75 @@ export function startSyncEngine() {
   // shop's own database within a second instead of waiting for the timer.
   // Auth can become ready after this engine starts, so rebuild the channel at
   // that boundary instead of permanently choosing anonymous or staff mode.
-  let live: ReturnType<typeof supabaseExternal.channel> | null = null;
   let liveHasStaffSession = hasStaffSession();
+  const liveChannels = createSerialChannelReplacer<
+    ReturnType<typeof supabaseExternal.channel>
+  >({
+    remove: (channel) => supabaseExternal.removeChannel(channel),
+    onCurrentChange: (channel) => {
+      settingsLiveChannel = channel;
+    },
+    onError: (error) => {
+      console.warn("[sync] Realtime channel replacement failed", error);
+    },
+  });
   const installLiveChannel = (staffPresent: boolean) => {
-    const previous = live;
-    const next = supabaseExternal.channel("pos-live-settings");
-    live = next;
-    settingsLiveChannel = next;
-    next.on("broadcast", { event: "settings_changed" }, (message) => {
-      const table = String(
-        (message as { payload?: { table?: unknown } }).payload?.table ?? "",
-      );
-      if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return;
-      queueLiveChange({ reason: `broadcast:${table}`, table, storeId: null });
-    });
-    // Database-change subscriptions require table SELECT privileges. PIN-only
-    // Electron sessions intentionally have no cloud staff JWT, so they rely on
-    // durable local SQL synchronization and polling instead of opening invalid
-    // anon subscriptions. Authenticated web users retain scoped live wake-ups.
-    if (staffPresent) {
-      for (const table of ORGANIZATION_LIVE_TABLES) {
-        next.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
-          const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
-            (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
-          const storeId = String(changed.store_id ?? changed.branch_id ?? "").trim() || null;
-          const entityId = String(changed.id ?? "").trim() || null;
-          queueLiveChange({ reason: `live:${table}`, table, storeId, entityId });
-        });
-      }
-      const liveBranchId = activeBranchId();
-      if (liveBranchId) {
-        for (const { table, column } of BRANCH_LIVE_TABLES) {
-          next.on(
-            "postgres_changes",
-            {
-              event: "*",
-              schema: "public",
-              table,
-              filter: `${column}=eq.${liveBranchId}`,
-            },
-            (payload) => {
-              const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
-                (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
-              const entityId = String(changed.id ?? "").trim() || null;
-              queueLiveChange({
-                reason: `live:${table}`,
+    void liveChannels.replace(() => {
+      const next = supabaseExternal.channel("pos-live-settings");
+      next.on("broadcast", { event: "settings_changed" }, (message) => {
+        const table = String(
+          (message as { payload?: { table?: unknown } }).payload?.table ?? "",
+        );
+        if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return;
+        queueLiveChange({ reason: `broadcast:${table}`, table, storeId: null });
+      });
+      // Database-change subscriptions require table SELECT privileges. PIN-only
+      // Electron sessions intentionally have no cloud staff JWT, so they rely on
+      // durable local SQL synchronization and polling instead of opening invalid
+      // anon subscriptions. Authenticated web users retain scoped live wake-ups.
+      if (staffPresent) {
+        for (const table of ORGANIZATION_LIVE_TABLES) {
+          next.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
+            const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
+              (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
+            const storeId = String(changed.store_id ?? changed.branch_id ?? "").trim() || null;
+            const entityId = String(changed.id ?? "").trim() || null;
+            queueLiveChange({ reason: `live:${table}`, table, storeId, entityId });
+          });
+        }
+        const liveBranchId = activeBranchId();
+        if (liveBranchId) {
+          for (const { table, column } of BRANCH_LIVE_TABLES) {
+            next.on(
+              "postgres_changes",
+              {
+                event: "*",
+                schema: "public",
                 table,
-                storeId: liveBranchId,
-                entityId,
-              });
-            },
-          );
+                filter: `${column}=eq.${liveBranchId}`,
+              },
+              (payload) => {
+                const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
+                  (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
+                const entityId = String(changed.id ?? "").trim() || null;
+                queueLiveChange({
+                  reason: `live:${table}`,
+                  table,
+                  storeId: liveBranchId,
+                  entityId,
+                });
+              },
+            );
+          }
         }
       }
-    }
-    next.subscribe((status) => {
-      // A resubscribe after a dropped socket may have missed events while it
-      // was down, so treat a fresh join as a reason to re-read the rules.
-      if (status === "SUBSCRIBED") announceSettingsChange("realtime:subscribed");
+      next.subscribe((status) => {
+        // A resubscribe after a dropped socket may have missed events while it
+        // was down, so treat a fresh join as a reason to re-read the rules.
+        if (status === "SUBSCRIBED") announceSettingsChange("realtime:subscribed");
+      });
+      return next;
     });
-    if (previous) void supabaseExternal.removeChannel(previous);
   };
   installLiveChannel(liveHasStaffSession);
   const { data: authListener } = supabaseExternal.auth.onAuthStateChange((_event, session) => {
@@ -963,8 +973,7 @@ export function startSyncEngine() {
     if (liveTimer) window.clearTimeout(liveTimer);
     pendingLiveChanges.clear();
     authListener.subscription.unsubscribe();
-    if (settingsLiveChannel === live) settingsLiveChannel = null;
-    if (live) void supabaseExternal.removeChannel(live);
+    void liveChannels.stop();
     offDesktopStatus?.();
     offMode();
     window.removeEventListener("pos:browser-outbox-changed", wakeOutbox);
