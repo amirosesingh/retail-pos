@@ -34,4 +34,16 @@ describe("sales realtime refresh", () => {
     expect(store).toContain('window.addEventListener("focus", focus)');
     expect(store).toContain("if (cancelled) void handle.remove()");
   });
+
+  it("broadcasts a value-free wake signal after web settings writes", () => {
+    const settings = readFileSync("src/lib/branch-settings.ts", "utf8");
+    const engine = readFileSync("src/lib/sync-engine.ts", "utf8");
+
+    expect(settings).toContain('broadcastSettingsChange("settings_overrides")');
+    expect(settings).toContain('broadcastSettingsChange("settings_locks")');
+    expect(engine).toContain('live.on("broadcast", { event: "settings_changed" }');
+    expect(engine).toContain("payload: { table }");
+    expect(engine).not.toContain("payload: { table, patch");
+    expect(engine).toContain("queueLiveChange({ reason: `broadcast:${table}`");
+  });
 });

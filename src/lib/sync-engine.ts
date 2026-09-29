@@ -637,6 +637,36 @@ export type LiveChange = {
 const settingsListeners = new Set<(change: LiveChange) => void>();
 const salesListeners = new Set<(change: LiveChange) => void>();
 const dataListeners = new Set<(change: LiveChange) => void>();
+let settingsLiveChannel: ReturnType<typeof supabaseExternal.channel> | null = null;
+
+/**
+ * Wake connected tills after a browser has committed a settings change.
+ *
+ * Settings rows are intentionally invisible to anonymous Realtime clients,
+ * including an Electron cashier that authenticates through the signed relay.
+ * This public broadcast contains no setting value or identity; it is only a
+ * hint to run the existing authenticated pull. A forged hint can therefore
+ * cause at most a harmless, debounced sync and can never change local data.
+ */
+export async function broadcastSettingsChange(table: string): Promise<boolean> {
+  if (localDb()) return false;
+  if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return false;
+  const channel = settingsLiveChannel;
+  if (!channel) return false;
+  try {
+    return (
+      (await channel.send({
+        type: "broadcast",
+        event: "settings_changed",
+        payload: { table },
+      })) === "ok"
+    );
+  } catch {
+    // Realtime is an acceleration path. The normal sync poll remains the
+    // durable fallback when the socket is reconnecting.
+    return false;
+  }
+}
 
 export function subscribeSettingsChange(fn: (change: LiveChange) => void): () => void {
   settingsListeners.add(fn);
@@ -718,6 +748,16 @@ function flushLiveChanges(): void {
       announceDataChange(change);
     }
   }
+}
+
+function queueLiveChange(change: LiveChange): void {
+  pendingLiveChanges.set(
+    `${change.table}:${change.storeId ?? ""}:${change.entityId ?? ""}`,
+    change,
+  );
+  if (liveTimer) window.clearTimeout(liveTimer);
+  // One catch-up for a burst of related edits.
+  liveTimer = window.setTimeout(flushLiveChanges, 400);
 }
 
 /**
@@ -851,6 +891,14 @@ export function startSyncEngine() {
   // Live listener: an account or settings change made anywhere lands in this
   // shop's own database within a second instead of waiting for the timer.
   const live = supabaseExternal.channel("pos-live-settings");
+  settingsLiveChannel = live;
+  live.on("broadcast", { event: "settings_changed" }, (message) => {
+    const table = String(
+      (message as { payload?: { table?: unknown } }).payload?.table ?? "",
+    );
+    if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return;
+    queueLiveChange({ reason: `broadcast:${table}`, table, storeId: null });
+  });
   for (const table of LIVE_TABLES) {
     live.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
       const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
@@ -862,10 +910,7 @@ export function startSyncEngine() {
           : changed.id ?? "",
       ).trim() || null;
       const change = { reason: `live:${table}`, table, storeId, entityId };
-      pendingLiveChanges.set(`${table}:${storeId ?? ""}:${entityId ?? ""}`, change);
-      if (liveTimer) window.clearTimeout(liveTimer);
-      // One catch-up for a burst of related edits.
-      liveTimer = window.setTimeout(flushLiveChanges, 400);
+      queueLiveChange(change);
     });
   }
   live.subscribe((status) => {
@@ -882,6 +927,7 @@ export function startSyncEngine() {
     if (debounce) window.clearTimeout(debounce);
     if (liveTimer) window.clearTimeout(liveTimer);
     pendingLiveChanges.clear();
+    if (settingsLiveChannel === live) settingsLiveChannel = null;
     void supabaseExternal.removeChannel(live);
     offDesktopStatus?.();
     offMode();
