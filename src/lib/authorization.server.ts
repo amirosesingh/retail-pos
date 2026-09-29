@@ -57,11 +57,13 @@ export async function saveRuleRow(rule: {
   requireReason: boolean;
   threshold: number | null;
   isEnabled: boolean;
-}): Promise<void> {
-  const res = await rest("authorization_actions?on_conflict=action_key,scope_type,scope_id", {
+  expectedVersion: number;
+  changedBy: string;
+}): Promise<AuthorizationRule> {
+  const res = await rest("rpc/authorization_rule_save", {
     method: "POST",
-    body: JSON.stringify([
-      {
+    body: JSON.stringify({
+      p_rule: {
         action_key: rule.actionKey,
         scope_type: rule.scopeType,
         scope_id: rule.scopeId,
@@ -79,12 +81,16 @@ export async function saveRuleRow(rule: {
         require_reason: rule.requireReason,
         threshold: rule.threshold,
         is_enabled: rule.isEnabled,
-        updated_at: new Date().toISOString(),
       },
-    ]),
-    prefer: "return=minimal,resolution=merge-duplicates",
+      p_expected_version: rule.expectedVersion,
+      p_changed_by: rule.changedBy,
+      p_change_source: "web",
+    }),
   });
   if (!res.ok) throw new Error((await res.text()).slice(0, 300) || "Could not save the rule");
+  const rows = (await res.json()) as Row[];
+  if (!rows[0]) throw new Error("The saved rule was not returned");
+  return normalizeRule(rows[0]);
 }
 
 export async function listAuthorizationPeopleRows(

@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld("pos", {
   commitAggregate: (aggregate) => invoke("business:commit-aggregate", aggregate),
   snapshot: () => invoke("business:snapshot"),
   query: (table, options) => invoke("business:query", table, options),
+  saveAuthorizationRule: (value) => invoke("business:save-authorization-rule", value),
   shiftExpectedTotals: (shiftId) => invoke("business:shift-expected", shiftId),
   shiftCloseStart: (value) => invoke("business:shift-close-start", value),
   shiftCloseCount: (value) => invoke("business:shift-close-count", value),

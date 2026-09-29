@@ -38,6 +38,7 @@ const { createTelemetry } = require("./telemetry.cjs");
 const { OperationsRepository } = require("./db/repositories/operations.cjs");
 const { AggregateRepository } = require("./db/repositories/aggregates.cjs");
 const { ReceiptRepository } = require("./db/repositories/receipts.cjs");
+const { AuthorizationRulesRepository } = require("./db/repositories/authorization-rules.cjs");
 const { applyMigrations, migrationBundleSql } = require("./db/migrations.cjs");
 const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
@@ -73,6 +74,7 @@ const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepos
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
 const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
+const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
 const localStaffStore = createLocalStaffStore(configStore);
 
 function publishBusinessChange(change){
@@ -1157,7 +1159,7 @@ function registerIpc() {
     isFirstRun: () => !terminalStore.read() && !cloudCredentials.status().configured,
   });
   ipcMain.handle("admin:status", () => adminSession.status());
-  ipcMain.handle("admin:lock", () => { adminSession.clear(); return adminSession.status(); });
+  ipcMain.handle("admin:lock", () => { adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
   ipcMain.handle("admin:adopt-session", async (_e, value, rawTerminal) => guard.guarded(async () => {
     const proof=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
     if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return{ok:false,error:"A verified signed-in user is required."};
@@ -1174,7 +1176,9 @@ function registerIpc() {
       const mirrored=terminalStore.write(terminal);
       if(mirrored?.ok===false)return{ok:false,code:"EACTIVATION_STORE",error:mirrored.error??"Windows secure storage could not save the terminal activation."};
     }
-    adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);rememberVerifiedBranch(result.branchId);return{ok:true,level:result.level};
+    adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);
+    syncCloud.setAuthorizationProof(proof);
+    rememberVerifiedBranch(result.branchId);return{ok:true,level:result.level};
   }));
   ipcMain.handle("admin:unlock", async (_e, username, pin) => guard.guarded(async () => {
     const user = guard.text(username, { name: "username", max: 160 });
@@ -1244,6 +1248,26 @@ function registerIpc() {
   ipcMain.handle("database:backup", (_e, file) => guard.guarded(() => backupService.backup(guard.filePath(file,{name:"backup file",extension:"bak"}))));
   ipcMain.handle("database:restore", (_e, file) => guard.guarded(async () => { const result=await backupService.restore(guard.filePath(file,{name:"backup file",extension:"bak"})); if(result.ok)await databaseService.restore(); return result; }));
   ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}), guard.writeOps(ops,{max:200}));scheduleAutomaticSync(250);return result;}));
+  ipcMain.handle("business:save-authorization-rule", (_e, value) => guard.guarded(async () => {
+    const identity = adminSession.identity();
+    if (!identity || !adminSession.hasPosAuthority() || !adminSession.hasPermission("can_access_pos_settings"))
+      return { ok: false, code: "PERMISSION_DENIED", error: "POS settings permission is required." };
+    const branchId = localBranchId();
+    if (!branchId) return { ok: false, code: "EBRANCH", error: "The terminal branch is not configured." };
+    try {
+      const result = await authorizationRulesRepository.save(value, {
+        branchId: String(branchId),
+        actor: identity.subject,
+        isAdmin: identity.level === "admin",
+      });
+      publishBusinessChange({ tables: ["authorization_actions", "authorization_action_history"], source: "local" });
+      scheduleAutomaticSync(250);
+      return result;
+    } catch (error) {
+      recordFault("business.save-authorization-rule", error);
+      return { ok: false, code: error?.code ?? "ESQLSERVER_WRITE", error: error?.message ?? "The authorization rule could not be saved locally." };
+    }
+  }));
   ipcMain.handle("business:commit-aggregate", (_e, value) => guard.guarded(async() => {
     const aggregate=guard.aggregate(value);
     try {

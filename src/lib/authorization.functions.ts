@@ -34,6 +34,7 @@ const saveRuleInput = caller.extend({
   escalationRoles: z.array(z.string().max(40)).max(20).default([]),
   requireReason: z.boolean().default(false),
   threshold: z.number().nullable().default(null),
+  expectedVersion: z.number().int().nonnegative().default(0),
 });
 
 const pinInput = caller.extend({
@@ -289,7 +290,7 @@ export const saveAuthorizationRule = createServerFn({ method: "POST" })
       if (configurationError) return { ok: false as const, error: configurationError };
       const scopeId = data.scopeType === "branch" ? callerStore(who, data.scopeId) : "";
       const { saveRuleRow } = await import("./authorization.server");
-      await saveRuleRow({
+      const rule = await saveRuleRow({
         actionKey: data.actionKey,
         scopeType: data.scopeType,
         scopeId,
@@ -307,8 +308,10 @@ export const saveAuthorizationRule = createServerFn({ method: "POST" })
         requireReason: data.requireReason,
         threshold: data.threshold,
         isEnabled: true,
+        expectedVersion: data.expectedVersion,
+        changedBy: who.id || who.name,
       });
-      return { ok: true as const };
+      return { ok: true as const, rule };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300) };
     }

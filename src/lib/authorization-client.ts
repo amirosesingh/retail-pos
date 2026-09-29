@@ -4,6 +4,9 @@
  * so it sends the same validated request to the configured hosted backend.
  */
 import { isTerminalApp } from "@/platform-config/platform";
+import { localDb } from "@/core/local-db/local-db";
+import { localStaffRoster } from "@/core/local-db/local-staff";
+import { normalizeRule } from "./authorization";
 import { posFetch } from "./server-origin";
 import {
   authorizeWithPin as authorizeWithPinFn,
@@ -88,23 +91,41 @@ export const cancelAuthorizationRequest = (
     cancelAuthorizationRequestFn as DirectCall,
   );
 
-export const getAuthorizationRules = (
+export const getAuthorizationRules = async (
   input: NonNullable<Parameters<typeof getAuthorizationRulesFn>[0]>,
-) =>
-  callHosted<Awaited<ReturnType<typeof getAuthorizationRulesFn>>>(
+) => {
+  if (isTerminalApp() && localDb()?.query) {
+    const result = await localDb()!.query!("authorization_actions", { limit: 2000 });
+    if (!result.ok) return { ok: false as const, error: result.error ?? "Could not load local authorization rules", rules: [] };
+    return { ok: true as const, rules: (result.rows ?? []).map(normalizeRule) };
+  }
+  return callHosted<Awaited<ReturnType<typeof getAuthorizationRulesFn>>>(
     "rules",
     input.data,
     getAuthorizationRulesFn as DirectCall,
   );
+};
 
-export const saveAuthorizationRule = (
+export const saveAuthorizationRule = async (
   input: NonNullable<Parameters<typeof saveAuthorizationRuleFn>[0]>,
-) =>
-  callHosted<Awaited<ReturnType<typeof saveAuthorizationRuleFn>>>(
+) => {
+  if (isTerminalApp() && localDb()?.saveAuthorizationRule) {
+    const result = await localDb()!.saveAuthorizationRule!(input.data as unknown as Record<string, unknown>);
+    return result.ok
+      ? { ok: true as const, rule: normalizeRule(result.rule) }
+      : { ok: false as const, error: result.error ?? "Could not save the rule" };
+  }
+  const result = await callHosted<Awaited<ReturnType<typeof saveAuthorizationRuleFn>>>(
     "save_rule",
     input.data,
     saveAuthorizationRuleFn as DirectCall,
   );
+  if (result.ok) {
+    const { broadcastSettingsChange } = await import("./sync-engine");
+    await broadcastSettingsChange("authorization_actions");
+  }
+  return result;
+};
 
 export const setStaffAuthorizationPin = (
   input: NonNullable<Parameters<typeof setStaffAuthorizationPinFn>[0]>,
@@ -115,14 +136,20 @@ export const setStaffAuthorizationPin = (
     setStaffAuthorizationPinFn as DirectCall,
   );
 
-export const listAuthorizationPeople = (
+export const listAuthorizationPeople = async (
   input: NonNullable<Parameters<typeof listAuthorizationPeopleFn>[0]>,
-) =>
-  callHosted<Awaited<ReturnType<typeof listAuthorizationPeopleFn>>>(
+) => {
+  if (isTerminalApp()) {
+    const data = input.data as { storeId?: string };
+    const rows = await localStaffRoster(data.storeId ?? null);
+    return { ok: true as const, people: rows.map((row) => ({ id: row.id, name: row.fullName || row.username, role: row.roleSlug || "staff", storeId: row.storeId ?? "" })) };
+  }
+  return callHosted<Awaited<ReturnType<typeof listAuthorizationPeopleFn>>>(
     "people",
     input.data,
     listAuthorizationPeopleFn as DirectCall,
   );
+};
 
 export const verifyBusinessAuthorization = (
   input: NonNullable<Parameters<typeof verifyBusinessAuthorizationFn>[0]>,

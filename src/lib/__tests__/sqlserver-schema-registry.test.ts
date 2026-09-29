@@ -11,20 +11,26 @@ describe("SQL Server schema registry", () => {
   const completeSql = readFileSync("database/sqlserver/retail-pos-local-database.sql", "utf8");
 
   it("loads through the same path used by the packaged desktop validator", () => {
-    expect(packagedRegistry.loadRegistry().tables).toHaveLength(68);
+    expect(packagedRegistry.loadRegistry().tables).toHaveLength(69);
     expect(packagedRegistry.registryPath().replaceAll("\\", "/")).toMatch(
       /database\/sqlserver\/schema-registry\.json$/,
     );
   });
 
   it("maps every cloud domain table and column", () => {
-    expect(registry.tables).toHaveLength(68);
+    expect(registry.tables).toHaveLength(69);
     expect(
       registry.tables.reduce(
         (sum: number, table: { columns: unknown[] }) => sum + table.columns.length,
         0,
       ),
     ).toBeGreaterThanOrEqual(995);
+    const rules = registry.tables.find(
+      (table: { cloudTable: string }) => table.cloudTable === "authorization_actions",
+    );
+    expect(rules.direction).toBe("bidirectional");
+    expect(rules.columns.some((column: { cloudColumn: string }) => column.cloudColumn === "row_version")).toBe(true);
+    expect(registry.tables.some((table: { cloudTable: string }) => table.cloudTable === "authorization_action_history")).toBe(true);
     expect(
       registry.tables
         .find((table: { cloudTable: string }) => table.cloudTable === "sale_items")

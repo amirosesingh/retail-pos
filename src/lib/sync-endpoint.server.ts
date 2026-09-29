@@ -195,8 +195,43 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     if (branchId !== scope.storeId && (terminalBound || !mayManageOtherBranches)) return Response.json({ ok:false,code:"STORE_FORBIDDEN",error:"You can only synchronize your own branch." },{status:403});
     if (body.oldReceipt && !(scope.role === "admin" || scope.roleSlug === "admin" || scope.permissions.can_process_refund === true))
       return Response.json({ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required to retrieve historical receipts."},{status:403});
+    const governanceTables = new Set(["authorization_actions", "authorization_action_history"]);
+    const governanceOperations = body.sqlServerBatch
+      ? (governanceTables.has(body.sqlServerBatch.table) ? [{ table: body.sqlServerBatch.table, rows: body.sqlServerBatch.rows }] : [])
+      : (body.sqlServerAggregate?.operations ?? []).filter((operation) => governanceTables.has(operation.table));
+    if (governanceOperations.length) {
+      const isAdmin = scope.role === "admin" || scope.roleSlug === "admin";
+      if (scope.kind === "terminal" || scope.permissions.can_access_pos_settings !== true) {
+        return Response.json({ ok:false,code:"GOVERNANCE_AUTH_REQUIRED",error:"A currently signed-in staff member with POS settings permission is required to sync authorization rules." },{status:403});
+      }
+      const invalidScope = governanceOperations.some((operation) => operation.rows.some((row) => {
+        const scopeType = String(row.scope_type ?? "branch");
+        const scopeId = String(row.scope_id ?? "");
+        return scopeType === "global" ? !isAdmin : scopeType !== "branch" || !scope.storeId || scopeId !== scope.storeId;
+      }));
+      if (invalidScope)
+        return Response.json({ ok:false,code:"STORE_FORBIDDEN",error:"Authorization rules can only be synchronized for the verified branch; global rules require an administrator." },{status:403});
+      const actor = scope.staffUserId ?? scope.label;
+      if (body.sqlServerBatch?.table === "authorization_actions")
+        body.sqlServerBatch.rows = body.sqlServerBatch.rows.map((row) => ({ ...row, updated_by: actor }));
+      if (body.sqlServerBatch?.table === "authorization_action_history")
+        body.sqlServerBatch.rows = body.sqlServerBatch.rows.map((row) => ({ ...row, changed_by: actor, change_source: "desktop" }));
+      if (body.sqlServerAggregate)
+        body.sqlServerAggregate.operations = body.sqlServerAggregate.operations.map((operation) => ({
+          ...operation,
+          rows: operation.table === "authorization_actions"
+            ? operation.rows.map((row) => ({ ...row, updated_by: actor }))
+            : operation.table === "authorization_action_history"
+              ? operation.rows.map((row) => ({ ...row, changed_by: actor, change_source: "desktop" }))
+              : operation.rows,
+        }));
+    }
     const { serviceRest } = await import("@/core/api/pos-relay.server");
-    const rpc = body.sqlServerBatch ? ["pos_sync_push_batch", {
+    const governanceBatch = body.sqlServerBatch && governanceTables.has(body.sqlServerBatch.table);
+    const rpc = governanceBatch ? ["pos_sync_push_governance_batch", {
+      p_batch_id:body.sqlServerBatch!.batchId,p_organization_id:body.sqlServerBatch!.organizationId,p_branch_id:branchId,
+      p_table:body.sqlServerBatch!.table,p_rows:body.sqlServerBatch!.rows,
+    }] as const : body.sqlServerBatch ? ["pos_sync_push_batch", {
       p_batch_id:body.sqlServerBatch.batchId,p_organization_id:body.sqlServerBatch.organizationId,p_branch_id:branchId,
       p_table:body.sqlServerBatch.table,p_rows:body.sqlServerBatch.rows,p_changes:body.sqlServerBatch.changes,
     }] as const : body.sqlServerAggregate ? ["pos_sync_push_aggregate", {

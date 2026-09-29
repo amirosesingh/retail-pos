@@ -24,7 +24,6 @@ const PULL_ONLY = new Set([
   "cashiers",
   "staff_roles",
   "user_roles",
-  "authorization_actions",
   "secure_settings",
   "settings_locks",
   "public_flags",
@@ -37,6 +36,7 @@ const APPEND_ONLY = new Set([
   "shift_close_events",
   "shift_notifications",
   "shift_reconciliations",
+  "authorization_action_history",
 ]);
 
 function sqlType(declaration) {

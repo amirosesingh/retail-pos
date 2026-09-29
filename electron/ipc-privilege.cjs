@@ -63,6 +63,7 @@ const CHANNEL_LEVELS = {
   "business:commit-aggregate": OPEN,
   "business:snapshot": OPEN,
   "business:query": OPEN,
+  "business:save-authorization-rule": OPEN,
   "business:shift-expected": OPEN,
   "business:shift-close-start": OPEN,
   "business:shift-close-count": OPEN,
@@ -475,6 +476,13 @@ function allowed(channel, args = []) {
       }
       return false;
     }
+  }
+  if (channel === "business:save-authorization-rule") {
+    if (adminSession.hasPosAuthority() && adminSession.hasPermission("can_access_pos_settings")) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
   }
   const level = levelFor(channel, args);
   if (level === OPEN) return true;

@@ -2,7 +2,10 @@ const { policy } = require("./conflicts.cjs");
 const { toLocalValue } = require("./row-codec.cjs");
 
 class CloudClient {
-  constructor({ configStore, terminalStore, connectionManager = null }) { this.configStore = configStore; this.terminalStore = terminalStore; this.connectionManager = connectionManager; }
+  constructor({ configStore, terminalStore, connectionManager = null }) { this.configStore = configStore; this.terminalStore = terminalStore; this.connectionManager = connectionManager; this.authorizationProof = null; }
+  setAuthorizationProof(proof) { this.authorizationProof = proof && typeof proof === "object" ? { ...proof } : null; }
+  clearAuthorizationProof() { this.authorizationProof = null; }
+  hasAuthorizationProof() { return Boolean(this.authorizationProof && Object.values(this.authorizationProof).some(Boolean)); }
   async request(payload) {
     const terminal = this.terminalStore.read() ?? {};
     // An empty config-store value must not mask the HTTPS recovery copy sealed
@@ -14,7 +17,9 @@ class CloudClient {
     if (!terminalToken) throw Object.assign(new Error("The renderer activation has not reached the desktop synchronization service yet. Close and reopen Settings, then retry synchronization."),{code:"EACTIVATION_MIRROR"});
     // The OS-sealed activation token is authoritative. Put it last so no
     // caller-supplied payload can replace the device identity or its branch.
-    const response = await fetch(`${base}/api/v1/pos/sync`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, terminalToken }) });
+    const governance = payload?.sqlServerBatch?.table === "authorization_actions" || payload?.sqlServerBatch?.table === "authorization_action_history" || payload?.sqlServerAggregate?.operations?.some((operation) => operation.table === "authorization_actions" || operation.table === "authorization_action_history");
+    const personProof = governance ? (this.authorizationProof ?? {}) : {};
+    const response = await fetch(`${base}/api/v1/pos/sync`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, ...personProof, terminalToken }) });
     const data = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
     if (!response.ok || data?.ok === false) {
       // PostgREST reports raised SQL errors in `message`, while the POS relay
@@ -85,7 +90,10 @@ class CloudClient {
           ? "target.[refunded_qty]=CASE WHEN source.[refunded_qty]>target.[refunded_qty] THEN source.[refunded_qty] ELSE target.[refunded_qty] END,target.[row_version]=CASE WHEN source.[row_version]>target.[row_version] THEN source.[row_version] ELSE target.[row_version] END"
           : null;
       const mayUpdate = conflictPolicy !== "immutable_reversal" && updates.length;
-      const matched = correction ? `WHEN MATCHED THEN UPDATE SET ${correction}` : mayUpdate ? `WHEN MATCHED${versioned ? " AND source.[row_version]>target.[row_version]" : ""} THEN UPDATE SET ${updates.join(",")}` : "";
+      const authorizationOrder = table.cloudTable === "authorization_actions" && names.some(([name]) => name === "updated_at")
+        ? " AND (source.[row_version]>target.[row_version] OR (source.[row_version]=target.[row_version] AND (source.[updated_at]>target.[updated_at] OR (source.[updated_at]=target.[updated_at] AND COALESCE(source.[updated_by],N'')>COALESCE(target.[updated_by],N'')))))"
+        : versioned ? " AND source.[row_version]>target.[row_version]" : "";
+      const matched = correction ? `WHEN MATCHED THEN UPDATE SET ${correction}` : mayUpdate ? `WHEN MATCHED${authorizationOrder} THEN UPDATE SET ${updates.join(",")}` : "";
       const source = names.map(([name, parameter]) => `@${parameter} AS [${name}]`).join(",");
       await request.query(`WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544) MERGE dbo.[${table.sqlServerTable}] WITH(HOLDLOCK) AS target USING(SELECT ${source}) AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT(${names.map(([name]) => `[${name}]`).join(",")}) VALUES(${names.map(([name]) => `source.[${name}]`).join(",")});`);
     }

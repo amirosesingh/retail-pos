@@ -8524,9 +8524,14 @@ CREATE TABLE IF NOT EXISTS public.authorization_actions (
   require_reason boolean NOT NULL DEFAULT false,
   threshold numeric,
   is_enabled boolean NOT NULL DEFAULT true,
+  row_version integer NOT NULL DEFAULT 1,
+  updated_by text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.authorization_actions ADD COLUMN IF NOT EXISTS row_version integer NOT NULL DEFAULT 1;
+ALTER TABLE public.authorization_actions ADD COLUMN IF NOT EXISTS updated_by text;
 
 CREATE UNIQUE INDEX IF NOT EXISTS authorization_actions_scope_uidx
   ON public.authorization_actions (action_key, scope_type, scope_id);
@@ -8540,6 +8545,98 @@ DROP POLICY IF EXISTS "Staff read authorisation rules" ON public.authorization_a
 CREATE POLICY "Staff read authorisation rules"
   ON public.authorization_actions FOR SELECT TO authenticated
   USING (scope_id = '' OR public.store_visible(scope_id));
+
+-- Every rule revision is immutable evidence. Electron writes this in the
+-- same local SQL transaction as the rule and Change Tracking uploads both.
+CREATE TABLE IF NOT EXISTS public.authorization_action_history (
+  id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  action_id uuid NOT NULL,
+  action_key text NOT NULL,
+  scope_type text NOT NULL,
+  scope_id text NOT NULL DEFAULT '',
+  row_version integer NOT NULL,
+  changed_by text NOT NULL,
+  change_source text NOT NULL,
+  change_kind text NOT NULL,
+  snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS authorization_action_history_action_idx
+  ON public.authorization_action_history(action_id, row_version DESC);
+REVOKE ALL ON public.authorization_action_history FROM anon, authenticated;
+GRANT SELECT ON public.authorization_action_history TO authenticated;
+GRANT ALL ON public.authorization_action_history TO service_role;
+ALTER TABLE public.authorization_action_history ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Staff read authorisation rule history" ON public.authorization_action_history;
+CREATE POLICY "Staff read authorisation rule history"
+  ON public.authorization_action_history FOR SELECT TO authenticated
+  USING (scope_id = '' OR public.store_visible(scope_id));
+
+CREATE OR REPLACE FUNCTION public.authorization_action_history_immutable()
+RETURNS trigger LANGUAGE plpgsql SET search_path TO 'public', 'pg_temp' AS $$
+BEGIN
+  RAISE EXCEPTION 'authorization_action_history is insert-only';
+END $$;
+DROP TRIGGER IF EXISTS authorization_action_history_no_change ON public.authorization_action_history;
+CREATE TRIGGER authorization_action_history_no_change
+  BEFORE UPDATE OR DELETE ON public.authorization_action_history
+  FOR EACH ROW EXECUTE FUNCTION public.authorization_action_history_immutable();
+
+CREATE OR REPLACE FUNCTION public.authorization_rule_save(
+  p_rule jsonb,
+  p_expected_version integer,
+  p_changed_by text,
+  p_change_source text DEFAULT 'web'
+) RETURNS SETOF public.authorization_actions
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $$
+DECLARE
+  current_row public.authorization_actions%rowtype;
+  saved_row public.authorization_actions%rowtype;
+  next_version integer;
+BEGIN
+  SELECT * INTO current_row
+  FROM public.authorization_actions
+  WHERE action_key=p_rule->>'action_key'
+    AND scope_type=p_rule->>'scope_type'
+    AND scope_id=COALESCE(p_rule->>'scope_id','')
+  FOR UPDATE;
+
+  IF FOUND AND current_row.row_version <> COALESCE(p_expected_version,0) THEN
+    RAISE EXCEPTION USING ERRCODE='40001', MESSAGE='This authorization rule changed on another device. Reload it before saving.';
+  ELSIF NOT FOUND AND COALESCE(p_expected_version,0) <> 0 THEN
+    RAISE EXCEPTION USING ERRCODE='40001', MESSAGE='This authorization rule changed on another device. Reload it before saving.';
+  END IF;
+  next_version := COALESCE(current_row.row_version,0)+1;
+
+  INSERT INTO public.authorization_actions AS target
+    (action_key,scope_type,scope_id,mode,allowed_roles,allowed_user_ids,requester_roles,requester_user_ids,authority_limits,extra_authority,absolute_ceilings,approval_timeout_minutes,escalation_after_minutes,escalation_roles,require_reason,threshold,is_enabled,row_version,updated_by,updated_at)
+  VALUES
+    (p_rule->>'action_key',p_rule->>'scope_type',COALESCE(p_rule->>'scope_id',''),p_rule->>'mode',
+     ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_rule->'allowed_roles','[]'::jsonb))),
+     ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_rule->'allowed_user_ids','[]'::jsonb))),
+     ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_rule->'requester_roles','[]'::jsonb))),
+     ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_rule->'requester_user_ids','[]'::jsonb))),
+     COALESCE(p_rule->'authority_limits','{}'::jsonb),COALESCE(p_rule->'extra_authority','{}'::jsonb),COALESCE(p_rule->'absolute_ceilings','{}'::jsonb),
+     COALESCE((p_rule->>'approval_timeout_minutes')::integer,15),(p_rule->>'escalation_after_minutes')::integer,
+     ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_rule->'escalation_roles','[]'::jsonb))),
+     COALESCE((p_rule->>'require_reason')::boolean,false),(p_rule->>'threshold')::numeric,
+     COALESCE((p_rule->>'is_enabled')::boolean,true),next_version,p_changed_by,now())
+  ON CONFLICT (action_key,scope_type,scope_id) DO UPDATE SET
+    mode=EXCLUDED.mode,allowed_roles=EXCLUDED.allowed_roles,allowed_user_ids=EXCLUDED.allowed_user_ids,
+    requester_roles=EXCLUDED.requester_roles,requester_user_ids=EXCLUDED.requester_user_ids,
+    authority_limits=EXCLUDED.authority_limits,extra_authority=EXCLUDED.extra_authority,absolute_ceilings=EXCLUDED.absolute_ceilings,
+    approval_timeout_minutes=EXCLUDED.approval_timeout_minutes,escalation_after_minutes=EXCLUDED.escalation_after_minutes,
+    escalation_roles=EXCLUDED.escalation_roles,require_reason=EXCLUDED.require_reason,threshold=EXCLUDED.threshold,
+    is_enabled=EXCLUDED.is_enabled,row_version=EXCLUDED.row_version,updated_by=EXCLUDED.updated_by,updated_at=now()
+  RETURNING * INTO saved_row;
+
+  INSERT INTO public.authorization_action_history(action_id,action_key,scope_type,scope_id,row_version,changed_by,change_source,change_kind,snapshot)
+  VALUES(saved_row.id,saved_row.action_key,saved_row.scope_type,saved_row.scope_id,saved_row.row_version,p_changed_by,p_change_source,
+    CASE WHEN current_row.id IS NULL THEN 'created' ELSE 'updated' END,to_jsonb(saved_row));
+  RETURN NEXT saved_row;
+END $$;
+REVOKE ALL ON FUNCTION public.authorization_rule_save(jsonb,integer,text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.authorization_rule_save(jsonb,integer,text,text) TO service_role;
 
 -- ------------------------------------------------------ authorization_requests
 CREATE TABLE IF NOT EXISTS public.authorization_requests (
@@ -14286,9 +14383,9 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."authorization_actions" ("id","action_key","scope_type","scope_id","mode","allowed_roles","allowed_user_ids","requester_roles","requester_user_ids","authority_limits","extra_authority","absolute_ceilings","approval_timeout_minutes","escalation_after_minutes","escalation_roles","require_reason","threshold","is_enabled","created_at","updated_at")
-  SELECT "id","action_key","scope_type","scope_id","mode","allowed_roles","allowed_user_ids","requester_roles","requester_user_ids","authority_limits","extra_authority","absolute_ceilings","approval_timeout_minutes","escalation_after_minutes","escalation_roles","require_reason","threshold","is_enabled","created_at","updated_at" FROM jsonb_populate_recordset(NULL::public."authorization_actions", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "action_key"=EXCLUDED."action_key","scope_type"=EXCLUDED."scope_type","scope_id"=EXCLUDED."scope_id","mode"=EXCLUDED."mode","allowed_roles"=EXCLUDED."allowed_roles","allowed_user_ids"=EXCLUDED."allowed_user_ids","requester_roles"=EXCLUDED."requester_roles","requester_user_ids"=EXCLUDED."requester_user_ids","authority_limits"=EXCLUDED."authority_limits","extra_authority"=EXCLUDED."extra_authority","absolute_ceilings"=EXCLUDED."absolute_ceilings","approval_timeout_minutes"=EXCLUDED."approval_timeout_minutes","escalation_after_minutes"=EXCLUDED."escalation_after_minutes","escalation_roles"=EXCLUDED."escalation_roles","require_reason"=EXCLUDED."require_reason","threshold"=EXCLUDED."threshold","is_enabled"=EXCLUDED."is_enabled","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at";
+  INSERT INTO public."authorization_actions" ("id","action_key","scope_type","scope_id","mode","allowed_roles","allowed_user_ids","requester_roles","requester_user_ids","authority_limits","extra_authority","absolute_ceilings","approval_timeout_minutes","escalation_after_minutes","escalation_roles","require_reason","threshold","is_enabled","row_version","updated_by","created_at","updated_at")
+  SELECT "id","action_key","scope_type","scope_id","mode","allowed_roles","allowed_user_ids","requester_roles","requester_user_ids","authority_limits","extra_authority","absolute_ceilings","approval_timeout_minutes","escalation_after_minutes","escalation_roles","require_reason","threshold","is_enabled","row_version","updated_by","created_at","updated_at" FROM jsonb_populate_recordset(NULL::public."authorization_actions", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO UPDATE SET "action_key"=EXCLUDED."action_key","scope_type"=EXCLUDED."scope_type","scope_id"=EXCLUDED."scope_id","mode"=EXCLUDED."mode","allowed_roles"=EXCLUDED."allowed_roles","allowed_user_ids"=EXCLUDED."allowed_user_ids","requester_roles"=EXCLUDED."requester_roles","requester_user_ids"=EXCLUDED."requester_user_ids","authority_limits"=EXCLUDED."authority_limits","extra_authority"=EXCLUDED."extra_authority","absolute_ceilings"=EXCLUDED."absolute_ceilings","approval_timeout_minutes"=EXCLUDED."approval_timeout_minutes","escalation_after_minutes"=EXCLUDED."escalation_after_minutes","escalation_roles"=EXCLUDED."escalation_roles","require_reason"=EXCLUDED."require_reason","threshold"=EXCLUDED."threshold","is_enabled"=EXCLUDED."is_enabled","row_version"=EXCLUDED."row_version","updated_by"=EXCLUDED."updated_by","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at" WHERE (EXCLUDED."row_version",EXCLUDED."updated_at",COALESCE(EXCLUDED."updated_by",''))>(public."authorization_actions"."row_version",public."authorization_actions"."updated_at",COALESCE(public."authorization_actions"."updated_by",''));
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 
@@ -14306,11 +14403,40 @@ REVOKE ALL ON FUNCTION public.sync_delete_authorization_actions(jsonb,text) FROM
 
 CREATE OR REPLACE FUNCTION public.sync_feed_authorization_actions() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
 BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'authorization_actions',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+ SELECT 'default',branches.branch_id,'authorization_actions',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."authorization_actions";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."authorization_actions" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_authorization_actions();
 
 REVOKE ALL ON FUNCTION public.sync_feed_authorization_actions() FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.sync_apply_authorization_action_history(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE v_count integer; v_row jsonb;
+BEGIN
+
+
+  INSERT INTO public."authorization_action_history" ("id","action_id","action_key","scope_type","scope_id","row_version","changed_by","change_source","change_kind","snapshot","created_at")
+  SELECT "id","action_id","action_key","scope_type","scope_id","row_version","changed_by","change_source","change_kind","snapshot","created_at" FROM jsonb_populate_recordset(NULL::public."authorization_action_history", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO NOTHING;
+  GET DIAGNOSTICS v_count=ROW_COUNT;
+
+
+
+  RETURN v_count;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.sync_delete_authorization_action_history(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE v_count integer;
+BEGIN RETURN 0; END $fn$;
+REVOKE ALL ON FUNCTION public.sync_apply_authorization_action_history(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_authorization_action_history(jsonb,text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.sync_feed_authorization_action_history() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,'authorization_action_history',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+DROP TRIGGER IF EXISTS sync_feed_change ON public."authorization_action_history";
+CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."authorization_action_history" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_authorization_action_history();
+
+REVOKE ALL ON FUNCTION public.sync_feed_authorization_action_history() FROM PUBLIC, anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.sync_apply_authorization_requests(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer; v_row jsonb;
@@ -14702,6 +14828,8 @@ BEGIN
     WHEN 'pos_store_settings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(p_rows)+public.sync_delete_pos_store_settings(p_changes,p_branch_id);
     WHEN 'settings_scoped' THEN  v_count:=public.sync_apply_settings_scoped(p_rows)+public.sync_delete_settings_scoped(p_changes,p_branch_id);
     WHEN 'stock_count_drafts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(p_rows)+public.sync_delete_stock_count_drafts(p_changes,p_branch_id);
+    WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(p_rows)+public.sync_delete_authorization_actions(p_changes,p_branch_id);
+    WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(p_rows)+public.sync_delete_authorization_action_history(p_changes,p_branch_id);
     WHEN 'authorization_requests' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_requests(p_rows)+public.sync_delete_authorization_requests(p_changes,p_branch_id);
     WHEN 'authorization_log' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_log(p_rows)+public.sync_delete_authorization_log(p_changes,p_branch_id);
     WHEN 'record_edits' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_record_edits(p_rows)+public.sync_delete_record_edits(p_changes,p_branch_id);
@@ -14777,6 +14905,8 @@ BEGIN
     WHEN 'pos_store_settings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(v_rows)+public.sync_delete_pos_store_settings(v_op->'changes',p_branch_id);
     WHEN 'settings_scoped' THEN  v_count:=public.sync_apply_settings_scoped(v_rows)+public.sync_delete_settings_scoped(v_op->'changes',p_branch_id);
     WHEN 'stock_count_drafts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(v_rows)+public.sync_delete_stock_count_drafts(v_op->'changes',p_branch_id);
+    WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(v_rows)+public.sync_delete_authorization_actions(v_op->'changes',p_branch_id);
+    WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(v_rows)+public.sync_delete_authorization_action_history(v_op->'changes',p_branch_id);
     WHEN 'authorization_requests' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_requests(v_rows)+public.sync_delete_authorization_requests(v_op->'changes',p_branch_id);
     WHEN 'authorization_log' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_log(v_rows)+public.sync_delete_authorization_log(v_op->'changes',p_branch_id);
     WHEN 'record_edits' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_record_edits(v_rows)+public.sync_delete_record_edits(v_op->'changes',p_branch_id);
@@ -14856,6 +14986,7 @@ BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_use
     WHEN 'settings_scoped' THEN (SELECT to_jsonb(x) FROM public."settings_scoped" x WHERE x."scope"::text=(f.entity_id::jsonb)->>'scope' AND x."scope_id"::text=(f.entity_id::jsonb)->>'scope_id' AND x."key"::text=(f.entity_id::jsonb)->>'key' LIMIT 1)
     WHEN 'stock_count_drafts' THEN (SELECT to_jsonb(x) FROM public."stock_count_drafts" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
     WHEN 'authorization_actions' THEN (SELECT to_jsonb(x) FROM public."authorization_actions" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
+    WHEN 'authorization_action_history' THEN (SELECT to_jsonb(x) FROM public."authorization_action_history" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
     WHEN 'authorization_requests' THEN (SELECT to_jsonb(x) FROM public."authorization_requests" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
     WHEN 'authorization_log' THEN (SELECT to_jsonb(x) FROM public."authorization_log" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
     WHEN 'record_edits' THEN (SELECT to_jsonb(x) FROM public."record_edits" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
@@ -14933,6 +15064,7 @@ BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_use
     WHEN 'settings_scoped' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'key',x."key")::text cursor,x row_data FROM public."settings_scoped" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'key',x."key")::text>p_after_cursor) ORDER BY jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'key',x."key")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'stock_count_drafts' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."stock_count_drafts" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'authorization_actions' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."authorization_actions" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
+    WHEN 'authorization_action_history' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."authorization_action_history" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'authorization_requests' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."authorization_requests" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'authorization_log' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."authorization_log" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'record_edits' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."record_edits" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
@@ -14953,7 +15085,7 @@ DECLARE v_me public.app_users%ROWTYPE;
 BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
  IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
  IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
- RETURN QUERY SELECT 'coupon_campaigns'::text table_name,count(*)::bigint row_count FROM public."coupon_campaigns" x WHERE true UNION ALL SELECT 'shifts'::text table_name,count(*)::bigint row_count FROM public."shifts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'issued_vouchers'::text table_name,count(*)::bigint row_count FROM public."issued_vouchers" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'activity_events'::text table_name,count(*)::bigint row_count FROM public."activity_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'app_users'::text table_name,count(*)::bigint row_count FROM public."app_users" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'audit_logs'::text table_name,count(*)::bigint row_count FROM public."audit_logs" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'booking_payments'::text table_name,count(*)::bigint row_count FROM public."booking_payments" x WHERE EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=x."booking_id"::text AND p.store_id::text=p_branch_id) UNION ALL SELECT 'bookings'::text table_name,count(*)::bigint row_count FROM public."bookings" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'branch_telemetry'::text table_name,count(*)::bigint row_count FROM public."branch_telemetry" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'cashiers'::text table_name,count(*)::bigint row_count FROM public."cashiers" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'coupon_events'::text table_name,count(*)::bigint row_count FROM public."coupon_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'drawer_events'::text table_name,count(*)::bigint row_count FROM public."drawer_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'held_orders'::text table_name,count(*)::bigint row_count FROM public."held_orders" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'integration_settings'::text table_name,count(*)::bigint row_count FROM public."integration_settings" x WHERE true UNION ALL SELECT 'item_activity_logs'::text table_name,count(*)::bigint row_count FROM public."item_activity_logs" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'member_verifications'::text table_name,count(*)::bigint row_count FROM public."member_verifications" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'members'::text table_name,count(*)::bigint row_count FROM public."members" x WHERE true UNION ALL SELECT 'membership_tiers'::text table_name,count(*)::bigint row_count FROM public."membership_tiers" x WHERE true UNION ALL SELECT 'offline_sync_audit_log'::text table_name,count(*)::bigint row_count FROM public."offline_sync_audit_log" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'payment_transactions'::text table_name,count(*)::bigint row_count FROM public."payment_transactions" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'payment_types'::text table_name,count(*)::bigint row_count FROM public."payment_types" x WHERE true UNION ALL SELECT 'pin_attempts'::text table_name,count(*)::bigint row_count FROM public."pin_attempts" x WHERE true UNION ALL SELECT 'pos_settings'::text table_name,count(*)::bigint row_count FROM public."pos_settings" x WHERE true UNION ALL SELECT 'product_barcodes'::text table_name,count(*)::bigint row_count FROM public."product_barcodes" x WHERE true UNION ALL SELECT 'product_categories'::text table_name,count(*)::bigint row_count FROM public."product_categories" x WHERE true UNION ALL SELECT 'products'::text table_name,count(*)::bigint row_count FROM public."products" x WHERE true UNION ALL SELECT 'promotions'::text table_name,count(*)::bigint row_count FROM public."promotions" x WHERE true UNION ALL SELECT 'public_flags'::text table_name,count(*)::bigint row_count FROM public."public_flags" x WHERE true UNION ALL SELECT 'purchase_order_items'::text table_name,count(*)::bigint row_count FROM public."purchase_order_items" x WHERE EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"::text=x."po_id"::text AND p.store_id::text=p_branch_id) UNION ALL SELECT 'purchase_orders'::text table_name,count(*)::bigint row_count FROM public."purchase_orders" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'sale_items'::text table_name,count(*)::bigint row_count FROM public."sale_items" x WHERE x.branch_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'sales'::text table_name,count(*)::bigint row_count FROM public."sales" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'secure_settings'::text table_name,count(*)::bigint row_count FROM public."secure_settings" x WHERE true UNION ALL SELECT 'security_findings'::text table_name,count(*)::bigint row_count FROM public."security_findings" x WHERE true UNION ALL SELECT 'settings_locks'::text table_name,count(*)::bigint row_count FROM public."settings_locks" x WHERE true UNION ALL SELECT 'settings_overrides'::text table_name,count(*)::bigint row_count FROM public."settings_overrides" x WHERE true UNION ALL SELECT 'shift_sessions'::text table_name,count(*)::bigint row_count FROM public."shift_sessions" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'sku_audit'::text table_name,count(*)::bigint row_count FROM public."sku_audit" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'staff_roles'::text table_name,count(*)::bigint row_count FROM public."staff_roles" x WHERE true UNION ALL SELECT 'stock_adjustments'::text table_name,count(*)::bigint row_count FROM public."stock_adjustments" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'stock_delta_applied'::text table_name,count(*)::bigint row_count FROM public."stock_delta_applied" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'stock_transfer_items'::text table_name,count(*)::bigint row_count FROM public."stock_transfer_items" x WHERE EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=x."transfer_id"::text AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text)) UNION ALL SELECT 'stock_transfers'::text table_name,count(*)::bigint row_count FROM public."stock_transfers" x WHERE p_branch_id IN (x.from_store_id::text,x.to_store_id::text) UNION ALL SELECT 'stores'::text table_name,count(*)::bigint row_count FROM public."stores" x WHERE true UNION ALL SELECT 'suppliers'::text table_name,count(*)::bigint row_count FROM public."suppliers" x WHERE true UNION ALL SELECT 'sync_metadata'::text table_name,count(*)::bigint row_count FROM public."sync_metadata" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'system_audit_logs'::text table_name,count(*)::bigint row_count FROM public."system_audit_logs" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_commands'::text table_name,count(*)::bigint row_count FROM public."terminal_commands" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_tokens'::text table_name,count(*)::bigint row_count FROM public."terminal_tokens" x WHERE true UNION ALL SELECT 'uom_units'::text table_name,count(*)::bigint row_count FROM public."uom_units" x WHERE true UNION ALL SELECT 'user_roles'::text table_name,count(*)::bigint row_count FROM public."user_roles" x WHERE true UNION ALL SELECT 'whatsapp_queue'::text table_name,count(*)::bigint row_count FROM public."whatsapp_queue" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_recovery_secrets'::text table_name,count(*)::bigint row_count FROM public."terminal_recovery_secrets" x WHERE true UNION ALL SELECT 'pos_store_settings'::text table_name,count(*)::bigint row_count FROM public."pos_store_settings" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'settings_scoped'::text table_name,count(*)::bigint row_count FROM public."settings_scoped" x WHERE true UNION ALL SELECT 'stock_count_drafts'::text table_name,count(*)::bigint row_count FROM public."stock_count_drafts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'authorization_actions'::text table_name,count(*)::bigint row_count FROM public."authorization_actions" x WHERE true UNION ALL SELECT 'authorization_requests'::text table_name,count(*)::bigint row_count FROM public."authorization_requests" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'authorization_log'::text table_name,count(*)::bigint row_count FROM public."authorization_log" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'record_edits'::text table_name,count(*)::bigint row_count FROM public."record_edits" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_cash_counts'::text table_name,count(*)::bigint row_count FROM public."shift_cash_counts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_close_events'::text table_name,count(*)::bigint row_count FROM public."shift_close_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_reconciliations'::text table_name,count(*)::bigint row_count FROM public."shift_reconciliations" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_variance_alerts'::text table_name,count(*)::bigint row_count FROM public."shift_variance_alerts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_notifications'::text table_name,count(*)::bigint row_count FROM public."shift_notifications" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'entity_status_history'::text table_name,count(*)::bigint row_count FROM public."entity_status_history" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'nav_pins'::text table_name,count(*)::bigint row_count FROM public."nav_pins" x WHERE true UNION ALL SELECT 'store_groups'::text table_name,count(*)::bigint row_count FROM public."store_groups" x WHERE true;
+ RETURN QUERY SELECT 'coupon_campaigns'::text table_name,count(*)::bigint row_count FROM public."coupon_campaigns" x WHERE true UNION ALL SELECT 'shifts'::text table_name,count(*)::bigint row_count FROM public."shifts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'issued_vouchers'::text table_name,count(*)::bigint row_count FROM public."issued_vouchers" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'activity_events'::text table_name,count(*)::bigint row_count FROM public."activity_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'app_users'::text table_name,count(*)::bigint row_count FROM public."app_users" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'audit_logs'::text table_name,count(*)::bigint row_count FROM public."audit_logs" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'booking_payments'::text table_name,count(*)::bigint row_count FROM public."booking_payments" x WHERE EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=x."booking_id"::text AND p.store_id::text=p_branch_id) UNION ALL SELECT 'bookings'::text table_name,count(*)::bigint row_count FROM public."bookings" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'branch_telemetry'::text table_name,count(*)::bigint row_count FROM public."branch_telemetry" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'cashiers'::text table_name,count(*)::bigint row_count FROM public."cashiers" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'coupon_events'::text table_name,count(*)::bigint row_count FROM public."coupon_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'drawer_events'::text table_name,count(*)::bigint row_count FROM public."drawer_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'held_orders'::text table_name,count(*)::bigint row_count FROM public."held_orders" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'integration_settings'::text table_name,count(*)::bigint row_count FROM public."integration_settings" x WHERE true UNION ALL SELECT 'item_activity_logs'::text table_name,count(*)::bigint row_count FROM public."item_activity_logs" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'member_verifications'::text table_name,count(*)::bigint row_count FROM public."member_verifications" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'members'::text table_name,count(*)::bigint row_count FROM public."members" x WHERE true UNION ALL SELECT 'membership_tiers'::text table_name,count(*)::bigint row_count FROM public."membership_tiers" x WHERE true UNION ALL SELECT 'offline_sync_audit_log'::text table_name,count(*)::bigint row_count FROM public."offline_sync_audit_log" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'payment_transactions'::text table_name,count(*)::bigint row_count FROM public."payment_transactions" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'payment_types'::text table_name,count(*)::bigint row_count FROM public."payment_types" x WHERE true UNION ALL SELECT 'pin_attempts'::text table_name,count(*)::bigint row_count FROM public."pin_attempts" x WHERE true UNION ALL SELECT 'pos_settings'::text table_name,count(*)::bigint row_count FROM public."pos_settings" x WHERE true UNION ALL SELECT 'product_barcodes'::text table_name,count(*)::bigint row_count FROM public."product_barcodes" x WHERE true UNION ALL SELECT 'product_categories'::text table_name,count(*)::bigint row_count FROM public."product_categories" x WHERE true UNION ALL SELECT 'products'::text table_name,count(*)::bigint row_count FROM public."products" x WHERE true UNION ALL SELECT 'promotions'::text table_name,count(*)::bigint row_count FROM public."promotions" x WHERE true UNION ALL SELECT 'public_flags'::text table_name,count(*)::bigint row_count FROM public."public_flags" x WHERE true UNION ALL SELECT 'purchase_order_items'::text table_name,count(*)::bigint row_count FROM public."purchase_order_items" x WHERE EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"::text=x."po_id"::text AND p.store_id::text=p_branch_id) UNION ALL SELECT 'purchase_orders'::text table_name,count(*)::bigint row_count FROM public."purchase_orders" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'sale_items'::text table_name,count(*)::bigint row_count FROM public."sale_items" x WHERE x.branch_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'sales'::text table_name,count(*)::bigint row_count FROM public."sales" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'secure_settings'::text table_name,count(*)::bigint row_count FROM public."secure_settings" x WHERE true UNION ALL SELECT 'security_findings'::text table_name,count(*)::bigint row_count FROM public."security_findings" x WHERE true UNION ALL SELECT 'settings_locks'::text table_name,count(*)::bigint row_count FROM public."settings_locks" x WHERE true UNION ALL SELECT 'settings_overrides'::text table_name,count(*)::bigint row_count FROM public."settings_overrides" x WHERE true UNION ALL SELECT 'shift_sessions'::text table_name,count(*)::bigint row_count FROM public."shift_sessions" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'sku_audit'::text table_name,count(*)::bigint row_count FROM public."sku_audit" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'staff_roles'::text table_name,count(*)::bigint row_count FROM public."staff_roles" x WHERE true UNION ALL SELECT 'stock_adjustments'::text table_name,count(*)::bigint row_count FROM public."stock_adjustments" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'stock_delta_applied'::text table_name,count(*)::bigint row_count FROM public."stock_delta_applied" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'stock_transfer_items'::text table_name,count(*)::bigint row_count FROM public."stock_transfer_items" x WHERE EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=x."transfer_id"::text AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text)) UNION ALL SELECT 'stock_transfers'::text table_name,count(*)::bigint row_count FROM public."stock_transfers" x WHERE p_branch_id IN (x.from_store_id::text,x.to_store_id::text) UNION ALL SELECT 'stores'::text table_name,count(*)::bigint row_count FROM public."stores" x WHERE true UNION ALL SELECT 'suppliers'::text table_name,count(*)::bigint row_count FROM public."suppliers" x WHERE true UNION ALL SELECT 'sync_metadata'::text table_name,count(*)::bigint row_count FROM public."sync_metadata" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'system_audit_logs'::text table_name,count(*)::bigint row_count FROM public."system_audit_logs" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_commands'::text table_name,count(*)::bigint row_count FROM public."terminal_commands" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_tokens'::text table_name,count(*)::bigint row_count FROM public."terminal_tokens" x WHERE true UNION ALL SELECT 'uom_units'::text table_name,count(*)::bigint row_count FROM public."uom_units" x WHERE true UNION ALL SELECT 'user_roles'::text table_name,count(*)::bigint row_count FROM public."user_roles" x WHERE true UNION ALL SELECT 'whatsapp_queue'::text table_name,count(*)::bigint row_count FROM public."whatsapp_queue" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_recovery_secrets'::text table_name,count(*)::bigint row_count FROM public."terminal_recovery_secrets" x WHERE true UNION ALL SELECT 'pos_store_settings'::text table_name,count(*)::bigint row_count FROM public."pos_store_settings" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'settings_scoped'::text table_name,count(*)::bigint row_count FROM public."settings_scoped" x WHERE true UNION ALL SELECT 'stock_count_drafts'::text table_name,count(*)::bigint row_count FROM public."stock_count_drafts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'authorization_actions'::text table_name,count(*)::bigint row_count FROM public."authorization_actions" x WHERE true UNION ALL SELECT 'authorization_action_history'::text table_name,count(*)::bigint row_count FROM public."authorization_action_history" x WHERE true UNION ALL SELECT 'authorization_requests'::text table_name,count(*)::bigint row_count FROM public."authorization_requests" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'authorization_log'::text table_name,count(*)::bigint row_count FROM public."authorization_log" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'record_edits'::text table_name,count(*)::bigint row_count FROM public."record_edits" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_cash_counts'::text table_name,count(*)::bigint row_count FROM public."shift_cash_counts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_close_events'::text table_name,count(*)::bigint row_count FROM public."shift_close_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_reconciliations'::text table_name,count(*)::bigint row_count FROM public."shift_reconciliations" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_variance_alerts'::text table_name,count(*)::bigint row_count FROM public."shift_variance_alerts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_notifications'::text table_name,count(*)::bigint row_count FROM public."shift_notifications" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'entity_status_history'::text table_name,count(*)::bigint row_count FROM public."entity_status_history" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'nav_pins'::text table_name,count(*)::bigint row_count FROM public."nav_pins" x WHERE true UNION ALL SELECT 'store_groups'::text table_name,count(*)::bigint row_count FROM public."store_groups" x WHERE true;
 END $fn$;
 
 CREATE OR REPLACE FUNCTION public.pos_old_receipt_lookup(p_lookup text,p_branch_id text) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
@@ -14980,6 +15112,19 @@ GRANT EXECUTE ON FUNCTION public.pos_sync_counts(text,text,integer) TO service_r
 GRANT EXECUTE ON FUNCTION public.pos_old_receipt_lookup(text,text) TO service_role;
 
 -- SQLSERVER_SYNC_CONTRACT_END
+
+CREATE OR REPLACE FUNCTION public.pos_sync_push_governance_batch(
+  p_batch_id uuid,p_organization_id text,p_branch_id text,p_table text,p_rows jsonb
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE v_count integer:=0;
+BEGIN
+  IF p_table NOT IN ('authorization_actions','authorization_action_history') THEN RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END IF;
+  IF p_table='authorization_actions' THEN v_count:=public.sync_apply_authorization_actions(p_rows);
+  ELSE v_count:=public.sync_apply_authorization_action_history(p_rows); END IF;
+  RETURN jsonb_build_object('ok',true,'applied',v_count,'batch_id',p_batch_id);
+END $$;
+REVOKE ALL ON FUNCTION public.pos_sync_push_governance_batch(uuid,text,text,text,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_push_governance_batch(uuid,text,text,text,jsonb) TO service_role;
 
 -- Resolve large spreadsheet batches against the authoritative catalogue in a
 -- single indexed call. RLS remains in force because this is SECURITY INVOKER.

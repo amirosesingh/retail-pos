@@ -600,6 +600,7 @@ const LIVE_SETTINGS_TABLES = [
   "settings_overrides",
   "settings_locks",
   "settings_scoped",
+  "authorization_actions",
 ] as const;
 
 const LIVE_TABLES = [
