@@ -22,7 +22,7 @@ describe("scoped SQL Server synchronization", () => {
     expect(schema).toContain("lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id");
     expect(schema).toContain("lower(x.scope_type)='cluster'");
     expect(schema).toContain("terminal_id text");
-    expect(schema).toContain("f.terminal_id IS NULL OR f.terminal_id=p_terminal_id");
+    expect(schema).toContain("candidate.terminal_id IS NULL OR candidate.terminal_id=p_terminal_id");
     expect(schema).toContain("NULLIF(x.owner_store_id::text,'') IS NULL OR x.owner_store_id::text=p_branch_id");
     expect(schema).toContain("SYNC_PRODUCT_SCOPE_FORBIDDEN");
   });
@@ -47,6 +47,9 @@ describe("scoped SQL Server synchronization", () => {
     expect(engine).not.toMatch(/LIVE_SETTINGS_TABLES[\s\S]{0,500}\.\.\.LIVE_SETTINGS_TABLES/);
     expect(activity).toContain("filter: `store_id=eq.${branchId}`");
     expect(approvals).toContain("filter: `store_id=eq.${branchId}`");
+    expect(engine).toContain("if (hasStaffSession())");
+    expect(activity).toContain("if (!hasStaffSession()) return");
+    expect(approvals).toContain("if (!hasStaffSession()) return");
   });
 
   it("keeps master/configuration and stock-request transition history append-only", () => {
@@ -112,5 +115,56 @@ describe("scoped SQL Server synchronization", () => {
     expect(migration).toContain("DROP POLICY IF EXISTS terminal_commands_staff_read");
     expect(migration).toContain("public.store_visible(store_id)");
     expect(migration).not.toMatch(/CREATE POLICY settings_(?:overrides|scoped)_read[\s\S]{0,100}USING \(true\)/);
+  });
+
+  it("bounds the change-feed page before hydrating synchronized rows", () => {
+    const schema = read("supabase/schema.sql");
+    const pull = schema.slice(schema.indexOf("CREATE OR REPLACE FUNCTION public.pos_sync_pull"), schema.indexOf("CREATE OR REPLACE FUNCTION public.pos_sync_bootstrap"));
+    expect(pull).toContain("WITH feed_page AS MATERIALIZED");
+    expect(pull.indexOf("LIMIT LEAST(GREATEST(p_limit,100),2000)")).toBeLessThan(pull.indexOf("CASE f.table_name"));
+    expect(pull).toContain("FROM feed_page f ORDER BY f.cursor");
+    expect(pull).toContain(`x."id"=((f.entity_id::jsonb)->>'id')::uuid`);
+    expect(pull).toContain(`x."id"=((f.entity_id::jsonb)->>'id')::integer`);
+    expect(pull).toContain(`x."key"=((f.entity_id::jsonb)->>'key')`);
+    expect(pull).not.toContain(`x."id"::text=(f.entity_id::jsonb)->>'id'`);
+  });
+
+  it("returns stale authorization edits once instead of triggering PostgreSQL retries", () => {
+    const schema = read("supabase/schema.sql");
+    const migration = read("supabase/migrations/20260929174500_stop_retrying_application_conflicts.sql");
+    for (const sql of [schema, migration]) {
+      const legacyRules = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION public.pos_rules_save"), sql.indexOf("REVOKE ALL ON FUNCTION public.pos_rules_save"));
+      const authorizationRules = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION public.authorization_rule_save"), sql.indexOf("REVOKE ALL ON FUNCTION public.authorization_rule_save"));
+      expect(legacyRules).toContain("ERRCODE = 'PT409'");
+      expect(authorizationRules).toContain("ERRCODE='PT409'");
+      expect(legacyRules).not.toContain("ERRCODE = '40001'");
+      expect(authorizationRules).not.toContain("ERRCODE='40001'");
+    }
+  });
+
+  it("discards legacy central-setting uploads without weakening scope enforcement", () => {
+    const schema = read("supabase/schema.sql");
+    const migration = read("supabase/migrations/20260929080650_ignore_central_settings_push.sql");
+    const { terminalWritableChanges } = require("../../../electron/sync/push-worker.cjs");
+    const changes = [
+      { key: { scope: "GLOBAL", scope_id: "" } },
+      { entityId: JSON.stringify({ scope: "CLUSTER", scope_id: "C1" }) },
+      { key: { scope: "BRANCH", scope_id: "B1" } },
+      { key: { scope: "BRANCH", scope_id: "B2" } },
+      { key: { scope: "TERMINAL", scope_id: "T1" } },
+      { key: { scope: "INVALID", scope_id: "X" } },
+    ];
+    expect(terminalWritableChanges("settings_overrides", changes, { branchId: "B1", terminalId: "T1" })).toEqual([changes[2], changes[4], changes[5]]);
+    expect(terminalWritableChanges("sales", changes)).toEqual(changes);
+    expect(schema).toContain("lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')");
+    expect(schema).toContain("jsonb_agg(r) FILTER (WHERE");
+    expect(migration).toContain("SYNC_SCOPE_FORBIDDEN");
+    expect(migration).toContain("pos_sync_push_batch");
+    expect(migration).toContain("pos_sync_push_aggregate");
+    expect(read("supabase/migrations/20260929161909_ignore_stale_scoped_settings_push.sql")).toContain("NOT IN (''global'',''cluster'',''branch'',''terminal'')");
+    const deleteMigration = read("supabase/migrations/20260929162248_restrict_terminal_settings_deletes.sql");
+    expect(deleteMigration).toContain("sync_delete_settings_overrides");
+    expect(deleteMigration).toContain("sync_delete_settings_scoped");
+    expect(deleteMigration).not.toContain("lower(x.scope)='global'");
   });
 });

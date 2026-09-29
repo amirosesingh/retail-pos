@@ -141,6 +141,11 @@ describe("local SQL Server wizard server step", () => {
     expect(wizard).toContain("selectDiscoveredServer(current, server)");
     expect(wizard).toContain("saveAndConnect(profile)");
     expect(wizard).toContain("await mirrorTerminalConfigToDesktop()");
+    expect(wizard).toContain("validationHasSchemaDifferences");
+    expect(wizard).toContain("Download migration SQL file");
+    expect(wizard).toContain("Apply directly and validate again");
+    expect(wizard).toContain("Missing tables:");
+    expect(wizard).toContain("Table changes required:");
 
     const scan = wizard.slice(wizard.indexOf("const scanServers"), wizard.indexOf("const ok ="));
     expect(scan).not.toContain("saveAndConnect");
@@ -156,13 +161,42 @@ describe("local SQL Server wizard server step", () => {
     expect(wizard).toContain("setStep((value) => Math.min(6, value + 1))");
   });
 
-  it("opens synchronization failure details from the failure count", () => {
+  it("opens all database errors and routes database settings to the local SQL popup", () => {
     const operations = readFileSync("src/platforms/windows/components/LocalDatabaseOperations.tsx", "utf8");
     expect(operations).toContain("setFailureDetailsOpen(true)");
-    expect(operations).toContain("Synchronization failures");
+    expect(operations).toContain("Database errors");
+    expect(operations).toContain("databaseErrors");
+    expect(operations).toContain("businessBatches");
     expect(operations).toContain("failure.error_message");
     expect(operations).toContain("conflict.reason");
     expect(operations.match(/await mirrorTerminalConfigToDesktop\(\)/g)).toHaveLength(4);
+    expect(operations).toContain("hasDatabaseConnectivityError");
+    expect(operations).toContain("Open Database Settings");
+    expect(operations).toContain("OPEN_LOCAL_DATABASE_SETTINGS_EVENT");
+    const wizard = readFileSync("src/platforms/windows/components/LocalDatabaseWizard.tsx", "utf8");
+    expect(wizard).toContain('"pos:open-local-database-settings"');
+    expect(wizard).toContain("window.addEventListener(OPEN_LOCAL_DATABASE_SETTINGS_EVENT");
+  });
+
+  it("performs migration connectivity preflight and revalidation", () => {
+    const main = readFileSync("electron/main.cjs", "utf8");
+    const handler = main.slice(main.indexOf('ipcMain.handle("database:migrate"'), main.indexOf('ipcMain.handle("database:migrate-saved"'));
+    expect(handler).toContain('observedDatabaseOperation("migration","preflight"');
+    expect(handler).toContain('observedDatabaseOperation("migration","apply"');
+    expect(handler).toContain('observedDatabaseOperation("migration","revalidate"');
+    const health = readFileSync("electron/db/health.cjs", "utf8");
+    expect(health).toContain('kind:"index"');
+    expect(health).toContain('kind:"constraint"');
+    expect(health).toContain("requiredIndexes()");
+  });
+
+  it("repairs the legacy terminal platform default without rewriting terminal rows", () => {
+    const migration = readFileSync("database/sqlserver/migrations/004_repair_terminal_platform_default.sql", "utf8");
+    const installer = readFileSync("database/sqlserver/retail-pos-local-database.sql", "utf8");
+    expect(migration).toContain("DROP CONSTRAINT");
+    expect(migration).toContain("DEFAULT (N'pc') FOR platform");
+    expect(migration).not.toMatch(/UPDATE\s+dbo\.terminal_tokens/i);
+    expect(installer).toContain("repair_terminal_platform_default");
   });
 
   it("reports reconciliation drift as a completed comparison", () => {

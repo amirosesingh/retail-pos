@@ -96,6 +96,7 @@ const initial: Profile = {
   retentionDays: 90,
 };
 const steps = ["Mode", "Server", "Authentication", "Test", "Database", "Validate", "Save"];
+export const OPEN_LOCAL_DATABASE_SETTINGS_EVENT = "pos:open-local-database-settings";
 
 export function LocalDatabaseWizard({
   initiallyOpen = false,
@@ -138,6 +139,11 @@ export function LocalDatabaseWizard({
       setState(next);
     });
   }, [initiallyOpen]);
+  useEffect(() => {
+    const openSettings = () => setOpen(true);
+    window.addEventListener(OPEN_LOCAL_DATABASE_SETTINGS_EVENT, openSettings);
+    return () => window.removeEventListener(OPEN_LOCAL_DATABASE_SETTINGS_EVENT, openSettings);
+  }, []);
   const shown = useMemo(
     () => databases.filter((item) => item.name.toLowerCase().includes(search.toLowerCase())),
     [databases, search],
@@ -187,8 +193,17 @@ export function LocalDatabaseWizard({
     }
   };
   const ok = result?.ok === true;
+  const validationHasSchemaDifferences =
+    typeof result?.requiredTables === "number" &&
+    result.ready !== true &&
+    ((Array.isArray(result.missingTables) && result.missingTables.length > 0) ||
+      (Array.isArray(result.incompatibleColumns) && result.incompatibleColumns.length > 0) ||
+      (Array.isArray(result.differences) && result.differences.length > 0) ||
+      result.changeTracking === false);
   const migrationRequired =
-    result?.status === "migration_required" || state.detail?.status === "migration_required";
+    validationHasSchemaDifferences ||
+    result?.status === "migration_required" ||
+    state.detail?.status === "migration_required";
   const recoveringSavedMigration =
     initiallyOpen && state.configured && state.detail?.status === "migration_required";
 
@@ -570,7 +585,7 @@ export function LocalDatabaseWizard({
                 <div className="space-y-3">
                   <Action
                     title={`Validate ${profile.database || "selected database"}`}
-                    text="Checks schema, tables, columns, change tracking, permissions and a rolled-back write."
+                    text="Compares tables, columns, types, defaults, indexes, constraints, change tracking, permissions, and a rolled-back write with this application version."
                     busy={busy}
                     onClick={() => run(() => api()!.validateDatabase(profile))}
                     result={result}
@@ -582,7 +597,7 @@ export function LocalDatabaseWizard({
                         disabled={busy}
                         onClick={() => void exportMigrations()}
                       >
-                        Save migration SQL file
+                        Download migration SQL file
                       </Button>
                       <Button
                         disabled={busy}
@@ -756,20 +771,24 @@ function ResultSummary({ result }: { result: Record<string, unknown> }) {
       </div>
     );
   if (typeof result.requiredTables === "number")
-    return (
-      <div className="grid gap-2 rounded-md bg-muted p-3 text-sm sm:grid-cols-2" role="status">
-        <span>Required tables: {String(result.requiredTables)}</span>
-        <span>Present: {String(result.presentTables ?? 0)}</span>
-        <span>
-          Missing: {Array.isArray(result.missingTables) ? result.missingTables.length : 0}
-        </span>
-        <span>Columns compatible: {result.columnsCompatible ? "Yes" : "No"}</span>
-        <span>Write test: {result.writeTest ? "Passed and rolled back" : "Failed"}</span>
-        <span>
-          Status: {result.ready ? "Ready" : String(result.status ?? "Migration required")}
-        </span>
+    return (() => {
+      const missingTables = Array.isArray(result.missingTables) ? result.missingTables.map(String) : [];
+      const incompatibleColumns = Array.isArray(result.incompatibleColumns) ? result.incompatibleColumns.map(String) : [];
+      const differences = Array.isArray(result.differences) ? result.differences as Array<Record<string, unknown>> : [];
+      return <div className="space-y-2 rounded-md bg-muted p-3 text-sm" role="status">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <span>Required tables: {String(result.requiredTables)}</span>
+          <span>Present: {String(result.presentTables ?? 0)}</span>
+          <span>Missing: {missingTables.length}</span>
+          <span>Columns compatible: {result.columnsCompatible ? "Yes" : "No"}</span>
+          <span>Write test: {result.writeTest ? "Passed and rolled back" : "Failed"}</span>
+          <span>Status: {result.ready ? "Ready" : String(result.status ?? "Migration required")}</span>
+        </div>
+        {missingTables.length ? <p className="break-words text-xs text-muted-foreground">Missing tables: {missingTables.join(", ")}</p> : null}
+        {incompatibleColumns.length ? <p className="break-words text-xs text-muted-foreground">Table changes required: {incompatibleColumns.join(", ")}</p> : null}
+        {differences.length ? <div className="max-h-56 space-y-1 overflow-y-auto rounded border bg-background p-2" aria-label="Schema differences">{differences.map((difference, index) => <div key={`${String(difference.kind)}:${String(difference.table)}:${String(difference.object)}:${index}`} className="text-xs"><span className="font-medium">{[difference.kind, difference.table, difference.object].filter(Boolean).map(String).join(" · ")}</span><span className="text-muted-foreground"> — {String(difference.issue ?? "different")}; expected {String(difference.expected ?? "required")}; actual {String(difference.actual ?? "unknown")}</span></div>)}</div> : null}
       </div>
-    );
+    })();
   if (result.version || result.edition)
     return (
       <div className="grid gap-2 rounded-md bg-muted p-3 text-sm sm:grid-cols-2" role="status">

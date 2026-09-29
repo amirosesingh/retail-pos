@@ -7848,8 +7848,12 @@ BEGIN
     FROM public.pos_store_settings WHERE store_id = sid FOR UPDATE;
 
   IF _expected_version IS NOT NULL AND _expected_version <> current_version THEN
+    -- 40001 is PostgreSQL's retryable serialization-failure code. PostgREST
+    -- automatically retries it, so using it for an application-level stale
+    -- edit can spin until the request times out. PT409 preserves the conflict
+    -- response without asking the database gateway to retry the same payload.
     RAISE EXCEPTION 'STALE_RULES: these rules were changed elsewhere (version %, expected %)',
-      current_version, _expected_version USING ERRCODE = '40001';
+      current_version, _expected_version USING ERRCODE = 'PT409';
   END IF;
 
   SELECT string_agg(format('%I = ($1 ->> %L)::%s', key, key,
@@ -8623,9 +8627,9 @@ BEGIN
   FOR UPDATE;
 
   IF FOUND AND current_row.row_version <> COALESCE(p_expected_version,0) THEN
-    RAISE EXCEPTION USING ERRCODE='40001', MESSAGE='This authorization rule changed on another device. Reload it before saving.';
+    RAISE EXCEPTION USING ERRCODE='PT409', MESSAGE='This authorization rule changed on another device. Reload it before saving.';
   ELSIF NOT FOUND AND COALESCE(p_expected_version,0) <> 0 THEN
-    RAISE EXCEPTION USING ERRCODE='40001', MESSAGE='This authorization rule changed on another device. Reload it before saving.';
+    RAISE EXCEPTION USING ERRCODE='PT409', MESSAGE='This authorization rule changed on another device. Reload it before saving.';
   END IF;
   next_version := COALESCE(current_row.row_version,0)+1;
 
@@ -13925,7 +13929,7 @@ END $fn$;
 CREATE OR REPLACE FUNCTION public.sync_delete_settings_overrides(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."settings_overrides" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
- WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND ((lower(x.scope)='global' OR (lower(x.scope)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text)) OR (lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id))) AND x."scope"::text=COALESCE(c->'key'->>'scope',(c->>'entityId')::jsonb->>'scope',(c->>'entity_id')::jsonb->>'scope') AND x."scope_id"::text=COALESCE(c->'key'->>'scope_id',(c->>'entityId')::jsonb->>'scope_id',(c->>'entity_id')::jsonb->>'scope_id') AND x."section"::text=COALESCE(c->'key'->>'section',(c->>'entityId')::jsonb->>'section',(c->>'entity_id')::jsonb->>'section');
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (((lower(x.scope)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id))) AND x."scope"::text=COALESCE(c->'key'->>'scope',(c->>'entityId')::jsonb->>'scope',(c->>'entity_id')::jsonb->>'scope') AND x."scope_id"::text=COALESCE(c->'key'->>'scope_id',(c->>'entityId')::jsonb->>'scope_id',(c->>'entity_id')::jsonb->>'scope_id') AND x."section"::text=COALESCE(c->'key'->>'section',(c->>'entityId')::jsonb->>'section',(c->>'entity_id')::jsonb->>'section');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_settings_overrides(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.sync_delete_settings_overrides(jsonb,text,text) FROM PUBLIC;
@@ -14505,7 +14509,7 @@ END $fn$;
 CREATE OR REPLACE FUNCTION public.sync_delete_settings_scoped(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."settings_scoped" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
- WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND ((lower(x.scope)='global' OR (lower(x.scope)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text)) OR (lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id))) AND x."scope"::text=COALESCE(c->'key'->>'scope',(c->>'entityId')::jsonb->>'scope',(c->>'entity_id')::jsonb->>'scope') AND x."scope_id"::text=COALESCE(c->'key'->>'scope_id',(c->>'entityId')::jsonb->>'scope_id',(c->>'entity_id')::jsonb->>'scope_id') AND x."key"::text=COALESCE(c->'key'->>'key',(c->>'entityId')::jsonb->>'key',(c->>'entity_id')::jsonb->>'key');
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (((lower(x.scope)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id))) AND x."scope"::text=COALESCE(c->'key'->>'scope',(c->>'entityId')::jsonb->>'scope',(c->>'entity_id')::jsonb->>'scope') AND x."scope_id"::text=COALESCE(c->'key'->>'scope_id',(c->>'entityId')::jsonb->>'scope_id',(c->>'entity_id')::jsonb->>'scope_id') AND x."key"::text=COALESCE(c->'key'->>'key',(c->>'entityId')::jsonb->>'key',(c->>'entity_id')::jsonb->>'key');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_settings_scoped(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.sync_delete_settings_scoped(jsonb,text,text) FROM PUBLIC;
@@ -14986,7 +14990,7 @@ BEGIN
     WHEN 'purchase_orders' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_orders(p_rows)+public.sync_delete_purchase_orders(p_changes,p_branch_id,p_terminal_id);
     WHEN 'sale_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sale_items(p_rows)+public.sync_delete_sale_items(p_changes,p_branch_id,p_terminal_id);
     WHEN 'sales' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sales(p_rows)+public.sync_delete_sales(p_changes,p_branch_id,p_terminal_id);
-    WHEN 'settings_overrides' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT ((lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id))) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_settings_overrides(p_rows)+public.sync_delete_settings_overrides(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'settings_overrides' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_overrides(p_rows)+public.sync_delete_settings_overrides(p_changes,p_branch_id,p_terminal_id);
     WHEN 'shift_sessions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_sessions(p_rows)+public.sync_delete_shift_sessions(p_changes,p_branch_id,p_terminal_id);
     WHEN 'sku_audit' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sku_audit(p_rows)+public.sync_delete_sku_audit(p_changes,p_branch_id,p_terminal_id);
     WHEN 'stock_adjustments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_adjustments(p_rows)+public.sync_delete_stock_adjustments(p_changes,p_branch_id,p_terminal_id);
@@ -15001,7 +15005,7 @@ BEGIN
     WHEN 'uom_units' THEN  v_count:=public.sync_apply_uom_units(p_rows)+public.sync_delete_uom_units(p_changes,p_branch_id,p_terminal_id);
     WHEN 'whatsapp_queue' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_whatsapp_queue(p_rows)+public.sync_delete_whatsapp_queue(p_changes,p_branch_id,p_terminal_id);
     WHEN 'pos_store_settings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(p_rows)+public.sync_delete_pos_store_settings(p_changes,p_branch_id,p_terminal_id);
-    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT ((lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id))) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_settings_scoped(p_rows)+public.sync_delete_settings_scoped(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_scoped(p_rows)+public.sync_delete_settings_scoped(p_changes,p_branch_id,p_terminal_id);
     WHEN 'stock_count_drafts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(p_rows)+public.sync_delete_stock_count_drafts(p_changes,p_branch_id,p_terminal_id);
     WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(p_rows)+public.sync_delete_authorization_actions(p_changes,p_branch_id,p_terminal_id);
     WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(p_rows)+public.sync_delete_authorization_action_history(p_changes,p_branch_id,p_terminal_id);
@@ -15067,7 +15071,7 @@ BEGIN
     WHEN 'purchase_orders' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_orders(v_rows)+public.sync_delete_purchase_orders(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'sale_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sale_items(v_rows)+public.sync_delete_sale_items(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'sales' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sales(v_rows)+public.sync_delete_sales(v_op->'changes',p_branch_id,p_terminal_id);
-    WHEN 'settings_overrides' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT ((lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id))) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_settings_overrides(v_rows)+public.sync_delete_settings_overrides(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'settings_overrides' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_overrides(v_rows)+public.sync_delete_settings_overrides(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'shift_sessions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_sessions(v_rows)+public.sync_delete_shift_sessions(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'sku_audit' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sku_audit(v_rows)+public.sync_delete_sku_audit(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'stock_adjustments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_adjustments(v_rows)+public.sync_delete_stock_adjustments(v_op->'changes',p_branch_id,p_terminal_id);
@@ -15082,7 +15086,7 @@ BEGIN
     WHEN 'uom_units' THEN  v_count:=public.sync_apply_uom_units(v_rows)+public.sync_delete_uom_units(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'whatsapp_queue' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_whatsapp_queue(v_rows)+public.sync_delete_whatsapp_queue(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'pos_store_settings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(v_rows)+public.sync_delete_pos_store_settings(v_op->'changes',p_branch_id,p_terminal_id);
-    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT ((lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id))) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_settings_scoped(v_rows)+public.sync_delete_settings_scoped(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_scoped(v_rows)+public.sync_delete_settings_scoped(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'stock_count_drafts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(v_rows)+public.sync_delete_stock_count_drafts(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(v_rows)+public.sync_delete_authorization_actions(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(v_rows)+public.sync_delete_authorization_action_history(v_op->'changes',p_branch_id,p_terminal_id);
@@ -15108,76 +15112,83 @@ DECLARE v_me public.app_users%ROWTYPE;
 BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id); IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
  IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
  IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
- RETURN QUERY SELECT f.cursor,f.table_name,f.entity_id,f.operation,f.row_version,f.tombstone,CASE f.table_name WHEN 'coupon_campaigns' THEN (SELECT to_jsonb(x) FROM public."coupon_campaigns" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'shifts' THEN (SELECT to_jsonb(x) FROM public."shifts" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'issued_vouchers' THEN (SELECT to_jsonb(x) FROM public."issued_vouchers" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'activity_events' THEN (SELECT to_jsonb(x) FROM public."activity_events" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'app_users' THEN (SELECT to_jsonb(x) FROM public."app_users" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'audit_logs' THEN (SELECT to_jsonb(x) FROM public."audit_logs" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'booking_payments' THEN (SELECT to_jsonb(x) FROM public."booking_payments" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'bookings' THEN (SELECT to_jsonb(x) FROM public."bookings" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'branch_telemetry' THEN (SELECT to_jsonb(x) FROM public."branch_telemetry" x WHERE x."terminal_id"::text=(f.entity_id::jsonb)->>'terminal_id' LIMIT 1)
-    WHEN 'cashiers' THEN (SELECT to_jsonb(x) FROM public."cashiers" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'coupon_events' THEN (SELECT to_jsonb(x) FROM public."coupon_events" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'drawer_events' THEN (SELECT to_jsonb(x) FROM public."drawer_events" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'held_orders' THEN (SELECT to_jsonb(x) FROM public."held_orders" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'integration_settings' THEN (SELECT to_jsonb(x) FROM public."integration_settings" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'item_activity_logs' THEN (SELECT to_jsonb(x) FROM public."item_activity_logs" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'member_verifications' THEN (SELECT to_jsonb(x) FROM public."member_verifications" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'members' THEN (SELECT to_jsonb(x) FROM public."members" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'membership_tiers' THEN (SELECT to_jsonb(x) FROM public."membership_tiers" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'offline_sync_audit_log' THEN (SELECT to_jsonb(x) FROM public."offline_sync_audit_log" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'payment_transactions' THEN (SELECT to_jsonb(x) FROM public."payment_transactions" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'payment_types' THEN (SELECT to_jsonb(x) FROM public."payment_types" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'pin_attempts' THEN (SELECT to_jsonb(x) FROM public."pin_attempts" x WHERE x."key"::text=(f.entity_id::jsonb)->>'key' LIMIT 1)
-    WHEN 'pos_settings' THEN (SELECT to_jsonb(x) FROM public."pos_settings" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'product_barcodes' THEN (SELECT to_jsonb(x) FROM public."product_barcodes" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'product_categories' THEN (SELECT to_jsonb(x) FROM public."product_categories" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'products' THEN (SELECT to_jsonb(x) FROM public."products" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'promotions' THEN (SELECT to_jsonb(x) FROM public."promotions" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'public_flags' THEN (SELECT to_jsonb(x) FROM public."public_flags" x WHERE x."key"::text=(f.entity_id::jsonb)->>'key' LIMIT 1)
-    WHEN 'purchase_order_items' THEN (SELECT to_jsonb(x) FROM public."purchase_order_items" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'purchase_orders' THEN (SELECT to_jsonb(x) FROM public."purchase_orders" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'sale_items' THEN (SELECT to_jsonb(x) FROM public."sale_items" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'sales' THEN (SELECT to_jsonb(x) FROM public."sales" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'secure_settings' THEN (SELECT to_jsonb(x) FROM public."secure_settings" x WHERE x."key"::text=(f.entity_id::jsonb)->>'key' LIMIT 1)
-    WHEN 'security_findings' THEN (SELECT to_jsonb(x) FROM public."security_findings" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'settings_locks' THEN (SELECT to_jsonb(x) FROM public."settings_locks" x WHERE x."section"::text=(f.entity_id::jsonb)->>'section' LIMIT 1)
-    WHEN 'settings_overrides' THEN (SELECT to_jsonb(x) FROM public."settings_overrides" x WHERE x."scope"::text=(f.entity_id::jsonb)->>'scope' AND x."scope_id"::text=(f.entity_id::jsonb)->>'scope_id' AND x."section"::text=(f.entity_id::jsonb)->>'section' LIMIT 1)
-    WHEN 'shift_sessions' THEN (SELECT to_jsonb(x) FROM public."shift_sessions" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'sku_audit' THEN (SELECT to_jsonb(x) FROM public."sku_audit" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'staff_roles' THEN (SELECT to_jsonb(x) FROM public."staff_roles" x WHERE x."slug"::text=(f.entity_id::jsonb)->>'slug' LIMIT 1)
-    WHEN 'stock_adjustments' THEN (SELECT to_jsonb(x) FROM public."stock_adjustments" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'stock_delta_applied' THEN (SELECT to_jsonb(x) FROM public."stock_delta_applied" x WHERE x."movement_id"::text=(f.entity_id::jsonb)->>'movement_id' LIMIT 1)
-    WHEN 'stock_transfer_items' THEN (SELECT to_jsonb(x) FROM public."stock_transfer_items" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'stock_transfers' THEN (SELECT to_jsonb(x) FROM public."stock_transfers" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'stores' THEN (SELECT to_jsonb(x) FROM public."stores" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'suppliers' THEN (SELECT to_jsonb(x) FROM public."suppliers" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'sync_metadata' THEN (SELECT to_jsonb(x) FROM public."sync_metadata" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'system_audit_logs' THEN (SELECT to_jsonb(x) FROM public."system_audit_logs" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'terminal_commands' THEN (SELECT to_jsonb(x) FROM public."terminal_commands" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'terminal_tokens' THEN (SELECT to_jsonb(x) FROM public."terminal_tokens" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'uom_units' THEN (SELECT to_jsonb(x) FROM public."uom_units" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'user_roles' THEN (SELECT to_jsonb(x) FROM public."user_roles" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'whatsapp_queue' THEN (SELECT to_jsonb(x) FROM public."whatsapp_queue" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'terminal_recovery_secrets' THEN (SELECT to_jsonb(x) FROM public."terminal_recovery_secrets" x WHERE x."terminal_token_id"::text=(f.entity_id::jsonb)->>'terminal_token_id' LIMIT 1)
-    WHEN 'pos_store_settings' THEN (SELECT to_jsonb(x) FROM public."pos_store_settings" x WHERE x."store_id"::text=(f.entity_id::jsonb)->>'store_id' LIMIT 1)
-    WHEN 'settings_scoped' THEN (SELECT to_jsonb(x) FROM public."settings_scoped" x WHERE x."scope"::text=(f.entity_id::jsonb)->>'scope' AND x."scope_id"::text=(f.entity_id::jsonb)->>'scope_id' AND x."key"::text=(f.entity_id::jsonb)->>'key' LIMIT 1)
-    WHEN 'stock_count_drafts' THEN (SELECT to_jsonb(x) FROM public."stock_count_drafts" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'authorization_actions' THEN (SELECT to_jsonb(x) FROM public."authorization_actions" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'authorization_action_history' THEN (SELECT to_jsonb(x) FROM public."authorization_action_history" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'authorization_requests' THEN (SELECT to_jsonb(x) FROM public."authorization_requests" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'authorization_log' THEN (SELECT to_jsonb(x) FROM public."authorization_log" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'record_edits' THEN (SELECT to_jsonb(x) FROM public."record_edits" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'shift_cash_counts' THEN (SELECT to_jsonb(x) FROM public."shift_cash_counts" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'shift_close_events' THEN (SELECT to_jsonb(x) FROM public."shift_close_events" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'shift_reconciliations' THEN (SELECT to_jsonb(x) FROM public."shift_reconciliations" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'shift_variance_alerts' THEN (SELECT to_jsonb(x) FROM public."shift_variance_alerts" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'shift_notifications' THEN (SELECT to_jsonb(x) FROM public."shift_notifications" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'entity_status_history' THEN (SELECT to_jsonb(x) FROM public."entity_status_history" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'nav_pins' THEN (SELECT to_jsonb(x) FROM public."nav_pins" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
-    WHEN 'store_groups' THEN (SELECT to_jsonb(x) FROM public."store_groups" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1) ELSE NULL END
- FROM public.sync_change_feed f WHERE f.organization_id=p_organization_id AND f.branch_id IN (p_branch_id,'global') AND (f.terminal_id IS NULL OR f.terminal_id=p_terminal_id) AND f.cursor>p_after_cursor ORDER BY f.cursor LIMIT LEAST(GREATEST(p_limit,100),2000);
+ RETURN QUERY WITH feed_page AS MATERIALIZED (
+  SELECT candidate.cursor,candidate.table_name,candidate.entity_id,candidate.operation,candidate.row_version,candidate.tombstone
+  FROM public.sync_change_feed candidate
+  WHERE candidate.organization_id=p_organization_id AND candidate.branch_id IN (p_branch_id,'global')
+    AND (candidate.terminal_id IS NULL OR candidate.terminal_id=p_terminal_id) AND candidate.cursor>p_after_cursor
+  ORDER BY candidate.cursor LIMIT LEAST(GREATEST(p_limit,100),2000)
+ )
+ SELECT f.cursor,f.table_name,f.entity_id,f.operation,f.row_version,f.tombstone,CASE f.table_name WHEN 'coupon_campaigns' THEN (SELECT to_jsonb(x) FROM public."coupon_campaigns" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shifts' THEN (SELECT to_jsonb(x) FROM public."shifts" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'issued_vouchers' THEN (SELECT to_jsonb(x) FROM public."issued_vouchers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'activity_events' THEN (SELECT to_jsonb(x) FROM public."activity_events" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'app_users' THEN (SELECT to_jsonb(x) FROM public."app_users" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'audit_logs' THEN (SELECT to_jsonb(x) FROM public."audit_logs" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'booking_payments' THEN (SELECT to_jsonb(x) FROM public."booking_payments" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'bookings' THEN (SELECT to_jsonb(x) FROM public."bookings" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'branch_telemetry' THEN (SELECT to_jsonb(x) FROM public."branch_telemetry" x WHERE x."terminal_id"=((f.entity_id::jsonb)->>'terminal_id') LIMIT 1)
+    WHEN 'cashiers' THEN (SELECT to_jsonb(x) FROM public."cashiers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'coupon_events' THEN (SELECT to_jsonb(x) FROM public."coupon_events" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'drawer_events' THEN (SELECT to_jsonb(x) FROM public."drawer_events" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'held_orders' THEN (SELECT to_jsonb(x) FROM public."held_orders" x WHERE x."id"=((f.entity_id::jsonb)->>'id') LIMIT 1)
+    WHEN 'integration_settings' THEN (SELECT to_jsonb(x) FROM public."integration_settings" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'item_activity_logs' THEN (SELECT to_jsonb(x) FROM public."item_activity_logs" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'member_verifications' THEN (SELECT to_jsonb(x) FROM public."member_verifications" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'members' THEN (SELECT to_jsonb(x) FROM public."members" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'membership_tiers' THEN (SELECT to_jsonb(x) FROM public."membership_tiers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'offline_sync_audit_log' THEN (SELECT to_jsonb(x) FROM public."offline_sync_audit_log" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'payment_transactions' THEN (SELECT to_jsonb(x) FROM public."payment_transactions" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'payment_types' THEN (SELECT to_jsonb(x) FROM public."payment_types" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'pin_attempts' THEN (SELECT to_jsonb(x) FROM public."pin_attempts" x WHERE x."key"=((f.entity_id::jsonb)->>'key') LIMIT 1)
+    WHEN 'pos_settings' THEN (SELECT to_jsonb(x) FROM public."pos_settings" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::integer LIMIT 1)
+    WHEN 'product_barcodes' THEN (SELECT to_jsonb(x) FROM public."product_barcodes" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'product_categories' THEN (SELECT to_jsonb(x) FROM public."product_categories" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'products' THEN (SELECT to_jsonb(x) FROM public."products" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'promotions' THEN (SELECT to_jsonb(x) FROM public."promotions" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'public_flags' THEN (SELECT to_jsonb(x) FROM public."public_flags" x WHERE x."key"=((f.entity_id::jsonb)->>'key') LIMIT 1)
+    WHEN 'purchase_order_items' THEN (SELECT to_jsonb(x) FROM public."purchase_order_items" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'purchase_orders' THEN (SELECT to_jsonb(x) FROM public."purchase_orders" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'sale_items' THEN (SELECT to_jsonb(x) FROM public."sale_items" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'sales' THEN (SELECT to_jsonb(x) FROM public."sales" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'secure_settings' THEN (SELECT to_jsonb(x) FROM public."secure_settings" x WHERE x."key"=((f.entity_id::jsonb)->>'key') LIMIT 1)
+    WHEN 'security_findings' THEN (SELECT to_jsonb(x) FROM public."security_findings" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'settings_locks' THEN (SELECT to_jsonb(x) FROM public."settings_locks" x WHERE x."section"=((f.entity_id::jsonb)->>'section') LIMIT 1)
+    WHEN 'settings_overrides' THEN (SELECT to_jsonb(x) FROM public."settings_overrides" x WHERE x."scope"=((f.entity_id::jsonb)->>'scope') AND x."scope_id"=((f.entity_id::jsonb)->>'scope_id') AND x."section"=((f.entity_id::jsonb)->>'section') LIMIT 1)
+    WHEN 'shift_sessions' THEN (SELECT to_jsonb(x) FROM public."shift_sessions" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'sku_audit' THEN (SELECT to_jsonb(x) FROM public."sku_audit" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'staff_roles' THEN (SELECT to_jsonb(x) FROM public."staff_roles" x WHERE x."slug"=((f.entity_id::jsonb)->>'slug') LIMIT 1)
+    WHEN 'stock_adjustments' THEN (SELECT to_jsonb(x) FROM public."stock_adjustments" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'stock_delta_applied' THEN (SELECT to_jsonb(x) FROM public."stock_delta_applied" x WHERE x."movement_id"=((f.entity_id::jsonb)->>'movement_id')::uuid LIMIT 1)
+    WHEN 'stock_transfer_items' THEN (SELECT to_jsonb(x) FROM public."stock_transfer_items" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'stock_transfers' THEN (SELECT to_jsonb(x) FROM public."stock_transfers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'stores' THEN (SELECT to_jsonb(x) FROM public."stores" x WHERE x."id"=((f.entity_id::jsonb)->>'id') LIMIT 1)
+    WHEN 'suppliers' THEN (SELECT to_jsonb(x) FROM public."suppliers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'sync_metadata' THEN (SELECT to_jsonb(x) FROM public."sync_metadata" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'system_audit_logs' THEN (SELECT to_jsonb(x) FROM public."system_audit_logs" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'terminal_commands' THEN (SELECT to_jsonb(x) FROM public."terminal_commands" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'terminal_tokens' THEN (SELECT to_jsonb(x) FROM public."terminal_tokens" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'uom_units' THEN (SELECT to_jsonb(x) FROM public."uom_units" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'user_roles' THEN (SELECT to_jsonb(x) FROM public."user_roles" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'whatsapp_queue' THEN (SELECT to_jsonb(x) FROM public."whatsapp_queue" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'terminal_recovery_secrets' THEN (SELECT to_jsonb(x) FROM public."terminal_recovery_secrets" x WHERE x."terminal_token_id"=((f.entity_id::jsonb)->>'terminal_token_id')::uuid LIMIT 1)
+    WHEN 'pos_store_settings' THEN (SELECT to_jsonb(x) FROM public."pos_store_settings" x WHERE x."store_id"=((f.entity_id::jsonb)->>'store_id') LIMIT 1)
+    WHEN 'settings_scoped' THEN (SELECT to_jsonb(x) FROM public."settings_scoped" x WHERE x."scope"=((f.entity_id::jsonb)->>'scope') AND x."scope_id"=((f.entity_id::jsonb)->>'scope_id') AND x."key"=((f.entity_id::jsonb)->>'key') LIMIT 1)
+    WHEN 'stock_count_drafts' THEN (SELECT to_jsonb(x) FROM public."stock_count_drafts" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'authorization_actions' THEN (SELECT to_jsonb(x) FROM public."authorization_actions" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'authorization_action_history' THEN (SELECT to_jsonb(x) FROM public."authorization_action_history" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'authorization_requests' THEN (SELECT to_jsonb(x) FROM public."authorization_requests" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'authorization_log' THEN (SELECT to_jsonb(x) FROM public."authorization_log" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'record_edits' THEN (SELECT to_jsonb(x) FROM public."record_edits" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shift_cash_counts' THEN (SELECT to_jsonb(x) FROM public."shift_cash_counts" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shift_close_events' THEN (SELECT to_jsonb(x) FROM public."shift_close_events" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shift_reconciliations' THEN (SELECT to_jsonb(x) FROM public."shift_reconciliations" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shift_variance_alerts' THEN (SELECT to_jsonb(x) FROM public."shift_variance_alerts" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shift_notifications' THEN (SELECT to_jsonb(x) FROM public."shift_notifications" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'entity_status_history' THEN (SELECT to_jsonb(x) FROM public."entity_status_history" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'nav_pins' THEN (SELECT to_jsonb(x) FROM public."nav_pins" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'store_groups' THEN (SELECT to_jsonb(x) FROM public."store_groups" x WHERE x."id"=((f.entity_id::jsonb)->>'id') LIMIT 1) ELSE NULL END
+ FROM feed_page f ORDER BY f.cursor;
 END $fn$;
 
 CREATE OR REPLACE FUNCTION public.pos_sync_bootstrap(p_organization_id text,p_branch_id text,p_terminal_id text,p_table text,p_after_cursor text DEFAULT NULL,p_history_days integer DEFAULT 90,p_limit integer DEFAULT 500)

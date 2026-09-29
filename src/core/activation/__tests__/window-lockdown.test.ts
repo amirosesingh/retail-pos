@@ -32,6 +32,8 @@ describe("desktop window lockdown", () => {
     expect(main).toMatch(/setWindowOpenHandler/);
     expect(main).toMatch(/will-attach-webview/);
     expect(main).toMatch(/Content-Security-Policy/);
+    expect(main).toContain('"content-security-policy-report-only"');
+    expect(main).toContain("name.toLowerCase()");
     expect(main).toMatch(/frame-ancestors 'none'/);
   });
 

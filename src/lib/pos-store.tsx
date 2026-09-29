@@ -1339,7 +1339,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // Offline, local SQL or queued: nothing opens until it is stored.
         target = await db.commitShift(shift);
         if (target === "cloud") {
-          const seen = await db.shiftExists(shift.id);
+          const seen = await db.shiftExists(shift.id, currentStore.id);
           if (seen === "no") {
             throw new Error(
               "The shift was not found in the database after saving. Nothing was opened — try again, or check this account's branch and role.",

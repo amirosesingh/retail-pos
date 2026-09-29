@@ -94,6 +94,20 @@ function rememberVerifiedBranch(branchId){
   const terminal=terminalStore.read();
   if(terminal?.tokenId&&!terminal.locationId&&!terminal.storeId&&!terminal.branchId)terminalStore.write({...terminal,branchId});
 }
+async function observedDatabaseOperation(category, stage, work) {
+  try {
+    const result = await work();
+    if (result?.ok === false) diagnostics.logConnection(`${category}.${stage}.failed`, {
+      category, stage, code: result.code ?? "EDATABASE", message: result.error ?? result.message ?? "The database operation did not complete.",
+    });
+    return result;
+  } catch (error) {
+    diagnostics.logConnection(`${category}.${stage}.failed`, {
+      category, stage, code: error?.code ?? "EDATABASE", message: error?.message ?? String(error),
+    });
+    throw error;
+  }
+}
 async function prepareLocalData({force=false}={}){
   const profile=databaseConfig.profile()??{};
   try{return await localDataLifecycle.ensure({branchId:localBranchId(),historyDays:Number(profile.retentionDays)||90,force});}
@@ -103,6 +117,7 @@ async function prepareLocalData({force=false}={}){
     // synchronization status; it must not describe the healthy local database
     // as degraded or disable offline trading.
     databaseService.markReady({phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences});
+    diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error) });
     throw error;
   }
 }
@@ -134,6 +149,7 @@ async function runAutomaticSync() {
   }
   automaticSyncQueued = false;
   let result = await syncCoordinator.runNow({ branchId: localBranchId(), batchSize: 500 });
+  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed." });
   if (result.code === "ECHANGEGAP") {
     try {
       await prepareLocalData({ force: true });
@@ -1200,16 +1216,26 @@ function registerIpc() {
   ipcMain.handle("database:authorize-settings", () => ({ ok: true }));
   ipcMain.handle("database:set-enabled", (_e, value) => guard.guarded(async()=>{await databaseService.setEnabled(value===true);if(value===true&&databaseManager.isConnected())void prepareLocalData().catch(error=>recordFault("local-data.prepare",error));return databaseService.snapshot();}));
   ipcMain.handle("database:list-servers", () => discoverLocalSqlServers());
-  ipcMain.handle("database:test-server", (_e, value) => guard.guarded(() => databaseService.testServer(guard.databaseProfile(value))));
-  ipcMain.handle("database:list-databases", (_e, value) => guard.guarded(() => databaseService.databases(guard.databaseProfile(value))));
-  ipcMain.handle("database:validate", (_e, value) => guard.guarded(() => databaseService.validate(guard.databaseProfile(value, { requireDatabase: true }))));
-  ipcMain.handle("database:migrate", (_e, value) => guard.guarded(() => applyMigrations(databaseManager,guard.databaseProfile(value,{requireDatabase:true}))));
+  ipcMain.handle("database:test-server", (_e, value) => guard.guarded(() => observedDatabaseOperation("connection","test",() => databaseService.testServer(guard.databaseProfile(value)))));
+  ipcMain.handle("database:list-databases", (_e, value) => guard.guarded(() => observedDatabaseOperation("connection","list_databases",() => databaseService.databases(guard.databaseProfile(value)))));
+  ipcMain.handle("database:validate", (_e, value) => guard.guarded(() => observedDatabaseOperation("validation","schema",() => databaseService.validate(guard.databaseProfile(value, { requireDatabase: true })))));
+  ipcMain.handle("database:migrate", (_e, value) => guard.guarded(async () => {
+    const profile=guard.databaseProfile(value,{requireDatabase:true});
+    const preflight=await observedDatabaseOperation("migration","preflight",() => databaseService.validate(profile));
+    if(!preflight.ok)return preflight;
+    const migrated=await observedDatabaseOperation("migration","apply",() => applyMigrations(databaseManager,profile));
+    if(!migrated.ok)return migrated;
+    const validation=await observedDatabaseOperation("migration","revalidate",() => databaseService.validate(profile));
+    return validation.ready?{...migrated,ready:true,validation}:{...migrated,ok:false,code:"EMIGRATION_INCOMPLETE",error:"The migration ran, but schema validation still found differences.",validation};
+  }));
   ipcMain.handle("database:migrate-saved", () => guard.guarded(async()=>{
     const wasPaused=syncCoordinator.paused;
     if(!wasPaused)syncCoordinator.pause();
     databaseService.beginMigration();
     try{
-      const migrated=await applyMigrations(databaseManager);
+      const preflight=await observedDatabaseOperation("migration","preflight",() => databaseService.health());
+      if(!preflight.ok){databaseService.migrationFailed(preflight);return{...preflight,state:databaseService.snapshot()};}
+      const migrated=await observedDatabaseOperation("migration","apply",() => applyMigrations(databaseManager));
       if(!migrated.ok){databaseService.migrationFailed(migrated);return{...migrated,state:databaseService.snapshot()};}
       const state=await databaseService.revalidateConnected();
       if(!state.tradingReady)return{...migrated,ok:false,code:"EMIGRATION_INCOMPLETE",error:"The packaged migration ran, but the local schema still requires attention.",state};
@@ -1226,10 +1252,10 @@ function registerIpc() {
     });
     if(chosen.canceled||!chosen.filePath)return{ok:false,canceled:true};
     try{fs.writeFileSync(chosen.filePath,migrationBundleSql(app.getVersion()),"utf8");return{ok:true,file:chosen.filePath};}
-    catch(error){return{ok:false,code:"EMIGRATION_EXPORT",error:String(error?.message??error)};}
+    catch(error){diagnostics.logConnection("migration.export.failed",{category:"migration",stage:"download",code:"EMIGRATION_EXPORT",message:String(error?.message??error)});return{ok:false,code:"EMIGRATION_EXPORT",error:String(error?.message??error)};}
   });
   ipcMain.handle("database:save-connect", (_e, value) => guard.guarded(async()=>{
-    const result=await databaseService.saveAndConnect(guard.databaseProfile(value,{requireDatabase:true}));
+    const result=await observedDatabaseOperation("connection","save_connect",() => databaseService.saveAndConnect(guard.databaseProfile(value,{requireDatabase:true})));
     if(!result.ok)return result;
     try{
       const synchronization=await prepareLocalData();
@@ -1340,14 +1366,14 @@ function registerIpc() {
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
   ipcMain.handle("sync:get-status", () => syncCoordinator.refresh(localBranchId()));
-  ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{const input=guard.options(options,{name:"sync options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});const result=await syncCoordinator.runNow({...input,branchId});return result.code==="ECHANGEGAP"?prepareLocalData({force:true}):result;}));
+  ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{const input=guard.options(options,{name:"sync options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});const result=await observedDatabaseOperation("synchronization","manual",() => syncCoordinator.runNow({...input,branchId}));return result.code==="ECHANGEGAP"?prepareLocalData({force:true}):result;}));
   ipcMain.handle("sync:auto", async () => {
     if(!databaseManager.isConnected()||!localBranchId())return{ok:false,skipped:true};
     return syncCoordinator.runNow({branchId:localBranchId(),batchSize:500});
   });
   ipcMain.handle("sync:pause", () => syncCoordinator.pause());
   ipcMain.handle("sync:resume", () => syncCoordinator.resume());
-  ipcMain.handle("sync:get-failures", async () => ({ failures:databaseManager.isConnected()?await jobRepository.failures():[], businessBatches:databaseManager.isConnected()?await changeReader.failedAggregates(localBranchId()):[], conflictRows:databaseManager.isConnected()?await conflictRepository.unresolved():[], conflicts:databaseManager.isConnected()?await conflictRepository.count():0 }));
+  ipcMain.handle("sync:get-failures", async () => ({ databaseErrors:diagnostics.databaseErrors(100), failures:databaseManager.isConnected()?await jobRepository.failures():[], businessBatches:databaseManager.isConnected()?await changeReader.failedAggregates(localBranchId()):[], conflictRows:databaseManager.isConnected()?await conflictRepository.unresolved():[], conflicts:databaseManager.isConnected()?await conflictRepository.count():0 }));
   ipcMain.handle("sync:reconcile", (_e, options) => guard.guarded(async()=>{try{const input=guard.options(options,{name:"reconciliation options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("A branch is required for reconciliation."),{code:"EBRANCH"});const historyDays=Number(databaseConfig.profile()?.retentionDays)||90;if(input.deep===true){const report=await localDataLifecycle.verify(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]);return{ok:true,verified:report.verified,differences:report.tables.filter(table=>!table.verified),verification:report.tables,lastVerifiedAt:report.verifiedAt};}const differences=input.repair===true?await localDataLifecycle.repair(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]):await localDataLifecycle.reconcile(branchId,historyDays);return{ok:true,matched:differences.length===0,differences,verification:syncCoordinator.snapshot().tables,lastComparedAt:syncCoordinator.snapshot().lastComparedAt};}catch(error){return{ok:false,code:error?.code??"ERECONCILE",error:String(error?.message??error)};}}));
   ipcMain.handle("telemetry:presence", (_e, value) => guard.guarded(() => {
     const input = guard.options(value, { name: "telemetry presence", max: 3 });
@@ -1606,8 +1632,14 @@ function registerIpc() {
 app.whenReady().then(async () => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const headers = { ...details.responseHeaders };
-    delete headers["content-security-policy"];
-    delete headers["Content-Security-Policy"];
+    // Cloudflare challenge/RUM responses can include their own report-only
+    // policy. Keeping it beside the shell policy produces hundreds of false
+    // violations for same-origin challenge scripts and telemetry requests.
+    // Remove every casing of both upstream CSP headers, then install the one
+    // enforced desktop policy below.
+    for (const name of Object.keys(headers)) {
+      if (["content-security-policy", "content-security-policy-report-only"].includes(name.toLowerCase())) delete headers[name];
+    }
     headers["Content-Security-Policy"] = [["default-src 'self' data: blob:", "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:", "connect-src 'self' https: wss: http://127.0.0.1:* http://localhost:*", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'"].join("; ")];
     callback({ responseHeaders: headers });
   });

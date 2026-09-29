@@ -51,7 +51,7 @@ BEGIN
 
   IF _expected_version IS NOT NULL AND _expected_version <> current_version THEN
     RAISE EXCEPTION 'STALE_RULES: these rules were changed elsewhere (version %, expected %)',
-      current_version, _expected_version USING ERRCODE = '40001';
+      current_version, _expected_version USING ERRCODE = 'PT409';
   END IF;
 
   SELECT string_agg(format('%I = ($1 ->> %L)::%s', key, key,

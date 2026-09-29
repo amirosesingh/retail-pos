@@ -79,4 +79,12 @@ describe("business UI persistence acknowledgements", () => {
     const noSale = register.slice(register.indexOf("await recordNoSale({"));
     expect(noSale.indexOf("await recordNoSale({")).toBeLessThan(noSale.indexOf("openCashDrawer()"));
   });
+
+  it("verifies a saved shift without querying the protected table directly", () => {
+    const db = source("src/core/api/pos-db.ts");
+    const lookup = db.slice(db.indexOf("async shiftExists"), db.indexOf("commitDrawerEvent"));
+    expect(lookup).toContain('routedQuery("shifts"');
+    expect(lookup).toContain('"shift_list_secure"');
+    expect(lookup).not.toContain('.from("shifts"');
+  });
 });

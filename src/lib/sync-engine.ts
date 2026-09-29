@@ -883,39 +883,45 @@ export function startSyncEngine() {
     if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return;
     queueLiveChange({ reason: `broadcast:${table}`, table, storeId: null });
   });
-  for (const table of ORGANIZATION_LIVE_TABLES) {
-    live.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
-      const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
-        (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
-      const storeId = String(changed.store_id ?? changed.branch_id ?? "").trim() || null;
-      const entityId = String(changed.id ?? "").trim() || null;
-      const change = { reason: `live:${table}`, table, storeId, entityId };
-      queueLiveChange(change);
-    });
-  }
-  const liveBranchId = activeBranchId();
-  if (liveBranchId) {
-    for (const { table, column } of BRANCH_LIVE_TABLES) {
-      live.on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table,
-          filter: `${column}=eq.${liveBranchId}`,
-        },
-        (payload) => {
-          const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
-            (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
-          const entityId = String(changed.id ?? "").trim() || null;
-          queueLiveChange({
-            reason: `live:${table}`,
+  // Database-change subscriptions require table SELECT privileges. PIN-only
+  // Electron sessions intentionally have no cloud staff JWT, so they rely on
+  // durable local SQL synchronization and polling instead of opening invalid
+  // anon subscriptions. Authenticated web users retain scoped live wake-ups.
+  if (hasStaffSession()) {
+    for (const table of ORGANIZATION_LIVE_TABLES) {
+      live.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
+        const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
+          (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
+        const storeId = String(changed.store_id ?? changed.branch_id ?? "").trim() || null;
+        const entityId = String(changed.id ?? "").trim() || null;
+        const change = { reason: `live:${table}`, table, storeId, entityId };
+        queueLiveChange(change);
+      });
+    }
+    const liveBranchId = activeBranchId();
+    if (liveBranchId) {
+      for (const { table, column } of BRANCH_LIVE_TABLES) {
+        live.on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
             table,
-            storeId: liveBranchId,
-            entityId,
-          });
-        },
-      );
+            filter: `${column}=eq.${liveBranchId}`,
+          },
+          (payload) => {
+            const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
+              (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
+            const entityId = String(changed.id ?? "").trim() || null;
+            queueLiveChange({
+              reason: `live:${table}`,
+              table,
+              storeId: liveBranchId,
+              entityId,
+            });
+          },
+        );
+      }
     }
   }
   live.subscribe((status) => {
