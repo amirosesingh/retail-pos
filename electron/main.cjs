@@ -1247,7 +1247,7 @@ function registerIpc() {
   ipcMain.handle("database:schema-status", () => databaseService.schemaStatus());
   ipcMain.handle("database:backup", (_e, file) => guard.guarded(() => backupService.backup(guard.filePath(file,{name:"backup file",extension:"bak"}))));
   ipcMain.handle("database:restore", (_e, file) => guard.guarded(async () => { const result=await backupService.restore(guard.filePath(file,{name:"backup file",extension:"bak"})); if(result.ok)await databaseService.restore(); return result; }));
-  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}), guard.writeOps(ops,{max:200}));scheduleAutomaticSync(250);return result;}));
+  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}), guard.writeOps(ops,{max:200}),{branchId:localBranchId(),terminalId:terminal.tokenId??terminal.terminalId});scheduleAutomaticSync(250);return result;}));
   ipcMain.handle("business:save-authorization-rule", (_e, value) => guard.guarded(async () => {
     const identity = adminSession.identity();
     if (!identity || !adminSession.hasPosAuthority() || !adminSession.hasPermission("can_access_pos_settings"))
@@ -1295,7 +1295,7 @@ function registerIpc() {
     }
   }));
   ipcMain.handle("business:snapshot", () => guard.guarded(async () => {
-    const snapshot = await operationsRepository.snapshot(localBranchId());
+    const snapshot = await operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null);
     return { ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) };
   }));
   ipcMain.handle("business:query", (_e, table, options) => guard.guarded(async () => {
@@ -1340,7 +1340,7 @@ function registerIpc() {
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
   ipcMain.handle("sync:get-status", () => syncCoordinator.refresh(localBranchId()));
-  ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{const input=guard.options(options,{name:"sync options"});const result=await syncCoordinator.runNow({...input,branchId:input.branchId??localBranchId()});return result.code==="ECHANGEGAP"?prepareLocalData({force:true}):result;}));
+  ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{const input=guard.options(options,{name:"sync options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});const result=await syncCoordinator.runNow({...input,branchId});return result.code==="ECHANGEGAP"?prepareLocalData({force:true}):result;}));
   ipcMain.handle("sync:auto", async () => {
     if(!databaseManager.isConnected()||!localBranchId())return{ok:false,skipped:true};
     return syncCoordinator.runNow({branchId:localBranchId(),batchSize:500});

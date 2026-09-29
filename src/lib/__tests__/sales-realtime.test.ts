@@ -5,7 +5,7 @@ describe("sales realtime refresh", () => {
   it("uses the shared channel as a notification and refetches canonical sales", () => {
     const engine = readFileSync("src/lib/sync-engine.ts", "utf8");
     const store = readFileSync("src/lib/pos-store.tsx", "utf8");
-    expect(engine).toMatch(/LIVE_TABLES[\s\S]*"sales"/);
+    expect(engine).toMatch(/BRANCH_LIVE_TABLES[\s\S]*"sales"/);
     expect(engine).toContain("announceSalesChange(change.table, change.storeId)");
     expect(engine).toContain("pendingLiveChanges");
     expect(engine).toContain("for (const change of changes)");
@@ -38,9 +38,16 @@ describe("sales realtime refresh", () => {
   it("broadcasts a value-free wake signal after web settings writes", () => {
     const settings = readFileSync("src/lib/branch-settings.ts", "utf8");
     const engine = readFileSync("src/lib/sync-engine.ts", "utf8");
+    const appShell = readFileSync("src/platforms/web/components/pos/AppShell.tsx", "utf8");
+    const db = readFileSync("src/core/api/pos-db.ts", "utf8");
+    const rules = readFileSync("src/routes/settings.rules.tsx", "utf8");
 
     expect(settings).toContain('broadcastSettingsChange("settings_overrides")');
     expect(settings).toContain('broadcastSettingsChange("settings_locks")');
+    expect(appShell).toContain("useEffect(() => startSyncEngine(), [])");
+    expect(db).toContain('broadcastSettingsChange("pos_settings")');
+    expect(rules).toContain('broadcastSettingsChange("pos_store_settings")');
+    expect(engine).toContain("await broadcastSettingsChange(op.table)");
     expect(engine).toContain('live.on("broadcast", { event: "settings_changed" }');
     expect(engine).toContain("payload: { table }");
     expect(engine).not.toContain("payload: { table, patch");

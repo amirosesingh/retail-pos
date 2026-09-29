@@ -1,7 +1,6 @@
-import { toast } from "sonner";
 import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
 import { defaultSettings, sampleState } from "@/lib/pos-seed";
-import { runOpLive } from "@/lib/sync-engine";
+import { broadcastSettingsChange, runOpLive } from "@/lib/sync-engine";
 import { localDb } from "@/core/local-db/local-db";
 import { routedQuery } from "@/core/api/db-query";
 import type { SyncOp } from "@/lib/sync-outbox";
@@ -14,7 +13,6 @@ import {
   setCloudDirect,
 } from "@/core/local-db/db-mode";
 import { notifyError, showNotification } from "@/lib/notify";
-import { logSync } from "@/lib/sync-log";
 import { recordDiagnostic, reasonCode } from "@/lib/diagnostics";
 import { applyStockDeltaBatch } from "@/lib/stock-recovery";
 import { canRelay, hasStaffSession, relayActiveShift, relayStores } from "@/core/api/sync-relay";
@@ -145,6 +143,43 @@ export const rowToProduct = (r: Row): Product => ({
   customPoints: r.custom_points == null ? undefined : num(r.custom_points),
   ownerStoreId: (r.owner_store_id as string | null | undefined) ?? null,
 });
+
+/**
+ * Resolve scoped price records without ever rewriting the product's global
+ * price. The current deployment models a physical register as its terminal;
+ * priority is therefore global < cluster < branch < terminal.
+ */
+export function applyScopedProductPrices(
+  products: Product[],
+  rows: Row[],
+  scope: { branchId?: string | null; terminalId?: string | null; clusterId?: string | null },
+): Product[] {
+  const priority: Record<string, number> = { global: 0, cluster: 1, branch: 2, terminal: 3 };
+  const selected = new Map<string, { priority: number; value: Row }>();
+  for (const row of rows) {
+    const key = String(row.key ?? "");
+    if (!key.startsWith("product_price:")) continue;
+    const kind = String(row.scope ?? "").toLowerCase();
+    const id = String(row.scope_id ?? "");
+    if (
+      (kind === "branch" && id !== scope.branchId) ||
+      (kind === "terminal" && id !== scope.terminalId) ||
+      (kind === "cluster" && id !== (scope.clusterId || "default")) ||
+      !(kind in priority)
+    ) continue;
+    const value = jsonValue<Row>(row.value, {});
+    const productId = key.slice("product_price:".length);
+    const candidate = { priority: priority[kind], value };
+    if (candidate.priority >= (selected.get(productId)?.priority ?? -1)) selected.set(productId, candidate);
+  }
+  return products.map((product) => {
+    const value = selected.get(product.id)?.value;
+    if (!value) return product;
+    const selling = value.selling_price == null ? product.price : safeNum(value.selling_price, product.price);
+    const ecom = value.ecom_price == null ? product.ecomPrice : safeNum(value.ecom_price, product.ecomPrice ?? selling);
+    return { ...product, price: selling, ecomPrice: ecom };
+  });
+}
 
 function jsonValue<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string") return (value ?? fallback) as T;
@@ -1081,7 +1116,7 @@ export async function loadCloudState(
     return loadLocalState(new Error("No direct cloud staff session is active."));
   // These reads are independent. Start membership tiers alongside the other
   // slices so a full network round trip is not added to every sign-in.
-  const [tiers, products, members, sales, promotions, settings, stores, shifts] = await Promise.all(
+  const [tiers, products, priceOverrides, members, sales, promotions, settings, stores, shifts] = await Promise.all(
     [
       supabase.from("membership_tiers").select("id, name").is("deleted_at", null),
       // Keep bootstrap bounded. Search and barcode resolution query the indexed
@@ -1094,6 +1129,11 @@ export async function loadCloudState(
         .order("updated_at", { ascending: false })
         .order("id")
         .limit(2000),
+      supabase
+        .from("settings_scoped")
+        .select("scope, scope_id, key, value")
+        .like("key", "product_price:%")
+        .limit(5000),
       supabase
         .from("members")
         .select("*")
@@ -1142,6 +1182,7 @@ export async function loadCloudState(
   const err =
     tiers.error ||
     products.error ||
+    priceOverrides.error ||
     members.error ||
     sales.error ||
     promotions.error ||
@@ -1159,8 +1200,14 @@ export async function loadCloudState(
     tierNameById[t.id] = t.name as MemberTier;
   }
 
+  const terminal = readTerminalConfig();
+  const activeStore = stores.ok ? stores.stores.find((store) => store.id === storeId) : undefined;
   return {
-    products: (products.data ?? []).map(rowToProduct),
+    products: applyScopedProductPrices(
+      (products.data ?? []).map(rowToProduct),
+      ((priceOverrides.data ?? []) as Row[]),
+      { branchId: storeId, terminalId: terminal?.tokenId, clusterId: activeStore?.groupId },
+    ),
     members: (members.data ?? []).map((m) => rowToMember(m, tierName)),
     sales: (sales.data ?? []).map(rowToSale),
     promotions: (promotions.data ?? []).map(rowToPromotion),
@@ -1614,7 +1661,10 @@ export async function invoiceNumberTaken(invoiceNo: string, exceptId?: string): 
 }
 
 /** Latest catalogue rows for a set of products, straight from the database. */
-export async function loadProductsByIds(ids: string[]): Promise<Product[]> {
+export async function loadProductsByIds(
+  ids: string[],
+  scope: { branchId?: string | null; clusterId?: string | null } = {},
+): Promise<Product[]> {
   if (!ids.length) return [];
   const rows: Row[] = [];
   for (let start = 0; start < ids.length; start += 500) {
@@ -1625,7 +1675,13 @@ export async function loadProductsByIds(ids: string[]): Promise<Product[]> {
       })) as Row[]),
     );
   }
-  return rows.map(rowToProduct);
+  const terminal = readTerminalConfig();
+  const overrides = await routedQuery("settings_scoped", { limit: 5000 }).catch(() => [] as Row[]);
+  return applyScopedProductPrices(rows.map(rowToProduct), overrides as Row[], {
+    branchId: scope.branchId ?? terminal?.locationId,
+    terminalId: terminal?.tokenId,
+    clusterId: scope.clusterId,
+  });
 }
 
 /**
@@ -1978,7 +2034,10 @@ export const db = {
       await commitOps("Saving settings", [op2]);
       return;
     }
-    if (!res.error) return;
+    if (!res.error) {
+      await broadcastSettingsChange("pos_settings");
+      return;
+    }
     if (isConnectionError(new Error(res.error.message))) {
       await commitOps("Saving settings", [op2]);
       return;
@@ -1990,6 +2049,7 @@ export const db = {
     missingSettingsColumns.add(col);
     const retry = await supabase.from("pos_settings").upsert(settingsToRow(s) as never);
     if (retry.error) throw new Error(retry.error.message);
+    await broadcastSettingsChange("pos_settings");
     if (import.meta.env.DEV) console.warn(`[settings] compatibility column unavailable: ${col}`);
   },
 
@@ -2408,6 +2468,39 @@ export const db = {
   /** Save one product and wait until it is stored somewhere. */
   commitProduct: (p: Product) =>
     commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [productToRow(p)] }]),
+
+  /**
+   * Save a branch price as a scoped record. The product's global prices stay
+   * untouched, and the next server revision decides conflicts authoritatively.
+   */
+  commitProductPriceOverride: async (
+    productId: string,
+    branchId: string,
+    price: number,
+    ecomPrice?: number,
+    updatedBy?: string | null,
+  ) => {
+    const key = `product_price:${productId}`;
+    const current = (await routedQuery("settings_scoped", {
+      match: { scope: "BRANCH", scope_id: branchId, key },
+      limit: 1,
+    }).catch(() => [] as Row[])) as Row[];
+    const rowVersion = Math.max(1, safeInt(current[0]?.row_version, 0) + 1);
+    return commitOps("Saving branch price", [{
+      kind: "upsert",
+      table: "settings_scoped",
+      rows: [{
+        scope: "BRANCH",
+        scope_id: branchId,
+        key,
+        value: { selling_price: safeNum(price), ecom_price: safeNumOrNull(ecomPrice) },
+        is_overridden: true,
+        updated_by: updatedBy ?? null,
+        updated_at: new Date().toISOString(),
+        row_version: rowVersion,
+      }],
+    }]);
+  },
 
   /** Save a promotion and wait until it is stored somewhere. */
   commitPromotion: (p: Promotion) =>

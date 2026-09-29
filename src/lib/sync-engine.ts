@@ -3,7 +3,6 @@ import { logSync } from "./sync-log";
 import { hasRequiredPlatformConfig } from "./platform-config-ready";
 import { hasSignedInIdentity } from "./session-presence";
 
-import { replayOrder } from "./activity-journal";
 import { tableSyncAllowed } from "./sync-policy";
 import { canRelay, hasStaffSession, relayOp } from "@/core/api/sync-relay";
 import { preferRelay } from "./pos-auth-route";
@@ -21,6 +20,7 @@ import {
   syncState,
 } from "./sync-status";
 import { recordSync } from "./sync-audit";
+import { activeBranchId } from "./active-branch";
 import {
   beginSyncRun,
   endSyncRun,
@@ -63,7 +63,6 @@ import {
   type Connectivity,
 } from "@/core/activation/connection-health";
 import { subscribeSyncConfig, syncConfig } from "./sync-config";
-import { noteVersions } from "./row-versions";
 import {
   acknowledgeBrowserBatch,
   browserPendingCount,
@@ -74,13 +73,9 @@ import { withRelativeStock } from "./sync-stock";
 import { applyStockDeltaBatch } from "./stock-recovery";
 import { TOMBSTONE_TABLES } from "./tombstones";
 import {
-  failOp,
   isOnline,
   isOnlineSyncEnabled,
-  listQueue,
   markSynced,
-  resolveOp,
-  type QueuedOp,
   type SyncOp,
 } from "./sync-outbox";
 
@@ -253,32 +248,6 @@ async function execute(op: SyncOp): Promise<QueryResult> {
 }
 
 /**
- * Stamp the change with the record version this till was working from. The
- * central database keeps whichever copy is newer, so an edit made from an
- * hour-old copy can no longer undo work someone else did in the meantime.
- */
-function versionedOp(entry: QueuedOp): SyncOp {
-  const versions = entry.baseVersions;
-  if (!versions || !Object.keys(versions).length) return entry.op;
-  if (entry.op.kind === "upsert") {
-    return {
-      ...entry.op,
-      rows: entry.op.rows.map((r) => {
-        const v = versions[String(r["id"] ?? "")];
-        return typeof v === "number" ? { ...r, row_version: v } : r;
-      }),
-    };
-  }
-  if (entry.op.kind === "update") {
-    const v = versions[String(entry.op.match["id"] ?? "")];
-    return typeof v === "number"
-      ? { ...entry.op, values: { ...entry.op.values, row_version: v } }
-      : entry.op;
-  }
-  return entry.op;
-}
-
-/**
  * Live write for the Android build: send the operation to the backend now and
  * report the result. Nothing is stored or retried on the device.
  */
@@ -297,7 +266,10 @@ export async function runOpLive(context: string, op: SyncOp): Promise<void> {
     canRelay()
   ) {
     const relayed = await viaRelay(context, op);
-    if (relayed.ok) return;
+    if (relayed.ok) {
+      await broadcastSettingsChange(op.table);
+      return;
+    }
     throw new Error(relayed.error ?? "The server could not save this change");
   }
 
@@ -320,7 +292,10 @@ export async function runOpLive(context: string, op: SyncOp): Promise<void> {
     if (isPermissionError(res.error) && canRelay()) {
       refusedTables.add(op.table);
       const relayed = await viaRelay(context, op);
-      if (relayed.ok) return;
+      if (relayed.ok) {
+        await broadcastSettingsChange(op.table);
+        return;
+      }
       throw new Error(
         relayed.error
           ? `The central database refused this change and the server relay could not save it either: ${relayed.error}`
@@ -332,6 +307,7 @@ export async function runOpLive(context: string, op: SyncOp): Promise<void> {
     throw new Error(message);
   }
   logSync("push", op.table, true, context);
+  await broadcastSettingsChange(op.table);
 }
 
 export async function drainOutbox(): Promise<{ pushed: number; failed: number }> {
@@ -603,24 +579,31 @@ const LIVE_SETTINGS_TABLES = [
   "authorization_actions",
 ] as const;
 
-const LIVE_TABLES = [
-  "app_users",
+const ORGANIZATION_LIVE_TABLES = [
   "staff_roles",
   "stores",
-  ...LIVE_SETTINGS_TABLES,
-  "sales",
-  "sale_items",
-  "payment_transactions",
-  "products",
-  "product_barcodes",
   "members",
   "promotions",
-  "purchase_orders",
-  "purchase_order_items",
+] as const;
+
+/**
+ * Realtime is only a wake-up hint; the durable scoped pull remains the source
+ * of truth. Keep every operational subscription at the active branch so a
+ * till never receives another branch's change payload merely to discard it.
+ * Child rows without a branch column are deliberately omitted: their scoped
+ * parent event or the reconciliation timer wakes the durable pull.
+ */
+const BRANCH_LIVE_TABLES = [
+  { table: "app_users", column: "store_id" },
+  { table: "sales", column: "store_id" },
+  { table: "sale_items", column: "branch_id" },
+  { table: "payment_transactions", column: "store_id" },
+  { table: "products", column: "owner_store_id" },
+  { table: "purchase_orders", column: "store_id" },
   // Approval rows are cloud-owned while online. Their Realtime event wakes
   // the desktop worker so SQL Server becomes a background mirror, never a
   // prerequisite for submitting or deciding the request.
-  "authorization_requests",
+  { table: "authorization_requests", column: "store_id" },
 ] as const;
 
 export type LiveChange = {
@@ -900,19 +883,40 @@ export function startSyncEngine() {
     if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return;
     queueLiveChange({ reason: `broadcast:${table}`, table, storeId: null });
   });
-  for (const table of LIVE_TABLES) {
+  for (const table of ORGANIZATION_LIVE_TABLES) {
     live.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
       const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
         (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
       const storeId = String(changed.store_id ?? changed.branch_id ?? "").trim() || null;
-      const entityId = String(
-        table === "product_barcodes" || table === "purchase_order_items"
-          ? changed.product_id ?? changed.purchase_order_id ?? changed.id ?? ""
-          : changed.id ?? "",
-      ).trim() || null;
+      const entityId = String(changed.id ?? "").trim() || null;
       const change = { reason: `live:${table}`, table, storeId, entityId };
       queueLiveChange(change);
     });
+  }
+  const liveBranchId = activeBranchId();
+  if (liveBranchId) {
+    for (const { table, column } of BRANCH_LIVE_TABLES) {
+      live.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table,
+          filter: `${column}=eq.${liveBranchId}`,
+        },
+        (payload) => {
+          const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
+            (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
+          const entityId = String(changed.id ?? "").trim() || null;
+          queueLiveChange({
+            reason: `live:${table}`,
+            table,
+            storeId: liveBranchId,
+            entityId,
+          });
+        },
+      );
+    }
   }
   live.subscribe((status) => {
     // A resubscribe after a dropped socket may have missed events while it

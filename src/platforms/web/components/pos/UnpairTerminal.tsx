@@ -28,6 +28,7 @@ import { useAuthOptional } from "@/lib/pos-auth";
 
 export function UnpairTerminalCard() {
   const [confirming, setConfirming] = useState(false);
+  const [working, setWorking] = useState(false);
   const { authorize } = useManagerGate();
   const auth = useAuthOptional();
   const config = readTerminalConfig();
@@ -52,19 +53,38 @@ export function UnpairTerminalCard() {
   };
 
   const run = async () => {
-    // Retire the registration centrally first, so the credentials this machine
-    // held are refused even if someone restores an old copy of them. Trading
-    // history — sales, shifts, payments, transfers, audit — is never touched.
-    if (config?.tokenId) {
-      try {
-        await revokeTerminalToken(config.tokenId);
-      } catch {
-        toast.message("Cleared on this device; the register will catch up when it reconnects.");
+    setWorking(true);
+    try {
+      // A branch may only leave this working database after its durable local
+      // changes have reached the server. Old branch rows remain an inactive,
+      // branch-scoped archive; the next activation bootstraps only its new
+      // branch and therefore cannot expose or upload the previous branch.
+      const sync = window.pos?.sync;
+      let status = await sync?.getStatus?.();
+      if ((status?.pending ?? 0) > 0 && sync?.runNow) {
+        await sync.runNow({ batchSize: 500 });
+        status = await sync.getStatus?.();
       }
+      if ((status?.pending ?? 0) > 0 || (status?.failed ?? 0) > 0 || (status?.conflicts ?? 0) > 0) {
+        throw new Error(
+          `This terminal still has ${status?.pending ?? 0} pending, ${status?.failed ?? 0} failed, and ${status?.conflicts ?? 0} conflicted local change(s). Resolve synchronization before changing branches.`,
+        );
+      }
+      await sync?.pause?.();
+
+      // Retire the registration centrally first, so credentials restored from
+      // an old machine backup are refused. Never silently clear only the local
+      // activation when the server could not confirm the retirement.
+      if (config?.tokenId) await revokeTerminalToken(config.tokenId);
+      await unpairTerminal();
+      toast.success("Terminal cleared — enter a new activation code");
+      window.setTimeout(() => window.location.reload(), 600);
+    } catch (error) {
+      await window.pos?.sync?.resume?.().catch(() => undefined);
+      toast.error(error instanceof Error ? error.message : "The terminal could not be unpaired safely.");
+    } finally {
+      setWorking(false);
     }
-    await unpairTerminal();
-    toast.success("Terminal cleared — enter a new activation code");
-    window.setTimeout(() => window.location.reload(), 600);
   };
 
   return (
@@ -99,7 +119,9 @@ export function UnpairTerminalCard() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep it paired</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void run()}>Unpair terminal</AlertDialogAction>
+            <AlertDialogAction disabled={working} onClick={(event) => { event.preventDefault(); void run(); }}>
+              {working ? "Checking synchronization…" : "Unpair terminal"}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

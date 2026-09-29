@@ -15,16 +15,13 @@ import { TICKET_ACTIONS, logTicketEvent } from "@/lib/ticket-audit";
 import {
   BadgeCheck,
   Banknote,
-  CreditCard,
   Minus,
   Plus,
   Printer,
   Search,
   Trash2,
-  Wallet,
   Gift,
   Vault,
-  Info,
   UserPlus,
   X,
   Repeat,
@@ -33,7 +30,6 @@ import {
   CalendarClock,
   ChevronUp,
   MonitorPlay,
-  Landmark,
   MessageCircle,
   PauseCircle,
   Percent,
@@ -92,28 +88,15 @@ import { useUserPermissions } from "@/lib/pos-permissions";
 import { useVisibility } from "@/lib/ui-visibility";
 import { useUiScale } from "@/lib/use-ui-scale";
 import { discountLabel, loadMemberVouchers, scopeLabel } from "@/lib/coupons";
-import type {
-  Booking,
-  CartLine,
-  DiscountType,
-  IntakeCharge,
-  Member,
-  PaymentMethod,
-  Sale,
-} from "@/core/types/pos-types";
+import type { IntakeCharge, Member, Sale } from "@/core/types/pos-types";
 import { applyCombo, intakeTotals, newJobTag } from "@/lib/booking-charges";
-import type { Payment } from "@/core/types/pos-types";
 import { TenderSplit } from "@/platforms/web/components/pos/TenderSplit";
 import {
   lineUnitDiscount,
-  methodLabel,
-  paymentsLabel,
-  paymentsTotal,
-  PAYMENT_LABELS,
   r2,
   validateTenders,
 } from "@/core/types/pos-types";
-import { activePaymentTypes, tenderIcon, usePaymentTypes } from "@/core/types/payment-types";
+import { tenderIcon } from "@/core/types/payment-types";
 import { NO_SALE_REASON_MAX, NO_SALE_REASON_MIN, recordNoSale } from "@/lib/drawer-events";
 
 import { logger } from "@/lib/audit-log";
@@ -121,20 +104,17 @@ import { DiscountPad } from "@/platforms/web/components/pos/DiscountPad";
 import { useManagerGate, type GateRequest } from "@/lib/manager-gate";
 import type { AuthPayload } from "@/lib/authorization";
 import { usePosRules } from "@/lib/pos-rules.tsx";
-import { assertShiftClosable } from "@/lib/pos-rules.functions";
-import { parseAmount, parsePositiveAmount } from "@/core/pricing/amount";
+import { parsePositiveAmount } from "@/core/pricing/amount";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { verifyBusinessAuthorization } from "@/lib/authorization-client";
 import { evaluatePromotions, focLine } from "@/lib/pos-promotions";
-import { clearCartDraft, loadCartDraft, saveCartDraft } from "@/lib/cart-draft";
+import { loadCartDraft, saveCartDraft } from "@/lib/cart-draft";
 import {
   openCashDrawer,
   printSaleReceipt,
-  printShiftReport,
   saleReceiptPreview,
 } from "@/lib/pos-print";
 import { ShiftCloseDialog } from "@/platforms/web/components/pos/ShiftCloseDialog";
-import { logSystemAction } from "@/lib/system-audit";
 import {
   openCustomerDisplay,
   publishDisplay,
@@ -195,11 +175,8 @@ function Register() {
   const {
     state,
     activeShift,
-    recordSale,
-    createBooking,
     updateBookingSpecs,
     openShift,
-    closeShift,
     currentStore,
     upsertProduct,
     updateSettings,
@@ -333,21 +310,6 @@ function Register() {
     );
   };
   const [closeShiftOpen, setCloseShiftOpen] = useState(false);
-  /** Leaving the dialog never closes the shift and never prints anything. */
-  function abandonShiftClose() {
-    setCloseShiftOpen(false);
-    if (activeShift) {
-      logSystemAction({
-        actorName: user?.name ?? activeShift.cashier,
-        actorRole: user?.role ?? null,
-        actionType: "SHIFT_CLOSE_CANCELLED",
-        entityAffected: "shifts",
-        entityId: activeShift.id,
-        storeId: currentStore.id,
-        note: "Closing screen dismissed — shift left open, nothing printed.",
-      });
-    }
-  }
   const canDiscount = can("can_give_discount");
   const [discountOverride, setDiscountOverride] = useState(false);
   const discountAllowed = canDiscount || discountOverride;
@@ -412,7 +374,7 @@ function Register() {
   const [openShiftOpen, setOpenShiftOpen] = useState(false);
   // Start blank so the cashier must enter the amount actually counted.
   const [float, setFloat] = useState("");
-  const [cashier, setCashier] = useState(user?.name ?? "Cashier");
+  const [cashier] = useState(user?.name ?? "Cashier");
   useEffect(() => {
     if (openShiftOpen) setFloat("");
   }, [openShiftOpen]);
@@ -444,9 +406,7 @@ function Register() {
     setTenders,
     bankName,
     setBankName,
-    paymentTypes,
     tenderOptions,
-    activeTender,
     activeMethodName,
     needsTenderRef,
     openPayment,
@@ -910,20 +870,6 @@ function Register() {
       .catch(() => undefined);
   }
 
-  function scanSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const code = query.trim();
-    if (!code) return;
-    if (/(^|\/)vch_[a-z0-9]+$/i.test(code)) {
-      setQuery("");
-      void applyVoucher(code);
-      return;
-    }
-    const hit = resolveByBarcode(state.products, code);
-    if (hit) setQuery("");
-    scanCode(code);
-  }
-
   const displayBase = {
     companyName: state.settings.receipt.companyName || currentStore.name,
     storeName: `${currentStore.name} (${currentStore.code})`,
@@ -952,7 +898,7 @@ function Register() {
     transferRef: "",
   });
 
-  const { saving, lastSale, setLastSale, completeSale, bookAndPayLater, sendSaleOnWhatsApp } =
+  const { saving, lastSale, completeSale, bookAndPayLater, sendSaleOnWhatsApp } =
     useCheckout({
       getActiveShift: () => activeShift,
       getCurrentStore: () => currentStore,
@@ -1093,7 +1039,6 @@ function Register() {
   const serviceTypes = (state.settings.integrations.serviceTypes ?? []).filter(
     (s2) => s2.active && s2.name.trim(),
   );
-  const pickedService = serviceTypes.find((s2) => s2.id === serviceId) ?? null;
   const stringingService = serviceTypes.find((s2) => s2.isStringingJob) ?? null;
   const racketMode = bookMode === "racket";
 
@@ -1249,7 +1194,6 @@ function Register() {
     toast.success(`Specs updated for ${updated.ref}`);
   }
 
-  const serviceLabel = pickedService?.name ?? customService.trim();
   /* ---- racket intake: catalogue pickers, customer-provided gear, labour lock ---- */
   const catalogueOptions = (match: RegExp) =>
     state.products

@@ -5897,6 +5897,7 @@ IF OBJECT_ID(N'dbo.settings_overrides', N'U') IS NULL BEGIN CREATE TABLE dbo.[se
   [updated_by] nvarchar(max) NULL,
   [created_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_settings_overrides_created_at] DEFAULT (SYSDATETIMEOFFSET()),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_settings_overrides_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
+  [row_version] int NOT NULL CONSTRAINT [DF_settings_overrides_row_version] DEFAULT (1),
   CONSTRAINT [PK_settings_overrides] PRIMARY KEY ([scope], [scope_id], [section])
 
 ); END;
@@ -5979,6 +5980,19 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.settings_ov
 END;
 
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.settings_overrides') AND c.name=N'updated_at' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[settings_overrides] ALTER COLUMN [updated_at] datetimeoffset(7) NOT NULL;
+
+IF COL_LENGTH(N'dbo.settings_overrides', N'row_version') IS NULL ALTER TABLE dbo.[settings_overrides] ADD [row_version] int NULL;
+
+IF OBJECT_ID(N'dbo.settings_overrides', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.settings_overrides', N'row_version') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.settings_overrides') AND c.name=N'row_version'
+) ALTER TABLE dbo.[settings_overrides] ADD CONSTRAINT [DF_settings_overrides_row_version] DEFAULT (1) FOR [row_version];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.settings_overrides') AND name=N'row_version' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[settings_overrides] SET [row_version]=1 WHERE [row_version] IS NULL;';
+  ALTER TABLE dbo.[settings_overrides] ALTER COLUMN [row_version] int NOT NULL;
+END;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.settings_overrides') AND name=N'IX_settings_overrides_updated_at') CREATE INDEX [IX_settings_overrides_updated_at] ON dbo.[settings_overrides]([updated_at]);
 
@@ -8290,6 +8304,7 @@ IF OBJECT_ID(N'dbo.settings_scoped', N'U') IS NULL BEGIN CREATE TABLE dbo.[setti
   [updated_by] nvarchar(max) NULL,
   [created_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_settings_scoped_created_at] DEFAULT (SYSDATETIMEOFFSET()),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_settings_scoped_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
+  [row_version] int NOT NULL CONSTRAINT [DF_settings_scoped_row_version] DEFAULT (1),
   CONSTRAINT [PK_settings_scoped] PRIMARY KEY ([scope], [scope_id], [key])
 
 ); END;
@@ -8374,6 +8389,19 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.settings_sc
 END;
 
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.settings_scoped') AND c.name=N'updated_at' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[settings_scoped] ALTER COLUMN [updated_at] datetimeoffset(7) NOT NULL;
+
+IF COL_LENGTH(N'dbo.settings_scoped', N'row_version') IS NULL ALTER TABLE dbo.[settings_scoped] ADD [row_version] int NULL;
+
+IF OBJECT_ID(N'dbo.settings_scoped', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.settings_scoped', N'row_version') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.settings_scoped') AND c.name=N'row_version'
+) ALTER TABLE dbo.[settings_scoped] ADD CONSTRAINT [DF_settings_scoped_row_version] DEFAULT (1) FOR [row_version];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.settings_scoped') AND name=N'row_version' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[settings_scoped] SET [row_version]=1 WHERE [row_version] IS NULL;';
+  ALTER TABLE dbo.[settings_scoped] ALTER COLUMN [row_version] int NOT NULL;
+END;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.settings_scoped') AND name=N'IX_settings_scoped_updated_at') CREATE INDEX [IX_settings_scoped_updated_at] ON dbo.[settings_scoped]([updated_at]);
 

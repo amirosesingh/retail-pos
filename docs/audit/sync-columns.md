@@ -1,6 +1,6 @@
 # Synchronization column matrix
 
-Generated from the packaged registry: 68 tables and 1160 synchronized columns.
+Generated from the packaged registry: 69 tables and 1175 synchronized columns.
 
 Columns listed here are synchronized unless the table is listed as local-only or cloud-only in the coverage matrix.
 
@@ -62,6 +62,17 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | audit_logs | before_state | before_state | jsonb | nvarchar(max) | yes | — | no | — | no |
 | audit_logs | after_state | after_state | jsonb | nvarchar(max) | yes | — | no | — | no |
 | audit_logs | store_id | store_id | TEXT | nvarchar(450) | yes | — | no | — | no |
+| authorization_action_history | id | id | uuid | uniqueidentifier | no | — | yes | — | no |
+| authorization_action_history | action_id | action_id | uuid | uniqueidentifier | no | — | no | — | no |
+| authorization_action_history | action_key | action_key | text | nvarchar(max) | no | — | no | — | no |
+| authorization_action_history | scope_type | scope_type | text | nvarchar(max) | no | — | no | — | no |
+| authorization_action_history | scope_id | scope_id | text | nvarchar(max) | no | '' | no | — | no |
+| authorization_action_history | row_version | row_version | integer | int | no | — | no | — | no |
+| authorization_action_history | changed_by | changed_by | text | nvarchar(max) | no | — | no | — | no |
+| authorization_action_history | change_source | change_source | text | nvarchar(max) | no | — | no | — | no |
+| authorization_action_history | change_kind | change_kind | text | nvarchar(max) | no | — | no | — | no |
+| authorization_action_history | snapshot | snapshot | jsonb | nvarchar(max) | no | N'{}' | no | — | no |
+| authorization_action_history | created_at | created_at | timestamptz | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | authorization_actions | id | id | uuid | uniqueidentifier | no | — | yes | — | no |
 | authorization_actions | action_key | action_key | text | nvarchar(128) | no | — | no | — | no |
 | authorization_actions | scope_type | scope_type | text | nvarchar(128) | no | 'global' | no | — | no |
@@ -80,6 +91,8 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | authorization_actions | require_reason | require_reason | boolean | bit | no | 0 | no | — | no |
 | authorization_actions | threshold | threshold | numeric | decimal(38,12) | yes | — | no | — | no |
 | authorization_actions | is_enabled | is_enabled | boolean | bit | no | 1 | no | — | no |
+| authorization_actions | row_version | row_version | integer | int | no | 1 | no | — | no |
+| authorization_actions | updated_by | updated_by | text | nvarchar(max) | yes | — | no | — | no |
 | authorization_actions | created_at | created_at | timestamptz | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | authorization_actions | updated_at | updated_at | timestamptz | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | authorization_log | id | id | uuid | uniqueidentifier | no | — | yes | — | no |
@@ -454,6 +467,7 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | settings_overrides | updated_by | updated_by | text | nvarchar(max) | yes | — | no | — | no |
 | settings_overrides | created_at | created_at | timestamp with time zone | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | settings_overrides | updated_at | updated_at | timestamp with time zone | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
+| settings_overrides | row_version | row_version | integer | int | no | 1 | no | — | no |
 | settings_scoped | scope | scope | text | nvarchar(128) | no | 'GLOBAL' | yes | — | no |
 | settings_scoped | scope_id | scope_id | text | nvarchar(128) | no | '' | yes | — | no |
 | settings_scoped | key | key | text | nvarchar(128) | no | — | yes | — | no |
@@ -462,6 +476,7 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | settings_scoped | updated_by | updated_by | text | nvarchar(max) | yes | — | no | — | no |
 | settings_scoped | created_at | created_at | timestamptz | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | settings_scoped | updated_at | updated_at | timestamptz | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
+| settings_scoped | row_version | row_version | integer | int | no | 1 | no | — | no |
 | shift_sessions | id | id | uuid | uniqueidentifier | no | NEWID() | yes | — | no |
 | shift_sessions | shift_id | shift_id | text | nvarchar(max) | yes | — | no | — | no |
 | shift_sessions | store_id | store_id | text | nvarchar(450) | no | — | no | — | no |

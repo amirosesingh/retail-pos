@@ -7,6 +7,7 @@ Generated from the packaged synchronization registry. Financial records are corr
 | activity_events | idempotent_upsert | versioned | tombstone | highest_version |
 | app_users | idempotent_upsert | versioned | tombstone | highest_version |
 | audit_logs | idempotent_upsert | versioned | tombstone | highest_version |
+| authorization_action_history | idempotent_upsert | append_only | none | immutable_reversal |
 | authorization_actions | idempotent_upsert | versioned | tombstone | highest_version |
 | authorization_log | idempotent_upsert | versioned | tombstone | highest_version |
 | authorization_requests | idempotent_upsert | versioned | tombstone | highest_version |

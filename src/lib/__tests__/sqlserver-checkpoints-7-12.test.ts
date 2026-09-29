@@ -53,7 +53,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(schema).toContain("SYNC_IDEMPOTENCY_MISMATCH");
     expect(schema).toMatch(/FOR v_op[\s\S]+INSERT INTO public\.sync_idempotency_receipts/);
     expect(schema).toContain("SYNC_BRANCH_FORBIDDEN");
-    expect(schema).toMatch(/sync_delete_sales\(p_changes jsonb,p_branch_id text\)/);
+    expect(schema).toMatch(/sync_delete_sales\(p_changes jsonb,p_branch_id text,p_terminal_id text\)/);
     expect(schema).toContain("REVOKE ALL ON FUNCTION public.sync_apply_sales(jsonb) FROM PUBLIC");
     expect(schema).toMatch(/sync_apply_item_activity_logs[\s\S]+stock_apply_delta/);
     expect(schema).toMatch(/sync_apply_products[\s\S]+DO UPDATE SET[\s\S]+WHERE EXCLUDED\."row_version">public\."products"\."row_version"/);

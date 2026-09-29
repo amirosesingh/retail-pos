@@ -72,6 +72,42 @@ describe("relay authorisation", () => {
     if (!out.ok) expect(out.code).toBe("PERMISSION_DENIED");
   });
 
+  it("allows only permissioned product-price overrides for the proven branch", async () => {
+    const allowed = await safeAuthorizeRelayOp(
+      {
+        kind: "upsert",
+        table: "settings_scoped",
+        rows: [{
+          scope: "BRANCH",
+          scope_id: "STORE-A",
+          key: "product_price:p-1",
+          value: { selling_price: 12, ecom_price: 14 },
+          row_version: 999,
+          updated_by: "spoofed",
+        }],
+      },
+      { ...cashier, permissions: { ...cashier.permissions, can_edit_product_price: true } },
+    );
+    expect(allowed.ok).toBe(true);
+    if (allowed.ok && allowed.op.kind === "upsert") {
+      expect(allowed.op.onConflict).toBe("scope,scope_id,key");
+      expect(allowed.op.rows[0]).not.toHaveProperty("row_version");
+      expect(allowed.op.rows[0]?.["updated_by"]).toBe("u-1");
+    }
+
+    for (const rows of [
+      [{ scope: "BRANCH", scope_id: "STORE-B", key: "product_price:p-1", value: { selling_price: 12 } }],
+      [{ scope: "GLOBAL", scope_id: "", key: "product_price:p-1", value: { selling_price: 12 } }],
+      [{ scope: "BRANCH", scope_id: "STORE-A", key: "tax.rate", value: { selling_price: 12 } }],
+    ]) {
+      const denied = await safeAuthorizeRelayOp(
+        { kind: "upsert", table: "settings_scoped", rows },
+        { ...cashier, permissions: { ...cashier.permissions, can_edit_product_price: true } },
+      );
+      expect(denied.ok).toBe(false);
+    }
+  });
+
   it("enforces tender corrections on the backend", async () => {
     const denied = await safeAuthorizeRelayOp(
       { kind: "update", table: "sales", values: { payment_type: "cash" }, match: { id: "s1" } },

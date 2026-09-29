@@ -734,6 +734,7 @@ CREATE TABLE IF NOT EXISTS public.settings_overrides (
     updated_by text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
+    ,row_version integer DEFAULT 1 NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.shift_sessions (
@@ -8240,8 +8241,28 @@ CREATE TABLE IF NOT EXISTS public.settings_scoped (
   updated_by text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
+  row_version integer NOT NULL DEFAULT 1,
   PRIMARY KEY (scope, scope_id, key)
 );
+
+ALTER TABLE public.settings_overrides ADD COLUMN IF NOT EXISTS row_version integer NOT NULL DEFAULT 1;
+ALTER TABLE public.settings_scoped ADD COLUMN IF NOT EXISTS row_version integer NOT NULL DEFAULT 1;
+
+CREATE OR REPLACE FUNCTION public.preserve_or_bump_row_version() RETURNS trigger
+LANGUAGE plpgsql SET search_path TO 'public', 'pg_temp' AS $$
+BEGIN
+  NEW.row_version := GREATEST(COALESCE(NEW.row_version, 0), COALESCE(OLD.row_version, 0) + 1);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS settings_overrides_bump_row_version ON public.settings_overrides;
+CREATE TRIGGER settings_overrides_bump_row_version BEFORE UPDATE ON public.settings_overrides
+  FOR EACH ROW EXECUTE FUNCTION public.preserve_or_bump_row_version();
+
+DROP TRIGGER IF EXISTS settings_scoped_bump_row_version ON public.settings_scoped;
+CREATE TRIGGER settings_scoped_bump_row_version BEFORE UPDATE ON public.settings_scoped
+  FOR EACH ROW EXECUTE FUNCTION public.preserve_or_bump_row_version();
 
 GRANT SELECT ON public.settings_scoped TO authenticated;
 GRANT ALL ON public.settings_scoped TO service_role;
@@ -12630,6 +12651,144 @@ $retail_verify_rls$;
 RESET check_function_bodies;
 RESET client_min_messages;
 
+-- Append-only master/configuration history and automatic stock lifecycle
+-- history. The migration source is
+-- 20260929080000_change_history_stock_request_lifecycle.sql.
+CREATE TABLE IF NOT EXISTS public.change_history (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id text NOT NULL DEFAULT 'default',
+  entity_type text NOT NULL, entity_id text NOT NULL,
+  action text NOT NULL CHECK (action IN ('insert','update','delete')),
+  old_value jsonb, new_value jsonb, revision bigint NOT NULL,
+  scope_type text NOT NULL DEFAULT 'GLOBAL', scope_id text, changed_by text,
+  source_application text NOT NULL DEFAULT 'web', device_id text, terminal_id text,
+  server_timestamp timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS change_history_entity_idx ON public.change_history(entity_type,entity_id,revision DESC);
+CREATE INDEX IF NOT EXISTS change_history_scope_idx ON public.change_history(organization_id,scope_type,scope_id,server_timestamp DESC);
+ALTER TABLE public.change_history ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.change_history FROM anon,authenticated;
+GRANT SELECT ON public.change_history TO authenticated;
+GRANT ALL ON public.change_history TO service_role;
+DROP POLICY IF EXISTS "Auditors read applicable change history" ON public.change_history;
+CREATE POLICY "Auditors read applicable change history" ON public.change_history FOR SELECT TO authenticated
+USING (public.has_perm('can_view_audit_trail') AND (upper(scope_type)='GLOBAL' OR (upper(scope_type)='BRANCH' AND public.store_visible(scope_id)) OR (upper(scope_type)='TERMINAL' AND EXISTS(SELECT 1 FROM public.terminal_tokens t WHERE t.id::text=scope_id AND public.store_visible(t.location_id)))));
+CREATE OR REPLACE FUNCTION public.change_history_immutable() RETURNS trigger LANGUAGE plpgsql SET search_path=public,pg_temp AS $fn$ BEGIN RAISE EXCEPTION 'change_history is append-only'; END $fn$;
+DROP TRIGGER IF EXISTS change_history_no_change ON public.change_history;
+CREATE TRIGGER change_history_no_change BEFORE UPDATE OR DELETE ON public.change_history FOR EACH ROW EXECUTE FUNCTION public.change_history_immutable();
+
+CREATE OR REPLACE FUNCTION public.record_product_master_history() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE v_old jsonb; v_new jsonb; v_owner text; v_revision bigint;
+BEGIN v_old:=CASE WHEN TG_OP='INSERT' THEN NULL ELSE to_jsonb(OLD)-'stock_quantity'-'stock_by_store' END; v_new:=CASE WHEN TG_OP='DELETE' THEN NULL ELSE to_jsonb(NEW)-'stock_quantity'-'stock_by_store' END;
+IF TG_OP='UPDATE' AND v_old IS NOT DISTINCT FROM v_new THEN RETURN NEW; END IF; v_owner:=COALESCE(NEW.owner_store_id,OLD.owner_store_id); v_revision:=COALESCE(NEW.row_version,OLD.row_version,1);
+INSERT INTO public.change_history(entity_type,entity_id,action,old_value,new_value,revision,scope_type,scope_id,changed_by,source_application,device_id,terminal_id)
+VALUES('products',COALESCE(NEW.id,OLD.id)::text,lower(TG_OP),v_old,v_new,v_revision,CASE WHEN NULLIF(v_owner,'') IS NULL THEN 'GLOBAL' ELSE 'BRANCH' END,NULLIF(v_owner,''),NULLIF(current_setting('pos.updated_by',true),''),COALESCE(NULLIF(current_setting('pos.source_application',true),''),'web'),NULLIF(current_setting('pos.device_id',true),''),NULLIF(current_setting('pos.sync_terminal',true),'')); RETURN COALESCE(NEW,OLD); END $fn$;
+DROP TRIGGER IF EXISTS products_change_history ON public.products;
+CREATE TRIGGER products_change_history AFTER INSERT OR UPDATE OR DELETE ON public.products FOR EACH ROW EXECUTE FUNCTION public.record_product_master_history();
+
+CREATE OR REPLACE FUNCTION public.record_scoped_setting_history() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE v_old jsonb; v_new jsonb; v_row jsonb; v_scope text; v_scope_id text; v_revision bigint; v_entity_id text;
+BEGIN v_old:=CASE WHEN TG_OP='INSERT' THEN NULL ELSE to_jsonb(OLD) END; v_new:=CASE WHEN TG_OP='DELETE' THEN NULL ELSE to_jsonb(NEW) END; IF TG_OP='UPDATE' AND v_old IS NOT DISTINCT FROM v_new THEN RETURN NEW; END IF; v_row:=COALESCE(v_new,v_old); v_scope:=upper(COALESCE(v_row->>'scope','GLOBAL')); v_scope_id:=NULLIF(v_row->>'scope_id',''); v_revision:=COALESCE((v_row->>'row_version')::bigint,1); v_entity_id:=concat_ws(':',v_scope,COALESCE(v_scope_id,''),COALESCE(v_row->>'section',v_row->>'key',''));
+INSERT INTO public.change_history(entity_type,entity_id,action,old_value,new_value,revision,scope_type,scope_id,changed_by,source_application,device_id,terminal_id)
+VALUES(TG_TABLE_NAME,v_entity_id,lower(TG_OP),v_old,v_new,v_revision,v_scope,v_scope_id,COALESCE(v_row->>'updated_by',NULLIF(current_setting('pos.updated_by',true),'')),COALESCE(NULLIF(current_setting('pos.source_application',true),''),'web'),NULLIF(current_setting('pos.device_id',true),''),NULLIF(current_setting('pos.sync_terminal',true),'')); RETURN COALESCE(NEW,OLD); END $fn$;
+DROP TRIGGER IF EXISTS settings_overrides_change_history ON public.settings_overrides;
+CREATE TRIGGER settings_overrides_change_history AFTER INSERT OR UPDATE OR DELETE ON public.settings_overrides FOR EACH ROW EXECUTE FUNCTION public.record_scoped_setting_history();
+DROP TRIGGER IF EXISTS settings_scoped_change_history ON public.settings_scoped;
+CREATE TRIGGER settings_scoped_change_history AFTER INSERT OR UPDATE OR DELETE ON public.settings_scoped FOR EACH ROW EXECUTE FUNCTION public.record_scoped_setting_history();
+
+CREATE OR REPLACE FUNCTION public.record_stock_transfer_status_history() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE v_actor text; v_reason text; v_branch text;
+BEGIN IF TG_OP='UPDATE' AND OLD.status IS NOT DISTINCT FROM NEW.status THEN RETURN NEW; END IF; v_actor:=CASE NEW.status WHEN 'approved' THEN NEW.approved_by WHEN 'rejected' THEN NEW.rejected_by WHEN 'dispatched' THEN NEW.dispatched_by WHEN 'received' THEN NEW.received_by WHEN 'verified' THEN NEW.verified_by WHEN 'completed' THEN NEW.verified_by WHEN 'completed_with_discrepancy' THEN NEW.verified_by ELSE NEW.created_by END; v_reason:=COALESCE(NEW.rejected_reason,NEW.cancelled_reason,NEW.discrepancy_reason);
+FOREACH v_branch IN ARRAY ARRAY[NEW.from_store_id,NEW.to_store_id] LOOP INSERT INTO public.entity_status_history(entity_type,entity_id,status_kind,previous_status,new_status,reason,actor_name,store_id,branch_id,related_entity_type,related_entity_id,metadata,client_event_id,row_version)
+VALUES('stock_transfer',NEW.id::text,CASE WHEN NEW.kind='request' THEN 'request_status' ELSE 'transfer_status' END,CASE WHEN TG_OP='INSERT' THEN NULL ELSE OLD.status END,NEW.status,v_reason,v_actor,v_branch,v_branch,'branch',CASE WHEN v_branch=NEW.from_store_id THEN NEW.to_store_id ELSE NEW.from_store_id END,jsonb_build_object('ref',NEW.ref,'kind',NEW.kind,'from_store_id',NEW.from_store_id,'to_store_id',NEW.to_store_id),concat('stock_transfer:',NEW.id,':',NEW.status,':',v_branch,':',NEW.row_version),NEW.row_version) ON CONFLICT (client_event_id) WHERE client_event_id IS NOT NULL DO NOTHING; END LOOP; RETURN NEW; END $fn$;
+DROP TRIGGER IF EXISTS stock_transfers_status_history ON public.stock_transfers;
+CREATE TRIGGER stock_transfers_status_history AFTER INSERT OR UPDATE OF status ON public.stock_transfers FOR EACH ROW EXECUTE FUNCTION public.record_stock_transfer_status_history();
+REVOKE ALL ON FUNCTION public.record_product_master_history() FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.record_scoped_setting_history() FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.record_stock_transfer_status_history() FROM PUBLIC,anon,authenticated;
+
+-- Scoped synchronization and RLS hardening. Keep this immediately before the
+-- generated sync contract so canonical regeneration cannot weaken it.
+CREATE OR REPLACE FUNCTION public.settings_scope_visible(p_scope text, p_scope_id text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+  SELECT CASE lower(COALESCE(p_scope,''))
+    WHEN 'global' THEN auth.uid() IS NOT NULL
+    WHEN 'branch' THEN public.store_visible(p_scope_id)
+    WHEN 'cluster' THEN EXISTS (
+      SELECT 1 FROM public.stores s
+      WHERE COALESCE(NULLIF(s.group_id,''),'default')=p_scope_id AND public.store_visible(s.id)
+    )
+    WHEN 'terminal' THEN EXISTS (
+      SELECT 1 FROM public.terminal_tokens t
+      WHERE t.id::text=p_scope_id AND public.store_visible(t.location_id)
+    )
+    WHEN 'private' THEN p_scope_id=public.settings_private_key()
+    ELSE false
+  END
+$$;
+
+CREATE OR REPLACE FUNCTION public.settings_scope_manageable(p_scope text, p_scope_id text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+  SELECT CASE lower(COALESCE(p_scope,''))
+    WHEN 'global' THEN EXISTS (
+      SELECT 1 FROM public.app_users u WHERE u.auth_user_id=auth.uid() AND u.is_active=true AND u.role='admin'
+    )
+    WHEN 'private' THEN p_scope_id=public.settings_private_key()
+    ELSE public.is_supervisor_now() AND public.settings_scope_visible(p_scope,p_scope_id)
+  END
+$$;
+
+REVOKE ALL ON FUNCTION public.settings_scope_visible(text,text) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.settings_scope_manageable(text,text) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.settings_scope_visible(text,text) TO authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.settings_scope_manageable(text,text) TO authenticated,service_role;
+
+REVOKE ALL ON TABLE public.settings_overrides FROM anon;
+REVOKE ALL ON TABLE public.settings_scoped FROM anon;
+GRANT SELECT ON TABLE public.settings_overrides,public.settings_scoped TO authenticated;
+
+DROP POLICY IF EXISTS settings_overrides_private ON public.settings_overrides;
+DROP POLICY IF EXISTS settings_overrides_read ON public.settings_overrides;
+DROP POLICY IF EXISTS settings_overrides_write ON public.settings_overrides;
+CREATE POLICY settings_overrides_read ON public.settings_overrides FOR SELECT TO authenticated
+  USING (public.settings_scope_visible(scope,scope_id));
+CREATE POLICY settings_overrides_write ON public.settings_overrides FOR ALL TO authenticated
+  USING (public.settings_scope_manageable(scope,scope_id))
+  WITH CHECK (public.settings_scope_manageable(scope,scope_id));
+
+DROP POLICY IF EXISTS settings_scoped_read ON public.settings_scoped;
+DROP POLICY IF EXISTS "Staff read scoped settings" ON public.settings_scoped;
+CREATE POLICY settings_scoped_read ON public.settings_scoped FOR SELECT TO authenticated
+  USING (public.settings_scope_visible(scope,scope_id));
+
+DROP POLICY IF EXISTS "Staff read pos rules" ON public.pos_store_settings;
+DROP POLICY IF EXISTS "Supervisors update rules" ON public.pos_store_settings;
+DROP POLICY IF EXISTS "Supervisors write rules" ON public.pos_store_settings;
+CREATE POLICY "Supervisors update visible rules" ON public.pos_store_settings FOR UPDATE TO authenticated
+  USING (public.is_supervisor_now() AND public.store_visible(store_id))
+  WITH CHECK (public.is_supervisor_now() AND public.store_visible(store_id));
+CREATE POLICY "Supervisors insert visible rules" ON public.pos_store_settings FOR INSERT TO authenticated
+  WITH CHECK (public.is_supervisor_now() AND public.store_visible(store_id));
+
+DROP POLICY IF EXISTS "Staff read authorisation rules" ON public.authorization_actions;
+CREATE POLICY "Staff read authorisation rules" ON public.authorization_actions FOR SELECT TO authenticated
+  USING (public.is_staff_now() AND public.settings_scope_visible(scope_type,scope_id));
+DROP POLICY IF EXISTS "Staff read authorisation rule history" ON public.authorization_action_history;
+CREATE POLICY "Staff read authorisation rule history" ON public.authorization_action_history FOR SELECT TO authenticated
+  USING (public.is_staff_now() AND public.settings_scope_visible(scope_type,scope_id));
+
+DROP POLICY IF EXISTS terminal_commands_staff_read ON public.terminal_commands;
+DROP POLICY IF EXISTS terminal_commands_staff_update ON public.terminal_commands;
+DROP POLICY IF EXISTS terminal_commands_staff_write ON public.terminal_commands;
+DROP POLICY IF EXISTS "Staff read commands" ON public.terminal_commands;
+DROP POLICY IF EXISTS "Staff complete commands" ON public.terminal_commands;
+DROP POLICY IF EXISTS "Supervisors issue commands" ON public.terminal_commands;
+CREATE POLICY terminal_commands_branch_read ON public.terminal_commands FOR SELECT TO authenticated
+  USING (public.store_visible(store_id));
+CREATE POLICY terminal_commands_branch_update ON public.terminal_commands FOR UPDATE TO authenticated
+  USING (public.store_visible(store_id)) WITH CHECK (public.store_visible(store_id));
+CREATE POLICY terminal_commands_branch_insert ON public.terminal_commands FOR INSERT TO authenticated
+  WITH CHECK (public.is_supervisor_now() AND public.store_visible(store_id));
+
 -- SQLSERVER_SYNC_CONTRACT_BEGIN
 
 CREATE TABLE IF NOT EXISTS public.sync_idempotency_receipts (
@@ -12640,12 +12799,24 @@ ALTER TABLE public.sync_idempotency_receipts ADD COLUMN IF NOT EXISTS payload_ha
 
 CREATE TABLE IF NOT EXISTS public.sync_change_feed (
  cursor bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, organization_id text NOT NULL, branch_id text NOT NULL,
+ terminal_id text,
  table_name text NOT NULL, entity_id text NOT NULL, operation text NOT NULL CHECK(operation IN ('insert','update','delete')),
  row_version bigint NOT NULL DEFAULT 1, tombstone boolean NOT NULL DEFAULT false, changed_at timestamptz NOT NULL DEFAULT now());
 
 CREATE INDEX IF NOT EXISTS sync_change_feed_branch_cursor_idx ON public.sync_change_feed(organization_id,branch_id,cursor);
 
+ALTER TABLE public.sync_change_feed ADD COLUMN IF NOT EXISTS terminal_id text;
+
 ALTER TABLE public.sync_idempotency_receipts ENABLE ROW LEVEL SECURITY; ALTER TABLE public.sync_change_feed ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION public.pos_sync_validate_scope(p_organization_id text,p_branch_id text,p_terminal_id text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+BEGIN
+ IF p_organization_id IS DISTINCT FROM 'default' THEN RAISE EXCEPTION 'SYNC_ORGANIZATION_FORBIDDEN'; END IF;
+ IF NULLIF(btrim(p_branch_id),'') IS NULL OR NULLIF(btrim(p_terminal_id),'') IS NULL THEN RAISE EXCEPTION 'SYNC_TERMINAL_REQUIRED'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.terminal_tokens t WHERE t.id::text=p_terminal_id AND t.location_id=p_branch_id AND t.status IN ('active','used') AND t.revoked_at IS NULL) THEN RAISE EXCEPTION 'SYNC_TERMINAL_SCOPE_FORBIDDEN'; END IF;
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_sync_validate_scope(text,text,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_validate_scope(text,text,text) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.sync_apply_coupon_campaigns(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer; v_row jsonb;
@@ -12662,17 +12833,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_coupon_campaigns(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_coupon_campaigns(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."coupon_campaigns" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_coupon_campaigns(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_coupon_campaigns(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_coupon_campaigns(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_coupon_campaigns() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'coupon_campaigns',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'coupon_campaigns',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."coupon_campaigns";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."coupon_campaigns" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_coupon_campaigns();
 
@@ -12693,17 +12864,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_shifts(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_shifts(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."shifts" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_shifts(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_shifts(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_shifts(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_shifts() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'shifts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'shifts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."shifts";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."shifts" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_shifts();
 
@@ -12724,17 +12895,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_issued_vouchers(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_issued_vouchers(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."issued_vouchers" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_issued_vouchers(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_issued_vouchers(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_issued_vouchers(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_issued_vouchers() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'issued_vouchers',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'issued_vouchers',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."issued_vouchers";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."issued_vouchers" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_issued_vouchers();
 
@@ -12755,17 +12926,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_activity_events(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_activity_events(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."activity_events" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_activity_events(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_activity_events(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_activity_events(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_activity_events() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'activity_events',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'activity_events',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."activity_events";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."activity_events" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_activity_events();
 
@@ -12786,17 +12957,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_app_users(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_app_users(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."app_users" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_app_users(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_app_users(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_app_users(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_app_users() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'app_users',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'app_users',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."app_users";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."app_users" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_app_users();
 
@@ -12817,17 +12988,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_audit_logs(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_audit_logs(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."audit_logs" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_audit_logs(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_audit_logs(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_audit_logs(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_audit_logs() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'audit_logs',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'audit_logs',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."audit_logs";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."audit_logs" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_audit_logs();
 
@@ -12848,17 +13019,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_booking_payments(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_booking_payments(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."booking_payments" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=x."booking_id"::text AND p.store_id::text=p_branch_id)) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_booking_payments(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_booking_payments(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_booking_payments(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_booking_payments() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'booking_payments',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT p.store_id::text branch_id FROM public."bookings" p WHERE p."id"::text=COALESCE(NEW."booking_id",OLD."booking_id")::text) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'booking_payments',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT p.store_id::text branch_id,NULL::text terminal_id FROM public."bookings" p WHERE p."id"::text=COALESCE(NEW."booking_id",OLD."booking_id")::text) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."booking_payments";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."booking_payments" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_booking_payments();
 
@@ -12879,17 +13050,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_bookings(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_bookings(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."bookings" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_bookings(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_bookings(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_bookings(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_bookings() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'bookings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'bookings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."bookings";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."bookings" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_bookings();
 
@@ -12910,17 +13081,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_branch_telemetry(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_branch_telemetry(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."branch_telemetry" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."terminal_id"::text=COALESCE(c->'key'->>'terminal_id',(c->>'entityId')::jsonb->>'terminal_id',(c->>'entity_id')::jsonb->>'terminal_id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_branch_telemetry(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_branch_telemetry(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_branch_telemetry(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_branch_telemetry() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'branch_telemetry',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('terminal_id',OLD."terminal_id")::text ELSE jsonb_build_object('terminal_id',NEW."terminal_id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'branch_telemetry',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('terminal_id',OLD."terminal_id")::text ELSE jsonb_build_object('terminal_id',NEW."terminal_id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."branch_telemetry";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."branch_telemetry" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_branch_telemetry();
 
@@ -12941,17 +13112,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_cashiers(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_cashiers(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."cashiers" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_cashiers(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_cashiers(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_cashiers(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_cashiers() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'cashiers',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'cashiers',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."cashiers";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."cashiers" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_cashiers();
 
@@ -12972,17 +13143,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_coupon_events(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_coupon_events(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."coupon_events" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_coupon_events(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_coupon_events(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_coupon_events(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_coupon_events() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'coupon_events',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'coupon_events',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."coupon_events";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."coupon_events" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_coupon_events();
 
@@ -13003,17 +13174,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_drawer_events(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_drawer_events(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."drawer_events" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_drawer_events(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_drawer_events(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_drawer_events(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_drawer_events() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'drawer_events',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'drawer_events',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."drawer_events";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."drawer_events" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_drawer_events();
 
@@ -13034,17 +13205,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_held_orders(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_held_orders(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."held_orders" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_held_orders(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_held_orders(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_held_orders(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_held_orders() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'held_orders',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'held_orders',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."held_orders";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."held_orders" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_held_orders();
 
@@ -13065,17 +13236,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_integration_settings(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_integration_settings(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."integration_settings" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_integration_settings(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_integration_settings(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_integration_settings(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_integration_settings() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'integration_settings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'integration_settings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."integration_settings";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."integration_settings" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_integration_settings();
 
@@ -13100,17 +13271,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_item_activity_logs(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_item_activity_logs(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."item_activity_logs" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_item_activity_logs(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_item_activity_logs(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_item_activity_logs(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_item_activity_logs() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'item_activity_logs',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'item_activity_logs',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."item_activity_logs";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."item_activity_logs" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_item_activity_logs();
 
@@ -13131,17 +13302,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_member_verifications(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_member_verifications(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."member_verifications" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_member_verifications(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_member_verifications(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_member_verifications(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_member_verifications() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'member_verifications',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'member_verifications',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."member_verifications";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."member_verifications" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_member_verifications();
 
@@ -13162,17 +13333,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_members(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_members(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."members" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_members(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_members(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_members(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_members() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'members',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'members',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."members";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."members" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_members();
 
@@ -13193,17 +13364,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_membership_tiers(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_membership_tiers(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."membership_tiers" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_membership_tiers(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_membership_tiers(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_membership_tiers(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_membership_tiers() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'membership_tiers',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'membership_tiers',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."membership_tiers";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."membership_tiers" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_membership_tiers();
 
@@ -13224,17 +13395,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_offline_sync_audit_log(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_offline_sync_audit_log(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."offline_sync_audit_log" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_offline_sync_audit_log(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_offline_sync_audit_log(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_offline_sync_audit_log(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_offline_sync_audit_log() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'offline_sync_audit_log',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'offline_sync_audit_log',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."offline_sync_audit_log";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."offline_sync_audit_log" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_offline_sync_audit_log();
 
@@ -13255,17 +13426,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_payment_transactions(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_payment_transactions(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."payment_transactions" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_payment_transactions(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_payment_transactions(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_payment_transactions(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_payment_transactions() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'payment_transactions',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'payment_transactions',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."payment_transactions";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."payment_transactions" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_payment_transactions();
 
@@ -13286,17 +13457,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_payment_types(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_payment_types(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."payment_types" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_payment_types(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_payment_types(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_payment_types(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_payment_types() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'payment_types',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'payment_types',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."payment_types";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."payment_types" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_payment_types();
 
@@ -13317,17 +13488,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_pin_attempts(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_pin_attempts(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."pin_attempts" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."key"::text=COALESCE(c->'key'->>'key',(c->>'entityId')::jsonb->>'key',(c->>'entity_id')::jsonb->>'key');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_pin_attempts(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_pin_attempts(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_pin_attempts(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_pin_attempts() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'pin_attempts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('key',OLD."key")::text ELSE jsonb_build_object('key',NEW."key")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'pin_attempts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('key',OLD."key")::text ELSE jsonb_build_object('key',NEW."key")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."pin_attempts";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."pin_attempts" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_pin_attempts();
 
@@ -13348,17 +13519,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_pos_settings(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_pos_settings(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."pos_settings" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_pos_settings(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_pos_settings(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_pos_settings(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_pos_settings() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'pos_settings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'pos_settings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."pos_settings";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."pos_settings" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_pos_settings();
 
@@ -13379,17 +13550,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_product_barcodes(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_product_barcodes(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."product_barcodes" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
- WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=x."product_id"::text AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id))) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_product_barcodes(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_product_barcodes(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_product_barcodes(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_product_barcodes() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'product_barcodes',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'product_barcodes',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NULLIF(p.owner_store_id::text,''),'global') branch_id,NULL::text terminal_id FROM public."products" p WHERE p."id"::text=COALESCE(NEW."product_id",OLD."product_id")::text) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."product_barcodes";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."product_barcodes" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_product_barcodes();
 
@@ -13410,17 +13581,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_product_categories(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_product_categories(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."product_categories" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_product_categories(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_product_categories(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_product_categories(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_product_categories() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'product_categories',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'product_categories',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."product_categories";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."product_categories" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_product_categories();
 
@@ -13441,17 +13612,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_products(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_products(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."products" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
- WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND ((NULLIF(x.owner_store_id::text,'') IS NULL OR x.owner_store_id::text=p_branch_id)) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_products(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_products(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_products(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_products() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'products',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'products',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NULLIF(COALESCE(NEW.owner_store_id,OLD.owner_store_id)::text,''),'global') branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."products";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."products" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_products();
 
@@ -13472,17 +13643,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_promotions(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_promotions(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."promotions" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
- WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=x."foc_product_id"::text AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id))) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_promotions(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_promotions(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_promotions(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_promotions() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'promotions',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'promotions',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NULLIF(p.owner_store_id::text,''),'global') branch_id,NULL::text terminal_id FROM public."products" p WHERE p."id"::text=COALESCE(NEW."foc_product_id",OLD."foc_product_id")::text) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."promotions";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."promotions" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_promotions();
 
@@ -13503,17 +13674,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_public_flags(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_public_flags(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."public_flags" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."key"::text=COALESCE(c->'key'->>'key',(c->>'entityId')::jsonb->>'key',(c->>'entity_id')::jsonb->>'key');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_public_flags(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_public_flags(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_public_flags(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_public_flags() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'public_flags',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('key',OLD."key")::text ELSE jsonb_build_object('key',NEW."key")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'public_flags',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('key',OLD."key")::text ELSE jsonb_build_object('key',NEW."key")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."public_flags";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."public_flags" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_public_flags();
 
@@ -13534,17 +13705,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_purchase_order_items(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_purchase_order_items(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."purchase_order_items" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"::text=x."po_id"::text AND p.store_id::text=p_branch_id)) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_purchase_order_items(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_purchase_order_items(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_purchase_order_items(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_purchase_order_items() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'purchase_order_items',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT p.store_id::text branch_id FROM public."purchase_orders" p WHERE p."id"::text=COALESCE(NEW."po_id",OLD."po_id")::text) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'purchase_order_items',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT p.store_id::text branch_id,NULL::text terminal_id FROM public."purchase_orders" p WHERE p."id"::text=COALESCE(NEW."po_id",OLD."po_id")::text) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."purchase_order_items";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."purchase_order_items" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_purchase_order_items();
 
@@ -13565,17 +13736,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_purchase_orders(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_purchase_orders(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."purchase_orders" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_purchase_orders(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_purchase_orders(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_purchase_orders(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_purchase_orders() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'purchase_orders',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'purchase_orders',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."purchase_orders";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."purchase_orders" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_purchase_orders();
 
@@ -13596,17 +13767,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_sale_items(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_sale_items(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."sale_items" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.branch_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_sale_items(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_sale_items(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_sale_items(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_sale_items() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'sale_items',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.branch_id,OLD.branch_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'sale_items',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.branch_id,OLD.branch_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."sale_items";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."sale_items" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_sale_items();
 
@@ -13627,17 +13798,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_sales(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_sales(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."sales" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_sales(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_sales(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_sales(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_sales() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'sales',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'sales',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."sales";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."sales" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_sales();
 
@@ -13658,17 +13829,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_secure_settings(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_secure_settings(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."secure_settings" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."key"::text=COALESCE(c->'key'->>'key',(c->>'entityId')::jsonb->>'key',(c->>'entity_id')::jsonb->>'key');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_secure_settings(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_secure_settings(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_secure_settings(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_secure_settings() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'secure_settings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('key',OLD."key")::text ELSE jsonb_build_object('key',NEW."key")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'secure_settings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('key',OLD."key")::text ELSE jsonb_build_object('key',NEW."key")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."secure_settings";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."secure_settings" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_secure_settings();
 
@@ -13689,17 +13860,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_security_findings(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_security_findings(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."security_findings" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_security_findings(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_security_findings(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_security_findings(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_security_findings() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'security_findings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'security_findings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."security_findings";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."security_findings" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_security_findings();
 
@@ -13720,17 +13891,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_settings_locks(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_settings_locks(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."settings_locks" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."section"::text=COALESCE(c->'key'->>'section',(c->>'entityId')::jsonb->>'section',(c->>'entity_id')::jsonb->>'section');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_settings_locks(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_settings_locks(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_settings_locks(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_settings_locks() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'settings_locks',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('section',OLD."section")::text ELSE jsonb_build_object('section',NEW."section")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'settings_locks',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('section',OLD."section")::text ELSE jsonb_build_object('section',NEW."section")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."settings_locks";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."settings_locks" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_settings_locks();
 
@@ -13741,9 +13912,9 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."settings_overrides" ("scope","scope_id","section","patch","updated_by","created_at","updated_at")
-  SELECT "scope","scope_id","section","patch","updated_by","created_at","updated_at" FROM jsonb_populate_recordset(NULL::public."settings_overrides", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("scope","scope_id","section") DO UPDATE SET "patch"=EXCLUDED."patch","updated_by"=EXCLUDED."updated_by","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at";
+  INSERT INTO public."settings_overrides" ("scope","scope_id","section","patch","updated_by","created_at","updated_at","row_version")
+  SELECT "scope","scope_id","section","patch","updated_by","created_at","updated_at","row_version" FROM jsonb_populate_recordset(NULL::public."settings_overrides", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("scope","scope_id","section") DO UPDATE SET "patch"=EXCLUDED."patch","updated_by"=EXCLUDED."updated_by","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","row_version"=EXCLUDED."row_version" WHERE EXCLUDED."row_version">public."settings_overrides"."row_version";
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 
@@ -13751,17 +13922,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_settings_overrides(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_settings_overrides(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."settings_overrides" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
- WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."scope"::text=COALESCE(c->'key'->>'scope',(c->>'entityId')::jsonb->>'scope',(c->>'entity_id')::jsonb->>'scope') AND x."scope_id"::text=COALESCE(c->'key'->>'scope_id',(c->>'entityId')::jsonb->>'scope_id',(c->>'entity_id')::jsonb->>'scope_id') AND x."section"::text=COALESCE(c->'key'->>'section',(c->>'entityId')::jsonb->>'section',(c->>'entity_id')::jsonb->>'section');
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND ((lower(x.scope)='global' OR (lower(x.scope)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text)) OR (lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id))) AND x."scope"::text=COALESCE(c->'key'->>'scope',(c->>'entityId')::jsonb->>'scope',(c->>'entity_id')::jsonb->>'scope') AND x."scope_id"::text=COALESCE(c->'key'->>'scope_id',(c->>'entityId')::jsonb->>'scope_id',(c->>'entity_id')::jsonb->>'scope_id') AND x."section"::text=COALESCE(c->'key'->>'section',(c->>'entityId')::jsonb->>'section',(c->>'entity_id')::jsonb->>'section');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_settings_overrides(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_settings_overrides(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_settings_overrides(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_settings_overrides() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'settings_overrides',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('scope',OLD."scope",'scope_id',OLD."scope_id",'section',OLD."section")::text ELSE jsonb_build_object('scope',NEW."scope",'scope_id',NEW."scope_id",'section',NEW."section")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'settings_overrides',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('scope',OLD."scope",'scope_id',OLD."scope_id",'section',OLD."section")::text ELSE jsonb_build_object('scope',NEW."scope",'scope_id',NEW."scope_id",'section',NEW."section")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id WHERE lower(COALESCE(NEW.scope,OLD.scope))='global' UNION ALL SELECT COALESCE(NEW.scope_id,OLD.scope_id)::text,NULL::text WHERE lower(COALESCE(NEW.scope,OLD.scope))='branch' UNION ALL SELECT store.id::text,NULL::text FROM public.stores store WHERE lower(COALESCE(NEW.scope,OLD.scope))='cluster' AND COALESCE(NULLIF(store.group_id,''),'default')=COALESCE(NEW.scope_id,OLD.scope_id)::text UNION ALL SELECT token.location_id::text,COALESCE(NEW.scope_id,OLD.scope_id)::text FROM public.terminal_tokens token WHERE lower(COALESCE(NEW.scope,OLD.scope))='terminal' AND token.id::text=COALESCE(NEW.scope_id,OLD.scope_id)::text) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."settings_overrides";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."settings_overrides" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_settings_overrides();
 
@@ -13782,17 +13953,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_shift_sessions(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_shift_sessions(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."shift_sessions" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_shift_sessions(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_shift_sessions(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_shift_sessions(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_shift_sessions() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'shift_sessions',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'shift_sessions',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."shift_sessions";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."shift_sessions" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_shift_sessions();
 
@@ -13813,17 +13984,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_sku_audit(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_sku_audit(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."sku_audit" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_sku_audit(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_sku_audit(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_sku_audit(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_sku_audit() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'sku_audit',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'sku_audit',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."sku_audit";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."sku_audit" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_sku_audit();
 
@@ -13844,17 +14015,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_staff_roles(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_staff_roles(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."staff_roles" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."slug"::text=COALESCE(c->'key'->>'slug',(c->>'entityId')::jsonb->>'slug',(c->>'entity_id')::jsonb->>'slug');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_staff_roles(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_staff_roles(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_staff_roles(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_staff_roles() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'staff_roles',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('slug',OLD."slug")::text ELSE jsonb_build_object('slug',NEW."slug")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'staff_roles',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('slug',OLD."slug")::text ELSE jsonb_build_object('slug',NEW."slug")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."staff_roles";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."staff_roles" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_staff_roles();
 
@@ -13875,17 +14046,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_stock_adjustments(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_stock_adjustments(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."stock_adjustments" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_stock_adjustments(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_stock_adjustments(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_stock_adjustments(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_stock_adjustments() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'stock_adjustments',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'stock_adjustments',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."stock_adjustments";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."stock_adjustments" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_stock_adjustments();
 
@@ -13897,17 +14068,17 @@ BEGIN FOR v_row IN SELECT value FROM jsonb_array_elements(COALESCE(p_rows,'[]'::
   PERFORM public.stock_apply_delta((v_row->>'movement_id')::uuid,(v_row->>'product_id')::uuid,v_row->>'store_id',COALESCE((v_row->>'delta')::integer,0)); v_count:=v_count+1;
  END LOOP; RETURN v_count; END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_stock_delta_applied(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_stock_delta_applied(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."stock_delta_applied" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."movement_id"::text=COALESCE(c->'key'->>'movement_id',(c->>'entityId')::jsonb->>'movement_id',(c->>'entity_id')::jsonb->>'movement_id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_stock_delta_applied(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_stock_delta_applied(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_stock_delta_applied(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_stock_delta_applied() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'stock_delta_applied',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('movement_id',OLD."movement_id")::text ELSE jsonb_build_object('movement_id',NEW."movement_id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'stock_delta_applied',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('movement_id',OLD."movement_id")::text ELSE jsonb_build_object('movement_id',NEW."movement_id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."stock_delta_applied";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."stock_delta_applied" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_stock_delta_applied();
 
@@ -13928,17 +14099,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_stock_transfer_items(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_stock_transfer_items(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."stock_transfer_items" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=x."transfer_id"::text AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text))) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_stock_transfer_items(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_stock_transfer_items(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_stock_transfer_items(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_stock_transfer_items() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'stock_transfer_items',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT DISTINCT branch_id FROM public."stock_transfers" p CROSS JOIN LATERAL (VALUES(p.from_store_id::text),(p.to_store_id::text)) b(branch_id) WHERE p."id"::text=COALESCE(NEW."transfer_id",OLD."transfer_id")::text AND branch_id IS NOT NULL) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'stock_transfer_items',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT DISTINCT branch_id,NULL::text terminal_id FROM public."stock_transfers" p CROSS JOIN LATERAL (VALUES(p.from_store_id::text),(p.to_store_id::text)) b(branch_id) WHERE p."id"::text=COALESCE(NEW."transfer_id",OLD."transfer_id")::text AND branch_id IS NOT NULL) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."stock_transfer_items";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."stock_transfer_items" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_stock_transfer_items();
 
@@ -13959,17 +14130,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_stock_transfers(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_stock_transfers(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."stock_transfers" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (p_branch_id IN (x.from_store_id::text,x.to_store_id::text)) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_stock_transfers(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_stock_transfers(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_stock_transfers(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_stock_transfers() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'stock_transfers',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT DISTINCT branch_id FROM (VALUES(COALESCE(NEW.from_store_id,OLD.from_store_id)::text),(COALESCE(NEW.to_store_id,OLD.to_store_id)::text)) b(branch_id) WHERE branch_id IS NOT NULL) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'stock_transfers',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT DISTINCT branch_id,NULL::text terminal_id FROM (VALUES(COALESCE(NEW.from_store_id,OLD.from_store_id)::text),(COALESCE(NEW.to_store_id,OLD.to_store_id)::text)) b(branch_id) WHERE branch_id IS NOT NULL) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."stock_transfers";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."stock_transfers" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_stock_transfers();
 
@@ -13990,17 +14161,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_stores(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_stores(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."stores" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_stores(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_stores(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_stores(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_stores() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'stores',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'stores',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."stores";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."stores" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_stores();
 
@@ -14021,17 +14192,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_suppliers(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_suppliers(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."suppliers" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_suppliers(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_suppliers(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_suppliers(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_suppliers() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'suppliers',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'suppliers',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."suppliers";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."suppliers" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_suppliers();
 
@@ -14052,17 +14223,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_sync_metadata(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_sync_metadata(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."sync_metadata" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_sync_metadata(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_sync_metadata(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_sync_metadata(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_sync_metadata() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'sync_metadata',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'sync_metadata',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."sync_metadata";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."sync_metadata" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_sync_metadata();
 
@@ -14083,17 +14254,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_system_audit_logs(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_system_audit_logs(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."system_audit_logs" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_system_audit_logs(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_system_audit_logs(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_system_audit_logs(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_system_audit_logs() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'system_audit_logs',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'system_audit_logs',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."system_audit_logs";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."system_audit_logs" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_system_audit_logs();
 
@@ -14114,17 +14285,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_terminal_commands(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_terminal_commands(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."terminal_commands" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_terminal_commands(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_terminal_commands(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_terminal_commands(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_terminal_commands() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'terminal_commands',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'terminal_commands',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."terminal_commands";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."terminal_commands" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_terminal_commands();
 
@@ -14145,17 +14316,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_terminal_tokens(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_terminal_tokens(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."terminal_tokens" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_terminal_tokens(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_terminal_tokens(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_terminal_tokens(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_terminal_tokens() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'terminal_tokens',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'terminal_tokens',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."terminal_tokens";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."terminal_tokens" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_terminal_tokens();
 
@@ -14176,17 +14347,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_uom_units(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_uom_units(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."uom_units" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_uom_units(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_uom_units(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_uom_units(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_uom_units() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'uom_units',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'uom_units',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."uom_units";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."uom_units" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_uom_units();
 
@@ -14207,17 +14378,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_user_roles(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_user_roles(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."user_roles" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_user_roles(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_user_roles(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_user_roles(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_user_roles() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'user_roles',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'user_roles',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."user_roles";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."user_roles" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_user_roles();
 
@@ -14238,17 +14409,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_whatsapp_queue(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_whatsapp_queue(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."whatsapp_queue" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_whatsapp_queue(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_whatsapp_queue(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_whatsapp_queue(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_whatsapp_queue() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'whatsapp_queue',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'whatsapp_queue',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."whatsapp_queue";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."whatsapp_queue" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_whatsapp_queue();
 
@@ -14269,17 +14440,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_terminal_recovery_secrets(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_terminal_recovery_secrets(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."terminal_recovery_secrets" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."terminal_token_id"::text=COALESCE(c->'key'->>'terminal_token_id',(c->>'entityId')::jsonb->>'terminal_token_id',(c->>'entity_id')::jsonb->>'terminal_token_id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_terminal_recovery_secrets(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_terminal_recovery_secrets(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_terminal_recovery_secrets(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_terminal_recovery_secrets() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'terminal_recovery_secrets',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('terminal_token_id',OLD."terminal_token_id")::text ELSE jsonb_build_object('terminal_token_id',NEW."terminal_token_id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'terminal_recovery_secrets',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('terminal_token_id',OLD."terminal_token_id")::text ELSE jsonb_build_object('terminal_token_id',NEW."terminal_token_id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."terminal_recovery_secrets";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."terminal_recovery_secrets" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_terminal_recovery_secrets();
 
@@ -14300,17 +14471,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_pos_store_settings(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_pos_store_settings(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."pos_store_settings" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."store_id"::text=COALESCE(c->'key'->>'store_id',(c->>'entityId')::jsonb->>'store_id',(c->>'entity_id')::jsonb->>'store_id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_pos_store_settings(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_pos_store_settings(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_pos_store_settings(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_pos_store_settings() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'pos_store_settings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('store_id',OLD."store_id")::text ELSE jsonb_build_object('store_id',NEW."store_id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'pos_store_settings',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('store_id',OLD."store_id")::text ELSE jsonb_build_object('store_id',NEW."store_id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."pos_store_settings";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."pos_store_settings" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_pos_store_settings();
 
@@ -14321,9 +14492,9 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."settings_scoped" ("scope","scope_id","key","value","is_overridden","updated_by","created_at","updated_at")
-  SELECT "scope","scope_id","key","value","is_overridden","updated_by","created_at","updated_at" FROM jsonb_populate_recordset(NULL::public."settings_scoped", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("scope","scope_id","key") DO UPDATE SET "value"=EXCLUDED."value","is_overridden"=EXCLUDED."is_overridden","updated_by"=EXCLUDED."updated_by","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at";
+  INSERT INTO public."settings_scoped" ("scope","scope_id","key","value","is_overridden","updated_by","created_at","updated_at","row_version")
+  SELECT "scope","scope_id","key","value","is_overridden","updated_by","created_at","updated_at","row_version" FROM jsonb_populate_recordset(NULL::public."settings_scoped", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("scope","scope_id","key") DO UPDATE SET "value"=EXCLUDED."value","is_overridden"=EXCLUDED."is_overridden","updated_by"=EXCLUDED."updated_by","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","row_version"=EXCLUDED."row_version" WHERE EXCLUDED."row_version">public."settings_scoped"."row_version";
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 
@@ -14331,17 +14502,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_settings_scoped(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_settings_scoped(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."settings_scoped" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
- WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."scope"::text=COALESCE(c->'key'->>'scope',(c->>'entityId')::jsonb->>'scope',(c->>'entity_id')::jsonb->>'scope') AND x."scope_id"::text=COALESCE(c->'key'->>'scope_id',(c->>'entityId')::jsonb->>'scope_id',(c->>'entity_id')::jsonb->>'scope_id') AND x."key"::text=COALESCE(c->'key'->>'key',(c->>'entityId')::jsonb->>'key',(c->>'entity_id')::jsonb->>'key');
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND ((lower(x.scope)='global' OR (lower(x.scope)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text)) OR (lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id))) AND x."scope"::text=COALESCE(c->'key'->>'scope',(c->>'entityId')::jsonb->>'scope',(c->>'entity_id')::jsonb->>'scope') AND x."scope_id"::text=COALESCE(c->'key'->>'scope_id',(c->>'entityId')::jsonb->>'scope_id',(c->>'entity_id')::jsonb->>'scope_id') AND x."key"::text=COALESCE(c->'key'->>'key',(c->>'entityId')::jsonb->>'key',(c->>'entity_id')::jsonb->>'key');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_settings_scoped(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_settings_scoped(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_settings_scoped(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_settings_scoped() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'settings_scoped',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('scope',OLD."scope",'scope_id',OLD."scope_id",'key',OLD."key")::text ELSE jsonb_build_object('scope',NEW."scope",'scope_id',NEW."scope_id",'key',NEW."key")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'settings_scoped',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('scope',OLD."scope",'scope_id',OLD."scope_id",'key',OLD."key")::text ELSE jsonb_build_object('scope',NEW."scope",'scope_id',NEW."scope_id",'key',NEW."key")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id WHERE lower(COALESCE(NEW.scope,OLD.scope))='global' UNION ALL SELECT COALESCE(NEW.scope_id,OLD.scope_id)::text,NULL::text WHERE lower(COALESCE(NEW.scope,OLD.scope))='branch' UNION ALL SELECT store.id::text,NULL::text FROM public.stores store WHERE lower(COALESCE(NEW.scope,OLD.scope))='cluster' AND COALESCE(NULLIF(store.group_id,''),'default')=COALESCE(NEW.scope_id,OLD.scope_id)::text UNION ALL SELECT token.location_id::text,COALESCE(NEW.scope_id,OLD.scope_id)::text FROM public.terminal_tokens token WHERE lower(COALESCE(NEW.scope,OLD.scope))='terminal' AND token.id::text=COALESCE(NEW.scope_id,OLD.scope_id)::text) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."settings_scoped";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."settings_scoped" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_settings_scoped();
 
@@ -14362,17 +14533,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_stock_count_drafts(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_stock_count_drafts(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."stock_count_drafts" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_stock_count_drafts(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_stock_count_drafts(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_stock_count_drafts(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_stock_count_drafts() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'stock_count_drafts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'stock_count_drafts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."stock_count_drafts";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."stock_count_drafts" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_stock_count_drafts();
 
@@ -14393,17 +14564,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_authorization_actions(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_authorization_actions(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."authorization_actions" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
- WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND ((lower(x.scope_type)='global' OR (lower(x.scope_type)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope_type)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text)))) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_authorization_actions(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_authorization_actions(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_authorization_actions(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_authorization_actions() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'authorization_actions',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'authorization_actions',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id WHERE lower(COALESCE(NEW.scope_type,OLD.scope_type))='global' UNION ALL SELECT COALESCE(NEW.scope_id,OLD.scope_id)::text,NULL::text WHERE lower(COALESCE(NEW.scope_type,OLD.scope_type))='branch' UNION ALL SELECT store.id::text,NULL::text FROM public.stores store WHERE lower(COALESCE(NEW.scope_type,OLD.scope_type))='cluster' AND COALESCE(NULLIF(store.group_id,''),'default')=COALESCE(NEW.scope_id,OLD.scope_id)::text) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."authorization_actions";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."authorization_actions" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_authorization_actions();
 
@@ -14424,15 +14595,15 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_authorization_action_history(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_authorization_action_history(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN RETURN 0; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_authorization_action_history(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_authorization_action_history(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_authorization_action_history(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_authorization_action_history() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'authorization_action_history',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'authorization_action_history',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id WHERE lower(COALESCE(NEW.scope_type,OLD.scope_type))='global' UNION ALL SELECT COALESCE(NEW.scope_id,OLD.scope_id)::text,NULL::text WHERE lower(COALESCE(NEW.scope_type,OLD.scope_type))='branch' UNION ALL SELECT store.id::text,NULL::text FROM public.stores store WHERE lower(COALESCE(NEW.scope_type,OLD.scope_type))='cluster' AND COALESCE(NULLIF(store.group_id,''),'default')=COALESCE(NEW.scope_id,OLD.scope_id)::text) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."authorization_action_history";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."authorization_action_history" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_authorization_action_history();
 
@@ -14453,17 +14624,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_authorization_requests(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_authorization_requests(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."authorization_requests" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_authorization_requests(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_authorization_requests(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_authorization_requests(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_authorization_requests() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'authorization_requests',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'authorization_requests',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."authorization_requests";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."authorization_requests" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_authorization_requests();
 
@@ -14484,17 +14655,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_authorization_log(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_authorization_log(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."authorization_log" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_authorization_log(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_authorization_log(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_authorization_log(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_authorization_log() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'authorization_log',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'authorization_log',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."authorization_log";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."authorization_log" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_authorization_log();
 
@@ -14515,17 +14686,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_record_edits(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_record_edits(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."record_edits" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_record_edits(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_record_edits(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_record_edits(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_record_edits() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'record_edits',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'record_edits',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."record_edits";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."record_edits" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_record_edits();
 
@@ -14546,15 +14717,15 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_shift_cash_counts(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_shift_cash_counts(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN RETURN 0; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_shift_cash_counts(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_shift_cash_counts(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_shift_cash_counts(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_shift_cash_counts() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'shift_cash_counts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'shift_cash_counts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."shift_cash_counts";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."shift_cash_counts" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_shift_cash_counts();
 
@@ -14575,15 +14746,15 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_shift_close_events(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_shift_close_events(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN RETURN 0; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_shift_close_events(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_shift_close_events(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_shift_close_events(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_shift_close_events() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'shift_close_events',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'shift_close_events',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."shift_close_events";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."shift_close_events" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_shift_close_events();
 
@@ -14604,15 +14775,15 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_shift_reconciliations(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_shift_reconciliations(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN RETURN 0; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_shift_reconciliations(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_shift_reconciliations(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_shift_reconciliations(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_shift_reconciliations() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'shift_reconciliations',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'shift_reconciliations',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."shift_reconciliations";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."shift_reconciliations" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_shift_reconciliations();
 
@@ -14633,17 +14804,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_shift_variance_alerts(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_shift_variance_alerts(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."shift_variance_alerts" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_shift_variance_alerts(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_shift_variance_alerts(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_shift_variance_alerts(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_shift_variance_alerts() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'shift_variance_alerts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'shift_variance_alerts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."shift_variance_alerts";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."shift_variance_alerts" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_shift_variance_alerts();
 
@@ -14664,15 +14835,15 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_shift_notifications(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_shift_notifications(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN RETURN 0; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_shift_notifications(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_shift_notifications(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_shift_notifications(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_shift_notifications() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'shift_notifications',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'shift_notifications',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."shift_notifications";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."shift_notifications" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_shift_notifications();
 
@@ -14693,17 +14864,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_entity_status_history(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_entity_status_history(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."entity_status_history" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.store_id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_entity_status_history(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_entity_status_history(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_entity_status_history(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_entity_status_history() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'entity_status_history',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'entity_status_history',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."entity_status_history";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."entity_status_history" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_entity_status_history();
 
@@ -14724,17 +14895,17 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_nav_pins(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_nav_pins(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."nav_pins" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_nav_pins(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_nav_pins(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_nav_pins(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_nav_pins() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'nav_pins',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'nav_pins',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."nav_pins";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."nav_pins" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_nav_pins();
 
@@ -14755,26 +14926,30 @@ BEGIN
   RETURN v_count;
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.sync_delete_store_groups(p_changes jsonb,p_branch_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+CREATE OR REPLACE FUNCTION public.sync_delete_store_groups(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."store_groups" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
  WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_store_groups(jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sync_delete_store_groups(jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_store_groups(jsonb,text,text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.sync_feed_store_groups() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,'store_groups',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id) branches; RETURN NULL; END $trg$;
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',branches.branch_id,branches.terminal_id,'store_groups',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT 'global'::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public."store_groups";
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."store_groups" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_store_groups();
 
 REVOKE ALL ON FUNCTION public.sync_feed_store_groups() FROM PUBLIC, anon, authenticated;
 
-CREATE OR REPLACE FUNCTION public.pos_sync_push_batch(p_batch_id uuid,p_organization_id text,p_branch_id text,p_table text,p_rows jsonb,p_changes jsonb DEFAULT '[]'::jsonb)
+CREATE OR REPLACE FUNCTION public.pos_sync_push_batch(p_batch_id uuid,p_organization_id text,p_branch_id text,p_terminal_id text,p_table text,p_rows jsonb,p_changes jsonb DEFAULT '[]'::jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
 DECLARE v_me public.app_users%ROWTYPE; v_count integer:=0; v_hash text:=md5(p_table||COALESCE(p_rows,'[]'::jsonb)::text||COALESCE(p_changes,'[]'::jsonb)::text); v_prior text;
 BEGIN
+ PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+ PERFORM set_config('pos.source_application','electron',true);
+ PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
+ PERFORM set_config('pos.device_id',p_terminal_id,true);
  IF auth.role()<>'service_role' THEN
   SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
   IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
@@ -14782,73 +14957,77 @@ BEGIN
  END IF;
  SELECT payload_hash INTO v_prior FROM public.sync_idempotency_receipts WHERE batch_id=p_batch_id;
  IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id); END IF;
- CASE p_table WHEN 'coupon_campaigns' THEN  v_count:=public.sync_apply_coupon_campaigns(p_rows)+public.sync_delete_coupon_campaigns(p_changes,p_branch_id);
-    WHEN 'shifts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shifts(p_rows)+public.sync_delete_shifts(p_changes,p_branch_id);
-    WHEN 'issued_vouchers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_issued_vouchers(p_rows)+public.sync_delete_issued_vouchers(p_changes,p_branch_id);
-    WHEN 'activity_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_activity_events(p_rows)+public.sync_delete_activity_events(p_changes,p_branch_id);
-    WHEN 'audit_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_audit_logs(p_rows)+public.sync_delete_audit_logs(p_changes,p_branch_id);
-    WHEN 'booking_payments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=r->>'booking_id' AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_booking_payments(p_rows)+public.sync_delete_booking_payments(p_changes,p_branch_id);
-    WHEN 'bookings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_bookings(p_rows)+public.sync_delete_bookings(p_changes,p_branch_id);
-    WHEN 'branch_telemetry' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_branch_telemetry(p_rows)+public.sync_delete_branch_telemetry(p_changes,p_branch_id);
-    WHEN 'coupon_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_coupon_events(p_rows)+public.sync_delete_coupon_events(p_changes,p_branch_id);
-    WHEN 'drawer_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_drawer_events(p_rows)+public.sync_delete_drawer_events(p_changes,p_branch_id);
-    WHEN 'held_orders' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_held_orders(p_rows)+public.sync_delete_held_orders(p_changes,p_branch_id);
-    WHEN 'integration_settings' THEN  v_count:=public.sync_apply_integration_settings(p_rows)+public.sync_delete_integration_settings(p_changes,p_branch_id);
-    WHEN 'item_activity_logs' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_item_activity_logs(p_rows)+public.sync_delete_item_activity_logs(p_changes,p_branch_id);
-    WHEN 'member_verifications' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_member_verifications(p_rows)+public.sync_delete_member_verifications(p_changes,p_branch_id);
-    WHEN 'members' THEN  v_count:=public.sync_apply_members(p_rows)+public.sync_delete_members(p_changes,p_branch_id);
-    WHEN 'membership_tiers' THEN  v_count:=public.sync_apply_membership_tiers(p_rows)+public.sync_delete_membership_tiers(p_changes,p_branch_id);
-    WHEN 'offline_sync_audit_log' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_offline_sync_audit_log(p_rows)+public.sync_delete_offline_sync_audit_log(p_changes,p_branch_id);
-    WHEN 'payment_transactions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_payment_transactions(p_rows)+public.sync_delete_payment_transactions(p_changes,p_branch_id);
-    WHEN 'payment_types' THEN  v_count:=public.sync_apply_payment_types(p_rows)+public.sync_delete_payment_types(p_changes,p_branch_id);
-    WHEN 'pin_attempts' THEN  v_count:=public.sync_apply_pin_attempts(p_rows)+public.sync_delete_pin_attempts(p_changes,p_branch_id);
-    WHEN 'pos_settings' THEN  v_count:=public.sync_apply_pos_settings(p_rows)+public.sync_delete_pos_settings(p_changes,p_branch_id);
-    WHEN 'product_barcodes' THEN  v_count:=public.sync_apply_product_barcodes(p_rows)+public.sync_delete_product_barcodes(p_changes,p_branch_id);
-    WHEN 'product_categories' THEN  v_count:=public.sync_apply_product_categories(p_rows)+public.sync_delete_product_categories(p_changes,p_branch_id);
-    WHEN 'products' THEN  v_count:=public.sync_apply_products(p_rows)+public.sync_delete_products(p_changes,p_branch_id);
-    WHEN 'promotions' THEN  v_count:=public.sync_apply_promotions(p_rows)+public.sync_delete_promotions(p_changes,p_branch_id);
-    WHEN 'purchase_order_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"::text=r->>'po_id' AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_order_items(p_rows)+public.sync_delete_purchase_order_items(p_changes,p_branch_id);
-    WHEN 'purchase_orders' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_orders(p_rows)+public.sync_delete_purchase_orders(p_changes,p_branch_id);
-    WHEN 'sale_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sale_items(p_rows)+public.sync_delete_sale_items(p_changes,p_branch_id);
-    WHEN 'sales' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sales(p_rows)+public.sync_delete_sales(p_changes,p_branch_id);
-    WHEN 'settings_overrides' THEN  v_count:=public.sync_apply_settings_overrides(p_rows)+public.sync_delete_settings_overrides(p_changes,p_branch_id);
-    WHEN 'shift_sessions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_sessions(p_rows)+public.sync_delete_shift_sessions(p_changes,p_branch_id);
-    WHEN 'sku_audit' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sku_audit(p_rows)+public.sync_delete_sku_audit(p_changes,p_branch_id);
-    WHEN 'stock_adjustments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_adjustments(p_rows)+public.sync_delete_stock_adjustments(p_changes,p_branch_id);
-    WHEN 'stock_delta_applied' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_delta_applied(p_rows)+public.sync_delete_stock_delta_applied(p_changes,p_branch_id);
-    WHEN 'stock_transfer_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=r->>'transfer_id' AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text))) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfer_items(p_rows)+public.sync_delete_stock_transfer_items(p_changes,p_branch_id);
-    WHEN 'stock_transfers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE p_branch_id<>COALESCE(r->>'from_store_id','') AND p_branch_id<>COALESCE(r->>'to_store_id','')) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfers(p_rows)+public.sync_delete_stock_transfers(p_changes,p_branch_id);
-    WHEN 'stores' THEN  v_count:=public.sync_apply_stores(p_rows)+public.sync_delete_stores(p_changes,p_branch_id);
-    WHEN 'suppliers' THEN  v_count:=public.sync_apply_suppliers(p_rows)+public.sync_delete_suppliers(p_changes,p_branch_id);
-    WHEN 'sync_metadata' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sync_metadata(p_rows)+public.sync_delete_sync_metadata(p_changes,p_branch_id);
-    WHEN 'system_audit_logs' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_system_audit_logs(p_rows)+public.sync_delete_system_audit_logs(p_changes,p_branch_id);
-    WHEN 'terminal_commands' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_terminal_commands(p_rows)+public.sync_delete_terminal_commands(p_changes,p_branch_id);
-    WHEN 'uom_units' THEN  v_count:=public.sync_apply_uom_units(p_rows)+public.sync_delete_uom_units(p_changes,p_branch_id);
-    WHEN 'whatsapp_queue' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_whatsapp_queue(p_rows)+public.sync_delete_whatsapp_queue(p_changes,p_branch_id);
-    WHEN 'pos_store_settings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(p_rows)+public.sync_delete_pos_store_settings(p_changes,p_branch_id);
-    WHEN 'settings_scoped' THEN  v_count:=public.sync_apply_settings_scoped(p_rows)+public.sync_delete_settings_scoped(p_changes,p_branch_id);
-    WHEN 'stock_count_drafts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(p_rows)+public.sync_delete_stock_count_drafts(p_changes,p_branch_id);
-    WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(p_rows)+public.sync_delete_authorization_actions(p_changes,p_branch_id);
-    WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(p_rows)+public.sync_delete_authorization_action_history(p_changes,p_branch_id);
-    WHEN 'authorization_requests' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_requests(p_rows)+public.sync_delete_authorization_requests(p_changes,p_branch_id);
-    WHEN 'authorization_log' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_log(p_rows)+public.sync_delete_authorization_log(p_changes,p_branch_id);
-    WHEN 'record_edits' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_record_edits(p_rows)+public.sync_delete_record_edits(p_changes,p_branch_id);
-    WHEN 'shift_cash_counts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_cash_counts(p_rows)+public.sync_delete_shift_cash_counts(p_changes,p_branch_id);
-    WHEN 'shift_close_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_close_events(p_rows)+public.sync_delete_shift_close_events(p_changes,p_branch_id);
-    WHEN 'shift_reconciliations' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_reconciliations(p_rows)+public.sync_delete_shift_reconciliations(p_changes,p_branch_id);
-    WHEN 'shift_variance_alerts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_variance_alerts(p_rows)+public.sync_delete_shift_variance_alerts(p_changes,p_branch_id);
-    WHEN 'shift_notifications' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_notifications(p_rows)+public.sync_delete_shift_notifications(p_changes,p_branch_id);
-    WHEN 'entity_status_history' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_entity_status_history(p_rows)+public.sync_delete_entity_status_history(p_changes,p_branch_id);
-    WHEN 'nav_pins' THEN  v_count:=public.sync_apply_nav_pins(p_rows)+public.sync_delete_nav_pins(p_changes,p_branch_id);
-    WHEN 'store_groups' THEN  v_count:=public.sync_apply_store_groups(p_rows)+public.sync_delete_store_groups(p_changes,p_branch_id); ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE;
+ CASE p_table WHEN 'coupon_campaigns' THEN  v_count:=public.sync_apply_coupon_campaigns(p_rows)+public.sync_delete_coupon_campaigns(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shifts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shifts(p_rows)+public.sync_delete_shifts(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'issued_vouchers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_issued_vouchers(p_rows)+public.sync_delete_issued_vouchers(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'activity_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_activity_events(p_rows)+public.sync_delete_activity_events(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'audit_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_audit_logs(p_rows)+public.sync_delete_audit_logs(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'booking_payments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=r->>'booking_id' AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_booking_payments(p_rows)+public.sync_delete_booking_payments(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'bookings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_bookings(p_rows)+public.sync_delete_bookings(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'branch_telemetry' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_branch_telemetry(p_rows)+public.sync_delete_branch_telemetry(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'coupon_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_coupon_events(p_rows)+public.sync_delete_coupon_events(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'drawer_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_drawer_events(p_rows)+public.sync_delete_drawer_events(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'held_orders' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_held_orders(p_rows)+public.sync_delete_held_orders(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'integration_settings' THEN  v_count:=public.sync_apply_integration_settings(p_rows)+public.sync_delete_integration_settings(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'item_activity_logs' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_item_activity_logs(p_rows)+public.sync_delete_item_activity_logs(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'member_verifications' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_member_verifications(p_rows)+public.sync_delete_member_verifications(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'members' THEN  v_count:=public.sync_apply_members(p_rows)+public.sync_delete_members(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'membership_tiers' THEN  v_count:=public.sync_apply_membership_tiers(p_rows)+public.sync_delete_membership_tiers(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'offline_sync_audit_log' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_offline_sync_audit_log(p_rows)+public.sync_delete_offline_sync_audit_log(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'payment_transactions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_payment_transactions(p_rows)+public.sync_delete_payment_transactions(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'payment_types' THEN  v_count:=public.sync_apply_payment_types(p_rows)+public.sync_delete_payment_types(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'pin_attempts' THEN  v_count:=public.sync_apply_pin_attempts(p_rows)+public.sync_delete_pin_attempts(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'pos_settings' THEN  v_count:=public.sync_apply_pos_settings(p_rows)+public.sync_delete_pos_settings(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'product_barcodes' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=r->>'product_id' AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id))) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_product_barcodes(p_rows)+public.sync_delete_product_barcodes(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'product_categories' THEN  v_count:=public.sync_apply_product_categories(p_rows)+public.sync_delete_product_categories(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'products' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NULLIF(r->>'owner_store_id','') IS NOT NULL AND r->>'owner_store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_products(p_rows)+public.sync_delete_products(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'promotions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NULLIF(r->>'foc_product_id','') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=r->>'foc_product_id' AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id))) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_promotions(p_rows)+public.sync_delete_promotions(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'purchase_order_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"::text=r->>'po_id' AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_order_items(p_rows)+public.sync_delete_purchase_order_items(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'purchase_orders' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_orders(p_rows)+public.sync_delete_purchase_orders(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'sale_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sale_items(p_rows)+public.sync_delete_sale_items(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'sales' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sales(p_rows)+public.sync_delete_sales(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'settings_overrides' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT ((lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id))) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_settings_overrides(p_rows)+public.sync_delete_settings_overrides(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_sessions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_sessions(p_rows)+public.sync_delete_shift_sessions(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'sku_audit' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sku_audit(p_rows)+public.sync_delete_sku_audit(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stock_adjustments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_adjustments(p_rows)+public.sync_delete_stock_adjustments(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stock_delta_applied' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_delta_applied(p_rows)+public.sync_delete_stock_delta_applied(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stock_transfer_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=r->>'transfer_id' AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text))) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfer_items(p_rows)+public.sync_delete_stock_transfer_items(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stock_transfers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE p_branch_id<>COALESCE(r->>'from_store_id','') AND p_branch_id<>COALESCE(r->>'to_store_id','')) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfers(p_rows)+public.sync_delete_stock_transfers(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stores' THEN  v_count:=public.sync_apply_stores(p_rows)+public.sync_delete_stores(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'suppliers' THEN  v_count:=public.sync_apply_suppliers(p_rows)+public.sync_delete_suppliers(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'sync_metadata' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sync_metadata(p_rows)+public.sync_delete_sync_metadata(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'system_audit_logs' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_system_audit_logs(p_rows)+public.sync_delete_system_audit_logs(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'terminal_commands' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_terminal_commands(p_rows)+public.sync_delete_terminal_commands(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'uom_units' THEN  v_count:=public.sync_apply_uom_units(p_rows)+public.sync_delete_uom_units(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'whatsapp_queue' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_whatsapp_queue(p_rows)+public.sync_delete_whatsapp_queue(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'pos_store_settings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(p_rows)+public.sync_delete_pos_store_settings(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT ((lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id))) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_settings_scoped(p_rows)+public.sync_delete_settings_scoped(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stock_count_drafts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(p_rows)+public.sync_delete_stock_count_drafts(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(p_rows)+public.sync_delete_authorization_actions(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(p_rows)+public.sync_delete_authorization_action_history(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'authorization_requests' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_requests(p_rows)+public.sync_delete_authorization_requests(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'authorization_log' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_log(p_rows)+public.sync_delete_authorization_log(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'record_edits' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_record_edits(p_rows)+public.sync_delete_record_edits(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_cash_counts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_cash_counts(p_rows)+public.sync_delete_shift_cash_counts(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_close_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_close_events(p_rows)+public.sync_delete_shift_close_events(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_reconciliations' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_reconciliations(p_rows)+public.sync_delete_shift_reconciliations(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_variance_alerts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_variance_alerts(p_rows)+public.sync_delete_shift_variance_alerts(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_notifications' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_notifications(p_rows)+public.sync_delete_shift_notifications(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'entity_status_history' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_entity_status_history(p_rows)+public.sync_delete_entity_status_history(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'nav_pins' THEN  v_count:=public.sync_apply_nav_pins(p_rows)+public.sync_delete_nav_pins(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'store_groups' THEN  v_count:=public.sync_apply_store_groups(p_rows)+public.sync_delete_store_groups(p_changes,p_branch_id,p_terminal_id); ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE;
  INSERT INTO public.sync_idempotency_receipts(batch_id,organization_id,branch_id,table_name,payload_hash,applied_count) VALUES(p_batch_id,p_organization_id,p_branch_id,p_table,v_hash,v_count);
  RETURN jsonb_build_object('ok',true,'applied',v_count,'batch_id',p_batch_id);
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.pos_sync_push_aggregate(p_batch_id uuid,p_organization_id text,p_branch_id text,p_operations jsonb)
+CREATE OR REPLACE FUNCTION public.pos_sync_push_aggregate(p_batch_id uuid,p_organization_id text,p_branch_id text,p_terminal_id text,p_operations jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
 DECLARE v_me public.app_users%ROWTYPE; v_op jsonb; v_table text; v_rows jsonb; v_count integer:=0; v_total integer:=0; v_hash text:=md5(COALESCE(p_operations,'[]'::jsonb)::text); v_prior text;
 BEGIN
+ PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+ PERFORM set_config('pos.source_application','electron',true);
+ PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
+ PERFORM set_config('pos.device_id',p_terminal_id,true);
  IF jsonb_typeof(p_operations)<>'array' OR jsonb_array_length(p_operations)>200 THEN RAISE EXCEPTION 'SYNC_AGGREGATE_INVALID'; END IF;
  IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
   IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
@@ -14859,74 +15038,74 @@ BEGIN
   IF v_table='products' AND EXISTS(SELECT 1 FROM jsonb_array_elements(p_operations) related WHERE related->>'table' IN ('item_activity_logs','stock_delta_applied')) THEN
    SELECT COALESCE(jsonb_agg((row_value-'stock_quantity'-'stock_by_store')||jsonb_build_object('stock_quantity',0,'stock_by_store','{}'::jsonb)),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(v_rows) AS product_rows(row_value);
   END IF;
-  CASE v_table WHEN 'coupon_campaigns' THEN  v_count:=public.sync_apply_coupon_campaigns(v_rows)+public.sync_delete_coupon_campaigns(v_op->'changes',p_branch_id);
-    WHEN 'shifts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shifts(v_rows)+public.sync_delete_shifts(v_op->'changes',p_branch_id);
-    WHEN 'issued_vouchers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_issued_vouchers(v_rows)+public.sync_delete_issued_vouchers(v_op->'changes',p_branch_id);
-    WHEN 'activity_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_activity_events(v_rows)+public.sync_delete_activity_events(v_op->'changes',p_branch_id);
-    WHEN 'audit_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_audit_logs(v_rows)+public.sync_delete_audit_logs(v_op->'changes',p_branch_id);
-    WHEN 'booking_payments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=r->>'booking_id' AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_booking_payments(v_rows)+public.sync_delete_booking_payments(v_op->'changes',p_branch_id);
-    WHEN 'bookings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_bookings(v_rows)+public.sync_delete_bookings(v_op->'changes',p_branch_id);
-    WHEN 'branch_telemetry' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_branch_telemetry(v_rows)+public.sync_delete_branch_telemetry(v_op->'changes',p_branch_id);
-    WHEN 'coupon_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_coupon_events(v_rows)+public.sync_delete_coupon_events(v_op->'changes',p_branch_id);
-    WHEN 'drawer_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_drawer_events(v_rows)+public.sync_delete_drawer_events(v_op->'changes',p_branch_id);
-    WHEN 'held_orders' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_held_orders(v_rows)+public.sync_delete_held_orders(v_op->'changes',p_branch_id);
-    WHEN 'integration_settings' THEN  v_count:=public.sync_apply_integration_settings(v_rows)+public.sync_delete_integration_settings(v_op->'changes',p_branch_id);
-    WHEN 'item_activity_logs' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_item_activity_logs(v_rows)+public.sync_delete_item_activity_logs(v_op->'changes',p_branch_id);
-    WHEN 'member_verifications' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_member_verifications(v_rows)+public.sync_delete_member_verifications(v_op->'changes',p_branch_id);
-    WHEN 'members' THEN  v_count:=public.sync_apply_members(v_rows)+public.sync_delete_members(v_op->'changes',p_branch_id);
-    WHEN 'membership_tiers' THEN  v_count:=public.sync_apply_membership_tiers(v_rows)+public.sync_delete_membership_tiers(v_op->'changes',p_branch_id);
-    WHEN 'offline_sync_audit_log' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_offline_sync_audit_log(v_rows)+public.sync_delete_offline_sync_audit_log(v_op->'changes',p_branch_id);
-    WHEN 'payment_transactions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_payment_transactions(v_rows)+public.sync_delete_payment_transactions(v_op->'changes',p_branch_id);
-    WHEN 'payment_types' THEN  v_count:=public.sync_apply_payment_types(v_rows)+public.sync_delete_payment_types(v_op->'changes',p_branch_id);
-    WHEN 'pin_attempts' THEN  v_count:=public.sync_apply_pin_attempts(v_rows)+public.sync_delete_pin_attempts(v_op->'changes',p_branch_id);
-    WHEN 'pos_settings' THEN  v_count:=public.sync_apply_pos_settings(v_rows)+public.sync_delete_pos_settings(v_op->'changes',p_branch_id);
-    WHEN 'product_barcodes' THEN  v_count:=public.sync_apply_product_barcodes(v_rows)+public.sync_delete_product_barcodes(v_op->'changes',p_branch_id);
-    WHEN 'product_categories' THEN  v_count:=public.sync_apply_product_categories(v_rows)+public.sync_delete_product_categories(v_op->'changes',p_branch_id);
-    WHEN 'products' THEN  v_count:=public.sync_apply_products(v_rows)+public.sync_delete_products(v_op->'changes',p_branch_id);
-    WHEN 'promotions' THEN  v_count:=public.sync_apply_promotions(v_rows)+public.sync_delete_promotions(v_op->'changes',p_branch_id);
-    WHEN 'purchase_order_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"::text=r->>'po_id' AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_order_items(v_rows)+public.sync_delete_purchase_order_items(v_op->'changes',p_branch_id);
-    WHEN 'purchase_orders' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_orders(v_rows)+public.sync_delete_purchase_orders(v_op->'changes',p_branch_id);
-    WHEN 'sale_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sale_items(v_rows)+public.sync_delete_sale_items(v_op->'changes',p_branch_id);
-    WHEN 'sales' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sales(v_rows)+public.sync_delete_sales(v_op->'changes',p_branch_id);
-    WHEN 'settings_overrides' THEN  v_count:=public.sync_apply_settings_overrides(v_rows)+public.sync_delete_settings_overrides(v_op->'changes',p_branch_id);
-    WHEN 'shift_sessions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_sessions(v_rows)+public.sync_delete_shift_sessions(v_op->'changes',p_branch_id);
-    WHEN 'sku_audit' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sku_audit(v_rows)+public.sync_delete_sku_audit(v_op->'changes',p_branch_id);
-    WHEN 'stock_adjustments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_adjustments(v_rows)+public.sync_delete_stock_adjustments(v_op->'changes',p_branch_id);
-    WHEN 'stock_delta_applied' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_delta_applied(v_rows)+public.sync_delete_stock_delta_applied(v_op->'changes',p_branch_id);
-    WHEN 'stock_transfer_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=r->>'transfer_id' AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text))) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfer_items(v_rows)+public.sync_delete_stock_transfer_items(v_op->'changes',p_branch_id);
-    WHEN 'stock_transfers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE p_branch_id<>COALESCE(r->>'from_store_id','') AND p_branch_id<>COALESCE(r->>'to_store_id','')) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfers(v_rows)+public.sync_delete_stock_transfers(v_op->'changes',p_branch_id);
-    WHEN 'stores' THEN  v_count:=public.sync_apply_stores(v_rows)+public.sync_delete_stores(v_op->'changes',p_branch_id);
-    WHEN 'suppliers' THEN  v_count:=public.sync_apply_suppliers(v_rows)+public.sync_delete_suppliers(v_op->'changes',p_branch_id);
-    WHEN 'sync_metadata' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sync_metadata(v_rows)+public.sync_delete_sync_metadata(v_op->'changes',p_branch_id);
-    WHEN 'system_audit_logs' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_system_audit_logs(v_rows)+public.sync_delete_system_audit_logs(v_op->'changes',p_branch_id);
-    WHEN 'terminal_commands' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_terminal_commands(v_rows)+public.sync_delete_terminal_commands(v_op->'changes',p_branch_id);
-    WHEN 'uom_units' THEN  v_count:=public.sync_apply_uom_units(v_rows)+public.sync_delete_uom_units(v_op->'changes',p_branch_id);
-    WHEN 'whatsapp_queue' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_whatsapp_queue(v_rows)+public.sync_delete_whatsapp_queue(v_op->'changes',p_branch_id);
-    WHEN 'pos_store_settings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(v_rows)+public.sync_delete_pos_store_settings(v_op->'changes',p_branch_id);
-    WHEN 'settings_scoped' THEN  v_count:=public.sync_apply_settings_scoped(v_rows)+public.sync_delete_settings_scoped(v_op->'changes',p_branch_id);
-    WHEN 'stock_count_drafts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(v_rows)+public.sync_delete_stock_count_drafts(v_op->'changes',p_branch_id);
-    WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(v_rows)+public.sync_delete_authorization_actions(v_op->'changes',p_branch_id);
-    WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(v_rows)+public.sync_delete_authorization_action_history(v_op->'changes',p_branch_id);
-    WHEN 'authorization_requests' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_requests(v_rows)+public.sync_delete_authorization_requests(v_op->'changes',p_branch_id);
-    WHEN 'authorization_log' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_log(v_rows)+public.sync_delete_authorization_log(v_op->'changes',p_branch_id);
-    WHEN 'record_edits' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_record_edits(v_rows)+public.sync_delete_record_edits(v_op->'changes',p_branch_id);
-    WHEN 'shift_cash_counts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_cash_counts(v_rows)+public.sync_delete_shift_cash_counts(v_op->'changes',p_branch_id);
-    WHEN 'shift_close_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_close_events(v_rows)+public.sync_delete_shift_close_events(v_op->'changes',p_branch_id);
-    WHEN 'shift_reconciliations' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_reconciliations(v_rows)+public.sync_delete_shift_reconciliations(v_op->'changes',p_branch_id);
-    WHEN 'shift_variance_alerts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_variance_alerts(v_rows)+public.sync_delete_shift_variance_alerts(v_op->'changes',p_branch_id);
-    WHEN 'shift_notifications' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_notifications(v_rows)+public.sync_delete_shift_notifications(v_op->'changes',p_branch_id);
-    WHEN 'entity_status_history' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_entity_status_history(v_rows)+public.sync_delete_entity_status_history(v_op->'changes',p_branch_id);
-    WHEN 'nav_pins' THEN  v_count:=public.sync_apply_nav_pins(v_rows)+public.sync_delete_nav_pins(v_op->'changes',p_branch_id);
-    WHEN 'store_groups' THEN  v_count:=public.sync_apply_store_groups(v_rows)+public.sync_delete_store_groups(v_op->'changes',p_branch_id); ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE; v_total:=v_total+v_count;
+  CASE v_table WHEN 'coupon_campaigns' THEN  v_count:=public.sync_apply_coupon_campaigns(v_rows)+public.sync_delete_coupon_campaigns(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shifts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shifts(v_rows)+public.sync_delete_shifts(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'issued_vouchers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_issued_vouchers(v_rows)+public.sync_delete_issued_vouchers(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'activity_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_activity_events(v_rows)+public.sync_delete_activity_events(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'audit_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_audit_logs(v_rows)+public.sync_delete_audit_logs(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'booking_payments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=r->>'booking_id' AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_booking_payments(v_rows)+public.sync_delete_booking_payments(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'bookings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_bookings(v_rows)+public.sync_delete_bookings(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'branch_telemetry' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_branch_telemetry(v_rows)+public.sync_delete_branch_telemetry(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'coupon_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_coupon_events(v_rows)+public.sync_delete_coupon_events(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'drawer_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_drawer_events(v_rows)+public.sync_delete_drawer_events(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'held_orders' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_held_orders(v_rows)+public.sync_delete_held_orders(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'integration_settings' THEN  v_count:=public.sync_apply_integration_settings(v_rows)+public.sync_delete_integration_settings(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'item_activity_logs' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_item_activity_logs(v_rows)+public.sync_delete_item_activity_logs(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'member_verifications' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_member_verifications(v_rows)+public.sync_delete_member_verifications(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'members' THEN  v_count:=public.sync_apply_members(v_rows)+public.sync_delete_members(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'membership_tiers' THEN  v_count:=public.sync_apply_membership_tiers(v_rows)+public.sync_delete_membership_tiers(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'offline_sync_audit_log' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_offline_sync_audit_log(v_rows)+public.sync_delete_offline_sync_audit_log(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'payment_transactions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_payment_transactions(v_rows)+public.sync_delete_payment_transactions(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'payment_types' THEN  v_count:=public.sync_apply_payment_types(v_rows)+public.sync_delete_payment_types(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'pin_attempts' THEN  v_count:=public.sync_apply_pin_attempts(v_rows)+public.sync_delete_pin_attempts(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'pos_settings' THEN  v_count:=public.sync_apply_pos_settings(v_rows)+public.sync_delete_pos_settings(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'product_barcodes' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=r->>'product_id' AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id))) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_product_barcodes(v_rows)+public.sync_delete_product_barcodes(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'product_categories' THEN  v_count:=public.sync_apply_product_categories(v_rows)+public.sync_delete_product_categories(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'products' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NULLIF(r->>'owner_store_id','') IS NOT NULL AND r->>'owner_store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_products(v_rows)+public.sync_delete_products(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'promotions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NULLIF(r->>'foc_product_id','') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=r->>'foc_product_id' AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id))) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_promotions(v_rows)+public.sync_delete_promotions(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'purchase_order_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"::text=r->>'po_id' AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_order_items(v_rows)+public.sync_delete_purchase_order_items(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'purchase_orders' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_orders(v_rows)+public.sync_delete_purchase_orders(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'sale_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sale_items(v_rows)+public.sync_delete_sale_items(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'sales' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sales(v_rows)+public.sync_delete_sales(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'settings_overrides' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT ((lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id))) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_settings_overrides(v_rows)+public.sync_delete_settings_overrides(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_sessions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_sessions(v_rows)+public.sync_delete_shift_sessions(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'sku_audit' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sku_audit(v_rows)+public.sync_delete_sku_audit(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stock_adjustments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_adjustments(v_rows)+public.sync_delete_stock_adjustments(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stock_delta_applied' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_delta_applied(v_rows)+public.sync_delete_stock_delta_applied(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stock_transfer_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=r->>'transfer_id' AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text))) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfer_items(v_rows)+public.sync_delete_stock_transfer_items(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stock_transfers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE p_branch_id<>COALESCE(r->>'from_store_id','') AND p_branch_id<>COALESCE(r->>'to_store_id','')) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfers(v_rows)+public.sync_delete_stock_transfers(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stores' THEN  v_count:=public.sync_apply_stores(v_rows)+public.sync_delete_stores(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'suppliers' THEN  v_count:=public.sync_apply_suppliers(v_rows)+public.sync_delete_suppliers(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'sync_metadata' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sync_metadata(v_rows)+public.sync_delete_sync_metadata(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'system_audit_logs' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_system_audit_logs(v_rows)+public.sync_delete_system_audit_logs(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'terminal_commands' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_terminal_commands(v_rows)+public.sync_delete_terminal_commands(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'uom_units' THEN  v_count:=public.sync_apply_uom_units(v_rows)+public.sync_delete_uom_units(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'whatsapp_queue' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_whatsapp_queue(v_rows)+public.sync_delete_whatsapp_queue(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'pos_store_settings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(v_rows)+public.sync_delete_pos_store_settings(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT ((lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id))) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_settings_scoped(v_rows)+public.sync_delete_settings_scoped(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stock_count_drafts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(v_rows)+public.sync_delete_stock_count_drafts(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(v_rows)+public.sync_delete_authorization_actions(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(v_rows)+public.sync_delete_authorization_action_history(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'authorization_requests' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_requests(v_rows)+public.sync_delete_authorization_requests(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'authorization_log' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_log(v_rows)+public.sync_delete_authorization_log(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'record_edits' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_record_edits(v_rows)+public.sync_delete_record_edits(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_cash_counts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_cash_counts(v_rows)+public.sync_delete_shift_cash_counts(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_close_events' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_close_events(v_rows)+public.sync_delete_shift_close_events(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_reconciliations' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_reconciliations(v_rows)+public.sync_delete_shift_reconciliations(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_variance_alerts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_variance_alerts(v_rows)+public.sync_delete_shift_variance_alerts(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_notifications' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_notifications(v_rows)+public.sync_delete_shift_notifications(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'entity_status_history' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_entity_status_history(v_rows)+public.sync_delete_entity_status_history(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'nav_pins' THEN  v_count:=public.sync_apply_nav_pins(v_rows)+public.sync_delete_nav_pins(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'store_groups' THEN  v_count:=public.sync_apply_store_groups(v_rows)+public.sync_delete_store_groups(v_op->'changes',p_branch_id,p_terminal_id); ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE; v_total:=v_total+v_count;
  END LOOP;
  INSERT INTO public.sync_idempotency_receipts(batch_id,organization_id,branch_id,table_name,payload_hash,applied_count) VALUES(p_batch_id,p_organization_id,p_branch_id,'__aggregate__',v_hash,v_total);
  RETURN jsonb_build_object('ok',true,'applied',v_total,'batch_id',p_batch_id);
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.pos_sync_pull(p_organization_id text,p_branch_id text,p_after_cursor bigint DEFAULT 0,p_limit integer DEFAULT 500)
+CREATE OR REPLACE FUNCTION public.pos_sync_pull(p_organization_id text,p_branch_id text,p_terminal_id text,p_after_cursor bigint DEFAULT 0,p_limit integer DEFAULT 500)
 RETURNS TABLE(cursor bigint,table_name text,entity_id text,operation text,row_version bigint,tombstone boolean,row_data jsonb) LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
 DECLARE v_me public.app_users%ROWTYPE;
-BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
+BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id); IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
  IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
  IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
  RETURN QUERY SELECT f.cursor,f.table_name,f.entity_id,f.operation,f.row_version,f.tombstone,CASE f.table_name WHEN 'coupon_campaigns' THEN (SELECT to_jsonb(x) FROM public."coupon_campaigns" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
@@ -14998,13 +15177,13 @@ BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_use
     WHEN 'entity_status_history' THEN (SELECT to_jsonb(x) FROM public."entity_status_history" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
     WHEN 'nav_pins' THEN (SELECT to_jsonb(x) FROM public."nav_pins" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1)
     WHEN 'store_groups' THEN (SELECT to_jsonb(x) FROM public."store_groups" x WHERE x."id"::text=(f.entity_id::jsonb)->>'id' LIMIT 1) ELSE NULL END
- FROM public.sync_change_feed f WHERE f.organization_id=p_organization_id AND f.branch_id IN (p_branch_id,'global') AND f.cursor>p_after_cursor ORDER BY f.cursor LIMIT LEAST(GREATEST(p_limit,100),2000);
+ FROM public.sync_change_feed f WHERE f.organization_id=p_organization_id AND f.branch_id IN (p_branch_id,'global') AND (f.terminal_id IS NULL OR f.terminal_id=p_terminal_id) AND f.cursor>p_after_cursor ORDER BY f.cursor LIMIT LEAST(GREATEST(p_limit,100),2000);
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.pos_sync_bootstrap(p_organization_id text,p_branch_id text,p_table text,p_after_cursor text DEFAULT NULL,p_history_days integer DEFAULT 90,p_limit integer DEFAULT 500)
+CREATE OR REPLACE FUNCTION public.pos_sync_bootstrap(p_organization_id text,p_branch_id text,p_terminal_id text,p_table text,p_after_cursor text DEFAULT NULL,p_history_days integer DEFAULT 90,p_limit integer DEFAULT 500)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
 DECLARE v_rows jsonb:='[]'::jsonb; v_cursor text; v_me public.app_users%ROWTYPE;
-BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
+BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id); IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
  IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
  IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
  CASE p_table WHEN 'coupon_campaigns' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."coupon_campaigns" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
@@ -15030,10 +15209,10 @@ BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_use
     WHEN 'payment_types' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."payment_types" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'pin_attempts' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('key',x."key")::text cursor,x row_data FROM public."pin_attempts" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('key',x."key")::text>p_after_cursor) ORDER BY jsonb_build_object('key',x."key")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'pos_settings' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."pos_settings" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
-    WHEN 'product_barcodes' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."product_barcodes" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
+    WHEN 'product_barcodes' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."product_barcodes" x WHERE (EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=x."product_id"::text AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id)))  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'product_categories' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."product_categories" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
-    WHEN 'products' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."products" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
-    WHEN 'promotions' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."promotions" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
+    WHEN 'products' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."products" x WHERE ((NULLIF(x.owner_store_id::text,'') IS NULL OR x.owner_store_id::text=p_branch_id))  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
+    WHEN 'promotions' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."promotions" x WHERE (EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=x."foc_product_id"::text AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id)))  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'public_flags' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('key',x."key")::text cursor,x row_data FROM public."public_flags" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('key',x."key")::text>p_after_cursor) ORDER BY jsonb_build_object('key',x."key")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'purchase_order_items' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."purchase_order_items" x WHERE (EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"::text=x."po_id"::text AND p.store_id::text=p_branch_id))  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'purchase_orders' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."purchase_orders" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
@@ -15042,7 +15221,7 @@ BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_use
     WHEN 'secure_settings' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('key',x."key")::text cursor,x row_data FROM public."secure_settings" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('key',x."key")::text>p_after_cursor) ORDER BY jsonb_build_object('key',x."key")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'security_findings' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."security_findings" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'settings_locks' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('section',x."section")::text cursor,x row_data FROM public."settings_locks" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('section',x."section")::text>p_after_cursor) ORDER BY jsonb_build_object('section',x."section")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
-    WHEN 'settings_overrides' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'section',x."section")::text cursor,x row_data FROM public."settings_overrides" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'section',x."section")::text>p_after_cursor) ORDER BY jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'section',x."section")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
+    WHEN 'settings_overrides' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'section',x."section")::text cursor,x row_data FROM public."settings_overrides" x WHERE ((lower(x.scope)='global' OR (lower(x.scope)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text)) OR (lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id)))  AND (p_after_cursor IS NULL OR jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'section',x."section")::text>p_after_cursor) ORDER BY jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'section',x."section")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'shift_sessions' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."shift_sessions" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'sku_audit' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."sku_audit" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'staff_roles' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('slug',x."slug")::text cursor,x row_data FROM public."staff_roles" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('slug',x."slug")::text>p_after_cursor) ORDER BY jsonb_build_object('slug',x."slug")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
@@ -15061,10 +15240,10 @@ BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_use
     WHEN 'whatsapp_queue' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."whatsapp_queue" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'terminal_recovery_secrets' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('terminal_token_id',x."terminal_token_id")::text cursor,x row_data FROM public."terminal_recovery_secrets" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('terminal_token_id',x."terminal_token_id")::text>p_after_cursor) ORDER BY jsonb_build_object('terminal_token_id',x."terminal_token_id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'pos_store_settings' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('store_id',x."store_id")::text cursor,x row_data FROM public."pos_store_settings" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('store_id',x."store_id")::text>p_after_cursor) ORDER BY jsonb_build_object('store_id',x."store_id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
-    WHEN 'settings_scoped' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'key',x."key")::text cursor,x row_data FROM public."settings_scoped" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'key',x."key")::text>p_after_cursor) ORDER BY jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'key',x."key")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
+    WHEN 'settings_scoped' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'key',x."key")::text cursor,x row_data FROM public."settings_scoped" x WHERE ((lower(x.scope)='global' OR (lower(x.scope)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text)) OR (lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id)))  AND (p_after_cursor IS NULL OR jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'key',x."key")::text>p_after_cursor) ORDER BY jsonb_build_object('scope',x."scope",'scope_id',x."scope_id",'key',x."key")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'stock_count_drafts' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."stock_count_drafts" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
-    WHEN 'authorization_actions' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."authorization_actions" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
-    WHEN 'authorization_action_history' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."authorization_action_history" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
+    WHEN 'authorization_actions' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."authorization_actions" x WHERE ((lower(x.scope_type)='global' OR (lower(x.scope_type)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope_type)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text))))  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
+    WHEN 'authorization_action_history' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."authorization_action_history" x WHERE ((lower(x.scope_type)='global' OR (lower(x.scope_type)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope_type)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text))))  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'authorization_requests' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."authorization_requests" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'authorization_log' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."authorization_log" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'record_edits' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."record_edits" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
@@ -15079,13 +15258,13 @@ BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_use
  RETURN jsonb_build_object('rows',v_rows,'cursor',CASE WHEN jsonb_array_length(v_rows)>=LEAST(GREATEST(p_limit,100),2000) THEN v_cursor ELSE NULL END);
 END $fn$;
 
-CREATE OR REPLACE FUNCTION public.pos_sync_counts(p_organization_id text,p_branch_id text,p_history_days integer DEFAULT 90)
+CREATE OR REPLACE FUNCTION public.pos_sync_counts(p_organization_id text,p_branch_id text,p_terminal_id text,p_history_days integer DEFAULT 90)
 RETURNS TABLE(table_name text,row_count bigint) LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
 DECLARE v_me public.app_users%ROWTYPE;
-BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
+BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id); IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
  IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
  IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
- RETURN QUERY SELECT 'coupon_campaigns'::text table_name,count(*)::bigint row_count FROM public."coupon_campaigns" x WHERE true UNION ALL SELECT 'shifts'::text table_name,count(*)::bigint row_count FROM public."shifts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'issued_vouchers'::text table_name,count(*)::bigint row_count FROM public."issued_vouchers" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'activity_events'::text table_name,count(*)::bigint row_count FROM public."activity_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'app_users'::text table_name,count(*)::bigint row_count FROM public."app_users" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'audit_logs'::text table_name,count(*)::bigint row_count FROM public."audit_logs" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'booking_payments'::text table_name,count(*)::bigint row_count FROM public."booking_payments" x WHERE EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=x."booking_id"::text AND p.store_id::text=p_branch_id) UNION ALL SELECT 'bookings'::text table_name,count(*)::bigint row_count FROM public."bookings" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'branch_telemetry'::text table_name,count(*)::bigint row_count FROM public."branch_telemetry" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'cashiers'::text table_name,count(*)::bigint row_count FROM public."cashiers" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'coupon_events'::text table_name,count(*)::bigint row_count FROM public."coupon_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'drawer_events'::text table_name,count(*)::bigint row_count FROM public."drawer_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'held_orders'::text table_name,count(*)::bigint row_count FROM public."held_orders" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'integration_settings'::text table_name,count(*)::bigint row_count FROM public."integration_settings" x WHERE true UNION ALL SELECT 'item_activity_logs'::text table_name,count(*)::bigint row_count FROM public."item_activity_logs" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'member_verifications'::text table_name,count(*)::bigint row_count FROM public."member_verifications" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'members'::text table_name,count(*)::bigint row_count FROM public."members" x WHERE true UNION ALL SELECT 'membership_tiers'::text table_name,count(*)::bigint row_count FROM public."membership_tiers" x WHERE true UNION ALL SELECT 'offline_sync_audit_log'::text table_name,count(*)::bigint row_count FROM public."offline_sync_audit_log" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'payment_transactions'::text table_name,count(*)::bigint row_count FROM public."payment_transactions" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'payment_types'::text table_name,count(*)::bigint row_count FROM public."payment_types" x WHERE true UNION ALL SELECT 'pin_attempts'::text table_name,count(*)::bigint row_count FROM public."pin_attempts" x WHERE true UNION ALL SELECT 'pos_settings'::text table_name,count(*)::bigint row_count FROM public."pos_settings" x WHERE true UNION ALL SELECT 'product_barcodes'::text table_name,count(*)::bigint row_count FROM public."product_barcodes" x WHERE true UNION ALL SELECT 'product_categories'::text table_name,count(*)::bigint row_count FROM public."product_categories" x WHERE true UNION ALL SELECT 'products'::text table_name,count(*)::bigint row_count FROM public."products" x WHERE true UNION ALL SELECT 'promotions'::text table_name,count(*)::bigint row_count FROM public."promotions" x WHERE true UNION ALL SELECT 'public_flags'::text table_name,count(*)::bigint row_count FROM public."public_flags" x WHERE true UNION ALL SELECT 'purchase_order_items'::text table_name,count(*)::bigint row_count FROM public."purchase_order_items" x WHERE EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"::text=x."po_id"::text AND p.store_id::text=p_branch_id) UNION ALL SELECT 'purchase_orders'::text table_name,count(*)::bigint row_count FROM public."purchase_orders" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'sale_items'::text table_name,count(*)::bigint row_count FROM public."sale_items" x WHERE x.branch_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'sales'::text table_name,count(*)::bigint row_count FROM public."sales" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'secure_settings'::text table_name,count(*)::bigint row_count FROM public."secure_settings" x WHERE true UNION ALL SELECT 'security_findings'::text table_name,count(*)::bigint row_count FROM public."security_findings" x WHERE true UNION ALL SELECT 'settings_locks'::text table_name,count(*)::bigint row_count FROM public."settings_locks" x WHERE true UNION ALL SELECT 'settings_overrides'::text table_name,count(*)::bigint row_count FROM public."settings_overrides" x WHERE true UNION ALL SELECT 'shift_sessions'::text table_name,count(*)::bigint row_count FROM public."shift_sessions" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'sku_audit'::text table_name,count(*)::bigint row_count FROM public."sku_audit" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'staff_roles'::text table_name,count(*)::bigint row_count FROM public."staff_roles" x WHERE true UNION ALL SELECT 'stock_adjustments'::text table_name,count(*)::bigint row_count FROM public."stock_adjustments" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'stock_delta_applied'::text table_name,count(*)::bigint row_count FROM public."stock_delta_applied" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'stock_transfer_items'::text table_name,count(*)::bigint row_count FROM public."stock_transfer_items" x WHERE EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=x."transfer_id"::text AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text)) UNION ALL SELECT 'stock_transfers'::text table_name,count(*)::bigint row_count FROM public."stock_transfers" x WHERE p_branch_id IN (x.from_store_id::text,x.to_store_id::text) UNION ALL SELECT 'stores'::text table_name,count(*)::bigint row_count FROM public."stores" x WHERE true UNION ALL SELECT 'suppliers'::text table_name,count(*)::bigint row_count FROM public."suppliers" x WHERE true UNION ALL SELECT 'sync_metadata'::text table_name,count(*)::bigint row_count FROM public."sync_metadata" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'system_audit_logs'::text table_name,count(*)::bigint row_count FROM public."system_audit_logs" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_commands'::text table_name,count(*)::bigint row_count FROM public."terminal_commands" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_tokens'::text table_name,count(*)::bigint row_count FROM public."terminal_tokens" x WHERE true UNION ALL SELECT 'uom_units'::text table_name,count(*)::bigint row_count FROM public."uom_units" x WHERE true UNION ALL SELECT 'user_roles'::text table_name,count(*)::bigint row_count FROM public."user_roles" x WHERE true UNION ALL SELECT 'whatsapp_queue'::text table_name,count(*)::bigint row_count FROM public."whatsapp_queue" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_recovery_secrets'::text table_name,count(*)::bigint row_count FROM public."terminal_recovery_secrets" x WHERE true UNION ALL SELECT 'pos_store_settings'::text table_name,count(*)::bigint row_count FROM public."pos_store_settings" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'settings_scoped'::text table_name,count(*)::bigint row_count FROM public."settings_scoped" x WHERE true UNION ALL SELECT 'stock_count_drafts'::text table_name,count(*)::bigint row_count FROM public."stock_count_drafts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'authorization_actions'::text table_name,count(*)::bigint row_count FROM public."authorization_actions" x WHERE true UNION ALL SELECT 'authorization_action_history'::text table_name,count(*)::bigint row_count FROM public."authorization_action_history" x WHERE true UNION ALL SELECT 'authorization_requests'::text table_name,count(*)::bigint row_count FROM public."authorization_requests" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'authorization_log'::text table_name,count(*)::bigint row_count FROM public."authorization_log" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'record_edits'::text table_name,count(*)::bigint row_count FROM public."record_edits" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_cash_counts'::text table_name,count(*)::bigint row_count FROM public."shift_cash_counts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_close_events'::text table_name,count(*)::bigint row_count FROM public."shift_close_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_reconciliations'::text table_name,count(*)::bigint row_count FROM public."shift_reconciliations" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_variance_alerts'::text table_name,count(*)::bigint row_count FROM public."shift_variance_alerts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_notifications'::text table_name,count(*)::bigint row_count FROM public."shift_notifications" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'entity_status_history'::text table_name,count(*)::bigint row_count FROM public."entity_status_history" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'nav_pins'::text table_name,count(*)::bigint row_count FROM public."nav_pins" x WHERE true UNION ALL SELECT 'store_groups'::text table_name,count(*)::bigint row_count FROM public."store_groups" x WHERE true;
+ RETURN QUERY SELECT 'coupon_campaigns'::text table_name,count(*)::bigint row_count FROM public."coupon_campaigns" x WHERE true UNION ALL SELECT 'shifts'::text table_name,count(*)::bigint row_count FROM public."shifts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'issued_vouchers'::text table_name,count(*)::bigint row_count FROM public."issued_vouchers" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'activity_events'::text table_name,count(*)::bigint row_count FROM public."activity_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'app_users'::text table_name,count(*)::bigint row_count FROM public."app_users" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'audit_logs'::text table_name,count(*)::bigint row_count FROM public."audit_logs" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'booking_payments'::text table_name,count(*)::bigint row_count FROM public."booking_payments" x WHERE EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=x."booking_id"::text AND p.store_id::text=p_branch_id) UNION ALL SELECT 'bookings'::text table_name,count(*)::bigint row_count FROM public."bookings" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'branch_telemetry'::text table_name,count(*)::bigint row_count FROM public."branch_telemetry" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'cashiers'::text table_name,count(*)::bigint row_count FROM public."cashiers" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'coupon_events'::text table_name,count(*)::bigint row_count FROM public."coupon_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'drawer_events'::text table_name,count(*)::bigint row_count FROM public."drawer_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'held_orders'::text table_name,count(*)::bigint row_count FROM public."held_orders" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'integration_settings'::text table_name,count(*)::bigint row_count FROM public."integration_settings" x WHERE true UNION ALL SELECT 'item_activity_logs'::text table_name,count(*)::bigint row_count FROM public."item_activity_logs" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'member_verifications'::text table_name,count(*)::bigint row_count FROM public."member_verifications" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'members'::text table_name,count(*)::bigint row_count FROM public."members" x WHERE true UNION ALL SELECT 'membership_tiers'::text table_name,count(*)::bigint row_count FROM public."membership_tiers" x WHERE true UNION ALL SELECT 'offline_sync_audit_log'::text table_name,count(*)::bigint row_count FROM public."offline_sync_audit_log" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'payment_transactions'::text table_name,count(*)::bigint row_count FROM public."payment_transactions" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'payment_types'::text table_name,count(*)::bigint row_count FROM public."payment_types" x WHERE true UNION ALL SELECT 'pin_attempts'::text table_name,count(*)::bigint row_count FROM public."pin_attempts" x WHERE true UNION ALL SELECT 'pos_settings'::text table_name,count(*)::bigint row_count FROM public."pos_settings" x WHERE true UNION ALL SELECT 'product_barcodes'::text table_name,count(*)::bigint row_count FROM public."product_barcodes" x WHERE EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=x."product_id"::text AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id)) UNION ALL SELECT 'product_categories'::text table_name,count(*)::bigint row_count FROM public."product_categories" x WHERE true UNION ALL SELECT 'products'::text table_name,count(*)::bigint row_count FROM public."products" x WHERE (NULLIF(x.owner_store_id::text,'') IS NULL OR x.owner_store_id::text=p_branch_id) UNION ALL SELECT 'promotions'::text table_name,count(*)::bigint row_count FROM public."promotions" x WHERE EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=x."foc_product_id"::text AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id)) UNION ALL SELECT 'public_flags'::text table_name,count(*)::bigint row_count FROM public."public_flags" x WHERE true UNION ALL SELECT 'purchase_order_items'::text table_name,count(*)::bigint row_count FROM public."purchase_order_items" x WHERE EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"::text=x."po_id"::text AND p.store_id::text=p_branch_id) UNION ALL SELECT 'purchase_orders'::text table_name,count(*)::bigint row_count FROM public."purchase_orders" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'sale_items'::text table_name,count(*)::bigint row_count FROM public."sale_items" x WHERE x.branch_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'sales'::text table_name,count(*)::bigint row_count FROM public."sales" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'secure_settings'::text table_name,count(*)::bigint row_count FROM public."secure_settings" x WHERE true UNION ALL SELECT 'security_findings'::text table_name,count(*)::bigint row_count FROM public."security_findings" x WHERE true UNION ALL SELECT 'settings_locks'::text table_name,count(*)::bigint row_count FROM public."settings_locks" x WHERE true UNION ALL SELECT 'settings_overrides'::text table_name,count(*)::bigint row_count FROM public."settings_overrides" x WHERE (lower(x.scope)='global' OR (lower(x.scope)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text)) OR (lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id)) UNION ALL SELECT 'shift_sessions'::text table_name,count(*)::bigint row_count FROM public."shift_sessions" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'sku_audit'::text table_name,count(*)::bigint row_count FROM public."sku_audit" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'staff_roles'::text table_name,count(*)::bigint row_count FROM public."staff_roles" x WHERE true UNION ALL SELECT 'stock_adjustments'::text table_name,count(*)::bigint row_count FROM public."stock_adjustments" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'stock_delta_applied'::text table_name,count(*)::bigint row_count FROM public."stock_delta_applied" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'stock_transfer_items'::text table_name,count(*)::bigint row_count FROM public."stock_transfer_items" x WHERE EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=x."transfer_id"::text AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text)) UNION ALL SELECT 'stock_transfers'::text table_name,count(*)::bigint row_count FROM public."stock_transfers" x WHERE p_branch_id IN (x.from_store_id::text,x.to_store_id::text) UNION ALL SELECT 'stores'::text table_name,count(*)::bigint row_count FROM public."stores" x WHERE true UNION ALL SELECT 'suppliers'::text table_name,count(*)::bigint row_count FROM public."suppliers" x WHERE true UNION ALL SELECT 'sync_metadata'::text table_name,count(*)::bigint row_count FROM public."sync_metadata" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'system_audit_logs'::text table_name,count(*)::bigint row_count FROM public."system_audit_logs" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_commands'::text table_name,count(*)::bigint row_count FROM public."terminal_commands" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_tokens'::text table_name,count(*)::bigint row_count FROM public."terminal_tokens" x WHERE true UNION ALL SELECT 'uom_units'::text table_name,count(*)::bigint row_count FROM public."uom_units" x WHERE true UNION ALL SELECT 'user_roles'::text table_name,count(*)::bigint row_count FROM public."user_roles" x WHERE true UNION ALL SELECT 'whatsapp_queue'::text table_name,count(*)::bigint row_count FROM public."whatsapp_queue" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'terminal_recovery_secrets'::text table_name,count(*)::bigint row_count FROM public."terminal_recovery_secrets" x WHERE true UNION ALL SELECT 'pos_store_settings'::text table_name,count(*)::bigint row_count FROM public."pos_store_settings" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'settings_scoped'::text table_name,count(*)::bigint row_count FROM public."settings_scoped" x WHERE (lower(x.scope)='global' OR (lower(x.scope)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text)) OR (lower(x.scope)='terminal' AND x.scope_id::text=p_terminal_id)) UNION ALL SELECT 'stock_count_drafts'::text table_name,count(*)::bigint row_count FROM public."stock_count_drafts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'authorization_actions'::text table_name,count(*)::bigint row_count FROM public."authorization_actions" x WHERE (lower(x.scope_type)='global' OR (lower(x.scope_type)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope_type)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text))) UNION ALL SELECT 'authorization_action_history'::text table_name,count(*)::bigint row_count FROM public."authorization_action_history" x WHERE (lower(x.scope_type)='global' OR (lower(x.scope_type)='branch' AND x.scope_id::text=p_branch_id) OR (lower(x.scope_type)='cluster' AND EXISTS(SELECT 1 FROM public.stores scoped_store WHERE scoped_store.id::text=p_branch_id AND COALESCE(NULLIF(scoped_store.group_id,''),'default')=x.scope_id::text))) UNION ALL SELECT 'authorization_requests'::text table_name,count(*)::bigint row_count FROM public."authorization_requests" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'authorization_log'::text table_name,count(*)::bigint row_count FROM public."authorization_log" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'record_edits'::text table_name,count(*)::bigint row_count FROM public."record_edits" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_cash_counts'::text table_name,count(*)::bigint row_count FROM public."shift_cash_counts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_close_events'::text table_name,count(*)::bigint row_count FROM public."shift_close_events" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_reconciliations'::text table_name,count(*)::bigint row_count FROM public."shift_reconciliations" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_variance_alerts'::text table_name,count(*)::bigint row_count FROM public."shift_variance_alerts" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'shift_notifications'::text table_name,count(*)::bigint row_count FROM public."shift_notifications" x WHERE x.store_id::text=p_branch_id AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) UNION ALL SELECT 'entity_status_history'::text table_name,count(*)::bigint row_count FROM public."entity_status_history" x WHERE x.store_id::text=p_branch_id UNION ALL SELECT 'nav_pins'::text table_name,count(*)::bigint row_count FROM public."nav_pins" x WHERE true UNION ALL SELECT 'store_groups'::text table_name,count(*)::bigint row_count FROM public."store_groups" x WHERE true;
 END $fn$;
 
 CREATE OR REPLACE FUNCTION public.pos_old_receipt_lookup(p_lookup text,p_branch_id text) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
@@ -15098,17 +15277,17 @@ BEGIN IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_use
  RETURN jsonb_build_object('sale',to_jsonb(v_sale),'items',(SELECT COALESCE(jsonb_agg(to_jsonb(i)),'[]'::jsonb) FROM public.sale_items i WHERE i.sale_id=v_sale.id),'payments',(SELECT COALESCE(jsonb_agg(to_jsonb(p)),'[]'::jsonb) FROM public.payment_transactions p WHERE p.sale_id=v_sale.id));
 END $fn$;
 
-REVOKE ALL ON FUNCTION public.pos_sync_push_batch(uuid,text,text,text,jsonb,jsonb) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.pos_sync_push_aggregate(uuid,text,text,jsonb) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.pos_sync_pull(text,text,bigint,integer) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.pos_sync_bootstrap(text,text,text,text,integer,integer) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.pos_sync_counts(text,text,integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_push_aggregate(uuid,text,text,text,jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_bootstrap(text,text,text,text,text,integer,integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_counts(text,text,text,integer) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.pos_old_receipt_lookup(text,text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.pos_sync_push_batch(uuid,text,text,text,jsonb,jsonb) TO service_role;
-GRANT EXECUTE ON FUNCTION public.pos_sync_push_aggregate(uuid,text,text,jsonb) TO service_role;
-GRANT EXECUTE ON FUNCTION public.pos_sync_pull(text,text,bigint,integer) TO service_role;
-GRANT EXECUTE ON FUNCTION public.pos_sync_bootstrap(text,text,text,text,integer,integer) TO service_role;
-GRANT EXECUTE ON FUNCTION public.pos_sync_counts(text,text,integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_push_aggregate(uuid,text,text,text,jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_bootstrap(text,text,text,text,text,integer,integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_counts(text,text,text,integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.pos_old_receipt_lookup(text,text) TO service_role;
 
 -- SQLSERVER_SYNC_CONTRACT_END
