@@ -66,6 +66,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260929162248_restrict_terminal_settings_deletes.sql",
       "supabase/migrations/20260929170000_bound_sync_pull_page.sql",
       "supabase/migrations/20260929174500_stop_retrying_application_conflicts.sql",
+      "supabase/migrations/20260930083000_repair_authenticated_sync_reads.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
