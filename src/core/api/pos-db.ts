@@ -2405,10 +2405,12 @@ export const db = {
         });
         return "unknown";
       }
+      // This projection is deliberately bounded. It can prove presence, but
+      // absence from the page does not prove the row was not saved.
       return Array.isArray(res.data) &&
         (res.data as Array<Record<string, unknown>>).some((row) => row.id === id)
         ? "yes"
-        : "no";
+        : "unknown";
     } catch (e) {
       recordDiagnostic({
         kind: "shift_lookup_unavailable",

@@ -161,7 +161,7 @@ describe("offline terminal operations", () => {
     const rendererSync = readFileSync("src/lib/sync-engine.ts", "utf8");
     expect(rendererSync).toContain("subscribeConnectivity");
     expect(rendererSync).toContain('runExclusive("network")');
-    expect(rendererSync).toContain('live.on("postgres_changes"');
+    expect(rendererSync).toContain('next.on("postgres_changes"');
   });
 
   it("keeps a dirty sync wake-up and performs a bounded final flush before SQL closes", () => {

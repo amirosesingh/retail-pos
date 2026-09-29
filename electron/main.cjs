@@ -1226,6 +1226,7 @@ function registerIpc() {
     const migrated=await observedDatabaseOperation("migration","apply",() => applyMigrations(databaseManager,profile));
     if(!migrated.ok)return migrated;
     const validation=await observedDatabaseOperation("migration","revalidate",() => databaseService.validate(profile));
+    if(!validation.ok)return validation;
     return validation.ready?{...migrated,ready:true,validation}:{...migrated,ok:false,code:"EMIGRATION_INCOMPLETE",error:"The migration ran, but schema validation still found differences.",validation};
   }));
   ipcMain.handle("database:migrate-saved", () => guard.guarded(async()=>{

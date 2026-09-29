@@ -34,7 +34,7 @@ async function validateDatabase(manager, profile) {
         actual.get(row.table_name).set(row.column_name, row);
       }
       const keyRows = await pool.request().query(`SELECT t.name table_name,i.name index_name,i.is_primary_key,i.is_unique,i.has_filter,i.filter_definition,c.name column_name,ic.key_ordinal
-        FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id JOIN sys.indexes i ON i.object_id=t.object_id AND i.index_id>0 AND i.is_hypothetical=0
+        FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id JOIN sys.indexes i ON i.object_id=t.object_id AND i.index_id>0 AND i.is_hypothetical=0 AND i.is_disabled=0
         JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
         WHERE s.name='dbo' AND ic.key_ordinal>0;`);
       const foreignRows = await pool.request().query(`SELECT pt.name table_name,pc.name column_name,rt.name referenced_table,rc.name referenced_column

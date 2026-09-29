@@ -32,6 +32,8 @@ describe("scoped SQL Server synchronization", () => {
     const relay = read("src/core/api/pos-relay.server.ts");
     const main = read("electron/main.cjs");
     expect(endpoint).toContain('p_terminal_id:scope.terminalId ?? ""');
+    expect(endpoint).toContain('terminalSync && !scope.terminalId');
+    expect(endpoint).toContain('code:"TERMINAL_REQUIRED"');
     expect(relay).toContain("terminalId = input.terminalToken");
     expect(main).toContain("const branchId=localBranchId()");
     expect(main).not.toContain("branchId:input.branchId??localBranchId()");
@@ -47,7 +49,9 @@ describe("scoped SQL Server synchronization", () => {
     expect(engine).not.toMatch(/LIVE_SETTINGS_TABLES[\s\S]{0,500}\.\.\.LIVE_SETTINGS_TABLES/);
     expect(activity).toContain("filter: `store_id=eq.${branchId}`");
     expect(approvals).toContain("filter: `store_id=eq.${branchId}`");
-    expect(engine).toContain("if (hasStaffSession())");
+    expect(engine).toContain("supabaseExternal.auth.onAuthStateChange");
+    expect(engine).toContain("installLiveChannel(staffPresent)");
+    expect(engine).toContain("authListener.subscription.unsubscribe()");
     expect(activity).toContain("if (!hasStaffSession()) return");
     expect(approvals).toContain("if (!hasStaffSession()) return");
   });
@@ -121,6 +125,7 @@ describe("scoped SQL Server synchronization", () => {
     const schema = read("supabase/schema.sql");
     const pull = schema.slice(schema.indexOf("CREATE OR REPLACE FUNCTION public.pos_sync_pull"), schema.indexOf("CREATE OR REPLACE FUNCTION public.pos_sync_bootstrap"));
     expect(pull).toContain("WITH feed_page AS MATERIALIZED");
+    expect(pull).toContain("SECURITY DEFINER SET search_path=public,pg_temp");
     expect(pull.indexOf("LIMIT LEAST(GREATEST(p_limit,100),2000)")).toBeLessThan(pull.indexOf("CASE f.table_name"));
     expect(pull).toContain("FROM feed_page f ORDER BY f.cursor");
     expect(pull).toContain(`x."id"=((f.entity_id::jsonb)->>'id')::uuid`);

@@ -343,7 +343,7 @@ BEGIN
 END $fn$;`);
 
 const pullFunction = `CREATE OR REPLACE FUNCTION public.pos_sync_pull(p_organization_id text,p_branch_id text,p_terminal_id text,p_after_cursor bigint DEFAULT 0,p_limit integer DEFAULT 500)
-RETURNS TABLE(cursor bigint,table_name text,entity_id text,operation text,row_version bigint,tombstone boolean,row_data jsonb) LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $fn$
+RETURNS TABLE(cursor bigint,table_name text,entity_id text,operation text,row_version bigint,tombstone boolean,row_data jsonb) LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
 DECLARE v_me public.app_users%ROWTYPE;
 BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id); IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
  IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
@@ -480,10 +480,7 @@ if (pullMigrationIndex >= 0) {
   const migrationsDir = path.join(root, "supabase", "migrations") + path.sep;
   if (!migrationPath.startsWith(migrationsDir) || !fs.existsSync(migrationPath))
     throw new Error("--pull-migration must name an existing file under supabase/migrations");
-  const migration = `${pullFunction.replaceAll(
-    "LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS",
-    "LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS",
-  )}
+  const migration = `${pullFunction}
 
 REVOKE ALL ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) TO service_role;

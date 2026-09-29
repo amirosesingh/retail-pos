@@ -87,7 +87,8 @@ function databaseErrors(limit = 100) {
     try { detail = JSON.parse(match[3]); } catch { continue; }
     const event = match[2];
     const text = `${event} ${detail?.state ?? ""} ${detail?.code ?? ""} ${detail?.message ?? ""}`;
-    const isFailure = detail?.connected === false || Boolean(detail?.code) || Boolean(detail?.message) || /(?:error|failed|failure|timeout|migration_required)/i.test(text);
+    const normalUnconfiguredState = String(detail?.state ?? "").toLowerCase() === "enabled_unconfigured";
+    const isFailure = (!normalUnconfiguredState && detail?.connected === false) || Boolean(detail?.code) || Boolean(detail?.message) || /(?:error|failed|failure|timeout|migration_required)/i.test(text);
     if (!isFailure || /(?:validating|connecting|disconnect(?:ed)?|disabled)$/i.test(String(detail?.state ?? ""))) continue;
     rows.push({
       id: `${match[1]}:${event}:${rows.length}`,

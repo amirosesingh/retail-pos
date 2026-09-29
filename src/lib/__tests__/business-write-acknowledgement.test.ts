@@ -85,6 +85,10 @@ describe("business UI persistence acknowledgements", () => {
     const lookup = db.slice(db.indexOf("async shiftExists"), db.indexOf("commitDrawerEvent"));
     expect(lookup).toContain('routedQuery("shifts"');
     expect(lookup).toContain('"shift_list_secure"');
+    expect(lookup).toContain(': "unknown"');
     expect(lookup).not.toContain('.from("shifts"');
+    expect(source("src/lib/pos-store.tsx")).toContain(
+      "db.shiftExists(shift.id, shift.storeId)",
+    );
   });
 });

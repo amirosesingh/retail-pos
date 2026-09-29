@@ -184,10 +184,15 @@ describe("local SQL Server wizard server step", () => {
     expect(handler).toContain('observedDatabaseOperation("migration","preflight"');
     expect(handler).toContain('observedDatabaseOperation("migration","apply"');
     expect(handler).toContain('observedDatabaseOperation("migration","revalidate"');
+    expect(handler).toContain("if(!validation.ok)return validation");
     const health = readFileSync("electron/db/health.cjs", "utf8");
     expect(health).toContain('kind:"index"');
     expect(health).toContain('kind:"constraint"');
     expect(health).toContain("requiredIndexes()");
+    expect(health).toContain("i.is_disabled=0");
+    const diagnostics = readFileSync("electron/diagnostics.cjs", "utf8");
+    expect(diagnostics).toContain('normalUnconfiguredState');
+    expect(diagnostics).toContain('=== "enabled_unconfigured"');
   });
 
   it("repairs the legacy terminal platform default without rewriting terminal rows", () => {
