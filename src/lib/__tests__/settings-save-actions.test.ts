@@ -30,13 +30,25 @@ describe("settings save actions", () => {
     expect(frame).toContain("settingsScopeLoading && !allowWhileScopeLoading");
   });
 
+  it("keeps the database settings page status-only and opens cloud configuration in a dialog", () => {
+    const settings = read("src/platforms/web/components/pos/DatabaseConnectionSettings.tsx");
+    const cloud = read("src/platforms/web/components/pos/settings/panels/CloudConnectionPanel.tsx");
+    const firstRun = read("src/platforms/web/components/pos/ConnectDatabaseScreen.tsx");
+
+    expect(settings).toContain('<CloudConnectionPanel presentation="dialog" />');
+    expect(cloud).toContain('presentation = "panel"');
+    expect(cloud).toContain("<DialogContent");
+    expect(cloud).toContain("Configure connection");
+    expect(cloud).toContain("Central database configured");
+    expect(firstRun).toContain("<CloudConnectionPanel onConnected={continueStartup} />");
+    expect(firstRun).not.toContain('presentation="dialog"');
+  });
+
   it("uses each independently authorized page's granular permission", () => {
     const frame = read("src/platforms/web/components/pos/settings/SettingsFrame.tsx");
     const database = read("src/routes/settings.database.tsx");
     const sessions = read("src/routes/settings.sessions.tsx");
-    const cloud = read(
-      "src/platforms/web/components/pos/settings/panels/CloudConnectionPanel.tsx",
-    );
+    const cloud = read("src/platforms/web/components/pos/settings/panels/CloudConnectionPanel.tsx");
 
     expect(frame).toContain("permission?: PermissionFlag");
     expect(frame).toContain("const canSettings = isAdmin || can(requiredPermission)");

@@ -48,7 +48,9 @@ describe("online approval primary database", () => {
     expect(fn).toContain('rule.mode !== "pin" && rule.mode !== "either"');
     expect(fn).toContain("rule.approvalTimeoutMinutes / 60");
     expect(gate).not.toContain("authorizeAsAdmin");
-    expect(gate).toContain("Every person, including an administrator, follows the configured method");
+    expect(gate).toContain(
+      "Every person, including an administrator, follows the configured method",
+    );
     expect(register).toContain("...(heldOrderId ? { heldOrderId } : {})");
     expect(register).toContain("snapshotFingerprint(snapshot)");
     expect(register).toContain("authorizationRules[action]?.mode");
@@ -150,6 +152,19 @@ describe("online approval primary database", () => {
     expect(panel).toContain("PeopleMultiSelect");
     expect(panel).toContain("Search by name, staff ID, role or branch");
     expect(approvals).toContain("Routed approvers");
+  });
+
+  it("keeps authorization categories compact and moves detailed settings into one dialog", () => {
+    const panel = source("src/platforms/web/components/pos/settings/AuthorizationRulesPanel.tsx");
+
+    expect(panel).toContain("<SettingsSections");
+    expect(panel).toContain("<RuleConfigurationDialog");
+    expect(panel).toContain("Status / configuration summary");
+    expect(panel).toContain("SELECTABLE_AUTH_MODES");
+    expect(panel).toContain('mode.value !== "either"');
+    expect(panel).toContain("Complete the highlighted settings before saving");
+    expect(panel).toContain("Approval Request settings will become inactive, not deleted");
+    expect(panel).toContain('placeholder="Search by name, staff ID, role or branch"');
   });
 
   it("uses the transactional saved-rules snapshot without a fragile second read", () => {
