@@ -3,18 +3,21 @@ import { AlertTriangle, Cloud, Database, RefreshCw, Settings } from "lucide-reac
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { ONLINE_STARTUP_OVERRIDE } from "@/core/local-db/db-mode";
+import {
+  LOCAL_DATABASE_SETTINGS_REQUEST,
+  ONLINE_STARTUP_OVERRIDE,
+} from "@/core/local-db/db-mode";
+import { LocalDatabaseWizard } from "@/platforms/windows/components/LocalDatabaseWizard";
 
 type DatabaseState = {
   connected?: boolean;
   state?: string;
-  detail?: { error?: string; hint?: string } | null;
+  detail?: { error?: string; hint?: string; status?: string } | null;
 };
 
 type StartupDatabaseApi = {
   getState(): Promise<DatabaseState>;
   retryStartup(): Promise<DatabaseState>;
-  authorizeSettings(): Promise<{ ok: boolean; error?: string }>;
 };
 
 const database = () =>
@@ -30,8 +33,13 @@ function DatabaseStartupPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [online, setOnline] = useState(() => navigator.onLine);
+  const [showLocalSettings, setShowLocalSettings] = useState(
+    () => window.sessionStorage.getItem(LOCAL_DATABASE_SETTINGS_REQUEST) === "1",
+  );
+  const migrationRequired = state.detail?.status === "migration_required";
 
   useEffect(() => {
+    window.sessionStorage.removeItem(LOCAL_DATABASE_SETTINGS_REQUEST);
     void database()?.getState().then(setState);
     const update = () => setOnline(navigator.onLine);
     window.addEventListener("online", update);
@@ -67,21 +75,22 @@ function DatabaseStartupPage() {
   };
 
   const openSettings = async () => {
-    setBusy(true);
     setError("");
-    try {
-      const authorized = await database()!.authorizeSettings();
-      if (!authorized.ok) {
-        setError(authorized.error ?? "Administrator authorization is required.");
-        return;
-      }
-      await navigate({ to: "/settings/database" });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+    setShowLocalSettings(true);
   };
+
+  if (showLocalSettings) {
+    return (
+      <main className="min-h-screen bg-background p-6">
+        <section className="mx-auto w-full max-w-4xl space-y-4">
+          <Button variant="outline" onClick={() => setShowLocalSettings(false)}>
+            Back to database recovery
+          </Button>
+          <LocalDatabaseWizard initiallyOpen onRecoveryClose={() => setShowLocalSettings(false)} />
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-background p-6">
@@ -91,9 +100,13 @@ function DatabaseStartupPage() {
             <AlertTriangle className="size-6" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold">Local database is unavailable</h1>
+            <h1 className="text-xl font-semibold">
+              {migrationRequired ? "Local database update required" : "Local database is unavailable"}
+            </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Retail tried the saved Microsoft SQL Server connection before opening the terminal.
+              {migrationRequired
+                ? "SQL Server is connected, but its POS schema must be updated before local trading resumes."
+                : "Retail tried the saved Microsoft SQL Server connection before opening the terminal."}
             </p>
           </div>
         </div>
@@ -113,7 +126,7 @@ function DatabaseStartupPage() {
             <Cloud className="size-4" /> Continue with online terminal
           </Button>
           <Button className="sm:col-span-2" variant="outline" disabled={busy} onClick={() => void openSettings()}>
-            <Settings className="size-4" /> Open database settings
+            <Settings className="size-4" /> Open local SQL database settings
           </Button>
         </div>
 

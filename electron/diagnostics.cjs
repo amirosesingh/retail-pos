@@ -56,6 +56,23 @@ const logCrash = (event, detail) =>
 
 const logServer = (line) => append("server.log", line);
 
+/** Durable, credential-free evidence for local SQL/cloud routing failures. */
+function logConnection(event, detail = {}) {
+  const safe = {};
+  const allowed = ["state", "connected", "scope", "code", "stage", "category", "message", "latencyMs"];
+  for (const key of allowed) {
+    const value = detail?.[key];
+    if (value == null) continue;
+    safe[key] = typeof value === "string"
+      ? value
+          .replace(/https?:\/\/[^\s]+/gi, "[url]")
+          .replace(/(apikey|authorization|token|password|key)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+          .slice(0, 600)
+      : value;
+  }
+  append("connection.log", `${String(event ?? "connection").slice(0, 100)} ${JSON.stringify(safe)}`);
+}
+
 /**
  * Native minidumps.
  *
@@ -173,6 +190,7 @@ function writeReport(extra = {}) {
 module.exports = {
   logCrash,
   logServer,
+  logConnection,
   startCrashReporter,
   watchWindow,
   watchApp,

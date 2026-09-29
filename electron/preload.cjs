@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld("pos", {
     listDatabases: (profile) => invoke("database:list-databases", profile),
     validateDatabase: (profile) => invoke("database:validate", profile),
     migrateDatabase: (profile) => invoke("database:migrate", profile),
+    migrateSavedDatabase: () => invoke("database:migrate-saved"),
+    exportMigrationSql: () => invoke("database:export-migrations"),
     saveAndConnect: (profile) => invoke("database:save-connect", profile),
     disconnect: () => invoke("database:disconnect"),
     removeConfiguration: () => invoke("database:remove-configuration"),
@@ -134,6 +136,7 @@ contextBridge.exposeInMainWorld("pos", {
   rollbackNow: () => invoke("health:rollback"),
   openLogFolder: () => invoke("health:open-logs"),
   collectDiagnostics: () => invoke("health:collect-diagnostics"),
+  logConnection: (event, detail) => invoke("health:log-connection", event, detail),
   onFatal: (cb) => {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("app:fatal", handler);

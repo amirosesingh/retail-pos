@@ -136,13 +136,23 @@ describe("cashier location bootstrap", () => {
 
   it("loads the location directory independently of heavy business data", () => {
     const store = read("src/lib/pos-store.tsx");
-    expect(store).toContain("const locationTask = isOnlineOnly() ? loadLocationDirectory() : null");
+    expect(store).toContain(
+      'const locationTask = effectiveDatabaseMode() === "online" ? loadLocationDirectory() : null',
+    );
     expect(store).toContain(
       "const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined)",
     );
     expect(store.indexOf('markStartupStage("essential-pos-ready")')).toBeLessThan(
       store.indexOf("const loaded = await cloudTask"),
     );
+  });
+
+  it("honours the Electron startup online override throughout read and sale routing", () => {
+    const db = read("src/core/api/pos-db.ts");
+    const query = read("src/core/api/db-query.ts");
+    expect(db).toContain('effectiveDatabaseMode() === "local" && bridge?.snapshot');
+    expect(db).toContain('const onlineOnly = effectiveDatabaseMode() === "online"');
+    expect(query).toContain('effectiveDatabaseMode() === "local" && bridge?.query');
   });
 
   it("does not accept an anonymous empty store response ahead of a proven relay", () => {

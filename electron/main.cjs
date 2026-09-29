@@ -38,7 +38,7 @@ const { createTelemetry } = require("./telemetry.cjs");
 const { OperationsRepository } = require("./db/repositories/operations.cjs");
 const { AggregateRepository } = require("./db/repositories/aggregates.cjs");
 const { ReceiptRepository } = require("./db/repositories/receipts.cjs");
-const { applyMigrations } = require("./db/migrations.cjs");
+const { applyMigrations, migrationBundleSql } = require("./db/migrations.cjs");
 const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
@@ -50,6 +50,7 @@ const databaseManager = new ConnectionManager();
 const databaseService = new DatabaseService({
   secureConfig: databaseConfig,
   manager: databaseManager,
+  log: diagnostics.logConnection,
   publish: (state) => {
     for (const win of BrowserWindow.getAllWindows()) win.webContents.send("database:state", state);
   },
@@ -120,7 +121,7 @@ function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
 }
 async function runAutomaticSync() {
   automaticSyncTimer = null;
-  if (!databaseManager.pool || !localBranchId() || jobManager.running || syncCoordinator.paused) {
+  if (!databaseManager.isConnected() || !localBranchId() || jobManager.running || syncCoordinator.paused) {
     scheduleAutomaticSync();
     return;
   }
@@ -154,7 +155,7 @@ function stopAutomaticSync() {
 const shutdownDelay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 async function flushSyncBeforeShutdown() {
   const branchId = localBranchId();
-  if (!databaseManager.pool || !branchId || syncCoordinator.paused) return { skipped: true };
+  if (!databaseManager.isConnected() || !branchId || syncCoordinator.paused) return { skipped: true };
   const deadline = Date.now() + SHUTDOWN_SYNC_TIMEOUT_MS;
   while (syncCoordinator.running && Date.now() < deadline) await shutdownDelay(50);
   let result = { ok: true, pushed: 0 };
@@ -1193,12 +1194,36 @@ function registerIpc() {
   ipcMain.handle("database:get-state", () => databaseService.snapshot());
   ipcMain.handle("database:retry-startup", () => databaseService.restore());
   ipcMain.handle("database:authorize-settings", () => ({ ok: true }));
-  ipcMain.handle("database:set-enabled", (_e, value) => guard.guarded(async()=>{const state=await databaseService.setEnabled(value===true);if(value===true&&databaseManager.pool)void prepareLocalData().catch(error=>recordFault("local-data.prepare",error));return databaseService.snapshot();}));
+  ipcMain.handle("database:set-enabled", (_e, value) => guard.guarded(async()=>{await databaseService.setEnabled(value===true);if(value===true&&databaseManager.isConnected())void prepareLocalData().catch(error=>recordFault("local-data.prepare",error));return databaseService.snapshot();}));
   ipcMain.handle("database:list-servers", () => discoverLocalSqlServers());
   ipcMain.handle("database:test-server", (_e, value) => guard.guarded(() => databaseService.testServer(guard.databaseProfile(value))));
   ipcMain.handle("database:list-databases", (_e, value) => guard.guarded(() => databaseService.databases(guard.databaseProfile(value))));
   ipcMain.handle("database:validate", (_e, value) => guard.guarded(() => databaseService.validate(guard.databaseProfile(value, { requireDatabase: true }))));
   ipcMain.handle("database:migrate", (_e, value) => guard.guarded(() => applyMigrations(databaseManager,guard.databaseProfile(value,{requireDatabase:true}))));
+  ipcMain.handle("database:migrate-saved", () => guard.guarded(async()=>{
+    const wasPaused=syncCoordinator.paused;
+    if(!wasPaused)syncCoordinator.pause();
+    databaseService.beginMigration();
+    try{
+      const migrated=await applyMigrations(databaseManager);
+      if(!migrated.ok){databaseService.migrationFailed(migrated);return{...migrated,state:databaseService.snapshot()};}
+      const state=await databaseService.revalidateConnected();
+      if(!state.tradingReady)return{...migrated,ok:false,code:"EMIGRATION_INCOMPLETE",error:"The packaged migration ran, but the local schema still requires attention.",state};
+      databaseService.markReady({phase:"migration_complete",syncReady:!wasPaused});
+      return{...migrated,ok:true,ready:true,state:databaseService.snapshot()};
+    }finally{if(!wasPaused){syncCoordinator.resume();scheduleAutomaticSync(250);}}
+  }));
+  ipcMain.handle("database:export-migrations", async()=>{
+    const chosen=await dialog.showSaveDialog({
+      title:"Save local SQL Server migration",
+      defaultPath:path.join(app.getPath("downloads"),`Retail POS Local Migration ${app.getVersion()}.sql`),
+      filters:[{name:"SQL Server script",extensions:["sql"]}],
+      properties:["showOverwriteConfirmation"],
+    });
+    if(chosen.canceled||!chosen.filePath)return{ok:false,canceled:true};
+    try{fs.writeFileSync(chosen.filePath,migrationBundleSql(app.getVersion()),"utf8");return{ok:true,file:chosen.filePath};}
+    catch(error){return{ok:false,code:"EMIGRATION_EXPORT",error:String(error?.message??error)};}
+  });
   ipcMain.handle("database:save-connect", (_e, value) => guard.guarded(async()=>{
     const result=await databaseService.saveAndConnect(guard.databaseProfile(value,{requireDatabase:true}));
     if(!result.ok)return result;
@@ -1288,17 +1313,17 @@ function registerIpc() {
     );
   }));
   ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(() => { const input=guard.options(value,{name:"refund",max:5}); const terminal=terminalStore.read()??{}; const branch=input.branchId??terminal.locationId??terminal.storeId; return receiptRepository.refund({saleId:guard.uuid(input.saleId,{name:"sale id"}),refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null}); }));
-  ipcMain.handle("jobs:get-active", async () => databaseManager.pool ? jobRepository.active() : null);
-  ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.pool ? jobRepository.history(Number(limit)||50) : []);
-  ipcMain.handle("sync:get-status", () => syncCoordinator.snapshot());
+  ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
+  ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
+  ipcMain.handle("sync:get-status", () => syncCoordinator.refresh(localBranchId()));
   ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{const input=guard.options(options,{name:"sync options"});const result=await syncCoordinator.runNow({...input,branchId:input.branchId??localBranchId()});return result.code==="ECHANGEGAP"?prepareLocalData({force:true}):result;}));
   ipcMain.handle("sync:auto", async () => {
-    if(!databaseManager.pool||!localBranchId())return{ok:false,skipped:true};
+    if(!databaseManager.isConnected()||!localBranchId())return{ok:false,skipped:true};
     return syncCoordinator.runNow({branchId:localBranchId(),batchSize:500});
   });
   ipcMain.handle("sync:pause", () => syncCoordinator.pause());
   ipcMain.handle("sync:resume", () => syncCoordinator.resume());
-  ipcMain.handle("sync:get-failures", async () => ({ failures:databaseManager.pool?await jobRepository.failures():[], conflictRows:databaseManager.pool?await conflictRepository.unresolved():[], conflicts:databaseManager.pool?await conflictRepository.count():0 }));
+  ipcMain.handle("sync:get-failures", async () => ({ failures:databaseManager.isConnected()?await jobRepository.failures():[], businessBatches:databaseManager.isConnected()?await changeReader.failedAggregates(localBranchId()):[], conflictRows:databaseManager.isConnected()?await conflictRepository.unresolved():[], conflicts:databaseManager.isConnected()?await conflictRepository.count():0 }));
   ipcMain.handle("sync:reconcile", (_e, options) => guard.guarded(async()=>{try{const input=guard.options(options,{name:"reconciliation options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("A branch is required for reconciliation."),{code:"EBRANCH"});const historyDays=Number(databaseConfig.profile()?.retentionDays)||90;if(input.deep===true){const report=await localDataLifecycle.verify(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]);return{ok:true,verified:report.verified,differences:report.tables.filter(table=>!table.verified),verification:report.tables,lastVerifiedAt:report.verifiedAt};}const differences=input.repair===true?await localDataLifecycle.repair(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]):await localDataLifecycle.reconcile(branchId,historyDays);return{ok:true,matched:differences.length===0,differences,verification:syncCoordinator.snapshot().tables,lastComparedAt:syncCoordinator.snapshot().lastComparedAt};}catch(error){return{ok:false,code:error?.code??"ERECONCILE",error:String(error?.message??error)};}}));
   ipcMain.handle("telemetry:presence", (_e, value) => guard.guarded(() => {
     const input = guard.options(value, { name: "telemetry presence", max: 3 });
@@ -1398,6 +1423,13 @@ function registerIpc() {
     if (result.ok) shell.showItemInFolder(result.file);
     return result;
   });
+  ipcMain.handle("health:log-connection", (_event, event, detail) => {
+    diagnostics.logConnection(
+      guard.text(event, { name: "connection event", max: 100 }),
+      guard.options(detail, { name: "connection detail", max: 8 }),
+    );
+    return { ok: true };
+  });
   ipcMain.handle("health:quit", () => app.quit());
 
   ipcMain.handle("print:silent", async (_e, html, options) => guard.guarded(async () => {
@@ -1425,7 +1457,7 @@ function registerIpc() {
     if (reason.trim().length < 3) return { ok: false, code: "EREASON", error: "A drawer-opening reason is required." };
     const branchId = localBranchId();
     if (!branchId) return { ok: false, code: "EBRANCH", error: "The terminal branch is not configured." };
-    if (!databaseManager.pool) return { ok: false, code: "EDATABASE", error: "The local SQL database must be connected before the drawer can open." };
+    if (!databaseManager.isConnected()) return { ok: false, code: "EDATABASE", error: "The local SQL database must be connected before the drawer can open." };
     const identity = adminSession.identity();
     if (!identity) return { ok: false, code: "EAUTH", error: "A verified signed-in user is required." };
     const terminal = terminalStore.read() ?? {};

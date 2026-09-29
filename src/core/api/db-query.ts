@@ -13,6 +13,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { noteVersions } from "@/lib/row-versions";
 import { readAllPages } from "@/lib/paged-read";
 import { localDb } from "@/core/local-db/local-db";
+import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 
 import type { Row } from "@/lib/sync-outbox";
 
@@ -65,7 +66,7 @@ async function runQuery(
   options: QueryOptions,
 ): Promise<{ rows: Row[]; source: ReadSource }> {
   const bridge = localDb();
-  if (bridge?.query) {
+  if (effectiveDatabaseMode() === "local" && bridge?.query) {
     // Never grow renderer memory with the size of a table. Callers page large
     // views explicitly; point lookups and configuration reads remain bounded.
     const result = await bridge.query(table, { ...options, limit: Math.min(options.limit ?? 1000, 2000) });

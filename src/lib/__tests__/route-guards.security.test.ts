@@ -24,8 +24,9 @@ const PUBLIC_ROUTES = new Set([
   // key, and reads no business data.
   "recovery.tsx",
   // Startup recovery must be reachable before AppShell signs a cashier in.
-  // It exposes no business data; opening Database Settings still passes
-  // through the root PrivilegeGate and its administrator authorization.
+  // It exposes no business data. Its local recovery wizard may run read-only
+  // probes, while every configuration or migration write remains protected by
+  // the main-process administrator IPC gate.
   "database-startup.tsx",
 ]);
 

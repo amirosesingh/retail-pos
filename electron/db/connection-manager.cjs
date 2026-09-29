@@ -45,9 +45,17 @@ class ConnectionManager {
       requestTimeout: profile.requestTimeoutMs,
     });
     await pool.connect();
+    pool.on?.("error", () => { pool.__posConnectionFaulted = true; });
     this.pool = pool;
     this.profile = { ...profile, password: undefined };
     return pool;
+  }
+  isConnected() {
+    const pool = this.pool;
+    if (!pool || pool.__posConnectionFaulted) return false;
+    if (typeof pool.connected === "boolean") return pool.connected;
+    if (typeof pool.healthy === "boolean") return pool.healthy;
+    return true;
   }
   async close() {
     const pool = this.pool;

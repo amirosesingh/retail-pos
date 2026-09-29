@@ -42,7 +42,11 @@ describe("SQL Server persistent state machine", () => {
 
   it("does not mark an incomplete restored schema as trading ready", async () => {
     const { DatabaseService } = await import("../../../electron/db/service.cjs");
-    const manager = { pool: undefined, open: vi.fn(), close: vi.fn(async () => undefined) };
+    const manager: { pool?: object; open: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> } = {
+      pool: undefined,
+      open: vi.fn(async function (this: { pool?: object }) { this.pool = {}; }),
+      close: vi.fn(async () => undefined),
+    };
     const validation = {
       ok: true,
       ready: false,
@@ -61,10 +65,11 @@ describe("SQL Server persistent state machine", () => {
 
     await expect(service.restore()).resolves.toMatchObject({
       state: "enabled_error",
-      connected: false,
+      connected: true,
       tradingReady: false,
       detail: validation,
     });
-    expect(manager.open).not.toHaveBeenCalled();
+    expect(manager.open).toHaveBeenCalledOnce();
+    expect(manager.close).not.toHaveBeenCalled();
   });
 });

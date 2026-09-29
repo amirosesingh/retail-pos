@@ -110,6 +110,22 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(reader).toMatch(/JOIN selected ON selected\.aggregate_id=journal\.aggregate_id/);
   });
 
+  it("reports a concurrent sync as busy and reads live journal counters", async () => {
+    const pendingSummary = vi.fn().mockResolvedValue({ pending: 7, failed: 2 });
+    const { SyncCoordinator } = await import("../../../electron/sync/coordinator.cjs");
+    const coordinator = new SyncCoordinator({
+      pushWorker: { reader: { connectionManager: { pool: {} }, pendingSummary }, run: vi.fn() },
+      pullWorker: { run: vi.fn() },
+    });
+    await expect(coordinator.refresh("B1")).resolves.toMatchObject({ pending: 7, failed: 2 });
+    coordinator.running = true;
+    await expect(coordinator.runNow({ branchId: "B1" })).resolves.toMatchObject({
+      ok: false,
+      busy: true,
+      code: "ESYNC_BUSY",
+    });
+  });
+
   it("keeps an unacknowledged local row and records the cloud conflict", async () => {
     const commit = vi.fn();
     class Transaction { begin = vi.fn(); commit = commit; rollback = vi.fn(); }

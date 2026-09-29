@@ -67,6 +67,15 @@ describe("action-specific safe wording", () => {
     expect(message).not.toContain("SQL insert");
   });
 
+  it("does not describe a failed location load as a database save", () => {
+    const message = describeError(
+      new Error("Local SQL Server database requires an update before data can be read"),
+      "Loading data",
+    );
+    expect(message).toContain("could not read the database");
+    expect(message).not.toContain("could not be saved");
+  });
+
   it("identifies the failed local SQL table without exposing raw SQL", () => {
     const message = describeError(
       {

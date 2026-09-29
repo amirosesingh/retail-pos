@@ -12,6 +12,7 @@ export type DatabaseMode = "online" | "local";
 
 const KEY = "pos.db.mode";
 export const ONLINE_STARTUP_OVERRIDE = "pos.startup.online-only";
+export const LOCAL_DATABASE_SETTINGS_REQUEST = "pos.local-database.settings-request";
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
