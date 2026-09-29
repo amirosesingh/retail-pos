@@ -380,6 +380,11 @@ async function readChangedPage(
     stampColumn.set(table, "updated_at");
     return { ...res, column: "updated_at" as const };
   }
+  // A denied request or connection failure says nothing about the schema.
+  // Only retry when Postgres/PostgREST actually reports a missing column.
+  if (res.error.code !== "42703" && res.error.code !== "PGRST204") {
+    return { ...res, column: "updated_at" as const };
+  }
   res = await ask("created_at");
   if (!res.error) stampColumn.set(table, "created_at");
   return { ...res, column: "created_at" as const };
@@ -391,6 +396,10 @@ async function readChangedPage(
  */
 export async function pullDelta(): Promise<{ merged: number }> {
   if (pulling || !isOnline() || !isOnlineSyncEnabled()) return { merged: 0 };
+  // This is a direct Data API change probe, not the terminal's durable pull.
+  // PIN credentials do not authorize SELECT on business tables. Electron's
+  // worker owns its pull; only cloud staff sessions can run this probe.
+  if (localDb() || !hasStaffSession()) return { merged: 0 };
   // Keys rejected: stay parked until fresh ones are saved.
   if (syncState().credentialsInvalid) return { merged: 0 };
   pulling = true;

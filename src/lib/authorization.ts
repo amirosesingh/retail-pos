@@ -287,7 +287,11 @@ export const defaultRule = (actionKey: AuthActionKey): AuthorizationRule => ({
 
 const parsedJson = (raw: unknown): unknown => {
   if (typeof raw !== "string") return raw;
-  try { return JSON.parse(raw); } catch { return raw; }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
 };
 
 const asStrings = (raw: unknown): string[] => {
@@ -375,6 +379,46 @@ export function resolveRules(rows: AuthorizationRule[], storeId: string): RuleMa
   }
   return out;
 }
+
+/**
+ * Rules shown in the settings editor for one storage scope.
+ *
+ * A branch may inherit a global rule for display, but that global row version
+ * must never be used as the expected version of a new branch override. The
+ * override does not exist yet, so its correct optimistic-lock version is 0.
+ */
+export function resolveEditableRules(
+  rows: AuthorizationRule[],
+  scopeType: "global" | "branch",
+  storeId: string,
+): RuleMap {
+  const scopeId = scopeType === "branch" ? storeId : "";
+  const effective = resolveRules(rows, scopeId);
+  const direct = new Map(
+    rows
+      .filter((rule) => rule.scopeType === scopeType && rule.scopeId === scopeId)
+      .map((rule) => [rule.actionKey, rule]),
+  );
+  const out: RuleMap = {};
+  for (const action of AUTH_ACTIONS) {
+    const stored = direct.get(action.key);
+    out[action.key] = stored ?? {
+      ...effective[action.key],
+      id: "",
+      scopeType,
+      scopeId,
+      rowVersion: 0,
+      updatedAt: null,
+      updatedBy: null,
+    };
+  }
+  return out;
+}
+
+export const isAuthorizationRuleConflict = (message: string): boolean =>
+  /PT409|ESTALE_RULE|changed on another device|reload it before saving|reopen it to review/i.test(
+    message,
+  );
 
 /**
  * The fall-back when the rules table cannot be read: the branch's existing

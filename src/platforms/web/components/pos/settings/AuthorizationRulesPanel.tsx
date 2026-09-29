@@ -30,6 +30,7 @@ import {
 } from "@/platforms/web/components/pos/settings/authorization-rule-configuration";
 import { notifyError } from "@/lib/notify";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
+import { subscribeSettingsChange } from "@/lib/sync-engine";
 import {
   getAuthorizationRules,
   listAuthorizationPeople,
@@ -40,8 +41,9 @@ import {
   AUTH_GROUPS,
   AUTH_MODES,
   defaultRule,
+  isAuthorizationRuleConflict,
   normalizeRule,
-  resolveRules,
+  resolveEditableRules,
   type AuthActionDef,
   type AuthMode,
   type AuthorizationRule,
@@ -745,6 +747,7 @@ export function AuthorizationRulesPanel({
   const [error, setError] = useState("");
   const [people, setPeople] = useState<AuthorizationPerson[]>([]);
   const [editing, setEditing] = useState<EditingRule | null>(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -763,7 +766,9 @@ export function AuthorizationRulesPanel({
         const rows = (res.rules ?? []).map((row) =>
           normalizeRule({ ...row, action_key: row.actionKey }),
         );
-        setRules(resolveRules(rows, branchScope ? storeId : ""));
+        setRules(
+          resolveEditableRules(rows, branchScope ? "branch" : "global", branchScope ? storeId : ""),
+        );
       } catch (caught) {
         if (!cancelled) setError((caught as Error).message);
       }
@@ -772,7 +777,24 @@ export function AuthorizationRulesPanel({
     return () => {
       cancelled = true;
     };
-  }, [branchScope, storeId]);
+  }, [branchScope, reloadVersion, storeId]);
+
+  useEffect(
+    () =>
+      subscribeSettingsChange((change) => {
+        if (change.table !== "authorization_actions" || editing) return;
+        setReloadVersion((version) => version + 1);
+      }),
+    [editing],
+  );
+
+  useEffect(() => {
+    const refreshVisibleRules = () => {
+      if (!editing) setReloadVersion((version) => version + 1);
+    };
+    window.addEventListener("focus", refreshVisibleRules);
+    return () => window.removeEventListener("focus", refreshVisibleRules);
+  }, [editing]);
 
   useEffect(() => {
     if (!mayEdit) return;
@@ -838,6 +860,14 @@ export function AuthorizationRulesPanel({
         },
       });
       if (!res.ok) {
+        if (isAuthorizationRuleConflict(res.error ?? "")) {
+          setEditing(null);
+          setReloadVersion((version) => version + 1);
+          toast.error(
+            "This rule changed elsewhere. The latest version is being loaded for review.",
+          );
+          return;
+        }
         toast.error(res.error ?? "Could not save the rule");
         return;
       }
