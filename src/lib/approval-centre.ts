@@ -8,6 +8,7 @@
  * below is the safety net for a terminal that missed the live message.
  */
 import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { hasStaffSession } from "@/core/api/sync-relay";
 
 import { claimAuthorizationRequest, listAuthorizationRequests } from "./authorization-client";
 import { getPosCallerAuth } from "./pos-caller-auth";
@@ -126,6 +127,10 @@ export async function claimMatchingApproval(input: {
  * database has no realtime — the poll still reconciles.
  */
 export function subscribeApprovals(onChange: () => void): () => void {
+  // PIN-only terminals use the protected relay and the durable 45-second
+  // reconciliation poll. Without a Supabase staff JWT, a filtered Postgres
+  // subscription is rejected before RLS as an "invalid column" error.
+  if (!hasStaffSession()) return () => undefined;
   try {
     // ActivityBell and the approvals page can be mounted together. Distinct
     // topics keep one subscriber from replacing the other's channel.

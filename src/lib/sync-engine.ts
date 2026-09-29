@@ -874,54 +874,75 @@ export function startSyncEngine() {
 
   // Live listener: an account or settings change made anywhere lands in this
   // shop's own database within a second instead of waiting for the timer.
-  const live = supabaseExternal.channel("pos-live-settings");
-  settingsLiveChannel = live;
-  live.on("broadcast", { event: "settings_changed" }, (message) => {
-    const table = String(
-      (message as { payload?: { table?: unknown } }).payload?.table ?? "",
-    );
-    if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return;
-    queueLiveChange({ reason: `broadcast:${table}`, table, storeId: null });
-  });
-  for (const table of ORGANIZATION_LIVE_TABLES) {
-    live.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
-      const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
-        (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
-      const storeId = String(changed.store_id ?? changed.branch_id ?? "").trim() || null;
-      const entityId = String(changed.id ?? "").trim() || null;
-      const change = { reason: `live:${table}`, table, storeId, entityId };
-      queueLiveChange(change);
+  // Auth can become ready after this engine starts, so rebuild the channel at
+  // that boundary instead of permanently choosing anonymous or staff mode.
+  let live: ReturnType<typeof supabaseExternal.channel> | null = null;
+  let liveHasStaffSession = hasStaffSession();
+  const installLiveChannel = (staffPresent: boolean) => {
+    const previous = live;
+    const next = supabaseExternal.channel("pos-live-settings");
+    live = next;
+    settingsLiveChannel = next;
+    next.on("broadcast", { event: "settings_changed" }, (message) => {
+      const table = String(
+        (message as { payload?: { table?: unknown } }).payload?.table ?? "",
+      );
+      if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return;
+      queueLiveChange({ reason: `broadcast:${table}`, table, storeId: null });
     });
-  }
-  const liveBranchId = activeBranchId();
-  if (liveBranchId) {
-    for (const { table, column } of BRANCH_LIVE_TABLES) {
-      live.on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table,
-          filter: `${column}=eq.${liveBranchId}`,
-        },
-        (payload) => {
+    // Database-change subscriptions require table SELECT privileges. PIN-only
+    // Electron sessions intentionally have no cloud staff JWT, so they rely on
+    // durable local SQL synchronization and polling instead of opening invalid
+    // anon subscriptions. Authenticated web users retain scoped live wake-ups.
+    if (staffPresent) {
+      for (const table of ORGANIZATION_LIVE_TABLES) {
+        next.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
           const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
             (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
+          const storeId = String(changed.store_id ?? changed.branch_id ?? "").trim() || null;
           const entityId = String(changed.id ?? "").trim() || null;
-          queueLiveChange({
-            reason: `live:${table}`,
-            table,
-            storeId: liveBranchId,
-            entityId,
-          });
-        },
-      );
+          queueLiveChange({ reason: `live:${table}`, table, storeId, entityId });
+        });
+      }
+      const liveBranchId = activeBranchId();
+      if (liveBranchId) {
+        for (const { table, column } of BRANCH_LIVE_TABLES) {
+          next.on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table,
+              filter: `${column}=eq.${liveBranchId}`,
+            },
+            (payload) => {
+              const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
+                (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
+              const entityId = String(changed.id ?? "").trim() || null;
+              queueLiveChange({
+                reason: `live:${table}`,
+                table,
+                storeId: liveBranchId,
+                entityId,
+              });
+            },
+          );
+        }
+      }
     }
-  }
-  live.subscribe((status) => {
-    // A resubscribe after a dropped socket may have missed events while it
-    // was down, so treat a fresh join as a reason to re-read the rules.
-    if (status === "SUBSCRIBED") announceSettingsChange("realtime:subscribed");
+    next.subscribe((status) => {
+      // A resubscribe after a dropped socket may have missed events while it
+      // was down, so treat a fresh join as a reason to re-read the rules.
+      if (status === "SUBSCRIBED") announceSettingsChange("realtime:subscribed");
+    });
+    if (previous) void supabaseExternal.removeChannel(previous);
+  };
+  installLiveChannel(liveHasStaffSession);
+  const { data: authListener } = supabaseExternal.auth.onAuthStateChange((_event, session) => {
+    const staffPresent = Boolean(session?.access_token);
+    if (staffPresent === liveHasStaffSession) return;
+    liveHasStaffSession = staffPresent;
+    installLiveChannel(staffPresent);
   });
 
   tick();
@@ -932,8 +953,9 @@ export function startSyncEngine() {
     if (debounce) window.clearTimeout(debounce);
     if (liveTimer) window.clearTimeout(liveTimer);
     pendingLiveChanges.clear();
+    authListener.subscription.unsubscribe();
     if (settingsLiveChannel === live) settingsLiveChannel = null;
-    void supabaseExternal.removeChannel(live);
+    if (live) void supabaseExternal.removeChannel(live);
     offDesktopStatus?.();
     offMode();
     window.removeEventListener("pos:browser-outbox-changed", wakeOutbox);

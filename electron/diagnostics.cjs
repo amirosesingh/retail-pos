@@ -74,6 +74,38 @@ function logConnection(event, detail = {}) {
 }
 
 /**
+ * Returns recent database failures without requiring SQL Server to be online.
+ * connection.log is the durable source so connection failures remain visible
+ * even when the database that normally stores jobs cannot be opened.
+ */
+function databaseErrors(limit = 100) {
+  const rows = [];
+  for (const line of tail("connection.log", Math.max(100, Math.min(Number(limit) * 8, 1600))).reverse()) {
+    const match = String(line).match(/^(\S+)\s+(\S+)\s+(\{.*\})$/);
+    if (!match) continue;
+    let detail;
+    try { detail = JSON.parse(match[3]); } catch { continue; }
+    const event = match[2];
+    const text = `${event} ${detail?.state ?? ""} ${detail?.code ?? ""} ${detail?.message ?? ""}`;
+    const normalUnconfiguredState = String(detail?.state ?? "").toLowerCase() === "enabled_unconfigured";
+    const isFailure = (!normalUnconfiguredState && detail?.connected === false) || Boolean(detail?.code) || Boolean(detail?.message) || /(?:error|failed|failure|timeout|migration_required)/i.test(text);
+    if (!isFailure || /(?:validating|connecting|disconnect(?:ed)?|disabled)$/i.test(String(detail?.state ?? ""))) continue;
+    rows.push({
+      id: `${match[1]}:${event}:${rows.length}`,
+      occurred_at: match[1],
+      event,
+      category: detail?.category ?? (/sync/i.test(text) ? "synchronization" : /migrat/i.test(text) ? "migration" : /validat|schema/i.test(text) ? "validation" : "connection"),
+      stage: detail?.stage ?? null,
+      state: detail?.state ?? null,
+      code: detail?.code ?? null,
+      message: detail?.message ?? "The database operation did not complete.",
+    });
+    if (rows.length >= Math.max(1, Math.min(Number(limit) || 100, 500))) break;
+  }
+  return rows;
+}
+
+/**
  * Native minidumps.
  *
  * A segfault in the GPU or a native module never reaches JavaScript, so
@@ -191,6 +223,7 @@ module.exports = {
   logCrash,
   logServer,
   logConnection,
+  databaseErrors,
   startCrashReporter,
   watchWindow,
   watchApp,

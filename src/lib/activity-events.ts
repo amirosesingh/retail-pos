@@ -17,6 +17,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { platformName } from "@/platform-config/platform";
 import { localDb } from "@/core/local-db/local-db";
 import { commitOps } from "@/core/api/pos-db";
+import { hasStaffSession } from "@/core/api/sync-relay";
 import { activeBranchId } from "./active-branch";
 
 export type EventSeverity = "info" | "warning" | "critical";
@@ -781,6 +782,11 @@ export function subscribeActivityEvents(onChange: () => void): () => void {
     // for the 15-second reconciliation poll or Supabase Realtime.
     cleanups.push(bridge.onBusinessChanged(() => onChange()));
   }
+  // A PIN-only Electron session deliberately has no Supabase Auth JWT. The
+  // anon role cannot SELECT this protected table, and Realtime reports that
+  // lack of privilege misleadingly as "invalid column for filter store_id".
+  // Local SQL notifications plus the reconciliation poll remain authoritative.
+  if (!hasStaffSession()) return () => cleanups.forEach((cleanup) => cleanup());
   try {
     const channel = supabaseExternal.channel("pos-activity-notifications");
     const branchId = activeBranchId();

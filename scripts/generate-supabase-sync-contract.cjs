@@ -15,11 +15,22 @@ const keyJson = (table, alias) =>
   `jsonb_build_object(${primary(table)
     .map((column) => `'${column.cloudColumn}',${alias}.${q(column.cloudColumn)}`)
     .join(",")})::text`;
+const keyValue = (column, feedAlias) => {
+  const jsonValue = `((${feedAlias}.entity_id::jsonb)->>'${column.cloudColumn}')`;
+  const type = String(column.cloudType ?? "text").toLowerCase();
+  // Keep the indexed column bare. Casting it to text forces PostgreSQL to
+  // scan the full source table once per feed row. Cast the trigger-generated
+  // JSON key back to its registered type so primary-key indexes remain usable.
+  if (type === "uuid") return `${jsonValue}::uuid`;
+  if (type === "integer" || type === "bigint" || type === "smallint")
+    return `${jsonValue}::${type}`;
+  return jsonValue;
+};
 const keyMatch = (table, rowAlias, feedAlias = "f") =>
   primary(table)
     .map(
       (column) =>
-        `${rowAlias}.${q(column.cloudColumn)}::text=(${feedAlias}.entity_id::jsonb)->>'${column.cloudColumn}'`,
+        `${rowAlias}.${q(column.cloudColumn)}=${keyValue(column, feedAlias)}`,
     )
     .join(" AND ");
 
@@ -59,12 +70,18 @@ function branchPredicate(table, alias = "x", seen = new Set()) {
   return "true";
 }
 
+function deleteBranchPredicate(table, alias = "x") {
+  if (["settings_overrides", "settings_scoped"].includes(table.cloudTable))
+    return `((lower(${alias}.scope)='branch' AND ${alias}.scope_id::text=p_branch_id) OR (lower(${alias}.scope)='terminal' AND ${alias}.scope_id::text=p_terminal_id))`;
+  return branchPredicate(table, alias);
+}
+
 function incomingBranchGuard(table, rows = "p_rows") {
   const names = columnNames(table);
   if (table.cloudTable === "products")
     return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE NULLIF(r->>'owner_store_id','') IS NOT NULL AND r->>'owner_store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF;`;
   if (["settings_overrides", "settings_scoped"].includes(table.cloudTable))
-    return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE NOT ((lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id))) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF;`;
+    return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO ${rows} FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r;`;
   if (table.cloudTable === "audit_logs")
     return `SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO ${rows} FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;`;
   if (names.has("store_id"))
@@ -244,7 +261,7 @@ END $fn$;`);
   const deleteStatement = table.deleteRule === "none"
     ? "BEGIN RETURN 0; END"
     : `BEGIN DELETE FROM public.${q(table.cloudTable)} x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
- WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (${branchPredicate(table)}) AND ${deleteWhere};
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (${deleteBranchPredicate(table)}) AND ${deleteWhere};
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END`;
   out.push(`CREATE OR REPLACE FUNCTION public.sync_delete_${table.cloudTable}(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
 DECLARE v_count integer;
@@ -325,15 +342,23 @@ BEGIN
  RETURN jsonb_build_object('ok',true,'applied',v_total,'batch_id',p_batch_id);
 END $fn$;`);
 
-out.push(`CREATE OR REPLACE FUNCTION public.pos_sync_pull(p_organization_id text,p_branch_id text,p_terminal_id text,p_after_cursor bigint DEFAULT 0,p_limit integer DEFAULT 500)
-RETURNS TABLE(cursor bigint,table_name text,entity_id text,operation text,row_version bigint,tombstone boolean,row_data jsonb) LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $fn$
+const pullFunction = `CREATE OR REPLACE FUNCTION public.pos_sync_pull(p_organization_id text,p_branch_id text,p_terminal_id text,p_after_cursor bigint DEFAULT 0,p_limit integer DEFAULT 500)
+RETURNS TABLE(cursor bigint,table_name text,entity_id text,operation text,row_version bigint,tombstone boolean,row_data jsonb) LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
 DECLARE v_me public.app_users%ROWTYPE;
 BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id); IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
  IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
  IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
- RETURN QUERY SELECT f.cursor,f.table_name,f.entity_id,f.operation,f.row_version,f.tombstone,CASE f.table_name ${rowCases} ELSE NULL END
- FROM public.sync_change_feed f WHERE f.organization_id=p_organization_id AND f.branch_id IN (p_branch_id,'global') AND (f.terminal_id IS NULL OR f.terminal_id=p_terminal_id) AND f.cursor>p_after_cursor ORDER BY f.cursor LIMIT LEAST(GREATEST(p_limit,100),2000);
-END $fn$;`);
+ RETURN QUERY WITH feed_page AS MATERIALIZED (
+  SELECT candidate.cursor,candidate.table_name,candidate.entity_id,candidate.operation,candidate.row_version,candidate.tombstone
+  FROM public.sync_change_feed candidate
+  WHERE candidate.organization_id=p_organization_id AND candidate.branch_id IN (p_branch_id,'global')
+    AND (candidate.terminal_id IS NULL OR candidate.terminal_id=p_terminal_id) AND candidate.cursor>p_after_cursor
+  ORDER BY candidate.cursor LIMIT LEAST(GREATEST(p_limit,100),2000)
+ )
+ SELECT f.cursor,f.table_name,f.entity_id,f.operation,f.row_version,f.tombstone,CASE f.table_name ${rowCases} ELSE NULL END
+ FROM feed_page f ORDER BY f.cursor;
+END $fn$;`;
+out.push(pullFunction);
 
 const bootstrapCases = tables
   .map((table) => {
@@ -446,4 +471,20 @@ CREATE TRIGGER settings_scoped_bump_row_version BEFORE UPDATE ON public.settings
 `;
   fs.writeFileSync(migrationPath, preamble + schema.slice(hardeningStart, contractEnd));
   console.log(`Migration sync contract written to ${path.relative(root, migrationPath)}`);
+}
+
+const pullMigrationIndex = process.argv.indexOf("--pull-migration");
+if (pullMigrationIndex >= 0) {
+  const requested = process.argv[pullMigrationIndex + 1];
+  const migrationPath = requested ? path.resolve(root, requested) : "";
+  const migrationsDir = path.join(root, "supabase", "migrations") + path.sep;
+  if (!migrationPath.startsWith(migrationsDir) || !fs.existsSync(migrationPath))
+    throw new Error("--pull-migration must name an existing file under supabase/migrations");
+  const migration = `${pullFunction}
+
+REVOKE ALL ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) TO service_role;
+`;
+  fs.writeFileSync(migrationPath, migration);
+  console.log(`Pull migration written to ${path.relative(root, migrationPath)}`);
 }

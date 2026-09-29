@@ -52,9 +52,9 @@ BEGIN
   WHERE action_key=p_rule->>'action_key' AND scope_type=p_rule->>'scope_type'
     AND scope_id=COALESCE(p_rule->>'scope_id','') FOR UPDATE;
   IF FOUND AND current_row.row_version <> COALESCE(p_expected_version,0) THEN
-    RAISE EXCEPTION USING ERRCODE='40001', MESSAGE='This authorization rule changed on another device. Reload it before saving.';
+    RAISE EXCEPTION USING ERRCODE='PT409', MESSAGE='This authorization rule changed on another device. Reload it before saving.';
   ELSIF NOT FOUND AND COALESCE(p_expected_version,0) <> 0 THEN
-    RAISE EXCEPTION USING ERRCODE='40001', MESSAGE='This authorization rule changed on another device. Reload it before saving.';
+    RAISE EXCEPTION USING ERRCODE='PT409', MESSAGE='This authorization rule changed on another device. Reload it before saving.';
   END IF;
   next_version := COALESCE(current_row.row_version,0)+1;
   INSERT INTO public.authorization_actions AS target

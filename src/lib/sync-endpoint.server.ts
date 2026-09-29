@@ -190,6 +190,9 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
 
   if (body.sqlServerBatch || body.sqlServerAggregate || body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerCounts || body.oldReceipt) {
     const branchId = body.sqlServerBatch?.branchId ?? body.sqlServerAggregate?.branchId ?? body.sqlServerPull?.branchId ?? body.sqlServerBootstrap?.branchId ?? body.sqlServerCounts?.branchId ?? body.oldReceipt?.branchId ?? "";
+    const terminalSync = Boolean(body.sqlServerBatch || body.sqlServerAggregate || body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerCounts);
+    if (terminalSync && !scope.terminalId)
+      return Response.json({ok:false,code:"TERMINAL_REQUIRED",error:"SQL Server synchronization requires a verified terminal activation for this branch."},{status:403});
     const mayManageOtherBranches = scope.role === "admin" || scope.roleSlug === "admin" || scope.permissions.can_manage_sync_backup === true;
     const terminalBound = Boolean(body.terminalToken) || scope.kind === "terminal";
     if (branchId !== scope.storeId && (terminalBound || !mayManageOtherBranches)) return Response.json({ ok:false,code:"STORE_FORBIDDEN",error:"You can only synchronize your own branch." },{status:403});

@@ -36,6 +36,33 @@ function rowsForBranch(tableName, rows, branchId) {
     : { ...row, [branchColumn]: branchId });
 }
 
+function changeKey(change) {
+  if (change?.key && typeof change.key === "object") return change.key;
+  const encoded = change?.entityId ?? change?.entity_id;
+  if (typeof encoded !== "string") return {};
+  try { return JSON.parse(encoded); } catch { return {}; }
+}
+
+/**
+ * Global and cluster settings are read-only cache entries on a terminal. Old
+ * databases can expose rows downloaded before the CLOUD change-tracking
+ * context was introduced as local changes. Do not upload those rows or cached
+ * rows belonging to a previous branch/terminal. Unknown scope types remain in
+ * the batch so the server rejects malformed writes.
+ */
+function terminalWritableChanges(tableName, changes, { branchId = "", terminalId = "" } = {}) {
+  if (!["settings_overrides", "settings_scoped"].includes(tableName)) return changes;
+  return changes.filter((change) => {
+    const key = changeKey(change);
+    const scope = String(key.scope ?? "").trim().toLowerCase();
+    const scopeId = String(key.scope_id ?? "").trim();
+    if (["global", "cluster"].includes(scope)) return false;
+    if (scope === "branch" && branchId && scopeId !== branchId) return false;
+    if (scope === "terminal" && terminalId && scopeId !== terminalId) return false;
+    return true;
+  });
+}
+
 class PushWorker {
   constructor({ reader, cloud, checkpoints, registry }) {
     this.reader = reader; this.cloud = cloud; this.checkpoints = checkpoints; this.registry = registry;
@@ -52,6 +79,7 @@ class PushWorker {
   }
   async pushAggregates(branchId, batchSize) {
     let pushed = 0;
+    const terminalId = this.cloud.terminalId?.() ?? "";
     const aggregates = await this.reader.pendingAggregates(branchId, batchSize);
     for (const aggregate of aggregates) {
       const operations = [];
@@ -59,8 +87,9 @@ class PushWorker {
       for (const [tableName, changes] of groupBy(finalChanges, (change) => change.entity_type)) {
         const table = this.registry.tables.find((item) => item.sqlServerTable === tableName);
         if (!table) throw new Error(`The aggregate references unregistered table ${tableName}.`);
-        const live = changes.filter((change) => change.operation !== "delete");
-        const removed = changes.filter((change) => change.operation === "delete");
+        const writable = terminalWritableChanges(table.cloudTable, changes, { branchId, terminalId });
+        const live = writable.filter((change) => change.operation !== "delete");
+        const removed = writable.filter((change) => change.operation === "delete");
         if (live.length) operations.push({ table: table.cloudTable, dependencyOrder:table.dependencyOrder, deletePhase:false, changes:live, rows:rowsForBranch(table.cloudTable,await this.reader.rows(table,live),branchId) });
         if (removed.length) operations.push({ table: table.cloudTable, dependencyOrder:table.dependencyOrder, deletePhase:true, changes:removed, rows:[] });
       }
@@ -82,6 +111,7 @@ class PushWorker {
   async run({ branchId, batchSize = 500 }) {
     if (!branchId) throw new Error("A branch is required for synchronization.");
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
+    const terminalId = this.cloud.terminalId?.() ?? "";
     let pushed = await this.pushAggregates(branchId, batchSize);
     const governance = new Set(["authorization_actions", "authorization_action_history"]);
     const governanceOrder = (table) => table.cloudTable === "authorization_actions" ? 1 : table.cloudTable === "authorization_action_history" ? 2 : 0;
@@ -95,7 +125,7 @@ class PushWorker {
       while (true) {
         const window = await this.reader.changedIds(table, checkpoint?.change_tracking_version ?? 0, batchSize);
         if (!window.length) break;
-        let changes = window.filter((change)=>!change.remote);
+        let changes = terminalWritableChanges(table.cloudTable, window.filter((change)=>!change.remote), { branchId, terminalId });
         if(!changes.length){const version=Math.max(...window.map(row=>Number(row.version)));await this.checkpoints.save(branchId,table.sqlServerTable,"push",{change_tracking_version:version});checkpoint={...(checkpoint??{}),change_tracking_version:version};continue;}
         let live = changes.filter((change) => change.operation !== "D");
         let rows = rowsForBranch(table.cloudTable, await this.reader.rows(table, live), branchId);
@@ -128,4 +158,4 @@ class PushWorker {
     return { pushed };
   }
 }
-module.exports = { PushWorker, collapseChanges, rowsForBranch };
+module.exports = { PushWorker, collapseChanges, rowsForBranch, terminalWritableChanges };

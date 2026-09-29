@@ -48,7 +48,9 @@ describe("sales realtime refresh", () => {
     expect(db).toContain('broadcastSettingsChange("pos_settings")');
     expect(rules).toContain('broadcastSettingsChange("pos_store_settings")');
     expect(engine).toContain("await broadcastSettingsChange(op.table)");
-    expect(engine).toContain('live.on("broadcast", { event: "settings_changed" }');
+    expect(engine).toContain('supabaseExternal.channel("pos-live-settings")');
+    expect(engine).not.toContain("pos-live-settings-${");
+    expect(engine).toContain('next.on("broadcast", { event: "settings_changed" }');
     expect(engine).toContain("payload: { table }");
     expect(engine).not.toContain("payload: { table, patch");
     expect(engine).toContain("queueLiveChange({ reason: `broadcast:${table}`");

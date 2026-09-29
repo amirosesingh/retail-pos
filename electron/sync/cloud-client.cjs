@@ -6,6 +6,7 @@ class CloudClient {
   setAuthorizationProof(proof) { this.authorizationProof = proof && typeof proof === "object" ? { ...proof } : null; }
   clearAuthorizationProof() { this.authorizationProof = null; }
   hasAuthorizationProof() { return Boolean(this.authorizationProof && Object.values(this.authorizationProof).some(Boolean)); }
+  terminalId() { return String(this.terminalStore.read()?.tokenId ?? "").trim(); }
   async request(payload) {
     const terminal = this.terminalStore.read() ?? {};
     // An empty config-store value must not mask the HTTPS recovery copy sealed

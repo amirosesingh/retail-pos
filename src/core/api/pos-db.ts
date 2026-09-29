@@ -2380,13 +2380,21 @@ export const db = {
    * exists — a cashier must never be told "Shift opened" on a write the
    * database quietly refused.
    */
-  async shiftExists(id: string): Promise<"yes" | "no" | "unknown"> {
+  async shiftExists(id: string, storeId?: string): Promise<"yes" | "no" | "unknown"> {
     try {
-      const res = await supabase
-        .from("shifts" as never)
-        .select("id")
-        .eq("id", id)
-        .limit(1);
+      const bridge = localDb();
+      if (effectiveDatabaseMode() === "local" && bridge?.query) {
+        const rows = await routedQuery("shifts", { columns: "id", match: { id }, limit: 1 });
+        return rows.length > 0 ? "yes" : "no";
+      }
+
+      // Direct SELECT on shifts is intentionally revoked. Use the existing
+      // branch-scoped projection so web verification does not weaken grants.
+      if (!storeId) return "unknown";
+      const res = await supabase.rpc(
+        "shift_list_secure" as never,
+        { p_store_id: storeId, p_limit: 300 } as never,
+      );
       // A refused or failed read tells us nothing about the write itself.
       if (res.error) {
         recordDiagnostic({
@@ -2397,7 +2405,12 @@ export const db = {
         });
         return "unknown";
       }
-      return Array.isArray(res.data) && res.data.length > 0 ? "yes" : "no";
+      // This projection is deliberately bounded. It can prove presence, but
+      // absence from the page does not prove the row was not saved.
+      return Array.isArray(res.data) &&
+        (res.data as Array<Record<string, unknown>>).some((row) => row.id === id)
+        ? "yes"
+        : "unknown";
     } catch (e) {
       recordDiagnostic({
         kind: "shift_lookup_unavailable",
