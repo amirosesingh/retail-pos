@@ -10,9 +10,19 @@ type Props = {
   savedAt?: string | null;
   error?: string;
   className?: string;
+  savedText?: string;
+  dirtyText?: string;
 };
 
-export function SaveIndicator({ dirty, saving, savedAt, error, className = "" }: Props) {
+export function SaveIndicator({
+  dirty,
+  saving,
+  savedAt,
+  error,
+  className = "",
+  savedText = "All changes saved",
+  dirtyText = "Unsaved changes",
+}: Props) {
   return (
     <span
       role="status"
@@ -30,12 +40,12 @@ export function SaveIndicator({ dirty, saving, savedAt, error, className = "" }:
         </>
       ) : dirty ? (
         <>
-          <TriangleAlert className="size-4 text-amber-500" /> Unsaved changes
+          <TriangleAlert className="size-4 text-amber-500" /> {dirtyText}
         </>
       ) : (
         <>
           <Check className="size-4 text-emerald-500" />
-          {savedAt ? `All changes saved · ${savedAt}` : "All changes saved"}
+          {savedAt ? `${savedText} · ${savedAt}` : savedText}
         </>
       )}
     </span>

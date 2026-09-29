@@ -15,7 +15,7 @@ import {
 import { notifyError, showNotification } from "@/lib/notify";
 import { recordDiagnostic, reasonCode } from "@/lib/diagnostics";
 import { applyStockDeltaBatch } from "@/lib/stock-recovery";
-import { canRelay, hasStaffSession, relayActiveShift, relayStores } from "@/core/api/sync-relay";
+import { canRelay, hasStaffSession, relayActiveShift, relayOp, relayStores } from "@/core/api/sync-relay";
 import { hydrateTerminalConfig, readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { isOperationalTable } from "@/lib/pos-auth-route";
 import { keyset, nextCursor, PAGE_SIZE, type Cursor, type Page } from "@/lib/keyset";
@@ -2120,6 +2120,26 @@ export const db = {
           })),
         },
       ]);
+      return rows.map((r) => r.id);
+    }
+    if (!hasStaffSession()) {
+      if (!canRelay()) throw new Error("Sign in before uploading audit logs.");
+      const result = await relayOp({
+        kind: "upsert",
+        table: "audit_logs",
+        onConflict: "id",
+        rows: rows.map((r) => ({
+          id: r.id,
+          user_name: r.staffName,
+          action_category: r.category,
+          action_name: r.action,
+          target_module: r.module,
+          details: r.details,
+          store_id: typeof r.details.storeId === "string" ? r.details.storeId : null,
+          created_at: r.at,
+        })),
+      });
+      if (!result.ok) throw new Error(result.error ?? "Could not upload audit logs.");
       return rows.map((r) => r.id);
     }
     const { error } = await supabase.from("audit_logs").upsert(

@@ -7,6 +7,8 @@ import {
   defaultRule,
   effectiveApprovalAuthority,
   isRoutedApprover,
+  isAuthorizationRuleConflict,
+  resolveEditableRules,
   resolveRules,
 } from "../authorization";
 
@@ -87,6 +89,41 @@ describe("central relative approval authority", () => {
     expect(
       resolveRules([global, branch], "b2").discount_over_limit.extraAuthority["role:manager"],
     ).toBe(20);
+  });
+
+  it("creates an inherited branch edit at version zero", () => {
+    const global = {
+      ...rule,
+      id: "global-rule",
+      scopeType: "global" as const,
+      scopeId: "",
+      rowVersion: 7,
+    };
+    const editable = resolveEditableRules([global], "branch", "b1").discount_over_limit;
+    expect(editable).toMatchObject({
+      id: "",
+      scopeType: "branch",
+      scopeId: "b1",
+      rowVersion: 0,
+      mode: global.mode,
+    });
+  });
+
+  it("keeps the actual branch version when an override already exists", () => {
+    const branch = {
+      ...rule,
+      id: "branch-rule",
+      scopeType: "branch" as const,
+      scopeId: "b1",
+      rowVersion: 4,
+    };
+    expect(resolveEditableRules([branch], "branch", "b1").discount_over_limit).toBe(branch);
+  });
+
+  it("recognizes cloud and desktop optimistic-lock conflicts", () => {
+    expect(isAuthorizationRuleConflict('{"code":"PT409"}')).toBe(true);
+    expect(isAuthorizationRuleConflict("ESTALE_RULE: reopen it to review")).toBe(true);
+    expect(isAuthorizationRuleConflict("Network unavailable")).toBe(false);
   });
 
   it("opens configured backup roles only after the escalation delay", () => {

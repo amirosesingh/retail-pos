@@ -1,8 +1,17 @@
 import { PresetNumber } from "@/components/ui/preset-number";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
-import { useEffect, useState } from "react";
-import { ArrowLeft, Loader2, Save, ShieldCheck } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  CloudOff,
+  Loader2,
+  RefreshCw,
+  Save,
+  ShieldCheck,
+  TriangleAlert,
+} from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 
@@ -25,6 +34,7 @@ import { posFetch, serverOrigin } from "@/lib/server-origin";
 import { requestIdleTimeout } from "@/lib/idle-timeout-client";
 import { isWindowsShell } from "@/platform-config/features";
 import { broadcastSettingsChange } from "@/lib/sync-engine";
+import { reconcileRulesDraft } from "@/lib/pos-rules-draft";
 
 export const Route = createFileRoute("/settings/rules")({
   head: () => ({
@@ -51,8 +61,6 @@ function RulesSettings() {
   const {
     rules,
     loading,
-    usingDefaults,
-    degraded,
     failureText,
     backendError,
     lastSyncedAt,
@@ -77,7 +85,16 @@ function RulesSettings() {
   const [idleScope, setIdleScope] = useState<"branch" | "global">("branch");
   const [savingIdle, setSavingIdle] = useState(false);
   const [idleLoaded, setIdleLoaded] = useState(false);
+  const [savedIdle, setSavedIdle] = useState<number | null>(null);
   const [savingScoped, setSavingScoped] = useState(false);
+  const [scopedTouched, setScopedTouched] = useState(false);
+  const [savedScoped, setSavedScoped] = useState(() =>
+    JSON.stringify({ hours: state.settings.hours, review: state.settings.review }),
+  );
+  const [checking, setChecking] = useState(false);
+  const previouslyConfirmed = useRef(rules);
+  const draftScope = useRef(currentStore.id);
+  const forceNextRules = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +103,7 @@ function RulesSettings() {
       .then((result) => {
         if (!cancelled && typeof result.minutes === "number") {
           setIdle(result.minutes);
+          setSavedIdle(result.minutes);
           setIdleLoaded(true);
         }
       })
@@ -101,6 +119,7 @@ function RulesSettings() {
     setSavingIdle(true);
     try {
       await requestIdleTimeout(currentStore.id, idle, idleScope);
+      setSavedIdle(idle);
       toast.success(
         idleScope === "global"
           ? "Global idle limit saved for new sign-ins"
@@ -117,6 +136,10 @@ function RulesSettings() {
     setSavingScoped(true);
     try {
       await saveConfiguredSettings();
+      setSavedScoped(
+        JSON.stringify({ hours: state.settings.hours, review: state.settings.review }),
+      );
+      setScopedTouched(false);
       toast.success("Trading hours and review thresholds saved");
     } catch (error) {
       notifyError(error, "Could not save the scoped settings");
@@ -125,10 +148,88 @@ function RulesSettings() {
     }
   }
 
-  // Rules live in the database; the draft only mirrors the last server read.
-  useEffect(() => setDraft(rules), [rules]);
+  // Accept background refreshes while the editor is clean. A focus/timer
+  // refresh must never erase an unfinished administrator draft.
+  useEffect(() => {
+    const changedBranch = draftScope.current !== currentStore.id;
+    setDraft((current) =>
+      reconcileRulesDraft(
+        current,
+        previouslyConfirmed.current,
+        rules,
+        forceNextRules.current || changedBranch,
+      ),
+    );
+    previouslyConfirmed.current = rules;
+    draftScope.current = currentStore.id;
+    forceNextRules.current = false;
+  }, [currentStore.id, rules]);
+
+  useEffect(() => {
+    if (scopedTouched) return;
+    setSavedScoped(JSON.stringify({ hours: state.settings.hours, review: state.settings.review }));
+  }, [scopedTouched, state.settings.hours, state.settings.review]);
+
+  useEffect(() => {
+    setScopedTouched(false);
+  }, [currentStore.id]);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(rules);
+  const scopedDirty =
+    scopedTouched &&
+    JSON.stringify({ hours: state.settings.hours, review: state.settings.review }) !== savedScoped;
+  const idleDirty = idleLoaded && savedIdle !== null && idle !== savedIdle;
+
+  const statusView =
+    status === "LIVE"
+      ? {
+          title: "Rules active",
+          detail: "Verified with the central database.",
+          icon: CheckCircle2,
+          tone: "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+        }
+      : status === "PENDING_UPLOAD"
+        ? {
+            title: "Rules active · Pending sync",
+            detail:
+              "This terminal is enforcing the saved change while it waits to reach head office.",
+            icon: RefreshCw,
+            tone: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+          }
+        : status === "DEGRADED"
+          ? {
+              title: "Rules active · Offline",
+              detail:
+                "The last verified rules remain in force. This page will catch up automatically.",
+              icon: CloudOff,
+              tone: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+            }
+          : status === "SYNCING"
+            ? {
+                title: "Checking rules",
+                detail: "Checking the central database for this branch's enforced rules.",
+                icon: RefreshCw,
+                tone: "border-primary/30 bg-primary/5 text-foreground",
+              }
+            : {
+                title:
+                  status === "IDENTITY_UNAVAILABLE" ? "Branch required" : "Rules need attention",
+                detail:
+                  failureText ||
+                  "This terminal has not received verified branch rules. Restrictive safety rules apply.",
+                icon: TriangleAlert,
+                tone: "border-destructive/40 bg-destructive/10 text-destructive",
+              };
+  const StatusIcon = statusView.icon;
+
+  async function checkRulesNow() {
+    setChecking(true);
+    try {
+      await refresh();
+    } finally {
+      setChecking(false);
+    }
+  }
 
   const set = (key: PosRuleKey, value: boolean | number) =>
     setDraft((d) => ({ ...d, [key]: value }) as PosRules);
@@ -188,6 +289,7 @@ function RulesSettings() {
         : await savePosRules({ data: payload });
       if (!res.ok) {
         if (/STALE_RULES/i.test(res.error ?? "")) {
+          forceNextRules.current = true;
           await refresh();
           toast.error(
             "These settings were changed on another terminal. The latest version has been loaded.",
@@ -236,8 +338,8 @@ function RulesSettings() {
               <ShieldCheck className="size-5 shrink-0 text-primary" /> POS rules &amp; enforcement
             </h1>
             <p className="text-sm text-muted-foreground">
-              Operational limits for {currentStore.name}. Stored in the database and re-checked on
-              the server for every till action — never cached in the browser.
+              Configure the branch policy enforced across every register at {currentStore.name}.
+              Saved values stay in force while newer rules are checked quietly in the background.
             </p>
           </div>
           {loading && (
@@ -251,71 +353,83 @@ function RulesSettings() {
           </p>
         )}
 
-        {usingDefaults && !loading && (
-          <p className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-            {failureText || "The saved rules could not be read."} The strictest built-in settings
-            are being enforced right now, and anything you save here may not take effect until the
-            connection is back.
-            {backendError ? (
-              <span className="mt-1 block text-xs opacity-80">{backendError}</span>
-            ) : null}
-          </p>
-        )}
-
-        {degraded && !loading && (
-          <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-400">
-            {failureText || "The saved rules could not be refreshed."} The last confirmed settings
-            {lastSyncedAt ? ` (read ${new Date(lastSyncedAt).toLocaleTimeString()})` : ""} are still
-            in force, and this page will catch up on its own once the connection returns.
-            {backendError ? (
-              <span className="mt-1 block text-xs opacity-80">{backendError}</span>
-            ) : null}
-          </p>
-        )}
-
-        <section className="rounded-lg border border-border bg-card p-4 text-sm">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <h2 className="font-medium">Rules status</h2>
-            <Button type="button" variant="outline" size="sm" onClick={refresh}>
+        <section className={`rounded-lg border p-4 text-sm ${statusView.tone}`}>
+          <div className="flex flex-wrap items-start gap-3 sm:flex-nowrap">
+            <StatusIcon
+              className={`mt-0.5 size-5 shrink-0 ${status === "SYNCING" ? "animate-spin" : ""}`}
+            />
+            <div className="min-w-0 flex-1">
+              <h2 className="font-semibold">{statusView.title}</h2>
+              <p className="mt-0.5 text-xs opacity-90">{statusView.detail}</p>
+              <p className="mt-2 text-xs opacity-80">
+                {lastSyncedAt
+                  ? `Last verified ${new Date(lastSyncedAt).toLocaleString()}`
+                  : "Not yet verified on this terminal"}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={checking}
+              onClick={() => void checkRulesNow()}
+            >
+              {checking ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
               Check now
             </Button>
           </div>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground sm:grid-cols-3">
-            <div>
-              <dt className="text-xs uppercase tracking-wide">Branch</dt>
-              <dd className="text-foreground">{currentStore.name}</dd>
-            </div>
-            <div>
-              <dt className="text-xs uppercase tracking-wide">Branch ID</dt>
-              <dd className="text-foreground">{branchId || currentStore.id || "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-xs uppercase tracking-wide">Terminal</dt>
-              <dd className="text-foreground">{terminal || "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-xs uppercase tracking-wide">Source</dt>
-              <dd className="text-foreground">{source}</dd>
-            </div>
-            <div>
-              <dt className="text-xs uppercase tracking-wide">Revision</dt>
-              <dd className="text-foreground">{revision || "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-xs uppercase tracking-wide">Status</dt>
-              <dd className="text-foreground">{status}</dd>
-            </div>
-            <div className="col-span-2 sm:col-span-3">
-              <dt className="text-xs uppercase tracking-wide">Last successful sync</dt>
-              <dd className="text-foreground">
-                {lastSyncedAt ? new Date(lastSyncedAt).toLocaleString() : "never on this terminal"}
-              </dd>
-            </div>
-          </dl>
-          <p className="mt-2 text-xs text-muted-foreground">{statusText}</p>
+          <details className="mt-3 border-t border-current/15 pt-2 text-xs opacity-85">
+            <summary className="cursor-pointer select-none font-medium">Technical details</summary>
+            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+              <div>
+                <dt className="opacity-70">Branch</dt>
+                <dd>{currentStore.name}</dd>
+              </div>
+              <div>
+                <dt className="opacity-70">Branch ID</dt>
+                <dd className="break-all">{branchId || currentStore.id || "—"}</dd>
+              </div>
+              <div>
+                <dt className="opacity-70">Terminal</dt>
+                <dd className="break-all">{terminal || "—"}</dd>
+              </div>
+              <div>
+                <dt className="opacity-70">Source</dt>
+                <dd>{source}</dd>
+              </div>
+              <div>
+                <dt className="opacity-70">Revision</dt>
+                <dd className="break-all">{revision || "—"}</dd>
+              </div>
+              <div>
+                <dt className="opacity-70">Engine status</dt>
+                <dd>{status}</dd>
+              </div>
+            </dl>
+            <p className="mt-2">{statusText}</p>
+            {backendError ? <p className="mt-1 break-words opacity-75">{backendError}</p> : null}
+          </details>
         </section>
 
         <section className="rounded-lg border border-border bg-card px-5">
+          <div className="flex items-center justify-between gap-3 border-b border-border/60 py-4">
+            <div>
+              <h2 className="text-sm font-semibold">Operational rules</h2>
+              <p className="text-xs text-muted-foreground">
+                Shift, pricing, refund and manager-approval controls.
+              </p>
+            </div>
+            <SaveIndicator
+              dirty={dirty}
+              saving={saving}
+              savedText="Rules saved"
+              dirtyText="Unsaved rule changes"
+            />
+          </div>
           <SettingsSections
             storageKey="rules"
             items={RULE_GROUPS.map((group) => ({
@@ -387,12 +501,19 @@ function RulesSettings() {
         </section>
 
         <section className="space-y-5 rounded-lg border border-border bg-card p-5">
-          <div>
-            <h2 className="text-sm font-semibold">Trading hours &amp; review thresholds</h2>
-            <p className="text-xs text-muted-foreground">
-              These values use the scope selected above and are consumed by checkout, shift alerts
-              and the manager review dashboard.
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Trading policy</h2>
+              <p className="text-xs text-muted-foreground">
+                Trading hours, shift duration and activity-review thresholds for this branch.
+              </p>
+            </div>
+            <SaveIndicator
+              dirty={scopedDirty}
+              saving={savingScoped}
+              savedText="Trading policy saved"
+              dirtyText="Unsaved trading changes"
+            />
           </div>
           <div className="grid gap-4 border-t border-border/60 pt-4 sm:grid-cols-2">
             <label className="space-y-1 text-sm">
@@ -401,11 +522,12 @@ function RulesSettings() {
                 type="time"
                 disabled={!mayEdit}
                 value={state.settings.hours.dayStart}
-                onChange={(event) =>
+                onChange={(event) => (
+                  setScopedTouched(true),
                   updateSettings({
                     hours: { ...state.settings.hours, dayStart: event.target.value },
                   })
-                }
+                )}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -414,9 +536,10 @@ function RulesSettings() {
                 type="time"
                 disabled={!mayEdit}
                 value={state.settings.hours.dayEnd}
-                onChange={(event) =>
+                onChange={(event) => (
+                  setScopedTouched(true),
                   updateSettings({ hours: { ...state.settings.hours, dayEnd: event.target.value } })
-                }
+                )}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -427,14 +550,15 @@ function RulesSettings() {
                 max={48}
                 disabled={!mayEdit}
                 value={state.settings.hours.maxShiftHours}
-                onChange={(event) =>
+                onChange={(event) => (
+                  setScopedTouched(true),
                   updateSettings({
                     hours: {
                       ...state.settings.hours,
                       maxShiftHours: Math.min(48, Math.max(1, Number(event.target.value) || 1)),
                     },
                   })
-                }
+                )}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -445,14 +569,15 @@ function RulesSettings() {
                 max={240}
                 disabled={!mayEdit}
                 value={state.settings.hours.reminderMinutes}
-                onChange={(event) =>
+                onChange={(event) => (
+                  setScopedTouched(true),
                   updateSettings({
                     hours: {
                       ...state.settings.hours,
                       reminderMinutes: Math.min(240, Math.max(0, Number(event.target.value) || 0)),
                     },
                   })
-                }
+                )}
               />
             </label>
           </div>
@@ -473,14 +598,15 @@ function RulesSettings() {
                   min={0}
                   disabled={!mayEdit}
                   value={state.settings.review[key]}
-                  onChange={(event) =>
+                  onChange={(event) => (
+                    setScopedTouched(true),
                     updateSettings({
                       review: {
                         ...state.settings.review,
                         [key]: Math.max(0, Number(event.target.value) || 0),
                       },
                     })
-                  }
+                  )}
                 />
               </label>
             ))}
@@ -489,7 +615,7 @@ function RulesSettings() {
             <Button
               size="sm"
               variant="outline"
-              disabled={savingScoped}
+              disabled={savingScoped || !scopedDirty}
               onClick={() => void saveScopedSettings()}
             >
               {savingScoped ? (
@@ -497,7 +623,7 @@ function RulesSettings() {
               ) : (
                 <Save className="size-4" />
               )}
-              Save trading &amp; review settings
+              Save trading policy
             </Button>
           )}
         </section>
@@ -510,13 +636,23 @@ function RulesSettings() {
         />
 
         <section className="space-y-4 rounded-lg border border-border bg-card p-5">
-          <div>
-            <h2 className="text-sm font-semibold">Idle session timeout</h2>
-            <p className="text-xs text-muted-foreground">
-              Server session idle limit for new sign-ins at this branch (1–1440 minutes). Existing
-              sessions keep the limit assigned at sign-in. Use Auto-lock under Terminal security &
-              access above to set when the screen returns to sign-in.
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Session security</h2>
+              <p className="text-xs text-muted-foreground">
+                Server session idle limit for new sign-ins at this branch (1–1440 minutes). Existing
+                sessions keep the limit assigned at sign-in. Use Auto-lock under Terminal security &
+                access above to set when the screen returns to sign-in.
+              </p>
+            </div>
+            {idleLoaded ? (
+              <SaveIndicator
+                dirty={idleDirty}
+                saving={savingIdle}
+                savedText="Session limit saved"
+                dirtyText="Unsaved session limit"
+              />
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-3">
             {isAdmin && (
@@ -548,7 +684,7 @@ function RulesSettings() {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={savingIdle || !idleLoaded}
+                disabled={savingIdle || !idleLoaded || !idleDirty}
                 onClick={() => void saveIdle()}
               >
                 {savingIdle ? (
@@ -564,7 +700,12 @@ function RulesSettings() {
 
         {mayEdit && (
           <div className="sticky bottom-0 -mx-6 flex items-center gap-3 border-t border-border bg-background/95 px-6 py-3 backdrop-blur">
-            <SaveIndicator dirty={dirty} saving={saving} />
+            <SaveIndicator
+              dirty={dirty}
+              saving={saving}
+              savedText="Operational rules saved"
+              dirtyText="Unsaved operational-rule changes"
+            />
             <Button
               size="sm"
               className="ml-auto"
