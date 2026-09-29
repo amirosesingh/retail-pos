@@ -11,6 +11,7 @@ import {
   type AuthorizationRequest,
   type AuthorizationRule,
   type AuthPayload,
+  type ApprovalRouteSnapshot,
   type TicketSnapshot,
 } from "./authorization";
 
@@ -50,6 +51,9 @@ export async function saveRuleRow(rule: {
   authorityLimits: Record<string, number>;
   extraAuthority: Record<string, number>;
   absoluteCeilings: Record<string, number>;
+  approvalTimeoutMinutes: number;
+  escalationAfterMinutes: number | null;
+  escalationRoles: string[];
   requireReason: boolean;
   threshold: number | null;
   isEnabled: boolean;
@@ -69,6 +73,9 @@ export async function saveRuleRow(rule: {
         authority_limits: rule.authorityLimits,
         extra_authority: rule.extraAuthority,
         absolute_ceilings: rule.absoluteCeilings,
+        approval_timeout_minutes: rule.approvalTimeoutMinutes,
+        escalation_after_minutes: rule.escalationAfterMinutes,
+        escalation_roles: rule.escalationRoles,
         require_reason: rule.requireReason,
         threshold: rule.threshold,
         is_enabled: rule.isEnabled,
@@ -78,6 +85,24 @@ export async function saveRuleRow(rule: {
     prefer: "return=minimal,resolution=merge-duplicates",
   });
   if (!res.ok) throw new Error((await res.text()).slice(0, 300) || "Could not save the rule");
+}
+
+export async function listAuthorizationPeopleRows(
+  storeId: string,
+): Promise<Array<{ id: string; name: string; role: string; storeId: string }>> {
+  const branch = encodeURIComponent(storeId);
+  const scope = storeId ? `&or=(store_id.eq.${branch},store_id.is.null,store_id.eq.)` : "";
+  const rows = await readRows(
+    `app_users?select=user_id,full_name,role,store_id&is_active=eq.true${scope}&order=full_name.asc`,
+  );
+  return rows
+    .map((row) => ({
+      id: String(row["user_id"] ?? ""),
+      name: String(row["full_name"] ?? row["user_id"] ?? ""),
+      role: String(row["role"] ?? "staff"),
+      storeId: String(row["store_id"] ?? ""),
+    }))
+    .filter((person) => person.id);
 }
 
 // -------------------------------------------------------------------- log
@@ -93,7 +118,8 @@ export async function writeLog(entry: {
   authorizerRole?: string | null;
   storeId?: string | null;
   terminalId?: string | null;
-  outcome: "approved" | "rejected" | "failed_pin" | "denied";
+  outcome:
+    "requested" | "approved" | "rejected" | "cancelled" | "expired" | "failed_pin" | "denied";
   purpose?: string | null;
   detail?: Record<string, unknown>;
 }): Promise<{ ok: boolean; error?: string }> {
@@ -125,10 +151,24 @@ export async function writeLog(entry: {
     if (!res.ok) throw new Error((await res.text()).slice(0, 200));
     return { ok: true };
   } catch (e) {
-    // An action is never blocked on its audit write, but the caller is told
-    // so it can be shown as unrecorded rather than silently lost.
+    // Callers that authorise or create a request treat this as fail-closed.
     return { ok: false, error: (e as Error).message.slice(0, 200) };
   }
+}
+
+/** A request grant is unusable unless its immutable approval audit exists. */
+export async function hasApprovalAudit(requestId: string): Promise<boolean> {
+  const rows = await readRows(
+    `authorization_log?select=id&request_id=eq.${encodeURIComponent(requestId)}&outcome=eq.approved&limit=1`,
+  );
+  return rows.length === 1;
+}
+
+export async function hasRequestAudit(requestId: string): Promise<boolean> {
+  const rows = await readRows(
+    `authorization_log?select=id&request_id=eq.${encodeURIComponent(requestId)}&outcome=eq.requested&limit=1`,
+  );
+  return rows.length === 1;
 }
 
 // --------------------------------------------------------------- requests
@@ -149,6 +189,7 @@ export async function createRequest(input: {
   snapshot?: TicketSnapshot | null;
   snapshotHash?: string;
   heldOrderId?: string | null;
+  approvalRoute: ApprovalRouteSnapshot;
 }): Promise<{ request: AuthorizationRequest; created: boolean }> {
   const path = input.id ? "authorization_requests?on_conflict=id" : "authorization_requests";
   const res = await rest(path, {
@@ -170,6 +211,7 @@ export async function createRequest(input: {
         bill_snapshot: input.snapshot ?? {},
         snapshot_hash: input.snapshotHash ?? "",
         held_order_id: input.heldOrderId ?? null,
+        approval_route: input.approvalRoute,
         expires_at: new Date(Date.now() + input.ttlHours * 3600_000).toISOString(),
       },
     ]),
@@ -219,6 +261,29 @@ export async function listRequests(opts: {
   if (opts.status && opts.status !== "all") parts.push(`status=eq.${opts.status}`);
   const rows = await readRows(`authorization_requests?${parts.join("&")}`);
   return rows.map(normalizeRequest).map(withExpiry);
+}
+
+/**
+ * Persist elapsed approval windows before a queue is read. The pending guard
+ * makes this safe when several tills poll at once: only one caller receives
+ * each expired row and therefore writes its audit/notification side effects.
+ */
+export async function expirePendingRequests(): Promise<AuthorizationRequest[]> {
+  const now = new Date().toISOString();
+  const res = await rest(
+    `authorization_requests?status=eq.pending&expires_at=lt.${encodeURIComponent(now)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: "expired",
+        decided_at: now,
+        decision_note: "Approval window expired",
+      }),
+      prefer: "return=representation",
+    },
+  );
+  if (!res.ok) throw new Error((await res.text()).slice(0, 300) || "Could not expire requests");
+  return ((await res.json()) as Row[]).map(normalizeRequest);
 }
 
 export async function getRequest(id: string): Promise<AuthorizationRequest | null> {

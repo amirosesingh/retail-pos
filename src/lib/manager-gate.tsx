@@ -3,8 +3,8 @@
  *
  * 1. The branch rule says how the action must be authorised — not at all, by
  *    PIN, by an approval request, or either.
- * 2. An administrator is never prompted; the server records their approval.
- * 3. Everyone else gets the one prompt, and the answer comes from the server.
+ * 2. Every person, including an administrator, follows the configured method.
+ * 3. The answer comes from the server and yields a signed, action-bound grant.
  */
 import {
   createContext,
@@ -23,15 +23,14 @@ import {
   type AuthorizationPrompt,
   type PromptOutcome,
 } from "@/platforms/web/components/pos/AuthorizationDialog";
-import { useAuthOptional } from "@/lib/pos-auth";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { GATE_RULE_KEY, offlineApprovalMode, type GateAction } from "@/lib/pos-rules";
 import { isOnline } from "@/lib/sync-outbox";
-import { authorizeAsAdmin } from "@/lib/pos-rules.functions";
 import { getAuthorizationRules } from "@/lib/authorization-client";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import {
   AUTH_ACTION_LABEL,
+  authorizationBinding,
   normalizeRule,
   resolveRules,
   rulesFromLegacy,
@@ -40,6 +39,8 @@ import {
   type RuleMap,
 } from "@/lib/authorization";
 import type { TicketSnapshot } from "@/lib/ticket-snapshot";
+import { snapshotFingerprint } from "@/lib/ticket-snapshot";
+import { claimMatchingApproval } from "@/lib/approval-centre";
 
 export type GateRequest = {
   action: AuthActionKey;
@@ -80,8 +81,6 @@ export function ManagerGateProvider({
   children: ReactNode;
 }) {
   const { rules: legacyRules } = usePosRules();
-  const auth = useAuthOptional();
-  const isAdmin = auth?.user?.role === "admin";
   const [pending, setPending] = useState<AuthorizationPrompt | null>(null);
   const resolver = useRef<((outcome: PromptOutcome) => void) | null>(null);
 
@@ -109,11 +108,39 @@ export function ManagerGateProvider({
 
   const authorize = useCallback(
     async (request: GateRequest): Promise<GateResult> => {
+      if (!query.data) {
+        toast.error("Authorization rules are not available", {
+          description: "The restricted action was blocked. Reconnect and try again.",
+        });
+        return { ok: false, grantToken: null };
+      }
       const rule = rules[request.action];
       const mode = rule?.mode ?? "none";
 
       // 1 · this branch does not gate the action
       if (mode === "none") return { ok: true, grantToken: null };
+
+      // Retrying the exact action after an asynchronous decision consumes the
+      // ready grant instead of opening a second request.
+      if (isOnline() && (mode === "request" || mode === "either")) {
+        const claimed = await claimMatchingApproval({
+          actionKey: request.action,
+          storeId: request.storeId,
+          payload: request.payload,
+          snapshotHash: request.snapshot ? snapshotFingerprint(request.snapshot) : undefined,
+        }).catch(() => null);
+        if (claimed?.grantToken) {
+          if (
+            claimed.approvedAmount !== null &&
+            request.requestedAmount != null &&
+            request.requestedAmount > claimed.approvedAmount
+          ) {
+            toast.error(`Only ${claimed.approvedAmount.toFixed(2)} was approved.`);
+            return { ok: false, grantToken: null };
+          }
+          return { ok: true, grantToken: claimed.grantToken };
+        }
+      }
 
       // 2 · with no connection the branch rule decides what may still be
       //     approved here, and how.
@@ -136,36 +163,7 @@ export function ManagerGateProvider({
         if (allowance === "manager_pin" || mode === "request") promptMode = "pin";
       }
 
-      // 3 · administrators are not prompted; the approval is logged server-side
-      if (isAdmin) {
-        try {
-          const caller = await getPosCallerAuth();
-          if (caller.accessToken) {
-            const res = await authorizeAsAdmin({
-              data: {
-                accessToken: caller.accessToken,
-                action: request.action,
-                ruleKey:
-                  (GATE_RULE_KEY as Record<string, string>)[request.action] ?? request.action,
-                ...(request.storeId ? { storeId: request.storeId } : {}),
-                ...(request.terminalId ? { terminalId: request.terminalId } : {}),
-                ...(request.detail ? { detail: request.detail } : {}),
-              },
-            });
-            if (res.ok) {
-              // An approval that could not be recorded is still allowed, but
-              // it is never allowed to pass unnoticed.
-              if (res.warning) toast.warning(res.warning);
-              return { ok: true, grantToken: res.grantToken };
-            }
-          }
-        } catch {
-          /* fall through — an admin is still allowed through */
-        }
-        return { ok: true, grantToken: null };
-      }
-
-      // 4 · everyone else: PIN, an approval request, or their choice of both
+      // 3 · PIN, an approval request, or the configured choice of both.
       const outcome = await new Promise<PromptOutcome>((resolve) => {
         resolver.current = resolve;
         setPending({
@@ -177,6 +175,10 @@ export function ManagerGateProvider({
           ...(request.storeId ? { storeId: request.storeId } : {}),
           ...(request.terminalId ? { terminalId: request.terminalId } : {}),
           ...(request.payload ? { payload: request.payload } : {}),
+          binding: authorizationBinding(
+            request.payload ?? {},
+            request.snapshot ? snapshotFingerprint(request.snapshot) : "",
+          ),
           ...(request.snapshot ? { snapshot: request.snapshot } : {}),
           ...(request.requestedAmount === undefined || request.requestedAmount === null
             ? {}
@@ -191,6 +193,7 @@ export function ManagerGateProvider({
           authorityLimits: rule?.authorityLimits ?? {},
           extraAuthority: rule?.extraAuthority ?? {},
           absoluteCeilings: rule?.absoluteCeilings ?? {},
+          approvalTimeoutMinutes: rule?.approvalTimeoutMinutes ?? 15,
         });
       });
 
@@ -200,7 +203,7 @@ export function ManagerGateProvider({
       }
       return { ok: false, grantToken: null };
     },
-    [rules, isAdmin, legacyRules],
+    [rules, legacyRules, query.data],
   );
 
   const value = useMemo<Ctx>(() => ({ authorize, rules }), [authorize, rules]);
@@ -222,7 +225,7 @@ export function ManagerGateProvider({
 export function useManagerGate(): Ctx {
   return (
     useContext(ManagerGateContext) ?? {
-      authorize: async () => ({ ok: true, grantToken: null }),
+      authorize: async () => ({ ok: false, grantToken: null }),
       rules: {},
     }
   );

@@ -9,12 +9,14 @@
 import { toast } from "sonner";
 import {
   addHeldOrder,
+  clearHeldPending,
   removeHeldOrder,
   useHeldOrders,
   type HeldOrder,
 } from "@/lib/held-orders";
 import { claimApproval } from "@/lib/approval-centre";
 import type { TicketSnapshot } from "@/lib/ticket-snapshot";
+import type { AuthPayload } from "@/lib/authorization";
 import { TICKET_ACTIONS, logTicketEvent } from "@/lib/ticket-audit";
 import type { CartLine, DiscountType } from "@/core/types/pos-types";
 import type { CartCoupon } from "@/lib/register/use-cart";
@@ -49,6 +51,8 @@ type HeldOrdersDeps = {
   /** Called with the single-use grant when a parked approval is claimed. */
   onApprovalClaimed?: (grant: {
     requestId: string;
+    actionKey: string;
+    approvedPayload: AuthPayload;
     grantToken: string;
     approvedAmount: number | null;
   }) => void;
@@ -58,11 +62,11 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   const held = useHeldOrders();
 
   /** Park the open ticket with everything on it, so reopening is lossless. */
-  function holdOrder(silent = false) {
+  function holdOrder(silent = false, requestedId?: string) {
     const { lines, total, storeId, memberId, memberName } = deps;
     if (!lines.length) return null;
     const snapshot = lines;
-    const id = `H${Date.now()}`;
+    const id = requestedId ?? `H${Date.now()}`;
     const order: HeldOrder = {
       id,
       label: `${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${snapshot.length} item(s)`,
@@ -109,7 +113,10 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         toast.info("Still waiting for a decision on this ticket");
         return;
       }
-      const claimed = await claimApproval(order.pendingRequestId).catch(() => null);
+      const claimed = await claimApproval(
+        order.pendingRequestId,
+        order.approvalSnapshotHash ?? undefined,
+      ).catch(() => null);
       if (!claimed || !claimed.ok) {
         toast.error(
           (claimed && "error" in claimed ? claimed.error : "") ||
@@ -118,14 +125,17 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         return;
       }
       if (claimed.status !== "approved" || !claimed.grantToken) {
-        toast.error(`The request was ${claimed.status}`);
-        return;
+        clearHeldPending(order.id);
+        toast.warning(`The request was ${claimed.status}; the restricted change was not applied.`);
+      } else {
+        deps.onApprovalClaimed?.({
+          requestId: order.pendingRequestId,
+          actionKey: claimed.actionKey,
+          approvedPayload: claimed.approvedPayload,
+          grantToken: claimed.grantToken,
+          approvedAmount: claimed.approvedAmount ?? null,
+        });
       }
-      deps.onApprovalClaimed?.({
-        requestId: order.pendingRequestId,
-        grantToken: claimed.grantToken,
-        approvedAmount: claimed.approvedAmount ?? null,
-      });
     }
     const parked = deps.lines.length ? holdOrder(true) : null;
     deps.setLines(order.lines);

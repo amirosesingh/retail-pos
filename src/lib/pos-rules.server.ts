@@ -19,7 +19,15 @@ function secret(): Buffer {
   return createHash("sha256").update(raw, "utf8").digest();
 }
 
-export type OverrideGrant = { action: string; approvedBy: string; role: string; exp: number };
+export type OverrideGrant = {
+  action: string;
+  approvedBy: string;
+  role: string;
+  storeId: string;
+  binding: string;
+  requestId?: string;
+  exp: number;
+};
 
 export function signOverrideGrant(grant: Omit<OverrideGrant, "exp">): string {
   const body = Buffer.from(
@@ -33,6 +41,7 @@ export function signOverrideGrant(grant: Omit<OverrideGrant, "exp">): string {
 export function verifyOverrideGrant(
   token: string | undefined,
   action: string,
+  expectedGrant?: { storeId?: string | null; binding?: string | null },
 ): OverrideGrant | null {
   const [body, sig] = (token || "").split(".");
   if (!body || !sig) return null;
@@ -44,10 +53,28 @@ export function verifyOverrideGrant(
     const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as OverrideGrant;
     if (!parsed.exp || parsed.exp < Date.now()) return null;
     if (parsed.action !== action) return null;
+    if (expectedGrant?.storeId != null && parsed.storeId !== expectedGrant.storeId) return null;
+    if (expectedGrant?.binding != null && parsed.binding !== expectedGrant.binding) return null;
     return parsed;
   } catch {
     return null;
   }
+}
+
+/** Execute a sensitive write only after its exact branch/action/payload grant verifies. */
+export async function runAuthorizedMutation<T>(
+  proof: { token?: string | null; action: string; storeId: string; binding: string },
+  mutate: () => Promise<T> | T,
+): Promise<T> {
+  if (
+    !verifyOverrideGrant(proof.token ?? undefined, proof.action, {
+      storeId: proof.storeId,
+      binding: proof.binding,
+    })
+  ) {
+    throw new Error("A valid authorization grant is required");
+  }
+  return await mutate();
 }
 
 function headers(accessToken?: string): Record<string, string> {
@@ -208,9 +235,22 @@ export async function saveRules(
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error((await res.text()).slice(0, 400) || "Could not save rules");
-  // The RPC result is canonical effective rules. Re-read the small snapshot so
-  // the editor also receives the exact version it must use for its next save.
-  return await loadRulesResult(storeId);
+  // The transactional RPC returns the effective rules and their new version.
+  // Do not issue a second read: a brief outage after a committed save used to
+  // make the editor claim that the saved rules could not be refreshed.
+  const json = (await res.json()) as RulesSnapshotRow;
+  const rules = normalizeRules(json?.rules);
+  return {
+    rules,
+    source: "database",
+    failure: "none",
+    revision: rulesRevision(rules),
+    fetchedAt: Date.now(),
+    storeId: String(json?.store_id ?? storeId ?? ""),
+    rowVersion: Math.max(0, Number(json?.row_version) || 0),
+    updatedAt: typeof json?.updated_at === "string" ? json.updated_at : null,
+    updatedBy: typeof json?.updated_by === "string" ? json.updated_by : null,
+  };
 }
 
 export async function verifyManagerPinInDb(
@@ -242,37 +282,6 @@ export async function verifyManagerPinInDb(
     return { userId: row.user_id, name: row.full_name ?? row.user_id, role: row.role ?? "manager" };
   } catch {
     return null;
-  }
-}
-
-export async function logOverride(input: {
-  action: string;
-  ruleKey?: string | null;
-  requestedBy?: string | null;
-  approvedBy: string;
-  approvedRole: string;
-  storeId?: string | null;
-  terminalId?: string | null;
-  detail?: string | null;
-}): Promise<{ ok: boolean; error?: string }> {
-  try {
-    await rpc("log_manager_override", {
-      _action: input.action,
-      _rule_key: input.ruleKey ?? null,
-      _requested_by: input.requestedBy ?? null,
-      _approved_by: input.approvedBy,
-      _approved_role: input.approvedRole,
-      _store_id: input.storeId ?? null,
-      _terminal_id: input.terminalId ?? null,
-      _detail: input.detail ?? null,
-      _outcome: "approved",
-      _mode_used: "admin_auto",
-    });
-    return { ok: true };
-  } catch (e) {
-    // The till is never blocked on an audit write, but the caller is told so
-    // the approval can be shown as unrecorded instead of silently lost.
-    return { ok: false, error: (e as Error).message.slice(0, 300) };
   }
 }
 

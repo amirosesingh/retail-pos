@@ -13,6 +13,9 @@ export type { TicketSnapshot } from "./ticket-snapshot";
 /** How an action must be authorised. */
 export type AuthMode = "none" | "pin" | "request" | "either";
 
+/** Old approvals must not remain usable after the customer or prices changed. */
+export const APPROVAL_TTL_MS = 15 * 60_000;
+
 export const AUTH_MODES: { value: AuthMode; label: string; blurb: string }[] = [
   {
     value: "none",
@@ -46,6 +49,7 @@ export type AuthActionKey =
   | "edit_posted_purchase"
   | "discard_draft"
   | "delete_product"
+  | "stock_transfer"
   | "member_points_adjust";
 
 export type AuthActionDef = {
@@ -173,6 +177,13 @@ export const AUTH_ACTIONS: AuthActionDef[] = [
     deferrable: true,
   },
   {
+    key: "stock_transfer",
+    group: "inventory",
+    label: "Stock transfer",
+    blurb: "Moving stock from one branch or warehouse to another.",
+    deferrable: true,
+  },
+  {
     key: "delete_product",
     group: "inventory",
     label: "Delete a product",
@@ -238,6 +249,9 @@ export type AuthorizationRule = {
   extraAuthority: Record<string, number>;
   /** Optional hard cap after applying relative authority. */
   absoluteCeilings: Record<string, number>;
+  approvalTimeoutMinutes: number;
+  escalationAfterMinutes: number | null;
+  escalationRoles: string[];
   requireReason: boolean;
   threshold: number | null;
   isEnabled: boolean;
@@ -255,6 +269,9 @@ export const defaultRule = (actionKey: AuthActionKey): AuthorizationRule => ({
   authorityLimits: {},
   extraAuthority: {},
   absoluteCeilings: {},
+  approvalTimeoutMinutes: 15,
+  escalationAfterMinutes: null,
+  escalationRoles: [],
   requireReason: false,
   threshold: null,
   isEnabled: true,
@@ -298,6 +315,15 @@ export function normalizeRule(input: unknown): AuthorizationRule {
     authorityLimits: asLimits(row["authority_limits"]),
     extraAuthority: asLimits(row["extra_authority"]),
     absoluteCeilings: asLimits(row["absolute_ceilings"]),
+    approvalTimeoutMinutes: Math.min(
+      1440,
+      Math.max(1, Number(row["approval_timeout_minutes"]) || 15),
+    ),
+    escalationAfterMinutes:
+      row["escalation_after_minutes"] == null
+        ? null
+        : Math.min(1440, Math.max(1, Number(row["escalation_after_minutes"]) || 1)),
+    escalationRoles: asStrings(row["escalation_roles"]),
     requireReason: row["require_reason"] === true,
     threshold: threshold === null || threshold === undefined ? null : Number(threshold),
     isEnabled: row["is_enabled"] !== false,
@@ -456,9 +482,58 @@ export function canAuthorizeAmount(
   );
 }
 
+/** Backup roles become eligible only after the configured escalation delay. */
+export function canAuthorizeEscalated(
+  rule: AuthorizationRule | undefined,
+  who: { role?: string | null },
+  createdAt: string,
+  now = Date.now(),
+): boolean {
+  if (!rule?.escalationAfterMinutes || !rule.escalationRoles.length) return false;
+  const created = Date.parse(createdAt);
+  if (!Number.isFinite(created)) return false;
+  const role = (who.role ?? "").toLowerCase();
+  return (
+    now - created >= rule.escalationAfterMinutes * 60_000 &&
+    rule.escalationRoles.some((candidate) => candidate.toLowerCase() === role)
+  );
+}
+
+export function canDecideRequestAmount(
+  rule: AuthorizationRule | undefined,
+  who: { userId?: string | null; role?: string | null },
+  request: Pick<AuthorizationRequest, "createdAt" | "requestedAmount" | "requesterDirectLimit">,
+  amount = request.requestedAmount,
+): boolean {
+  if (canAuthorizeAmount(rule, who, amount, request.requesterDirectLimit)) return true;
+  if (!canAuthorizeEscalated(rule, who, request.createdAt)) return false;
+  const limit = effectiveApprovalAuthority(
+    rule,
+    who,
+    request.requesterDirectLimit,
+  ).effectiveMaximum;
+  return (
+    limit === null || amount == null || (Number.isFinite(amount) && amount >= 0 && amount <= limit)
+  );
+}
+
 /** Approval payloads stay flat so they survive the wire unchanged. */
 export type PayloadValue = string | number | boolean | null;
 export type AuthPayload = Record<string, PayloadValue>;
+
+/** Stable binding carried by a signed grant and checked again by the mutation. */
+export function authorizationBinding(payload: AuthPayload = {}, snapshotHash = ""): string {
+  const material =
+    JSON.stringify(
+      Object.fromEntries(Object.entries(payload).sort(([a], [b]) => a.localeCompare(b))),
+    ) + `|${snapshotHash}`;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < material.length; i += 1) {
+    hash ^= material.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${hash.toString(16).padStart(8, "0")}${material.length.toString(16)}`;
+}
 
 export type AuthorizationRequest = {
   id: string;
@@ -488,6 +563,21 @@ export type AuthorizationRequest = {
   /** the parked ticket this request belongs to, when there is one */
   heldOrderId: string | null;
   consumedAt: string | null;
+  /** Exact people and roles the request was routed to when it was created. */
+  approvalRoute: ApprovalRouteSnapshot | null;
+};
+
+export type ApprovalRoutePerson = { id: string; name: string; role: string };
+
+export type ApprovalRouteSnapshot = {
+  primaryRoles: string[];
+  primaryUserIds: string[];
+  primaryApprovers: ApprovalRoutePerson[];
+  escalationAfterMinutes: number | null;
+  escalationRoles: string[];
+  escalationApprovers: ApprovalRoutePerson[];
+  ruleScopeType: AuthScopeType;
+  ruleScopeId: string;
 };
 
 const numberOrNull = (raw: unknown): number | null =>
@@ -532,7 +622,59 @@ export function normalizeRequest(input: unknown): AuthorizationRequest {
     snapshotHash: String(row["snapshot_hash"] ?? ""),
     heldOrderId: (row["held_order_id"] as string) ?? null,
     consumedAt: (row["consumed_at"] as string) ?? null,
+    approvalRoute: normalizeApprovalRoute(row["approval_route"]),
   };
+}
+
+function normalizeApprovalRoute(raw: unknown): ApprovalRouteSnapshot | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const row = raw as Record<string, unknown>;
+  // Existing/offline-created rows use the database default `{}`. Treat that
+  // as a legacy request so current branch rules still govern it; an empty
+  // route must never make a valid queued request permanently invisible.
+  if (!Object.keys(row).length) return null;
+  const people = (value: unknown): ApprovalRoutePerson[] =>
+    Array.isArray(value)
+      ? value
+          .map((item) => item as Record<string, unknown>)
+          .map((item) => ({
+            id: String(item.id ?? ""),
+            name: String(item.name ?? item.id ?? ""),
+            role: String(item.role ?? "staff"),
+          }))
+          .filter((item) => item.id)
+      : [];
+  const scope = String(row.ruleScopeType ?? "global");
+  return {
+    primaryRoles: asStrings(row.primaryRoles),
+    primaryUserIds: asStrings(row.primaryUserIds),
+    primaryApprovers: people(row.primaryApprovers),
+    escalationAfterMinutes: numberOrNull(row.escalationAfterMinutes),
+    escalationRoles: asStrings(row.escalationRoles),
+    escalationApprovers: people(row.escalationApprovers),
+    ruleScopeType: scope === "branch" || scope === "cluster" ? scope : "global",
+    ruleScopeId: String(row.ruleScopeId ?? ""),
+  };
+}
+
+/** A request may only be shown to people it was originally routed to. */
+export function isRoutedApprover(
+  request: Pick<AuthorizationRequest, "approvalRoute" | "createdAt">,
+  who: { userId?: string | null },
+  now = Date.now(),
+): boolean {
+  const route = request.approvalRoute;
+  if (!route) return true; // Backward compatibility for requests created before route snapshots.
+  const id = (who.userId ?? "").toLowerCase();
+  if (!id) return false;
+  if (route.primaryApprovers.some((person) => person.id.toLowerCase() === id)) return true;
+  if (!route.escalationAfterMinutes) return false;
+  const created = Date.parse(request.createdAt);
+  return (
+    Number.isFinite(created) &&
+    now - created >= route.escalationAfterMinutes * 60_000 &&
+    route.escalationApprovers.some((person) => person.id.toLowerCase() === id)
+  );
 }
 
 /** An empty jsonb column means "no ticket was attached", not an empty ticket. */

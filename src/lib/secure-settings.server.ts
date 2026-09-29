@@ -42,6 +42,8 @@ export async function verifyPosStaff(accessToken: string): Promise<{
   userId: string;
   role: string;
   isAdmin: boolean;
+  storeId: string;
+  permissions: Record<string, boolean>;
 }> {
   const headers = {
     apikey: supabaseConfig().key,
@@ -62,7 +64,12 @@ export async function verifyPosStaff(accessToken: string): Promise<{
 
   const rows = (await rpc.json()) as unknown;
   const row = (Array.isArray(rows) ? rows[0] : rows) as
-    | { role?: string; is_active?: boolean }
+    | {
+        role?: string;
+        is_active?: boolean;
+        store_id?: string | null;
+        permissions?: Record<string, unknown> | null;
+      }
     | null;
   const role = row?.role;
   if (!role) throw new Error("No staff record for this account");
@@ -72,7 +79,15 @@ export async function verifyPosStaff(accessToken: string): Promise<{
     throw new Error("This account is awaiting administrator approval");
   }
 
-  return { userId: user.id, role, isAdmin: role === "admin" || role === "manager" };
+  return {
+    userId: user.id,
+    role,
+    isAdmin: role === "admin" || role === "manager",
+    storeId: String(row?.store_id ?? ""),
+    permissions: Object.fromEntries(
+      Object.entries(row?.permissions ?? {}).map(([key, value]) => [key, value === true]),
+    ),
+  };
 }
 
 /* ------------------------- encrypted value store ------------------------- */

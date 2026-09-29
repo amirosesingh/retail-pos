@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { markHeldWaiting } from "@/lib/held-orders";
 import { terminalId as posTerminalId } from "@/lib/activity-journal";
-import type { TicketSnapshot } from "@/lib/ticket-snapshot";
+import { snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
 import { useCart } from "@/lib/register/use-cart";
 import { useTender } from "@/lib/register/use-tender";
 import { isoDaysFromNow, useBookingIntake } from "@/lib/register/use-booking-intake";
@@ -43,6 +43,7 @@ import {
   ChefHat,
   PackageSearch,
   ArrowLeft,
+  Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
@@ -118,10 +119,12 @@ import { NO_SALE_REASON_MAX, NO_SALE_REASON_MIN, recordNoSale } from "@/lib/draw
 import { logger } from "@/lib/audit-log";
 import { DiscountPad } from "@/platforms/web/components/pos/DiscountPad";
 import { useManagerGate, type GateRequest } from "@/lib/manager-gate";
+import type { AuthPayload } from "@/lib/authorization";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { assertShiftClosable } from "@/lib/pos-rules.functions";
 import { parseAmount, parsePositiveAmount } from "@/core/pricing/amount";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
+import { verifyBusinessAuthorization } from "@/lib/authorization-client";
 import { evaluatePromotions, focLine } from "@/lib/pos-promotions";
 import { clearCartDraft, loadCartDraft, saveCartDraft } from "@/lib/cart-draft";
 import {
@@ -213,25 +216,66 @@ function Register() {
    * gets the dialog. Resolves with the signed grant token, or null when the
    * action was refused.
    */
-  const { authorize } = useManagerGate();
+  const { authorize, rules: authorizationRules } = useManagerGate();
   /**
    * The open ticket, filled in below once the totals exist. Sending it with a
    * request lets a remote approver decide on what the cashier can see.
    */
   const ticketSnapshot = useRef<() => TicketSnapshot | null>(() => null);
   /** Parks the open ticket; filled in once the held-orders hook exists. */
-  const parkTicket = useRef<(() => { id: string } | null) | null>(null);
+  const parkTicket = useRef<((id?: string) => { id: string } | null) | null>(null);
   /** The single-use grant claimed when a ticket comes back approved. */
   const claimedGrant = useRef<{
     requestId: string;
+    actionKey: string;
+    approvedPayload: AuthPayload;
     grantToken: string;
     amount: number | null;
   } | null>(null);
   const askManager = async (request: GateRequest) => {
     const snapshot = ticketSnapshot.current();
+    const verifyGrant = async (grantToken: string | null) => {
+      const result = await verifyBusinessAuthorization({
+        data: {
+          ...(await getPosCallerAuth()),
+          actionKey: request.action,
+          storeId: request.storeId ?? currentStore.id,
+          payload: request.payload ?? {},
+          snapshotHash: snapshot ? snapshotFingerprint(snapshot) : "",
+          grantToken,
+        },
+      });
+      if (!result.ok) {
+        toast.error(result.error);
+        return null;
+      }
+      return grantToken ?? "";
+    };
+    const existing = claimedGrant.current;
+    if (
+      existing?.actionKey === request.action &&
+      Object.entries(request.payload ?? {}).every(
+        ([key, value]) => existing.approvedPayload[key] === value,
+      )
+    ) {
+      if (
+        existing.amount !== null &&
+        request.requestedAmount !== undefined &&
+        request.requestedAmount !== null &&
+        request.requestedAmount > existing.amount
+      ) {
+        toast.error(`Only ${existing.amount.toFixed(2)} was approved for this ticket.`);
+        return null;
+      }
+      return verifyGrant(existing.grantToken);
+    }
+    const heldOrderId = snapshot
+      ? `H${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      : undefined;
     const res = await authorize({
       ...request,
       ...(snapshot ? { snapshot } : {}),
+      ...(heldOrderId ? { heldOrderId } : {}),
       ...(request.requestedAmount === undefined && snapshot?.requestedValue !== undefined
         ? { requestedAmount: snapshot.requestedValue }
         : {}),
@@ -239,16 +283,54 @@ function Register() {
     // A queued action must not hold the till hostage: the ticket is parked
     // exactly as the approver sees it and the next customer can be served.
     if (res.pendingRequestId) {
-      const parked = parkTicket.current?.();
+      const parked = parkTicket.current?.(heldOrderId);
       if (parked) {
-        markHeldWaiting(parked.id, res.pendingRequestId);
+        markHeldWaiting(
+          parked.id,
+          res.pendingRequestId,
+          snapshot ? snapshotFingerprint(snapshot) : undefined,
+        );
         toast.info("Ticket parked while it waits for approval", {
           description: "Pick it up from Hold tickets once the decision arrives.",
         });
       }
     }
     // A gate that is switched off returns ok with no token — still a "go".
-    return res.ok ? (res.grantToken ?? "") : null;
+    return res.ok ? verifyGrant(res.grantToken) : null;
+  };
+  const requireCartPermission = async (flag: string) => {
+    const governed = {
+      can_void_cart: [
+        "void_cart",
+        "Authorise bill void",
+        "Voiding this bill requires authorisation.",
+      ],
+      can_delete_line: [
+        "void_line",
+        "Authorise line void",
+        "Removing this line requires authorisation.",
+      ],
+      can_reduce_qty: [
+        "reduce_qty",
+        "Authorise quantity reduction",
+        "Reducing this quantity requires authorisation.",
+      ],
+    } as const;
+    const match = governed[flag as keyof typeof governed];
+    if (!match) return requirePermission(flag);
+    const [action, title, reason] = match;
+    if ((authorizationRules[action]?.mode ?? "none") === "none") {
+      return requirePermission(flag);
+    }
+    return (
+      (await askManager({
+        action,
+        title,
+        reason,
+        storeId: currentStore.id,
+        requestedBy: user?.staffId ?? user?.name ?? null,
+      })) !== null
+    );
   };
   const [closeShiftOpen, setCloseShiftOpen] = useState(false);
   /** Leaving the dialog never closes the shift and never prints anything. */
@@ -308,7 +390,7 @@ function Register() {
     products: state.products,
     bookings: state.bookings,
     currentStore,
-    requirePermission,
+    requirePermission: requireCartPermission,
     getTotal: () => totals.total,
     getMemberName: () => member?.name ?? null,
     // A discount unlock lasts for this ticket only.
@@ -322,6 +404,9 @@ function Register() {
 
   /** Calculator-style discount pad: index of the cart line, or "bill". */
   const [padTarget, setPadTarget] = useState<number | "bill" | null>(null);
+  const [priceTarget, setPriceTarget] = useState<number | null>(null);
+  const [priceDraft, setPriceDraft] = useState("");
+  const [priceReason, setPriceReason] = useState("");
 
   /** True while a sale / booking is being stored — blocks a second click. */
   const [openShiftOpen, setOpenShiftOpen] = useState(false);
@@ -729,6 +814,8 @@ function Register() {
     onApprovalClaimed: (grant) => {
       claimedGrant.current = {
         requestId: grant.requestId,
+        actionKey: grant.actionKey,
+        approvedPayload: grant.approvedPayload,
         grantToken: grant.grantToken,
         amount: grant.approvedAmount,
       };
@@ -757,6 +844,7 @@ function Register() {
             unitPrice: l.price,
             discount: l.discount ?? 0,
             lineTotal: r2(l.price * l.qty - (l.discount ?? 0)),
+            priceOverridden: !!l.priceOverridden,
           })),
           subtotal: totals.subtotal,
           discount: totals.discount ?? 0,
@@ -765,7 +853,7 @@ function Register() {
           total: totals.total,
           member: member ? { id: member.id, name: member.name, points: member.points } : null,
         };
-  parkTicket.current = () => holdOrder(true);
+  parkTicket.current = (id) => holdOrder(true, id);
   // A grant belongs to one ticket only: once the ticket is gone, so is it.
   useEffect(() => {
     if (lines.length === 0) claimedGrant.current = null;
@@ -1838,6 +1926,22 @@ function Register() {
                   />
                 </div>
               )}
+              {!l.credit && !l.foc && (
+                <div className="mt-2 flex justify-end">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[11px] text-muted-foreground"
+                    onClick={() => {
+                      setPriceTarget(i);
+                      setPriceDraft(String(l.price));
+                      setPriceReason("");
+                    }}
+                  >
+                    <Pencil className="size-3" /> Override price
+                  </Button>
+                </div>
+              )}
             </div>
           ))}
           {!lines.length && (
@@ -2296,167 +2400,169 @@ function Register() {
         </div>
         <div className="min-h-0 flex-1">
           <ZoomCanvas>
-        <RegisterActionsProvider handlers={registerActionHandlers}>
-          <RegisterWorkspace
-            terminalKey={terminalKey}
-            mode={state.settings.integrations.sellingLayout}
-            onModeChange={(sellingLayout) =>
-              updateSettings({
-                integrations: { ...state.settings.integrations, sellingLayout },
-              })
-            }
-            slots={{
-              catalog: slot_catalog,
-              billNumber: atom_billNumber,
-              shiftBadge: atom_shiftBadge,
-              actExchange: atom_actExchange,
-              actClear: atom_actClear,
-              scanBar: slot_scanBar,
-              memberSearch: slot_memberSearch,
-              cartLines: slot_cartLines,
-              totalsBlock: atom_totalsBlock,
-              balanceDue: atom_balanceDue,
-              actCharge: atom_actCharge,
-              actBooking: atom_actBooking,
-              reprintDeck: atom_reprintDeck,
-              actHold: atom_actHold,
-              actVoid: atom_actVoid,
-              actCoupon: atom_actCoupon,
-              actSplit: atom_actSplit,
-              heldList: atom_heldList,
-              actDrawer: atom_actDrawer,
-              receiptToggle: atom_receiptToggle,
-            }}
-            classic={
-              <div className="pos-scaled flex h-full min-h-0 min-w-0 flex-col overflow-hidden lg:flex-row">
-                {/* Product lookup stays deliberately smaller than the sale. */}
-                <section
-                  className="flex max-h-[42%] min-h-0 w-full shrink-0 flex-col border-b border-border lg:max-h-none lg:w-[var(--lookup-w)] lg:min-w-[280px] lg:max-w-[42%] lg:border-b-0"
-                  style={{ ["--lookup-w" as string]: `${lookupWidth}px` }}
-                >
-                  {slot_standardProductLookup}
-                </section>
+            <RegisterActionsProvider handlers={registerActionHandlers}>
+              <RegisterWorkspace
+                terminalKey={terminalKey}
+                mode={state.settings.integrations.sellingLayout}
+                onModeChange={(sellingLayout) =>
+                  updateSettings({
+                    integrations: { ...state.settings.integrations, sellingLayout },
+                  })
+                }
+                slots={{
+                  catalog: slot_catalog,
+                  billNumber: atom_billNumber,
+                  shiftBadge: atom_shiftBadge,
+                  actExchange: atom_actExchange,
+                  actClear: atom_actClear,
+                  scanBar: slot_scanBar,
+                  memberSearch: slot_memberSearch,
+                  cartLines: slot_cartLines,
+                  totalsBlock: atom_totalsBlock,
+                  balanceDue: atom_balanceDue,
+                  actCharge: atom_actCharge,
+                  actBooking: atom_actBooking,
+                  reprintDeck: atom_reprintDeck,
+                  actHold: atom_actHold,
+                  actVoid: atom_actVoid,
+                  actCoupon: atom_actCoupon,
+                  actSplit: atom_actSplit,
+                  heldList: atom_heldList,
+                  actDrawer: atom_actDrawer,
+                  receiptToggle: atom_receiptToggle,
+                }}
+                classic={
+                  <div className="pos-scaled flex h-full min-h-0 min-w-0 flex-col overflow-hidden lg:flex-row">
+                    {/* Product lookup stays deliberately smaller than the sale. */}
+                    <section
+                      className="flex max-h-[42%] min-h-0 w-full shrink-0 flex-col border-b border-border lg:max-h-none lg:w-[var(--lookup-w)] lg:min-w-[280px] lg:max-w-[42%] lg:border-b-0"
+                      style={{ ["--lookup-w" as string]: `${lookupWidth}px` }}
+                    >
+                      {slot_standardProductLookup}
+                    </section>
 
-                <ColumnResizer
-                  width={lookupWidth}
-                  onWidth={setLookupWidth}
-                  min={280}
-                  max={520}
-                  direction="right"
-                  label="Resize product lookup"
-                />
+                    <ColumnResizer
+                      width={lookupWidth}
+                      onWidth={setLookupWidth}
+                      min={280}
+                      max={520}
+                      direction="right"
+                      label="Resize product lookup"
+                    />
 
-                {/* Current sale owns the remaining width. */}
-                <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-sidebar">
-                  {slot_billHeader}
+                    {/* Current sale owns the remaining width. */}
+                    <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-sidebar">
+                      {slot_billHeader}
 
-                  <div className="border-b border-border px-4 py-3">{slot_memberSearch}</div>
+                      <div className="border-b border-border px-4 py-3">{slot_memberSearch}</div>
 
-                  <div className="border-b border-border bg-background/70 px-3 py-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {atom_actHold && <div className="h-10 min-w-32 flex-1">{atom_actHold}</div>}
-                      {atom_actCoupon && (
-                        <div className="h-10 min-w-32 flex-1">{atom_actCoupon}</div>
-                      )}
-                      <Button asChild variant="outline" className="h-10 min-w-32 flex-1">
-                        <Link to="/holds">
-                          <PauseCircle className="size-4" /> Held bills
-                          {held.length > 0 && (
-                            <Badge className="ml-1 h-5 min-w-5 justify-center px-1 text-[10px]">
-                              {held.length}
-                            </Badge>
+                      <div className="border-b border-border bg-background/70 px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {atom_actHold && (
+                            <div className="h-10 min-w-32 flex-1">{atom_actHold}</div>
                           )}
-                        </Link>
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-10 min-w-28 flex-1"
-                        onClick={() => setReceiptPreview((open) => !open)}
-                      >
-                        <Printer className="size-4" /> Receipt
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-10 min-w-28"
-                        aria-expanded={deckOpen}
-                        onClick={() => setDeckOpen((open) => !open)}
-                      >
-                        More actions
-                        <ChevronUp
-                          className={`size-4 transition-transform ${deckOpen ? "" : "rotate-180"}`}
-                        />
-                      </Button>
-                    </div>
-                    {deckOpen && (
-                      <div className="mt-2 grid gap-2 rounded-lg border border-border bg-card p-2 sm:grid-cols-3">
-                        {atom_actSplit && <div className="h-10">{atom_actSplit}</div>}
-                        <div className="h-10">{atom_actDrawer}</div>
-                        <div className="h-10">{atom_actVoid}</div>
+                          {atom_actCoupon && (
+                            <div className="h-10 min-w-32 flex-1">{atom_actCoupon}</div>
+                          )}
+                          <Button asChild variant="outline" className="h-10 min-w-32 flex-1">
+                            <Link to="/holds">
+                              <PauseCircle className="size-4" /> Held bills
+                              {held.length > 0 && (
+                                <Badge className="ml-1 h-5 min-w-5 justify-center px-1 text-[10px]">
+                                  {held.length}
+                                </Badge>
+                              )}
+                            </Link>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-10 min-w-28 flex-1"
+                            onClick={() => setReceiptPreview((open) => !open)}
+                          >
+                            <Printer className="size-4" /> Receipt
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-10 min-w-28"
+                            aria-expanded={deckOpen}
+                            onClick={() => setDeckOpen((open) => !open)}
+                          >
+                            More actions
+                            <ChevronUp
+                              className={`size-4 transition-transform ${deckOpen ? "" : "rotate-180"}`}
+                            />
+                          </Button>
+                        </div>
+                        {deckOpen && (
+                          <div className="mt-2 grid gap-2 rounded-lg border border-border bg-card p-2 sm:grid-cols-3">
+                            {atom_actSplit && <div className="h-10">{atom_actSplit}</div>}
+                            <div className="h-10">{atom_actDrawer}</div>
+                            <div className="h-10">{atom_actVoid}</div>
+                          </div>
+                        )}
                       </div>
-                    )}
+
+                      {slot_cartLines}
+
+                      {slot_billFooter}
+                    </section>
                   </div>
-
-                  {slot_cartLines}
-
-                  {slot_billFooter}
-                </section>
-              </div>
-            }
-          />
-        </RegisterActionsProvider>
-        {/* Unknown scans and manual lookups land in the search & add modal. */}
-        <ProductSearchDialog
-          open={catalogOpen}
-          onOpenChange={(v) => {
-            setCatalogOpen(v);
-            if (!v) setUnknownCode(null);
-          }}
-          query={query}
-          onQueryChange={setQuery}
-          products={visibleProducts}
-          storeId={currentStore.id}
-          unknownCode={unknownCode}
-          onAdd={(id) => {
-            addLine(id);
-            setCatalogOpen(false);
-            setUnknownCode(null);
-            setQuery("");
-          }}
-          onLinkBarcode={async (id, code) => {
-            const product = state.products.find((p) => p.id === id);
-            if (!product) return;
-            await upsertProduct({
-              ...product,
-              barcodes: Array.from(new Set([...(product.barcodes ?? []), code])),
-              ...(product.barcode ? {} : { barcode: code }),
-            });
-            toast.success(`${code} linked to ${product.name}`);
-            addLine(id);
-            setUnknownCode(null);
-            setQuery("");
-          }}
-          onCreateProduct={async (draft) => {
-            const created = {
-              id: crypto.randomUUID(),
-              name: draft.name,
-              sku: draft.sku,
-              barcode: draft.barcode,
-              category: draft.category,
-              price: draft.price,
-              cost: 0,
-              stockByStore: { [currentStore.id]: 1 },
-              reorderLevel: 0,
-              taxRate: state.settings.tax.enabled ? state.settings.tax.rate : 0,
-            };
-            await upsertProduct(created);
-            toast.success(`${created.name} added to the catalogue`);
-            addLine(created.id);
-            setUnknownCode(null);
-            setQuery("");
-          }}
-        />
+                }
+              />
+            </RegisterActionsProvider>
+            {/* Unknown scans and manual lookups land in the search & add modal. */}
+            <ProductSearchDialog
+              open={catalogOpen}
+              onOpenChange={(v) => {
+                setCatalogOpen(v);
+                if (!v) setUnknownCode(null);
+              }}
+              query={query}
+              onQueryChange={setQuery}
+              products={visibleProducts}
+              storeId={currentStore.id}
+              unknownCode={unknownCode}
+              onAdd={(id) => {
+                addLine(id);
+                setCatalogOpen(false);
+                setUnknownCode(null);
+                setQuery("");
+              }}
+              onLinkBarcode={async (id, code) => {
+                const product = state.products.find((p) => p.id === id);
+                if (!product) return;
+                await upsertProduct({
+                  ...product,
+                  barcodes: Array.from(new Set([...(product.barcodes ?? []), code])),
+                  ...(product.barcode ? {} : { barcode: code }),
+                });
+                toast.success(`${code} linked to ${product.name}`);
+                addLine(id);
+                setUnknownCode(null);
+                setQuery("");
+              }}
+              onCreateProduct={async (draft) => {
+                const created = {
+                  id: crypto.randomUUID(),
+                  name: draft.name,
+                  sku: draft.sku,
+                  barcode: draft.barcode,
+                  category: draft.category,
+                  price: draft.price,
+                  cost: 0,
+                  stockByStore: { [currentStore.id]: 1 },
+                  reorderLevel: 0,
+                  taxRate: state.settings.tax.enabled ? state.settings.tax.rate : 0,
+                };
+                await upsertProduct(created);
+                toast.success(`${created.name} added to the catalogue`);
+                addLine(created.id);
+                setUnknownCode(null);
+                setQuery("");
+              }}
+            />
           </ZoomCanvas>
         </div>
       </div>
@@ -3812,6 +3918,91 @@ function Register() {
 
       {/* Close shift — the one server-driven closing workflow */}
       <ShiftCloseDialog open={closeShiftOpen} onOpenChange={setCloseShiftOpen} />
+      <Dialog open={priceTarget !== null} onOpenChange={(open) => !open && setPriceTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Price override</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label>New unit price</Label>
+              <Input
+                className="numeric"
+                inputMode="decimal"
+                value={priceDraft}
+                onChange={(event) => setPriceDraft(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>
+                Reason {rules.require_reason_for_price_override ? "(required)" : "(optional)"}
+              </Label>
+              <Textarea
+                value={priceReason}
+                onChange={(event) => setPriceReason(event.target.value.slice(0, 400))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPriceTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const target = priceTarget;
+                const line = target === null ? undefined : lines[target];
+                const next = Number(priceDraft);
+                void (async () => {
+                  if (!line || !Number.isFinite(next) || next < 0) {
+                    toast.error("Enter a valid unit price");
+                    return;
+                  }
+                  if (rules.require_reason_for_price_override && priceReason.trim().length < 3) {
+                    toast.error("Enter why the price is being changed");
+                    return;
+                  }
+                  const granted = await askManager({
+                    action: "price_override",
+                    title: "Authorise price override",
+                    reason: `${line.name}: ${money(line.price)} → ${money(next)}`,
+                    storeId: currentStore.id,
+                    requestedBy: activeCashier,
+                    requestedAmount: next,
+                    valueUnit: "currency",
+                    payload: {
+                      product_id: line.productId,
+                      product_name: line.name,
+                      original_price: line.price,
+                      requested_price: next,
+                      transaction: billNo ?? `draft-${currentStore.id}`,
+                    },
+                    detail: priceReason.trim(),
+                  });
+                  if (granted === null) return;
+                  patchLine(target!, {
+                    price: r2(next),
+                    originalPrice: line.originalPrice ?? line.price,
+                    priceOverridden: true,
+                    priceOverrideReason: priceReason.trim(),
+                  });
+                  logger.log("discount", "Price overridden", "register", {
+                    productId: line.productId,
+                    product: line.name,
+                    from: line.price,
+                    to: r2(next),
+                    reason: priceReason.trim(),
+                    storeId: currentStore.id,
+                  });
+                  setPriceTarget(null);
+                })();
+              }}
+            >
+              Apply override
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <DiscountPad
         open={padTarget !== null}
         onOpenChange={(o) => !o && setPadTarget(null)}
@@ -3889,6 +4080,9 @@ function Register() {
                 payload: {
                   discount_type: t,
                   discount_scope: target === "bill" ? "bill" : "item",
+                  target_product_id:
+                    typeof target === "number" ? (lines[target]?.productId ?? null) : null,
+                  target_index: typeof target === "number" ? target : -1,
                   allowed_limit:
                     t === "percent"
                       ? rules.max_cashier_discount_percent

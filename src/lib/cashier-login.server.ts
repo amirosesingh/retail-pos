@@ -192,7 +192,11 @@ export async function cashierLoginServer(input: {
 
   return {
     ok: true,
-    cashierToken: signCashierSession({ id: cashier.id, username: cashier.username }),
+    cashierToken: signCashierSession({
+      id: cashier.id,
+      username: cashier.username,
+      storeId: cashier.store_id ?? "",
+    }),
     sessionToken: session.token,
     idleMinutes: session.idleMinutes,
     authTokenHash,

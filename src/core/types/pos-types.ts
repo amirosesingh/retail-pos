@@ -139,6 +139,10 @@ export type CartLine = {
   productId: string;
   name: string;
   price: number;
+  /** Catalogue price retained when an authorised override changes this sale line. */
+  originalPrice?: number;
+  priceOverridden?: boolean;
+  priceOverrideReason?: string;
   qty: number;
   taxRate: number;
   discount: number;

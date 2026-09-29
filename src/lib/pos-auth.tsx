@@ -580,7 +580,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cashierLogin = useCallback(
-    async (userId: string, pin: string) => {
+    async (
+      userId: string,
+      pin: string,
+    ): Promise<{
+      ok: boolean;
+      error?: string;
+      code?: LoginFailure | "session-open-failed";
+    }> => {
       const code = usernameFromAddress(userId);
       if (!code) return { ok: false, error: "Enter your username" };
       // Accounts are provisioned with a 4-32 character credential, so the till

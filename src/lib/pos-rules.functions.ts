@@ -9,7 +9,6 @@ const callerInput = z.object({
   storeId: z.string().max(64).optional(),
 });
 
-
 const ruleValue = z.union([z.boolean(), z.number()]);
 
 const saveInput = z.object({
@@ -41,26 +40,31 @@ const closeInput = z.object({
   grantToken: z.string().optional(),
 });
 
-const bypassInput = z.object({
-  accessToken: z.string().min(10),
-  action: z.string().min(1).max(64),
-  ruleKey: z.string().max(64).optional(),
-  storeId: z.string().max(64).optional(),
-  terminalId: z.string().max(64).optional(),
-  detail: z.string().max(400).optional(),
-});
-
 /** Any signed-in till user: a Supabase staff account or a cashier session. */
 async function assertCaller(data: { accessToken?: string; terminalToken?: string }) {
   if (data.accessToken) {
     const { verifyPosStaff } = await import("./secure-settings.server");
     const caller = await verifyPosStaff(data.accessToken);
-    return { id: caller.userId, role: caller.role, isSupervisor: caller.isAdmin };
+    return {
+      id: caller.userId,
+      role: caller.role,
+      isSupervisor: caller.isAdmin,
+      canManageRules:
+        caller.role === "admin" ||
+        caller.role === "manager" ||
+        caller.permissions["can_access_pos_settings"] === true,
+    };
   }
   if (data.terminalToken) {
     const { verifyCashierSession } = await import("./pos-session.server");
     const session = verifyCashierSession(data.terminalToken);
-    if (session) return { id: session.id, role: "cashier", isSupervisor: false };
+    if (session)
+      return {
+        id: session.id,
+        role: "cashier",
+        isSupervisor: false,
+        canManageRules: false,
+      };
   }
   throw new Error("Not signed in");
 }
@@ -141,16 +145,15 @@ export const getPosRules = createServerFn({ method: "POST" })
     };
   });
 
-
-
-/** Supervisor-only write; the database re-checks the role as well. */
+/** Explicit POS-settings permission; the database re-checks permission and branch visibility. */
 export const savePosRules = createServerFn({ method: "POST" })
   .validator((data: unknown) => saveInput.parse(data))
   .handler(async ({ data }) => {
     const { saveRules } = await import("./pos-rules.server");
     try {
       const caller = await assertCaller(data);
-      if (!caller.isSupervisor) return { ok: false as const, error: "Supervisors only" };
+      if (!caller.canManageRules)
+        return { ok: false as const, error: "POS settings permission is required" };
       const { resolveRulesAccess } = await import("./pos-rules-access.server");
       const access = await resolveRulesAccess(data);
       if (!access.ok) return { ok: false as const, error: access.error, code: access.code };
@@ -173,12 +176,9 @@ export const savePosRules = createServerFn({ method: "POST" })
 export const verifyManagerPin = createServerFn({ method: "POST" })
   .validator((data: unknown) => pinInput.parse(data))
   .handler(async ({ data }) => {
-    const { verifyManagerPinInDb, signOverrideGrant } = await import(
-      "./pos-rules.server"
-    );
-    const { throttleStatus, throttleFail, throttleReset, minutesLeft } = await import(
-      "./pin-throttle.server"
-    );
+    const { verifyManagerPinInDb, signOverrideGrant } = await import("./pos-rules.server");
+    const { throttleStatus, throttleFail, throttleReset, minutesLeft } =
+      await import("./pin-throttle.server");
     // Guessing is stopped in the server, not the keypad: the count follows the
     // manager ID, so trying from another till does not reset it.
     const throttleKey = `manager:${data.managerId.toLowerCase()}`;
@@ -217,6 +217,8 @@ export const verifyManagerPin = createServerFn({ method: "POST" })
           action: data.action,
           approvedBy: manager.userId,
           role: manager.role,
+          storeId: data.storeId ?? "",
+          binding: "legacy",
         }),
       };
     } catch (e) {
@@ -229,54 +231,11 @@ export const verifyManagerPin = createServerFn({ method: "POST" })
  * are checked against the database rules, not the browser's copy.
  */
 
-/**
- * Admin bypass. An administrator never types a PIN, but the approval is still
- * proved on the server (their own session) and written to the override log, so
- * the audit trail is identical to a PIN-approved action.
- */
-export const authorizeAsAdmin = createServerFn({ method: "POST" })
-  .validator((data: unknown) => bypassInput.parse(data))
-  .handler(async ({ data }) => {
-    const { signOverrideGrant, logOverride } = await import("./pos-rules.server");
-    try {
-      const { verifyPosStaff } = await import("./secure-settings.server");
-      const caller = await verifyPosStaff(data.accessToken);
-      if (caller.role !== "admin") {
-        return { ok: false as const, error: "Administrators only" };
-      }
-      const logged = await logOverride({
-        action: data.action,
-        ruleKey: data.ruleKey ?? null,
-        requestedBy: caller.userId,
-        approvedBy: caller.userId,
-        approvedRole: "admin",
-        storeId: data.storeId ?? null,
-        terminalId: data.terminalId ?? null,
-        detail: `${data.detail ?? ""} (auto-approved: administrator)`.trim(),
-      });
-      return {
-        ok: true as const,
-        warning: logged.ok
-          ? ""
-          : "Approved, but the override could not be written to the audit log.",
-        manager: { id: caller.userId, name: caller.userId, role: "admin" },
-        grantToken: signOverrideGrant({
-          action: data.action,
-          approvedBy: caller.userId,
-          role: "admin",
-        }),
-      };
-    } catch (e) {
-      return { ok: false as const, error: (e as Error).message };
-    }
-  });
-
 export const assertShiftClosable = createServerFn({ method: "POST" })
   .validator((data: unknown) => closeInput.parse(data))
   .handler(async ({ data }) => {
-    const { loadRulesResult, heldOrderCountResult, verifyOverrideGrant } = await import(
-      "./pos-rules.server"
-    );
+    const { loadRulesResult, heldOrderCountResult, verifyOverrideGrant } =
+      await import("./pos-rules.server");
     try {
       await assertCaller(data);
       // The branch is taken from the caller's own proof where it carries one,
@@ -294,7 +253,9 @@ export const assertShiftClosable = createServerFn({ method: "POST" })
       const loaded = await loadRulesResult(access.branchId);
       const rules = loaded.rules;
 
-      const override = verifyOverrideGrant(data.grantToken, "shift_close");
+      const override = verifyOverrideGrant(data.grantToken, "shift_close", {
+        storeId: access.branchId,
+      });
       if (rules.block_shift_close_on_hold && !override) {
         const heldRes = await heldOrderCountResult(access.branchId);
         // If the count itself could not be read, the shift stays open rather

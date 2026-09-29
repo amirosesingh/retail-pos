@@ -1,6 +1,6 @@
 # Synchronization coverage and ownership matrix
 
-Generated from `database/sqlserver/schema-registry.json` (67 synchronized tables). Do not edit by hand; run `npm run audit:sync`.
+Generated from `database/sqlserver/schema-registry.json` (68 synchronized tables). Do not edit by hand; run `npm run audit:sync`.
 
 Electron operational reads and writes use local SQL Server. Supabase is the online synchronization peer. SQL Server Change Tracking detects ordinary row changes; `sync_change_journal` groups complete business transactions. No renderer/device outbox is used by Electron.
 
@@ -54,6 +54,7 @@ Electron operational reads and writes use local SQL Server. Supabase is the onli
 | purchase_orders | branch | Version policy | Bidirectional | SQL Change Tracking + cloud feed | tombstone | Normal feature permission | suppliers | Read/write SQL Server; sync later |
 | shift_cash_counts | branch | Originating transaction | Bidirectional | SQL Change Tracking + cloud feed | none | Normal feature permission | shifts | Read/write SQL Server; sync later |
 | shift_close_events | branch | Originating transaction | Bidirectional | SQL Change Tracking + cloud feed | none | Normal feature permission | shifts | Read/write SQL Server; sync later |
+| shift_notifications | branch | Originating transaction | Bidirectional | SQL Change Tracking + cloud feed | none | Normal feature permission | shifts | Read/write SQL Server; sync later |
 | stores | organization | Version policy | Bidirectional | SQL Change Tracking + cloud feed | tombstone | Normal feature permission | store_groups, stores | Read/write SQL Server; sync later |
 | bookings | branch | Version policy | Bidirectional | SQL Change Tracking + cloud feed | tombstone | Normal feature permission | members | Read/write SQL Server; sync later |
 | coupon_events | branch | Version policy | Bidirectional | SQL Change Tracking + cloud feed | tombstone | Normal feature permission | coupon_campaigns, members | Read/write SQL Server; sync later |
@@ -87,6 +88,7 @@ Electron operational reads and writes use local SQL Server. Supabase is the onli
 
 - `sync_change_feed`: server-side feed/idempotency infrastructure; never treated as POS operational data.
 - `sync_idempotency_receipts`: server-side feed/idempotency infrastructure; never treated as POS operational data.
+- `user_sessions`: server-side feed/idempotency infrastructure; never treated as POS operational data.
 
 ## Verification meaning
 

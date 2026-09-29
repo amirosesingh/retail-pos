@@ -6,9 +6,7 @@ const read = (path: string) => readFileSync(path, "utf8");
 describe("manager override audit history", () => {
   it("keeps one RPC signature and records every approval in all history stores", () => {
     const schema = read("supabase/schema.sql");
-    const migration = read(
-      "supabase/migrations/20260928213000_complete_authorization_history.sql",
-    );
+    const migration = read("supabase/migrations/20260928213000_complete_authorization_history.sql");
 
     for (const sql of [schema, migration]) {
       expect(sql).toContain(
@@ -24,11 +22,11 @@ describe("manager override audit history", () => {
     }
   });
 
-  it("labels PIN and automatic administrator approvals separately", () => {
+  it("records PIN approvals without an automatic administrator bypass", () => {
     const schema = read("supabase/schema.sql");
-    const server = read("src/lib/pos-rules.server.ts");
+    const gate = read("src/lib/manager-gate.tsx");
     expect(schema).toContain("'approved_by_name', u.full_name");
-    expect(server).toContain('_mode_used: "admin_auto"');
-    expect(server).toContain('_outcome: "approved"');
+    expect(gate).not.toContain("authorizeAsAdmin");
+    expect(gate).toContain("Every person, including an administrator");
   });
 });

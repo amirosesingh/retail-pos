@@ -35,9 +35,9 @@ async function handlePost(request: Request): Promise<Response> {
 
   const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
   const scope = await resolveRelayScope(access.caller);
-  if (!scope.isSupervisor) {
+  if (!(scope.isSupervisor || scope.permissions.can_access_pos_settings === true)) {
     return Response.json(
-      { ok: false, error: "Supervisors only", code: "FORBIDDEN" },
+      { ok: false, error: "POS settings permission is required", code: "FORBIDDEN" },
       { status: 403 },
     );
   }

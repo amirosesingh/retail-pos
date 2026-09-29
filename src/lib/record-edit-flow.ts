@@ -24,14 +24,12 @@ export type RecordKind = "stock_count" | "purchase_order" | "sale";
 export type EditGrant = {
   grantToken: string | null;
   authorizedBy: string;
-  modeUsed: "pin" | "request" | "admin_auto";
+  modeUsed: "none" | "pin" | "request";
   requestId?: string;
 };
 
 export type BeginOutcome =
-  | { kind: "open"; grant: EditGrant }
-  | { kind: "queued" }
-  | { kind: "blocked" };
+  { kind: "open"; grant: EditGrant } | { kind: "queued" } | { kind: "blocked" };
 
 /** Ask for permission to edit a posted record. */
 export async function beginPostedEdit(
@@ -68,7 +66,7 @@ export async function beginPostedEdit(
       grant: {
         grantToken: res.grantToken,
         authorizedBy: "",
-        modeUsed: res.grantToken ? "pin" : "admin_auto",
+        modeUsed: res.grantToken ? "pin" : "none",
       },
     };
   }

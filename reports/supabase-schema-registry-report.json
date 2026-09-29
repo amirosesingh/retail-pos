@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-09-28T10:38:48.973Z",
+  "generatedAt": "2026-09-29T00:20:24.970Z",
   "tableCount": 68,
-  "columnCount": 1156,
+  "columnCount": 1160,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -6727,6 +6727,24 @@
           "hasDefault": true
         },
         {
+          "name": "approval_timeout_minutes",
+          "declaration": "integer NOT NULL DEFAULT 15",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "escalation_after_minutes",
+          "declaration": "integer",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "escalation_roles",
+          "declaration": "text[] NOT NULL DEFAULT ARRAY[]::text[]",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
           "name": "require_reason",
           "declaration": "boolean NOT NULL DEFAULT false",
           "nullable": false,
@@ -6881,6 +6899,12 @@
         {
           "name": "updated_at",
           "declaration": "timestamptz NOT NULL DEFAULT now()",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "approval_route",
+          "declaration": "jsonb NOT NULL DEFAULT '{}'::jsonb",
           "nullable": false,
           "hasDefault": true
         },

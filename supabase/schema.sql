@@ -1067,6 +1067,27 @@ ALTER TABLE public.authorization_actions ADD COLUMN IF NOT EXISTS authority_limi
 
 ALTER TABLE public.authorization_actions ADD COLUMN IF NOT EXISTS extra_authority jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE public.authorization_actions ADD COLUMN IF NOT EXISTS absolute_ceilings jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE public.authorization_actions ADD COLUMN IF NOT EXISTS approval_timeout_minutes integer NOT NULL DEFAULT 15;
+ALTER TABLE public.authorization_actions ADD COLUMN IF NOT EXISTS escalation_after_minutes integer;
+ALTER TABLE public.authorization_actions ADD COLUMN IF NOT EXISTS escalation_roles text[] NOT NULL DEFAULT ARRAY[]::text[];
+DO $$ BEGIN
+  ALTER TABLE public.authorization_actions
+    ADD CONSTRAINT authorization_actions_timeout_chk
+    CHECK (approval_timeout_minutes BETWEEN 1 AND 1440);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+UPDATE public.authorization_actions
+   SET mode = 'request', updated_at = now()
+ WHERE mode NOT IN ('none', 'pin', 'request', 'either');
+DO $$ BEGIN
+  ALTER TABLE public.authorization_actions
+    ADD CONSTRAINT authorization_actions_mode_chk
+    CHECK (mode IN ('none', 'pin', 'request', 'either'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE public.authorization_actions
+    ADD CONSTRAINT authorization_actions_escalation_chk
+    CHECK (escalation_after_minutes IS NULL OR escalation_after_minutes BETWEEN 1 AND 1440);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 ALTER TABLE public.authorization_requests ADD COLUMN IF NOT EXISTS requester_direct_limit numeric;
 ALTER TABLE public.authorization_requests ADD COLUMN IF NOT EXISTS value_unit text NOT NULL DEFAULT 'number';
 
@@ -7786,7 +7807,7 @@ BEGIN
   END LOOP;
 END $$;
 
--- Supervisor-only write. Unknown keys are ignored; a stale expected version
+-- POS-settings editors may write their visible branch. Unknown keys are ignored; a stale expected version
 -- is refused so two supervisors cannot silently overwrite each other.
 CREATE OR REPLACE FUNCTION public.pos_rules_save(
   _store_id text,
@@ -7802,8 +7823,11 @@ DECLARE
   current_version integer;
   sets text;
 BEGIN
-  IF NOT public.is_supervisor_now() THEN
-    RAISE EXCEPTION 'NOT_AUTHORISED: supervisors only' USING ERRCODE = '42501';
+  IF NOT (public.is_supervisor_now() OR public.has_perm('can_access_pos_settings')) THEN
+    RAISE EXCEPTION 'NOT_AUTHORISED: POS settings permission required' USING ERRCODE = '42501';
+  END IF;
+  IF sid <> '' AND NOT public.store_visible(sid) THEN
+    RAISE EXCEPTION 'NOT_AUTHORISED: branch is not visible to this account' USING ERRCODE = '42501';
   END IF;
 
   FOR k IN SELECT jsonb_object_keys(COALESCE(_patch, '{}'::jsonb)) LOOP
@@ -7837,7 +7861,7 @@ BEGIN
         updated_by = $2, updated_at = now() WHERE store_id = $3', sets)
     USING clean, COALESCE(auth.uid()::text, 'service'), sid;
 
-  RETURN public.pos_rules_get(sid);
+  RETURN public.pos_rules_snapshot(sid);
 END $$;
 
 -- Remove the retired signature first. Leaving both signatures makes PostgREST
@@ -8494,6 +8518,9 @@ CREATE TABLE IF NOT EXISTS public.authorization_actions (
   authority_limits jsonb NOT NULL DEFAULT '{}'::jsonb,
   extra_authority jsonb NOT NULL DEFAULT '{}'::jsonb,
   absolute_ceilings jsonb NOT NULL DEFAULT '{}'::jsonb,
+  approval_timeout_minutes integer NOT NULL DEFAULT 15,
+  escalation_after_minutes integer,
+  escalation_roles text[] NOT NULL DEFAULT ARRAY[]::text[],
   require_reason boolean NOT NULL DEFAULT false,
   threshold numeric,
   is_enabled boolean NOT NULL DEFAULT true,
@@ -8536,6 +8563,11 @@ CREATE TABLE IF NOT EXISTS public.authorization_requests (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.authorization_requests
+  ADD COLUMN IF NOT EXISTS approval_route jsonb NOT NULL DEFAULT '{}'::jsonb;
+COMMENT ON COLUMN public.authorization_requests.approval_route IS
+  'Immutable-at-creation snapshot of primary/escalation approvers and rule routing settings.';
 
 CREATE INDEX IF NOT EXISTS authorization_requests_status_idx
   ON public.authorization_requests (status, created_at DESC);
@@ -8671,12 +8703,25 @@ BEGIN
     SELECT p.oid::regprocedure AS sig
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public'
-       AND p.proname IN ('authorization_verify_pin', 'set_authorization_pin')
+       AND p.proname = 'set_authorization_pin'
   LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon', r.sig);
     EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO authenticated, service_role', r.sig);
   END LOOP;
 END $$;
+
+REVOKE ALL ON FUNCTION public.authorization_verify_pin(text, text, text[], text[])
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.authorization_verify_pin(text, text, text[], text[])
+  TO service_role;
+REVOKE ALL ON FUNCTION public.verify_manager_pin(text, text, text, text, text, text, text, text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_manager_pin(text, text, text, text, text, text, text, text)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.set_authorization_pin(text, text, text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.set_authorization_pin(text, text, text)
+  TO service_role;
 
 -- ------------------------------------------- starting rules from the old switches
 INSERT INTO public.authorization_actions (action_key, scope_type, scope_id, mode, require_reason)
@@ -8692,6 +8737,7 @@ VALUES
   ('tax_exemption',         'global', '', 'pin',  true),
   ('no_sale_drawer',        'global', '', 'pin',  true),
   ('stock_adjustment',      'global', '', 'pin',  false),
+  ('stock_transfer',        'global', '', 'request', true),
   ('shift_close',           'global', '', 'none', false),
   ('shift_close_variance',  'global', '', 'pin',  true),
   ('edit_tenders',          'global', '', 'none', false),
@@ -11862,8 +11908,21 @@ RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT public.is_cross_group_transfer(_store_id, _to_store_id)
-      OR public.stock_transfer_approval_required(_store_id)
+  SELECT COALESCE(
+    (
+      SELECT false
+        FROM public.authorization_actions a
+       WHERE a.action_key = 'stock_transfer'
+         AND a.is_enabled
+         AND (
+           (a.scope_type = 'branch' AND a.scope_id = _store_id)
+           OR (a.scope_type = 'global' AND a.scope_id = '')
+         )
+       ORDER BY CASE WHEN a.scope_type = 'branch' THEN 0 ELSE 1 END
+       LIMIT 1
+    ),
+    public.stock_transfer_approval_required(_store_id)
+  )
 $$;
 
 REVOKE ALL ON FUNCTION public.stock_transfer_approval_required(text, text) FROM PUBLIC, anon;
@@ -11874,7 +11933,7 @@ GRANT EXECUTE ON FUNCTION public.stock_transfer_approval_required(text, text)
 INSERT INTO public.authorization_actions
   (action_key, scope_type, scope_id, mode, allowed_roles, allowed_user_ids, is_enabled)
 VALUES
-  ('cross_group_transfer_approval', 'global', '', 'required',
+  ('cross_group_transfer_approval', 'global', '', 'request',
    ARRAY['admin','manager']::text[], ARRAY[]::text[], true)
 ON CONFLICT (action_key, scope_type, scope_id) DO NOTHING;
 
@@ -14227,9 +14286,9 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."authorization_actions" ("id","action_key","scope_type","scope_id","mode","allowed_roles","allowed_user_ids","requester_roles","requester_user_ids","authority_limits","extra_authority","absolute_ceilings","require_reason","threshold","is_enabled","created_at","updated_at")
-  SELECT "id","action_key","scope_type","scope_id","mode","allowed_roles","allowed_user_ids","requester_roles","requester_user_ids","authority_limits","extra_authority","absolute_ceilings","require_reason","threshold","is_enabled","created_at","updated_at" FROM jsonb_populate_recordset(NULL::public."authorization_actions", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "action_key"=EXCLUDED."action_key","scope_type"=EXCLUDED."scope_type","scope_id"=EXCLUDED."scope_id","mode"=EXCLUDED."mode","allowed_roles"=EXCLUDED."allowed_roles","allowed_user_ids"=EXCLUDED."allowed_user_ids","requester_roles"=EXCLUDED."requester_roles","requester_user_ids"=EXCLUDED."requester_user_ids","authority_limits"=EXCLUDED."authority_limits","extra_authority"=EXCLUDED."extra_authority","absolute_ceilings"=EXCLUDED."absolute_ceilings","require_reason"=EXCLUDED."require_reason","threshold"=EXCLUDED."threshold","is_enabled"=EXCLUDED."is_enabled","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at";
+  INSERT INTO public."authorization_actions" ("id","action_key","scope_type","scope_id","mode","allowed_roles","allowed_user_ids","requester_roles","requester_user_ids","authority_limits","extra_authority","absolute_ceilings","approval_timeout_minutes","escalation_after_minutes","escalation_roles","require_reason","threshold","is_enabled","created_at","updated_at")
+  SELECT "id","action_key","scope_type","scope_id","mode","allowed_roles","allowed_user_ids","requester_roles","requester_user_ids","authority_limits","extra_authority","absolute_ceilings","approval_timeout_minutes","escalation_after_minutes","escalation_roles","require_reason","threshold","is_enabled","created_at","updated_at" FROM jsonb_populate_recordset(NULL::public."authorization_actions", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO UPDATE SET "action_key"=EXCLUDED."action_key","scope_type"=EXCLUDED."scope_type","scope_id"=EXCLUDED."scope_id","mode"=EXCLUDED."mode","allowed_roles"=EXCLUDED."allowed_roles","allowed_user_ids"=EXCLUDED."allowed_user_ids","requester_roles"=EXCLUDED."requester_roles","requester_user_ids"=EXCLUDED."requester_user_ids","authority_limits"=EXCLUDED."authority_limits","extra_authority"=EXCLUDED."extra_authority","absolute_ceilings"=EXCLUDED."absolute_ceilings","approval_timeout_minutes"=EXCLUDED."approval_timeout_minutes","escalation_after_minutes"=EXCLUDED."escalation_after_minutes","escalation_roles"=EXCLUDED."escalation_roles","require_reason"=EXCLUDED."require_reason","threshold"=EXCLUDED."threshold","is_enabled"=EXCLUDED."is_enabled","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at";
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 
@@ -14258,8 +14317,8 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."authorization_requests" ("id","action_key","requested_by","requested_by_name","store_id","terminal_id","reason","payload","status","decided_by","decided_by_name","decided_at","decision_note","expires_at","consumed_at","requester_direct_limit","value_unit","created_at","updated_at","requested_amount","approved_amount","approved_payload","bill_snapshot","snapshot_hash","held_order_id","notified_at")
-  SELECT "id","action_key","requested_by","requested_by_name","store_id","terminal_id","reason","payload","status","decided_by","decided_by_name","decided_at","decision_note","expires_at","consumed_at","requester_direct_limit","value_unit","created_at","updated_at","requested_amount","approved_amount","approved_payload","bill_snapshot","snapshot_hash","held_order_id","notified_at" FROM jsonb_populate_recordset(NULL::public."authorization_requests", COALESCE(p_rows,'[]'::jsonb))
+  INSERT INTO public."authorization_requests" ("id","action_key","requested_by","requested_by_name","store_id","terminal_id","reason","payload","status","decided_by","decided_by_name","decided_at","decision_note","expires_at","consumed_at","requester_direct_limit","value_unit","created_at","updated_at","approval_route","requested_amount","approved_amount","approved_payload","bill_snapshot","snapshot_hash","held_order_id","notified_at")
+  SELECT "id","action_key","requested_by","requested_by_name","store_id","terminal_id","reason","payload","status","decided_by","decided_by_name","decided_at","decision_note","expires_at","consumed_at","requester_direct_limit","value_unit","created_at","updated_at","approval_route","requested_amount","approved_amount","approved_payload","bill_snapshot","snapshot_hash","held_order_id","notified_at" FROM jsonb_populate_recordset(NULL::public."authorization_requests", COALESCE(p_rows,'[]'::jsonb))
   ON CONFLICT ("id") DO NOTHING;
   GET DIAGNOSTICS v_count=ROW_COUNT;
 

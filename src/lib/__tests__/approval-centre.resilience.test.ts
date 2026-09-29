@@ -5,11 +5,16 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+const { markReadyMock } = vi.hoisted(() => ({ markReadyMock: vi.fn() }));
+
 vi.mock("@/integrations/supabase/external-client", () => ({
   supabaseExternal: { channel: () => ({ on() {}, subscribe() {} }), removeChannel: () => {} },
 }));
 vi.mock("../pos-caller-auth", () => ({ getPosCallerAuth: async () => ({}) }));
-vi.mock("../held-orders", () => ({ markHeldReady: () => {} }));
+vi.mock("../held-orders", () => ({
+  markHeldReady: markReadyMock,
+  heldOrderForRequest: (id: string) => (id === "rejected-request" ? { id: "held-1" } : undefined),
+}));
 
 const listMock = vi.fn();
 vi.mock("../authorization.functions", () => ({
@@ -41,5 +46,22 @@ describe("approvals resilience", () => {
     const out = splitRequests(rows, "me");
     expect(out.toDecide).toHaveLength(1);
     expect(out.waiting).toHaveLength(1);
+  });
+
+  it("releases a locally linked parked ticket after rejection or expiry", async () => {
+    markReadyMock.mockClear();
+    listMock.mockResolvedValue({
+      ok: true,
+      me: { id: "me" },
+      requests: [
+        { id: "rejected-request", requestedBy: "me", status: "rejected" },
+        { id: "expired-request", requestedBy: "me", status: "expired", heldOrderId: "held-2" },
+      ],
+    });
+
+    await loadApprovalCentre();
+
+    expect(markReadyMock).toHaveBeenCalledWith("held-1");
+    expect(markReadyMock).toHaveBeenCalledWith("held-2");
   });
 });

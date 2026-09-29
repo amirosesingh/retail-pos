@@ -1,6 +1,6 @@
 # Synchronization column matrix
 
-Generated from the packaged registry: 67 tables and 1137 synchronized columns.
+Generated from the packaged registry: 68 tables and 1160 synchronized columns.
 
 Columns listed here are synchronized unless the table is listed as local-only or cloud-only in the coverage matrix.
 
@@ -74,6 +74,9 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | authorization_actions | authority_limits | authority_limits | jsonb | nvarchar(max) | no | N'{}' | no | — | no |
 | authorization_actions | extra_authority | extra_authority | jsonb | nvarchar(max) | no | N'{}' | no | — | no |
 | authorization_actions | absolute_ceilings | absolute_ceilings | jsonb | nvarchar(max) | no | N'{}' | no | — | no |
+| authorization_actions | approval_timeout_minutes | approval_timeout_minutes | integer | int | no | 15 | no | — | no |
+| authorization_actions | escalation_after_minutes | escalation_after_minutes | integer | int | yes | — | no | — | no |
+| authorization_actions | escalation_roles | escalation_roles | text[] | nvarchar(max) | no | N'[]' | no | — | no |
 | authorization_actions | require_reason | require_reason | boolean | bit | no | 0 | no | — | no |
 | authorization_actions | threshold | threshold | numeric | decimal(38,12) | yes | — | no | — | no |
 | authorization_actions | is_enabled | is_enabled | boolean | bit | no | 1 | no | — | no |
@@ -110,6 +113,7 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | authorization_requests | value_unit | value_unit | text | nvarchar(max) | no | 'number' | no | — | no |
 | authorization_requests | created_at | created_at | timestamptz | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | authorization_requests | updated_at | updated_at | timestamptz | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
+| authorization_requests | approval_route | approval_route | jsonb | nvarchar(max) | no | N'{}' | no | — | no |
 | authorization_requests | requested_amount | requested_amount | numeric | decimal(38,12) | yes | — | no | — | no |
 | authorization_requests | approved_amount | approved_amount | numeric | decimal(38,12) | yes | — | no | — | no |
 | authorization_requests | approved_payload | approved_payload | jsonb | nvarchar(max) | no | N'{}' | no | — | no |
@@ -162,6 +166,7 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | cashiers | created_at | created_at | timestamp with time zone | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | cashiers | updated_at | updated_at | timestamp with time zone | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | cashiers | role_slug | role_slug | text | nvarchar(max) | yes | — | no | — | no |
+| cashiers | idle_timeout_minutes | idle_timeout_minutes | integer | int | yes | — | no | — | no |
 | coupon_campaigns | id | id | uuid | uniqueidentifier | no | NEWID() | yes | — | no |
 | coupon_campaigns | name | name | text | nvarchar(max) | no | — | no | — | no |
 | coupon_campaigns | slug | slug | text | nvarchar(450) | no | — | no | — | yes |
@@ -737,6 +742,24 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | shift_close_events | actor_staff_id | actor_staff_id | text | nvarchar(max) | yes | — | no | — | no |
 | shift_close_events | actor_user_id | actor_user_id | uuid | uniqueidentifier | yes | — | no | — | no |
 | shift_close_events | created_at | created_at | timestamptz | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
+| shift_notifications | id | id | uuid | uniqueidentifier | no | NEWID() | yes | — | no |
+| shift_notifications | shift_id | shift_id | uuid | uniqueidentifier | no | — | no | shifts.id | yes |
+| shift_notifications | store_id | store_id | text | nvarchar(450) | no | — | no | — | no |
+| shift_notifications | store_name | store_name | text | nvarchar(max) | no | '' | no | — | no |
+| shift_notifications | terminal_name | terminal_name | text | nvarchar(max) | no | '' | no | — | no |
+| shift_notifications | closed_by | closed_by | text | nvarchar(max) | no | '' | no | — | no |
+| shift_notifications | opened_at | opened_at | timestamptz | datetimeoffset(7) | no | — | no | — | no |
+| shift_notifications | closed_at | closed_at | timestamptz | datetimeoffset(7) | no | — | no | — | no |
+| shift_notifications | total_sales | total_sales | numeric | decimal(38,12) | no | 0 | no | — | no |
+| shift_notifications | transactions | transactions | integer | int | no | 0 | no | — | no |
+| shift_notifications | discounts | discounts | numeric | decimal(38,12) | no | 0 | no | — | no |
+| shift_notifications | refunds | refunds | numeric | decimal(38,12) | no | 0 | no | — | no |
+| shift_notifications | expected_cash | expected_cash | numeric | decimal(38,12) | no | 0 | no | — | no |
+| shift_notifications | counted_cash | counted_cash | numeric | decimal(38,12) | no | 0 | no | — | no |
+| shift_notifications | payment_breakdown | payment_breakdown | jsonb | nvarchar(max) | no | N'{}' | no | — | no |
+| shift_notifications | summary | summary | text | nvarchar(max) | no | '' | no | — | no |
+| shift_notifications | channels | channels | text[] | nvarchar(max) | no | N'[]' | no | — | no |
+| shift_notifications | created_at | created_at | timestamptz | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | stores | id | id | text | nvarchar(450) | no | — | yes | — | no |
 | stores | code | code | text | nvarchar(max) | no | — | no | — | no |
 | stores | name | name | text | nvarchar(max) | no | — | no | — | no |
@@ -955,7 +978,7 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | terminal_tokens | replaced_by | replaced_by | uuid | uniqueidentifier | yes | — | no | — | no |
 | terminal_tokens | claimed_by_device | claimed_by_device | text | nvarchar(max) | yes | — | no | — | no |
 | terminal_tokens | claimed_at | claimed_at | timestamp with time zone | datetimeoffset(7) | yes | — | no | — | no |
-| terminal_tokens | platform | platform | text | nvarchar(max) | no | 'unknown' | no | — | no |
+| terminal_tokens | platform | platform | text | nvarchar(max) | no | 'pc' | no | — | no |
 | terminal_tokens | row_version | row_version | integer | int | no | 1 | no | — | no |
 | terminal_tokens | claim_secret_hash | claim_secret_hash | text | nvarchar(max) | yes | — | no | — | no |
 | terminal_tokens | claim_expires_at | claim_expires_at | timestamp with time zone | datetimeoffset(7) | yes | — | no | — | no |

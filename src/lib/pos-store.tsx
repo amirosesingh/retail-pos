@@ -291,7 +291,7 @@ type Ctx = {
   recordSale: (
     sale: Omit<Sale, "id" | "receiptNo" | "createdAt"> & { receiptNo?: string },
   ) => Promise<Sale>;
-  refundSale: (saleId: string) => Promise<boolean>;
+  refundSale: (saleId: string, grantToken?: string | null) => Promise<boolean>;
   changeSalePayment: (saleId: string, method: PaymentMethod, reason?: string) => Promise<boolean>;
   createBooking: (input: NewBooking) => Promise<Booking>;
   setBookingJobStatus: (
@@ -2119,9 +2119,29 @@ export function PosProvider({ children }: { children: ReactNode }) {
     [activeShift, recordSale],
   );
 
-  const refundSale = useCallback(async (saleId: string): Promise<boolean> => {
-    const sale = stateRef.current.sales.find((x) => x.id === saleId);
-    if (!sale || sale.refunded) return false;
+  const refundSale = useCallback(
+    async (saleId: string, grantToken?: string | null): Promise<boolean> => {
+      const sale = stateRef.current.sales.find((x) => x.id === saleId);
+      if (!sale || sale.refunded) return false;
+    const payload = {
+      sale_id: sale.id,
+      receipt_no: sale.receiptNo,
+      total: Math.abs(sale.total),
+    };
+    const [{ verifyBusinessAuthorization }, { getPosCallerAuth }] = await Promise.all([
+      import("./authorization-client"),
+      import("./pos-caller-auth"),
+    ]);
+    const authorization = await verifyBusinessAuthorization({
+      data: {
+        ...(await getPosCallerAuth()),
+        actionKey: "refund",
+        storeId: sale.storeId,
+        payload,
+        grantToken: grantToken ?? null,
+      },
+    });
+    if (!authorization.ok) throw new Error(authorization.error);
     // The stable refund id makes a retry idempotent. Nothing visible changes
     // until the authoritative gateway has accepted the refund.
     await db.refundSale(saleId, `refund:${saleId}`);
@@ -2155,8 +2175,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
         sales: s.sales.map((x) => (x.id === saleId ? { ...x, refunded: true } : x)),
       };
     });
-    return true;
-  }, []);
+      return true;
+    },
+    [],
+  );
 
   /** Correct the tender recorded on a completed bill (e.g. rung up as card). */
   const changeSalePayment = useCallback(

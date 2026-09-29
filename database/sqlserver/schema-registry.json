@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-09-28T10:38:48.973Z",
+  "generatedAt": "2026-09-29T00:20:24.970Z",
   "tables": [
     {
       "cloudTable": "coupon_campaigns",
@@ -13736,6 +13736,45 @@
           "uniqueGroup": null
         },
         {
+          "cloudColumn": "approval_timeout_minutes",
+          "sqlServerColumn": "approval_timeout_minutes",
+          "cloudType": "integer",
+          "sqlServerType": "int",
+          "nullable": false,
+          "defaultRule": "15",
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "escalation_after_minutes",
+          "sqlServerColumn": "escalation_after_minutes",
+          "cloudType": "integer",
+          "sqlServerType": "int",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "escalation_roles",
+          "sqlServerColumn": "escalation_roles",
+          "cloudType": "text[]",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": false,
+          "defaultRule": "N'[]'",
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
           "cloudColumn": "require_reason",
           "sqlServerColumn": "require_reason",
           "cloudType": "boolean",
@@ -14056,6 +14095,19 @@
           "sqlServerType": "datetimeoffset(7)",
           "nullable": false,
           "defaultRule": "SYSDATETIMEOFFSET()",
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "approval_route",
+          "sqlServerColumn": "approval_route",
+          "cloudType": "jsonb",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": false,
+          "defaultRule": "N'{}'",
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,
