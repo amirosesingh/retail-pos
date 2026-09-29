@@ -7794,7 +7794,8 @@ BEGIN
   FOREACH t IN ARRAY ARRAY[
     'sales', 'sale_items', 'payment_transactions',
     'products', 'product_barcodes', 'members', 'promotions',
-    'purchase_orders', 'purchase_order_items'
+    'purchase_orders', 'purchase_order_items',
+    'staff_roles', 'stores', 'app_users'
   ] LOOP
     IF to_regclass('public.' || t) IS NOT NULL THEN
       EXECUTE format('ALTER TABLE public.%I REPLICA IDENTITY FULL', t);
