@@ -28,7 +28,7 @@ import { authorizeWithPin, submitAuthorizationRequest } from "@/lib/authorizatio
 import { looksOffline, parkGovernanceRow } from "@/lib/governance-offline";
 import { useAuthOptional } from "@/lib/pos-auth";
 import type { AuthActionKey, AuthMode, AuthPayload, AuthorizationRule } from "@/lib/authorization";
-import { canAuthorizeAmount } from "@/lib/authorization";
+import { APPROVAL_TTL_MS, canAuthorizeAmount } from "@/lib/authorization";
 import { verifyLocalPin } from "@/core/local-db/local-staff";
 import { normalizeSnapshot, snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
 import { syncNow } from "@/lib/sync-engine";
@@ -61,6 +61,8 @@ export type AuthorizationPrompt = {
   authorityLimits?: Record<string, number>;
   extraAuthority?: Record<string, number>;
   absoluteCeilings?: Record<string, number>;
+  approvalTimeoutMinutes?: number;
+  binding: string;
 };
 
 export type PromptOutcome =
@@ -97,31 +99,55 @@ export function AuthorizationDialog({
       mode: "pin" as const,
       allowedRoles: prompt.allowedRoles ?? ["admin", "manager"],
       allowedUserIds: prompt.allowedUserIds ?? [],
-      requesterRoles: [], requesterUserIds: [],
+      requesterRoles: [],
+      requesterUserIds: [],
       authorityLimits: prompt.authorityLimits ?? {},
       extraAuthority: prompt.extraAuthority ?? {},
       absoluteCeilings: prompt.absoluteCeilings ?? {},
+      approvalTimeoutMinutes: 15,
+      escalationAfterMinutes: null,
+      escalationRoles: [],
       requireReason: prompt.requireReason,
       threshold: null,
       isEnabled: true,
     };
-    if (!canAuthorizeAmount(rule, { userId: result.staff.id, role: result.staff.roleSlug }, prompt.requestedAmount, prompt.requesterDirectLimit)) {
+    if (
+      !canAuthorizeAmount(
+        rule,
+        { userId: result.staff.id, role: result.staff.roleSlug },
+        prompt.requestedAmount,
+        prompt.requesterDirectLimit,
+      )
+    ) {
       toast.error("This locally verified account is not allowed to approve this action.");
       return false;
     }
     const parked = await parkGovernanceRow("authorization_log", {
-      id: newId(), action_key: prompt.actionKey, mode_used: "offline_pin",
-      requested_by: me?.staffId ?? null, authorized_by: result.staff.id,
-      authorizer_role: result.staff.roleSlug, store_id: prompt.storeId ?? "",
-      terminal_id: prompt.terminalId ?? "", outcome: "approved",
-      detail: { reason: note.trim(), offline: true, requested_amount: prompt.requestedAmount ?? null },
+      id: newId(),
+      action_key: prompt.actionKey,
+      mode_used: "offline_pin",
+      requested_by: me?.staffId ?? null,
+      authorized_by: result.staff.id,
+      authorizer_role: result.staff.roleSlug,
+      store_id: prompt.storeId ?? "",
+      terminal_id: prompt.terminalId ?? "",
+      outcome: "approved",
+      detail: {
+        reason: note.trim(),
+        offline: true,
+        requested_amount: prompt.requestedAmount ?? null,
+      },
     });
     if (!parked.parked) {
       toast.error("The approval could not be recorded in the local database.");
       return false;
     }
     toast.success(`Approved offline by ${result.staff.full_name || result.staff.username}`);
-    onFinish({ kind: "approved", grantToken: "", by: result.staff.full_name || result.staff.username });
+    onFinish({
+      kind: "approved",
+      grantToken: "",
+      by: result.staff.full_name || result.staff.username,
+    });
     return true;
   }
 
@@ -154,7 +180,9 @@ export function AuthorizationDialog({
       notified_at: null,
       created_at: createdAt,
       updated_at: createdAt,
-      expires_at: new Date(Date.now() + 24 * 3600_000).toISOString(),
+      expires_at: new Date(
+        Date.now() + (prompt?.approvalTimeoutMinutes ?? APPROVAL_TTL_MS / 60_000) * 60_000,
+      ).toISOString(),
     });
     if (!parked.parked) {
       toast.error(message || "Could not send the request");
@@ -189,6 +217,7 @@ export function AuthorizationDialog({
           actionKey: prompt.actionKey,
           authorizerId: authorizerId.trim(),
           pin,
+          binding: prompt.binding,
           ...(prompt.storeId ? { storeId: prompt.storeId } : {}),
           ...(prompt.terminalId ? { terminalId: prompt.terminalId } : {}),
           ...(note.trim() ? { reason: note.trim() } : {}),
@@ -203,7 +232,6 @@ export function AuthorizationDialog({
         else toast.error(res.error ?? "Authorisation failed");
         return;
       }
-      if (res.warning) toast.warning(res.warning);
       toast.success(`Approved by ${res.authorizer.name}`);
       onFinish({ kind: "approved", grantToken: res.grantToken, by: res.authorizer.name });
     } catch (e) {
@@ -228,7 +256,7 @@ export function AuthorizationDialog({
           ...auth,
           requestId,
           actionKey: prompt.actionKey,
-          reason: note.trim(),
+          reason: note.trim() || prompt.reason,
           payload: prompt.payload ?? {},
           ...(prompt.storeId ? { storeId: prompt.storeId } : {}),
           ...(prompt.terminalId ? { terminalId: prompt.terminalId } : {}),

@@ -52,6 +52,7 @@ Generated from the packaged synchronization registry. Financial records are corr
 | purchase_orders | idempotent_upsert | versioned | tombstone | highest_version |
 | shift_cash_counts | idempotent_upsert | append_only | none | immutable_reversal |
 | shift_close_events | idempotent_upsert | append_only | none | immutable_reversal |
+| shift_notifications | idempotent_upsert | append_only | none | immutable_reversal |
 | stores | idempotent_upsert | versioned | tombstone | highest_version |
 | bookings | idempotent_upsert | versioned | tombstone | highest_version |
 | coupon_events | idempotent_upsert | versioned | tombstone | highest_version |

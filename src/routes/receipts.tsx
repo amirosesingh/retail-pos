@@ -32,6 +32,7 @@ import type { PaymentMethod, Sale } from "@/core/types/pos-types";
 import { findReceiptExact, loadSalesPage } from "@/core/api/pos-db";
 import type { Cursor } from "@/lib/keyset";
 import { saveRecordEditHistory } from "@/lib/record-edit-flow";
+import { useManagerGate } from "@/lib/manager-gate";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -72,6 +73,7 @@ function ReceiptVault() {
   const { state, currentStore, activeShift, refundSale, changeSalePayment } = usePos();
   const { user, can } = useAuth();
   const { requirePermission } = useUserPermissions();
+  const { authorize, rules: authorizationRules } = useManagerGate();
   const [query, setQuery] = useState("");
   /** Cashiers land on their own shift; anything older needs a date range. */
   const [scope, setScope] = useState<"shift" | "range" | "all">("shift");
@@ -124,7 +126,10 @@ function ReceiptVault() {
     setFindingExact(true);
     try {
       const found = await findReceiptExact(query, currentStore.id);
-      if (!found) { toast.error("No exact receipt was found for this branch"); return; }
+      if (!found) {
+        toast.error("No exact receipt was found for this branch");
+        return;
+      }
       setOlder((previous) => [found.sale, ...previous.filter((sale) => sale.id !== found.sale.id)]);
       setSelectedId(found.sale.id);
       setScope("all");
@@ -132,8 +137,11 @@ function ReceiptVault() {
         setCloudHistory((previous) => new Set(previous).add(found.sale.id));
         toast.success("Receipt retrieved from cloud history and verified locally");
       }
-    } catch (error) { notifyError(error, "Finding receipt"); }
-    finally { setFindingExact(false); }
+    } catch (error) {
+      notifyError(error, "Finding receipt");
+    } finally {
+      setFindingExact(false);
+    }
   };
 
   const scoped = sales.filter((s) => {
@@ -194,7 +202,11 @@ function ReceiptVault() {
 
   async function openCancel() {
     if (!selected) return;
-    if (!(await requirePermission("can_process_refund"))) return;
+    if (
+      (authorizationRules.refund?.mode ?? "none") === "none" &&
+      !(await requirePermission("can_process_refund"))
+    )
+      return;
     setCancelReason("");
     setCancelOpen(true);
   }
@@ -206,8 +218,27 @@ function ReceiptVault() {
       toast.error("Type why this bill is being cancelled");
       return;
     }
+    const grant = await authorize({
+      action: "refund",
+      title: "Authorise bill void / refund",
+      reason,
+      storeId: currentStore.id,
+      requestedBy: user?.staffId ?? user?.name ?? null,
+      requestedAmount: Math.abs(selected.total),
+      valueUnit: "currency",
+      payload: {
+        sale_id: selected.id,
+        receipt_no: selected.receiptNo,
+        total: Math.abs(selected.total),
+      },
+      detail: reason,
+    });
+    if (!grant.ok) {
+      if (grant.pendingRequestId) setCancelOpen(false);
+      return;
+    }
     try {
-      await refundSale(selected.id);
+      await refundSale(selected.id, grant.grantToken);
       holdCancelledBill({
         receiptNo: selected.receiptNo,
         total: selected.total,
@@ -292,9 +323,23 @@ function ReceiptVault() {
           <div className="flex gap-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void searchExact(); }} placeholder="Receipt no, sale ID or transaction ID" className="w-full pl-9 sm:w-72" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void searchExact();
+                }}
+                placeholder="Receipt no, sale ID or transaction ID"
+                className="w-full pl-9 sm:w-72"
+              />
             </div>
-            <Button variant="outline" disabled={findingExact || !query.trim()} onClick={() => void searchExact()}>{findingExact ? "Finding…" : "Find exact"}</Button>
+            <Button
+              variant="outline"
+              disabled={findingExact || !query.trim()}
+              onClick={() => void searchExact()}
+            >
+              {findingExact ? "Finding…" : "Find exact"}
+            </Button>
           </div>
         </header>
 

@@ -45,20 +45,20 @@ describe("manager gate rule mapping", () => {
 describe("override grants", () => {
   it("accepts a grant it just signed for the same action", async () => {
     const { signOverrideGrant, verifyOverrideGrant } = await import("../pos-rules.server");
-    const token = signOverrideGrant({ action: "refund", approvedBy: "MGR1", role: "manager" });
+    const token = signOverrideGrant({ action: "refund", approvedBy: "MGR1", role: "manager", storeId: "s1", binding: "sale:1" });
     const grant = verifyOverrideGrant(token, "refund");
     expect(grant?.approvedBy).toBe("MGR1");
   });
 
   it("refuses a grant issued for a different action", async () => {
     const { signOverrideGrant, verifyOverrideGrant } = await import("../pos-rules.server");
-    const token = signOverrideGrant({ action: "refund", approvedBy: "MGR1", role: "manager" });
+    const token = signOverrideGrant({ action: "refund", approvedBy: "MGR1", role: "manager", storeId: "s1", binding: "sale:1" });
     expect(verifyOverrideGrant(token, "void_cart")).toBeNull();
   });
 
   it("refuses a tampered or missing grant", async () => {
     const { signOverrideGrant, verifyOverrideGrant } = await import("../pos-rules.server");
-    const token = signOverrideGrant({ action: "refund", approvedBy: "MGR1", role: "manager" });
+    const token = signOverrideGrant({ action: "refund", approvedBy: "MGR1", role: "manager", storeId: "s1", binding: "sale:1" });
     const [body] = token.split(".");
     expect(verifyOverrideGrant(`${body}.deadbeef`, "refund")).toBeNull();
     expect(verifyOverrideGrant(undefined, "refund")).toBeNull();

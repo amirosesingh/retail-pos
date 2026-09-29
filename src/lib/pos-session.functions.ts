@@ -27,12 +27,18 @@ export const issueCashierSession = createServerFn({ method: "POST" })
       if (!res.ok) return { ok: false as const, error: "Sign in failed" };
       const rows = (await res.json()) as unknown;
       const row = (Array.isArray(rows) ? rows[0] : rows) as
-        | { user_id?: string }
+        | { user_id?: string; store_id?: string | null }
         | null;
-      if (!row?.user_id) return { ok: false as const, error: "Invalid username or PIN" };
+      if (!row?.user_id || !row.store_id) {
+        return { ok: false as const, error: "This cashier is not assigned to a branch" };
+      }
       return {
         ok: true as const,
-        token: signCashierSession({ id: String(row.user_id), username: String(row.user_id) }),
+        token: signCashierSession({
+          id: String(row.user_id),
+          username: String(row.user_id),
+          storeId: String(row.store_id),
+        }),
       };
     } catch {
       return { ok: false as const, error: "Sign in failed" };

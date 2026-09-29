@@ -12,9 +12,11 @@ import {
   decideAuthorizationRequest as decideAuthorizationRequestFn,
   getAuthorizationRules as getAuthorizationRulesFn,
   listAuthorizationRequests as listAuthorizationRequestsFn,
+  listAuthorizationPeople as listAuthorizationPeopleFn,
   saveAuthorizationRule as saveAuthorizationRuleFn,
   setStaffAuthorizationPin as setStaffAuthorizationPinFn,
   submitAuthorizationRequest as submitAuthorizationRequestFn,
+  verifyBusinessAuthorization as verifyBusinessAuthorizationFn,
 } from "./authorization.functions";
 
 type DirectCall = (input: never) => Promise<unknown>;
@@ -111,4 +113,22 @@ export const setStaffAuthorizationPin = (
     "set_pin",
     input.data,
     setStaffAuthorizationPinFn as DirectCall,
+  );
+
+export const listAuthorizationPeople = (
+  input: NonNullable<Parameters<typeof listAuthorizationPeopleFn>[0]>,
+) =>
+  callHosted<Awaited<ReturnType<typeof listAuthorizationPeopleFn>>>(
+    "people",
+    input.data,
+    listAuthorizationPeopleFn as DirectCall,
+  );
+
+export const verifyBusinessAuthorization = (
+  input: NonNullable<Parameters<typeof verifyBusinessAuthorizationFn>[0]>,
+) =>
+  callHosted<Awaited<ReturnType<typeof verifyBusinessAuthorizationFn>>>(
+    "verify_mutation",
+    input.data,
+    verifyBusinessAuthorizationFn as DirectCall,
   );

@@ -42,7 +42,8 @@ export type HeldOrder = {
   status?: "held" | "waiting" | "ready";
   /** the approval request this ticket is bound to, when it is waiting */
   pendingRequestId?: string | null;
-
+  /** fingerprint of the exact ticket reviewed by the approver */
+  approvalSnapshotHash?: string | null;
 };
 
 const KEY = "pos.held.orders";
@@ -106,11 +107,21 @@ export function persistHeldOrder(order: HeldOrder) {
     note: order.note ?? "",
     cancelledFrom: order.cancelledFrom ?? null,
     heldAt: order.heldAt,
+    status: order.status ?? "held",
+    pendingRequestId: order.pendingRequestId ?? null,
   });
 }
 
 export function updateHeldOrder(id: string, patch: Partial<HeldOrder>) {
-  setHeldOrders((hs) => hs.map((h) => (h.id === id ? { ...h, ...patch } : h)));
+  let updated: HeldOrder | undefined;
+  setHeldOrders((hs) =>
+    hs.map((h) => {
+      if (h.id !== id) return h;
+      updated = { ...h, ...patch };
+      return updated;
+    }),
+  );
+  if (updated) void persistHeldOrder(updated);
 }
 
 /** Park a cancelled bill so the till can correct and re-ring it. */
@@ -152,8 +163,12 @@ export function useHeldOrders(): HeldOrder[] {
  * The cashier can then serve the next customer; the ticket stays exactly as
  * the approver saw it, bound to the request that will decide it.
  */
-export function markHeldWaiting(id: string, requestId: string) {
-  updateHeldOrder(id, { status: "waiting", pendingRequestId: requestId });
+export function markHeldWaiting(id: string, requestId: string, snapshotHash?: string) {
+  updateHeldOrder(id, {
+    status: "waiting",
+    pendingRequestId: requestId,
+    approvalSnapshotHash: snapshotHash ?? null,
+  });
 }
 
 /** The decision has arrived — the ticket can be picked up again. */
@@ -163,7 +178,11 @@ export function markHeldReady(id: string) {
 
 /** Back to an ordinary parked ticket, with no request attached. */
 export function clearHeldPending(id: string) {
-  updateHeldOrder(id, { status: "held", pendingRequestId: null });
+  updateHeldOrder(id, {
+    status: "held",
+    pendingRequestId: null,
+    approvalSnapshotHash: null,
+  });
 }
 
 /** The parked ticket bound to a given approval request, if it is still here. */

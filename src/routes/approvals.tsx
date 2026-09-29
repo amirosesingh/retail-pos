@@ -182,7 +182,12 @@ function ApprovalsPage() {
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <Switch id="all-branches" checked={allBranches} onCheckedChange={setAllBranches} />
+              <Switch
+                id="all-branches"
+                checked={allBranches}
+                onCheckedChange={setAllBranches}
+                disabled={me?.role !== "admin"}
+              />
               <Label htmlFor="all-branches" className="text-xs">
                 All branches
               </Label>
@@ -238,6 +243,37 @@ function ApprovalsPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {row.reason ? <p className="text-sm">“{row.reason}”</p> : null}
+                <dl className="grid gap-x-4 gap-y-1 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-2">
+                  <div>
+                    <dt className="text-muted-foreground">Request ID</dt>
+                    <dd className="break-all font-mono">{row.id}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Created</dt>
+                    <dd>{new Date(row.createdAt).toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Expires</dt>
+                    <dd>{new Date(row.expiresAt).toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Terminal</dt>
+                    <dd>{row.terminalId || "—"}</dd>
+                  </div>
+                  {row.decidedAt ? (
+                    <div>
+                      <dt className="text-muted-foreground">Decision time</dt>
+                      <dd>{new Date(row.decidedAt).toLocaleString()}</dd>
+                    </div>
+                  ) : null}
+                  {row.consumedAt ? (
+                    <div>
+                      <dt className="text-muted-foreground">Grant used</dt>
+                      <dd>{new Date(row.consumedAt).toLocaleString()}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+                {row.approvalRoute ? <ApprovalRouteReview row={row} /> : null}
                 {payload.length ? (
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/50 p-3 text-xs">
                     {payload.map(([k, v]) => (
@@ -335,6 +371,41 @@ function ApprovalsPage() {
         })}
       </div>
     </AppShell>
+  );
+}
+
+function ApprovalRouteReview({ row }: { row: AuthorizationRequest }) {
+  const route = row.approvalRoute;
+  if (!route) return null;
+  const primary = route.primaryApprovers.map((person) => `${person.name} (${person.role})`);
+  const escalation = route.escalationApprovers.map((person) => `${person.name} (${person.role})`);
+  const escalatesAt =
+    route.escalationAfterMinutes && route.escalationAfterMinutes > 0
+      ? new Date(Date.parse(row.createdAt) + route.escalationAfterMinutes * 60_000).toLocaleString()
+      : null;
+  return (
+    <dl className="grid gap-x-4 gap-y-2 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-2">
+      <div>
+        <dt className="text-muted-foreground">Routed approvers</dt>
+        <dd>{primary.join(", ") || "No eligible approver recorded"}</dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">Configured approver roles</dt>
+        <dd>{route.primaryRoles.join(", ") || "Named users only"}</dd>
+      </div>
+      {escalatesAt ? (
+        <>
+          <div>
+            <dt className="text-muted-foreground">Escalation eligible</dt>
+            <dd>{escalatesAt}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Escalation route</dt>
+            <dd>{escalation.join(", ") || route.escalationRoles.join(", ") || "Not configured"}</dd>
+          </div>
+        </>
+      ) : null}
+    </dl>
   );
 }
 

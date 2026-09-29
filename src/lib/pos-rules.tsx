@@ -34,30 +34,15 @@ export const posRulesQueryKey = (storeId: string) => ["pos-rules", storeId.trim(
 
 /** Why the live values are not in use, in words a supervisor can act on. */
 export type RulesFailureKind =
-  | "none"
-  | "config"
-  | "network"
-  | "auth"
-  | "permission"
-  | "data"
-  | "unknown";
+  "none" | "config" | "network" | "auth" | "permission" | "data" | "unknown";
 
 /** Where the rules in use came from. */
 export type RulesSourceKind =
-  | "DATABASE"
-  | "LOCAL_PENDING"
-  | "LAST_KNOWN_GOOD"
-  | "DEFAULT_SAFETY"
-  | "UNAVAILABLE";
+  "DATABASE" | "LOCAL_PENDING" | "LAST_KNOWN_GOOD" | "DEFAULT_SAFETY" | "UNAVAILABLE";
 
 /** What the terminal is doing about them. */
 export type RulesStatus =
-  | "LIVE"
-  | "SYNCING"
-  | "DEGRADED"
-  | "PENDING_UPLOAD"
-  | "NOT_VERIFIED"
-  | "IDENTITY_UNAVAILABLE";
+  "LIVE" | "SYNCING" | "DEGRADED" | "PENDING_UPLOAD" | "NOT_VERIFIED" | "IDENTITY_UNAVAILABLE";
 
 const FAILURE_TEXT: Record<RulesFailureKind, string> = {
   none: "",
@@ -103,6 +88,7 @@ type Ctx = {
   platform: string;
   lastSyncedAt: number | null;
   refresh: () => Promise<void>;
+  confirmSaved: (snapshot: unknown) => Promise<void>;
   rowVersion: number;
   updatedAt: string | null;
   updatedBy: string | null;
@@ -179,6 +165,24 @@ async function fetchRules(auth: Record<string, string>, storeId: string): Promis
     return body;
   }
   return (await getPosRules({ data: { ...auth, storeId } })) as Answer;
+}
+
+const retryDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Transient transport failures get a short bounded retry before degrading. */
+async function fetchRulesResilient(auth: Record<string, string>, storeId: string): Promise<Answer> {
+  let answer: Answer = {};
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      answer = await fetchRules(auth, storeId);
+    } catch (error) {
+      answer = { ok: false, failure: "network", error: (error as Error).message };
+    }
+    if (answer.ok && answer.backend === "database") return answer;
+    if (answer.failure !== "network" && answer.failure !== "unknown") return answer;
+    if (attempt < 2) await retryDelay(attempt === 0 ? 250 : 750);
+  }
+  return answer;
 }
 
 export function PosRulesProvider({
@@ -316,7 +320,7 @@ export function PosRulesProvider({
 
       logRules("POS_RULES_SYNC_STARTED", { platform, terminal_id: me, branch_id: scope });
       try {
-        const res = await fetchRules(auth as Record<string, string>, scope);
+        const res = await fetchRulesResilient(auth as Record<string, string>, scope);
         const failure = (res.failure ?? "unknown") as RulesFailureKind;
         if (res.ok && res.identified !== false && res.backend === "database") {
           const at = typeof res.fetchedAt === "number" ? res.fetchedAt : Date.now();
@@ -501,8 +505,59 @@ export function PosRulesProvider({
       refresh: async () => {
         await queryClient.refetchQueries({ queryKey: key });
       },
+      confirmSaved: async (raw: unknown) => {
+        const answer = (raw ?? {}) as Answer;
+        const at = typeof answer.fetchedAt === "number" ? answer.fetchedAt : Date.now();
+        const savedRules = normalizeRules(answer.rules);
+        const saved = {
+          rules: savedRules,
+          revision: answer.revision ?? "",
+          at,
+          rowVersion: Math.max(0, Number(answer.rowVersion) || 0),
+          updatedAt: answer.updatedAt ?? null,
+          updatedBy: answer.updatedBy ?? null,
+        };
+        lastGood.set(scope, saved);
+        queryClient.setQueryData<Snapshot>(key, {
+          rules: saved.rules,
+          usingDefaults: false,
+          degraded: false,
+          notVerified: false,
+          status: "LIVE",
+          source: "DATABASE",
+          failure: "none",
+          backendError: "",
+          revision: saved.revision,
+          branchId: scope,
+          lastSyncedAt: at,
+          rowVersion: saved.rowVersion,
+          updatedAt: saved.updatedAt,
+          updatedBy: saved.updatedBy,
+        });
+        // A device-cache failure must not turn a committed database save into
+        // a false failure or make the settings editor unusable.
+        await writeCachedRules({
+          terminalId: device.current,
+          branchId: scope,
+          revision: saved.revision,
+          syncedAt: at,
+          rules: saved.rules,
+          pending: false,
+          rowVersion: saved.rowVersion,
+          updatedAt: saved.updatedAt,
+          updatedBy: saved.updatedBy,
+        }).catch((error) =>
+          logRules("POS_RULES_LOAD_FAILED", {
+            platform: platformName(),
+            terminal_id: device.current,
+            branch_id: scope,
+            category: "cache",
+            message: (error as Error).message.slice(0, 200),
+          }),
+        );
+      },
     };
-  }, [key, query.data, query.isPending, queryClient]);
+  }, [key, query.data, query.isPending, queryClient, scope]);
 
   return <RulesContext.Provider value={value}>{children}</RulesContext.Provider>;
 }
@@ -530,6 +585,7 @@ export function usePosRules(): Ctx {
       updatedAt: null,
       updatedBy: null,
       refresh: async () => {},
+      confirmSaved: async () => {},
     }
   );
 }

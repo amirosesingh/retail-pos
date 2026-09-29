@@ -15,7 +15,7 @@ function secret(): Buffer {
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64url");
 
-export function signCashierSession(payload: { id: string; username: string }): string {
+export function signCashierSession(payload: { id: string; username: string; storeId: string }): string {
   const body = b64(JSON.stringify({ ...payload, exp: Date.now() + TTL_MS }));
   const sig = createHmac("sha256", secret()).update(body).digest("base64url");
   return `${body}.${sig}`;
@@ -23,7 +23,7 @@ export function signCashierSession(payload: { id: string; username: string }): s
 
 export function verifyCashierSession(
   token: string,
-): { id: string; username: string } | null {
+): { id: string; username: string; storeId: string } | null {
   const [body, sig] = (token || "").split(".");
   if (!body || !sig) return null;
   const expected = createHmac("sha256", secret()).update(body).digest("base64url");
@@ -34,10 +34,11 @@ export function verifyCashierSession(
     const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as {
       id: string;
       username: string;
+      storeId: string;
       exp: number;
     };
-    if (!parsed.exp || parsed.exp < Date.now()) return null;
-    return { id: parsed.id, username: parsed.username };
+    if (!parsed.exp || parsed.exp < Date.now() || !parsed.storeId) return null;
+    return { id: parsed.id, username: parsed.username, storeId: parsed.storeId };
   } catch {
     return null;
   }

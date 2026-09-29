@@ -8572,6 +8572,9 @@ IF OBJECT_ID(N'dbo.authorization_actions', N'U') IS NULL BEGIN CREATE TABLE dbo.
   [authority_limits] nvarchar(max) NOT NULL CONSTRAINT [DF_authorization_actions_authority_limits] DEFAULT (N'{}'),
   [extra_authority] nvarchar(max) NOT NULL CONSTRAINT [DF_authorization_actions_extra_authority] DEFAULT (N'{}'),
   [absolute_ceilings] nvarchar(max) NOT NULL CONSTRAINT [DF_authorization_actions_absolute_ceilings] DEFAULT (N'{}'),
+  [approval_timeout_minutes] int NOT NULL CONSTRAINT [DF_authorization_actions_approval_timeout_minutes] DEFAULT (15),
+  [escalation_after_minutes] int NULL,
+  [escalation_roles] nvarchar(max) NOT NULL CONSTRAINT [DF_authorization_actions_escalation_roles] DEFAULT (N'[]'),
   [require_reason] bit NOT NULL CONSTRAINT [DF_authorization_actions_require_reason] DEFAULT (0),
   [threshold] decimal(38,12) NULL,
   [is_enabled] bit NOT NULL CONSTRAINT [DF_authorization_actions_is_enabled] DEFAULT (1),
@@ -8725,6 +8728,34 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.authorizati
   ALTER TABLE dbo.[authorization_actions] ALTER COLUMN [absolute_ceilings] nvarchar(max) NOT NULL;
 END;
 
+IF COL_LENGTH(N'dbo.authorization_actions', N'approval_timeout_minutes') IS NULL ALTER TABLE dbo.[authorization_actions] ADD [approval_timeout_minutes] int NULL;
+
+IF OBJECT_ID(N'dbo.authorization_actions', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.authorization_actions', N'approval_timeout_minutes') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.authorization_actions') AND c.name=N'approval_timeout_minutes'
+) ALTER TABLE dbo.[authorization_actions] ADD CONSTRAINT [DF_authorization_actions_approval_timeout_minutes] DEFAULT (15) FOR [approval_timeout_minutes];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.authorization_actions') AND name=N'approval_timeout_minutes' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[authorization_actions] SET [approval_timeout_minutes]=15 WHERE [approval_timeout_minutes] IS NULL;';
+  ALTER TABLE dbo.[authorization_actions] ALTER COLUMN [approval_timeout_minutes] int NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.authorization_actions', N'escalation_after_minutes') IS NULL ALTER TABLE dbo.[authorization_actions] ADD [escalation_after_minutes] int NULL;
+
+IF COL_LENGTH(N'dbo.authorization_actions', N'escalation_roles') IS NULL ALTER TABLE dbo.[authorization_actions] ADD [escalation_roles] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.authorization_actions', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.authorization_actions', N'escalation_roles') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.authorization_actions') AND c.name=N'escalation_roles'
+) ALTER TABLE dbo.[authorization_actions] ADD CONSTRAINT [DF_authorization_actions_escalation_roles] DEFAULT (N'[]') FOR [escalation_roles];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.authorization_actions') AND name=N'escalation_roles' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[authorization_actions] SET [escalation_roles]=N''[]'' WHERE [escalation_roles] IS NULL;';
+  ALTER TABLE dbo.[authorization_actions] ALTER COLUMN [escalation_roles] nvarchar(max) NOT NULL;
+END;
+
 IF COL_LENGTH(N'dbo.authorization_actions', N'require_reason') IS NULL ALTER TABLE dbo.[authorization_actions] ADD [require_reason] bit NULL;
 
 IF OBJECT_ID(N'dbo.authorization_actions', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.authorization_actions', N'require_reason') IS NOT NULL AND NOT EXISTS (
@@ -8806,6 +8837,7 @@ IF OBJECT_ID(N'dbo.authorization_requests', N'U') IS NULL BEGIN CREATE TABLE dbo
   [value_unit] nvarchar(max) NOT NULL CONSTRAINT [DF_authorization_requests_value_unit] DEFAULT ('number'),
   [created_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_authorization_requests_created_at] DEFAULT (SYSDATETIMEOFFSET()),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_authorization_requests_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
+  [approval_route] nvarchar(max) NOT NULL CONSTRAINT [DF_authorization_requests_approval_route] DEFAULT (N'{}'),
   [requested_amount] decimal(38,12) NULL,
   [approved_amount] decimal(38,12) NULL,
   [approved_payload] nvarchar(max) NOT NULL CONSTRAINT [DF_authorization_requests_approved_payload] DEFAULT (N'{}'),
@@ -8961,6 +8993,19 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.authorizati
 END;
 
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.authorization_requests') AND c.name=N'updated_at' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[authorization_requests] ALTER COLUMN [updated_at] datetimeoffset(7) NOT NULL;
+
+IF COL_LENGTH(N'dbo.authorization_requests', N'approval_route') IS NULL ALTER TABLE dbo.[authorization_requests] ADD [approval_route] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.authorization_requests', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.authorization_requests', N'approval_route') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.authorization_requests') AND c.name=N'approval_route'
+) ALTER TABLE dbo.[authorization_requests] ADD CONSTRAINT [DF_authorization_requests_approval_route] DEFAULT (N'{}') FOR [approval_route];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.authorization_requests') AND name=N'approval_route' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[authorization_requests] SET [approval_route]=N''{}'' WHERE [approval_route] IS NULL;';
+  ALTER TABLE dbo.[authorization_requests] ALTER COLUMN [approval_route] nvarchar(max) NOT NULL;
+END;
 
 IF COL_LENGTH(N'dbo.authorization_requests', N'requested_amount') IS NULL ALTER TABLE dbo.[authorization_requests] ADD [requested_amount] decimal(38,12) NULL;
 
@@ -10582,137 +10627,152 @@ IF OBJECT_ID(N'dbo.authorization_requests', N'U') IS NOT NULL AND COL_LENGTH(N'd
   END;
 END;
 
-IF OBJECT_ID(N'dbo.authorization_requests', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.authorization_requests', N'approved_payload') IS NOT NULL BEGIN
+IF OBJECT_ID(N'dbo.authorization_requests', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.authorization_requests', N'approval_route') IS NOT NULL BEGIN
   DECLARE @legacy_json_default_20 sysname = (
+    SELECT dc.name FROM sys.default_constraints dc
+    JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+    WHERE dc.parent_object_id=OBJECT_ID(N'dbo.authorization_requests')
+      AND c.name=N'approval_route'
+      AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
+  );
+  IF @legacy_json_default_20 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_20_sql nvarchar(max) = N'ALTER TABLE dbo.[authorization_requests] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_20);
+    EXEC sys.sp_executesql @legacy_json_default_20_sql;
+    ALTER TABLE dbo.[authorization_requests] ADD CONSTRAINT [DF_authorization_requests_approval_route] DEFAULT (N'{}') FOR [approval_route];
+  END;
+END;
+
+IF OBJECT_ID(N'dbo.authorization_requests', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.authorization_requests', N'approved_payload') IS NOT NULL BEGIN
+  DECLARE @legacy_json_default_21 sysname = (
     SELECT dc.name FROM sys.default_constraints dc
     JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
     WHERE dc.parent_object_id=OBJECT_ID(N'dbo.authorization_requests')
       AND c.name=N'approved_payload'
       AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
   );
-  IF @legacy_json_default_20 IS NOT NULL BEGIN
-    DECLARE @legacy_json_default_20_sql nvarchar(max) = N'ALTER TABLE dbo.[authorization_requests] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_20);
-    EXEC sys.sp_executesql @legacy_json_default_20_sql;
+  IF @legacy_json_default_21 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_21_sql nvarchar(max) = N'ALTER TABLE dbo.[authorization_requests] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_21);
+    EXEC sys.sp_executesql @legacy_json_default_21_sql;
     ALTER TABLE dbo.[authorization_requests] ADD CONSTRAINT [DF_authorization_requests_approved_payload] DEFAULT (N'{}') FOR [approved_payload];
   END;
 END;
 
 IF OBJECT_ID(N'dbo.authorization_requests', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.authorization_requests', N'bill_snapshot') IS NOT NULL BEGIN
-  DECLARE @legacy_json_default_21 sysname = (
+  DECLARE @legacy_json_default_22 sysname = (
     SELECT dc.name FROM sys.default_constraints dc
     JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
     WHERE dc.parent_object_id=OBJECT_ID(N'dbo.authorization_requests')
       AND c.name=N'bill_snapshot'
       AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
   );
-  IF @legacy_json_default_21 IS NOT NULL BEGIN
-    DECLARE @legacy_json_default_21_sql nvarchar(max) = N'ALTER TABLE dbo.[authorization_requests] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_21);
-    EXEC sys.sp_executesql @legacy_json_default_21_sql;
+  IF @legacy_json_default_22 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_22_sql nvarchar(max) = N'ALTER TABLE dbo.[authorization_requests] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_22);
+    EXEC sys.sp_executesql @legacy_json_default_22_sql;
     ALTER TABLE dbo.[authorization_requests] ADD CONSTRAINT [DF_authorization_requests_bill_snapshot] DEFAULT (N'{}') FOR [bill_snapshot];
   END;
 END;
 
 IF OBJECT_ID(N'dbo.authorization_log', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.authorization_log', N'detail') IS NOT NULL BEGIN
-  DECLARE @legacy_json_default_22 sysname = (
+  DECLARE @legacy_json_default_23 sysname = (
     SELECT dc.name FROM sys.default_constraints dc
     JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
     WHERE dc.parent_object_id=OBJECT_ID(N'dbo.authorization_log')
       AND c.name=N'detail'
       AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
   );
-  IF @legacy_json_default_22 IS NOT NULL BEGIN
-    DECLARE @legacy_json_default_22_sql nvarchar(max) = N'ALTER TABLE dbo.[authorization_log] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_22);
-    EXEC sys.sp_executesql @legacy_json_default_22_sql;
+  IF @legacy_json_default_23 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_23_sql nvarchar(max) = N'ALTER TABLE dbo.[authorization_log] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_23);
+    EXEC sys.sp_executesql @legacy_json_default_23_sql;
     ALTER TABLE dbo.[authorization_log] ADD CONSTRAINT [DF_authorization_log_detail] DEFAULT (N'{}') FOR [detail];
   END;
 END;
 
 IF OBJECT_ID(N'dbo.record_edits', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.record_edits', N'before_value') IS NOT NULL BEGIN
-  DECLARE @legacy_json_default_23 sysname = (
+  DECLARE @legacy_json_default_24 sysname = (
     SELECT dc.name FROM sys.default_constraints dc
     JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
     WHERE dc.parent_object_id=OBJECT_ID(N'dbo.record_edits')
       AND c.name=N'before_value'
       AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
   );
-  IF @legacy_json_default_23 IS NOT NULL BEGIN
-    DECLARE @legacy_json_default_23_sql nvarchar(max) = N'ALTER TABLE dbo.[record_edits] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_23);
-    EXEC sys.sp_executesql @legacy_json_default_23_sql;
+  IF @legacy_json_default_24 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_24_sql nvarchar(max) = N'ALTER TABLE dbo.[record_edits] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_24);
+    EXEC sys.sp_executesql @legacy_json_default_24_sql;
     ALTER TABLE dbo.[record_edits] ADD CONSTRAINT [DF_record_edits_before_value] DEFAULT (N'{}') FOR [before_value];
   END;
 END;
 
 IF OBJECT_ID(N'dbo.record_edits', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.record_edits', N'after_value') IS NOT NULL BEGIN
-  DECLARE @legacy_json_default_24 sysname = (
+  DECLARE @legacy_json_default_25 sysname = (
     SELECT dc.name FROM sys.default_constraints dc
     JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
     WHERE dc.parent_object_id=OBJECT_ID(N'dbo.record_edits')
       AND c.name=N'after_value'
       AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
   );
-  IF @legacy_json_default_24 IS NOT NULL BEGIN
-    DECLARE @legacy_json_default_24_sql nvarchar(max) = N'ALTER TABLE dbo.[record_edits] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_24);
-    EXEC sys.sp_executesql @legacy_json_default_24_sql;
+  IF @legacy_json_default_25 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_25_sql nvarchar(max) = N'ALTER TABLE dbo.[record_edits] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_25);
+    EXEC sys.sp_executesql @legacy_json_default_25_sql;
     ALTER TABLE dbo.[record_edits] ADD CONSTRAINT [DF_record_edits_after_value] DEFAULT (N'{}') FOR [after_value];
   END;
 END;
 
 IF OBJECT_ID(N'dbo.record_edits', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.record_edits', N'stock_deltas') IS NOT NULL BEGIN
-  DECLARE @legacy_json_default_25 sysname = (
+  DECLARE @legacy_json_default_26 sysname = (
     SELECT dc.name FROM sys.default_constraints dc
     JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
     WHERE dc.parent_object_id=OBJECT_ID(N'dbo.record_edits')
       AND c.name=N'stock_deltas'
       AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
   );
-  IF @legacy_json_default_25 IS NOT NULL BEGIN
-    DECLARE @legacy_json_default_25_sql nvarchar(max) = N'ALTER TABLE dbo.[record_edits] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_25);
-    EXEC sys.sp_executesql @legacy_json_default_25_sql;
+  IF @legacy_json_default_26 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_26_sql nvarchar(max) = N'ALTER TABLE dbo.[record_edits] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_26);
+    EXEC sys.sp_executesql @legacy_json_default_26_sql;
     ALTER TABLE dbo.[record_edits] ADD CONSTRAINT [DF_record_edits_stock_deltas] DEFAULT (N'{}') FOR [stock_deltas];
   END;
 END;
 
 IF OBJECT_ID(N'dbo.shift_close_events', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_close_events', N'detail') IS NOT NULL BEGIN
-  DECLARE @legacy_json_default_26 sysname = (
+  DECLARE @legacy_json_default_27 sysname = (
     SELECT dc.name FROM sys.default_constraints dc
     JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
     WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_close_events')
       AND c.name=N'detail'
       AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
   );
-  IF @legacy_json_default_26 IS NOT NULL BEGIN
-    DECLARE @legacy_json_default_26_sql nvarchar(max) = N'ALTER TABLE dbo.[shift_close_events] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_26);
-    EXEC sys.sp_executesql @legacy_json_default_26_sql;
+  IF @legacy_json_default_27 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_27_sql nvarchar(max) = N'ALTER TABLE dbo.[shift_close_events] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_27);
+    EXEC sys.sp_executesql @legacy_json_default_27_sql;
     ALTER TABLE dbo.[shift_close_events] ADD CONSTRAINT [DF_shift_close_events_detail] DEFAULT (N'{}') FOR [detail];
   END;
 END;
 
 IF OBJECT_ID(N'dbo.shift_notifications', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.shift_notifications', N'payment_breakdown') IS NOT NULL BEGIN
-  DECLARE @legacy_json_default_27 sysname = (
+  DECLARE @legacy_json_default_28 sysname = (
     SELECT dc.name FROM sys.default_constraints dc
     JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
     WHERE dc.parent_object_id=OBJECT_ID(N'dbo.shift_notifications')
       AND c.name=N'payment_breakdown'
       AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
   );
-  IF @legacy_json_default_27 IS NOT NULL BEGIN
-    DECLARE @legacy_json_default_27_sql nvarchar(max) = N'ALTER TABLE dbo.[shift_notifications] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_27);
-    EXEC sys.sp_executesql @legacy_json_default_27_sql;
+  IF @legacy_json_default_28 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_28_sql nvarchar(max) = N'ALTER TABLE dbo.[shift_notifications] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_28);
+    EXEC sys.sp_executesql @legacy_json_default_28_sql;
     ALTER TABLE dbo.[shift_notifications] ADD CONSTRAINT [DF_shift_notifications_payment_breakdown] DEFAULT (N'{}') FOR [payment_breakdown];
   END;
 END;
 
 IF OBJECT_ID(N'dbo.entity_status_history', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.entity_status_history', N'metadata') IS NOT NULL BEGIN
-  DECLARE @legacy_json_default_28 sysname = (
+  DECLARE @legacy_json_default_29 sysname = (
     SELECT dc.name FROM sys.default_constraints dc
     JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
     WHERE dc.parent_object_id=OBJECT_ID(N'dbo.entity_status_history')
       AND c.name=N'metadata'
       AND dc.definition IN (N'(N''[]'')',N'N''[]''',N'(''[]'')',N'''[]''')
   );
-  IF @legacy_json_default_28 IS NOT NULL BEGIN
-    DECLARE @legacy_json_default_28_sql nvarchar(max) = N'ALTER TABLE dbo.[entity_status_history] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_28);
-    EXEC sys.sp_executesql @legacy_json_default_28_sql;
+  IF @legacy_json_default_29 IS NOT NULL BEGIN
+    DECLARE @legacy_json_default_29_sql nvarchar(max) = N'ALTER TABLE dbo.[entity_status_history] DROP CONSTRAINT ' + QUOTENAME(@legacy_json_default_29);
+    EXEC sys.sp_executesql @legacy_json_default_29_sql;
     ALTER TABLE dbo.[entity_status_history] ADD CONSTRAINT [DF_entity_status_history_metadata] DEFAULT (N'{}') FOR [metadata];
   END;
 END;
@@ -11980,6 +12040,9 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_actions', N'authority_limits'),
   (N'authorization_actions', N'extra_authority'),
   (N'authorization_actions', N'absolute_ceilings'),
+  (N'authorization_actions', N'approval_timeout_minutes'),
+  (N'authorization_actions', N'escalation_after_minutes'),
+  (N'authorization_actions', N'escalation_roles'),
   (N'authorization_actions', N'require_reason'),
   (N'authorization_actions', N'threshold'),
   (N'authorization_actions', N'is_enabled'),
@@ -11992,11 +12055,11 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_requests', N'store_id'),
   (N'authorization_requests', N'terminal_id'),
   (N'authorization_requests', N'reason'),
-  (N'authorization_requests', N'payload'),
+  (N'authorization_requests', N'payload');
+INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_requests', N'status'),
   (N'authorization_requests', N'decided_by'),
-  (N'authorization_requests', N'decided_by_name');
-INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N'authorization_requests', N'decided_by_name'),
   (N'authorization_requests', N'decided_at'),
   (N'authorization_requests', N'decision_note'),
   (N'authorization_requests', N'expires_at'),
@@ -12005,6 +12068,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_requests', N'value_unit'),
   (N'authorization_requests', N'created_at'),
   (N'authorization_requests', N'updated_at'),
+  (N'authorization_requests', N'approval_route'),
   (N'authorization_requests', N'requested_amount'),
   (N'authorization_requests', N'approved_amount'),
   (N'authorization_requests', N'approved_payload'),

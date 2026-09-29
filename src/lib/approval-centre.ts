@@ -9,13 +9,11 @@
  */
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 
-import {
-  claimAuthorizationRequest,
-  listAuthorizationRequests,
-} from "./authorization-client";
+import { claimAuthorizationRequest, listAuthorizationRequests } from "./authorization-client";
 import { getPosCallerAuth } from "./pos-caller-auth";
-import { markHeldReady } from "./held-orders";
+import { heldOrderForRequest, markHeldReady } from "./held-orders";
 import type { AuthorizationRequest } from "./authorization";
+import type { AuthPayload } from "./authorization";
 
 export const CENTRE_POLL_MS = 45_000;
 let approvalChannelSequence = 0;
@@ -35,10 +33,7 @@ export type CentreView = {
 const empty: CentreView = { toDecide: [], waiting: [], ready: [], history: [], me: "" };
 
 /** Split the queue into what this person is waiting for and what they must decide. */
-export function splitRequests(
-  rows: AuthorizationRequest[],
-  meId: string,
-): Omit<CentreView, "me"> {
+export function splitRequests(rows: AuthorizationRequest[], meId: string): Omit<CentreView, "me"> {
   const me = meId.toLowerCase();
   const mine = rows.filter((r) => r.requestedBy.toLowerCase() === me);
   const others = rows.filter((r) => r.requestedBy.toLowerCase() !== me);
@@ -66,7 +61,11 @@ export async function loadApprovalCentre(storeId?: string | null): Promise<Centr
   const meId = res.me?.id ?? "";
   const view = splitRequests(res.requests as AuthorizationRequest[], meId);
   // A ticket parked for a decision becomes pickable again the moment one lands.
-  for (const r of view.ready) if (r.heldOrderId) markHeldReady(r.heldOrderId);
+  for (const r of [...view.ready, ...view.history]) {
+    if (r.status === "pending") continue;
+    const heldId = r.heldOrderId ?? heldOrderForRequest(r.id)?.id;
+    if (heldId) markHeldReady(heldId);
+  }
   return { ...view, me: meId };
 }
 
@@ -82,6 +81,45 @@ export async function claimApproval(id: string, snapshotHash?: string) {
   });
 }
 
+/** Reuse a granted asynchronous decision when the operator retries the exact
+ * same business action. Payload matching prevents an approval for one bill or
+ * transfer from authorising another. */
+export async function claimMatchingApproval(input: {
+  actionKey: string;
+  storeId?: string | null;
+  payload?: AuthPayload;
+  snapshotHash?: string;
+}) {
+  const auth = await getPosCallerAuth();
+  const listed = await listAuthorizationRequests({
+    data: {
+      ...auth,
+      ...(input.storeId ? { storeId: input.storeId } : {}),
+      allBranches: false,
+      status: "all",
+    },
+  });
+  if (!listed.ok || !Array.isArray(listed.requests)) return null;
+  const expected = Object.entries(input.payload ?? {});
+  const match = (listed.requests as AuthorizationRequest[]).find(
+    (row) =>
+      row.status === "approved" &&
+      !row.consumedAt &&
+      row.actionKey === input.actionKey &&
+      (!input.snapshotHash || row.snapshotHash === input.snapshotHash) &&
+      expected.every(([key, value]) => row.payload[key] === value),
+  );
+  if (!match) return null;
+  const claimed = await claimAuthorizationRequest({
+    data: {
+      ...auth,
+      id: match.id,
+      ...(input.snapshotHash ? { snapshotHash: input.snapshotHash } : {}),
+    },
+  });
+  return claimed.ok && claimed.status === "approved" ? claimed : null;
+}
+
 /**
  * Live delivery of decisions and new requests. Falls back silently when the
  * database has no realtime — the poll still reconciles.
@@ -90,9 +128,7 @@ export function subscribeApprovals(onChange: () => void): () => void {
   try {
     // ActivityBell and the approvals page can be mounted together. Distinct
     // topics keep one subscriber from replacing the other's channel.
-    const channel = supabaseExternal.channel(
-      `pos-approval-centre:${++approvalChannelSequence}`,
-    );
+    const channel = supabaseExternal.channel(`pos-approval-centre:${++approvalChannelSequence}`);
     channel.on(
       "postgres_changes",
       { event: "*", schema: "public", table: "authorization_requests" },

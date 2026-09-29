@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   canAuthorizeAmount,
+  canAuthorizeEscalated,
+  canDecideRequestAmount,
   canRequestApproval,
   defaultRule,
   effectiveApprovalAuthority,
+  isRoutedApprover,
   resolveRules,
 } from "../authorization";
 
@@ -20,6 +23,12 @@ describe("central relative approval authority", () => {
     expect(canRequestApproval(rule, { role: "cashier" })).toBe(true);
     expect(canRequestApproval(rule, { role: "guest" })).toBe(false);
     expect(canRequestApproval({ ...rule, mode: "pin" }, { role: "cashier" })).toBe(false);
+  });
+
+  it("supports a named requester without granting that person approval authority", () => {
+    const named = { ...rule, requesterRoles: [], requesterUserIds: ["cashier-17"] };
+    expect(canRequestApproval(named, { userId: "Cashier-17", role: "guest" })).toBe(true);
+    expect(canAuthorizeAmount(named, { userId: "Cashier-17", role: "guest" }, 5, 0)).toBe(false);
   });
 
   it.each([
@@ -78,6 +87,71 @@ describe("central relative approval authority", () => {
     expect(
       resolveRules([global, branch], "b2").discount_over_limit.extraAuthority["role:manager"],
     ).toBe(20);
+  });
+
+  it("opens configured backup roles only after the escalation delay", () => {
+    const escalated = {
+      ...rule,
+      escalationAfterMinutes: 5,
+      escalationRoles: ["area_manager"],
+    };
+    const createdAt = new Date(Date.now() - 6 * 60_000).toISOString();
+    expect(canAuthorizeEscalated(escalated, { role: "area_manager" }, createdAt)).toBe(true);
+    expect(
+      canAuthorizeEscalated(escalated, { role: "area_manager" }, new Date().toISOString()),
+    ).toBe(false);
+    expect(canAuthorizeEscalated(escalated, { role: "cashier" }, createdAt)).toBe(false);
+  });
+
+  it("allows an escalated backup to decide after the primary authority window", () => {
+    const escalated = {
+      ...rule,
+      escalationAfterMinutes: 1,
+      escalationRoles: ["area_manager"],
+    };
+    expect(
+      canDecideRequestAmount(
+        escalated,
+        { role: "area_manager" },
+        {
+          createdAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+          requestedAmount: 50,
+          requesterDirectLimit: 10,
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("routes only snapshotted people and opens the backup route after its delay", () => {
+    const createdAt = "2026-09-29T00:00:00.000Z";
+    const request = {
+      createdAt,
+      approvalRoute: {
+        primaryRoles: ["manager"],
+        primaryUserIds: ["primary-1"],
+        primaryApprovers: [{ id: "primary-1", name: "Primary", role: "manager" }],
+        escalationAfterMinutes: 5,
+        escalationRoles: ["area_manager"],
+        escalationApprovers: [{ id: "backup-1", name: "Backup", role: "area_manager" }],
+        ruleScopeType: "global" as const,
+        ruleScopeId: "",
+      },
+    };
+    expect(isRoutedApprover(request, { userId: "PRIMARY-1" }, Date.parse(createdAt))).toBe(true);
+    expect(isRoutedApprover(request, { userId: "other" }, Date.parse(createdAt))).toBe(false);
+    expect(isRoutedApprover(request, { userId: "backup-1" }, Date.parse(createdAt))).toBe(false);
+    expect(
+      isRoutedApprover(request, { userId: "backup-1" }, Date.parse(createdAt) + 5 * 60_000),
+    ).toBe(true);
+  });
+
+  it("keeps legacy and offline rows with no route snapshot branch-rule compatible", () => {
+    expect(
+      isRoutedApprover(
+        { approvalRoute: null, createdAt: new Date().toISOString() },
+        { userId: "u1" },
+      ),
+    ).toBe(true);
   });
 
   it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(

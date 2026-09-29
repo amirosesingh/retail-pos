@@ -9,8 +9,10 @@ const bodySchema = z.object({
     "claim",
     "cancel",
     "rules",
+    "people",
     "save_rule",
     "set_pin",
+    "verify_mutation",
   ]),
   data: z.record(z.string(), z.unknown()),
 });
@@ -38,9 +40,13 @@ export async function handleAuthorizationRequest(request: Request): Promise<Resp
                   ? await functions.cancelAuthorizationRequest({ data: body.data as never })
                   : body.action === "rules"
                     ? await functions.getAuthorizationRules({ data: body.data as never })
-                    : body.action === "save_rule"
-                      ? await functions.saveAuthorizationRule({ data: body.data as never })
-                      : await functions.setStaffAuthorizationPin({ data: body.data as never });
+                    : body.action === "people"
+                      ? await functions.listAuthorizationPeople({ data: body.data as never })
+                      : body.action === "save_rule"
+                        ? await functions.saveAuthorizationRule({ data: body.data as never })
+                        : body.action === "set_pin"
+                          ? await functions.setStaffAuthorizationPin({ data: body.data as never })
+                          : await functions.verifyBusinessAuthorization({ data: body.data as never });
     return Response.json(result);
   } catch (error) {
     return Response.json(

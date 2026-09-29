@@ -133,6 +133,9 @@ export const resumeRecordEdit = createServerFn({ method: "POST" })
           action: request.actionKey,
           approvedBy: request.decidedBy ?? "approval",
           role: "approval",
+          storeId: request.storeId,
+          binding: `${data.kind}:${data.recordId}`,
+          requestId: request.id,
         }),
       };
     } catch (e) {

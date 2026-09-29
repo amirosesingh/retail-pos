@@ -63,7 +63,7 @@ function Shifts() {
   const { user, isAdmin, isSupervisor, can } = useAuth();
   const { requirePermission } = useUserPermissions();
   const { rules } = usePosRules();
-  const { authorize } = useManagerGate();
+  const { authorize, rules: authorizationRules } = useManagerGate();
   const [cashier, setCashier] = useState(user?.name ?? "Cashier");
   // Never carry a suggested or previous drawer count into a new shift.
   const [float, setFloat] = useState("");
@@ -450,12 +450,35 @@ function Shifts() {
                           variant="ghost"
                           disabled={s.refunded}
                           onClick={async () => {
-                            if (!(await requirePermission("can_process_refund"))) return;
+                            if (
+                              (authorizationRules.refund?.mode ?? "none") === "none" &&
+                              !(await requirePermission("can_process_refund"))
+                            )
+                              return;
+                            const grant = await authorize({
+                              action: "refund",
+                              title: "Authorise refund",
+                              reason: `Refund bill ${s.receiptNo}`,
+                              storeId: currentStore.id,
+                              requestedBy: user?.staffId ?? user?.name ?? null,
+                              requestedAmount: Math.abs(s.total),
+                              valueUnit: "currency",
+                              payload: {
+                                sale_id: s.id,
+                                receipt_no: s.receiptNo,
+                                total: Math.abs(s.total),
+                              },
+                            });
+                            if (!grant.ok) return;
                             try {
-                              await refundSale(s.id);
+                              await refundSale(s.id, grant.grantToken);
                               printSaleReceipt(s, member, "refund");
-                              const drawer = await openCashDrawer(`Refund ${s.receiptNo}`, activeShift?.id);
-                              if (!drawer.ok) toast.warning(drawer.error ?? "The cash drawer did not open.");
+                              const drawer = await openCashDrawer(
+                                `Refund ${s.receiptNo}`,
+                                activeShift?.id,
+                              );
+                              if (!drawer.ok)
+                                toast.warning(drawer.error ?? "The cash drawer did not open.");
                               toast.success(`${s.receiptNo} refunded`);
                             } catch (error) {
                               notifyError(error, "Refunding the sale");
@@ -480,107 +503,125 @@ function Shifts() {
           </Table>
         </section>
 
-        {can("can_shift_closing_history_view") && <section className="rounded-lg border border-border bg-card">
-          <h2 className="px-5 py-3 text-sm font-semibold">Shift history</h2>
-          <Separator />
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Cashier</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Opened</TableHead>
-                <TableHead>Closed</TableHead>
-                <TableHead>Closed by</TableHead>
-                <TableHead>Terminal</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead className="text-right">Float</TableHead>
-                {can("can_shift_counted_cash_view") && <TableHead className="text-right">Closing float</TableHead>}
-                {can("can_shift_variance_view") && <TableHead className="text-right">Over / short</TableHead>}
-                {can("can_shift_report_reprint") && <TableHead className="text-right">Z report</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {storeShifts.map((sh) => (
-                <TableRow key={sh.id}>
-                  <TableCell>{sh.cashier}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={
-                        sh.closedAt
-                          ? "text-[10px]"
-                          : "border-success/40 bg-success/10 text-[10px] text-success"
-                      }
-                    >
-                      {sh.closedAt ? "CLOSED" : "OPEN"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {new Date(sh.openedAt).toLocaleString()}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {sh.closedAt ? new Date(sh.closedAt).toLocaleString() : "open"}
-                    {sh.overdue && (
-                      <span className="ml-2 rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] text-destructive">
-                        OVERDUE
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{sh.closedBy ?? "—"}</TableCell>
-                  <TableCell className="text-muted-foreground">{sh.terminalName ?? "—"}</TableCell>
-                  <TableCell className="numeric text-muted-foreground">
-                    {shiftDuration(sh)}
-                  </TableCell>
-                  <TableCell className="numeric text-right">{money(sh.openingFloat)}</TableCell>
-                  {can("can_shift_counted_cash_view") && <TableCell className="numeric text-right">
-                    {(sh.closingFloat ?? sh.countedCash) == null
-                      ? "—"
-                      : money((sh.closingFloat ?? sh.countedCash) as number)}
-                  </TableCell>}
-                  {can("can_shift_variance_view") && <TableCell className="numeric text-right">
-                    {sh.varianceTotal == null ? (
-                      "—"
-                    ) : (
-                      <span
+        {can("can_shift_closing_history_view") && (
+          <section className="rounded-lg border border-border bg-card">
+            <h2 className="px-5 py-3 text-sm font-semibold">Shift history</h2>
+            <Separator />
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Cashier</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Opened</TableHead>
+                  <TableHead>Closed</TableHead>
+                  <TableHead>Closed by</TableHead>
+                  <TableHead>Terminal</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead className="text-right">Float</TableHead>
+                  {can("can_shift_counted_cash_view") && (
+                    <TableHead className="text-right">Closing float</TableHead>
+                  )}
+                  {can("can_shift_variance_view") && (
+                    <TableHead className="text-right">Over / short</TableHead>
+                  )}
+                  {can("can_shift_report_reprint") && (
+                    <TableHead className="text-right">Z report</TableHead>
+                  )}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {storeShifts.map((sh) => (
+                  <TableRow key={sh.id}>
+                    <TableCell>{sh.cashier}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
                         className={
-                          Math.abs(sh.varianceTotal) <= 0.005
-                            ? "text-muted-foreground"
-                            : sh.varianceTotal > 0
-                              ? "text-success"
-                              : "text-destructive"
+                          sh.closedAt
+                            ? "text-[10px]"
+                            : "border-success/40 bg-success/10 text-[10px] text-success"
                         }
                       >
-                        {money(sh.varianceTotal)}
-                      </span>
+                        {sh.closedAt ? "CLOSED" : "OPEN"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {new Date(sh.openedAt).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {sh.closedAt ? new Date(sh.closedAt).toLocaleString() : "open"}
+                      {sh.overdue && (
+                        <span className="ml-2 rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] text-destructive">
+                          OVERDUE
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{sh.closedBy ?? "—"}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {sh.terminalName ?? "—"}
+                    </TableCell>
+                    <TableCell className="numeric text-muted-foreground">
+                      {shiftDuration(sh)}
+                    </TableCell>
+                    <TableCell className="numeric text-right">{money(sh.openingFloat)}</TableCell>
+                    {can("can_shift_counted_cash_view") && (
+                      <TableCell className="numeric text-right">
+                        {(sh.closingFloat ?? sh.countedCash) == null
+                          ? "—"
+                          : money((sh.closingFloat ?? sh.countedCash) as number)}
+                      </TableCell>
                     )}
-                  </TableCell>}
-                  {can("can_shift_report_reprint") && <TableCell className="text-right">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => void printShiftReport(sh, storeSales, "zreport", {
-                        financialSummary: can("can_shift_financial_summary_view"),
-                        paymentBreakdown: can("can_shift_payment_breakdown_view"),
-                        expected: can("can_shift_expected_cash_view"),
-                        counted: can("can_shift_counted_cash_view"),
-                        variance: can("can_shift_variance_view"),
-                      })}
-                    >
-                      <Printer className="size-4" />
-                    </Button>
-                  </TableCell>}
-                </TableRow>
-              ))}
-              {!storeShifts.length && (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
-                    No shifts yet.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </section>}
+                    {can("can_shift_variance_view") && (
+                      <TableCell className="numeric text-right">
+                        {sh.varianceTotal == null ? (
+                          "—"
+                        ) : (
+                          <span
+                            className={
+                              Math.abs(sh.varianceTotal) <= 0.005
+                                ? "text-muted-foreground"
+                                : sh.varianceTotal > 0
+                                  ? "text-success"
+                                  : "text-destructive"
+                            }
+                          >
+                            {money(sh.varianceTotal)}
+                          </span>
+                        )}
+                      </TableCell>
+                    )}
+                    {can("can_shift_report_reprint") && (
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            void printShiftReport(sh, storeSales, "zreport", {
+                              financialSummary: can("can_shift_financial_summary_view"),
+                              paymentBreakdown: can("can_shift_payment_breakdown_view"),
+                              expected: can("can_shift_expected_cash_view"),
+                              counted: can("can_shift_counted_cash_view"),
+                              variance: can("can_shift_variance_view"),
+                            })
+                          }
+                        >
+                          <Printer className="size-4" />
+                        </Button>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))}
+                {!storeShifts.length && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                      No shifts yet.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </section>
+        )}
       </div>
 
       <ShiftCloseDialog open={closeOpen} onOpenChange={setCloseOpen} />

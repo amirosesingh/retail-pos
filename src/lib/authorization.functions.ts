@@ -15,6 +15,7 @@ const caller = z.object({
 });
 
 const rulesInput = caller.extend({ storeId: z.string().max(64).optional() });
+const peopleInput = caller.extend({ storeId: z.string().max(64).optional() });
 
 const saveRuleInput = caller.extend({
   actionKey: z.string().min(1).max(64),
@@ -28,6 +29,9 @@ const saveRuleInput = caller.extend({
   authorityLimits: z.record(z.string(), z.number().finite().nonnegative()).default({}),
   extraAuthority: z.record(z.string(), z.number().finite().nonnegative()).default({}),
   absoluteCeilings: z.record(z.string(), z.number().finite().nonnegative()).default({}),
+  approvalTimeoutMinutes: z.number().int().min(1).max(1440).default(15),
+  escalationAfterMinutes: z.number().int().min(1).max(1440).nullable().default(null),
+  escalationRoles: z.array(z.string().max(40)).max(20).default([]),
   requireReason: z.boolean().default(false),
   threshold: z.number().nullable().default(null),
 });
@@ -42,6 +46,7 @@ const pinInput = caller.extend({
   requestedAmount: z.number().finite().nonnegative().nullish(),
   requesterDirectLimit: z.number().finite().nonnegative().nullish(),
   valueUnit: z.enum(["percent", "currency", "quantity", "number"]).default("number"),
+  binding: z.string().min(1).max(80),
 });
 
 const snapshotLine = z.object({
@@ -119,25 +124,97 @@ const claimInput = caller.extend({
   snapshotHash: z.string().max(40).optional(),
 });
 
-type Caller = { id: string; name: string; role: string; isSupervisor: boolean };
+const mutationInput = caller.extend({
+  actionKey: z.string().min(1).max(64),
+  storeId: z.string().max(64),
+  payload: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  snapshotHash: z.string().max(40).default(""),
+  grantToken: z.string().max(4096).nullish(),
+});
+
+type Caller = {
+  id: string;
+  name: string;
+  role: string;
+  isSupervisor: boolean;
+  storeId: string;
+  canAccessAllBranches: boolean;
+  canManageRules: boolean;
+};
 
 /** Any signed-in till user: a staff account or a cashier PIN session. */
 async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
   if (data.accessToken) {
     const { verifyPosStaff } = await import("./secure-settings.server");
     const staff = await verifyPosStaff(data.accessToken);
-    return { id: staff.userId, name: staff.userId, role: staff.role, isSupervisor: staff.isAdmin };
+    return {
+      id: staff.userId,
+      name: staff.userId,
+      role: staff.role,
+      isSupervisor: staff.isAdmin,
+      storeId: staff.storeId,
+      canAccessAllBranches: staff.role === "admin",
+      canManageRules:
+        staff.role === "admin" ||
+        staff.role === "manager" ||
+        staff.permissions["can_access_pos_settings"] === true,
+    };
   }
   const sessionToken = data.cashierToken ?? data.terminalToken;
   if (sessionToken) {
     const { verifyCashierSession } = await import("./pos-session.server");
     const session = verifyCashierSession(sessionToken);
     if (session) {
-      return { id: session.id, name: session.username, role: "cashier", isSupervisor: false };
+      return {
+        id: session.id,
+        name: session.username,
+        role: "cashier",
+        isSupervisor: false,
+        storeId: session.storeId,
+        canAccessAllBranches: false,
+        canManageRules: false,
+      };
     }
   }
   throw new Error("Not signed in");
 }
+
+export function callerStore(
+  who: Pick<Caller, "storeId" | "canAccessAllBranches">,
+  requested?: string,
+): string {
+  const wanted = requested ?? "";
+  if (who.canAccessAllBranches) return wanted || who.storeId;
+  if (!who.storeId) throw new Error("Your account is not assigned to a branch");
+  if (wanted && wanted !== who.storeId) throw new Error("Cross-branch access is not allowed");
+  return who.storeId;
+}
+
+/** Final mutation boundary: re-read the current rule and verify a bound signed grant. */
+export const verifyBusinessAuthorization = createServerFn({ method: "POST" })
+  .validator((data: unknown) => mutationInput.parse(data))
+  .handler(async ({ data }) => {
+    try {
+      const who = await assertCaller(data);
+      const storeId = callerStore(who, data.storeId);
+      const { loadRuleRows } = await import("./authorization.server");
+      const { resolveRules, authorizationBinding } = await import("./authorization");
+      const { verifyOverrideGrant } = await import("./pos-rules.server");
+      const rule = resolveRules(await loadRuleRows(storeId), storeId)[data.actionKey];
+      if (!rule?.isEnabled || rule.mode === "none") return { ok: true as const, required: false };
+      const binding = authorizationBinding(data.payload, data.snapshotHash);
+      const grant = verifyOverrideGrant(data.grantToken ?? undefined, data.actionKey, {
+        storeId,
+        binding,
+      });
+      if (!grant) {
+        return { ok: false as const, error: "A valid authorization grant is required" };
+      }
+      return { ok: true as const, required: true, grant };
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message.slice(0, 300) };
+    }
+  });
 
 /** Effective rules for the caller's branch. */
 export const getAuthorizationRules = createServerFn({ method: "POST" })
@@ -145,26 +222,77 @@ export const getAuthorizationRules = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { loadRuleRows } = await import("./authorization.server");
     try {
-      await assertCaller(data);
-      const rows = await loadRuleRows(data.storeId ?? "");
+      const who = await assertCaller(data);
+      const rows = await loadRuleRows(callerStore(who, data.storeId));
       return { ok: true as const, rules: rows };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300), rules: [] };
     }
   });
 
-/** Administrators only; the write itself is made with service rights. */
+/** Active people available for named requester/approver assignments. */
+export const listAuthorizationPeople = createServerFn({ method: "POST" })
+  .validator((data: unknown) => peopleInput.parse(data))
+  .handler(async ({ data }) => {
+    try {
+      const who = await assertCaller(data);
+      if (!who.canManageRules) return { ok: false as const, error: "Settings permission required" };
+      // A global rules editor must be able to choose named approvers from all
+      // branches. Branch-scoped editors remain constrained to their own store.
+      const storeId =
+        who.canAccessAllBranches && !data.storeId ? "" : callerStore(who, data.storeId);
+      const { listAuthorizationPeopleRows } = await import("./authorization.server");
+      return { ok: true as const, people: await listAuthorizationPeopleRows(storeId) };
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message.slice(0, 300), people: [] };
+    }
+  });
+
+function ruleConfigurationError(data: z.infer<typeof saveRuleInput>): string | null {
+  if (data.mode === "none") return null;
+  if (!data.allowedRoles.length && !data.allowedUserIds.length) {
+    return "Select at least one role or named person who may authorise this action";
+  }
+  if (
+    (data.mode === "request" || data.mode === "either") &&
+    !data.requesterRoles.length &&
+    !data.requesterUserIds.length
+  ) {
+    return "Select at least one role or named person who may request approval";
+  }
+  if ((data.escalationAfterMinutes === null) !== (data.escalationRoles.length === 0)) {
+    return "Escalation needs both a delay and at least one backup approver role";
+  }
+  const badAuthorityKey = [
+    ...Object.keys(data.authorityLimits),
+    ...Object.keys(data.extraAuthority),
+    ...Object.keys(data.absoluteCeilings),
+  ].find((key) => !/^(role|user):[a-z0-9._@-]+$/i.test(key));
+  return badAuthorityKey
+    ? `Authority key "${badAuthorityKey}" must start with role: or user:`
+    : null;
+}
+
+/** Explicit POS-settings permission edits branch rules; only admins edit global defaults. */
 export const saveAuthorizationRule = createServerFn({ method: "POST" })
   .validator((data: unknown) => saveRuleInput.parse(data))
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
-      if (!who.isSupervisor) return { ok: false as const, error: "Administrators only" };
+      if (!who.canManageRules) {
+        return { ok: false as const, error: "POS settings permission is required" };
+      }
+      if (data.scopeType === "global" && !who.canAccessAllBranches) {
+        return { ok: false as const, error: "Only an administrator can change global rules" };
+      }
+      const configurationError = ruleConfigurationError(data);
+      if (configurationError) return { ok: false as const, error: configurationError };
+      const scopeId = data.scopeType === "branch" ? callerStore(who, data.scopeId) : "";
       const { saveRuleRow } = await import("./authorization.server");
       await saveRuleRow({
         actionKey: data.actionKey,
         scopeType: data.scopeType,
-        scopeId: data.scopeType === "branch" ? data.scopeId : "",
+        scopeId,
         mode: data.mode,
         allowedRoles: data.allowedRoles,
         allowedUserIds: data.allowedUserIds,
@@ -173,6 +301,9 @@ export const saveAuthorizationRule = createServerFn({ method: "POST" })
         authorityLimits: data.authorityLimits,
         extraAuthority: data.extraAuthority,
         absoluteCeilings: data.absoluteCeilings,
+        approvalTimeoutMinutes: data.approvalTimeoutMinutes,
+        escalationAfterMinutes: data.escalationAfterMinutes,
+        escalationRoles: data.escalationRoles,
         requireReason: data.requireReason,
         threshold: data.threshold,
         isEnabled: true,
@@ -215,8 +346,36 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
       };
     }
 
-    const rows = await loadRuleRows(data.storeId ?? "").catch(() => []);
-    const rule = resolveRules(rows, data.storeId ?? "")[data.actionKey];
+    let storeId: string;
+    try {
+      storeId = callerStore(who, data.storeId);
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message };
+    }
+    const rows = await loadRuleRows(storeId);
+    const rule = resolveRules(rows, storeId)[data.actionKey];
+    if (!rule || !rule.isEnabled || (rule.mode !== "pin" && rule.mode !== "either")) {
+      await writeLog({
+        actionKey: data.actionKey,
+        modeUsed: "pin",
+        requestedBy: who.id,
+        requestedByName: who.name,
+        authorizedBy: data.authorizerId,
+        authorizedByName: data.authorizerId,
+        storeId,
+        terminalId: data.terminalId ?? "",
+        outcome: "denied",
+        purpose: data.reason ?? "",
+        detail: { reason: "PIN is not the configured authorisation method" },
+      });
+      return {
+        ok: false as const,
+        error: "This rule requires an approval request; a PIN cannot authorise it",
+      };
+    }
+    if (rule.requireReason && (data.reason ?? "").trim().length < 3) {
+      return { ok: false as const, error: "A reason is required for this action" };
+    }
     const roles = rule?.allowedRoles ?? ["admin", "manager"];
     const users = rule?.allowedUserIds ?? [];
 
@@ -230,7 +389,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         requestedByName: who.name,
         authorizedBy: data.authorizerId,
         authorizedByName: data.authorizerId,
-        storeId: data.storeId ?? "",
+        storeId,
         terminalId: data.terminalId ?? "",
         outcome: "failed_pin",
         purpose: data.reason ?? "",
@@ -264,7 +423,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         authorizedBy: person.userId,
         authorizedByName: person.name,
         authorizerRole: person.role,
-        storeId: data.storeId ?? "",
+        storeId,
         terminalId: data.terminalId ?? "",
         outcome: "denied",
         purpose: data.reason ?? "",
@@ -288,12 +447,15 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
       authorizedBy: person.userId,
       authorizedByName: person.name,
       authorizerRole: person.role,
-      storeId: data.storeId ?? "",
+      storeId,
       terminalId: data.terminalId ?? "",
       outcome: "approved",
       purpose: data.reason ?? "",
       detail: { reason: data.reason ?? "", requested_amount: data.requestedAmount ?? null },
     });
+    if (!logged.ok) {
+      return { ok: false as const, error: "Approval audit could not be recorded" };
+    }
     return {
       ok: true as const,
       authorizer: { id: person.userId, name: person.name, role: person.role },
@@ -301,8 +463,9 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         action: data.actionKey,
         approvedBy: person.userId,
         role: person.role,
+        storeId,
+        binding: data.binding,
       }),
-      warning: logged.ok ? "" : "Approved, but the audit entry could not be written.",
     };
   });
 
@@ -318,38 +481,111 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
-      const { createRequest, markRequestNotified, loadRuleRows } =
-        await import("./authorization.server");
+      const {
+        createRequest,
+        markRequestNotified,
+        loadRuleRows,
+        listAuthorizationPeopleRows,
+        writeLog,
+        hasRequestAudit,
+      } = await import("./authorization.server");
       const { resolveRules, canRequestApproval } = await import("./authorization");
-      const rule = resolveRules(await loadRuleRows(data.storeId ?? ""), data.storeId ?? "")[
-        data.actionKey
-      ];
+      const storeId = callerStore(who, data.storeId);
+      const rule = resolveRules(await loadRuleRows(storeId), storeId)[data.actionKey];
       if (!canRequestApproval(rule, { userId: who.id, role: who.role })) {
         return {
           ok: false as const,
           error: "You are not allowed to request approval for this action",
         };
       }
+      if (rule.requireReason && data.reason.trim().length < 3) {
+        return { ok: false as const, error: "A reason is required for this request" };
+      }
       const { normalizeSnapshot, snapshotFingerprint } = await import("./ticket-snapshot");
       const snapshot = data.snapshot ? normalizeSnapshot(data.snapshot) : null;
+      const branchPeople = await listAuthorizationPeopleRows(storeId);
+      // Role authority is deliberately branch-bound. A specifically named
+      // person on a global rule may be in another branch, so include only
+      // those exact IDs from the company directory.
+      const namedIds = new Set(rule.allowedUserIds.map((id) => id.toLowerCase()));
+      const globalPeople =
+        rule.scopeType === "global" && namedIds.size
+          ? await listAuthorizationPeopleRows("")
+          : branchPeople;
+      const requesterId = who.id.toLowerCase();
+      const branchIds = new Set(branchPeople.map((person) => person.id.toLowerCase()));
+      const primaryApprovers = globalPeople.filter(
+        (person) =>
+          person.id.toLowerCase() !== requesterId &&
+          (namedIds.has(person.id.toLowerCase()) ||
+            (branchIds.has(person.id.toLowerCase()) &&
+              rule.allowedRoles.some((role) => role.toLowerCase() === person.role.toLowerCase()))),
+      );
+      if (!primaryApprovers.length) {
+        return {
+          ok: false as const,
+          error: "No active authorized approver is available for this branch and rule",
+        };
+      }
+      const escalationApprovers = branchPeople.filter(
+        (person) =>
+          person.id.toLowerCase() !== requesterId &&
+          rule.escalationRoles.some((role) => role.toLowerCase() === person.role.toLowerCase()),
+      );
+      const approvalRoute = {
+        primaryRoles: rule.allowedRoles,
+        primaryUserIds: rule.allowedUserIds,
+        primaryApprovers,
+        escalationAfterMinutes: rule.escalationAfterMinutes,
+        escalationRoles: rule.escalationRoles,
+        escalationApprovers,
+        ruleScopeType: rule.scopeType,
+        ruleScopeId: rule.scopeId,
+      };
       const created = await createRequest({
         id: data.requestId,
         actionKey: data.actionKey,
         requestedBy: who.id,
         requestedByName: who.name,
-        storeId: data.storeId ?? "",
+        storeId,
         terminalId: data.terminalId ?? "",
         reason: data.reason,
         payload: data.payload,
-        ttlHours: 24,
+        ttlHours: rule.approvalTimeoutMinutes / 60,
         requestedAmount: data.requestedAmount ?? snapshot?.requestedValue ?? null,
         requesterDirectLimit: data.requesterDirectLimit ?? null,
         valueUnit: data.valueUnit,
         snapshot,
         snapshotHash: snapshotFingerprint(snapshot),
         heldOrderId: data.heldOrderId ?? null,
+        approvalRoute,
       });
       const request = created.request;
+      const logged = (await hasRequestAudit(request.id))
+        ? { ok: true as const }
+        : await writeLog({
+            actionKey: request.actionKey,
+            modeUsed: "request",
+            requestId: request.id,
+            requestedBy: request.requestedBy,
+            requestedByName: request.requestedByName,
+            storeId: request.storeId,
+            terminalId: request.terminalId,
+            outcome: "requested",
+            purpose: request.reason,
+            detail: {
+              requested_amount: request.requestedAmount,
+              requester_direct_limit: request.requesterDirectLimit,
+              value_unit: request.valueUnit,
+              snapshot_hash: request.snapshotHash,
+              held_order_id: request.heldOrderId,
+              payload: request.payload,
+              approval_route: request.approvalRoute,
+            },
+          });
+      if (!logged.ok) {
+        return { ok: false as const, error: "The request could not be added to the audit trail" };
+      }
       // A retry after a lost response returns the existing UUID. Do not send
       // the approver a second WhatsApp message for the same logical request.
       if (created.created) {
@@ -387,7 +623,16 @@ async function notifyApprovers(
     entity_type: "authorization_request",
     entity_id: request.id,
     amount: request.requestedAmount,
-    meta: { action_key: request.actionKey, audience: "approvers" },
+    meta: {
+      action_key: request.actionKey,
+      audience: "configured_approvers",
+      audience_user_ids: request.approvalRoute?.primaryApprovers.map((person) => person.id) ?? [],
+      audience_roles: request.approvalRoute?.primaryRoles ?? [],
+      escalation_after_minutes: request.approvalRoute?.escalationAfterMinutes ?? null,
+      escalation_user_ids:
+        request.approvalRoute?.escalationApprovers.map((person) => person.id) ?? [],
+      escalation_roles: request.approvalRoute?.escalationRoles ?? [],
+    },
     client_event_id: `approval-req-${request.id}`,
     created_at: new Date().toISOString(),
   });
@@ -431,39 +676,110 @@ async function notifyRequester(
   });
 }
 
+/** Notify the originating till when its approval window closes unanswered. */
+async function notifyRequesterExpired(
+  request: import("./authorization").AuthorizationRequest,
+): Promise<void> {
+  const { writeActivityEvent } = await import("./activity-events.server");
+  const { AUTH_ACTION_LABEL } = await import("./authorization");
+  const label = AUTH_ACTION_LABEL[request.actionKey] ?? request.actionKey;
+  await writeActivityEvent({
+    event_type: "approval_expired",
+    severity: "warning",
+    title: `Expired — ${label}`,
+    message: "The approval window expired. The restricted action remains blocked.",
+    actor_id: null,
+    actor_name: "System",
+    actor_role: "system",
+    terminal_id: request.terminalId || null,
+    terminal_name: null,
+    store_id: request.storeId || null,
+    entity_type: "authorization_request",
+    entity_id: request.id,
+    amount: request.requestedAmount,
+    meta: { action_key: request.actionKey, audience: request.requestedBy },
+    client_event_id: `approval-expired-${request.id}`,
+    created_at: new Date().toISOString(),
+  });
+}
+
 /** The approvals queue, for anyone allowed to decide something. */
 export const listAuthorizationRequests = createServerFn({ method: "POST" })
   .validator((data: unknown) => listInput.parse(data))
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
-      const { listRequests, loadRuleRows } = await import("./authorization.server");
-      const { resolveRules, canAuthorizeAmount } = await import("./authorization");
-      const rules = resolveRules(
-        await loadRuleRows(data.storeId ?? "").catch(() => []),
-        data.storeId ?? "",
+      const { expirePendingRequests, listRequests, loadRuleRows, writeLog } =
+        await import("./authorization.server");
+      const { resolveRules, canDecideRequestAmount, isRoutedApprover } =
+        await import("./authorization");
+      const expired = await expirePendingRequests();
+      await Promise.all(
+        expired.map(async (request) => {
+          await writeLog({
+            actionKey: request.actionKey,
+            modeUsed: "request",
+            requestId: request.id,
+            requestedBy: request.requestedBy,
+            requestedByName: request.requestedByName,
+            storeId: request.storeId,
+            terminalId: request.terminalId,
+            outcome: "expired",
+            purpose: request.reason,
+            detail: {
+              expires_at: request.expiresAt,
+              approval_route: request.approvalRoute,
+            },
+          });
+          await notifyRequesterExpired(request).catch(() => undefined);
+          const { releaseDecidedHold } = await import("./record-edits.server");
+          await releaseDecidedHold(request.id).catch(() => undefined);
+        }),
       );
+      if (data.allBranches && !who.canAccessAllBranches) {
+        return {
+          ok: false as const,
+          error: "Only administrators can view approvals across branches",
+          requests: [] as never[],
+          rules: [] as never[],
+        };
+      }
+      const requestedStoreId = data.allBranches ? "" : callerStore(who, data.storeId);
+      // Fetch broadly on the trusted server, then return only branch-bound or
+      // explicitly routed rows. This lets a named cross-branch approver see
+      // their ticket without granting general cross-branch browsing.
       const all = await listRequests({
-        ...(data.storeId ? { storeId: data.storeId } : {}),
-        allBranches: data.allBranches,
+        allBranches: true,
         status: data.status,
       });
+      const rulesByStore = new Map<string, ReturnType<typeof resolveRules>>();
+      for (const branch of new Set(all.map((request) => request.storeId))) {
+        rulesByStore.set(branch, resolveRules(await loadRuleRows(branch), branch));
+      }
       // Someone only sees what they could act on, plus their own requests.
-      const visible = all.filter(
-        (r) =>
-          r.requestedBy.toLowerCase() === who.id.toLowerCase() ||
-          canAuthorizeAmount(
-            rules[r.actionKey],
-            { userId: who.id, role: who.role },
-            r.requestedAmount,
-            r.requesterDirectLimit,
-          ),
-      );
+      const visible = all.filter((r) => {
+        const sameBranch = r.storeId === requestedStoreId;
+        const explicitlyRouted = !!r.approvalRoute && isRoutedApprover(r, { userId: who.id });
+        const branchVisible = (data.allBranches && who.canAccessAllBranches) || sameBranch;
+        return (
+          (branchVisible && r.requestedBy.toLowerCase() === who.id.toLowerCase()) ||
+          ((branchVisible || explicitlyRouted) &&
+            isRoutedApprover(r, { userId: who.id }) &&
+            canDecideRequestAmount(
+              rulesByStore.get(r.storeId)?.[r.actionKey],
+              { userId: who.id, role: who.role },
+              r,
+            ))
+        );
+      });
+      const visibleBranches = new Set(visible.map((request) => request.storeId));
       return {
         ok: true as const,
         requests: visible,
         me: { id: who.id, role: who.role },
-        rules: Object.values(rules),
+        rules: Array.from(rulesByStore.entries())
+          .filter(([branch]) => visibleBranches.has(branch))
+          .flatMap(([, rules]) => Object.values(rules)),
       };
     } catch (e) {
       return {
@@ -481,12 +797,26 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
-      const { getRequest, decideRequest, loadRuleRows, writeLog } =
+      const { getRequest, decideRequest, loadRuleRows, writeLog, hasRequestAudit } =
         await import("./authorization.server");
-      const { resolveRules, canAuthorizeAmount, effectiveApprovalAuthority } =
-        await import("./authorization");
+      const {
+        resolveRules,
+        canAuthorizeAmount,
+        canAuthorizeEscalated,
+        canDecideRequestAmount,
+        effectiveApprovalAuthority,
+        isRoutedApprover,
+      } = await import("./authorization");
       const existing = await getRequest(data.id);
       if (!existing) return { ok: false as const, error: "That request no longer exists" };
+      const routed = isRoutedApprover(existing, { userId: who.id });
+      const explicitCrossBranch = !!existing.approvalRoute && routed;
+      if (!who.canAccessAllBranches && existing.storeId !== who.storeId && !explicitCrossBranch) {
+        return { ok: false as const, error: "Cross-branch access is not allowed" };
+      }
+      if (!(await hasRequestAudit(existing.id))) {
+        return { ok: false as const, error: "This request has no verified creation audit" };
+      }
       if (existing.status !== "pending") {
         return { ok: false as const, error: `This request is already ${existing.status}` };
       }
@@ -497,12 +827,15 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
       const requestedDecisionAmount = data.approve
         ? (data.approvedAmount ?? existing.requestedAmount ?? null)
         : existing.requestedAmount;
+      if (!routed) {
+        return { ok: false as const, error: "This request was not routed to you" };
+      }
       if (
-        !canAuthorizeAmount(
+        !canDecideRequestAmount(
           rules[existing.actionKey],
           { userId: who.id, role: who.role },
+          existing,
           requestedDecisionAmount,
-          existing.requesterDirectLimit,
         )
       ) {
         const authority = effectiveApprovalAuthority(
@@ -548,6 +881,14 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
       const approvedAmount = data.approve
         ? (data.approvedAmount ?? existing.requestedAmount ?? null)
         : null;
+      const currentRule = rules[existing.actionKey];
+      const usedEscalation =
+        !canAuthorizeAmount(
+          currentRule,
+          { userId: who.id, role: who.role },
+          requestedDecisionAmount,
+          existing.requesterDirectLimit,
+        ) && canAuthorizeEscalated(currentRule, { role: who.role }, existing.createdAt);
       const updated = await decideRequest({
         id: data.id,
         approve: data.approve,
@@ -569,7 +910,7 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
           request: latest,
         };
       }
-      await writeLog({
+      const decisionLogged = await writeLog({
         actionKey: existing.actionKey,
         modeUsed: "request",
         requestId: existing.id,
@@ -595,8 +936,22 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
           ),
           snapshot_hash: existing.snapshotHash,
           held_order_id: existing.heldOrderId,
+          approval_route: existing.approvalRoute,
+          escalated: usedEscalation,
+          escalation_eligible_at: existing.approvalRoute?.escalationAfterMinutes
+            ? new Date(
+                Date.parse(existing.createdAt) +
+                  existing.approvalRoute.escalationAfterMinutes * 60_000,
+              ).toISOString()
+            : null,
         },
       });
+      if (!decisionLogged.ok) {
+        return {
+          ok: false as const,
+          error: "Decision saved, but its audit entry failed; support must reconcile it before use",
+        };
+      }
       await notifyRequester(existing, data.approve, who, approvedAmount).catch(() => undefined);
       // A rejected request must not leave a posted record locked.
       if (!data.approve) {
@@ -622,10 +977,13 @@ export const claimAuthorizationRequest = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
-      const { getRequest, consumeRequest } = await import("./authorization.server");
+      const { getRequest, consumeRequest, hasApprovalAudit } =
+        await import("./authorization.server");
       const { signOverrideGrant } = await import("./pos-rules.server");
+      const { authorizationBinding } = await import("./authorization");
       const request = await getRequest(data.id);
       if (!request) return { ok: false as const, error: "That request no longer exists" };
+      callerStore(who, request.storeId);
       if (request.requestedBy.toLowerCase() !== who.id.toLowerCase()) {
         return { ok: false as const, error: "That request belongs to someone else" };
       }
@@ -637,8 +995,11 @@ export const claimAuthorizationRequest = createServerFn({ method: "POST" })
           approvedAmount: null,
         };
       }
+      if (!(await hasApprovalAudit(request.id))) {
+        return { ok: false as const, error: "This approval has no verified audit entry" };
+      }
       // The ticket must still be the one the approver looked at.
-      if (request.snapshotHash && data.snapshotHash && data.snapshotHash !== request.snapshotHash) {
+      if (request.snapshotHash && data.snapshotHash !== request.snapshotHash) {
         return {
           ok: false as const,
           error: "The ticket has changed since it was approved — send it again",
@@ -654,11 +1015,16 @@ export const claimAuthorizationRequest = createServerFn({ method: "POST" })
       return {
         ok: true as const,
         status: "approved" as const,
+        actionKey: request.actionKey,
         approvedAmount: request.approvedAmount ?? request.requestedAmount,
+        approvedPayload: request.approvedPayload,
         grantToken: signOverrideGrant({
           action: request.actionKey,
           approvedBy: request.decidedBy ?? "approval",
           role: "approval",
+          storeId: request.storeId,
+          binding: authorizationBinding(request.payload, request.snapshotHash),
+          requestId: request.id,
         }),
       };
     } catch (e) {
@@ -672,11 +1038,28 @@ export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
-      const { cancelRequest } = await import("./authorization.server");
+      const { cancelRequest, getRequest, writeLog } = await import("./authorization.server");
+      const request = await getRequest(data.id);
+      if (!request || request.requestedBy.toLowerCase() !== who.id.toLowerCase()) {
+        return { ok: false as const, error: "That request cannot be cancelled" };
+      }
+      callerStore(who, request.storeId);
       const done = await cancelRequest(data.id, who.id);
-      return done
+      if (!done) return { ok: false as const, error: "That request can no longer be cancelled" };
+      const logged = await writeLog({
+        actionKey: request.actionKey,
+        modeUsed: "request",
+        requestId: request.id,
+        requestedBy: request.requestedBy,
+        requestedByName: request.requestedByName,
+        storeId: request.storeId,
+        terminalId: request.terminalId,
+        outcome: "cancelled",
+        purpose: request.reason,
+      });
+      return logged.ok
         ? { ok: true as const }
-        : { ok: false as const, error: "That request can no longer be cancelled" };
+        : { ok: false as const, error: "Request cancelled, but its audit entry failed" };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300) };
     }
@@ -693,7 +1076,7 @@ export const setStaffAuthorizationPin = createServerFn({ method: "POST" })
       if (!who.isSupervisor) return { ok: false as const, error: "Administrators only" };
       const { setUserAuthorizationPin, writeLog } = await import("./authorization.server");
       await setUserAuthorizationPin(data.userId, data.pin, who.id);
-      await writeLog({
+      const logged = await writeLog({
         actionKey: "staff.set_pin",
         modeUsed: "admin_auto",
         outcome: "approved",
@@ -704,7 +1087,10 @@ export const setStaffAuthorizationPin = createServerFn({ method: "POST" })
         authorizerRole: who.role,
         purpose: `Set authorisation PIN for ${data.userId}`,
         detail: { target: data.userId },
-      }).catch(() => undefined);
+      });
+      if (!logged.ok) {
+        return { ok: false as const, error: "PIN was changed, but its audit entry failed" };
+      }
       return { ok: true as const };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300) };

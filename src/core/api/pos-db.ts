@@ -2435,6 +2435,8 @@ export const db = {
     note?: string;
     cancelledFrom?: string | null;
     heldAt: string;
+    status?: "held" | "waiting" | "ready";
+    pendingRequestId?: string | null;
   }) =>
     commitOps("Holding ticket", [
       {
@@ -2458,6 +2460,8 @@ export const db = {
             note: row.note ?? "",
             cancelled_from: row.cancelledFrom ?? null,
             held_at: row.heldAt,
+            status: row.status ?? "held",
+            pending_request_id: row.pendingRequestId ?? null,
           },
         ],
       },

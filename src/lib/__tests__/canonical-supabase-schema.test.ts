@@ -50,10 +50,13 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20260928074557_online_approval_cloud_primary.sql",
       "supabase/migrations/20260928082540_electron_direct_activity_preferences.sql",
       "supabase/migrations/20260928125000_enforce_terminal_platform_contract.sql",
+      "supabase/migrations/20260928150050_complete_authorization_workflow.sql",
+      "supabase/migrations/20260928150213_harden_authorization_routine_access.sql",
       "supabase/migrations/20260928155105_repair_cashier_idle_and_activity_clear.sql",
       "supabase/migrations/20260928183500_sync_activity_notification_preferences.sql",
       "supabase/migrations/20260928194500_fix_manager_override_audit_history.sql",
       "supabase/migrations/20260928213000_complete_authorization_history.sql",
+      "supabase/migrations/20260929001126_approval_route_audit_snapshot.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -68,7 +71,7 @@ describe("canonical Supabase SQL", () => {
     expect(migration).toContain("FUNCTION public.sync_apply_shift_notifications");
     expect(migration).toContain("FUNCTION public.sync_feed_shift_notifications");
     expect(migration).toContain(
-      "CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public.\"shift_notifications\"",
+      'CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."shift_notifications"',
     );
     for (const routine of [
       "pos_sync_push_batch",

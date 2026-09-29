@@ -56,6 +56,7 @@ function RulesSettings() {
     backendError,
     lastSyncedAt,
     refresh,
+    confirmSaved,
     status,
     statusText,
     source,
@@ -176,7 +177,11 @@ function RulesSettings() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           }).then(async (response) => ({
-            ...((await response.json().catch(() => ({}))) as { ok?: boolean; error?: string }),
+            ...((await response.json().catch(() => ({}))) as {
+              ok?: boolean;
+              error?: string;
+              snapshot?: unknown;
+            }),
             ok: response.ok,
           }))
         : await savePosRules({ data: payload });
@@ -192,7 +197,8 @@ function RulesSettings() {
         toast.error(res.error ?? "Could not save rules");
         return;
       }
-      await refresh();
+      if ("snapshot" in res && res.snapshot) await confirmSaved(res.snapshot);
+      else await refresh();
       toast.success("Rules saved");
     } catch (e) {
       if (!isWindowsShell()) {
@@ -239,8 +245,7 @@ function RulesSettings() {
 
         {!mayEdit && (
           <p className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
-            These rules are managed by an administrator. You can see what is enforced, but not
-            change it.
+            You can see what is enforced, but changing rules requires the POS settings permission.
           </p>
         )}
 
@@ -499,6 +504,7 @@ function RulesSettings() {
           storeId={currentStore.id}
           storeName={currentStore.name}
           mayEdit={mayEdit}
+          canEditGlobal={isAdmin}
         />
 
         <section className="space-y-4 rounded-lg border border-border bg-card p-5">

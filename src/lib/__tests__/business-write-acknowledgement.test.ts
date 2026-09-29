@@ -12,9 +12,9 @@ describe("business UI persistence acknowledgements", () => {
     expect(store.indexOf("await db.refundSale")).toBeLessThan(
       store.indexOf("sales: s.sales.map((x) => (x.id === saleId"),
     );
-    expect(receipts).toContain("await refundSale(selected.id)");
+    expect(receipts).toContain("await refundSale(selected.id, grant.grantToken)");
     expect(receipts).toContain("await changeSalePayment(selected.id");
-    expect(shifts).toContain("await refundSale(s.id)");
+    expect(shifts).toContain("await refundSale(s.id, grant.grantToken)");
   });
 
   it("awaits product and member acceptance before changing business state", () => {
