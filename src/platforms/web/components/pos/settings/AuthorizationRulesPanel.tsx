@@ -42,7 +42,6 @@ import {
   AUTH_MODES,
   defaultRule,
   isAuthorizationRuleConflict,
-  normalizeRule,
   resolveEditableRules,
   type AuthActionDef,
   type AuthMode,
@@ -763,9 +762,7 @@ export function AuthorizationRulesPanel({
         if (cancelled) return;
         if (!res.ok) setError(res.error ?? "");
         else setError("");
-        const rows = (res.rules ?? []).map((row) =>
-          normalizeRule({ ...row, action_key: row.actionKey }),
-        );
+        const rows = res.rules ?? [];
         setRules(
           resolveEditableRules(rows, branchScope ? "branch" : "global", branchScope ? storeId : ""),
         );

@@ -315,42 +315,56 @@ const asLimits = (raw: unknown): Record<string, number> => {
 /** Coerce an untrusted database row into a complete rule. */
 export function normalizeRule(input: unknown): AuthorizationRule {
   const row = (input ?? {}) as Record<string, unknown>;
-  const key = String(row["action_key"] ?? "") as AuthActionKey;
+  const field = (databaseName: string, applicationName: string) =>
+    row[databaseName] ?? row[applicationName];
+  const key = String(field("action_key", "actionKey") ?? "") as AuthActionKey;
   const base = defaultRule(key);
-  const scope = String(row["scope_type"] ?? "global");
+  const scope = String(field("scope_type", "scopeType") ?? "global");
   const threshold = row["threshold"];
   return {
     ...base,
     id: String(row["id"] ?? ""),
     scopeType: scope === "branch" || scope === "cluster" ? scope : "global",
-    scopeId: String(row["scope_id"] ?? ""),
+    scopeId: String(field("scope_id", "scopeId") ?? ""),
     mode: asMode(row["mode"]),
-    allowedRoles: asStrings(row["allowed_roles"]).length
-      ? asStrings(row["allowed_roles"])
+    allowedRoles: asStrings(field("allowed_roles", "allowedRoles")).length
+      ? asStrings(field("allowed_roles", "allowedRoles"))
       : base.allowedRoles,
-    allowedUserIds: asStrings(row["allowed_user_ids"]),
-    requesterRoles: asStrings(row["requester_roles"]).length
-      ? asStrings(row["requester_roles"])
+    allowedUserIds: asStrings(field("allowed_user_ids", "allowedUserIds")),
+    requesterRoles: asStrings(field("requester_roles", "requesterRoles")).length
+      ? asStrings(field("requester_roles", "requesterRoles"))
       : base.requesterRoles,
-    requesterUserIds: asStrings(row["requester_user_ids"]),
-    authorityLimits: asLimits(row["authority_limits"]),
-    extraAuthority: asLimits(row["extra_authority"]),
-    absoluteCeilings: asLimits(row["absolute_ceilings"]),
+    requesterUserIds: asStrings(field("requester_user_ids", "requesterUserIds")),
+    authorityLimits: asLimits(field("authority_limits", "authorityLimits")),
+    extraAuthority: asLimits(field("extra_authority", "extraAuthority")),
+    absoluteCeilings: asLimits(field("absolute_ceilings", "absoluteCeilings")),
     approvalTimeoutMinutes: Math.min(
       1440,
-      Math.max(1, Number(row["approval_timeout_minutes"]) || 15),
+      Math.max(1, Number(field("approval_timeout_minutes", "approvalTimeoutMinutes")) || 15),
     ),
     escalationAfterMinutes:
-      row["escalation_after_minutes"] == null
+      field("escalation_after_minutes", "escalationAfterMinutes") == null
         ? null
-        : Math.min(1440, Math.max(1, Number(row["escalation_after_minutes"]) || 1)),
-    escalationRoles: asStrings(row["escalation_roles"]),
-    requireReason: row["require_reason"] === true,
+        : Math.min(
+            1440,
+            Math.max(
+              1,
+              Number(field("escalation_after_minutes", "escalationAfterMinutes")) || 1,
+            ),
+          ),
+    escalationRoles: asStrings(field("escalation_roles", "escalationRoles")),
+    requireReason: field("require_reason", "requireReason") === true,
     threshold: threshold === null || threshold === undefined ? null : Number(threshold),
-    isEnabled: row["is_enabled"] !== false,
-    rowVersion: Math.max(0, Number(row["row_version"] ?? 0) || 0),
-    updatedAt: row["updated_at"] == null ? null : String(row["updated_at"]),
-    updatedBy: row["updated_by"] == null ? null : String(row["updated_by"]),
+    isEnabled: field("is_enabled", "isEnabled") !== false,
+    rowVersion: Math.max(0, Number(field("row_version", "rowVersion") ?? 0) || 0),
+    updatedAt:
+      field("updated_at", "updatedAt") == null
+        ? null
+        : String(field("updated_at", "updatedAt")),
+    updatedBy:
+      field("updated_by", "updatedBy") == null
+        ? null
+        : String(field("updated_by", "updatedBy")),
   };
 }
 
