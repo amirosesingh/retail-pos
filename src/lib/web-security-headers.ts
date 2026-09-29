@@ -42,6 +42,10 @@ export function contentSecurityPolicy(supabaseUrl?: string): string {
 /** Clone a response with the hosted application's security boundary applied. */
 export function withWebSecurityHeaders(response: Response, supabaseUrl?: string): Response {
   const headers = new Headers(response.headers);
+  // The POS owns one enforced policy. Drop any report-only policy inherited
+  // from an upstream renderer or proxy so browsers do not emit misleading
+  // violations for resources that the enforced policy intentionally allows.
+  headers.delete("Content-Security-Policy-Report-Only");
   if ((headers.get("content-type") ?? "").toLowerCase().includes("text/html")) {
     // HTML names the current build's content-hashed chunks. It must be
     // revalidated after every navigation/deployment; otherwise an old page

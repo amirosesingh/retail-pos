@@ -21,7 +21,11 @@ describe("hosted application security headers", () => {
     const secured = withWebSecurityHeaders(
       new Response("ready", {
         status: 202,
-        headers: { "content-type": "text/plain", "x-existing": "kept" },
+        headers: {
+          "content-type": "text/plain",
+          "content-security-policy-report-only": "connect-src 'none'",
+          "x-existing": "kept",
+        },
       }),
       "https://project-ref.supabase.co",
     );
@@ -29,6 +33,7 @@ describe("hosted application security headers", () => {
     expect(secured.status).toBe(202);
     expect(secured.headers.get("x-existing")).toBe("kept");
     expect(secured.headers.get("content-security-policy")).toContain("default-src 'self'");
+    expect(secured.headers.has("content-security-policy-report-only")).toBe(false);
     expect(secured.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await secured.text()).toBe("ready");
   });
