@@ -115,12 +115,14 @@ function Inventory() {
     stores,
     currentStore,
     upsertProduct,
+    upsertProductPriceOverride,
     removeProduct,
     removeProducts,
     patchProducts,
     archiveProducts,
     restoreProducts,
   } = usePos();
+  const [branchPriceOnly, setBranchPriceOnly] = useState(false);
   const { can } = useAuth();
   const { visible } = useVisibility();
   // Money columns need the reporting permission *and* the administrator's
@@ -294,10 +296,13 @@ function Inventory() {
             {canEdit && (
               <Dialog
                 open={!!draft}
-                onOpenChange={(o) => setDraft(o ? (draft ?? blank(currentStore.id)) : null)}
+                onOpenChange={(o) => {
+                  setDraft(o ? (draft ?? blank(currentStore.id)) : null);
+                  if (!o) setBranchPriceOnly(false);
+                }}
               >
                 <DialogTrigger asChild>
-                  <Button onClick={() => setDraft(blank(currentStore.id))}>
+                  <Button onClick={() => { setBranchPriceOnly(false); setDraft(blank(currentStore.id)); }}>
                     <Plus className="size-4" /> New product
                   </Button>
                 </DialogTrigger>
@@ -491,9 +496,22 @@ function Inventory() {
                           }
                         />
                       </Field>
+                      {state.products.some((product) => product.id === draft.id) && (
+                        <Field label="Price scope" className="sm:col-span-2">
+                          <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+                            <div>
+                              <p className="text-sm font-medium">Use these prices only at {currentStore.name}</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                Keeps the global product price unchanged. Only Price and E-com price are saved in this mode.
+                              </p>
+                            </div>
+                            <Switch checked={branchPriceOnly} onCheckedChange={setBranchPriceOnly} />
+                          </div>
+                        </Field>
+                      )}
                       <Field label="Cost">
                         <Input
-                          disabled={!canPrice}
+                          disabled={!canPrice || branchPriceOnly}
                           className="numeric"
                           value={draft.cost}
                           onChange={(e) =>
@@ -539,8 +557,11 @@ function Inventory() {
                           (autoSku ? nextSku(state.products.map((p) => p.sku)) : "");
                         try {
                           // Saved only once the write is confirmed stored.
-                          const target = await upsertProduct({ ...draft, sku });
+                          const target = branchPriceOnly
+                            ? await upsertProductPriceOverride(draft.id, draft.price, draft.ecomPrice)
+                            : await upsertProduct({ ...draft, sku });
                           setDraft(null);
+                          setBranchPriceOnly(false);
                           setSkuOverride(false);
                           toast.success(`Product saved — ${commitLabel(target).toLowerCase()}`);
                         } catch (e) {
@@ -735,7 +756,7 @@ function Inventory() {
                   <TableCell>
                     <button
                       className="text-left font-medium hover:text-primary"
-                      onClick={() => setDraft(p)}
+                      onClick={() => { setBranchPriceOnly(false); setDraft(p); }}
                     >
                       {p.name}
                     </button>

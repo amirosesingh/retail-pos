@@ -586,6 +586,8 @@ export type RelayCaller = {
   authUserId?: string | null;
   /** Signed claims from the proof, used as the no-round-trip fast path. */
   claims?: import("@/core/api/relay-claims.server").CallerClaims | null;
+  /** Verified physical terminal identity. Never accepted from a request body. */
+  terminalId?: string | null;
 };
 
 /**
@@ -604,6 +606,7 @@ export async function verifyRelayCaller(input: {
 }): Promise<RelayCaller> {
   let identity: RelayCaller | null = null;
   let terminalStore: string | null = null;
+  let terminalId: string | null = null;
   let endedSession = false;
 
   // A cryptographic session record is the strongest proof: it can be revoked
@@ -655,11 +658,13 @@ export async function verifyRelayCaller(input: {
       const row = rows[0];
       // A revoked token (remote reset, branch removed) never proves anything.
       if (row && !row.revoked_at && (row.status === "active" || row.status === "used")) {
+        terminalId = input.terminalToken;
         terminalStore = row.location_id ?? null;
         identity ??= {
           kind: "terminal",
           label: input.terminalToken,
           storeId: terminalStore,
+          terminalId,
         };
       }
     }
@@ -704,6 +709,6 @@ export async function verifyRelayCaller(input: {
   // A physical terminal's activation is the branch authority. A cashier or
   // administrator signed into that device may change permissions, but cannot
   // make the till read or write another branch's operational data.
-  if (terminalStore) identity = { ...identity, storeId: terminalStore };
+  if (terminalStore) identity = { ...identity, storeId: terminalStore, terminalId };
   return identity;
 }

@@ -228,20 +228,22 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     }
     const { serviceRest } = await import("@/core/api/pos-relay.server");
     const governanceBatch = body.sqlServerBatch && governanceTables.has(body.sqlServerBatch.table);
-    const rpc = governanceBatch ? ["pos_sync_push_governance_batch", {
+      const rpc = governanceBatch ? ["pos_sync_push_governance_batch", {
       p_batch_id:body.sqlServerBatch!.batchId,p_organization_id:body.sqlServerBatch!.organizationId,p_branch_id:branchId,
       p_table:body.sqlServerBatch!.table,p_rows:body.sqlServerBatch!.rows,
-    }] as const : body.sqlServerBatch ? ["pos_sync_push_batch", {
-      p_batch_id:body.sqlServerBatch.batchId,p_organization_id:body.sqlServerBatch.organizationId,p_branch_id:branchId,
-      p_table:body.sqlServerBatch.table,p_rows:body.sqlServerBatch.rows,p_changes:body.sqlServerBatch.changes,
-    }] as const : body.sqlServerAggregate ? ["pos_sync_push_aggregate", {
-      p_batch_id:body.sqlServerAggregate.batchId,p_organization_id:body.sqlServerAggregate.organizationId,p_branch_id:branchId,p_operations:body.sqlServerAggregate.operations,
-    }] as const : body.sqlServerPull ? ["pos_sync_pull", {
-      p_organization_id:body.sqlServerPull.organizationId,p_branch_id:branchId,p_after_cursor:body.sqlServerPull.cursor,p_limit:body.sqlServerPull.limit,
-    }] as const : body.sqlServerBootstrap ? ["pos_sync_bootstrap", {
-      p_organization_id:body.sqlServerBootstrap.organizationId,p_branch_id:branchId,p_table:body.sqlServerBootstrap.table,p_after_cursor:body.sqlServerBootstrap.cursor,p_history_days:body.sqlServerBootstrap.historyDays,p_limit:body.sqlServerBootstrap.limit,
-    }] as const : body.sqlServerCounts ? ["pos_sync_counts", {
-      p_organization_id:body.sqlServerCounts.organizationId,p_branch_id:branchId,p_history_days:body.sqlServerCounts.historyDays,
+      }] as const : body.sqlServerBatch ? ["pos_sync_push_batch", {
+        p_batch_id:body.sqlServerBatch.batchId,p_organization_id:body.sqlServerBatch.organizationId,p_branch_id:branchId,
+        p_terminal_id:scope.terminalId ?? "",
+        p_table:body.sqlServerBatch.table,p_rows:body.sqlServerBatch.rows,p_changes:body.sqlServerBatch.changes,
+      }] as const : body.sqlServerAggregate ? ["pos_sync_push_aggregate", {
+        p_batch_id:body.sqlServerAggregate.batchId,p_organization_id:body.sqlServerAggregate.organizationId,p_branch_id:branchId,p_operations:body.sqlServerAggregate.operations,
+        p_terminal_id:scope.terminalId ?? "",
+      }] as const : body.sqlServerPull ? ["pos_sync_pull", {
+        p_organization_id:body.sqlServerPull.organizationId,p_branch_id:branchId,p_terminal_id:scope.terminalId ?? "",p_after_cursor:body.sqlServerPull.cursor,p_limit:body.sqlServerPull.limit,
+      }] as const : body.sqlServerBootstrap ? ["pos_sync_bootstrap", {
+        p_organization_id:body.sqlServerBootstrap.organizationId,p_branch_id:branchId,p_terminal_id:scope.terminalId ?? "",p_table:body.sqlServerBootstrap.table,p_after_cursor:body.sqlServerBootstrap.cursor,p_history_days:body.sqlServerBootstrap.historyDays,p_limit:body.sqlServerBootstrap.limit,
+      }] as const : body.sqlServerCounts ? ["pos_sync_counts", {
+        p_organization_id:body.sqlServerCounts.organizationId,p_branch_id:branchId,p_terminal_id:scope.terminalId ?? "",p_history_days:body.sqlServerCounts.historyDays,
     }] as const : ["pos_old_receipt_lookup",{p_lookup:body.oldReceipt!.lookup,p_branch_id:branchId}] as const;
     const response=await serviceRest(`rpc/${rpc[0]}`,{method:"POST",body:JSON.stringify(rpc[1])});
     return new Response(await response.text(),{status:response.status,headers:{"content-type":"application/json"}});

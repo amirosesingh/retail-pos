@@ -24,6 +24,7 @@ import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { posFetch, serverOrigin } from "@/lib/server-origin";
 import { requestIdleTimeout } from "@/lib/idle-timeout-client";
 import { isWindowsShell } from "@/platform-config/features";
+import { broadcastSettingsChange } from "@/lib/sync-engine";
 
 export const Route = createFileRoute("/settings/rules")({
   head: () => ({
@@ -199,6 +200,7 @@ function RulesSettings() {
       }
       if ("snapshot" in res && res.snapshot) await confirmSaved(res.snapshot);
       else await refresh();
+      await broadcastSettingsChange("pos_store_settings");
       toast.success("Rules saved");
     } catch (e) {
       if (!isWindowsShell()) {

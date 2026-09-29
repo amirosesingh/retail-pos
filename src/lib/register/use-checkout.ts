@@ -23,7 +23,7 @@ import { db } from "@/core/api/pos-db";
 
 import { applyRounding, roundingOf } from "@/core/pricing/rounding";
 import { applyCombo, intakeTotals, newJobTag } from "@/lib/booking-charges";
-import { bookingRulesOf, lineUnitDiscount, paymentsLabel, r2, validateTenders } from "@/core/types/pos-types";
+import { bookingRulesOf, paymentsLabel, r2, validateTenders } from "@/core/types/pos-types";
 import type { Store, CartLine, Payment, PaymentMethod, Sale, Booking, Member } from "@/core/types/pos-types";
 import type { CartCoupon } from "@/lib/register/use-cart";
 import type { NewBooking } from "@/lib/pos-store";
@@ -372,8 +372,6 @@ export function useCheckout(deps: CheckoutDeps) {
     const activeMethodName = deps.getActiveMethodName();
     const needsTenderRef = deps.getNeedsTenderRef();
     const wa = state.settings.whatsapp;
-    const displayBase = deps.getDisplayBase();
-
     if (!activeShift) {
       toast.error("Open a shift before taking payment");
       return;

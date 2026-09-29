@@ -9,13 +9,6 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Table,
   TableBody,
   TableCell,
@@ -34,9 +27,7 @@ import { localShiftSessions, mergeSessions } from "@/lib/shift-sessions";
 import { commitLabel, loadShiftSessions } from "@/core/api/pos-db";
 import { notifyError } from "@/lib/notify";
 import type { ShiftSession } from "@/core/types/pos-types";
-import { parseAmount, parsePositiveAmount } from "@/core/pricing/amount";
-import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { assertShiftClosable } from "@/lib/pos-rules.functions";
+import { parsePositiveAmount } from "@/core/pricing/amount";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { useManagerGate } from "@/lib/manager-gate";
 import { ShiftCloseDialog } from "@/platforms/web/components/pos/ShiftCloseDialog";
@@ -59,12 +50,12 @@ export const Route = createFileRoute("/shifts")({
 });
 
 function Shifts() {
-  const { state, activeShift, openShift, closeShift, refundSale, currentStore, stores } = usePos();
+  const { state, activeShift, openShift, refundSale, currentStore, stores } = usePos();
   const { user, isAdmin, isSupervisor, can } = useAuth();
   const { requirePermission } = useUserPermissions();
   const { rules } = usePosRules();
   const { authorize, rules: authorizationRules } = useManagerGate();
-  const [cashier, setCashier] = useState(user?.name ?? "Cashier");
+  const [cashier] = useState(user?.name ?? "Cashier");
   // Never carry a suggested or previous drawer count into a new shift.
   const [float, setFloat] = useState("");
   const [closeOpen, setCloseOpen] = useState(false);

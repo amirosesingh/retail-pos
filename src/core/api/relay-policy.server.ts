@@ -30,6 +30,7 @@ export type RelayScope = {
   staffUserId?: string | null;
   /** Human name written onto rows so attribution is server-truth. */
   actorName?: string | null;
+  terminalId?: string | null;
   /** Claims answered the question but no account row backed them up. */
   stale?: boolean;
 };
@@ -241,6 +242,7 @@ export async function resolveRelayScope(caller: {
   email?: string | null;
   authUserId?: string | null;
   claims?: CallerClaims | null;
+  terminalId?: string | null;
 }): Promise<RelayScope> {
   const claims = caller.claims ?? null;
   const fastEnough = claims && claims.storeId && claims.role && claims.permissions !== null;
@@ -279,6 +281,7 @@ export async function resolveRelayScope(caller: {
     isSupervisor,
     staffUserId,
     actorName: row?.full_name ?? claims?.actorName ?? caller.label ?? null,
+    terminalId: caller.terminalId ?? null,
     // No account row and no usable claims: the caller can still be identified
     // but their permissions are unknown, so writes are refused as stale. A
     // proven supervisor is never stale — their role already answers it.

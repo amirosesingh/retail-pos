@@ -18,10 +18,10 @@ import { startDeviceSession, endDeviceSession } from "@/lib/user-sessions.functi
 import { loadSessionToken, saveSessionToken } from "@/lib/pos-credentials";
 import { toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
 import { activeBranchId, activeBranchName, bindTerminalBranch } from "@/lib/active-branch";
-import { cacheCredential, verifyCachedPin } from "@/lib/offline-credentials";
+import { verifyCachedPin } from "@/lib/offline-credentials";
 import { recordSignIn } from "@/lib/shift-attendance";
 import { endShiftSessions } from "@/lib/shift-sessions";
-import { isTokenRejection, notifySessionExpired, onSessionExpired } from "@/lib/session-expiry";
+import { notifySessionExpired, onSessionExpired } from "@/lib/session-expiry";
 import { validateStoredAuthSession } from "@/lib/auth-session-guard";
 import { setCentralAuthSessionPresent } from "@/lib/session-presence";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";

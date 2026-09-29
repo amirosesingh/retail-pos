@@ -4,6 +4,7 @@ const { branchPredicate } = require("../branch-scope.cjs");
 const MAX_BATCH_ROWS = 2000;
 const MAX_ENCODED_BYTES = 6 * 1024 * 1024;
 const MAX_QUERY_ROWS = 2000;
+const DEDICATED_WRITE_TABLES = new Set(["authorization_actions", "authorization_action_history"]);
 
 // Renderer reads are intentionally narrower than the synchronization registry.
 // Credentials, recovery secrets, PIN attempts and internal sync tables must
@@ -58,14 +59,44 @@ class OperationsRepository {
     }
     return ops;
   }
-  async apply(context, operations) {
+  assertWriteScope(ops, { branchId, terminalId }) {
+    if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
+    const branch = String(branchId);
+    const terminal = String(terminalId ?? "");
+    for (const op of ops) {
+      if (DEDICATED_WRITE_TABLES.has(op.table))
+        throw Object.assign(new Error("Authorization rules must use the protected authorization-rule writer."), { code: "EWRITE_SCOPE" });
+      const table = this.tables.get(op.table);
+      const names = new Set(table.columns.map((column) => column.sqlServerColumn));
+      const inserting = op.kind === "insert" || op.kind === "upsert";
+      for (const row of inserting ? (op.rows ?? (op.values ? [op.values] : [])) : []) {
+        if (names.has("store_id") && String(row.store_id ?? "") !== branch)
+          throw Object.assign(new Error(`${op.table} must belong to this terminal's branch.`), { code: "EWRITE_SCOPE" });
+        if (names.has("branch_id") && String(row.branch_id ?? "") !== branch)
+          throw Object.assign(new Error(`${op.table} must belong to this terminal's branch.`), { code: "EWRITE_SCOPE" });
+        if (names.has("from_store_id") && names.has("to_store_id") && ![row.from_store_id, row.to_store_id].map(String).includes(branch))
+          throw Object.assign(new Error("A stock transfer must involve this terminal's branch."), { code: "EWRITE_SCOPE" });
+      }
+      if (["settings_overrides", "settings_scoped"].includes(op.table)) {
+        const candidates = inserting ? (op.rows ?? (op.values ? [op.values] : [])) : [op.match ?? {}];
+        for (const row of candidates) {
+          const scope = String(row.scope ?? "").toLowerCase();
+          const scopeId = String(row.scope_id ?? "");
+          const allowed = (scope === "branch" && scopeId === branch) || (scope === "terminal" && terminal && scopeId === terminal);
+          if (!allowed) throw Object.assign(new Error("A terminal may only write its own branch or terminal settings."), { code: "EWRITE_SCOPE" });
+        }
+      }
+    }
+  }
+  async apply(context, operations, scope = {}) {
     const ops = this.validate(operations);
+    this.assertWriteScope(ops, scope);
     const sql = this.connectionManager.sql();
     const transaction = new sql.Transaction(this.pool());
     await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
     let affected = 0;
     try {
-      for (const op of ops) affected += await this.applyOperation(transaction, op);
+      for (const op of ops) affected += await this.applyOperation(transaction, op, scope);
       await transaction.commit();
       return { ok: true, context: String(context ?? "").slice(0, 160), affected };
     } catch (error) {
@@ -73,7 +104,7 @@ class OperationsRepository {
       throw error;
     }
   }
-  async applyOperation(transaction, op) {
+  async applyOperation(transaction, op, { branchId, terminalId } = {}) {
     const table = this.tables.get(op.table);
     const primary = table.columns.filter((column) => column.primaryKey).map((column) => column.sqlServerColumn);
     const hasRowVersion = table.columns.some((column) => column.sqlServerColumn === "row_version");
@@ -83,6 +114,8 @@ class OperationsRepository {
         const columns = Object.keys(row);
         if (!columns.length || primary.some((key) => row[key] == null)) throw new Error(`A complete stable key is required for ${op.table}.`);
         const request = new (this.connectionManager.sql().Request)(transaction);
+        request.input("branch", String(branchId));
+        request.input("terminal", String(terminalId ?? ""));
         columns.forEach((column, index) => request.input(`v${index}`, valueForSql(row[column])));
         const source = columns.map((column, index) => `@v${index} AS [${column}]`).join(",");
         const on = primary.map((column) => `target.[${column}]=source.[${column}]`).join(" AND ");
@@ -92,7 +125,9 @@ class OperationsRepository {
         const insertColumns = columns.map((column) => `[${column}]`).join(",");
         const insertValues = columns.map((column) => `source.[${column}]`).join(",");
         const matched = op.kind === "upsert" && update && !["immutable_reversal", "movement_delta"].includes(table.conflictRule) ? `WHEN MATCHED THEN UPDATE SET ${update}` : "";
-        const result = await request.query(`MERGE dbo.[${op.table}] WITH (HOLDLOCK) AS target USING (SELECT ${source}) AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT (${insertColumns}) VALUES (${insertValues});`);
+        const ownership = this.branchPredicate(table, "candidate");
+        const scopedSource = ownership ? `(SELECT * FROM (SELECT ${source}) candidate WHERE ${ownership})` : `(SELECT ${source})`;
+        const result = await request.query(`MERGE dbo.[${op.table}] WITH (HOLDLOCK) AS target USING ${scopedSource} AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT (${insertColumns}) VALUES (${insertValues});`);
         affected += result.rowsAffected?.reduce((sum, count) => sum + count, 0) ?? 0;
       }
       return affected;
@@ -100,17 +135,21 @@ class OperationsRepository {
     const match = Object.entries(op.match ?? {});
     if (!match.length) throw new Error("Update and delete operations require a match.");
     const request = new (this.connectionManager.sql().Request)(transaction);
+    request.input("branch", String(branchId));
+    request.input("terminal", String(terminalId ?? ""));
     match.forEach(([, value], index) => { if (value !== null) request.input(`m${index}`, valueForSql(value)); });
     const where = match.map(([column, value], index) => value === null ? `[${column}] IS NULL` : `[${column}]=@m${index}`).join(" AND ");
     let query;
-    if (op.kind === "delete") query = `DELETE FROM dbo.[${op.table}] WHERE ${where};`;
+    const ownership = this.branchPredicate(table, "source");
+    const restrictedWhere = `${where}${ownership ? ` AND (${ownership})` : ""}`;
+    if (op.kind === "delete") query = `DELETE source FROM dbo.[${op.table}] source WHERE ${restrictedWhere};`;
     else {
       const values = Object.entries(op.values ?? {}).filter(([column]) => column !== "row_version");
       if (!values.length && !hasRowVersion) return 0;
       values.forEach(([, value], index) => request.input(`v${index}`, valueForSql(value)));
       const setters = values.map(([column], index) => `[${column}]=@v${index}`);
       if (hasRowVersion) setters.push("[row_version]=COALESCE([row_version],0)+1");
-      query = `UPDATE dbo.[${op.table}] SET ${setters.join(",")} WHERE ${where};`;
+      query = `UPDATE source SET ${setters.join(",")} FROM dbo.[${op.table}] source WHERE ${restrictedWhere};`;
     }
     const result = await request.query(query);
     return result.rowsAffected?.reduce((sum, count) => sum + count, 0) ?? 0;
@@ -228,15 +267,57 @@ class OperationsRepository {
     if (!row) throw Object.assign(new Error("That shift does not exist in this branch."), { code: "ESHIFT" });
     return { ok: true, ...row };
   }
-  async snapshot(branchId = null) {
+  async snapshot(branchId = null, terminalId = null) {
     // Branch-owned rows are loaded separately with an explicit predicate.
     // The list below contains only shared catalogue/reference data.
     const names = ["products", "members", "stores", "promotions", "member_tiers"];
     const output = {};
     for (const name of names) {
       if (!this.tables.has(name)) continue;
-      const result = await this.pool().request().query(`SELECT TOP (2000) * FROM dbo.[${name}] ORDER BY [id];`);
+      const request = this.pool().request();
+      let sql = `SELECT TOP (2000) * FROM dbo.[${name}] ORDER BY [id];`;
+      if (name === "products") {
+        request.input("branch", branchId == null ? null : String(branchId));
+        sql = "SELECT TOP (2000) * FROM dbo.products WHERE NULLIF(owner_store_id,N'') IS NULL OR owner_store_id=@branch ORDER BY id;";
+      }
+      const result = await request.query(sql);
       output[name === "member_tiers" ? "tiers" : name] = result.recordset ?? [];
+    }
+    if (this.tables.has("settings_scoped") && output.products?.length) {
+      const request = this.pool().request()
+        .input("branch", branchId == null ? null : String(branchId))
+        .input("terminal", terminalId == null ? null : String(terminalId));
+      const result = await request.query(`
+        SELECT [scope],scope_id,[key],[value]
+        FROM dbo.settings_scoped
+        WHERE [key] LIKE N'product_price:%'
+          AND (LOWER([scope])=N'global'
+            OR (LOWER([scope])=N'branch' AND scope_id=@branch)
+            OR (LOWER([scope])=N'terminal' AND scope_id=@terminal)
+            OR (LOWER([scope])=N'cluster' AND scope_id=(
+              SELECT TOP (1) COALESCE(NULLIF(group_id,N''),N'default') FROM dbo.stores WHERE id=@branch
+            )));
+      `);
+      const priority = { global: 0, cluster: 1, branch: 2, terminal: 3 };
+      const byProduct = new Map();
+      for (const row of result.recordset ?? []) {
+        const productId = String(row.key ?? "").slice("product_price:".length);
+        if (!productId) continue;
+        let value = row.value;
+        try { if (typeof value === "string") value = JSON.parse(value); } catch { continue; }
+        if (!value || typeof value !== "object") continue;
+        const candidate = { priority: priority[String(row.scope ?? "").toLowerCase()] ?? -1, value };
+        if (candidate.priority >= (byProduct.get(productId)?.priority ?? -1)) byProduct.set(productId, candidate);
+      }
+      output.products = output.products.map((product) => {
+        const override = byProduct.get(String(product.id))?.value;
+        if (!override) return product;
+        return {
+          ...product,
+          ...(Number.isFinite(Number(override.selling_price)) ? { selling_price: Number(override.selling_price) } : {}),
+          ...(Number.isFinite(Number(override.ecom_price)) ? { ecom_price: Number(override.ecom_price) } : {}),
+        };
+      });
     }
     if (this.tables.has("pos_settings")) {
       const result = await this.pool().request().query("SELECT TOP (1) * FROM dbo.pos_settings ORDER BY id;");

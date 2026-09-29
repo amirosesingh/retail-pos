@@ -14,6 +14,7 @@ import { getPosCallerAuth } from "./pos-caller-auth";
 import { heldOrderForRequest, markHeldReady } from "./held-orders";
 import type { AuthorizationRequest } from "./authorization";
 import type { AuthPayload } from "./authorization";
+import { activeBranchId } from "./active-branch";
 
 export const CENTRE_POLL_MS = 45_000;
 let approvalChannelSequence = 0;
@@ -129,11 +130,19 @@ export function subscribeApprovals(onChange: () => void): () => void {
     // ActivityBell and the approvals page can be mounted together. Distinct
     // topics keep one subscriber from replacing the other's channel.
     const channel = supabaseExternal.channel(`pos-approval-centre:${++approvalChannelSequence}`);
-    channel.on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "authorization_requests" },
-      () => onChange(),
-    );
+    const branchId = activeBranchId();
+    if (branchId) {
+      channel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "authorization_requests",
+          filter: `store_id=eq.${branchId}`,
+        },
+        () => onChange(),
+      );
+    }
     channel.subscribe();
     return () => {
       void supabaseExternal.removeChannel(channel);

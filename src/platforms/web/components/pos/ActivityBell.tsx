@@ -70,7 +70,7 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
   const showActivity = isSupervisor;
   const allowed = true;
   const [centre, setCentre] = useState<CentreView | null>(null);
-  const [clearedTick, setClearedTick] = useState(0);
+  const [, setClearedTick] = useState(0);
   const meKey = user?.staffId ?? user?.name ?? "";
   const [rows, setRows] = useState<ActivityEvent[]>([]);
   const [unread, setUnread] = useState(0);

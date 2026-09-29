@@ -40,7 +40,6 @@ import { subscribeDataChange, subscribeSalesChange, subscribeSettingsChange } fr
 import {
   bookingBalance,
   lineDiscountTotal,
-  lineUnitDiscount,
   r2,
   type DiscountType,
 } from "@/core/types/pos-types";
@@ -331,6 +330,11 @@ type Ctx = {
 
   deleteBooking: (id: string, reason: string) => Promise<void>;
   upsertProduct: (product: Product) => Promise<CommitTarget>;
+  upsertProductPriceOverride: (
+    productId: string,
+    price: number,
+    ecomPrice?: number,
+  ) => Promise<CommitTarget>;
   /** Save a whole spreadsheet of products in batches, accounting for every row. */
   importProducts: (
     rows: ImportRow[],
@@ -530,8 +534,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
     authUserId,
     terminalUser,
     user,
-    isAdmin,
-    isSupervisor,
     can,
     ready: authReady,
   } = useAuth();
@@ -2259,6 +2261,37 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return target;
   }, []);
 
+  const upsertProductPriceOverride = useCallback(async (
+    productId: string,
+    price: number,
+    ecomPrice?: number,
+  ): Promise<CommitTarget> => {
+    const branchId = stateRef.current.currentStoreId;
+    if (!branchId) throw new Error("Choose a branch before saving a branch price.");
+    const current = stateRef.current.products.find((product) => product.id === productId);
+    if (!current) throw new Error("That product is no longer available.");
+    const target = await db.commitProductPriceOverride(
+      productId,
+      branchId,
+      price,
+      ecomPrice,
+      user?.staffId ?? null,
+    );
+    logger.log("inventory_edit", "Branch price override saved", "inventory", {
+      productId,
+      branchId,
+      previous: { price: current.price, ecomPrice: current.ecomPrice },
+      updated: { price, ecomPrice },
+    });
+    setState((snapshot) => ({
+      ...snapshot,
+      products: snapshot.products.map((product) =>
+        product.id === productId ? { ...product, price, ecomPrice } : product,
+      ),
+    }));
+    return target;
+  }, [user?.staffId]);
+
   /**
    * Saves a whole spreadsheet of products in batches.
    *
@@ -3484,6 +3517,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setBookingJobStatus,
     updateBookingSpecs,
     upsertProduct,
+    upsertProductPriceOverride,
     importProducts,
 
     removeProduct,

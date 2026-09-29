@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-09-29T05:31:09.466Z",
+  "generatedAt": "2026-09-29T06:29:03.256Z",
   "tables": [
     {
       "cloudTable": "coupon_campaigns",
@@ -9095,6 +9095,19 @@
           "foreignKeyTarget": null,
           "unique": false,
           "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "row_version",
+          "sqlServerColumn": "row_version",
+          "cloudType": "integer",
+          "sqlServerType": "int",
+          "nullable": false,
+          "defaultRule": "1",
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
         }
       ]
     },
@@ -13283,6 +13296,19 @@
           "sqlServerType": "datetimeoffset(7)",
           "nullable": false,
           "defaultRule": "SYSDATETIMEOFFSET()",
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "row_version",
+          "sqlServerColumn": "row_version",
+          "cloudType": "integer",
+          "sqlServerType": "int",
+          "nullable": false,
+          "defaultRule": "1",
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,

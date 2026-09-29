@@ -17,6 +17,7 @@ import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { platformName } from "@/platform-config/platform";
 import { localDb } from "@/core/local-db/local-db";
 import { commitOps } from "@/core/api/pos-db";
+import { activeBranchId } from "./active-branch";
 
 export type EventSeverity = "info" | "warning" | "critical";
 
@@ -782,9 +783,19 @@ export function subscribeActivityEvents(onChange: () => void): () => void {
   }
   try {
     const channel = supabaseExternal.channel("pos-activity-notifications");
-    channel.on("postgres_changes", { event: "*", schema: "public", table: "activity_events" }, () =>
-      onChange(),
-    );
+    const branchId = activeBranchId();
+    if (branchId) {
+      channel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "activity_events",
+          filter: `store_id=eq.${branchId}`,
+        },
+        () => onChange(),
+      );
+    }
     channel.subscribe();
     cleanups.push(() => {
       void supabaseExternal.removeChannel(channel);

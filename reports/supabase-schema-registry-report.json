@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-09-29T05:31:09.466Z",
+  "generatedAt": "2026-09-29T06:29:03.256Z",
   "tableCount": 69,
-  "columnCount": 1173,
+  "columnCount": 1175,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -4468,6 +4468,12 @@
           "declaration": "timestamp with time zone DEFAULT now() NOT NULL",
           "nullable": false,
           "hasDefault": true
+        },
+        {
+          "name": "row_version",
+          "declaration": "integer NOT NULL DEFAULT 1",
+          "nullable": false,
+          "hasDefault": true
         }
       ],
       "primaryKey": [
@@ -6507,6 +6513,12 @@
         {
           "name": "updated_at",
           "declaration": "timestamptz NOT NULL DEFAULT now()",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "row_version",
+          "declaration": "integer NOT NULL DEFAULT 1",
           "nullable": false,
           "hasDefault": true
         }

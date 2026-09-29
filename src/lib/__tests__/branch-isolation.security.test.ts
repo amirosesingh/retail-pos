@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { productVisibleAt } from "@/lib/branch-policy";
-import { productToRow, rowToProduct, rowToStore, storeToRow } from "@/core/api/pos-db";
+import { applyScopedProductPrices, productToRow, rowToProduct, rowToStore, storeToRow } from "@/core/api/pos-db";
 import { defaultSettings } from "@/lib/pos-seed";
 import type { AppSettings, Product, Store } from "@/core/types/pos-types";
 
@@ -103,5 +103,19 @@ describe("the owner survives a round trip through the database", () => {
     expect(row.private_catalogue).toBe(true);
     expect(rowToStore(row).privateCatalogue).toBe(true);
     expect(storeToRow({ ...branch, privateCatalogue: false }).private_catalogue).toBe(false);
+  });
+});
+
+describe("scoped product prices", () => {
+  it("uses the most specific applicable price without changing the global product", () => {
+    const base = product({ price: 100, ecomPrice: 105 });
+    const priced = applyScopedProductPrices([base], [
+      { scope: "GLOBAL", scope_id: "", key: "product_price:p1", value: { selling_price: 99 } },
+      { scope: "BRANCH", scope_id: "branch-a", key: "product_price:p1", value: { selling_price: 95 } },
+      { scope: "TERMINAL", scope_id: "terminal-a", key: "product_price:p1", value: { selling_price: 92 } },
+      { scope: "BRANCH", scope_id: "branch-b", key: "product_price:p1", value: { selling_price: 1 } },
+    ], { branchId: "branch-a", terminalId: "terminal-a" });
+    expect(priced[0].price).toBe(92);
+    expect(base.price).toBe(100);
   });
 });

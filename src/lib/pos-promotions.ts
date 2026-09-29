@@ -81,7 +81,6 @@ export function evaluatePromotions({
     }
   }
 
-  const thresholds = live
   const tierRule = live.find((p) => p.type === "tier");
   if (tierRule && member && base > 0) {
     const pct = tierRule.tierRates?.[member.tier] ?? 0;

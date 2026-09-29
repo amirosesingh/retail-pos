@@ -104,7 +104,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function AppShellFrame({ children }: { children: ReactNode }) {
   useEffect(() => startSyncEngine(), []);
-  const { activeShift, stores, currentStore, setCurrentStore, state, ready: dataReady } = usePos();
+  const { stores, currentStore, setCurrentStore, state, ready: dataReady } = usePos();
   useEffect(() => {
     setSharedPrinterPrefs(state.settings.integrations.receiptPrinter);
     return () => setSharedPrinterPrefs(undefined);
