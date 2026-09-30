@@ -714,7 +714,7 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
       const who = await assertCaller(data);
       const { expirePendingRequests, listRequests, loadRuleRows, writeLog } =
         await import("./authorization.server");
-      const { resolveRules, canDecideRequestAmount, isRoutedApprover } =
+      const { resolveRules, canViewAuthorizationRequest } =
         await import("./authorization");
       const expired = await expirePendingRequests();
       await Promise.all(
@@ -762,17 +762,12 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
       // Someone only sees what they could act on, plus their own requests.
       const visible = all.filter((r) => {
         const sameBranch = r.storeId === requestedStoreId;
-        const explicitlyRouted = !!r.approvalRoute && isRoutedApprover(r, { userId: who.id });
         const branchVisible = (data.allBranches && who.canAccessAllBranches) || sameBranch;
-        return (
-          (branchVisible && r.requestedBy.toLowerCase() === who.id.toLowerCase()) ||
-          ((branchVisible || explicitlyRouted) &&
-            isRoutedApprover(r, { userId: who.id }) &&
-            canDecideRequestAmount(
-              rulesByStore.get(r.storeId)?.[r.actionKey],
-              { userId: who.id, role: who.role },
-              r,
-            ))
+        return canViewAuthorizationRequest(
+          rulesByStore.get(r.storeId)?.[r.actionKey],
+          { userId: who.id, role: who.role },
+          r,
+          branchVisible,
         );
       });
       const visibleBranches = new Set(visible.map((request) => request.storeId));

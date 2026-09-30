@@ -4,6 +4,7 @@ import {
   canAuthorizeEscalated,
   canDecideRequestAmount,
   canRequestApproval,
+  canViewAuthorizationRequest,
   defaultRule,
   effectiveApprovalAuthority,
   isRoutedApprover,
@@ -218,6 +219,77 @@ describe("central relative approval authority", () => {
         { userId: "u1" },
       ),
     ).toBe(true);
+  });
+
+  it("keeps a notified approver's request visible when the current rule changes", () => {
+    const createdAt = "2026-09-30T00:00:00.000Z";
+    const routedRequest = {
+      createdAt,
+      requestedBy: "cashier-1",
+      requestedAmount: 25,
+      requesterDirectLimit: 10,
+      approvalRoute: {
+        primaryRoles: ["manager"],
+        primaryUserIds: ["manager-1"],
+        primaryApprovers: [{ id: "manager-1", name: "Manager", role: "manager" }],
+        escalationAfterMinutes: null,
+        escalationRoles: [],
+        escalationApprovers: [],
+        ruleScopeType: "branch" as const,
+        ruleScopeId: "store-1",
+      },
+    };
+    const changedRule = {
+      ...rule,
+      allowedRoles: [],
+      allowedUserIds: [],
+    };
+
+    expect(
+      canViewAuthorizationRequest(
+        changedRule,
+        { userId: "manager-1", role: "manager" },
+        routedRequest,
+        false,
+        Date.parse(createdAt),
+      ),
+    ).toBe(true);
+    expect(
+      canViewAuthorizationRequest(
+        changedRule,
+        { userId: "manager-2", role: "manager" },
+        routedRequest,
+        true,
+        Date.parse(createdAt),
+      ),
+    ).toBe(false);
+  });
+
+  it("uses current branch authority for legacy requests without a saved route", () => {
+    const legacyRequest = {
+      createdAt: new Date().toISOString(),
+      requestedBy: "cashier-1",
+      requestedAmount: 15,
+      requesterDirectLimit: 10,
+      approvalRoute: null,
+    };
+
+    expect(
+      canViewAuthorizationRequest(
+        rule,
+        { userId: "manager-1", role: "manager" },
+        legacyRequest,
+        true,
+      ),
+    ).toBe(true);
+    expect(
+      canViewAuthorizationRequest(
+        rule,
+        { userId: "manager-1", role: "manager" },
+        legacyRequest,
+        false,
+      ),
+    ).toBe(false);
   });
 
   it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(

@@ -755,6 +755,33 @@ export function isRoutedApprover(
   );
 }
 
+/**
+ * Decide whether a request belongs in this user's approval queue.
+ *
+ * A snapshotted route is the source of truth for queue membership because it
+ * is also what notification delivery uses. Current rules still govern legacy
+ * rows and are checked again when an approver submits a decision.
+ */
+export function canViewAuthorizationRequest(
+  rule: AuthorizationRule | undefined,
+  who: { userId?: string | null; role?: string | null },
+  request: Pick<
+    AuthorizationRequest,
+    | "approvalRoute"
+    | "createdAt"
+    | "requestedBy"
+    | "requestedAmount"
+    | "requesterDirectLimit"
+  >,
+  branchVisible: boolean,
+  now = Date.now(),
+): boolean {
+  const userId = (who.userId ?? "").toLowerCase();
+  if (branchVisible && userId && request.requestedBy.toLowerCase() === userId) return true;
+  if (request.approvalRoute) return isRoutedApprover(request, who, now);
+  return branchVisible && canDecideRequestAmount(rule, who, request);
+}
+
 /** An empty jsonb column means "no ticket was attached", not an empty ticket. */
 function normalizeSnapshotRow(raw: unknown): TicketSnapshot | null {
   if (!raw || typeof raw !== "object") return null;
