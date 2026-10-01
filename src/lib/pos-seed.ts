@@ -116,8 +116,6 @@ export const defaultSettings: AppSettings = {
   receipt: defaultReceiptSettings,
   payment: defaultPaymentDetails,
   whatsapp: defaultWhatsApp,
-  review: defaultReviewThresholds,
-  hours: defaultTradingHours,
   integrations: defaultIntegrations,
   visibility: { hidden: {} },
 };

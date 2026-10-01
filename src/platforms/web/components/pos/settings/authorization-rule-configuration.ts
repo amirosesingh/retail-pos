@@ -1,9 +1,13 @@
-import type { AuthActionDef, AuthorizationRule } from "@/lib/authorization";
+import {
+  includedAuthorizationUserIds,
+  type AuthActionDef,
+  type AuthorizationRule,
+} from "@/lib/authorization";
 
 const approverCount = (rule: AuthorizationRule) =>
   new Set([
     ...rule.allowedRoles.map((role) => `role:${role.toLowerCase()}`),
-    ...rule.allowedUserIds.map((id) => `user:${id.toLowerCase()}`),
+    ...includedAuthorizationUserIds(rule.allowedUserIds).map((id) => `user:${id.toLowerCase()}`),
   ]).size;
 
 export function authorizationRuleSummary(rule: AuthorizationRule): string {
@@ -24,7 +28,7 @@ export function validateAuthorizationRuleConfiguration(
 ): AuthorizationRuleValidationIssue[] {
   if (rule.mode === "none") return [];
   const issues: AuthorizationRuleValidationIssue[] = [];
-  if (!rule.allowedRoles.length && !rule.allowedUserIds.length) {
+  if (!rule.allowedRoles.length && !includedAuthorizationUserIds(rule.allowedUserIds).length) {
     issues.push({
       field: "authorizers",
       message: "Choose at least one person or role to authorise.",
@@ -37,7 +41,10 @@ export function validateAuthorizationRuleConfiguration(
     issues.push({ field: "threshold", message: `Enter ${action.thresholdLabel.toLowerCase()}.` });
   }
   if (rule.mode === "request" || rule.mode === "either") {
-    if (!rule.requesterRoles.length && !rule.requesterUserIds.length) {
+    if (
+      !rule.requesterRoles.length &&
+      !includedAuthorizationUserIds(rule.requesterUserIds).length
+    ) {
       issues.push({ field: "requesters", message: "Choose who may send an approval request." });
     }
     if (

@@ -9,7 +9,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { defaultSettings, emptyState } from "./pos-seed";
+import { defaultSettings, defaultTradingHours, emptyState } from "./pos-seed";
 import { describeDeleteBlock, type BlockedDelete } from "./product-delete";
 import type {
   AppSettings,
@@ -37,12 +37,7 @@ import type {
   TransferStatus,
 } from "@/core/types/pos-types";
 import { subscribeDataChange, subscribeSalesChange, subscribeSettingsChange } from "./sync-engine";
-import {
-  bookingBalance,
-  lineDiscountTotal,
-  r2,
-  type DiscountType,
-} from "@/core/types/pos-types";
+import { bookingBalance, lineDiscountTotal, r2, type DiscountType } from "@/core/types/pos-types";
 import { logger } from "./audit-log";
 import { receiptSequence } from "./report-data-safety";
 import { toast } from "sonner";
@@ -421,8 +416,6 @@ function mergeCloudSettings(cloudSettings: CloudSlice["settings"]): PosState["se
     receipt: { ...defaultSettings.receipt, ...cloudSettings?.receipt },
     payment: { ...defaultSettings.payment, ...cloudSettings?.payment },
     whatsapp: { ...defaultSettings.whatsapp, ...cloudSettings?.whatsapp },
-    review: { ...defaultSettings.review, ...cloudSettings?.review },
-    hours: { ...defaultSettings.hours, ...cloudSettings?.hours },
     integrations: { ...defaultSettings.integrations, ...cloudSettings?.integrations },
     visibility: { ...defaultSettings.visibility, ...cloudSettings?.visibility },
   };
@@ -530,13 +523,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setLoadPhase("loading");
     setReloadTick((v) => v + 1);
   }, []);
-  const {
-    authUserId,
-    terminalUser,
-    user,
-    can,
-    ready: authReady,
-  } = useAuth();
+  const { authUserId, terminalUser, user, can, ready: authReady } = useAuth();
   // Nothing is fetched from the cloud until a cashier or supervisor session
   // exists — visitors never receive catalogue, member or sales data.
   const signedIn = Boolean(authUserId || terminalUser);
@@ -593,7 +580,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         }
         return;
       }
-      if (typeof navigator !== "undefined" && !navigator.onLine && effectiveDatabaseMode() === "online") {
+      if (
+        typeof navigator !== "undefined" &&
+        !navigator.onLine &&
+        effectiveDatabaseMode() === "online"
+      ) {
         if (!cancelled) {
           setReady(true);
           setLoadPhase("ready");
@@ -1042,24 +1033,25 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // Electron must re-read SQL Server after the main worker pulls; a
         // cloud-only read would hide locally committed receipts still queued
         // for upload. Browser/mobile continue to read their cloud authority.
-        const refresh = effectiveDatabaseMode() === "online"
-          ? active
-            ? loadSalesPage(active, null, 500).then(({ rows }) => {
-                setState((current) =>
-                  applySalesSnapshot(current, rows, active, pendingSalesRef.current, true),
-                );
-              })
-            : loadCloudState().then((cloud) => {
-                setState((current) => applyCloud(current, cloud, pendingSalesRef.current));
-              })
-          : Promise.resolve(localDb()?.sync?.auto?.())
-              .catch(() => undefined)
-              .then(() => loadLocalSales())
-              .then((rows) => {
-                setState((current) =>
-                  applySalesSnapshot(current, rows, active, pendingSalesRef.current, true),
-                );
-              });
+        const refresh =
+          effectiveDatabaseMode() === "online"
+            ? active
+              ? loadSalesPage(active, null, 500).then(({ rows }) => {
+                  setState((current) =>
+                    applySalesSnapshot(current, rows, active, pendingSalesRef.current, true),
+                  );
+                })
+              : loadCloudState().then((cloud) => {
+                  setState((current) => applyCloud(current, cloud, pendingSalesRef.current));
+                })
+            : Promise.resolve(localDb()?.sync?.auto?.())
+                .catch(() => undefined)
+                .then(() => loadLocalSales())
+                .then((rows) => {
+                  setState((current) =>
+                    applySalesSnapshot(current, rows, active, pendingSalesRef.current, true),
+                  );
+                });
         void refresh.catch(() => {
           /* reconnect/pull remains the eventual-convergence fallback */
         });
@@ -1418,7 +1410,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         closedBy: user?.name ?? terminalUser?.name ?? activeShift.cashier,
         closedByStaffId: user?.staffId ?? terminalUser?.userCode,
         closedByRole: user?.role ?? terminalUser?.role,
-        overdue: isShiftOverdue(activeShift, stateRef.current.settings.hours),
+        overdue: isShiftOverdue(activeShift, defaultTradingHours),
       };
       // Electron's trusted shift-count/approval IPC has already committed the
       // financial close atomically. Rewriting it from the untrusted renderer
@@ -2130,58 +2122,58 @@ export function PosProvider({ children }: { children: ReactNode }) {
     async (saleId: string, grantToken?: string | null): Promise<boolean> => {
       const sale = stateRef.current.sales.find((x) => x.id === saleId);
       if (!sale || sale.refunded) return false;
-    const payload = {
-      sale_id: sale.id,
-      receipt_no: sale.receiptNo,
-      total: Math.abs(sale.total),
-    };
-    const [{ verifyBusinessAuthorization }, { getPosCallerAuth }] = await Promise.all([
-      import("./authorization-client"),
-      import("./pos-caller-auth"),
-    ]);
-    const authorization = await verifyBusinessAuthorization({
-      data: {
-        ...(await getPosCallerAuth()),
-        actionKey: "refund",
-        storeId: sale.storeId,
-        payload,
-        grantToken: grantToken ?? null,
-      },
-    });
-    if (!authorization.ok) throw new Error(authorization.error);
-    // The stable refund id makes a retry idempotent. Nothing visible changes
-    // until the authoritative gateway has accepted the refund.
-    await db.refundSale(saleId, `refund:${saleId}`);
-    logger.log("sale_event", "Sale refunded", "receipts", {
-      saleId,
-      receiptNo: sale.receiptNo,
-    });
-    {
-      const refunded = stateRef.current.sales.find((x) => x.id === saleId);
-      recordActivity({
-        type: "sale_refund",
-        severity: "critical",
-        title: "Refund issued",
-        message: `Bill ${refunded?.receiptNo ?? saleId} was refunded.`,
-        storeId: refunded?.storeId ?? null,
-        entityType: "sale",
-        entityId: refunded?.receiptNo ?? saleId,
-        amount: refunded?.total ?? null,
-      });
-    }
-    setState((s) => {
-      const sale = s.sales.find((x) => x.id === saleId);
-      if (!sale || sale.refunded) return s;
-      const products = s.products.map((p) => {
-        const line = sale.lines.find((l) => l.productId === p.id);
-        return line ? bump(p, sale.storeId, line.qty) : p;
-      });
-      return {
-        ...s,
-        products,
-        sales: s.sales.map((x) => (x.id === saleId ? { ...x, refunded: true } : x)),
+      const payload = {
+        sale_id: sale.id,
+        receipt_no: sale.receiptNo,
+        total: Math.abs(sale.total),
       };
-    });
+      const [{ verifyBusinessAuthorization }, { getPosCallerAuth }] = await Promise.all([
+        import("./authorization-client"),
+        import("./pos-caller-auth"),
+      ]);
+      const authorization = await verifyBusinessAuthorization({
+        data: {
+          ...(await getPosCallerAuth()),
+          actionKey: "refund",
+          storeId: sale.storeId,
+          payload,
+          grantToken: grantToken ?? null,
+        },
+      });
+      if (!authorization.ok) throw new Error(authorization.error);
+      // The stable refund id makes a retry idempotent. Nothing visible changes
+      // until the authoritative gateway has accepted the refund.
+      await db.refundSale(saleId, `refund:${saleId}`);
+      logger.log("sale_event", "Sale refunded", "receipts", {
+        saleId,
+        receiptNo: sale.receiptNo,
+      });
+      {
+        const refunded = stateRef.current.sales.find((x) => x.id === saleId);
+        recordActivity({
+          type: "sale_refund",
+          severity: "critical",
+          title: "Refund issued",
+          message: `Bill ${refunded?.receiptNo ?? saleId} was refunded.`,
+          storeId: refunded?.storeId ?? null,
+          entityType: "sale",
+          entityId: refunded?.receiptNo ?? saleId,
+          amount: refunded?.total ?? null,
+        });
+      }
+      setState((s) => {
+        const sale = s.sales.find((x) => x.id === saleId);
+        if (!sale || sale.refunded) return s;
+        const products = s.products.map((p) => {
+          const line = sale.lines.find((l) => l.productId === p.id);
+          return line ? bump(p, sale.storeId, line.qty) : p;
+        });
+        return {
+          ...s,
+          products,
+          sales: s.sales.map((x) => (x.id === saleId ? { ...x, refunded: true } : x)),
+        };
+      });
       return true;
     },
     [],
@@ -2261,36 +2253,35 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return target;
   }, []);
 
-  const upsertProductPriceOverride = useCallback(async (
-    productId: string,
-    price: number,
-    ecomPrice?: number,
-  ): Promise<CommitTarget> => {
-    const branchId = stateRef.current.currentStoreId;
-    if (!branchId) throw new Error("Choose a branch before saving a branch price.");
-    const current = stateRef.current.products.find((product) => product.id === productId);
-    if (!current) throw new Error("That product is no longer available.");
-    const target = await db.commitProductPriceOverride(
-      productId,
-      branchId,
-      price,
-      ecomPrice,
-      user?.staffId ?? null,
-    );
-    logger.log("inventory_edit", "Branch price override saved", "inventory", {
-      productId,
-      branchId,
-      previous: { price: current.price, ecomPrice: current.ecomPrice },
-      updated: { price, ecomPrice },
-    });
-    setState((snapshot) => ({
-      ...snapshot,
-      products: snapshot.products.map((product) =>
-        product.id === productId ? { ...product, price, ecomPrice } : product,
-      ),
-    }));
-    return target;
-  }, [user?.staffId]);
+  const upsertProductPriceOverride = useCallback(
+    async (productId: string, price: number, ecomPrice?: number): Promise<CommitTarget> => {
+      const branchId = stateRef.current.currentStoreId;
+      if (!branchId) throw new Error("Choose a branch before saving a branch price.");
+      const current = stateRef.current.products.find((product) => product.id === productId);
+      if (!current) throw new Error("That product is no longer available.");
+      const target = await db.commitProductPriceOverride(
+        productId,
+        branchId,
+        price,
+        ecomPrice,
+        user?.staffId ?? null,
+      );
+      logger.log("inventory_edit", "Branch price override saved", "inventory", {
+        productId,
+        branchId,
+        previous: { price: current.price, ecomPrice: current.ecomPrice },
+        updated: { price, ecomPrice },
+      });
+      setState((snapshot) => ({
+        ...snapshot,
+        products: snapshot.products.map((product) =>
+          product.id === productId ? { ...product, price, ecomPrice } : product,
+        ),
+      }));
+      return target;
+    },
+    [user?.staffId],
+  );
 
   /**
    * Saves a whole spreadsheet of products in batches.
@@ -2902,8 +2893,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
             receipt: { ...prev.receipt, ...(patch.receipt ?? {}) },
             payment: { ...prev.payment, ...(patch.payment ?? {}) },
             whatsapp: { ...prev.whatsapp, ...(patch.whatsapp ?? {}) },
-            review: { ...prev.review, ...(patch.review ?? {}) },
-            hours: { ...prev.hours, ...(patch.hours ?? {}) },
             integrations: { ...prev.integrations, ...(patch.integrations ?? {}) },
             visibility: { ...prev.visibility, ...(patch.visibility ?? {}) },
           })
@@ -2920,8 +2909,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
         receipt: { ...s.settings.receipt, ...(patch.receipt ?? {}) },
         payment: { ...s.settings.payment, ...(patch.payment ?? {}) },
         whatsapp: { ...s.settings.whatsapp, ...(patch.whatsapp ?? {}) },
-        review: { ...s.settings.review, ...(patch.review ?? {}) },
-        hours: { ...s.settings.hours, ...(patch.hours ?? {}) },
         integrations: { ...s.settings.integrations, ...(patch.integrations ?? {}) },
         visibility: { ...s.settings.visibility, ...(patch.visibility ?? {}) },
       },

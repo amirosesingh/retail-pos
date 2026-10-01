@@ -205,7 +205,7 @@ describe("per-user notification state", () => {
     );
   });
 
-  it("mirrors local SQL clear and reopen updates through the sync contract", () => {
+  it("mirrors local SQL clear updates through the sync contract", () => {
     const generator = readFileSync("scripts/generate-supabase-sync-contract.cjs", "utf8");
     const migration = readFileSync(
       "supabase/migrations/20260928183500_sync_activity_notification_preferences.sql",
@@ -219,7 +219,6 @@ describe("per-user notification state", () => {
     expect(migration).toContain("ON CONFLICT (id) DO UPDATE");
     expect(migration).toContain("SET cleared_by = EXCLUDED.cleared_by");
     expect(bell).toContain("...row.clearedBy, meKey");
-    expect(bell).toContain("row.clearedBy.filter");
   });
 
   it("moves full history into Reports and uses compact dismissible stacked popups", () => {
@@ -236,7 +235,11 @@ describe("per-user notification state", () => {
     expect(styles).toContain("@keyframes activity-toast-in");
     expect(bell).toContain("<AnimatedList");
     expect(bell).toContain("activity-notification-row");
-    expect(bell).toContain("activity-notification-history-row");
+    expect(bell).not.toContain('value="history"');
+    expect(bell).toContain('value="attention"');
+    expect(bell).toContain('value="warning"');
+    expect(bell).toContain('value="ready"');
+    expect(bell).toContain('value="activity"');
     expect(styles).toContain("@keyframes activity-row-out");
     expect(styles).toContain('.ui-animated-list-item[data-state="exiting"]');
     expect(styles).toContain("prefers-reduced-motion: reduce");

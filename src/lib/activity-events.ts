@@ -19,6 +19,7 @@ import { localDb } from "@/core/local-db/local-db";
 import { commitOps } from "@/core/api/pos-db";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { activeBranchId } from "./active-branch";
+import { activityAudienceIdentity, activityVisibleTo } from "./activity-audience";
 
 export type EventSeverity = "info" | "warning" | "critical";
 
@@ -297,7 +298,8 @@ export type ActivityFilter = {
   sortDirection?: "asc" | "desc";
 };
 
-export type ActivityEventPage = { rows: ActivityEvent[]; total: number };
+/** `total` is a lower bound when `totalExact` is false. */
+export type ActivityEventPage = { rows: ActivityEvent[]; total: number; totalExact?: boolean };
 
 type ActivityProfile = {
   role: string;
@@ -319,36 +321,71 @@ async function listActivityEventPageDirect(
   const profile = (profileResult.data?.[0] ?? null) as ActivityProfile | null;
   if (!profile?.is_active) throw new Error("A signed-in staff account is required");
 
-  let query = supabaseExternal.from("activity_events").select("*", { count: "exact" });
-  if (filter.types?.length) query = query.in("event_type", filter.types);
-  if (filter.severities?.length) query = query.in("severity", filter.severities);
-
   const branch = profile.store_id?.trim() || "";
   const isAdmin = profile.role === "admin";
   if (branch && !isAdmin) {
     if (filter.storeId && filter.storeId !== branch) throw new Error("Branch access denied");
-    query = query.eq("store_id", branch);
-  } else if (filter.storeId) query = query.eq("store_id", filter.storeId);
-
-  if (filter.actor) query = query.ilike("actor_name", `%${filter.actor.replace(/[,*()]/g, "")}%`);
-  if (filter.query) {
-    const term = filter.query.replace(/[,*()]/g, "");
-    if (term)
-      query = query.or(
-        `title.ilike.%${term}%,message.ilike.%${term}%,actor_name.ilike.%${term}%,entity_id.ilike.%${term}%`,
-      );
   }
-  if (filter.from) query = query.gte("created_at", filter.from);
-  if (filter.to) query = query.lte("created_at", filter.to);
+
+  const buildQuery = () => {
+    let query = supabaseExternal.from("activity_events").select("*");
+    if (filter.types?.length) query = query.in("event_type", filter.types);
+    if (filter.severities?.length) query = query.in("severity", filter.severities);
+    if (branch && !isAdmin) query = query.eq("store_id", branch);
+    else if (filter.storeId) query = query.eq("store_id", filter.storeId);
+    if (filter.actor) query = query.ilike("actor_name", `%${filter.actor.replace(/[,*()]/g, "")}%`);
+    if (filter.query) {
+      const term = filter.query.replace(/[,*()]/g, "");
+      if (term)
+        query = query.or(
+          `title.ilike.%${term}%,message.ilike.%${term}%,actor_name.ilike.%${term}%,entity_id.ilike.%${term}%`,
+        );
+    }
+    if (filter.from) query = query.gte("created_at", filter.from);
+    if (filter.to) query = query.lte("created_at", filter.to);
+    return query
+      .order(filter.sortBy ?? "created_at", {
+        ascending: filter.sortDirection === "asc",
+      })
+      .order("id", { ascending: true });
+  };
 
   const offset = filter.offset ?? 0;
   const limit = filter.limit ?? 200;
-  const result = await query
-    .order(filter.sortBy ?? "created_at", { ascending: filter.sortDirection === "asc" })
-    .range(offset, offset + limit - 1);
-  if (result.error) throw result.error;
-  const rows = (result.data ?? []).map((row) => map(row as Row));
-  return { rows, total: result.count ?? rows.length };
+  const target = offset + limit + 1;
+  const identity = activityAudienceIdentity();
+  const visibleRows: ActivityEvent[] = [];
+  const batchSize = 1000;
+  let sourceOffset = 0;
+  let exhausted = false;
+  // Advance the source cursor until this visible page is filled. Each database
+  // read stays bounded while sparse private audiences can still page beyond
+  // the first 10,000 source rows.
+  while (visibleRows.length < target) {
+    const result = await buildQuery().range(sourceOffset, sourceOffset + batchSize - 1);
+    if (result.error) throw result.error;
+    const batch = (result.data ?? []).map((row) => map(row as Row));
+    visibleRows.push(
+      ...(identity
+        ? batch.filter((row) =>
+            activityVisibleTo(
+              { store_id: row.storeId, terminal_id: row.terminalName, meta: row.meta },
+              identity,
+            ),
+          )
+        : batch),
+    );
+    if (batch.length < batchSize) {
+      exhausted = true;
+      break;
+    }
+    sourceOffset += batch.length;
+  }
+  return {
+    rows: visibleRows.slice(offset, offset + limit),
+    total: visibleRows.length,
+    totalExact: exhausted,
+  };
 }
 
 /** Electron-only fallback. The authenticated hosted API remains primary. */
@@ -361,6 +398,14 @@ async function listLocalActivityEventPage(filter: ActivityFilter): Promise<Activ
   });
   if (!result.ok) throw new Error(result.error ?? "The local notification log could not be read.");
   let rows = (result.rows ?? []).map((row) => map(row as Row));
+  const identity = activityAudienceIdentity();
+  if (identity)
+    rows = rows.filter((row) =>
+      activityVisibleTo(
+        { store_id: row.storeId, terminal_id: row.terminalName, meta: row.meta },
+        identity,
+      ),
+    );
   if (filter.types?.length) rows = rows.filter((row) => filter.types!.includes(row.type));
   if (filter.severities?.length)
     rows = rows.filter((row) => filter.severities!.includes(row.severity));
@@ -492,6 +537,7 @@ export async function listActivityEventPage(
       ok?: boolean;
       rows?: Row[];
       total?: number;
+      totalExact?: boolean;
       error?: string;
     };
     if (!response.ok || !result.ok) {
@@ -504,7 +550,11 @@ export async function listActivityEventPage(
         status: response.status,
       });
     }
-    return { rows: (result.rows ?? []).map(map), total: Number(result.total ?? 0) || 0 };
+    return {
+      rows: (result.rows ?? []).map(map),
+      total: Number(result.total ?? 0) || 0,
+      totalExact: result.totalExact !== false,
+    };
   } catch (error) {
     if (looksMissing(error)) {
       logMissing = true;

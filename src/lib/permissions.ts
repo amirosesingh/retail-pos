@@ -47,6 +47,9 @@ export const PERMISSION_GROUPS = [
       "can_give_discount",
       "can_void_item",
       "can_hold_cart",
+      "can_view_held_orders",
+      "can_reopen_held_order",
+      "can_discard_held_order",
       "can_process_refund",
       "can_process_exchange",
       "can_reprint_bill",
@@ -138,6 +141,9 @@ export type PermissionKey =
   | "can_give_discount"
   | "can_void_item"
   | "can_hold_cart"
+  | "can_view_held_orders"
+  | "can_reopen_held_order"
+  | "can_discard_held_order"
   | "can_process_refund"
   | "can_process_exchange"
   | "can_reprint_bill"
@@ -202,6 +208,9 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_give_discount: "Give discounts",
   can_void_item: "Void a line item",
   can_hold_cart: "Hold / park a cart",
+  can_view_held_orders: "View held tickets",
+  can_reopen_held_order: "Reopen a held ticket",
+  can_discard_held_order: "Discard a held ticket",
   can_process_refund: "Process refunds",
   can_process_exchange: "Process exchanges",
   can_reprint_bill: "Reprint / re-issue a bill",
@@ -260,6 +269,8 @@ export const CASHIER_PERMISSIONS: StaffPermissions = build([
   "can_shift_cash_count",
   "can_process_sale",
   "can_hold_cart",
+  "can_view_held_orders",
+  "can_reopen_held_order",
   "can_reprint_bill",
   "can_manage_bookings",
   "can_create_booking",
@@ -315,11 +326,7 @@ export const rolePermissions = (role: StaffRole): StaffPermissions =>
 // Legacy flag aliases used by older screens / nav config.
 // --------------------------------------------------------------------------
 export type LegacyFlag =
-  | "financials"
-  | "products"
-  | "ecommerce"
-  | "can_refund"
-  | "can_open_drawer_manual";
+  "financials" | "products" | "ecommerce" | "can_refund" | "can_open_drawer_manual";
 
 const LEGACY_MAP: Record<LegacyFlag, PermissionKey> = {
   financials: "can_view_sales_reports",
@@ -347,6 +354,15 @@ export function normalizePermissions(
     const resolved = resolvePermission(key as PermissionFlag);
     if (resolved in base) base[resolved] = !!value;
   }
+  // Existing cashier matrices predate the split hold controls. Preserve their
+  // current workflow once, while every subsequently saved matrix carries the
+  // three independent choices explicitly.
+  if (limited && !("can_view_held_orders" in raw))
+    base.can_view_held_orders = raw["can_hold_cart"] === true;
+  if (limited && !("can_reopen_held_order" in raw))
+    base.can_reopen_held_order = raw["can_hold_cart"] === true;
+  if (limited && !("can_discard_held_order" in raw))
+    base.can_discard_held_order = raw["can_void_cart"] === true;
   // Terminal registration belongs to supervisors and administrators even when
   // an older stored matrix still carries the former supervisor default (false).
   if (role === "supervisor") base.can_manage_terminals = true;
@@ -371,7 +387,8 @@ export type PermissionSubject =
 const matrixOf = (subject: PermissionSubject): Record<string, unknown> => {
   if (!subject) return {};
   const withPerms = subject as { permissions?: Record<string, unknown> | null };
-  if (withPerms.permissions && typeof withPerms.permissions === "object") return withPerms.permissions;
+  if (withPerms.permissions && typeof withPerms.permissions === "object")
+    return withPerms.permissions;
   return subject as Record<string, unknown>;
 };
 
@@ -429,7 +446,10 @@ export function getEffectivePermissions(
   const cached = roleSlug ? roleCache.get(roleSlug) : null;
   const base: StaffRole =
     cached?.baseLevel ??
-    (roleSlug === "admin" || roleSlug === "supervisor" || roleSlug === "warehouse" || roleSlug === "cashier"
+    (roleSlug === "admin" ||
+    roleSlug === "supervisor" ||
+    roleSlug === "warehouse" ||
+    roleSlug === "cashier"
       ? (roleSlug as StaffRole)
       : "cashier");
   const preset = cached ? { ...cached.permissions } : rolePermissions(base);
@@ -455,9 +475,7 @@ export function getEffectivePermissions(
 export const SUPERVISOR_PERMISSIONS: StaffPermissions = build(
   PERMISSION_KEYS.filter(
     (k) =>
-      k !== "can_manage_staff" &&
-      k !== "can_manage_sync_backup" &&
-      k !== "can_access_pos_settings",
+      k !== "can_manage_staff" && k !== "can_manage_sync_backup" && k !== "can_access_pos_settings",
   ),
 );
 
@@ -477,11 +495,7 @@ export const ROLE_LABELS: Record<StaffRole, string> = {
 };
 
 export type PermissionTag =
-  | "cashier-visible"
-  | "inventory-access"
-  | "reports-access"
-  | "supervisor-only"
-  | "admin-only";
+  "cashier-visible" | "inventory-access" | "reports-access" | "supervisor-only" | "admin-only";
 
 export const TAG_LABELS: Record<PermissionTag, string> = {
   "cashier-visible": "Till floor",
@@ -492,94 +506,91 @@ export const TAG_LABELS: Record<PermissionTag, string> = {
 };
 
 /** Which roles a tag is meant for, and the permissions it bundles. */
-export const PERMISSION_TAGS: Record<
-  PermissionTag,
-  { roles: StaffRole[]; keys: PermissionKey[] }
-> = {
-  "cashier-visible": {
-    roles: ["cashier", "supervisor", "admin"],
-    keys: [
-      "can_open_drawer",
-      "can_close_drawer",
-      "can_view_drawer_balance",
-      "can_open_shift",
-      "can_close_shift",
-      "can_bypass_shift_lock",
-      "can_shift_cash_count",
-      "can_shift_expected_cash_view",
-      "can_shift_counted_cash_view",
-      "can_shift_variance_view",
-      "can_shift_financial_summary_view",
-      "can_shift_payment_breakdown_view",
-      "can_shift_closing_history_view",
-      "can_shift_report_reprint",
-      "can_manage_other_shifts",
-      "can_shift_variance_approve",
-      "can_shift_cash_recount",
-      "can_delete_line",
-      "can_reduce_qty",
-      "can_discount_bill",
-      "can_override_price",
-      "can_void_cart",
-      "can_no_sale_open",
-      "can_edit_tenders",
-      "can_process_sale",
-      "can_give_discount",
-      "can_void_item",
-      "can_hold_cart",
-      "can_process_refund",
-      "can_process_exchange",
-      "can_reprint_bill",
-      "can_send_whatsapp_bill",
-      "can_manage_bookings",
-      "can_create_booking",
-      "can_collect_booking",
-      "can_cancel_booking",
-      "can_add_member",
-      "can_apply_member_discount",
-      "can_redeem_points",
-      "can_view_member_history",
-    ],
-  },
-  "inventory-access": {
-    roles: ["warehouse", "supervisor", "admin"],
-    keys: [
-      "can_view_inventory",
-      "can_edit_product_price",
-      "can_add_new_product",
-      "can_receive_purchase_order",
-      "can_adjust_stock",
-      "can_create_transfer",
-      "can_receive_transfer",
-      "can_approve_transfer",
-      "can_manage_locations",
-      "can_manage_categories",
-      "can_bulk_edit_products",
-      "can_merge_products",
-    ],
-  },
-  "reports-access": {
-    roles: ["supervisor", "admin"],
-    keys: [
-      "can_view_sales_reports",
-      "can_view_dashboard",
-      "can_view_audit_trail",
-      "can_export_reports",
-    ],
-  },
-  "supervisor-only": {
-    roles: ["supervisor", "admin"],
-    keys: ["can_edit_member_points", "can_manage_promotions", "can_manage_terminals"],
-  },
-  "admin-only": {
-    roles: ["admin"],
-    keys: [
-      "can_access_pos_settings",
-      "can_manage_staff",
-      "can_manage_sync_backup",
-    ],
-  },
-};
+export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: PermissionKey[] }> =
+  {
+    "cashier-visible": {
+      roles: ["cashier", "supervisor", "admin"],
+      keys: [
+        "can_open_drawer",
+        "can_close_drawer",
+        "can_view_drawer_balance",
+        "can_open_shift",
+        "can_close_shift",
+        "can_bypass_shift_lock",
+        "can_shift_cash_count",
+        "can_shift_expected_cash_view",
+        "can_shift_counted_cash_view",
+        "can_shift_variance_view",
+        "can_shift_financial_summary_view",
+        "can_shift_payment_breakdown_view",
+        "can_shift_closing_history_view",
+        "can_shift_report_reprint",
+        "can_manage_other_shifts",
+        "can_shift_variance_approve",
+        "can_shift_cash_recount",
+        "can_delete_line",
+        "can_reduce_qty",
+        "can_discount_bill",
+        "can_override_price",
+        "can_void_cart",
+        "can_no_sale_open",
+        "can_edit_tenders",
+        "can_process_sale",
+        "can_give_discount",
+        "can_void_item",
+        "can_hold_cart",
+        "can_view_held_orders",
+        "can_reopen_held_order",
+        "can_discard_held_order",
+        "can_process_refund",
+        "can_process_exchange",
+        "can_reprint_bill",
+        "can_send_whatsapp_bill",
+        "can_manage_bookings",
+        "can_create_booking",
+        "can_collect_booking",
+        "can_cancel_booking",
+        "can_add_member",
+        "can_apply_member_discount",
+        "can_redeem_points",
+        "can_view_member_history",
+      ],
+    },
+    "inventory-access": {
+      roles: ["warehouse", "supervisor", "admin"],
+      keys: [
+        "can_view_inventory",
+        "can_edit_product_price",
+        "can_add_new_product",
+        "can_receive_purchase_order",
+        "can_adjust_stock",
+        "can_create_transfer",
+        "can_receive_transfer",
+        "can_approve_transfer",
+        "can_manage_locations",
+        "can_manage_categories",
+        "can_bulk_edit_products",
+        "can_merge_products",
+      ],
+    },
+    "reports-access": {
+      roles: ["supervisor", "admin"],
+      keys: [
+        "can_view_sales_reports",
+        "can_view_dashboard",
+        "can_view_audit_trail",
+        "can_export_reports",
+      ],
+    },
+    "supervisor-only": {
+      roles: ["supervisor", "admin"],
+      keys: ["can_edit_member_points", "can_manage_promotions", "can_manage_terminals"],
+    },
+    "admin-only": {
+      roles: ["admin"],
+      keys: ["can_access_pos_settings", "can_manage_staff", "can_manage_sync_backup"],
+    },
+  };
 
 export const PERMISSION_TAG_KEYS = Object.keys(PERMISSION_TAGS) as PermissionTag[];
 

@@ -5,11 +5,19 @@
  * lives in one reusable dialog so every action follows the same workflow.
  */
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Loader2, Settings2, ShieldCheck } from "lucide-react";
+import {
+  AlertTriangle,
+  CircleHelp,
+  Loader2,
+  Settings2,
+  ShieldCheck,
+  UserRoundPlus,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -21,13 +29,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { SettingsSections } from "@/platforms/web/components/pos/settings/SettingsSection";
-import {
-  authorizationRuleSummary,
-  validateAuthorizationRuleConfiguration,
-} from "@/platforms/web/components/pos/settings/authorization-rule-configuration";
+import { validateAuthorizationRuleConfiguration } from "@/platforms/web/components/pos/settings/authorization-rule-configuration";
 import { notifyError } from "@/lib/notify";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { subscribeSettingsChange } from "@/lib/sync-engine";
@@ -41,6 +47,9 @@ import {
   AUTH_GROUPS,
   AUTH_MODES,
   defaultRule,
+  encodeAuthorizationUsers,
+  excludedAuthorizationUserIds,
+  includedAuthorizationUserIds,
   isAuthorizationRuleConflict,
   resolveEditableRules,
   type AuthActionDef,
@@ -102,13 +111,12 @@ function RoleChoices({
     <div className="flex flex-wrap gap-x-4 gap-y-2">
       {choices.map((role) => (
         <label key={`${id}-${role}`} className="flex items-center gap-2 text-sm capitalize">
-          <input
-            type="checkbox"
+          <Checkbox
             disabled={disabled}
             checked={roles.includes(role)}
-            onChange={(event) =>
+            onCheckedChange={(checked) =>
               onChange(
-                event.target.checked
+                checked === true
                   ? [...new Set([...roles, role])]
                   : roles.filter((candidate) => candidate !== role),
               )
@@ -182,10 +190,9 @@ function PeopleMultiSelect({
             key={`${id}-${person.id}`}
             className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted"
           >
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selectedKey.has(person.id.toLowerCase())}
-              onChange={(event) => toggle(person.id, event.target.checked)}
+              onCheckedChange={(checked) => toggle(person.id, checked === true)}
             />
             <span className="min-w-0 flex-1 truncate font-medium">{person.name}</span>
             <span className="text-muted-foreground">{person.id}</span>
@@ -215,6 +222,144 @@ function PeopleMultiSelect({
   );
 }
 
+function HelpTip({ text }: { text: string }) {
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex text-muted-foreground hover:text-foreground"
+            aria-label={text}
+          >
+            <CircleHelp className="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-64">{text}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function AudienceSelector({
+  id,
+  title,
+  help,
+  roles,
+  roleChoices,
+  encodedUsers,
+  people,
+  disabled,
+  invalid,
+  onRolesChange,
+  onUsersChange,
+}: {
+  id: string;
+  title: string;
+  help: string;
+  roles: string[];
+  roleChoices: string[];
+  encodedUsers: string[];
+  people: AuthorizationPerson[];
+  disabled: boolean;
+  invalid?: boolean;
+  onRolesChange: (roles: string[]) => void;
+  onUsersChange: (users: string[]) => void;
+}) {
+  const [peopleDialog, setPeopleDialog] = useState<"include" | "exclude" | null>(null);
+  const included = includedAuthorizationUserIds(encodedUsers);
+  const excluded = excludedAuthorizationUserIds(encodedUsers);
+  const roleMembers = people.filter((person) =>
+    roles.some((role) => role.toLowerCase() === person.role.toLowerCase()),
+  );
+  const update = (nextIncluded: string[], nextExcluded: string[]) =>
+    onUsersChange(encodeAuthorizationUsers(nextIncluded, nextExcluded));
+
+  return (
+    <section className={cn("space-y-3 rounded-lg border p-4", invalid && "border-destructive")}>
+      <div>
+        <h3 className="font-medium">{title}</h3>
+        <p className="text-xs text-muted-foreground">{help}</p>
+      </div>
+      <div className="space-y-2">
+        <Label className="text-sm">Roles</Label>
+        <RoleChoices
+          id={`${id}-roles`}
+          roles={roles}
+          choices={roleChoices}
+          disabled={disabled}
+          onChange={onRolesChange}
+        />
+        <p className="text-[11px] text-muted-foreground">
+          {roleMembers.length} active {roleMembers.length === 1 ? "person" : "people"} included by
+          the selected roles.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={disabled}
+          onClick={() => setPeopleDialog("include")}
+        >
+          <UserRoundPlus className="size-4" />
+          Additional people ({included.length})
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={disabled || !roles.length}
+          onClick={() => setPeopleDialog("exclude")}
+        >
+          Excluded people ({excluded.length})
+        </Button>
+      </div>
+      <Dialog open={peopleDialog !== null} onOpenChange={(open) => !open && setPeopleDialog(null)}>
+        <DialogContent className="w-[min(94vw,48rem)] max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              {peopleDialog === "exclude" ? "Excluded people" : "Additional people"}
+            </DialogTitle>
+            <DialogDescription>
+              {peopleDialog === "exclude"
+                ? "These people are denied for this rule even when their role is selected."
+                : "These people are allowed in addition to everyone covered by the selected roles."}
+            </DialogDescription>
+          </DialogHeader>
+          {peopleDialog === "exclude" ? (
+            <PeopleMultiSelect
+              id={`${id}-exclude`}
+              label="People excluded from selected roles"
+              help="Only active staff in the selected roles are shown."
+              people={roleMembers}
+              selected={excluded}
+              disabled={disabled}
+              onChange={(ids) => update(included, ids)}
+            />
+          ) : (
+            <PeopleMultiSelect
+              id={`${id}-include`}
+              label="Additional authorized people"
+              help="Choose active staff who are not covered by the selected roles."
+              people={people}
+              selected={included}
+              disabled={disabled}
+              onChange={(ids) => update(ids, excluded)}
+            />
+          )}
+          <DialogFooter>
+            <Button type="button" onClick={() => setPeopleDialog(null)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+}
+
 function AuthorityFields({
   id,
   title,
@@ -241,7 +386,7 @@ function AuthorityFields({
       key: `role:${role.toLowerCase()}`,
       label: `${role} role`,
     })),
-    ...rule.allowedUserIds.map((userId) => ({
+    ...includedAuthorizationUserIds(rule.allowedUserIds).map((userId) => ({
       key: `user:${userId.toLowerCase()}`,
       label:
         people.find((person) => person.id.toLowerCase() === userId.toLowerCase())?.name ?? userId,
@@ -334,7 +479,7 @@ function RuleConfigurationDialog({
 
   return (
     <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && !saving && onCancel()}>
-      <DialogContent className="flex max-h-[92vh] max-w-3xl flex-col gap-0 overflow-hidden p-0">
+      <DialogContent className="flex max-h-[94vh] w-[min(96vw,72rem)] max-w-6xl flex-col gap-0 overflow-hidden p-0">
         {rule && action ? (
           <>
             <DialogHeader className="border-b px-6 py-5 pr-12">
@@ -394,39 +539,19 @@ function RuleConfigurationDialog({
                     </div>
                   ) : null}
 
-                  <section className="space-y-4 rounded-lg border p-4">
-                    <div>
-                      <h3 className="font-medium">Who may authorize</h3>
-                      <p className="text-xs text-muted-foreground">
-                        Choose one or more roles, named staff members, or both.
-                      </p>
-                    </div>
-                    <div
-                      className={cn(
-                        "space-y-2 rounded-md border p-3",
-                        hasIssue("authorizers") && "border-destructive",
-                      )}
-                    >
-                      <Label className="text-sm">Authorized roles</Label>
-                      <RoleChoices
-                        id={`authorizer-role-${action.key}`}
-                        roles={rule.allowedRoles}
-                        choices={ROLE_CHOICES}
-                        disabled={!mayEdit}
-                        onChange={(allowedRoles) => onChange({ allowedRoles })}
-                      />
-                    </div>
-                    <PeopleMultiSelect
-                      id={`approve-${action.key}`}
-                      label="Authorized people"
-                      help="Search and select active staff. A selected role or a named person may authorize."
-                      people={people}
-                      selected={rule.allowedUserIds}
-                      disabled={!mayEdit}
-                      invalid={hasIssue("authorizers")}
-                      onChange={(allowedUserIds) => onChange({ allowedUserIds })}
-                    />
-                  </section>
+                  <AudienceSelector
+                    id={`approve-${action.key}`}
+                    title="Who may authorize"
+                    help="Selected roles include their active staff automatically. Add individual people or exclude exceptions only when needed."
+                    roles={rule.allowedRoles}
+                    roleChoices={ROLE_CHOICES}
+                    encodedUsers={rule.allowedUserIds}
+                    people={people}
+                    disabled={!mayEdit}
+                    invalid={hasIssue("authorizers")}
+                    onRolesChange={(allowedRoles) => onChange({ allowedRoles })}
+                    onUsersChange={(allowedUserIds) => onChange({ allowedUserIds })}
+                  />
 
                   {action.thresholdLabel || authorityUnit ? (
                     <section className="space-y-4 rounded-lg border p-4">
@@ -438,7 +563,10 @@ function RuleConfigurationDialog({
                       </div>
                       {action.thresholdLabel ? (
                         <label className="block max-w-sm space-y-1 text-sm">
-                          <span>{action.thresholdLabel}</span>
+                          <span className="flex items-center gap-1.5">
+                            {action.thresholdLabel}
+                            <HelpTip text="Actions at or below this value use the person's normal permission. Larger values require authorization." />
+                          </span>
                           <Input
                             className={cn(
                               "numeric h-9",
@@ -479,41 +607,25 @@ function RuleConfigurationDialog({
                   ) : null}
 
                   {requestMode ? (
-                    <section className="space-y-4 rounded-lg border p-4">
-                      <div>
-                        <h3 className="font-medium">Who may request approval</h3>
-                        <p className="text-xs text-muted-foreground">
-                          These people may send the action to the approval queue. They cannot
-                          approve it unless they are also selected above.
-                        </p>
-                      </div>
-                      <div
-                        className={cn(
-                          "space-y-2 rounded-md border p-3",
-                          hasIssue("requesters") && "border-destructive",
-                        )}
-                      >
-                        <Label className="text-sm">Requester roles</Label>
-                        <RoleChoices
-                          id={`requester-role-${action.key}`}
-                          roles={rule.requesterRoles}
-                          choices={REQUESTER_ROLE_CHOICES}
-                          disabled={!mayEdit}
-                          onChange={(requesterRoles) => onChange({ requesterRoles })}
-                        />
-                      </div>
-                      <PeopleMultiSelect
+                    <section className="space-y-4">
+                      <AudienceSelector
                         id={`request-${action.key}`}
-                        label="Named requesters"
-                        help="Optional named staff are combined with the selected requester roles."
+                        title="Who may request approval"
+                        help="Selected roles may send requests. Additional people and role exceptions are optional. Requesting does not grant approval authority."
+                        roles={rule.requesterRoles}
+                        roleChoices={REQUESTER_ROLE_CHOICES}
+                        encodedUsers={rule.requesterUserIds}
                         people={people}
-                        selected={rule.requesterUserIds}
                         disabled={!mayEdit}
                         invalid={hasIssue("requesters")}
-                        onChange={(requesterUserIds) => onChange({ requesterUserIds })}
+                        onRolesChange={(requesterRoles) => onChange({ requesterRoles })}
+                        onUsersChange={(requesterUserIds) => onChange({ requesterUserIds })}
                       />
                       <label className="block max-w-sm space-y-1 text-sm">
-                        <span>Approval expires after</span>
+                        <span className="flex items-center gap-1.5">
+                          Approval expires after
+                          <HelpTip text="If nobody decides before this time, the request expires and can no longer authorize the action." />
+                        </span>
                         <div className="flex items-center gap-2">
                           <Input
                             className={cn(
@@ -539,7 +651,10 @@ function RuleConfigurationDialog({
                     <section className="space-y-4 rounded-lg border p-4">
                       <div className="flex items-center justify-between gap-4">
                         <div>
-                          <h3 className="font-medium">Escalation</h3>
+                          <h3 className="flex items-center gap-1.5 font-medium">
+                            Escalation
+                            <HelpTip text="After the delay, the same unanswered request becomes visible to the selected backup roles." />
+                          </h3>
                           <p className="text-xs text-muted-foreground">
                             Send an unanswered request to backup roles after a delay.
                           </p>
@@ -561,7 +676,10 @@ function RuleConfigurationDialog({
                       {rule.escalationAfterMinutes !== null ? (
                         <div className="grid gap-4 border-t pt-4 sm:grid-cols-2">
                           <label className="space-y-1 text-sm">
-                            <span>Escalate after</span>
+                            <span className="flex items-center gap-1.5">
+                              Escalate after
+                              <HelpTip text="Minutes to wait before backup approvers are notified." />
+                            </span>
                             <div className="flex items-center gap-2">
                               <Input
                                 className={cn(
@@ -890,6 +1008,10 @@ export function AuthorizationRulesPanel({
             Choose how each action is authorized. Detailed settings open separately and every
             request and decision remains recorded in approval history.
           </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            The highest saved version is used. If versions match, the central database remains the
+            source of truth; a terminal-only edit is marked pending until it uploads.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {loading ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : null}
@@ -911,10 +1033,9 @@ export function AuthorizationRulesPanel({
         </p>
       ) : null}
 
-      <div className="hidden grid-cols-[minmax(0,1.25fr)_12rem_minmax(0,1fr)] gap-4 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground lg:grid">
+      <div className="hidden grid-cols-[minmax(0,1.5fr)_minmax(16rem,1fr)] gap-4 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground lg:grid">
         <span>Rule name</span>
         <span>Authorization method</span>
-        <span>Status / configuration summary</span>
       </div>
 
       <SettingsSections
@@ -933,42 +1054,35 @@ export function AuthorizationRulesPanel({
                 return (
                   <div
                     key={action.key}
-                    className="grid gap-3 border-t border-border/60 py-3 first:border-0 first:pt-0 lg:grid-cols-[minmax(0,1.25fr)_12rem_minmax(0,1fr)] lg:items-center lg:gap-4"
+                    className="grid gap-3 border-t border-border/60 py-3 first:border-0 first:pt-0 lg:grid-cols-[minmax(0,1.5fr)_minmax(16rem,1fr)] lg:items-center lg:gap-4"
                   >
                     <div className="min-w-0">
                       <Label className="text-sm">{action.label}</Label>
                       <p className="text-xs text-muted-foreground">{action.blurb}</p>
                     </div>
 
-                    <div className={mayEdit ? "" : "pointer-events-none opacity-60"}>
-                      <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground lg:hidden">
-                        Authorization method
-                      </span>
-                      <ThemedSelect
-                        ariaLabel={`${action.label} authorization`}
-                        className="h-9 w-full"
-                        value={displayedMode(rule.mode)}
-                        onChange={(value) => openConfiguration(action, value as SelectableAuthMode)}
-                        options={SELECTABLE_AUTH_MODES.map((mode) => ({
-                          value: mode.value,
-                          label: mode.label,
-                        }))}
-                      />
-                    </div>
-
-                    <div className="flex min-w-0 items-center justify-between gap-3">
-                      <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={cn(
+                          "min-w-0 flex-1",
+                          mayEdit ? "" : "pointer-events-none opacity-60",
+                        )}
+                      >
                         <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground lg:hidden">
-                          Status / configuration
+                          Authorization method
                         </span>
-                        <p className="text-xs text-muted-foreground">
-                          {authorizationRuleSummary(rule)}
-                        </p>
-                        {legacyEither ? (
-                          <p className="mt-1 text-xs text-amber-600">
-                            Existing rule also permits PIN; review to choose one method.
-                          </p>
-                        ) : null}
+                        <ThemedSelect
+                          ariaLabel={`${action.label} authorization`}
+                          className="h-9 w-full"
+                          value={displayedMode(rule.mode)}
+                          onChange={(value) =>
+                            openConfiguration(action, value as SelectableAuthMode)
+                          }
+                          options={SELECTABLE_AUTH_MODES.map((mode) => ({
+                            value: mode.value,
+                            label: mode.label,
+                          }))}
+                        />
                       </div>
                       {rule.mode !== "none" || legacyEither ? (
                         <Button

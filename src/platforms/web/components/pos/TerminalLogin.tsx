@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBranding } from "@/lib/branding";
-import { isTerminalApp } from "@/platform-config/platform";
+import { isLocalWebCashierTest, isTerminalApp } from "@/platform-config/platform";
 import { CashierPinLogin } from "@/platforms/web/components/auth/CashierPinLogin";
 import { isExternalEmail, usernameFromAddress } from "@/lib/internal-domains";
 import { isConfigurationFailure, type LoginFailure } from "@/lib/login-failure";
@@ -14,11 +14,11 @@ import { isConfigurationFailure, type LoginFailure } from "@/lib/login-failure";
 export function TerminalLogin() {
   const { login } = useAuth();
   const brand = useBranding();
-  // Cashier PIN sign-in only exists on a real till (Electron desktop or the
-  // Capacitor mobile app). In a plain browser this is a back-office console:
-  // supervisors and admins sign in with email and password.
+  // Production browsers remain back-office only. Local Vite development also
+  // exposes the terminal tab so the complete cashier approval flow can be
+  // exercised against the configured backend before a device build is made.
   const [terminal, setTerminal] = useState(false);
-  useEffect(() => setTerminal(isTerminalApp()), []);
+  useEffect(() => setTerminal(isTerminalApp() || isLocalWebCashierTest()), []);
   const [error, setError] = useState("");
   // Why the last attempt failed. A connection problem gets a way out of the
   // screen; only a genuine refusal is presented as a wrong password.

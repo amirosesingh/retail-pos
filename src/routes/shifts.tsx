@@ -19,6 +19,7 @@ import {
 import { money, usePos } from "@/lib/pos-store";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { isShiftOverdue, localTerminalId, shiftDuration } from "@/lib/shift-hours";
+import { defaultTradingHours } from "@/lib/pos-seed";
 import { useAuth } from "@/lib/pos-auth";
 import { useUserPermissions } from "@/lib/pos-permissions";
 import { openCashDrawer, printSaleReceipt, printShiftReport } from "@/lib/pos-print";
@@ -106,7 +107,7 @@ function Shifts() {
     !activeShift.terminalId ||
     activeShift.terminalId === hereId ||
     can("can_manage_other_shifts");
-  const overdueNow = activeShift ? isShiftOverdue(activeShift, state.settings.hours) : false;
+  const overdueNow = activeShift ? isShiftOverdue(activeShift, defaultTradingHours) : false;
 
   /* Mid-shift snapshot: supervisors always, cashiers only when switched on. */
   const mayPrintXReport =

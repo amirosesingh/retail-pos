@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Bell, Check, LoaderCircle, RotateCcw } from "lucide-react";
+import { Bell, Check, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AnimatedList } from "@/components/ui/animated-list";
@@ -28,7 +28,6 @@ import {
   clearAllActivityEntries,
   clearActivityEntry,
   clearedIds,
-  reopenActivityEntry,
   subscribeActivityEvents,
   type ActivityEvent,
 } from "@/lib/activity-events";
@@ -66,8 +65,9 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
   );
   const eventText = useCallback((value: string) => humanizeText(value, refs), [refs]);
   const sync = useSyncSummary();
-  // Everyone gets the centre; only supervisors get the branch activity feed.
-  const showActivity = isSupervisor;
+  // Everyone polls the feed. Server and local audience filters return general
+  // branch activity to supervisors and private approval notices to recipients.
+  const showActivity = true;
   const allowed = true;
   const [centre, setCentre] = useState<CentreView | null>(null);
   const [, setClearedTick] = useState(0);
@@ -83,7 +83,7 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
   const activityInitializedRef = useRef(false);
 
   const updatePreference = useCallback(
-    async (id: string, cleared: boolean, action: () => Promise<boolean>, failure: string) => {
+    async (id: string, action: () => Promise<boolean>, failure: string) => {
       if (preferenceBusyRef.current.has(id)) return;
       preferenceBusyRef.current.add(id);
       setPreferenceBusy(new Set(preferenceBusyRef.current));
@@ -92,18 +92,14 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
         if (!saved) {
           toast.error(failure);
         } else {
-          if (cleared) toast.dismiss(`activity-${id}`);
+          toast.dismiss(`activity-${id}`);
           // Electron keeps business preferences in SQL Server, not
           // localStorage. Reflect the committed row immediately so removal
           // and history insertion animate without waiting for the next poll.
           setRows((current) =>
             current.map((row) => {
               if (row.id !== id) return row;
-              const key = meKey.toLowerCase();
-              const next = cleared
-                ? [...new Set([...row.clearedBy, meKey])]
-                : row.clearedBy.filter((value) => value.toLowerCase() !== key);
-              return { ...row, clearedBy: next };
+              return { ...row, clearedBy: [...new Set([...row.clearedBy, meKey])] };
             }),
           );
         }
@@ -215,8 +211,6 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
   const toDecide = centre?.toDecide ?? [];
   const waiting = centre?.waiting ?? [];
   const ready = centre?.ready ?? [];
-  const clearedEvents = rows.filter((r) => hidden.has(r.id));
-  const clearedCount = clearedEvents.length;
   const attention = attentionCounts({
     approvals: [...toDecide, ...waiting],
     transfers: isSupervisor ? pos?.state.transfers : [],
@@ -290,21 +284,18 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
         <Tabs
           defaultValue={attention.approvals ? "attention" : ready.length ? "ready" : "activity"}
         >
-          <TabsList className="grid w-full grid-cols-5 rounded-none">
+          <TabsList className="grid w-full grid-cols-4 rounded-none">
             <TabsTrigger value="attention" className="text-[10px]">
               Attention{attention.approvals ? ` ${attention.approvals}` : ""}
             </TabsTrigger>
-            <TabsTrigger value="waiting" className="text-[10px]">
-              Waiting{waiting.length ? ` ${waiting.length}` : ""}
+            <TabsTrigger value="warning" className="text-[10px]">
+              Warning{waiting.length ? ` ${waiting.length}` : ""}
             </TabsTrigger>
             <TabsTrigger value="ready" className="text-[10px]">
               Ready{ready.length ? ` ${ready.length}` : ""}
             </TabsTrigger>
             <TabsTrigger value="activity" className="text-[10px]">
               Activity
-            </TabsTrigger>
-            <TabsTrigger value="history" className="text-[10px]">
-              History{clearedCount ? ` ${clearedCount}` : ""}
             </TabsTrigger>
           </TabsList>
 
@@ -317,7 +308,7 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
             />
           </TabsContent>
 
-          <TabsContent value="waiting" className="m-0 max-h-80 overflow-y-auto">
+          <TabsContent value="warning" className="m-0 max-h-80 overflow-y-auto">
             <RequestList rows={waiting} empty="You have nothing waiting for approval." />
           </TabsContent>
 
@@ -406,7 +397,6 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                         onClick={() =>
                           void updatePreference(
                             r.id,
-                            true,
                             () => clearActivityEntry(meKey, r.id),
                             "Could not clear notification. Check the connection and try again.",
                           )
@@ -437,56 +427,6 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                 )}
               />
             )}
-          </TabsContent>
-
-          <TabsContent value="history" className="m-0 max-h-80 overflow-y-auto">
-            <>
-              {clearedCount > 0 && (
-                <p className="px-3 pt-2 text-[10px] text-muted-foreground">
-                  Cleared notifications remain here and can be reopened.
-                </p>
-              )}
-              <AnimatedList
-                items={clearedEvents}
-                getKey={(row) => row.id}
-                empty={
-                  <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                    No notification history yet.
-                  </p>
-                }
-                renderItem={(row) => {
-                  const id = row.id;
-                  return (
-                    <div className="activity-notification-history-row flex items-center gap-2 border-b border-border/60 px-3 py-2 last:border-0">
-                      <p className="min-w-0 flex-1 truncate text-xs">{eventText(row.title)}</p>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 touch-manipulation gap-1 px-2 text-[10px] text-primary"
-                        disabled={preferenceBusy.has(id)}
-                        aria-busy={preferenceBusy.has(id)}
-                        onClick={() =>
-                          void updatePreference(
-                            id,
-                            false,
-                            () => reopenActivityEntry(meKey, id),
-                            "Could not reopen notification. Check the connection and try again.",
-                          )
-                        }
-                      >
-                        {preferenceBusy.has(id) ? (
-                          <LoaderCircle className="size-3 animate-spin" />
-                        ) : (
-                          <RotateCcw className="size-3" />
-                        )}
-                        {preferenceBusy.has(id) ? "Saving…" : "Reopen"}
-                      </Button>
-                    </div>
-                  );
-                }}
-              />
-            </>
           </TabsContent>
         </Tabs>
 

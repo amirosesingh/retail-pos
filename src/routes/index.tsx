@@ -2,7 +2,12 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { markHeldWaiting } from "@/lib/held-orders";
 import { terminalId as posTerminalId } from "@/lib/activity-journal";
-import { snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
+import {
+  maskSnapshotEmail,
+  maskSnapshotPhone,
+  snapshotFingerprint,
+  type TicketSnapshot,
+} from "@/lib/ticket-snapshot";
 import { useCart } from "@/lib/register/use-cart";
 import { useTender } from "@/lib/register/use-tender";
 import { isoDaysFromNow, useBookingIntake } from "@/lib/register/use-booking-intake";
@@ -72,6 +77,7 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { availableAt, cartTotals, money, stockAt, usePos } from "@/lib/pos-store";
 import { resolveByBarcode } from "@/lib/product-lookup";
@@ -91,11 +97,7 @@ import { discountLabel, loadMemberVouchers, scopeLabel } from "@/lib/coupons";
 import type { IntakeCharge, Member, Sale } from "@/core/types/pos-types";
 import { applyCombo, intakeTotals, newJobTag } from "@/lib/booking-charges";
 import { TenderSplit } from "@/platforms/web/components/pos/TenderSplit";
-import {
-  lineUnitDiscount,
-  r2,
-  validateTenders,
-} from "@/core/types/pos-types";
+import { lineUnitDiscount, r2, validateTenders } from "@/core/types/pos-types";
 import { tenderIcon } from "@/core/types/payment-types";
 import { NO_SALE_REASON_MAX, NO_SALE_REASON_MIN, recordNoSale } from "@/lib/drawer-events";
 
@@ -109,11 +111,7 @@ import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { verifyBusinessAuthorization } from "@/lib/authorization-client";
 import { evaluatePromotions, focLine } from "@/lib/pos-promotions";
 import { loadCartDraft, saveCartDraft } from "@/lib/cart-draft";
-import {
-  openCashDrawer,
-  printSaleReceipt,
-  saleReceiptPreview,
-} from "@/lib/pos-print";
+import { openCashDrawer, printSaleReceipt, saleReceiptPreview } from "@/lib/pos-print";
 import { ShiftCloseDialog } from "@/platforms/web/components/pos/ShiftCloseDialog";
 import {
   openCustomerDisplay,
@@ -184,7 +182,7 @@ function Register() {
   useUiScale();
   const { user, can } = useAuth();
   const { requirePermission } = useUserPermissions();
-  const { visible } = useVisibility();
+  const { visible, visibleRoute } = useVisibility();
   /** Server-loaded operational rules. Never read from browser storage. */
   const { rules } = usePosRules();
   /**
@@ -209,8 +207,22 @@ function Register() {
     grantToken: string;
     amount: number | null;
   } | null>(null);
+  const [appliedApproval, setAppliedApproval] = useState<{
+    requestId: string;
+    approvedAmount: number | null;
+    valueUnit: "percent" | "currency" | "quantity" | "number";
+  } | null>(null);
   const askManager = async (request: GateRequest) => {
-    const snapshot = ticketSnapshot.current();
+    const baseSnapshot = ticketSnapshot.current();
+    const snapshot = baseSnapshot
+      ? {
+          ...baseSnapshot,
+          ...(request.requestedAmount === undefined || request.requestedAmount === null
+            ? {}
+            : { requestedValue: request.requestedAmount }),
+          requestedLabel: request.title,
+        }
+      : null;
     const verifyGrant = async (grantToken: string | null) => {
       const result = await verifyBusinessAuthorization({
         data: {
@@ -771,6 +783,10 @@ function Register() {
     setBillNo,
     resetCart,
     snapshot: () => ticketSnapshot.current(),
+    onApprovalCleared: () => {
+      claimedGrant.current = null;
+      setAppliedApproval(null);
+    },
     onApprovalClaimed: (grant) => {
       claimedGrant.current = {
         requestId: grant.requestId,
@@ -779,10 +795,21 @@ function Register() {
         grantToken: grant.grantToken,
         amount: grant.approvedAmount,
       };
+      setAppliedApproval({
+        requestId: grant.requestId,
+        approvedAmount: grant.approvedAmount,
+        valueUnit: grant.valueUnit,
+      });
       toast.success(
         grant.approvedAmount === null
           ? "Approval applied to this ticket"
-          : `Approved ${grant.approvedAmount.toFixed(2)} — applied to this ticket`,
+          : `Approved ${
+              grant.valueUnit === "percent"
+                ? `${grant.approvedAmount.toFixed(2)}%`
+                : grant.valueUnit === "currency"
+                  ? money(grant.approvedAmount)
+                  : grant.approvedAmount.toFixed(2)
+            } — applied to this ticket`,
       );
     },
   });
@@ -811,12 +838,26 @@ function Register() {
           tax: totals.tax ?? 0,
           serviceCharge: 0,
           total: totals.total,
-          member: member ? { id: member.id, name: member.name, points: member.points } : null,
+          member: member
+            ? {
+                id: member.id,
+                code: member.code,
+                name: member.name,
+                phone: maskSnapshotPhone(member.phone),
+                email: maskSnapshotEmail(member.email),
+                tier: member.tier,
+                points: member.points,
+                totalSpend: member.totalSpend,
+              }
+            : null,
         };
   parkTicket.current = (id) => holdOrder(true, id);
   // A grant belongs to one ticket only: once the ticket is gone, so is it.
   useEffect(() => {
-    if (lines.length === 0) claimedGrant.current = null;
+    if (lines.length === 0) {
+      claimedGrant.current = null;
+      setAppliedApproval(null);
+    }
   }, [lines.length]);
   const detail = state.products.find((p) => p.id === detailId) ?? null;
 
@@ -898,116 +939,113 @@ function Register() {
     transferRef: "",
   });
 
-  const { saving, lastSale, completeSale, bookAndPayLater, sendSaleOnWhatsApp } =
-    useCheckout({
-      getActiveShift: () => activeShift,
-      getCurrentStore: () => currentStore,
-      getActiveCashier: () => activeCashier,
-      requirePermission,
-      getAuthorization: () =>
-        claimedGrant.current
-          ? { requestId: claimedGrant.current.requestId, approvedBy: null }
-          : null,
-      getLines: () => lines,
-      getTotals: () => totals,
-      getMember: () => member,
-      getMemberId: () => memberId,
-      getCoupon: () => coupon,
-      getVoucherToken: () => voucherToken,
-      getExchangeRef: () => exchangeRef,
-      getPointsEarned: () => pointsEarned,
-      getBillNo: () => billNo,
-      resetCart,
-      setLines,
-      setMemberId,
-      setVoucherToken,
-      getMethod: () => method,
-      getTendered: () => tendered,
-      getTransferRef: () => transferRef,
-      getTenderRef: () => tenderRef,
-      getTenderRefNote: () => tenderRefNote,
-      getBankName: () => bankName,
-      getTenders: () => tenders,
-      getActiveMethodName: () => activeMethodName,
-      getNeedsTenderRef: () => needsTenderRef,
-      resetTender,
-      bookingIntake: {
-        bookOpen,
-        setBookOpen,
-        deposit,
-        setDeposit,
-        depositMethod,
-        setDepositMethod,
-        dueDate,
-        setDueDate,
-        bookName,
-        setBookName,
-        bookPhone,
-        setBookPhone,
-        bookNote,
-        setBookNote,
-        serviceId,
-        setServiceId,
-        customService,
-        setCustomService,
-        payTiming,
-        setPayTiming,
-        bookMode,
-        setBookMode,
-        racketModel,
-        setRacketModel,
-        stringType,
-        setStringType,
-        tensionMain,
-        setTensionMain,
-        tensionCross,
-        setTensionCross,
-        tensionUnit,
-        setTensionUnit,
-        grommetNotes,
-        setGrommetNotes,
-        jobNotes,
-        setJobNotes,
-        promisedAt,
-        setPromisedAt,
-        stencil,
-        setStencil,
-        overgrip,
-        setOvergrip,
-        jobTag,
-        setJobTag,
-        bookingHubOpen,
-        setBookingHubOpen,
-        editBookingId,
-        setEditBookingId,
-        notifyWhatsApp,
-        setNotifyWhatsApp,
-        intakeCharges,
-        setIntakeCharges,
-        liabilityOk,
-        setLiabilityOk,
-        bookMemberQuery,
-        setBookMemberQuery,
-        racketProductId,
-        setRacketProductId,
-        racketCustomerOwned,
-        setRacketCustomerOwned,
-        stringProductId,
-        setStringProductId,
-        stringCustomerOwned,
-        setStringCustomerOwned,
-        labourUnlocked,
-        setLabourUnlocked,
-        labourReason,
-        setLabourReason,
-        resetJobCard,
-      },
-      getWaNumber: () => waNumber,
-      setWaNumber,
-      setWaSending,
-      cartSnapshot,
-      getDisplayBase: () => displayBase,
-    });
+  const { saving, lastSale, completeSale, bookAndPayLater, sendSaleOnWhatsApp } = useCheckout({
+    getActiveShift: () => activeShift,
+    getCurrentStore: () => currentStore,
+    getActiveCashier: () => activeCashier,
+    requirePermission,
+    getAuthorization: () =>
+      claimedGrant.current ? { requestId: claimedGrant.current.requestId, approvedBy: null } : null,
+    getLines: () => lines,
+    getTotals: () => totals,
+    getMember: () => member,
+    getMemberId: () => memberId,
+    getCoupon: () => coupon,
+    getVoucherToken: () => voucherToken,
+    getExchangeRef: () => exchangeRef,
+    getPointsEarned: () => pointsEarned,
+    getBillNo: () => billNo,
+    resetCart,
+    setLines,
+    setMemberId,
+    setVoucherToken,
+    getMethod: () => method,
+    getTendered: () => tendered,
+    getTransferRef: () => transferRef,
+    getTenderRef: () => tenderRef,
+    getTenderRefNote: () => tenderRefNote,
+    getBankName: () => bankName,
+    getTenders: () => tenders,
+    getActiveMethodName: () => activeMethodName,
+    getNeedsTenderRef: () => needsTenderRef,
+    resetTender,
+    bookingIntake: {
+      bookOpen,
+      setBookOpen,
+      deposit,
+      setDeposit,
+      depositMethod,
+      setDepositMethod,
+      dueDate,
+      setDueDate,
+      bookName,
+      setBookName,
+      bookPhone,
+      setBookPhone,
+      bookNote,
+      setBookNote,
+      serviceId,
+      setServiceId,
+      customService,
+      setCustomService,
+      payTiming,
+      setPayTiming,
+      bookMode,
+      setBookMode,
+      racketModel,
+      setRacketModel,
+      stringType,
+      setStringType,
+      tensionMain,
+      setTensionMain,
+      tensionCross,
+      setTensionCross,
+      tensionUnit,
+      setTensionUnit,
+      grommetNotes,
+      setGrommetNotes,
+      jobNotes,
+      setJobNotes,
+      promisedAt,
+      setPromisedAt,
+      stencil,
+      setStencil,
+      overgrip,
+      setOvergrip,
+      jobTag,
+      setJobTag,
+      bookingHubOpen,
+      setBookingHubOpen,
+      editBookingId,
+      setEditBookingId,
+      notifyWhatsApp,
+      setNotifyWhatsApp,
+      intakeCharges,
+      setIntakeCharges,
+      liabilityOk,
+      setLiabilityOk,
+      bookMemberQuery,
+      setBookMemberQuery,
+      racketProductId,
+      setRacketProductId,
+      racketCustomerOwned,
+      setRacketCustomerOwned,
+      stringProductId,
+      setStringProductId,
+      stringCustomerOwned,
+      setStringCustomerOwned,
+      labourUnlocked,
+      setLabourUnlocked,
+      labourReason,
+      setLabourReason,
+      resetJobCard,
+    },
+    getWaNumber: () => waNumber,
+    setWaNumber,
+    setWaSending,
+    cartSnapshot,
+    getDisplayBase: () => displayBase,
+  });
 
   const displayKey = JSON.stringify({
     l: lines.map((l) => [l.productId, l.qty, l.discount, l.discountType, l.foc, l.credit]),
@@ -1332,7 +1370,8 @@ function Register() {
   const navigate = useNavigate();
   useEffect(() => {
     if (!resume) return;
-    resumeHeld(resume);
+    if (can("can_reopen_held_order")) void resumeHeld(resume);
+    else toast.error("Reopen held ticket permission is required");
     void navigate({ to: "/", search: { sell: true }, replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resume]);
@@ -1422,6 +1461,11 @@ function Register() {
       <p className="numeric truncate text-[11px] text-muted-foreground">
         {billNo ? `#${billNo}` : "New bill — scan an item to start"}
       </p>
+      {appliedApproval && (
+        <p className="truncate text-[10px] font-medium text-success">
+          Approved · #{appliedApproval.requestId.slice(-8).toUpperCase()}
+        </p>
+      )}
     </div>
   );
 
@@ -1476,6 +1520,18 @@ function Register() {
           <p className="numeric truncate text-[11px] text-muted-foreground">
             {billNo ? `#${billNo}` : "New bill — scan an item to start"}
           </p>
+          {appliedApproval && (
+            <p className="truncate text-[10px] font-medium text-success">
+              Approval applied · #{appliedApproval.requestId.slice(-8).toUpperCase()}
+              {appliedApproval.approvedAmount === null
+                ? ""
+                : appliedApproval.valueUnit === "percent"
+                  ? ` · ${appliedApproval.approvedAmount.toFixed(2)}%`
+                  : appliedApproval.valueUnit === "currency"
+                    ? ` · ${money(appliedApproval.approvedAmount)}`
+                    : ` · ${appliedApproval.approvedAmount.toFixed(2)}`}
+            </p>
+          )}
         </div>
         <span
           className={`shrink-0 rounded-full border px-2 py-1 text-[11px] font-medium ${
@@ -2169,7 +2225,7 @@ function Register() {
   );
 
   const atom_actHold =
-    visible("register.holdOrder") && lines.length > 0 ? (
+    visible("register.holdOrder") && can("can_hold_cart") && lines.length > 0 ? (
       <div className="flex h-full min-w-0 items-center px-1">
         <ActionButton
           variant="outline"
@@ -2229,35 +2285,39 @@ function Register() {
     </div>
   ) : null;
 
-  const atom_heldList = held.length ? (
-    <div className="space-y-1 px-2 py-1">
-      <div className="flex items-center justify-between">
-        <p className="text-[11px] text-muted-foreground">Held orders</p>
-        <Link
-          to="/holds"
-          className="flex items-center gap-1.5 text-[11px] font-medium text-primary hover:underline"
-        >
-          Held bills
-          <span className="numeric inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold text-primary-foreground">
-            {held.length}
-          </span>
-        </Link>
+  const atom_heldList =
+    can("can_view_held_orders") && visibleRoute("/holds") && held.length ? (
+      <div className="space-y-1 px-2 py-1">
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] text-muted-foreground">Held orders</p>
+          <Link
+            to="/holds"
+            className="flex items-center gap-1.5 text-[11px] font-medium text-primary hover:underline"
+          >
+            Held bills
+            <span className="numeric inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold text-primary-foreground">
+              {held.length}
+            </span>
+          </Link>
+        </div>
+        {held.map((h) => (
+          <button
+            key={h.id}
+            onClick={() => {
+              if (can("can_reopen_held_order")) void resumeHeld(h.id);
+              else toast.error("Reopen held ticket permission is required");
+            }}
+            className="flex w-full items-center justify-between rounded-md border border-border px-2 py-1.5 text-[11px] hover:border-primary/60"
+          >
+            <span className="truncate">
+              {h.cancelledFrom ? "↩ " : ""}
+              {h.label}
+            </span>
+            <span className="numeric font-semibold">{money(h.total)}</span>
+          </button>
+        ))}
       </div>
-      {held.map((h) => (
-        <button
-          key={h.id}
-          onClick={() => resumeHeld(h.id)}
-          className="flex w-full items-center justify-between rounded-md border border-border px-2 py-1.5 text-[11px] hover:border-primary/60"
-        >
-          <span className="truncate">
-            {h.cancelledFrom ? "↩ " : ""}
-            {h.label}
-          </span>
-          <span className="numeric font-semibold">{money(h.total)}</span>
-        </button>
-      ))}
-    </div>
-  ) : null;
+    ) : null;
 
   const atom_actDrawer = (
     <div className="flex h-full min-w-0 items-center px-1">
@@ -2309,7 +2369,9 @@ function Register() {
     "cart.receipt": () => setReceiptPreview((v) => !v),
     "cart.barcode": () =>
       document.querySelector<HTMLInputElement>("[data-scan-focus] input")?.focus(),
-    "hold.new": () => holdOrder(),
+    "hold.new": () => {
+      if (can("can_hold_cart")) holdOrder();
+    },
     "void.cart": () => void clearCart(),
     "book.hub": () => setBookingHubOpen(true),
     "shift.open": () => setOpenShiftOpen(true),
@@ -3012,14 +3074,13 @@ function Register() {
                       key={`${l.productId}-${idx}`}
                       className="flex items-center gap-2 rounded-md border border-border px-3 py-2"
                     >
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         aria-label={`Exchange ${l.name}`}
                         checked={picked > 0}
-                        onChange={(e) =>
-                          setPicks((p) => ({ ...p, [idx]: e.target.checked ? l.qty : 0 }))
+                        onCheckedChange={(checked) =>
+                          setPicks((p) => ({ ...p, [idx]: checked === true ? l.qty : 0 }))
                         }
-                        className="size-4 accent-[var(--primary)]"
+                        className="size-4"
                       />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">{l.name}</p>
@@ -3186,10 +3247,9 @@ function Register() {
                       options={racketOptions}
                     />
                     <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={racketCustomerOwned}
-                        onChange={(e) => setCustomerRacket(e.target.checked)}
+                        onCheckedChange={(checked) => setCustomerRacket(checked === true)}
                       />
                       Customer provided racket (no charge)
                     </label>
@@ -3204,10 +3264,9 @@ function Register() {
                       options={stringOptions}
                     />
                     <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={stringCustomerOwned}
-                        onChange={(e) => setCustomerString(e.target.checked)}
+                        onCheckedChange={(checked) => setCustomerString(checked === true)}
                       />
                       Customer provided string (no charge)
                     </label>
@@ -3513,18 +3572,16 @@ function Register() {
                   </div>
                   <div className="flex flex-wrap items-center gap-4 text-xs">
                     <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={stencil}
-                        onChange={(e) => setStencil(e.target.checked)}
+                        onCheckedChange={(checked) => setStencil(checked === true)}
                       />
                       Stencil the string
                     </label>
                     <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={overgrip}
-                        onChange={(e) => setOvergrip(e.target.checked)}
+                        onCheckedChange={(checked) => setOvergrip(checked === true)}
                       />
                       Replace overgrip
                     </label>
@@ -3602,10 +3659,9 @@ function Register() {
                     />
                   </div>
                   <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={notifyWhatsApp}
-                      onChange={(e) => setNotifyWhatsApp(e.target.checked)}
+                      onCheckedChange={(checked) => setNotifyWhatsApp(checked === true)}
                     />
                     Notify the customer on WhatsApp when the racket is ready
                   </label>
@@ -3631,10 +3687,9 @@ function Register() {
                         {bookingRules.serviceTerms}
                       </p>
                       <label className="flex items-start gap-2 text-xs">
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={liabilityOk}
-                          onChange={(e) => setLiabilityOk(e.target.checked)}
+                          onCheckedChange={(checked) => setLiabilityOk(checked === true)}
                         />
                         Customer has read, acknowledged, and accepted the Service &amp; High-Tension
                         Liability Terms.
@@ -3654,10 +3709,9 @@ function Register() {
                   {bookingRules.serviceTerms}
                 </p>
                 <label className="flex items-start gap-2 text-xs">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={liabilityOk}
-                    onChange={(e) => setLiabilityOk(e.target.checked)}
+                    onCheckedChange={(checked) => setLiabilityOk(checked === true)}
                   />
                   Customer has read and accepted the booking terms &amp; conditions.
                 </label>
@@ -4036,7 +4090,9 @@ function Register() {
                 },
                 detail: `${v}${t === "percent" ? "%" : ""} on ${target === "bill" ? "the bill" : "a line"}`,
               });
-              if (!grant) return;
+              // An ungated action is represented by an empty grant token and
+              // is still allowed. Only null means the gate refused or queued it.
+              if (grant === null) return;
             }
             if (target === "bill") {
               setCartDiscount(v);

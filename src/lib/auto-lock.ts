@@ -10,6 +10,7 @@ import { useEffect, useRef } from "react";
 
 const KEY = "pos.autoLock.seconds";
 const LAST_ACTIVITY_KEY = "pos.autoLock.lastActivityAt";
+const SESSION_IDLE_MINUTES_KEY = "pos.session.idleMinutes";
 export const DEFAULT_AUTO_LOCK_SECONDS = 180;
 const ACTIVITY_WRITE_THROTTLE_MS = 1_000;
 const SERVER_ACTIVITY_THROTTLE_MS = 30_000;
@@ -37,6 +38,22 @@ export function setAutoLockSeconds(seconds: number) {
   const safe = Number.isFinite(seconds) && seconds > 0 ? Math.min(Math.round(seconds), 86_400) : 0;
   window.localStorage.setItem(KEY, String(safe));
   for (const l of listeners) l();
+}
+
+/** Effective server session limit captured at sign-in, expressed for useAutoLock. */
+export function sessionIdleSeconds(): number {
+  if (typeof window === "undefined") return DEFAULT_AUTO_LOCK_SECONDS;
+  const minutes = Number(window.localStorage.getItem(SESSION_IDLE_MINUTES_KEY));
+  return Number.isFinite(minutes) && minutes > 0
+    ? Math.min(Math.round(minutes * 60), 86_400)
+    : DEFAULT_AUTO_LOCK_SECONDS;
+}
+
+export function setSessionIdleMinutes(minutes: number): void {
+  if (typeof window === "undefined") return;
+  if (Number.isFinite(minutes) && minutes > 0)
+    window.localStorage.setItem(SESSION_IDLE_MINUTES_KEY, String(Math.round(minutes)));
+  else window.localStorage.removeItem(SESSION_IDLE_MINUTES_KEY);
 }
 
 /**
@@ -122,6 +139,7 @@ export function clearAutoLockActivity(): void {
   lastServerActivityAt = 0;
   operationGraceUntil = 0;
   window.localStorage.removeItem(LAST_ACTIVITY_KEY);
+  window.localStorage.removeItem(SESSION_IDLE_MINUTES_KEY);
 }
 
 // Capture every genuine user interaction that can change application state.

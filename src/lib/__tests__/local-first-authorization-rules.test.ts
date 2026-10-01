@@ -18,20 +18,43 @@ describe("local-first authorization rules", () => {
     const main = source("electron/main.cjs");
     const privilege = source("electron/ipc-privilege.cjs");
     const endpoint = source("src/lib/sync-endpoint.server.ts");
+    const cloud = source("electron/sync/cloud-client.cjs");
+    const push = source("electron/sync/push-worker.cjs");
     expect(main).toContain('ipcMain.handle("business:save-authorization-rule"');
     expect(main).toContain('adminSession.hasPermission("can_access_pos_settings")');
     expect(privilege).toContain('channel === "business:save-authorization-rule"');
-    expect(endpoint).toContain('code:"GOVERNANCE_AUTH_REQUIRED"');
-    expect(endpoint).toContain("scope.kind === \"terminal\"");
+    expect(endpoint).toContain('code: "GOVERNANCE_AUTH_REQUIRED"');
+    expect(endpoint).toContain('scope.kind === "terminal"');
+    for (const table of [
+      "pos_store_settings",
+      "authorization_actions",
+      "authorization_action_history",
+    ]) {
+      expect(endpoint).toContain(`"${table}"`);
+      expect(cloud).toContain(`"${table}"`);
+      expect(push).toContain(`"${table}"`);
+    }
+    expect(endpoint).toContain('operation.table === "pos_store_settings"');
   });
 
   it("uses versioned cloud merge and never routes the Electron save through the browser outbox", () => {
     const schema = source("supabase/schema.sql");
     const client = source("src/lib/authorization-client.ts");
     expect(schema).toMatch(/authorization_actions[\s\S]*row_version integer NOT NULL DEFAULT 1/);
-    expect(schema).toContain('(EXCLUDED."row_version",EXCLUDED."updated_at",COALESCE(EXCLUDED."updated_by",\'\'))>');
+    expect(schema).toContain(
+      'WHERE EXCLUDED."row_version">public."authorization_actions"."row_version"',
+    );
     expect(schema).toContain("authorization_action_history is insert-only");
     expect(client).toContain("localDb()!.saveAuthorizationRule!");
     expect(client).not.toContain("sync-outbox");
+  });
+
+  it("keeps central settings authoritative when local and cloud versions match", () => {
+    const offline = source("src/lib/pos-rules-offline.ts");
+    const pull = source("electron/sync/cloud-client.cjs");
+    expect(offline).toContain("input.expectedVersion) + 1");
+    expect(pull).toContain('"pos_store_settings"');
+    expect(pull).toContain('"authorization_actions"');
+    expect(pull).toContain(' ? ">=" : ">"');
   });
 });

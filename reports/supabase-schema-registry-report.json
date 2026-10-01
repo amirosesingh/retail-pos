@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-09-29T06:29:03.256Z",
-  "tableCount": 69,
-  "columnCount": 1175,
+  "generatedAt": "2026-10-01T05:14:28.872Z",
+  "tableCount": 70,
+  "columnCount": 1181,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -2969,60 +2969,6 @@
           "hasDefault": true
         },
         {
-          "name": "review_max_voids",
-          "declaration": "integer DEFAULT 5 NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "review_max_refunds",
-          "declaration": "integer DEFAULT 3 NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "review_max_refund_value",
-          "declaration": "numeric DEFAULT 200 NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "review_max_nosale",
-          "declaration": "integer DEFAULT 5 NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "review_max_discount_pct",
-          "declaration": "numeric DEFAULT 15 NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "day_start_time",
-          "declaration": "text DEFAULT '09:00'::text NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "day_end_time",
-          "declaration": "text DEFAULT '22:00'::text NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "max_shift_hours",
-          "declaration": "numeric DEFAULT 12 NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "shift_reminder_minutes",
-          "declaration": "integer DEFAULT 30 NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
           "name": "ui_visibility",
           "declaration": "jsonb DEFAULT '{\"hidden\": {}}'::jsonb NOT NULL",
           "nullable": false,
@@ -4471,7 +4417,7 @@
         },
         {
           "name": "row_version",
-          "declaration": "integer NOT NULL DEFAULT 1",
+          "declaration": "integer DEFAULT 1 NOT NULL",
           "nullable": false,
           "hasDefault": true
         }
@@ -7989,6 +7935,104 @@
         },
         {
           "name": "updated_at",
+          "declaration": "timestamptz NOT NULL DEFAULT now()",
+          "nullable": false,
+          "hasDefault": true
+        }
+      ],
+      "primaryKey": [],
+      "uniqueKeys": [],
+      "foreignKeys": []
+    },
+    {
+      "name": "change_history",
+      "columns": [
+        {
+          "name": "id",
+          "declaration": "uuid PRIMARY KEY DEFAULT gen_random_uuid()",
+          "nullable": true,
+          "hasDefault": true
+        },
+        {
+          "name": "organization_id",
+          "declaration": "text NOT NULL DEFAULT 'default'",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "entity_type",
+          "declaration": "text NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "entity_id",
+          "declaration": "text NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "action",
+          "declaration": "text NOT NULL CHECK (action IN ('insert','update','delete'))",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "old_value",
+          "declaration": "jsonb",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "new_value",
+          "declaration": "jsonb",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "revision",
+          "declaration": "bigint NOT NULL",
+          "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "scope_type",
+          "declaration": "text NOT NULL DEFAULT 'GLOBAL'",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "scope_id",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "changed_by",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "source_application",
+          "declaration": "text NOT NULL DEFAULT 'web'",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "device_id",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "terminal_id",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "server_timestamp",
           "declaration": "timestamptz NOT NULL DEFAULT now()",
           "nullable": false,
           "hasDefault": true

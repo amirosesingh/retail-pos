@@ -261,6 +261,27 @@ export type AuthorizationRule = {
   updatedBy: string | null;
 };
 
+/**
+ * Named exclusions share the existing text-array columns using a leading `!`.
+ * This keeps old databases and offline stores compatible while allowing a
+ * role to be selected with individual exceptions.
+ */
+export const includedAuthorizationUserIds = (values: string[]): string[] =>
+  values.filter((value) => value.trim() && !value.startsWith("!"));
+
+export const excludedAuthorizationUserIds = (values: string[]): string[] =>
+  values.filter((value) => value.startsWith("!")).map((value) => value.slice(1));
+
+export const encodeAuthorizationUsers = (included: string[], excluded: string[]): string[] => [
+  ...new Set(included.map((value) => value.trim()).filter(Boolean)),
+  ...[...new Set(excluded.map((value) => value.trim()).filter(Boolean))].map(
+    (value) => `!${value}`,
+  ),
+];
+
+const userIsExcluded = (values: string[], userId: string): boolean =>
+  excludedAuthorizationUserIds(values).some((value) => value.toLowerCase() === userId);
+
 export const defaultRule = (actionKey: AuthActionKey): AuthorizationRule => ({
   id: "",
   actionKey,
@@ -347,10 +368,7 @@ export function normalizeRule(input: unknown): AuthorizationRule {
         ? null
         : Math.min(
             1440,
-            Math.max(
-              1,
-              Number(field("escalation_after_minutes", "escalationAfterMinutes")) || 1,
-            ),
+            Math.max(1, Number(field("escalation_after_minutes", "escalationAfterMinutes")) || 1),
           ),
     escalationRoles: asStrings(field("escalation_roles", "escalationRoles")),
     requireReason: field("require_reason", "requireReason") === true,
@@ -358,13 +376,9 @@ export function normalizeRule(input: unknown): AuthorizationRule {
     isEnabled: field("is_enabled", "isEnabled") !== false,
     rowVersion: Math.max(0, Number(field("row_version", "rowVersion") ?? 0) || 0),
     updatedAt:
-      field("updated_at", "updatedAt") == null
-        ? null
-        : String(field("updated_at", "updatedAt")),
+      field("updated_at", "updatedAt") == null ? null : String(field("updated_at", "updatedAt")),
     updatedBy:
-      field("updated_by", "updatedBy") == null
-        ? null
-        : String(field("updated_by", "updatedBy")),
+      field("updated_by", "updatedBy") == null ? null : String(field("updated_by", "updatedBy")),
   };
 }
 
@@ -455,10 +469,13 @@ export function canAuthorize(
   who: { userId?: string | null; role?: string | null },
 ): boolean {
   if (!rule) return false;
+  const id = (who.userId ?? "").toLowerCase();
+  if (id && userIsExcluded(rule.allowedUserIds, id)) return false;
   const role = (who.role ?? "").toLowerCase();
   if (role && rule.allowedRoles.map((r) => r.toLowerCase()).includes(role)) return true;
-  const id = (who.userId ?? "").toLowerCase();
-  return !!id && rule.allowedUserIds.map((u) => u.toLowerCase()).includes(id);
+  return (
+    !!id && includedAuthorizationUserIds(rule.allowedUserIds).some((u) => u.toLowerCase() === id)
+  );
 }
 
 /** Authentication never implies authority: request and decision rights are separate. */
@@ -469,9 +486,11 @@ export function canRequestApproval(
   if (!rule || !rule.isEnabled || (rule.mode !== "request" && rule.mode !== "either")) return false;
   const role = (who.role ?? "").toLowerCase();
   const id = (who.userId ?? "").toLowerCase();
+  if (id && userIsExcluded(rule.requesterUserIds, id)) return false;
   return (
     rule.requesterRoles.some((r) => r.toLowerCase() === role) ||
-    (!!id && rule.requesterUserIds.some((u) => u.toLowerCase() === id))
+    (!!id &&
+      includedAuthorizationUserIds(rule.requesterUserIds).some((u) => u.toLowerCase() === id))
   );
 }
 
@@ -767,15 +786,15 @@ export function canViewAuthorizationRequest(
   who: { userId?: string | null; role?: string | null },
   request: Pick<
     AuthorizationRequest,
-    | "approvalRoute"
-    | "createdAt"
-    | "requestedBy"
-    | "requestedAmount"
-    | "requesterDirectLimit"
+    "approvalRoute" | "createdAt" | "requestedBy" | "requestedAmount" | "requesterDirectLimit"
   >,
   branchVisible: boolean,
   now = Date.now(),
+  allowBranchAudit = false,
 ): boolean {
+  // Administrators may audit completed/expired requests for branches they can
+  // access even when they were not one of the original routed approvers.
+  if (allowBranchAudit && branchVisible) return true;
   const userId = (who.userId ?? "").toLowerCase();
   if (branchVisible && userId && request.requestedBy.toLowerCase() === userId) return true;
   if (request.approvalRoute) return isRoutedApprover(request, who, now);
@@ -792,3 +811,24 @@ function normalizeSnapshotRow(raw: unknown): TicketSnapshot | null {
 /** The value that applies once a request is decided: the granted one wins. */
 export const effectiveAmount = (r: AuthorizationRequest): number | null =>
   r.approvedAmount ?? r.requestedAmount;
+
+/** Stable, terminal-aware reference that staff can read out more easily than a UUID. */
+export function approvalReference(
+  request: Pick<AuthorizationRequest, "id" | "terminalId" | "createdAt">,
+): string {
+  const parsed = new Date(request.createdAt);
+  const day = Number.isFinite(parsed.getTime())
+    ? `${String(parsed.getUTCFullYear()).slice(-2)}${String(parsed.getUTCMonth() + 1).padStart(2, "0")}${String(parsed.getUTCDate()).padStart(2, "0")}`
+    : "000000";
+  const terminal =
+    request.terminalId
+      .replace(/[^a-z0-9]/gi, "")
+      .toUpperCase()
+      .slice(-6) || "WEB";
+  const suffix =
+    request.id
+      .replace(/[^a-z0-9]/gi, "")
+      .toUpperCase()
+      .slice(0, 6) || "000000";
+  return `APR-${day}-${terminal}-${suffix}`;
+}

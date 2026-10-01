@@ -15,7 +15,13 @@ import {
 import { notifyError, showNotification } from "@/lib/notify";
 import { recordDiagnostic, reasonCode } from "@/lib/diagnostics";
 import { applyStockDeltaBatch } from "@/lib/stock-recovery";
-import { canRelay, hasStaffSession, relayActiveShift, relayOp, relayStores } from "@/core/api/sync-relay";
+import {
+  canRelay,
+  hasStaffSession,
+  relayActiveShift,
+  relayOp,
+  relayStores,
+} from "@/core/api/sync-relay";
 import { hydrateTerminalConfig, readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { isOperationalTable } from "@/lib/pos-auth-route";
 import { keyset, nextCursor, PAGE_SIZE, type Cursor, type Page } from "@/lib/keyset";
@@ -166,17 +172,23 @@ export function applyScopedProductPrices(
       (kind === "terminal" && id !== scope.terminalId) ||
       (kind === "cluster" && id !== (scope.clusterId || "default")) ||
       !(kind in priority)
-    ) continue;
+    )
+      continue;
     const value = jsonValue<Row>(row.value, {});
     const productId = key.slice("product_price:".length);
     const candidate = { priority: priority[kind], value };
-    if (candidate.priority >= (selected.get(productId)?.priority ?? -1)) selected.set(productId, candidate);
+    if (candidate.priority >= (selected.get(productId)?.priority ?? -1))
+      selected.set(productId, candidate);
   }
   return products.map((product) => {
     const value = selected.get(product.id)?.value;
     if (!value) return product;
-    const selling = value.selling_price == null ? product.price : safeNum(value.selling_price, product.price);
-    const ecom = value.ecom_price == null ? product.ecomPrice : safeNum(value.ecom_price, product.ecomPrice ?? selling);
+    const selling =
+      value.selling_price == null ? product.price : safeNum(value.selling_price, product.price);
+    const ecom =
+      value.ecom_price == null
+        ? product.ecomPrice
+        : safeNum(value.ecom_price, product.ecomPrice ?? selling);
     return { ...product, price: selling, ecomPrice: ecom };
   });
 }
@@ -409,19 +421,6 @@ const rowToSettings = (r: Row | null): AppSettings =>
           ...defaultSettings.whatsapp,
           ...((r.whatsapp_settings ?? {}) as object),
         },
-        review: {
-          maxVoids: num(r.review_max_voids, defaultSettings.review.maxVoids),
-          maxRefunds: num(r.review_max_refunds, defaultSettings.review.maxRefunds),
-          maxRefundValue: num(r.review_max_refund_value, defaultSettings.review.maxRefundValue),
-          maxNoSaleOpens: num(r.review_max_nosale, defaultSettings.review.maxNoSaleOpens),
-          maxDiscountPct: num(r.review_max_discount_pct, defaultSettings.review.maxDiscountPct),
-        },
-        hours: {
-          dayStart: r.day_start_time ?? defaultSettings.hours.dayStart,
-          dayEnd: r.day_end_time ?? defaultSettings.hours.dayEnd,
-          maxShiftHours: num(r.max_shift_hours, defaultSettings.hours.maxShiftHours),
-          reminderMinutes: num(r.shift_reminder_minutes, defaultSettings.hours.reminderMinutes),
-        },
         visibility: {
           hidden: ((r.ui_visibility as { hidden?: Record<string, string[]> } | null)?.hidden ??
             {}) as Record<string, string[]>,
@@ -472,15 +471,6 @@ const buildSettingsRow = (s: AppSettings): Row => ({
   show_points: s.receipt.showPoints,
   show_barcode: s.receipt.showBarcode,
   show_tax_details: s.receipt.showTax,
-  review_max_voids: s.review.maxVoids,
-  review_max_refunds: s.review.maxRefunds,
-  review_max_refund_value: s.review.maxRefundValue,
-  review_max_nosale: s.review.maxNoSaleOpens,
-  review_max_discount_pct: s.review.maxDiscountPct,
-  day_start_time: s.hours.dayStart,
-  day_end_time: s.hours.dayEnd,
-  max_shift_hours: s.hours.maxShiftHours,
-  shift_reminder_minutes: s.hours.reminderMinutes,
   ui_visibility: s.visibility ?? { hidden: {} },
   integration_settings: s.integrations ?? {},
   updated_at: new Date().toISOString(),
@@ -1116,8 +1106,8 @@ export async function loadCloudState(
     return loadLocalState(new Error("No direct cloud staff session is active."));
   // These reads are independent. Start membership tiers alongside the other
   // slices so a full network round trip is not added to every sign-in.
-  const [tiers, products, priceOverrides, members, sales, promotions, settings, stores, shifts] = await Promise.all(
-    [
+  const [tiers, products, priceOverrides, members, sales, promotions, settings, stores, shifts] =
+    await Promise.all([
       supabase.from("membership_tiers").select("id, name").is("deleted_at", null),
       // Keep bootstrap bounded. Search and barcode resolution query the indexed
       // database on demand, so a large catalogue is never materialised in a
@@ -1176,8 +1166,7 @@ export async function loadCloudState(
           return { data: null };
         }
       })(),
-    ],
-  );
+    ]);
 
   const err =
     tiers.error ||
@@ -1205,7 +1194,7 @@ export async function loadCloudState(
   return {
     products: applyScopedProductPrices(
       (products.data ?? []).map(rowToProduct),
-      ((priceOverrides.data ?? []) as Row[]),
+      (priceOverrides.data ?? []) as Row[],
       { branchId: storeId, terminalId: terminal?.tokenId, clusterId: activeStore?.groupId },
     ),
     members: (members.data ?? []).map((m) => rowToMember(m, tierName)),
@@ -1964,7 +1953,10 @@ export const db = {
       const message = (e as { message?: string })?.message ?? String(e);
       if (isLinkedRecordError(message)) throw e instanceof Error ? e : new Error(message);
       const offline = typeof navigator !== "undefined" && !navigator.onLine;
-      if (effectiveDatabaseMode() === "local" && (offline || /failed to fetch|network|timeout/i.test(message))) {
+      if (
+        effectiveDatabaseMode() === "local" &&
+        (offline || /failed to fetch|network|timeout/i.test(message))
+      ) {
         await commitOps("Deleting product", [op]);
         return;
       }
@@ -2519,20 +2511,24 @@ export const db = {
       limit: 1,
     }).catch(() => [] as Row[])) as Row[];
     const rowVersion = Math.max(1, safeInt(current[0]?.row_version, 0) + 1);
-    return commitOps("Saving branch price", [{
-      kind: "upsert",
-      table: "settings_scoped",
-      rows: [{
-        scope: "BRANCH",
-        scope_id: branchId,
-        key,
-        value: { selling_price: safeNum(price), ecom_price: safeNumOrNull(ecomPrice) },
-        is_overridden: true,
-        updated_by: updatedBy ?? null,
-        updated_at: new Date().toISOString(),
-        row_version: rowVersion,
-      }],
-    }]);
+    return commitOps("Saving branch price", [
+      {
+        kind: "upsert",
+        table: "settings_scoped",
+        rows: [
+          {
+            scope: "BRANCH",
+            scope_id: branchId,
+            key,
+            value: { selling_price: safeNum(price), ecom_price: safeNumOrNull(ecomPrice) },
+            is_overridden: true,
+            updated_by: updatedBy ?? null,
+            updated_at: new Date().toISOString(),
+            row_version: rowVersion,
+          },
+        ],
+      },
+    ]);
   },
 
   /** Save a promotion and wait until it is stored somewhere. */

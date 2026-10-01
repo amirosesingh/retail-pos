@@ -306,7 +306,7 @@ export function SettingsFrame({
         className={
           embedded
             ? "w-full max-w-full space-y-4"
-            : `mx-auto w-full space-y-5 p-6 ${wide ? "max-w-full" : "max-w-4xl"}`
+            : `mx-auto w-full space-y-5 p-6 ${wide ? "max-w-full" : "max-w-6xl"}`
         }
       >
         <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">

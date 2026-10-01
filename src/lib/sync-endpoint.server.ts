@@ -49,47 +49,104 @@ const opSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-
 const bodySchema = z.object({
   sessionToken: z.string().max(400).optional(),
   cashierToken: z.string().max(2000).optional(),
   terminalToken: z.string().max(200).optional(),
   accessToken: z.string().max(4000).optional(),
   ops: z.array(opSchema).max(50).optional(),
-  sqlServerBatch: z.object({
-    batchId: z.string().uuid(),
-    organizationId: z.string().min(1).max(128),
-    branchId: z.string().min(1).max(128),
-    table: z.string().regex(/^[a-z_][a-z0-9_]*$/).max(64),
-    rows: z.array(z.record(z.string(), z.unknown())).max(2000),
-    changes: z.array(z.record(z.string(), z.unknown())).max(2000),
-  }).optional(),
-  sqlServerAggregate: z.object({
-    batchId: z.string().uuid(), organizationId: z.string().min(1).max(128), branchId: z.string().min(1).max(128),
-    operations: z.array(z.object({
-      table: z.string().regex(/^[a-z_][a-z0-9_]*$/).max(64),
+  sqlServerBatch: z
+    .object({
+      batchId: z.string().uuid(),
+      organizationId: z.string().min(1).max(128),
+      branchId: z.string().min(1).max(128),
+      table: z
+        .string()
+        .regex(/^[a-z_][a-z0-9_]*$/)
+        .max(64),
       rows: z.array(z.record(z.string(), z.unknown())).max(2000),
       changes: z.array(z.record(z.string(), z.unknown())).max(2000),
-    })).min(1).max(200),
-  }).optional(),
-  sqlServerPull: z.object({
-    organizationId: z.string().min(1).max(128), branchId: z.string().min(1).max(128),
-    cursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), limit: z.number().int().min(100).max(2000),
-  }).optional(),
-  sqlServerBootstrap: z.object({
-    organizationId: z.string().min(1).max(128), branchId: z.string().min(1).max(128),
-    table: z.string().regex(/^[a-z_][a-z0-9_]*$/).max(64), cursor: z.string().max(512).nullable(),
-    historyDays: z.number().int().min(30).max(7300), limit: z.number().int().min(100).max(2000),
-  }).optional(),
-  sqlServerCounts: z.object({ organizationId: z.string().min(1).max(128), branchId: z.string().min(1).max(128), historyDays: z.number().int().min(30).max(7300) }).optional(),
-  sqlServerTelemetry: z.object({
-    terminal_id:z.string().min(1).max(128),store_id:z.string().min(1).max(128),terminal_name:z.string().max(160).nullable(),
-    branch_code:z.string().max(64).nullable(),session_status:z.enum(["signed_in","idle"]).nullable(),staff_name:z.string().max(160).nullable(),staff_role:z.string().max(64).nullable(),db_mode:z.string().max(32),connection_status:z.string().max(32),
-    storage_engine:z.literal("sqlserver"),pending_count:z.number().int().nonnegative(),conflict_count:z.number().int().nonnegative(),failed_count:z.number().int().nonnegative(),
-    last_synced_at:z.string().datetime().nullable(),last_push_at:z.string().datetime().nullable(),last_pull_at:z.string().datetime().nullable(),app_version:z.string().max(64),platform:z.string().max(64).nullable(),
-    sql_server_state:z.string().max(64),database_name:z.string().max(128).nullable(),schema_version:z.number().int().nonnegative().nullable(),sync_phase:z.string().max(64).nullable(),current_table:z.string().max(128).nullable(),last_seen_at:z.string().datetime(),
-  }).optional(),
-  oldReceipt: z.object({ lookup: z.string().min(1).max(128), branchId: z.string().min(1).max(128) }).optional(),
+    })
+    .optional(),
+  sqlServerAggregate: z
+    .object({
+      batchId: z.string().uuid(),
+      organizationId: z.string().min(1).max(128),
+      branchId: z.string().min(1).max(128),
+      operations: z
+        .array(
+          z.object({
+            table: z
+              .string()
+              .regex(/^[a-z_][a-z0-9_]*$/)
+              .max(64),
+            rows: z.array(z.record(z.string(), z.unknown())).max(2000),
+            changes: z.array(z.record(z.string(), z.unknown())).max(2000),
+          }),
+        )
+        .min(1)
+        .max(200),
+    })
+    .optional(),
+  sqlServerPull: z
+    .object({
+      organizationId: z.string().min(1).max(128),
+      branchId: z.string().min(1).max(128),
+      cursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      limit: z.number().int().min(100).max(2000),
+    })
+    .optional(),
+  sqlServerBootstrap: z
+    .object({
+      organizationId: z.string().min(1).max(128),
+      branchId: z.string().min(1).max(128),
+      table: z
+        .string()
+        .regex(/^[a-z_][a-z0-9_]*$/)
+        .max(64),
+      cursor: z.string().max(512).nullable(),
+      historyDays: z.number().int().min(30).max(7300),
+      limit: z.number().int().min(100).max(2000),
+    })
+    .optional(),
+  sqlServerCounts: z
+    .object({
+      organizationId: z.string().min(1).max(128),
+      branchId: z.string().min(1).max(128),
+      historyDays: z.number().int().min(30).max(7300),
+    })
+    .optional(),
+  sqlServerTelemetry: z
+    .object({
+      terminal_id: z.string().min(1).max(128),
+      store_id: z.string().min(1).max(128),
+      terminal_name: z.string().max(160).nullable(),
+      branch_code: z.string().max(64).nullable(),
+      session_status: z.enum(["signed_in", "idle"]).nullable(),
+      staff_name: z.string().max(160).nullable(),
+      staff_role: z.string().max(64).nullable(),
+      db_mode: z.string().max(32),
+      connection_status: z.string().max(32),
+      storage_engine: z.literal("sqlserver"),
+      pending_count: z.number().int().nonnegative(),
+      conflict_count: z.number().int().nonnegative(),
+      failed_count: z.number().int().nonnegative(),
+      last_synced_at: z.string().datetime().nullable(),
+      last_push_at: z.string().datetime().nullable(),
+      last_pull_at: z.string().datetime().nullable(),
+      app_version: z.string().max(64),
+      platform: z.string().max(64).nullable(),
+      sql_server_state: z.string().max(64),
+      database_name: z.string().max(128).nullable(),
+      schema_version: z.number().int().nonnegative().nullable(),
+      sync_phase: z.string().max(64).nullable(),
+      current_table: z.string().max(128).nullable(),
+      last_seen_at: z.string().datetime(),
+    })
+    .optional(),
+  oldReceipt: z
+    .object({ lookup: z.string().min(1).max(128), branchId: z.string().min(1).max(128) })
+    .optional(),
   read: z
     .discriminatedUnion("kind", [
       z.object({ kind: z.literal("activeShift"), storeId: z.string().min(1).max(64) }),
@@ -103,7 +160,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   try {
     const raw = await request.text();
     if (new TextEncoder().encode(raw).byteLength > 8 * 1024 * 1024)
-      return Response.json({ ok: false, code: "PAYLOAD_TOO_LARGE", error: "The sync batch exceeds 8 MiB." }, { status: 413 });
+      return Response.json(
+        { ok: false, code: "PAYLOAD_TOO_LARGE", error: "The sync batch exceeds 8 MiB." },
+        { status: 413 },
+      );
     body = bodySchema.parse(JSON.parse(raw));
   } catch {
     return Response.json({ ok: false, error: "Malformed request" }, { status: 400 });
@@ -118,12 +178,21 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     body = { ...body, accessToken: bearer.slice(0, 4000) };
   }
 
-  if (!body.ops?.length && !body.read && !body.sqlServerBatch && !body.sqlServerAggregate && !body.sqlServerPull && !body.sqlServerBootstrap && !body.sqlServerCounts && !body.sqlServerTelemetry && !body.oldReceipt)
+  if (
+    !body.ops?.length &&
+    !body.read &&
+    !body.sqlServerBatch &&
+    !body.sqlServerAggregate &&
+    !body.sqlServerPull &&
+    !body.sqlServerBootstrap &&
+    !body.sqlServerCounts &&
+    !body.sqlServerTelemetry &&
+    !body.oldReceipt
+  )
     return Response.json({ ok: false, error: "Nothing to do" }, { status: 400 });
 
-  const { verifyRelayCaller, runRelayOp, runRelayRead, hasServiceKey } = await import(
-    "@/core/api/pos-relay.server"
-  );
+  const { verifyRelayCaller, runRelayOp, runRelayRead, hasServiceKey } =
+    await import("@/core/api/pos-relay.server");
   // Without the internal key the relay cannot do anything: answer with a
   // readable "temporarily unavailable" instead of a blank server error.
   if (!hasServiceKey()) {
@@ -168,7 +237,11 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
 
   if (body.read) {
     // A till may only ask about its own branch.
-    if (body.read.kind === "activeShift" && !scope.isSupervisor && body.read.storeId !== scope.storeId)
+    if (
+      body.read.kind === "activeShift" &&
+      !scope.isSupervisor &&
+      body.read.storeId !== scope.storeId
+    )
       return Response.json(
         { ok: false, code: "STORE_FORBIDDEN", error: "You can only read your own branch." },
         { status: 403 },
@@ -182,74 +255,255 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   }
 
   if (body.sqlServerTelemetry) {
-    if (body.sqlServerTelemetry.store_id !== scope.storeId) return Response.json({ok:false,code:"STORE_FORBIDDEN",error:"Telemetry must belong to this terminal's branch."},{status:403});
+    if (body.sqlServerTelemetry.store_id !== scope.storeId)
+      return Response.json(
+        {
+          ok: false,
+          code: "STORE_FORBIDDEN",
+          error: "Telemetry must belong to this terminal's branch.",
+        },
+        { status: 403 },
+      );
     const { serviceRest } = await import("@/core/api/pos-relay.server");
-    const response=await serviceRest("branch_telemetry?on_conflict=terminal_id",{method:"POST",prefer:"resolution=merge-duplicates,return=minimal",body:JSON.stringify([body.sqlServerTelemetry])});
-    return response.ok?Response.json({ok:true}):Response.json({ok:false,error:(await response.text()).slice(0,400)},{status:response.status});
+    const response = await serviceRest("branch_telemetry?on_conflict=terminal_id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: JSON.stringify([body.sqlServerTelemetry]),
+    });
+    return response.ok
+      ? Response.json({ ok: true })
+      : Response.json(
+          { ok: false, error: (await response.text()).slice(0, 400) },
+          { status: response.status },
+        );
   }
 
-  if (body.sqlServerBatch || body.sqlServerAggregate || body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerCounts || body.oldReceipt) {
-    const branchId = body.sqlServerBatch?.branchId ?? body.sqlServerAggregate?.branchId ?? body.sqlServerPull?.branchId ?? body.sqlServerBootstrap?.branchId ?? body.sqlServerCounts?.branchId ?? body.oldReceipt?.branchId ?? "";
-    const terminalSync = Boolean(body.sqlServerBatch || body.sqlServerAggregate || body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerCounts);
+  if (
+    body.sqlServerBatch ||
+    body.sqlServerAggregate ||
+    body.sqlServerPull ||
+    body.sqlServerBootstrap ||
+    body.sqlServerCounts ||
+    body.oldReceipt
+  ) {
+    const branchId =
+      body.sqlServerBatch?.branchId ??
+      body.sqlServerAggregate?.branchId ??
+      body.sqlServerPull?.branchId ??
+      body.sqlServerBootstrap?.branchId ??
+      body.sqlServerCounts?.branchId ??
+      body.oldReceipt?.branchId ??
+      "";
+    const terminalSync = Boolean(
+      body.sqlServerBatch ||
+      body.sqlServerAggregate ||
+      body.sqlServerPull ||
+      body.sqlServerBootstrap ||
+      body.sqlServerCounts,
+    );
     if (terminalSync && !scope.terminalId)
-      return Response.json({ok:false,code:"TERMINAL_REQUIRED",error:"SQL Server synchronization requires a verified terminal activation for this branch."},{status:403});
-    const mayManageOtherBranches = scope.role === "admin" || scope.roleSlug === "admin" || scope.permissions.can_manage_sync_backup === true;
+      return Response.json(
+        {
+          ok: false,
+          code: "TERMINAL_REQUIRED",
+          error:
+            "SQL Server synchronization requires a verified terminal activation for this branch.",
+        },
+        { status: 403 },
+      );
+    const mayManageOtherBranches =
+      scope.role === "admin" ||
+      scope.roleSlug === "admin" ||
+      scope.permissions.can_manage_sync_backup === true;
     const terminalBound = Boolean(body.terminalToken) || scope.kind === "terminal";
-    if (branchId !== scope.storeId && (terminalBound || !mayManageOtherBranches)) return Response.json({ ok:false,code:"STORE_FORBIDDEN",error:"You can only synchronize your own branch." },{status:403});
-    if (body.oldReceipt && !(scope.role === "admin" || scope.roleSlug === "admin" || scope.permissions.can_process_refund === true))
-      return Response.json({ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required to retrieve historical receipts."},{status:403});
-    const governanceTables = new Set(["authorization_actions", "authorization_action_history"]);
+    if (branchId !== scope.storeId && (terminalBound || !mayManageOtherBranches))
+      return Response.json(
+        { ok: false, code: "STORE_FORBIDDEN", error: "You can only synchronize your own branch." },
+        { status: 403 },
+      );
+    if (
+      body.oldReceipt &&
+      !(
+        scope.role === "admin" ||
+        scope.roleSlug === "admin" ||
+        scope.permissions.can_process_refund === true
+      )
+    )
+      return Response.json(
+        {
+          ok: false,
+          code: "PERMISSION_DENIED",
+          error: "Refund permission is required to retrieve historical receipts.",
+        },
+        { status: 403 },
+      );
+    const protectedSettingsTables = new Set([
+      "pos_store_settings",
+      "authorization_actions",
+      "authorization_action_history",
+    ]);
+    const governanceRpcTables = new Set(["authorization_actions", "authorization_action_history"]);
     const governanceOperations = body.sqlServerBatch
-      ? (governanceTables.has(body.sqlServerBatch.table) ? [{ table: body.sqlServerBatch.table, rows: body.sqlServerBatch.rows }] : [])
-      : (body.sqlServerAggregate?.operations ?? []).filter((operation) => governanceTables.has(operation.table));
+      ? protectedSettingsTables.has(body.sqlServerBatch.table)
+        ? [{ table: body.sqlServerBatch.table, rows: body.sqlServerBatch.rows }]
+        : []
+      : (body.sqlServerAggregate?.operations ?? []).filter((operation) =>
+          protectedSettingsTables.has(operation.table),
+        );
     if (governanceOperations.length) {
       const isAdmin = scope.role === "admin" || scope.roleSlug === "admin";
       if (scope.kind === "terminal" || scope.permissions.can_access_pos_settings !== true) {
-        return Response.json({ ok:false,code:"GOVERNANCE_AUTH_REQUIRED",error:"A currently signed-in staff member with POS settings permission is required to sync authorization rules." },{status:403});
+        return Response.json(
+          {
+            ok: false,
+            code: "GOVERNANCE_AUTH_REQUIRED",
+            error:
+              "A currently signed-in staff member with POS settings permission is required to sync POS and authorization rules.",
+          },
+          { status: 403 },
+        );
       }
-      const invalidScope = governanceOperations.some((operation) => operation.rows.some((row) => {
-        const scopeType = String(row.scope_type ?? "branch");
-        const scopeId = String(row.scope_id ?? "");
-        return scopeType === "global" ? !isAdmin : scopeType !== "branch" || !scope.storeId || scopeId !== scope.storeId;
-      }));
+      const invalidScope = governanceOperations.some((operation) =>
+        operation.rows.some((row) => {
+          if (operation.table === "pos_store_settings")
+            return String(row.store_id ?? "") !== scope.storeId;
+          const scopeType = String(row.scope_type ?? "branch");
+          const scopeId = String(row.scope_id ?? "");
+          return scopeType === "global"
+            ? !isAdmin
+            : scopeType !== "branch" || !scope.storeId || scopeId !== scope.storeId;
+        }),
+      );
       if (invalidScope)
-        return Response.json({ ok:false,code:"STORE_FORBIDDEN",error:"Authorization rules can only be synchronized for the verified branch; global rules require an administrator." },{status:403});
+        return Response.json(
+          {
+            ok: false,
+            code: "STORE_FORBIDDEN",
+            error:
+              "Authorization rules can only be synchronized for the verified branch; global rules require an administrator.",
+          },
+          { status: 403 },
+        );
       const actor = scope.staffUserId ?? scope.label;
-      if (body.sqlServerBatch?.table === "authorization_actions")
-        body.sqlServerBatch.rows = body.sqlServerBatch.rows.map((row) => ({ ...row, updated_by: actor }));
-      if (body.sqlServerBatch?.table === "authorization_action_history")
-        body.sqlServerBatch.rows = body.sqlServerBatch.rows.map((row) => ({ ...row, changed_by: actor, change_source: "desktop" }));
-      if (body.sqlServerAggregate)
-        body.sqlServerAggregate.operations = body.sqlServerAggregate.operations.map((operation) => ({
-          ...operation,
-          rows: operation.table === "authorization_actions"
-            ? operation.rows.map((row) => ({ ...row, updated_by: actor }))
-            : operation.table === "authorization_action_history"
-              ? operation.rows.map((row) => ({ ...row, changed_by: actor, change_source: "desktop" }))
-              : operation.rows,
+      if (body.sqlServerBatch?.table === "pos_store_settings")
+        body.sqlServerBatch.rows = body.sqlServerBatch.rows.map((row) => ({
+          ...row,
+          updated_by: actor,
         }));
+      if (body.sqlServerBatch?.table === "authorization_actions")
+        body.sqlServerBatch.rows = body.sqlServerBatch.rows.map((row) => ({
+          ...row,
+          updated_by: actor,
+        }));
+      if (body.sqlServerBatch?.table === "authorization_action_history")
+        body.sqlServerBatch.rows = body.sqlServerBatch.rows.map((row) => ({
+          ...row,
+          changed_by: actor,
+          change_source: "desktop",
+        }));
+      if (body.sqlServerAggregate)
+        body.sqlServerAggregate.operations = body.sqlServerAggregate.operations.map(
+          (operation) => ({
+            ...operation,
+            rows:
+              operation.table === "pos_store_settings"
+                ? operation.rows.map((row) => ({ ...row, updated_by: actor }))
+                : operation.table === "authorization_actions"
+                  ? operation.rows.map((row) => ({ ...row, updated_by: actor }))
+                  : operation.table === "authorization_action_history"
+                    ? operation.rows.map((row) => ({
+                        ...row,
+                        changed_by: actor,
+                        change_source: "desktop",
+                      }))
+                    : operation.rows,
+          }),
+        );
     }
     const { serviceRest } = await import("@/core/api/pos-relay.server");
-    const governanceBatch = body.sqlServerBatch && governanceTables.has(body.sqlServerBatch.table);
-      const rpc = governanceBatch ? ["pos_sync_push_governance_batch", {
-      p_batch_id:body.sqlServerBatch!.batchId,p_organization_id:body.sqlServerBatch!.organizationId,p_branch_id:branchId,
-      p_table:body.sqlServerBatch!.table,p_rows:body.sqlServerBatch!.rows,
-      }] as const : body.sqlServerBatch ? ["pos_sync_push_batch", {
-        p_batch_id:body.sqlServerBatch.batchId,p_organization_id:body.sqlServerBatch.organizationId,p_branch_id:branchId,
-        p_terminal_id:scope.terminalId ?? "",
-        p_table:body.sqlServerBatch.table,p_rows:body.sqlServerBatch.rows,p_changes:body.sqlServerBatch.changes,
-      }] as const : body.sqlServerAggregate ? ["pos_sync_push_aggregate", {
-        p_batch_id:body.sqlServerAggregate.batchId,p_organization_id:body.sqlServerAggregate.organizationId,p_branch_id:branchId,p_operations:body.sqlServerAggregate.operations,
-        p_terminal_id:scope.terminalId ?? "",
-      }] as const : body.sqlServerPull ? ["pos_sync_pull", {
-        p_organization_id:body.sqlServerPull.organizationId,p_branch_id:branchId,p_terminal_id:scope.terminalId ?? "",p_after_cursor:body.sqlServerPull.cursor,p_limit:body.sqlServerPull.limit,
-      }] as const : body.sqlServerBootstrap ? ["pos_sync_bootstrap", {
-        p_organization_id:body.sqlServerBootstrap.organizationId,p_branch_id:branchId,p_terminal_id:scope.terminalId ?? "",p_table:body.sqlServerBootstrap.table,p_after_cursor:body.sqlServerBootstrap.cursor,p_history_days:body.sqlServerBootstrap.historyDays,p_limit:body.sqlServerBootstrap.limit,
-      }] as const : body.sqlServerCounts ? ["pos_sync_counts", {
-        p_organization_id:body.sqlServerCounts.organizationId,p_branch_id:branchId,p_terminal_id:scope.terminalId ?? "",p_history_days:body.sqlServerCounts.historyDays,
-    }] as const : ["pos_old_receipt_lookup",{p_lookup:body.oldReceipt!.lookup,p_branch_id:branchId}] as const;
-    const response=await serviceRest(`rpc/${rpc[0]}`,{method:"POST",body:JSON.stringify(rpc[1])});
-    return new Response(await response.text(),{status:response.status,headers:{"content-type":"application/json"}});
+    const governanceBatch =
+      body.sqlServerBatch && governanceRpcTables.has(body.sqlServerBatch.table);
+    const rpc = governanceBatch
+      ? ([
+          "pos_sync_push_governance_batch",
+          {
+            p_batch_id: body.sqlServerBatch!.batchId,
+            p_organization_id: body.sqlServerBatch!.organizationId,
+            p_branch_id: branchId,
+            p_table: body.sqlServerBatch!.table,
+            p_rows: body.sqlServerBatch!.rows,
+          },
+        ] as const)
+      : body.sqlServerBatch
+        ? ([
+            "pos_sync_push_batch",
+            {
+              p_batch_id: body.sqlServerBatch.batchId,
+              p_organization_id: body.sqlServerBatch.organizationId,
+              p_branch_id: branchId,
+              p_terminal_id: scope.terminalId ?? "",
+              p_table: body.sqlServerBatch.table,
+              p_rows: body.sqlServerBatch.rows,
+              p_changes: body.sqlServerBatch.changes,
+            },
+          ] as const)
+        : body.sqlServerAggregate
+          ? ([
+              "pos_sync_push_aggregate",
+              {
+                p_batch_id: body.sqlServerAggregate.batchId,
+                p_organization_id: body.sqlServerAggregate.organizationId,
+                p_branch_id: branchId,
+                p_operations: body.sqlServerAggregate.operations,
+                p_terminal_id: scope.terminalId ?? "",
+              },
+            ] as const)
+          : body.sqlServerPull
+            ? ([
+                "pos_sync_pull",
+                {
+                  p_organization_id: body.sqlServerPull.organizationId,
+                  p_branch_id: branchId,
+                  p_terminal_id: scope.terminalId ?? "",
+                  p_after_cursor: body.sqlServerPull.cursor,
+                  p_limit: body.sqlServerPull.limit,
+                },
+              ] as const)
+            : body.sqlServerBootstrap
+              ? ([
+                  "pos_sync_bootstrap",
+                  {
+                    p_organization_id: body.sqlServerBootstrap.organizationId,
+                    p_branch_id: branchId,
+                    p_terminal_id: scope.terminalId ?? "",
+                    p_table: body.sqlServerBootstrap.table,
+                    p_after_cursor: body.sqlServerBootstrap.cursor,
+                    p_history_days: body.sqlServerBootstrap.historyDays,
+                    p_limit: body.sqlServerBootstrap.limit,
+                  },
+                ] as const)
+              : body.sqlServerCounts
+                ? ([
+                    "pos_sync_counts",
+                    {
+                      p_organization_id: body.sqlServerCounts.organizationId,
+                      p_branch_id: branchId,
+                      p_terminal_id: scope.terminalId ?? "",
+                      p_history_days: body.sqlServerCounts.historyDays,
+                    },
+                  ] as const)
+                : ([
+                    "pos_old_receipt_lookup",
+                    { p_lookup: body.oldReceipt!.lookup, p_branch_id: branchId },
+                  ] as const);
+    const response = await serviceRest(`rpc/${rpc[0]}`, {
+      method: "POST",
+      body: JSON.stringify(rpc[1]),
+    });
+    return new Response(await response.text(), {
+      status: response.status,
+      headers: { "content-type": "application/json" },
+    });
   }
 
   const results: {

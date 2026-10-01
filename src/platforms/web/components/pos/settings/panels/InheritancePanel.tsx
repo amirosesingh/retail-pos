@@ -9,8 +9,6 @@ const SECTION_ROUTE: Record<SettingsSectionId, string> = {
   printer: "/settings/printer",
   terminalSecurity: "/settings/rules",
   tax: "/settings/tax",
-  review: "/settings/rules",
-  hours: "/settings/rules",
   receiptIdentity: "/settings/identity",
   receiptLayout: "/settings/elements",
   payment: "/settings/payment",

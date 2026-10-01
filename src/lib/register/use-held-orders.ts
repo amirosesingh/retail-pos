@@ -7,6 +7,7 @@
  * the register screen unchanged, including the audit trail.
  */
 import { toast } from "sonner";
+import { useRef } from "react";
 import {
   addHeldOrder,
   clearHeldPending,
@@ -55,11 +56,18 @@ type HeldOrdersDeps = {
     approvedPayload: AuthPayload;
     grantToken: string;
     approvedAmount: number | null;
+    valueUnit: "percent" | "currency" | "quantity" | "number";
   }) => void;
+  /** Clears approval UI/state before another parked ticket becomes active. */
+  onApprovalCleared?: () => void;
 };
 
 export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   const held = useHeldOrders();
+  // Route effects can run twice in React development mode, and a fast double
+  // click can do the same in production. Claiming is a one-time server write,
+  // so collapse concurrent attempts for the same parked ticket.
+  const resuming = useRef(new Set<string>());
 
   /** Park the open ticket with everything on it, so reopening is lossless. */
   function holdOrder(silent = false, requestedId?: string) {
@@ -106,57 +114,72 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
    *  permission, and it refuses if the ticket changed or somebody already
    *  used it. */
   async function resumeHeld(id: string) {
-    const order = held.find((h) => h.id === id);
-    if (!order) return;
-    if (order.pendingRequestId) {
-      if (order.status === "waiting") {
-        toast.info("Still waiting for a decision on this ticket");
-        return;
+    if (resuming.current.has(id)) return;
+    resuming.current.add(id);
+    try {
+      const order = held.find((h) => h.id === id);
+      if (!order) return;
+      let restoredApproval: Parameters<NonNullable<HeldOrdersDeps["onApprovalClaimed"]>>[0] | null =
+        null;
+      if (order.pendingRequestId) {
+        if (order.status === "waiting") {
+          toast.info("Still waiting for a decision on this ticket");
+          return;
+        }
+        const claimed = await claimApproval(
+          order.pendingRequestId,
+          order.approvalSnapshotHash ?? undefined,
+        ).catch(() => null);
+        if (!claimed || !claimed.ok) {
+          toast.error(
+            (claimed && "error" in claimed ? claimed.error : "") ||
+              "That approval can no longer be used",
+          );
+          return;
+        }
+        if (claimed.status !== "approved" || !claimed.grantToken) {
+          clearHeldPending(order.id);
+          toast.warning(
+            `The request was ${claimed.status}; the restricted change was not applied.`,
+          );
+        } else {
+          restoredApproval = {
+            requestId: order.pendingRequestId,
+            actionKey: claimed.actionKey,
+            approvedPayload: claimed.approvedPayload,
+            grantToken: claimed.grantToken,
+            approvedAmount: claimed.approvedAmount ?? null,
+            valueUnit: claimed.valueUnit,
+          };
+        }
       }
-      const claimed = await claimApproval(
-        order.pendingRequestId,
-        order.approvalSnapshotHash ?? undefined,
-      ).catch(() => null);
-      if (!claimed || !claimed.ok) {
-        toast.error(
-          (claimed && "error" in claimed ? claimed.error : "") ||
-            "That approval can no longer be used",
-        );
-        return;
-      }
-      if (claimed.status !== "approved" || !claimed.grantToken) {
-        clearHeldPending(order.id);
-        toast.warning(`The request was ${claimed.status}; the restricted change was not applied.`);
-      } else {
-        deps.onApprovalClaimed?.({
-          requestId: order.pendingRequestId,
-          actionKey: claimed.actionKey,
-          approvedPayload: claimed.approvedPayload,
-          grantToken: claimed.grantToken,
-          approvedAmount: claimed.approvedAmount ?? null,
-        });
-      }
+      const parked = deps.lines.length ? holdOrder(true) : null;
+      deps.onApprovalCleared?.();
+      deps.setLines(order.lines);
+      deps.setCartDiscount(order.cartDiscount ?? 0);
+      deps.setCartDiscountType(order.cartDiscountType ?? "amount");
+      deps.setExchangeRef(order.exchangeRef ?? null);
+      deps.setMemberId(order.memberId ?? null);
+      deps.setCoupon((order.coupon as CartCoupon | null) ?? null);
+      deps.setBillNo(order.billNo ?? null);
+      if (restoredApproval) deps.onApprovalClaimed?.(restoredApproval);
+      removeHeldOrder(id);
+      logTicketEvent(parked ? TICKET_ACTIONS.switched : TICKET_ACTIONS.resumed, {
+        holdRef: order.id,
+        parkedRef: parked?.id ?? null,
+        lines: order.lines.length,
+        value: order.total,
+        heldAt: order.heldAt,
+        heldBy: order.heldBy ?? null,
+        heldForSeconds: Math.round((Date.now() - new Date(order.heldAt).getTime()) / 1000),
+        storeId: deps.storeId,
+      });
+      toast.success(
+        parked ? "Switched ticket — the previous one is on hold" : "Held order resumed",
+      );
+    } finally {
+      resuming.current.delete(id);
     }
-    const parked = deps.lines.length ? holdOrder(true) : null;
-    deps.setLines(order.lines);
-    deps.setCartDiscount(order.cartDiscount ?? 0);
-    deps.setCartDiscountType(order.cartDiscountType ?? "amount");
-    deps.setExchangeRef(order.exchangeRef ?? null);
-    deps.setMemberId(order.memberId ?? null);
-    deps.setCoupon((order.coupon as CartCoupon | null) ?? null);
-    deps.setBillNo(order.billNo ?? null);
-    removeHeldOrder(id);
-    logTicketEvent(parked ? TICKET_ACTIONS.switched : TICKET_ACTIONS.resumed, {
-      holdRef: order.id,
-      parkedRef: parked?.id ?? null,
-      lines: order.lines.length,
-      value: order.total,
-      heldAt: order.heldAt,
-      heldBy: order.heldBy ?? null,
-      heldForSeconds: Math.round((Date.now() - new Date(order.heldAt).getTime()) / 1000),
-      storeId: deps.storeId,
-    });
-    toast.success(parked ? "Switched ticket — the previous one is on hold" : "Held order resumed");
   }
 
   return { held, holdOrder, resumeHeld };

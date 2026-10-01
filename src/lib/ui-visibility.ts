@@ -45,8 +45,6 @@ export type VisibilityElement = {
   ownerOnly?: boolean;
 };
 
-
-
 /** Every element an administrator can hide, grouped by the screen it lives on. */
 export const VISIBILITY_ELEMENTS: VisibilityElement[] = [
   {
@@ -84,6 +82,13 @@ export const VISIBILITY_ELEMENTS: VisibilityElement[] = [
     label: "Hold order",
     blurb: "Park the ticket and recall it later.",
     group: "Register POS",
+  },
+  {
+    key: "sales.heldOrders",
+    label: "Held tickets page",
+    blurb: "The list and details of parked tickets.",
+    group: "Sales & Operations",
+    route: "/holds",
   },
   {
     key: "register.closeShift",
@@ -140,8 +145,18 @@ export const SETTINGS_VISIBILITY_ELEMENTS: VisibilityElement[] = (
     ["/settings/display", "Display & text size", "Interface scale, density and theme.", "none"],
     ["/settings/updates", "Software updates", "App version and background updates.", "sensitive"],
     ["/settings/terminals", "Terminal activation", "Register tills and activation codes.", "none"],
-    ["/settings/mobile-terminals", "Mobile terminals", "Phones and tablets running the POS.", "none"],
-    ["/settings/sessions", "Active sessions", "Who is signed in, with remote sign-out.", "sensitive"],
+    [
+      "/settings/mobile-terminals",
+      "Mobile terminals",
+      "Phones and tablets running the POS.",
+      "none",
+    ],
+    [
+      "/settings/sessions",
+      "Active sessions",
+      "Who is signed in, with remote sign-out.",
+      "sensitive",
+    ],
     ["/settings/printer", "Receipt printer", "Device, margins, drawer pin, test print.", "none"],
     ["/settings/elements", "Receipt elements", "Paper size, logo, points and barcode.", "none"],
     ["/settings/type", "Receipt typography", "Fonts, sizes and spacing on slips.", "none"],
@@ -151,7 +166,12 @@ export const SETTINGS_VISIBILITY_ELEMENTS: VisibilityElement[] = (
     ["/settings/booking-slip", "Booking slip wording", "Terms and the signature line.", "none"],
     ["/settings/identity", "Business identity", "Company name, tax numbers, header.", "sensitive"],
     ["/settings/tax", "Tax & pricing", "Global tax rate and inclusive pricing.", "sensitive"],
-    ["/settings/rules", "POS rules & enforcement", "Shift, discount and refund limits.", "sensitive"],
+    [
+      "/settings/rules",
+      "POS rules & enforcement",
+      "Shift, discount and refund limits.",
+      "sensitive",
+    ],
     ["/settings/sku", "SKU numbering", "Automatic product codes.", "none"],
     ["/settings/numbering", "Bill numbering", "Branch, till and running number.", "sensitive"],
     ["/settings/catalog", "Categories & units", "Category groups and units of measure.", "none"],
@@ -159,20 +179,45 @@ export const SETTINGS_VISIBILITY_ELEMENTS: VisibilityElement[] = (
     ["/settings/visibility", "Roles & access", "What each role may do and see.", "core"],
     ["/settings/access", "Roles & access", "What each role may do and see.", "core"],
     ["/settings/payment", "Bank transfer details", "Bank account and payment QR.", "sensitive"],
-    ["/settings/payment-methods", "Payment methods", "Tenders cashiers can collect at checkout.", "sensitive"],
+    [
+      "/settings/payment-methods",
+      "Payment methods",
+      "Tenders cashiers can collect at checkout.",
+      "sensitive",
+    ],
     ["/settings/accounts", "Payment accounts", "Card machines, banks and e-wallets.", "sensitive"],
     ["/settings/services", "Booking services", "Jobs and their default fee.", "none"],
     ["/settings/whatsapp", "WhatsApp bills", "Send receipts over WhatsApp.", "sensitive"],
-    ["/settings/database", "Database connection", "Central Supabase credentials and status.", "core"],
-    ["/settings/system", "System status & integrations", "Connection health and public domains.", "sensitive"],
-    ["/settings/security-alerts", "Security alerts", "Scan findings and posture checks.", "sensitive"],
+    [
+      "/settings/database",
+      "Database connection",
+      "Central Supabase credentials and status.",
+      "core",
+    ],
+    [
+      "/settings/system",
+      "System status & integrations",
+      "Connection health and public domains.",
+      "sensitive",
+    ],
+    [
+      "/settings/security-alerts",
+      "Security alerts",
+      "Scan findings and posture checks.",
+      "sensitive",
+    ],
     ["/settings/logic-health", "Logic health", "Relational flow checks.", "sensitive"],
     ["/settings/branch-telemetry", "Branch telemetry", "Heartbeats from every till.", "sensitive"],
     ["/settings/notifications", "Notifications", "Where alerts are delivered.", "sensitive"],
     ["/settings/shift-alerts", "Shift alerts", "How the day-end summary is delivered.", "none"],
     ["/settings/booking-rules", "Booking rules", "Deposits, timing and liability wording.", "none"],
     ["/settings/hardware", "Hardware", "Scanners, drawers and displays.", "none"],
-    ["/settings/inheritance", "Settings inheritance", "Global, cluster and branch tiers.", "sensitive"],
+    [
+      "/settings/inheritance",
+      "Settings inheritance",
+      "Global, cluster and branch tiers.",
+      "sensitive",
+    ],
   ] as const
 ).map(([route, label, blurb, lock]) => ({
   key: `route:${route}`,
@@ -198,14 +243,12 @@ export const lockFor = (key: string): VisibilityLock => LOCK_BY_KEY.get(key) ?? 
 const grantKey = (key: string) => `grant:${key}`;
 
 /** Screens the owner keeps whatever the switches say. */
-export const isOwnerOnlyRoute = (path: string): boolean =>
-  routeElementFor(path)?.lock === "core";
-
+export const isOwnerOnlyRoute = (path: string): boolean => routeElementFor(path)?.lock === "core";
 
 function routeElementFor(path: string): VisibilityElement | undefined {
-  return ROUTE_ELEMENTS.filter(
-    (e) => path === e.route || path.startsWith(`${e.route}/`),
-  ).sort((a, b) => (b.route?.length ?? 0) - (a.route?.length ?? 0))[0];
+  return ROUTE_ELEMENTS.filter((e) => path === e.route || path.startsWith(`${e.route}/`)).sort(
+    (a, b) => (b.route?.length ?? 0) - (a.route?.length ?? 0),
+  )[0];
 }
 
 /**
@@ -226,7 +269,6 @@ export function isRouteVisibleFor(
 }
 
 export const VISIBILITY_GROUPS = Array.from(new Set(VISIBILITY_ELEMENTS.map((e) => e.group)));
-
 
 export type VisibilityMap = Record<string, string[]>;
 
@@ -277,12 +319,9 @@ export function useVisibility() {
   );
   // Prefer the person's real level so a supervisor can be hidden from a page
   // even though the till treats them as elevated. Only true admins see all.
-  const role = ((user?.metaRole ?? (isAdmin ? "admin" : user?.role) ?? "cashier") as string);
+  const role = (user?.metaRole ?? (isAdmin ? "admin" : user?.role) ?? "cashier") as string;
 
-  const visible = useCallback(
-    (key: string) => isVisibleFor(hidden, key, role),
-    [hidden, role],
-  );
+  const visible = useCallback((key: string) => isVisibleFor(hidden, key, role), [hidden, role]);
 
   const visibleRoute = useCallback(
     (path: string) => isRouteVisibleFor(hidden, path, role),
@@ -295,7 +334,6 @@ export function useVisibility() {
     },
     [hidden, updateSettings],
   );
-
 
   return { hidden, role, visible, visibleRoute, setHidden };
 }

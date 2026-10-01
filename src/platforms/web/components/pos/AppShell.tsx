@@ -23,8 +23,7 @@ import { clearRevocation, useRevocationCheck } from "@/lib/use-revocation-check"
 import { useStartupGate, startupDecision } from "@/core/activation/registration-status";
 import { hasFeature } from "@/platform-config/features";
 import { ConnectDatabaseScreen } from "@/platforms/web/components/pos/ConnectDatabaseScreen";
-import { useAutoLock } from "@/lib/auto-lock";
-import { usePosRules } from "@/lib/pos-rules.tsx";
+import { sessionIdleSeconds, useAutoLock } from "@/lib/auto-lock";
 import { SidebarNav, useSidebarCollapsed } from "@/platforms/web/components/pos/SidebarNav";
 import {
   ConnectionStatusButton,
@@ -143,21 +142,14 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // Terminal-wide font / control scaling preference.
   useUiScale();
 
-  // Idle screens return to the sign-in keypad. The shift stays open.
-  // Synchronized terminal settings are the source of truth. The legacy POS
-  // rule remains a compatibility fallback for databases upgraded in stages.
-  const posRules = usePosRules();
-  const ruleLockSeconds =
-    state.settings.integrations.autoLockTimeoutSeconds ??
-    (posRules.source === "DATABASE" || posRules.source === "LAST_KNOWN_GOOD"
-      ? posRules.rules.auto_lock_timeout_seconds
-      : undefined);
+  // The server stamps the effective branch/personal limit on sign-in. The
+  // visible lock and the revocable server session therefore expire together.
   useAutoLock(
     !!user,
     () => {
       void lock();
     },
-    ruleLockSeconds,
+    sessionIdleSeconds(),
   );
 
   // The bill counter lives in the branch database; restore it before the first

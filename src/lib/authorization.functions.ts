@@ -9,6 +9,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const caller = z.object({
+  sessionToken: z.string().min(10).optional(),
   accessToken: z.string().min(10).optional(),
   terminalToken: z.string().min(10).optional(),
   cashierToken: z.string().min(10).optional(),
@@ -79,9 +80,13 @@ const snapshotInput = z.object({
   member: z
     .object({
       id: z.string().max(80).default(""),
+      code: z.string().max(80).optional(),
       name: z.string().max(160).default(""),
+      phone: z.string().max(60).optional(),
+      email: z.string().max(160).optional(),
       tier: z.string().max(60).optional(),
       points: z.number().finite().optional(),
+      totalSpend: z.number().finite().optional(),
     })
     .nullish(),
 });
@@ -145,39 +150,27 @@ type Caller = {
 
 /** Any signed-in till user: a staff account or a cashier PIN session. */
 async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
-  if (data.accessToken) {
-    const { verifyPosStaff } = await import("./secure-settings.server");
-    const staff = await verifyPosStaff(data.accessToken);
-    return {
-      id: staff.userId,
-      name: staff.userId,
-      role: staff.role,
-      isSupervisor: staff.isAdmin,
-      storeId: staff.storeId,
-      canAccessAllBranches: staff.role === "admin",
-      canManageRules:
-        staff.role === "admin" ||
-        staff.role === "manager" ||
-        staff.permissions["can_access_pos_settings"] === true,
-    };
-  }
-  const sessionToken = data.cashierToken ?? data.terminalToken;
-  if (sessionToken) {
-    const { verifyCashierSession } = await import("./pos-session.server");
-    const session = verifyCashierSession(sessionToken);
-    if (session) {
-      return {
-        id: session.id,
-        name: session.username,
-        role: "cashier",
-        isSupervisor: false,
-        storeId: session.storeId,
-        canAccessAllBranches: false,
-        canManageRules: false,
-      };
-    }
-  }
-  throw new Error("Not signed in");
+  // Use the same proof precedence as the rest of the till backend. A PIN login
+  // can carry a revocable device session, a cashier proof and an Auth token at
+  // once; the verified person session and terminal activation supply the
+  // authoritative actor and branch without letting a second token mask them.
+  const [{ verifyRelayCaller }, { resolveRelayScope }] = await Promise.all([
+    import("@/core/api/pos-relay.server"),
+    import("@/core/api/relay-policy.server"),
+  ]);
+  const verified = await verifyRelayCaller(data);
+  const scope = await resolveRelayScope(verified);
+  const role = scope.roleSlug || scope.role || "staff";
+  return {
+    id: scope.staffUserId || verified.authUserId || scope.label,
+    name: scope.actorName || scope.label,
+    role,
+    isSupervisor: scope.isSupervisor,
+    storeId: scope.storeId || "",
+    canAccessAllBranches: role === "admin",
+    canManageRules:
+      role === "admin" || role === "manager" || scope.permissions.can_access_pos_settings === true,
+  };
 }
 
 export function callerStore(
@@ -405,6 +398,10 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
           : "That ID or PIN is not allowed to authorise this",
       };
     }
+    const { canAuthorize } = await import("./authorization");
+    if (!canAuthorize(rule, { userId: person.userId, role: person.role })) {
+      return { ok: false as const, error: "This person is excluded from authorising this action" };
+    }
     if (
       !canAuthorizeAmount(
         rule,
@@ -510,7 +507,14 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       // Role authority is deliberately branch-bound. A specifically named
       // person on a global rule may be in another branch, so include only
       // those exact IDs from the company directory.
-      const namedIds = new Set(rule.allowedUserIds.map((id) => id.toLowerCase()));
+      const { includedAuthorizationUserIds, excludedAuthorizationUserIds } =
+        await import("./authorization");
+      const namedIds = new Set(
+        includedAuthorizationUserIds(rule.allowedUserIds).map((id) => id.toLowerCase()),
+      );
+      const excludedIds = new Set(
+        excludedAuthorizationUserIds(rule.allowedUserIds).map((id) => id.toLowerCase()),
+      );
       const globalPeople =
         rule.scopeType === "global" && namedIds.size
           ? await listAuthorizationPeopleRows("")
@@ -520,6 +524,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       const primaryApprovers = globalPeople.filter(
         (person) =>
           person.id.toLowerCase() !== requesterId &&
+          !excludedIds.has(person.id.toLowerCase()) &&
           (namedIds.has(person.id.toLowerCase()) ||
             (branchIds.has(person.id.toLowerCase()) &&
               rule.allowedRoles.some((role) => role.toLowerCase() === person.role.toLowerCase()))),
@@ -537,7 +542,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       );
       const approvalRoute = {
         primaryRoles: rule.allowedRoles,
-        primaryUserIds: rule.allowedUserIds,
+        primaryUserIds: [...namedIds],
         primaryApprovers,
         escalationAfterMinutes: rule.escalationAfterMinutes,
         escalationRoles: rule.escalationRoles,
@@ -673,7 +678,12 @@ async function notifyRequester(
     entity_type: "authorization_request",
     entity_id: request.id,
     amount,
-    meta: { action_key: request.actionKey, audience: request.requestedBy },
+    meta: {
+      action_key: request.actionKey,
+      audience: request.requestedBy,
+      audience_user_ids: [request.requestedBy],
+      audience_terminal_id: request.terminalId || null,
+    },
     client_event_id: `approval-decision-${request.id}`,
     created_at: new Date().toISOString(),
   });
@@ -700,7 +710,12 @@ async function notifyRequesterExpired(
     entity_type: "authorization_request",
     entity_id: request.id,
     amount: request.requestedAmount,
-    meta: { action_key: request.actionKey, audience: request.requestedBy },
+    meta: {
+      action_key: request.actionKey,
+      audience: request.requestedBy,
+      audience_user_ids: [request.requestedBy],
+      audience_terminal_id: request.terminalId || null,
+    },
     client_event_id: `approval-expired-${request.id}`,
     created_at: new Date().toISOString(),
   });
@@ -714,8 +729,7 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
       const who = await assertCaller(data);
       const { expirePendingRequests, listRequests, loadRuleRows, writeLog } =
         await import("./authorization.server");
-      const { resolveRules, canViewAuthorizationRequest } =
-        await import("./authorization");
+      const { resolveRules, canViewAuthorizationRequest } = await import("./authorization");
       const expired = await expirePendingRequests();
       await Promise.all(
         expired.map(async (request) => {
@@ -768,6 +782,8 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
           { userId: who.id, role: who.role },
           r,
           branchVisible,
+          Date.now(),
+          data.status === "all" && who.canAccessAllBranches,
         );
       });
       const visibleBranches = new Set(visible.map((request) => request.storeId));
@@ -1015,6 +1031,7 @@ export const claimAuthorizationRequest = createServerFn({ method: "POST" })
         status: "approved" as const,
         actionKey: request.actionKey,
         approvedAmount: request.approvedAmount ?? request.requestedAmount,
+        valueUnit: request.valueUnit,
         approvedPayload: request.approvedPayload,
         grantToken: signOverrideGrant({
           action: request.actionKey,

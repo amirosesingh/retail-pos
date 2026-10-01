@@ -22,11 +22,7 @@ import {
 } from "./sync-status";
 import { recordSync } from "./sync-audit";
 import { activeBranchId } from "./active-branch";
-import {
-  beginSyncRun,
-  endSyncRun,
-  markTableSync,
-} from "./sync-progress";
+import { beginSyncRun, endSyncRun, markTableSync } from "./sync-progress";
 
 /**
  * The central project rejecting this device's keys (HTTP 401, "Invalid
@@ -73,12 +69,7 @@ import {
 import { withRelativeStock } from "./sync-stock";
 import { applyStockDeltaBatch } from "./stock-recovery";
 import { TOMBSTONE_TABLES } from "./tombstones";
-import {
-  isOnline,
-  isOnlineSyncEnabled,
-  markSynced,
-  type SyncOp,
-} from "./sync-outbox";
+import { isOnline, isOnlineSyncEnabled, markSynced, type SyncOp } from "./sync-outbox";
 
 /** Columns some older databases are missing; dropped on a schema-cache error. */
 const OPTIONAL_COLUMNS: Record<string, string[]> = {
@@ -92,17 +83,12 @@ const OPTIONAL_COLUMNS: Record<string, string[]> = {
     "custom_lines",
     "qr",
     "whatsapp_settings",
-    "day_start_time",
-    "day_end_time",
-    "max_shift_hours",
-    "shift_reminder_minutes",
     "ui_visibility",
   ],
 };
 
 /**
- * PostgREST reports an unknown column as
- * `Could not find the 'day_end_time' column of 'pos_settings' in the schema cache`.
+ * PostgREST reports unknown optional settings columns through its schema cache.
  * Pull the column name out so the row can be retried without it.
  */
 const missingColumn = (message: string): string | null =>
@@ -401,6 +387,29 @@ export async function pullDelta(): Promise<{ merged: number }> {
   // PIN credentials do not authorize SELECT on business tables. Electron's
   // worker owns its pull; only cloud staff sessions can run this probe.
   if (localDb() || !hasStaffSession()) return { merged: 0 };
+  // Local storage can briefly retain a revoked session while GoTrue is
+  // finishing its sign-out/refresh callback. Prove the user once before the
+  // table loop; otherwise every protected table repeats the same anonymous
+  // 401/42501 failure and floods the database log.
+  let verified: Awaited<ReturnType<typeof supabaseExternal.auth.getUser>>;
+  try {
+    verified = await supabaseExternal.auth.getUser();
+  } catch {
+    // A rejected promise is a connectivity failure, not proof that the token
+    // is invalid. Keep the signed-in session and retry on the next sync pass.
+    return { merged: 0 };
+  }
+  if (verified.error || !verified.data.user) {
+    const { isTokenRejection, notifySessionExpired } = await import("./session-expiry");
+    const rejected = verified.error
+      ? isTokenRejection(
+          Number((verified.error as { status?: unknown }).status ?? 0),
+          verified.error.message ?? "",
+        )
+      : !verified.data.user;
+    if (rejected) notifySessionExpired();
+    return { merged: 0 };
+  }
   // Keys rejected: stay parked until fresh ones are saved.
   if (syncState().credentialsInvalid) return { merged: 0 };
   pulling = true;
@@ -440,7 +449,12 @@ export async function pullDelta(): Promise<{ merged: number }> {
           return { merged: changed };
         }
         logSync("pull", table, false, tableError.message);
-        recordSync({ direction: "pull", entity: table, status: "failed", error: tableError.message });
+        recordSync({
+          direction: "pull",
+          entity: table,
+          status: "failed",
+          error: tableError.message,
+        });
         markTableSync(
           table,
           /does not exist|not found|schema cache/i.test(tableError.message) ? "missing" : "failed",
@@ -589,12 +603,7 @@ const LIVE_SETTINGS_TABLES = [
   "authorization_actions",
 ] as const;
 
-const ORGANIZATION_LIVE_TABLES = [
-  "staff_roles",
-  "stores",
-  "members",
-  "promotions",
-] as const;
+const ORGANIZATION_LIVE_TABLES = ["staff_roles", "stores", "members", "promotions"] as const;
 
 /**
  * Realtime is only a wake-up hint; the durable scoped pull remains the source
@@ -733,7 +742,8 @@ function flushLiveChanges(): void {
   pendingLiveChanges.clear();
   // Embedded terminals need a durable offline mirror. Online-only clients can
   // consume the changed records directly without reloading the whole dataset.
-  if (localDb()) void syncNow(`live:${[...new Set(changes.map((change) => change.table))].join(",")}`);
+  if (localDb())
+    void syncNow(`live:${[...new Set(changes.map((change) => change.table))].join(",")}`);
   for (const change of changes) {
     if ((LIVE_SETTINGS_TABLES as readonly string[]).includes(change.table)) {
       announceSettingsChange(change.reason, change.storeId, change.table);
@@ -741,7 +751,16 @@ function flushLiveChanges(): void {
     if (["sales", "sale_items", "payment_transactions"].includes(change.table)) {
       announceSalesChange(change.table, change.storeId);
     }
-    if (["products", "product_barcodes", "members", "promotions", "purchase_orders", "purchase_order_items"].includes(change.table)) {
+    if (
+      [
+        "products",
+        "product_barcodes",
+        "members",
+        "promotions",
+        "purchase_orders",
+        "purchase_order_items",
+      ].includes(change.table)
+    ) {
       announceDataChange(change);
     }
   }
@@ -805,9 +824,13 @@ export function startSyncEngine() {
       failedRow?.error_message === "central-config";
     setSyncState({
       phase: status.phase === "pushing" || status.phase === "pulling" ? "syncing" : "idle",
-      pending: batches ? batches.pending + batches.failed : (status.pending ?? status.queue?.length ?? 0),
+      pending: batches
+        ? batches.pending + batches.failed
+        : (status.pending ?? status.queue?.length ?? 0),
       lastSyncAt: status.lastPushAt ?? status.lastPullAt ?? null,
-      lastError: centralPending ? null : (status.error ?? status.lastError ?? failedRow?.error_message ?? null),
+      lastError: centralPending
+        ? null
+        : (status.error ?? status.lastError ?? failedRow?.error_message ?? null),
       credentialsInvalid: status.credentialsInvalid ?? false,
       cloudConfigured: status.cloudConfigured ?? null,
     });
@@ -816,7 +839,8 @@ export function startSyncEngine() {
     // till cannot keep using the value that preceded the sync cycle.
     if (completedNewPull) announceSettingsChange("desktop:pull-complete");
   };
-  const offDesktopStatus = desktopBridge?.sync?.subscribe?.(applyDesktopStatus) ??
+  const offDesktopStatus =
+    desktopBridge?.sync?.subscribe?.(applyDesktopStatus) ??
     desktopBridge?.onStatus?.(applyDesktopStatus);
   if (desktopBridge) {
     const status = desktopBridge.sync?.getStatus?.() ?? desktopBridge.status();
@@ -890,9 +914,7 @@ export function startSyncEngine() {
   // Auth can become ready after this engine starts, so rebuild the channel at
   // that boundary instead of permanently choosing anonymous or staff mode.
   let liveHasStaffSession = hasStaffSession();
-  const liveChannels = createSerialChannelReplacer<
-    ReturnType<typeof supabaseExternal.channel>
-  >({
+  const liveChannels = createSerialChannelReplacer<ReturnType<typeof supabaseExternal.channel>>({
     remove: (channel) => supabaseExternal.removeChannel(channel),
     onCurrentChange: (channel) => {
       settingsLiveChannel = channel;
@@ -905,9 +927,7 @@ export function startSyncEngine() {
     void liveChannels.replace(() => {
       const next = supabaseExternal.channel("pos-live-settings");
       next.on("broadcast", { event: "settings_changed" }, (message) => {
-        const table = String(
-          (message as { payload?: { table?: unknown } }).payload?.table ?? "",
-        );
+        const table = String((message as { payload?: { table?: unknown } }).payload?.table ?? "");
         if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return;
         queueLiveChange({ reason: `broadcast:${table}`, table, storeId: null });
       });
@@ -918,8 +938,11 @@ export function startSyncEngine() {
       if (staffPresent) {
         for (const table of ORGANIZATION_LIVE_TABLES) {
           next.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
-            const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
-              (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
+            const changed = ((
+              payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }
+            ).new ??
+              (payload as { old?: Record<string, unknown> }).old ??
+              {}) as Record<string, unknown>;
             const storeId = String(changed.store_id ?? changed.branch_id ?? "").trim() || null;
             const entityId = String(changed.id ?? "").trim() || null;
             queueLiveChange({ reason: `live:${table}`, table, storeId, entityId });
@@ -937,8 +960,11 @@ export function startSyncEngine() {
                 filter: `${column}=eq.${liveBranchId}`,
               },
               (payload) => {
-                const changed = ((payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }).new ??
-                  (payload as { old?: Record<string, unknown> }).old ?? {}) as Record<string, unknown>;
+                const changed = ((
+                  payload as { new?: Record<string, unknown>; old?: Record<string, unknown> }
+                ).new ??
+                  (payload as { old?: Record<string, unknown> }).old ??
+                  {}) as Record<string, unknown>;
                 const entityId = String(changed.id ?? "").trim() || null;
                 queueLiveChange({
                   reason: `live:${table}`,
@@ -982,6 +1008,5 @@ export function startSyncEngine() {
     window.removeEventListener("pos:browser-outbox-changed", wakeOutbox);
     document.removeEventListener("visibilitychange", flushBeforeBackground);
     started = false;
-
   };
 }

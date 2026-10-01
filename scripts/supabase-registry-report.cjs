@@ -50,7 +50,7 @@ for (const match of sql.matchAll(
 )) {
   if (CONTROL_TABLES.has(match[1])) continue;
   const columns = [];
-  for (const raw of match[2].split(/,\r?\n/)) {
+  for (const raw of splitTopLevelCommas(match[2])) {
     const line = raw.trim();
     if (!line || /^(?:CONSTRAINT|PRIMARY|UNIQUE|FOREIGN|CHECK)\b/i.test(line)) continue;
     const column = /^([a-z_][a-z0-9_]*)\s+(.+)$/i.exec(line);

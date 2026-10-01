@@ -11,14 +11,14 @@ describe("SQL Server schema registry", () => {
   const completeSql = readFileSync("database/sqlserver/retail-pos-local-database.sql", "utf8");
 
   it("loads through the same path used by the packaged desktop validator", () => {
-    expect(packagedRegistry.loadRegistry().tables).toHaveLength(69);
+    expect(packagedRegistry.loadRegistry().tables).toHaveLength(70);
     expect(packagedRegistry.registryPath().replaceAll("\\", "/")).toMatch(
       /database\/sqlserver\/schema-registry\.json$/,
     );
   });
 
   it("maps every cloud domain table and column", () => {
-    expect(registry.tables).toHaveLength(69);
+    expect(registry.tables).toHaveLength(70);
     expect(
       registry.tables.reduce(
         (sum: number, table: { columns: unknown[] }) => sum + table.columns.length,

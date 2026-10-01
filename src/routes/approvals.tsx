@@ -7,7 +7,7 @@
  */
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
-import { Check, Clock3, RefreshCw, X } from "lucide-react";
+import { Check, Clock3, Eye, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { notifyError } from "@/lib/notify";
 import { usePosOptional } from "@/lib/pos-store";
 import { humanizeText } from "@/lib/human-readable";
@@ -26,7 +27,11 @@ import {
   decideAuthorizationRequest,
   listAuthorizationRequests,
 } from "@/lib/authorization-client";
-import { AUTH_ACTION_LABEL, type AuthorizationRequest } from "@/lib/authorization";
+import {
+  approvalReference,
+  AUTH_ACTION_LABEL,
+  type AuthorizationRequest,
+} from "@/lib/authorization";
 import { subscribeApprovals } from "@/lib/approval-centre";
 import { syncNow } from "@/lib/sync-engine";
 
@@ -62,6 +67,13 @@ const STATUS_TONE: Record<string, string> = {
 /** Money that never throws on a missing or malformed value. */
 const money = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n.toFixed(2) : "0.00");
 
+const approvalValue = (value: number | null, unit: AuthorizationRequest["valueUnit"]) => {
+  if (value === null || !Number.isFinite(value)) return "—";
+  if (unit === "percent") return `${money(value)}%`;
+  if (unit === "quantity") return `${value} item${value === 1 ? "" : "s"}`;
+  return money(value);
+};
+
 const ago = (iso: string) => {
   const ms = Date.now() - Date.parse(iso || "");
   if (!Number.isFinite(ms)) return "";
@@ -81,7 +93,9 @@ function ApprovalsPage() {
   const [note, setNote] = useState<Record<string, string>>({});
   // What the approver is granting, when it differs from what was asked.
   const [amount, setAmount] = useState<Record<string, string>>({});
+  const [amountInvalid, setAmountInvalid] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [openRequestId, setOpenRequestId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -129,6 +143,22 @@ function ApprovalsPage() {
   const decide = async (row: AuthorizationRequest, approve: boolean) => {
     setBusy(row.id);
     try {
+      if (approve && amountInvalid[row.id]) {
+        toast.error("Enter a valid approval amount");
+        setBusy(null);
+        return;
+      }
+      const rawAmount = (amount[row.id] ?? "").trim();
+      const approvedAmount = rawAmount === "" ? null : Number(rawAmount);
+      if (
+        approve &&
+        approvedAmount !== null &&
+        (!Number.isFinite(approvedAmount) || approvedAmount < 0)
+      ) {
+        toast.error("Enter a valid approval amount");
+        setBusy(null);
+        return;
+      }
       const auth = await getPosCallerAuth();
       const res = await decideAuthorizationRequest({
         data: {
@@ -137,9 +167,7 @@ function ApprovalsPage() {
           approve,
           note: note[row.id] ?? "",
           // Blank means "as requested"; a number here grants a different value.
-          ...(approve && (amount[row.id] ?? "").trim() !== ""
-            ? { approvedAmount: Number(amount[row.id]) }
-            : {}),
+          ...(approve && approvedAmount !== null ? { approvedAmount } : {}),
         },
       });
       if (!res.ok) toast.error(res.error ?? "Could not record the decision");
@@ -215,7 +243,9 @@ function ApprovalsPage() {
             <CardContent className="flex flex-col items-center gap-2 p-10 text-center">
               <Clock3 className="size-6 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">
-                Nothing is waiting for a decision right now.
+                {history
+                  ? "No approval requests have been recorded for this branch."
+                  : "Nothing is waiting for a decision right now."}
               </p>
             </CardContent>
           </Card>
@@ -225,152 +255,253 @@ function ApprovalsPage() {
           const mine = !!me && row.requestedBy.toLowerCase() === me.id.toLowerCase();
           const payload = Object.entries(row.payload ?? {});
           return (
-            <Card key={row.id}>
-              <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
-                <div>
-                  <CardTitle className="text-base">
-                    {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey}
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground">
-                    {row.requestedByName || "Staff member"} ·{" "}
-                    {pos?.stores.find((store) => store.id === row.storeId)?.name ?? "All branches"}{" "}
-                    · {ago(row.createdAt)}
-                  </p>
-                </div>
-                <Badge className={STATUS_TONE[row.status] ?? ""} variant="secondary">
-                  {row.status}
-                </Badge>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {row.reason ? <p className="text-sm">“{row.reason}”</p> : null}
-                <dl className="grid gap-x-4 gap-y-1 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-2">
+            <Dialog
+              key={row.id}
+              open={openRequestId === row.id}
+              onOpenChange={(open) => setOpenRequestId(open ? row.id : null)}
+            >
+              <Card>
+                <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
                   <div>
-                    <dt className="text-muted-foreground">Request ID</dt>
-                    <dd className="break-all font-mono">{row.id}</dd>
+                    <CardTitle className="text-base">
+                      {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey}
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground">
+                      {approvalReference(row)} · {row.requestedByName || "Staff member"} ·{" "}
+                      {pos?.stores.find((store) => store.id === row.storeId)?.name ??
+                        "All branches"}{" "}
+                      · {ago(row.createdAt)}
+                    </p>
                   </div>
-                  <div>
-                    <dt className="text-muted-foreground">Created</dt>
-                    <dd>{new Date(row.createdAt).toLocaleString()}</dd>
+                  <div className="flex items-center gap-2">
+                    <Badge className={STATUS_TONE[row.status] ?? ""} variant="secondary">
+                      {row.status}
+                    </Badge>
+                    <Button variant="outline" size="sm" onClick={() => setOpenRequestId(row.id)}>
+                      <Eye className="mr-1 size-4" /> View details
+                    </Button>
                   </div>
-                  <div>
-                    <dt className="text-muted-foreground">Expires</dt>
-                    <dd>{new Date(row.expiresAt).toLocaleString()}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">Terminal</dt>
-                    <dd>{row.terminalId || "—"}</dd>
-                  </div>
-                  {row.decidedAt ? (
+                </CardHeader>
+              </Card>
+              <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+                <DialogHeader>
+                  <DialogTitle>
+                    {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey} · {row.status}
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3">
+                  {row.reason ? <p className="text-sm">“{row.reason}”</p> : null}
+                  <dl className="grid gap-x-4 gap-y-1 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-2">
                     <div>
-                      <dt className="text-muted-foreground">Decision time</dt>
-                      <dd>{new Date(row.decidedAt).toLocaleString()}</dd>
+                      <dt className="text-muted-foreground">Approval number</dt>
+                      <dd className="font-mono font-semibold">{approvalReference(row)}</dd>
                     </div>
-                  ) : null}
-                  {row.consumedAt ? (
                     <div>
-                      <dt className="text-muted-foreground">Grant used</dt>
-                      <dd>{new Date(row.consumedAt).toLocaleString()}</dd>
+                      <dt className="text-muted-foreground">Request ID</dt>
+                      <dd className="break-all font-mono">{row.id}</dd>
                     </div>
-                  ) : null}
-                </dl>
-                {row.approvalRoute ? <ApprovalRouteReview row={row} /> : null}
-                {payload.length ? (
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/50 p-3 text-xs">
-                    {payload.map(([k, v]) => (
-                      <div key={k} className="contents">
-                        <dt className="text-muted-foreground">{k.replace(/_/g, " ")}</dt>
-                        <dd className="font-medium">
-                          {humanizeText(String(v), {
-                            stores: pos?.stores,
-                            products: pos?.state.products,
-                            members: pos?.state.members,
-                            sales: pos?.state.sales,
-                          })}
-                        </dd>
+                    <div>
+                      <dt className="text-muted-foreground">Created</dt>
+                      <dd>{new Date(row.createdAt).toLocaleString()}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Expires</dt>
+                      <dd>{new Date(row.expiresAt).toLocaleString()}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Terminal</dt>
+                      <dd>{row.terminalId || "—"}</dd>
+                    </div>
+                    {row.decidedAt ? (
+                      <div>
+                        <dt className="text-muted-foreground">Decision time</dt>
+                        <dd>{new Date(row.decidedAt).toLocaleString()}</dd>
                       </div>
-                    ))}
+                    ) : null}
+                    {row.consumedAt ? (
+                      <div>
+                        <dt className="text-muted-foreground">Grant used</dt>
+                        <dd>{new Date(row.consumedAt).toLocaleString()}</dd>
+                      </div>
+                    ) : null}
                   </dl>
-                ) : null}
-                <TicketReview row={row} />
-                {row.status === "pending" ? (
-                  mine ? (
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs text-muted-foreground">
-                        Waiting for someone else to decide this.
-                      </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busy === row.id}
-                        onClick={() => void withdraw(row)}
-                      >
-                        Withdraw
-                      </Button>
-                    </div>
+                  {row.approvalRoute ? <ApprovalRouteReview row={row} /> : null}
+                  {payload.length ? (
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/50 p-3 text-xs">
+                      {payload.map(([k, v]) => (
+                        <div key={k} className="contents">
+                          <dt className="text-muted-foreground">{k.replace(/_/g, " ")}</dt>
+                          <dd className="font-medium">
+                            {humanizeText(String(v), {
+                              stores: pos?.stores,
+                              products: pos?.state.products,
+                              members: pos?.state.members,
+                              sales: pos?.state.sales,
+                            })}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
+                  <ApprovalAmountReview row={row} draft={amount[row.id] ?? ""} />
+                  <TicketReview row={row} />
+                  {row.status === "pending" ? (
+                    mine ? (
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs text-muted-foreground">
+                          Waiting for someone else to decide this.
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy === row.id}
+                          onClick={() => void withdraw(row)}
+                        >
+                          Withdraw
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 rounded-md border border-border/60 p-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <Label htmlFor={`approval-note-${row.id}`} className="text-xs">
+                              Decision note
+                            </Label>
+                            <Input
+                              id={`approval-note-${row.id}`}
+                              className="h-9"
+                              placeholder="Optional note for the cashier"
+                              value={note[row.id] ?? ""}
+                              onChange={(e) =>
+                                setNote((n) => ({ ...n, [row.id]: e.target.value.slice(0, 400) }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor={`approval-amount-${row.id}`} className="text-xs">
+                              Total approval to grant
+                            </Label>
+                            <Input
+                              id={`approval-amount-${row.id}`}
+                              className="h-9"
+                              type="number"
+                              min="0"
+                              step="any"
+                              placeholder={
+                                typeof row.requestedAmount === "number"
+                                  ? approvalValue(row.requestedAmount, row.valueUnit)
+                                  : "No amount requested"
+                              }
+                              value={amount[row.id] ?? ""}
+                              aria-invalid={amountInvalid[row.id] || undefined}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                const invalid = e.target.validity.badInput || value.length > 12;
+                                setAmountInvalid((current) => ({ ...current, [row.id]: invalid }));
+                                setAmount((current) => ({
+                                  ...current,
+                                  [row.id]: value,
+                                }));
+                              }}
+                            />
+                            <p className="text-[11px] text-muted-foreground">
+                              Leave blank to grant the requested total. The extra above the
+                              cashier's limit is shown above.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <Button
+                            size="sm"
+                            disabled={busy === row.id || Boolean(amountInvalid[row.id])}
+                            onClick={() => void decide(row, true)}
+                          >
+                            <Check className="mr-1 size-4" /> Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy === row.id}
+                            onClick={() => void decide(row, false)}
+                          >
+                            <X className="mr-1 size-4" /> Reject
+                          </Button>
+                        </div>
+                      </div>
+                    )
                   ) : (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Input
-                        className="h-9 flex-1 min-w-[12rem]"
-                        placeholder="Note (optional)"
-                        value={note[row.id] ?? ""}
-                        onChange={(e) =>
-                          setNote((n) => ({ ...n, [row.id]: e.target.value.slice(0, 400) }))
-                        }
-                      />
-                      <Input
-                        className="h-9 w-36"
-                        inputMode="decimal"
-                        placeholder={
-                          typeof row.requestedAmount === "number"
-                            ? `Approve ${money(row.requestedAmount)}`
-                            : "Amount (optional)"
-                        }
-                        value={amount[row.id] ?? ""}
-                        onChange={(e) =>
-                          setAmount((a) => ({
-                            ...a,
-                            [row.id]: e.target.value.replace(/[^0-9.]/g, "").slice(0, 12),
-                          }))
-                        }
-                      />
-                      <Button
-                        size="sm"
-                        disabled={busy === row.id}
-                        onClick={() => void decide(row, true)}
-                      >
-                        <Check className="mr-1 size-4" /> Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy === row.id}
-                        onClick={() => void decide(row, false)}
-                      >
-                        <X className="mr-1 size-4" /> Reject
-                      </Button>
-                    </div>
-                  )
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    {row.decidedByName || row.decidedBy
-                      ? `${row.status} by ${row.decidedByName || row.decidedBy}`
-                      : row.status}
-                    {row.decisionNote ? ` — ${row.decisionNote}` : ""}
-                    {typeof row.requestedAmount === "number"
-                      ? ` · asked ${money(row.requestedAmount)}`
-                      : ""}
-                    {typeof row.approvedAmount === "number"
-                      ? ` · granted ${money(row.approvedAmount)}`
-                      : ""}
-                    {row.consumedAt ? " · used" : ""}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+                    <p className="text-xs text-muted-foreground">
+                      {row.decidedByName || row.decidedBy
+                        ? `${row.status} by ${row.decidedByName || row.decidedBy}`
+                        : row.status}
+                      {row.decisionNote ? ` — ${row.decisionNote}` : ""}
+                      {typeof row.requestedAmount === "number"
+                        ? ` · asked ${money(row.requestedAmount)}`
+                        : ""}
+                      {typeof row.approvedAmount === "number"
+                        ? ` · granted ${money(row.approvedAmount)}`
+                        : ""}
+                      {row.consumedAt ? " · used" : ""}
+                    </p>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
           );
         })}
       </div>
     </AppShell>
+  );
+}
+
+function ApprovalAmountReview({ row, draft }: { row: AuthorizationRequest; draft: string }) {
+  const entered = draft.trim() === "" ? row.requestedAmount : Number(draft);
+  const grant = entered !== null && Number.isFinite(entered) ? entered : null;
+  const extraRequested =
+    row.requestedAmount !== null && row.requesterDirectLimit !== null
+      ? Math.max(0, row.requestedAmount - row.requesterDirectLimit)
+      : null;
+  const extraGrant =
+    grant !== null && row.requesterDirectLimit !== null
+      ? Math.max(0, grant - row.requesterDirectLimit)
+      : null;
+  return (
+    <dl className="grid gap-2 rounded-md bg-muted/50 p-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+      <div>
+        <dt className="text-muted-foreground">Requested total</dt>
+        <dd className="font-semibold">{approvalValue(row.requestedAmount, row.valueUnit)}</dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">Cashier's current limit</dt>
+        <dd className="font-semibold">{approvalValue(row.requesterDirectLimit, row.valueUnit)}</dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">
+          {row.status === "pending" ? "Extra requested" : "Approved total"}
+        </dt>
+        <dd className="font-semibold text-primary">
+          {approvalValue(
+            row.status === "pending" ? extraRequested : row.approvedAmount,
+            row.valueUnit,
+          )}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">
+          {row.status === "pending" ? "Extra being granted" : "Extra approved"}
+        </dt>
+        <dd className="font-semibold text-primary">
+          {approvalValue(
+            row.status === "pending"
+              ? extraGrant
+              : row.approvedAmount !== null && row.requesterDirectLimit !== null
+                ? Math.max(0, row.approvedAmount - row.requesterDirectLimit)
+                : null,
+            row.valueUnit,
+          )}
+        </dd>
+      </div>
+    </dl>
   );
 }
 
@@ -415,65 +546,145 @@ function ApprovalRouteReview({ row }: { row: AuthorizationRequest }) {
  */
 function TicketReview({ row }: { row: AuthorizationRequest }) {
   const t = row.snapshot;
-  if (!t) return null;
+  if (!t)
+    return (
+      <p className="rounded-md border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
+        This request was created without a bill snapshot. Its action, reason, amounts and audit
+        details remain available above.
+      </p>
+    );
   const lines = Array.isArray(t.lines) ? t.lines : [];
   return (
     <div className="rounded-md border border-border/60">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-2 text-xs">
-        <span className="font-medium">
-          Ticket {t.billNo || t.ticketId || "—"} · {t.cashier || row.requestedByName}
-        </span>
+      <div className="border-b border-border/60 px-3 py-2">
+        <p className="text-sm font-semibold">Bill {t.billNo || t.ticketId || "—"}</p>
+        <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <dt className="text-muted-foreground">Bill number</dt>
+            <dd>{t.billNo || "Draft bill"}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Ticket ID</dt>
+            <dd className="break-all">{t.ticketId || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Cashier</dt>
+            <dd>{t.cashier || row.requestedByName || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Captured</dt>
+            <dd>{new Date(t.capturedAt).toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Store ID</dt>
+            <dd className="break-all">{t.storeId || row.storeId || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Terminal ID</dt>
+            <dd className="break-all">{t.terminalId || row.terminalId || "—"}</dd>
+          </div>
+          {row.heldOrderId ? (
+            <div>
+              <dt className="text-muted-foreground">Held order</dt>
+              <dd className="break-all">{row.heldOrderId}</dd>
+            </div>
+          ) : null}
+        </dl>
+      </div>
+      <div className="border-b border-border/60 px-3 py-2 text-xs">
+        <p className="mb-2 font-medium">Member</p>
         {t.member ? (
-          <span className="text-muted-foreground">
-            Member {t.member.name}
-            {t.member.tier ? ` · ${t.member.tier}` : ""}
-            {t.member.points !== undefined ? ` · ${t.member.points} pts` : ""}
-          </span>
+          <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <dt className="text-muted-foreground">Member ID</dt>
+              <dd className="break-all">{t.member.id || "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Member code</dt>
+              <dd>{t.member.code || "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Name</dt>
+              <dd>{t.member.name || "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Tier</dt>
+              <dd>{t.member.tier || "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Phone (masked)</dt>
+              <dd>{t.member.phone || "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Email (masked)</dt>
+              <dd className="break-all">{t.member.email || "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Points</dt>
+              <dd>{t.member.points ?? "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Total spend</dt>
+              <dd>{t.member.totalSpend === undefined ? "—" : money(t.member.totalSpend)}</dd>
+            </div>
+          </dl>
         ) : (
-          <span className="text-muted-foreground">Walk-in</span>
+          <p className="text-muted-foreground">Walk-in customer — no member was attached.</p>
         )}
       </div>
-      <table className="w-full text-xs">
-        <thead className="text-muted-foreground">
-          <tr>
-            <th className="px-3 py-1 text-left font-normal">Item</th>
-            <th className="px-3 py-1 text-right font-normal">Qty</th>
-            <th className="px-3 py-1 text-right font-normal">Price</th>
-            <th className="px-3 py-1 text-right font-normal">Disc</th>
-            <th className="px-3 py-1 text-right font-normal">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {lines.map((l, i) => (
-            <tr key={`${l.sku}-${i}`} className="border-t border-border/40">
-              <td className="px-3 py-1">
-                {l.name || l.sku}
-                {l.priceOverridden ? " · price changed" : ""}
-              </td>
-              <td className="px-3 py-1 text-right">{l.qty}</td>
-              <td className="px-3 py-1 text-right">{money(l.unitPrice)}</td>
-              <td className="px-3 py-1 text-right">{money(l.discount)}</td>
-              <td className="px-3 py-1 text-right">{money(l.lineTotal)}</td>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[34rem] text-xs">
+          <thead className="text-muted-foreground">
+            <tr>
+              <th className="px-3 py-1 text-left font-normal">Item</th>
+              <th className="px-3 py-1 text-right font-normal">Qty</th>
+              <th className="px-3 py-1 text-right font-normal">Price</th>
+              <th className="px-3 py-1 text-right font-normal">Disc</th>
+              <th className="px-3 py-1 text-right font-normal">Total</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {lines.length ? (
+              lines.map((l, i) => (
+                <tr key={`${l.sku}-${i}`} className="border-t border-border/40">
+                  <td className="px-3 py-1">
+                    <span className="font-medium">{l.name || l.sku || "Unknown item"}</span>
+                    {l.sku ? (
+                      <span className="block text-[10px] text-muted-foreground">{l.sku}</span>
+                    ) : null}
+                    {l.priceOverridden ? " · price changed" : ""}
+                  </td>
+                  <td className="px-3 py-1 text-right">{l.qty}</td>
+                  <td className="px-3 py-1 text-right">{money(l.unitPrice)}</td>
+                  <td className="px-3 py-1 text-right">{money(l.discount)}</td>
+                  <td className="px-3 py-1 text-right">{money(l.lineTotal)}</td>
+                </tr>
+              ))
+            ) : (
+              <tr className="border-t border-border/40">
+                <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                  No cart lines were recorded.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
       <div className="flex flex-wrap justify-end gap-4 border-t border-border/60 px-3 py-2 text-xs">
         <span className="text-muted-foreground">Subtotal {money(t.subtotal)}</span>
         <span className="text-muted-foreground">Discount {money(t.discount)}</span>
         <span className="text-muted-foreground">Tax {money(t.tax)}</span>
+        {t.serviceCharge ? (
+          <span className="text-muted-foreground">Service {money(t.serviceCharge)}</span>
+        ) : null}
         <span className="font-medium">Total {money(t.total)}</span>
         {typeof t.expectedTotal === "number" ? (
           <span className="font-medium text-primary">If approved {money(t.expectedTotal)}</span>
         ) : null}
       </div>
-      {typeof row.requestedAmount === "number" ? (
-        <p className="border-t border-border/60 px-3 py-2 text-xs">
-          Requested{t.requestedLabel ? ` ${t.requestedLabel}` : ""}:{" "}
-          <span className="font-medium">{money(row.requestedAmount)}</span>
-          {typeof row.approvedAmount === "number" && row.approvedAmount !== row.requestedAmount ? (
-            <span className="text-primary"> · granted {money(row.approvedAmount)}</span>
-          ) : null}
+      {t.requestedLabel ? (
+        <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground">
+          Approval subject: <span className="font-medium text-foreground">{t.requestedLabel}</span>
         </p>
       ) : null}
     </div>

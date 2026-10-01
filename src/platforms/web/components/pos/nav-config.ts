@@ -68,7 +68,6 @@ export const navGroups: NavGroup[] = [
     items: [
       {
         to: "/",
-        search: { sell: "1" },
         label: "Register POS",
         icon: LayoutGrid,
         keywords: "checkout cart sale",
@@ -78,6 +77,7 @@ export const navGroups: NavGroup[] = [
         to: "/holds",
         label: "Hold Tickets",
         icon: PauseCircle,
+        flag: "can_view_held_orders",
         keywords: "held parked draft ticket resume switch park",
         blurb: "Reopen parked tickets and see who cleared or voided them.",
       },

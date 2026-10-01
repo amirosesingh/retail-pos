@@ -1,10 +1,7 @@
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
-import {
-  SettingsLink,
-  SettingsShell,
-} from "@/platforms/web/components/pos/settings/SettingsShell";
+import { SettingsLink, SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
 import {
   matchSettings,
   routeOf,
@@ -17,7 +14,6 @@ import {
   PINNED_SETTINGS,
   settingsCard,
   SETTINGS_CATEGORIES,
-  SETTINGS_GROUPS,
   type SettingsCard,
   type SettingsCategoryId,
 } from "@/lib/settings-catalog";
@@ -78,19 +74,19 @@ export const Route = createFileRoute("/settings/")({
 function Row({ c }: { c: SettingsCard }) {
   return (
     <div className="flex items-center gap-1 rounded-lg border border-border bg-card pr-2 transition-colors hover:border-primary/60">
-    <SettingsLink
-      card={c}
-      className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <c.icon className="size-4 shrink-0 text-primary" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium leading-tight">{c.label}</span>
-        <span className="mt-0.5 block truncate text-[11px] leading-snug text-muted-foreground">
-          {c.blurb}
+      <SettingsLink
+        card={c}
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <c.icon className="size-4 shrink-0 text-primary" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-medium leading-tight">{c.label}</span>
+          <span className="mt-0.5 block truncate text-[11px] leading-snug text-muted-foreground">
+            {c.blurb}
+          </span>
         </span>
-      </span>
-      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-    </SettingsLink>
+        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+      </SettingsLink>
       <PinButton kind="settings" itemKey={c.id} label={c.label} />
     </div>
   );
@@ -118,7 +114,7 @@ function SettingsHome() {
 
   return (
     <SettingsShell home>
-      <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
+      <div className="mx-auto w-full max-w-7xl space-y-5 p-4 sm:p-6">
         {/* Compact sticky header: title, description and search stay reachable. */}
         <header className="sticky top-0 z-20 -mx-4 space-y-2 border-b border-border bg-background/95 px-4 pb-3 pt-3 backdrop-blur sm:-mx-6 sm:px-6">
           <div className="flex items-center gap-2">
@@ -126,14 +122,14 @@ function SettingsHome() {
               <button
                 type="button"
                 onClick={() => void navigate({ search: {}, replace: false })}
-                className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+                className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
               >
                 <ChevronLeft className="size-4" /> Settings
               </button>
             ) : (
               <Link
                 to="/"
-                className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+                className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
               >
                 <ChevronLeft className="size-4" /> Register
               </Link>
@@ -202,7 +198,7 @@ function SettingsHome() {
             )}
           </section>
         ) : category ? (
-          <section className="space-y-2" aria-label={category.label}>
+          <section className="grid gap-3 sm:grid-cols-2" aria-label={category.label}>
             {cards
               .filter((c) => c.category === category.id)
               .map((c) => (
@@ -231,51 +227,33 @@ function SettingsHome() {
               </section>
             )}
 
-            {/* Phones step into a category; wide screens already have the rail,
-                so they see every area listed under its heading. */}
-            <div className="space-y-2 lg:hidden">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {categories.map((g) => (
                 <button
                   key={g.id}
                   type="button"
                   onClick={() => void navigate({ search: { cat: g.id }, replace: false })}
-                  className="flex w-full items-center gap-3 rounded-lg border border-border bg-card px-3 py-3 text-left transition-colors hover:border-primary/60"
+                  className="group flex min-h-40 w-full flex-col rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-sm"
                 >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{g.label}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">
-                      {g.blurb}
+                  <span className="flex w-full items-start gap-3">
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      <g.icon className="size-5" />
                     </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-base font-semibold">{g.label}</span>
+                      <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                        {g.blurb}
+                      </span>
+                    </span>
+                    <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                   </span>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="mt-auto block w-full border-t border-border/60 pt-3 text-[11px] leading-relaxed text-muted-foreground">
+                    {cards
+                      .filter((card) => card.category === g.id)
+                      .map((card) => card.label)
+                      .join(" · ")}
+                  </span>
                 </button>
-              ))}
-            </div>
-
-            <div className="hidden space-y-7 lg:block">
-              {SETTINGS_GROUPS.filter((h) => categories.some((g) => g.group === h.id)).map((h) => (
-                <div key={h.id} className="space-y-4">
-                  <h2 className="border-b border-border pb-1 text-sm font-semibold">{h.label}</h2>
-                  {categories
-                    .filter((g) => g.group === h.id)
-                    .map((g) => (
-                      <section key={g.id} className="space-y-2">
-                        <div>
-                          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            {g.label}
-                          </h3>
-                          <p className="text-[11px] text-muted-foreground">{g.blurb}</p>
-                        </div>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          {cards
-                            .filter((c) => c.category === g.id)
-                            .map((c) => (
-                              <Row key={c.id} c={c} />
-                            ))}
-                        </div>
-                      </section>
-                    ))}
-                </div>
               ))}
             </div>
           </>
