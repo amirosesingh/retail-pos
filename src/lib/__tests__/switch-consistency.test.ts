@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("boolean switch consistency", () => {
@@ -14,14 +14,16 @@ describe("boolean switch consistency", () => {
   });
 
   it("does not implement boolean controls with native checkbox inputs", () => {
-    let matches = "";
-    try {
-      matches = execFileSync("rg", ["-n", 'type=\\"checkbox\\"', "src", "-g", "*.tsx"], {
-        encoding: "utf8",
-      }).trim();
-    } catch (error) {
-      if ((error as { status?: number }).status !== 1) throw error;
-    }
-    expect(matches).toBe("");
+    const matches: string[] = [];
+    const visit = (directory: string) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) visit(path);
+        else if (entry.name.endsWith(".tsx") && readFileSync(path, "utf8").includes('type="checkbox"'))
+          matches.push(path);
+      }
+    };
+    visit("src");
+    expect(matches).toEqual([]);
   });
 });
