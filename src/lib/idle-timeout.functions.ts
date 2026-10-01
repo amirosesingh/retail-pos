@@ -24,11 +24,23 @@ async function rpc(accessToken: string, name: string, args: Record<string, unkno
 /** The default idle limit that applies to a branch. */
 export const getIdleTimeout = createServerFn({ method: "POST" })
   .validator((input: unknown) =>
-    z.object({ storeId: z.string().max(64).optional() }).parse(input),
+    z
+      .object({
+        storeId: z.string().max(64).optional(),
+        sessionToken: z.string().max(400).optional(),
+        cashierToken: z.string().max(2000).optional(),
+        terminalToken: z.string().max(200).optional(),
+        accessToken: z.string().max(4000).optional(),
+      })
+      .parse(input),
   )
   .handler(async ({ data }) => {
+    const { requireCallerScope } = await import("./privileged-caller.server");
+    const scope = await requireCallerScope(data);
+    if (!scope.isSupervisor && data.storeId && data.storeId !== scope.storeId)
+      throw new Error("You cannot read another branch's timeout.");
     const { resolveIdleMinutes } = await import("./session-guard.server");
-    const minutes = await resolveIdleMinutes({ branchId: data.storeId ?? null });
+    const minutes = await resolveIdleMinutes({ branchId: data.storeId ?? scope.storeId ?? null });
     return { minutes };
   });
 

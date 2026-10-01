@@ -8,11 +8,8 @@ import {
   useState,
   type Context,
   type ReactNode,
-
 } from "react";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { Loader2, ShieldAlert } from "lucide-react";
-import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { Button } from "@/components/ui/button";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { Input } from "@/components/ui/input";
@@ -27,15 +24,13 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth, useAuthOptional } from "@/lib/pos-auth";
 import { verifyLocalPin } from "@/core/local-db/local-staff";
-import { looksOffline } from "@/lib/governance-offline";
+import { verifyManagerPin } from "@/lib/pos-rules.functions";
 import {
   PERMISSION_LABELS,
   resolvePermission,
   type PermissionFlag,
   type StaffPermissions,
 } from "@/lib/permissions";
-
-const sb = supabaseExternal as unknown as SupabaseClient;
 
 type Ctx = {
   permissions: StaffPermissions;
@@ -63,7 +58,6 @@ const permissionsRegistry = globalThis as typeof globalThis & {
 };
 const PermissionsContext = (permissionsRegistry.__posPermissionsContext ??=
   createContext<Ctx | null>(null));
-
 
 /**
  * Degrades gracefully when the auth context is missing (duplicate module
@@ -178,12 +172,21 @@ function PermissionsInner({ children }: { children: ReactNode }) {
       close(true);
       return;
     }
-    const { data, error: rpcError } = await sb.rpc("verify_terminal_pin", {
-      p_user_id: userId.trim(),
-      p_pin: pin,
-    });
-    const row = (Array.isArray(data) ? data[0] : data) as { role?: string } | undefined;
-    if (rpcError && looksOffline(rpcError)) {
+    let result: Awaited<ReturnType<typeof verifyManagerPin>> | null = null;
+    try {
+      result = await verifyManagerPin({
+        data: {
+          managerId: userId.trim(),
+          pin,
+          action: "permission_override",
+          detail: pending ? `Permission override: ${pending}` : "Permission override",
+        },
+      });
+    } catch {
+      // The hosted server is unreachable; the sealed local roster is the
+      // outage fallback and still restricts the override to supervisors.
+    }
+    if (!result || (!result.ok && /reach|network|offline|fetch/i.test(result.error ?? ""))) {
       const local = await verifyLocalPin(userId.trim(), pin);
       setBusy(false);
       if (!local.ok || !["admin", "manager"].includes(local.staff.roleSlug)) {
@@ -194,12 +197,8 @@ function PermissionsInner({ children }: { children: ReactNode }) {
       return;
     }
     setBusy(false);
-    if (rpcError || !row) {
-      setError("Invalid supervisor User ID or PIN");
-      return;
-    }
-    if (row.role !== "admin" && row.role !== "manager") {
-      setError("That account is not a supervisor");
+    if (!result.ok) {
+      setError(result.error ?? "Invalid supervisor User ID or PIN");
       return;
     }
     close(true);

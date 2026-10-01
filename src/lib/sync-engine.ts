@@ -714,6 +714,9 @@ function announceDataChange(change: LiveChange): void {
 
 /** Refresh the offline staff roster so a PIN sign-in works without the cloud. */
 async function refreshStaffMirror(): Promise<void> {
+  // PIN sessions deliberately have no Data API JWT. Their roster is refreshed
+  // through the activated-terminal endpoint during sign-in instead.
+  if (!hasStaffSession()) return;
   const { data, error } = await supabaseExternal.rpc("list_app_users");
   if (error) throw new Error(error.message);
   const { cacheStaffRoster } = await import("@/core/local-db/local-staff");

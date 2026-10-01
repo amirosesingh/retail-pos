@@ -46,7 +46,9 @@ export const pushActivityEvent = createServerFn({ method: "POST" })
     }
     // Only a supervisor may file an event against another branch; everyone
     // else is stamped with the branch their proof belongs to.
-    const storeId = scope.isSupervisor ? (data.storeId ?? scope.storeId ?? null) : (scope.storeId ?? null);
+    const storeId = scope.isSupervisor
+      ? (data.storeId ?? scope.storeId ?? null)
+      : (scope.storeId ?? null);
     const { writeActivityEvent } = await import("./activity-events.server");
     const res = await writeActivityEvent({
       event_type: data.type,
@@ -78,24 +80,34 @@ const settingsInput = z.object({
   channels: z.record(z.string(), z.enum(["off", "app", "whatsapp"])),
 });
 
-export const loadNotificationSettings = createServerFn({ method: "POST" }).handler(async () => {
-  const { readNotificationSettings } = await import("./activity-events.server");
-  return await readNotificationSettings();
+const callerProof = z.object({
+  sessionToken: z.string().max(400).optional(),
+  cashierToken: z.string().max(2000).optional(),
+  terminalToken: z.string().max(200).optional(),
+  accessToken: z.string().max(4000).optional(),
 });
 
-export const saveNotificationSettings = createServerFn({ method: "POST" })
-  .validator((input: unknown) =>
-    z.object({ accessToken: z.string().min(10), settings: settingsInput }).parse(input),
-  )
+export const loadNotificationSettings = createServerFn({ method: "POST" })
+  .validator((input: unknown) => callerProof.parse(input))
   .handler(async ({ data }) => {
-    const { verifyPosStaff } = await import("./secure-settings.server");
     try {
-      const staff = await verifyPosStaff(data.accessToken);
-      if (staff.role !== "admin" && staff.role !== "manager") {
-        return { ok: false as const, error: "Admin access required" };
-      }
-    } catch {
-      return { ok: false as const, error: "Admin access required" };
+      const { requireCallerScope } = await import("./privileged-caller.server");
+      await requireCallerScope(data, { permission: "can_access_pos_settings" });
+      const { readNotificationSettings } = await import("./activity-events.server");
+      return { ok: true as const, settings: await readNotificationSettings() };
+    } catch (error) {
+      return { ok: false as const, error: (error as Error).message };
+    }
+  });
+
+export const saveNotificationSettings = createServerFn({ method: "POST" })
+  .validator((input: unknown) => callerProof.extend({ settings: settingsInput }).parse(input))
+  .handler(async ({ data }) => {
+    try {
+      const { requireCallerScope } = await import("./privileged-caller.server");
+      await requireCallerScope(data, { permission: "can_access_pos_settings" });
+    } catch (error) {
+      return { ok: false as const, error: (error as Error).message };
     }
     const { writeNotificationSettings } = await import("./activity-events.server");
     try {

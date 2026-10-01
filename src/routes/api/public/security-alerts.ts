@@ -29,11 +29,12 @@ async function handle({ request }: { request: Request }) {
   const denied = verifyHmacSignature({
     raw,
     signature: request.headers.get("x-security-signature"),
-    secret: runtimeEnvValue("SECURITY_ALERT_INGEST_SECRET") ?? process.env["SECURITY_ALERT_INGEST_SECRET"],
+    secret:
+      runtimeEnvValue("SECURITY_ALERT_INGEST_SECRET") ??
+      process.env["SECURITY_ALERT_INGEST_SECRET"],
     label: "Security alert ingest",
   });
   if (denied) return denied;
-
 
   let parsed;
   try {
@@ -43,18 +44,9 @@ async function handle({ request }: { request: Request }) {
   }
   if (!parsed.success) return Response.json({ error: "Invalid payload" }, { status: 400 });
 
-  let url: string;
-  let key: string;
-  try {
-    const { supabaseConfig } = await import("@/lib/external-supabase-config");
-    ({ url, key } = supabaseConfig());
-  } catch (e) {
-    return Response.json({ error: (e as Error).message }, { status: 500 });
-  }
-
-  const res = await fetch(`${url}/rest/v1/rpc/security_report_findings`, {
+  const { serviceRest } = await import("@/core/api/pos-relay.server");
+  const res = await serviceRest("rpc/security_report_findings", {
     method: "POST",
-    headers: { "Content-Type": "application/json", apikey: key },
     body: JSON.stringify({
       _source: "ci",
       _deployment_ref: parsed.data.deploymentRef,
