@@ -28,6 +28,8 @@ import { removeHeldOrder, useHeldOrders, type HeldOrder } from "@/lib/held-order
 import { TICKET_ACTIONS, logTicketEvent, useTicketTrail } from "@/lib/ticket-audit";
 import { loadApprovalCentre, subscribeApprovals } from "@/lib/approval-centre";
 import type { AuthorizationRequest } from "@/lib/authorization";
+import { cancelAuthorizationRequest } from "@/lib/authorization-client";
+import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 
 export const Route = createFileRoute("/holds")({
   head: () => ({
@@ -106,6 +108,22 @@ function HoldTickets() {
 
   async function discard(order: HeldOrder) {
     if (!(await requirePermission("can_discard_held_order"))) return;
+    if (order.pendingRequestId) {
+      const cancelled = await cancelAuthorizationRequest({
+        data: {
+          ...(await getPosCallerAuth()),
+          id: order.pendingRequestId,
+          reason: "Held bill discarded before completion",
+        },
+      }).catch(() => null);
+      if (!cancelled?.ok) {
+        toast.error(
+          (cancelled && "error" in cancelled ? cancelled.error : "") ||
+            "Could not void the bill's approval; the held bill was kept",
+        );
+        return;
+      }
+    }
     removeHeldOrder(order.id);
     logTicketEvent(TICKET_ACTIONS.discarded, {
       holdRef: order.id,

@@ -9235,9 +9235,14 @@ DECLARE
   had_stock boolean := false;
   has_stock boolean := false;
 BEGIN
-  SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, false)
+  SELECT lower(COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'false')) = 'true'
     INTO enabled FROM public.pos_settings WHERE id = 1;
   IF NOT enabled THEN RETURN NEW; END IF;
+  -- Treat malformed legacy stock payloads as unknown, not zero stock. This
+  -- prevents a bad JSON shape from automatically archiving a product.
+  IF jsonb_typeof(NEW.stock_by_store) IS DISTINCT FROM 'object' THEN
+    RETURN NEW;
+  END IF;
   SELECT EXISTS (
     SELECT 1 FROM jsonb_each_text(COALESCE(NEW.stock_by_store, '{}'::jsonb))
      WHERE value ~ '^-?[0-9]+([.][0-9]+)?$' AND value::numeric > 0
@@ -9249,10 +9254,14 @@ BEGIN
     NEW.is_archived := false;
     NEW.archived_at := NULL;
   ELSE
-    SELECT EXISTS (
-      SELECT 1 FROM jsonb_each_text(COALESCE(OLD.stock_by_store, '{}'::jsonb))
-       WHERE value ~ '^-?[0-9]+([.][0-9]+)?$' AND value::numeric > 0
-    ) INTO had_stock;
+    IF jsonb_typeof(OLD.stock_by_store) = 'object' THEN
+      SELECT EXISTS (
+        SELECT 1 FROM jsonb_each_text(OLD.stock_by_store)
+         WHERE value ~ '^-?[0-9]+([.][0-9]+)?$' AND value::numeric > 0
+      ) INTO had_stock;
+    ELSE
+      had_stock := true;
+    END IF;
     IF had_stock AND NOT has_stock THEN
       NEW.is_archived := true;
       NEW.archived_at := COALESCE(NEW.archived_at, now());
@@ -9277,24 +9286,32 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  IF COALESCE((NEW.integration_settings ->> 'autoArchiveZeroStock')::boolean, false)
-     AND NOT COALESCE((OLD.integration_settings ->> 'autoArchiveZeroStock')::boolean, false) THEN
-    UPDATE public.products
-       SET is_archived = NOT EXISTS (
-             SELECT 1
-               FROM jsonb_each_text(COALESCE(products.stock_by_store, '{}'::jsonb))
-              WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
-                AND value::numeric > 0
-           ),
-           archived_at = CASE
-             WHEN EXISTS (
+  IF lower(COALESCE(NEW.integration_settings ->> 'autoArchiveZeroStock', 'false')) = 'true'
+     AND lower(COALESCE(OLD.integration_settings ->> 'autoArchiveZeroStock', 'false')) <> 'true' THEN
+    WITH stock_state AS (
+      SELECT p.id,
+             EXISTS (
                SELECT 1
-                 FROM jsonb_each_text(COALESCE(products.stock_by_store, '{}'::jsonb))
+                 FROM jsonb_each_text(p.stock_by_store)
                 WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
                   AND value::numeric > 0
-             ) THEN NULL
-             ELSE COALESCE(products.archived_at, now())
-           END;
+             ) AS has_stock
+        FROM public.products p
+       WHERE jsonb_typeof(p.stock_by_store) = 'object'
+    )
+    UPDATE public.products p
+       SET is_archived = NOT stock_state.has_stock,
+           archived_at = CASE
+             WHEN stock_state.has_stock THEN NULL
+             ELSE COALESCE(p.archived_at, now())
+           END
+      FROM stock_state
+     WHERE p.id = stock_state.id
+       AND (
+         p.is_archived IS DISTINCT FROM NOT stock_state.has_stock
+         OR (stock_state.has_stock AND p.archived_at IS NOT NULL)
+         OR (NOT stock_state.has_stock AND p.archived_at IS NULL)
+       );
   END IF;
   RETURN NEW;
 END;
@@ -9311,7 +9328,7 @@ REVOKE ALL ON FUNCTION public.backfill_zero_stock_catalog_lifecycle() FROM PUBLI
 -- installation whose lifecycle setting was enabled earlier. Future changes
 -- are handled by the two triggers above.
 WITH lifecycle AS (
-  SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, false) AS enabled
+  SELECT lower(COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'false')) = 'true' AS enabled
     FROM public.pos_settings
    WHERE id = 1
 ), stock_state AS (
@@ -9323,6 +9340,7 @@ WITH lifecycle AS (
               AND value::numeric > 0
          ) AS has_stock
     FROM public.products p
+   WHERE jsonb_typeof(p.stock_by_store) = 'object'
 )
 UPDATE public.products p
    SET is_archived = NOT stock_state.has_stock,

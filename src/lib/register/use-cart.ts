@@ -44,7 +44,7 @@ type CartDeps = {
   getTotal: () => number;
   getMemberName: () => string | null;
   /** Fired when the ticket is emptied, so one-off unlocks do not linger. */
-  onReset?: () => void;
+  onReset?: (reason: "completed" | "voided" | "cleared" | "held") => void;
   /** The effective business tax rate, stored as a decimal on every new sale line. */
   taxRate: number;
   /**
@@ -146,12 +146,12 @@ export function useCart(deps: CartDeps) {
     setLines((ls) => ls.map((l, i) => (i === index ? { ...l, ...patch } : l)));
   }
 
-  function resetCart() {
+  function resetCart(reason: "completed" | "voided" | "cleared" | "held" = "completed") {
     setLines([]);
     setCartDiscount(0);
     setCartDiscountType("percent");
     setExchangeRef(null);
-    deps.onReset?.();
+    deps.onReset?.(reason);
     setCoupon(null);
     setBillNo(null);
     clearCartDraft(deps.currentStore.id);
@@ -169,7 +169,7 @@ export function useCart(deps: CartDeps) {
         items: lines.map((l) => ({ name: l.name, qty: l.qty, price: l.price })),
       });
     }
-    resetCart();
+    resetCart(source === "void" ? "voided" : "cleared");
   }
 
   return {

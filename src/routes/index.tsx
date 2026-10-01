@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { markHeldWaiting } from "@/lib/held-orders";
 import { terminalId as posTerminalId } from "@/lib/activity-journal";
 import {
@@ -108,7 +108,10 @@ import type { AuthPayload } from "@/lib/authorization";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { parsePositiveAmount } from "@/core/pricing/amount";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { verifyBusinessAuthorization } from "@/lib/authorization-client";
+import {
+  cancelAuthorizationRequest,
+  verifyBusinessAuthorization,
+} from "@/lib/authorization-client";
 import { evaluatePromotions, focLine } from "@/lib/pos-promotions";
 import { loadCartDraft, saveCartDraft } from "@/lib/cart-draft";
 import { openCashDrawer, printSaleReceipt, saleReceiptPreview } from "@/lib/pos-print";
@@ -169,6 +172,18 @@ function RegisterEntry() {
   );
 }
 
+type AppliedApproval = {
+  requestId: string;
+  approvedAmount: number | null;
+  requestedAmount: number | null;
+  requesterDirectLimit: number | null;
+  valueUnit: "percent" | "currency" | "quantity" | "number";
+  approvedBy: string | null;
+  approvedByName: string | null;
+  /** Fingerprint after the approved change was applied to the ticket. */
+  appliedSnapshotHash: string | null;
+};
+
 function Register() {
   const {
     state,
@@ -199,42 +214,41 @@ function Register() {
   const ticketSnapshot = useRef<() => TicketSnapshot | null>(() => null);
   /** Parks the open ticket; filled in once the held-orders hook exists. */
   const parkTicket = useRef<((id?: string) => { id: string } | null) | null>(null);
-  /** The single-use grant claimed when a ticket comes back approved. */
-  const claimedGrant = useRef<{
-    requestId: string;
-    actionKey: string;
-    approvedPayload: AuthPayload;
-    grantToken: string;
-    amount: number | null;
-  } | null>(null);
-  const [appliedApproval, setAppliedApproval] = useState<{
-    requestId: string;
-    approvedAmount: number | null;
-    requestedAmount: number | null;
-    requesterDirectLimit: number | null;
-    valueUnit: "percent" | "currency" | "quantity" | "number";
-  } | null>(null);
-  const appliedApprovalText = appliedApproval
-    ? (() => {
-        const formatValue = (value: number) =>
-          appliedApproval.valueUnit === "percent"
-            ? `${value.toFixed(2)}%`
-            : appliedApproval.valueUnit === "currency"
-              ? money(value)
-              : value.toFixed(2);
-        const approved =
-          appliedApproval.approvedAmount === null
-            ? ""
-            : ` · ${formatValue(appliedApproval.approvedAmount)} approved`;
-        const extra =
-          appliedApproval.approvedAmount !== null && appliedApproval.requesterDirectLimit !== null
-            ? ` · ${formatValue(Math.max(0, appliedApproval.approvedAmount - appliedApproval.requesterDirectLimit))} extra`
-            : "";
-        return `#${appliedApproval.requestId.slice(-8).toUpperCase()}${approved}${extra}`;
-      })()
-    : "";
+  const appliedApprovalRef = useRef<AppliedApproval | null>(null);
+  const [appliedApproval, setAppliedApproval] = useState<AppliedApproval | null>(null);
+  const clearAppliedApproval = useCallback(() => {
+    appliedApprovalRef.current = null;
+    setAppliedApproval(null);
+  }, []);
+  const invalidateAppliedApproval = useCallback(
+    async (reason: string) => {
+      const approval = appliedApprovalRef.current;
+      if (!approval) return true;
+      clearAppliedApproval();
+      const cancelled = await cancelAuthorizationRequest({
+        data: {
+          ...(await getPosCallerAuth()),
+          id: approval.requestId,
+          reason,
+        },
+      }).catch(() => null);
+      if (!cancelled?.ok) {
+        toast.error(
+          (cancelled && "error" in cancelled ? cancelled.error : "") ||
+            "The approval was removed from this till but could not be voided in the database",
+        );
+        return false;
+      }
+      return true;
+    },
+    [clearAppliedApproval],
+  );
   const askManager = async (request: GateRequest) => {
     const baseSnapshot = ticketSnapshot.current();
+    if (baseSnapshot && !baseSnapshot.billNo) {
+      toast.info("The bill number is still being reserved. Try the approval again in a moment.");
+      return null;
+    }
     const snapshot = baseSnapshot
       ? {
           ...baseSnapshot,
@@ -244,13 +258,38 @@ function Register() {
           requestedLabel: request.title,
         }
       : null;
+    const requestedTargetIndex = Number(request.payload?.["target_index"]);
+    const requestedTargetLine =
+      snapshot && Number.isInteger(requestedTargetIndex)
+        ? snapshot.lines[requestedTargetIndex]
+        : undefined;
+    const payload: AuthPayload = {
+      ...(request.payload ?? {}),
+      ...(snapshot?.billNo
+        ? {
+            bill_no: snapshot.billNo,
+            transaction: snapshot.billNo,
+          }
+        : {}),
+      ...(snapshot?.billNo && requestedTargetLine
+        ? {
+            target_line_key: [
+              snapshot.billNo,
+              requestedTargetIndex,
+              requestedTargetLine.sku,
+              requestedTargetLine.qty,
+              requestedTargetLine.unitPrice,
+            ].join("|"),
+          }
+        : {}),
+    };
     const verifyGrant = async (grantToken: string | null) => {
       const result = await verifyBusinessAuthorization({
         data: {
           ...(await getPosCallerAuth()),
           actionKey: request.action,
           storeId: request.storeId ?? currentStore.id,
-          payload: request.payload ?? {},
+          payload,
           snapshotHash: snapshot ? snapshotFingerprint(snapshot) : "",
           grantToken,
         },
@@ -261,29 +300,12 @@ function Register() {
       }
       return grantToken ?? "";
     };
-    const existing = claimedGrant.current;
-    if (
-      existing?.actionKey === request.action &&
-      Object.entries(request.payload ?? {}).every(
-        ([key, value]) => existing.approvedPayload[key] === value,
-      )
-    ) {
-      if (
-        existing.amount !== null &&
-        request.requestedAmount !== undefined &&
-        request.requestedAmount !== null &&
-        request.requestedAmount > existing.amount
-      ) {
-        toast.error(`Only ${existing.amount.toFixed(2)} was approved for this ticket.`);
-        return null;
-      }
-      return verifyGrant(existing.grantToken);
-    }
     const heldOrderId = snapshot
       ? `H${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       : undefined;
     const res = await authorize({
       ...request,
+      payload,
       ...(snapshot ? { snapshot } : {}),
       ...(heldOrderId ? { heldOrderId } : {}),
       ...(request.requestedAmount === undefined && snapshot?.requestedValue !== undefined
@@ -389,7 +411,16 @@ function Register() {
     getTotal: () => totals.total,
     getMemberName: () => member?.name ?? null,
     // A discount unlock lasts for this ticket only.
-    onReset: () => setDiscountOverride(false),
+    onReset: (reason) => {
+      setDiscountOverride(false);
+      if (reason === "voided" || reason === "cleared") {
+        void invalidateAppliedApproval(
+          reason === "voided" ? "Bill voided before completion" : "Bill cleared before completion",
+        );
+      } else {
+        clearAppliedApproval();
+      }
+    },
     // Tax is configured once for the business scope; product records are not a
     // second source of truth for the rate applied at the till.
     taxRate: state.settings.tax.enabled ? state.settings.tax.rate / 100 : 0,
@@ -709,6 +740,26 @@ function Register() {
     taxSettings,
     r2(promo.promoDiscount + billCouponDiscount),
   );
+  const appliedApprovalText = appliedApproval
+    ? (() => {
+        const formatValue = (value: number) =>
+          appliedApproval.valueUnit === "percent"
+            ? `${value.toFixed(2)}%`
+            : appliedApproval.valueUnit === "currency"
+              ? money(value)
+              : value.toFixed(2);
+        const approved =
+          appliedApproval.approvedAmount === null
+            ? ""
+            : ` · ${formatValue(appliedApproval.approvedAmount)} approved`;
+        const extra =
+          appliedApproval.approvedAmount !== null && appliedApproval.requesterDirectLimit !== null
+            ? ` · ${formatValue(Math.max(0, appliedApproval.approvedAmount - appliedApproval.requesterDirectLimit))} extra`
+            : "";
+        const approver = appliedApproval.approvedByName || appliedApproval.approvedBy;
+        return `#${appliedApproval.requestId.slice(-8).toUpperCase()}${approver ? ` · by ${approver}` : ""}${approved}${extra} · payable ${money(totals.total)}`;
+      })()
+    : "";
   const pointsEarned = member ? Math.max(0, Math.round(totals.total * promo.pointsRate)) : 0;
 
   // Keep the qualifying FOC freebie in sync with the open ticket.
@@ -807,35 +858,30 @@ function Register() {
     setBillNo,
     resetCart,
     snapshot: () => ticketSnapshot.current(),
-    onApprovalCleared: () => {
-      claimedGrant.current = null;
-      setAppliedApproval(null);
-    },
+    onApprovalCleared: clearAppliedApproval,
     onApprovalClaimed: (grant) => {
-      claimedGrant.current = {
-        requestId: grant.requestId,
-        actionKey: grant.actionKey,
-        approvedPayload: grant.approvedPayload,
-        grantToken: grant.grantToken,
-        amount: grant.approvedAmount,
-      };
-      setAppliedApproval({
+      const applied: AppliedApproval = {
         requestId: grant.requestId,
         approvedAmount: grant.approvedAmount,
         requestedAmount: grant.requestedAmount,
         requesterDirectLimit: grant.requesterDirectLimit,
         valueUnit: grant.valueUnit,
-      });
+        approvedBy: grant.approvedBy,
+        approvedByName: grant.approvedByName,
+        appliedSnapshotHash: null,
+      };
+      appliedApprovalRef.current = applied;
+      setAppliedApproval(applied);
       toast.success(
         grant.approvedAmount === null
-          ? "Approval applied to this ticket"
+          ? `Approval by ${grant.approvedByName || grant.approvedBy || "authorised staff"} applied to this ticket`
           : `Approved ${
               grant.valueUnit === "percent"
                 ? `${grant.approvedAmount.toFixed(2)}%`
                 : grant.valueUnit === "currency"
                   ? money(grant.approvedAmount)
                   : grant.approvedAmount.toFixed(2)
-            } — applied to this ticket`,
+            } by ${grant.approvedByName || grant.approvedBy || "authorised staff"} — applied to this ticket`,
       );
     },
   });
@@ -878,13 +924,40 @@ function Register() {
             : null,
         };
   parkTicket.current = (id) => holdOrder(true, id);
-  // A grant belongs to one ticket only: once the ticket is gone, so is it.
+  // Capture the ticket immediately after the approved change is applied. Any
+  // later line, quantity, member, coupon or total change voids the database
+  // approval before its signed grant can be accepted again.
   useEffect(() => {
-    if (lines.length === 0) {
-      claimedGrant.current = null;
-      setAppliedApproval(null);
+    const approval = appliedApprovalRef.current;
+    if (!approval) return;
+    const snapshot = ticketSnapshot.current();
+    if (!snapshot) {
+      void invalidateAppliedApproval("Approved bill was removed before completion");
+      return;
     }
-  }, [lines.length]);
+    const currentHash = snapshotFingerprint(snapshot);
+    if (!approval.appliedSnapshotHash) {
+      const bound = { ...approval, appliedSnapshotHash: currentHash };
+      appliedApprovalRef.current = bound;
+      setAppliedApproval(bound);
+      return;
+    }
+    if (approval.appliedSnapshotHash !== currentHash) {
+      void invalidateAppliedApproval("Approved bill or item changed before completion");
+    }
+  }, [
+    billNo,
+    cartDiscount,
+    cartDiscountType,
+    coupon,
+    invalidateAppliedApproval,
+    lines,
+    memberId,
+    totals.discount,
+    totals.subtotal,
+    totals.tax,
+    totals.total,
+  ]);
   const detail = state.products.find((p) => p.id === detailId) ?? null;
 
   /** Adds the product matching a scanned/typed code to the ticket. */
@@ -974,7 +1047,13 @@ function Register() {
     getActiveCashier: () => activeCashier,
     requirePermission,
     getAuthorization: () =>
-      claimedGrant.current ? { requestId: claimedGrant.current.requestId, approvedBy: null } : null,
+      appliedApprovalRef.current
+        ? {
+            requestId: appliedApprovalRef.current.requestId,
+            approvedBy:
+              appliedApprovalRef.current.approvedByName ?? appliedApprovalRef.current.approvedBy,
+          }
+        : null,
     getLines: () => lines,
     getTotals: () => totals,
     getMember: () => member,

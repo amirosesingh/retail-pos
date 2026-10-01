@@ -43,7 +43,7 @@ type HeldOrdersDeps = {
   setMemberId: (id: string | null) => void;
   setCoupon: (c: CartCoupon | null) => void;
   setBillNo: (no: string | null) => void;
-  resetCart: () => void;
+  resetCart: (reason?: "completed" | "voided" | "cleared" | "held") => void;
   /**
    * A picture of the open ticket, used to prove to the server that a ticket
    * resumed after an approval is still the one the approver reviewed.
@@ -59,6 +59,8 @@ type HeldOrdersDeps = {
     requestedAmount: number | null;
     requesterDirectLimit: number | null;
     valueUnit: "percent" | "currency" | "quantity" | "number";
+    approvedBy: string | null;
+    approvedByName: string | null;
   }) => void;
   /** Clears approval UI/state before another parked ticket becomes active. */
   onApprovalCleared?: () => void;
@@ -103,7 +105,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       member: memberName,
       items: snapshot.map((l) => ({ name: l.name, qty: l.qty, price: l.price })),
     });
-    deps.resetCart();
+    deps.resetCart("held");
     if (!silent) toast.success("Order held — reopen it from Hold tickets");
     return order;
   }
@@ -154,6 +156,8 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
             requestedAmount: claimed.requestedAmount ?? null,
             requesterDirectLimit: claimed.requesterDirectLimit ?? null,
             valueUnit: claimed.valueUnit,
+            approvedBy: claimed.approvedBy ?? null,
+            approvedByName: claimed.approvedByName ?? null,
           };
         }
       }
@@ -196,7 +200,13 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   return { held, holdOrder, resumeHeld };
 }
 
-type ClaimedGrant = Parameters<NonNullable<HeldOrdersDeps["onApprovalClaimed"]>>[0];
+type ClaimedGrant = Omit<
+  Parameters<NonNullable<HeldOrdersDeps["onApprovalClaimed"]>>[0],
+  "approvedBy" | "approvedByName"
+> & {
+  approvedBy?: string | null;
+  approvedByName?: string | null;
+};
 
 /** Apply the value the manager actually granted to the exact bill/line target. */
 export function applyApprovedDiscount(order: HeldOrder, grant: ClaimedGrant) {
@@ -208,6 +218,8 @@ export function applyApprovedDiscount(order: HeldOrder, grant: ClaimedGrant) {
   if (grant.actionKey !== "discount_over_limit" || grant.approvedAmount === null) return fallback;
 
   const payload = grant.approvedPayload;
+  const approvedBillNo = String(payload["bill_no"] ?? "");
+  if (!order.billNo || approvedBillNo !== order.billNo) return fallback;
   const type: DiscountType =
     payload["discount_type"] === "percent" || grant.valueUnit === "percent" ? "percent" : "amount";
   const value = Math.max(0, Number(grant.approvedAmount) || 0);
@@ -228,6 +240,15 @@ export function applyApprovedDiscount(order: HeldOrder, grant: ClaimedGrant) {
         ? matchingIndexes[0]
         : -1;
   if (targetIndex < 0 || targetIndex >= order.lines.length) return fallback;
+  const targetLine = order.lines[targetIndex]!;
+  const expectedLineKey = [
+    order.billNo,
+    targetIndex,
+    targetLine.productId,
+    targetLine.qty,
+    targetLine.price,
+  ].join("|");
+  if (payload["target_line_key"] !== expectedLineKey) return fallback;
   return {
     ...fallback,
     lines: order.lines.map((line, index) =>

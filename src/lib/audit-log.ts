@@ -292,6 +292,7 @@ export const logger = {
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 const BATCH = 50;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let flushInFlight: Promise<void> | null = null;
 
 /** Debounced push so fresh activity reaches the cloud within seconds. */
 function scheduleFlush() {
@@ -312,7 +313,15 @@ const setSync = (patch: Partial<SyncState>) => {
   syncListeners.forEach((l) => l());
 };
 
-async function flushBatch() {
+function flushBatch(): Promise<void> {
+  if (flushInFlight) return flushInFlight;
+  flushInFlight = flushBatchOnce().finally(() => {
+    flushInFlight = null;
+  });
+  return flushInFlight;
+}
+
+async function flushBatchOnce() {
   load();
   const online = typeof navigator === "undefined" ? true : navigator.onLine;
   // Oldest first, in per-terminal sequence, so the cloud sees the same order

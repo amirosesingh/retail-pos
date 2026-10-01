@@ -2207,6 +2207,7 @@ export const db = {
         action_name: r.action,
         target_module: r.module,
         details: r.details as never,
+        store_id: typeof r.details.storeId === "string" ? r.details.storeId : null,
         created_at: r.at,
       })) as never,
       { onConflict: "id", ignoreDuplicates: true },

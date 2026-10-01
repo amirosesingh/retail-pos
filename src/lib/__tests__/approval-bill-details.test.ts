@@ -9,6 +9,7 @@ const held = {
   id: "held-1",
   label: "Test bill",
   total: 100,
+  billNo: "B-1001",
   heldAt: "2026-10-01T02:00:00.000Z",
   lines: [
     {
@@ -88,7 +89,11 @@ describe("approval bill details", () => {
     const applied = applyApprovedDiscount(held, {
       requestId: "request-1",
       actionKey: "discount_over_limit",
-      approvedPayload: { discount_scope: "bill", discount_type: "percent" },
+      approvedPayload: {
+        discount_scope: "bill",
+        discount_type: "percent",
+        bill_no: "B-1001",
+      },
       grantToken: "grant",
       approvedAmount: 22,
       requestedAmount: 22,
@@ -139,6 +144,8 @@ describe("approval bill details", () => {
         discount_scope: "item",
         discount_type: "amount",
         target_product_id: "product-1",
+        bill_no: "B-1001",
+        target_line_key: "B-1001|0|product-1|1|100",
       },
       grantToken: "grant",
       approvedAmount: 20,
@@ -164,6 +171,7 @@ describe("approval bill details", () => {
         discount_scope: "item",
         discount_type: "percent",
         target_product_id: "product-1",
+        bill_no: "B-1001",
       },
       grantToken: "grant",
       approvedAmount: 22,
@@ -181,6 +189,8 @@ describe("approval bill details", () => {
         discount_type: "percent",
         target_product_id: "product-1",
         target_index: 1,
+        bill_no: "B-1001",
+        target_line_key: "B-1001|1|product-1|2|100",
       },
       grantToken: "grant",
       approvedAmount: 22,
@@ -198,6 +208,81 @@ describe("approval bill details", () => {
     expect(server).toContain("&expires_at=gt.");
   });
 
+  it("refuses to redirect an approval to another bill or changed item", () => {
+    const wrongBill = applyApprovedDiscount(held, {
+      requestId: "request-wrong-bill",
+      actionKey: "discount_over_limit",
+      approvedPayload: {
+        discount_scope: "bill",
+        discount_type: "percent",
+        bill_no: "B-OTHER",
+      },
+      grantToken: "grant",
+      approvedAmount: 15,
+      requestedAmount: 15,
+      requesterDirectLimit: 10,
+      valueUnit: "percent",
+    });
+    expect(wrongBill.cartDiscount).toBe(0);
+
+    const changedItem = applyApprovedDiscount(held, {
+      requestId: "request-changed-item",
+      actionKey: "discount_over_limit",
+      approvedPayload: {
+        discount_scope: "item",
+        discount_type: "amount",
+        target_product_id: "product-1",
+        target_index: 0,
+        bill_no: "B-1001",
+        target_line_key: "B-1001|0|product-1|2|100",
+      },
+      grantToken: "grant",
+      approvedAmount: 15,
+      requestedAmount: 15,
+      requesterDirectLimit: 10,
+      valueUnit: "currency",
+    });
+    expect(changedItem.lines[0]?.discount).toBe(0);
+  });
+
+  it("rejects unbound discount requests at the trusted server boundary", () => {
+    const functions = readFileSync("src/lib/authorization.functions.ts", "utf8");
+    expect(functions).toContain("A discount approval must be tied to one reserved bill number");
+    expect(functions).toContain("An item approval must match one exact item on that bill");
+    expect(functions).toContain('snapshot?.ticketId !== billNo');
+    expect(functions).toContain('data.payload["target_line_key"] !== expectedLineKey');
+  });
+
+  it("voids bill-bound approvals when their held ticket or applied cart is discarded", () => {
+    const server = readFileSync("src/lib/authorization.server.ts", "utf8");
+    const functions = readFileSync("src/lib/authorization.functions.ts", "utf8");
+    const holds = readFileSync("src/routes/holds.tsx", "utf8");
+    const register = readFileSync("src/routes/index.tsx", "utf8");
+    const discardStart = holds.indexOf("async function discard");
+    const discard = holds.slice(discardStart, holds.indexOf("\n  return (", discardStart));
+
+    expect(server).toContain("status=in.(pending,approved)");
+    expect(functions).toContain('request.status !== "approved"');
+    expect(functions).toContain('error: "That approval is no longer valid"');
+    expect(discard.indexOf("cancelAuthorizationRequest")).toBeLessThan(
+      discard.indexOf("removeHeldOrder(order.id)"),
+    );
+    expect(register).toContain("Approved bill or item changed before completion");
+    expect(register).toContain("appliedSnapshotHash");
+  });
+
+  it("returns and displays the durable approver identity and payable total", () => {
+    const functions = readFileSync("src/lib/authorization.functions.ts", "utf8");
+    const register = readFileSync("src/routes/index.tsx", "utf8");
+    const checkout = readFileSync("src/lib/register/use-checkout.ts", "utf8");
+    expect(functions).toContain("approvedByName: request.decidedByName");
+    expect(register).toContain("grant.approvedByName || grant.approvedBy");
+    expect(register).toContain("payable ${money(totals.total)}");
+    expect(register).toContain("appliedApprovalRef.current.approvedByName");
+    expect(checkout).toContain("authorizationRequestId: grant.requestId");
+    expect(checkout).toContain("authorizedBy: grant.approvedBy ?? null");
+  });
+
   it("allows a discount when the effective authorization rule is switched off", () => {
     const register = readFileSync("src/routes/index.tsx", "utf8");
     expect(register).toContain("if (grant === null) return;");
@@ -210,6 +295,7 @@ describe("approval bill details", () => {
     expect(held).toContain("resuming.current.has(id)");
     expect(register).toContain("Approval applied · {appliedApprovalText}");
     expect(register).toContain("approvedAmount - appliedApproval.requesterDirectLimit");
+    expect(register).not.toContain("existing.grantToken");
     expect(holds).toContain("Approved — ready");
     expect(holds).toContain("Approval applied");
   });

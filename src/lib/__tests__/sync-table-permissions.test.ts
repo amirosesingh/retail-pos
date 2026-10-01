@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   relay: vi.fn(),
   local: vi.fn(),
   from: vi.fn(),
+  upsert: vi.fn(),
   range: vi.fn(),
   checkpoint: vi.fn(),
   getUser: vi.fn(),
@@ -51,8 +52,16 @@ beforeEach(() => {
   mocks.local.mockReturnValue(null);
   mocks.relayAllowed.mockReturnValue(true);
   mocks.relay.mockResolvedValue({ ok: true });
+  mocks.upsert.mockResolvedValue({ error: null });
   mocks.getUser.mockResolvedValue({ data: { user: { id: "staff-1" } }, error: null });
-  const query = { select: vi.fn(), gt: vi.fn(), lte: vi.fn(), order: vi.fn(), range: mocks.range };
+  const query = {
+    select: vi.fn(),
+    gt: vi.fn(),
+    lte: vi.fn(),
+    order: vi.fn(),
+    range: mocks.range,
+    upsert: mocks.upsert,
+  };
   for (const method of [query.select, query.gt, query.lte, query.order])
     method.mockReturnValue(query);
   mocks.from.mockReturnValue(query);
@@ -160,6 +169,21 @@ describe("PIN audit uploads", () => {
     mocks.relayAllowed.mockReturnValue(false);
     await expect(db.pushAuditLogs(auditRows)).rejects.toThrow("Sign in");
     expect(mocks.from).not.toHaveBeenCalled();
+    expect(mocks.relay).not.toHaveBeenCalled();
+  });
+});
+
+describe("signed-in audit uploads", () => {
+  it("preserves branch ownership on direct Supabase writes", async () => {
+    mocks.staff.mockReturnValue(true);
+
+    await expect(db.pushAuditLogs(auditRows)).resolves.toEqual(["entry-1"]);
+
+    expect(mocks.from).toHaveBeenCalledWith("audit_logs");
+    expect(mocks.upsert).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: "entry-1", store_id: "branch-1" })],
+      { onConflict: "id", ignoreDuplicates: true },
+    );
     expect(mocks.relay).not.toHaveBeenCalled();
   });
 });

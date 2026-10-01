@@ -359,12 +359,18 @@ export async function consumeRequest(id: string, expectedHash?: string): Promise
   return ((await res.json()) as Row[]).length > 0;
 }
 
-export async function cancelRequest(id: string, requestedBy: string): Promise<boolean> {
+export async function cancelRequest(
+  id: string,
+  requestedBy: string,
+  reason = "Approval cancelled by requester",
+): Promise<boolean> {
   const res = await rest(
-    `authorization_requests?id=eq.${encodeURIComponent(id)}&status=eq.pending&requested_by=eq.${encodeURIComponent(requestedBy)}`,
+    `authorization_requests?id=eq.${encodeURIComponent(id)}&status=in.(pending,approved)&requested_by=eq.${encodeURIComponent(requestedBy)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ status: "cancelled", decided_at: new Date().toISOString() }),
+      // Keep the original approver and decision timestamp on an approved row;
+      // the immutable authorization log records when and why it was voided.
+      body: JSON.stringify({ status: "cancelled", decision_note: reason }),
       prefer: "return=representation",
     },
   );
