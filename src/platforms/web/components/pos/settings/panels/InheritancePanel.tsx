@@ -1,4 +1,4 @@
-import { Layers, MonitorCog, Store } from "lucide-react";
+import { Building2, Globe2, Layers, MonitorCog, Store } from "lucide-react";
 
 import { ScopePanel } from "@/platforms/web/components/pos/settings/ScopeControls";
 import { SETTINGS_SECTIONS, type SettingsSectionId } from "@/lib/settings-sections";
@@ -34,6 +34,29 @@ const TERMINAL_SECTIONS = SETTINGS_SECTIONS.filter(
   (section) => section.scopeFamily === "terminal",
 ).map((section) => section.id);
 
+const SCOPE_GUIDE = [
+  {
+    icon: Globe2,
+    label: "Global",
+    text: "Default for the whole business until a child scope overrides it.",
+  },
+  {
+    icon: Building2,
+    label: "Cluster",
+    text: "Shared by every store and terminal in that cluster.",
+  },
+  {
+    icon: Store,
+    label: "Store",
+    text: "Applies only to the selected store's business settings.",
+  },
+  {
+    icon: MonitorCog,
+    label: "Terminal",
+    text: "Applies only to the selected terminal's device settings.",
+  },
+] as const;
+
 /** The single place where settings ownership is selected. */
 export function InheritancePanel() {
   return (
@@ -54,7 +77,8 @@ export function InheritancePanel() {
             <Store className="size-4" /> Business settings
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Choose Global, Cluster or Branch, then use Edit values for the selected block.
+            Choose Global, Cluster or Store, then use Edit values. The selected scope is where the
+            next change is saved.
           </p>
         </div>
         <div className="rounded-lg border border-border bg-card p-4">
@@ -65,6 +89,17 @@ export function InheritancePanel() {
             Choose Global, Cluster or Terminal. The selected terminal stays active while you edit.
           </p>
         </div>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {SCOPE_GUIDE.map(({ icon: Icon, label, text }) => (
+          <div key={label} className="rounded-lg border border-border bg-muted/20 p-3">
+            <p className="flex items-center gap-2 text-xs font-semibold">
+              <Icon className="size-4 text-primary" /> {label}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{text}</p>
+          </div>
+        ))}
       </div>
 
       <ScopePanel

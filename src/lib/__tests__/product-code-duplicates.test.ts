@@ -41,4 +41,21 @@ describe("catalogue code duplicate audit", () => {
       "sku-1 already belongs to Product a (SKU-1).",
     ]);
   });
+
+  it("allows unrelated edits when an existing legacy code is duplicated", () => {
+    const first = product("a", "DUPLICATE", "BAR-1");
+    const second = product("b", "duplicate", "BAR-2");
+    expect(productCodeProblems([first, second], { ...second, name: "Renamed" })).toEqual([]);
+    expect(productCodeProblems([first, second], { ...second, barcode: "DUPLICATE" })).toEqual([
+      "duplicate is repeated on this product.",
+      "duplicate already belongs to Product a (DUPLICATE).",
+    ]);
+  });
+
+  it("ignores malformed persisted variant codes instead of throwing", () => {
+    const draft = product("a", "SKU-1", "BAR-1", {
+      variants: [{ code: undefined as unknown as string }],
+    });
+    expect(productCodeProblems([], draft)).toEqual([]);
+  });
 });

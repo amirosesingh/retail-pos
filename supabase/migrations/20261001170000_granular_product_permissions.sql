@@ -1,19 +1,30 @@
--- Split catalogue operations that previously shared can_add_new_product.
--- Backfill preserves every existing user's behavior while future edits store
--- each decision independently.
-UPDATE public.app_users
-SET permissions = permissions || jsonb_build_object(
-  'can_edit_product_details', COALESCE((permissions->>'can_add_new_product')::boolean, false),
-  'can_link_product_barcode', COALESCE((permissions->>'can_add_new_product')::boolean, false),
-  'can_archive_product', COALESCE((permissions->>'can_add_new_product')::boolean, false),
-  'can_restore_product', COALESCE((permissions->>'can_add_new_product')::boolean, false),
-  'can_publish_product', COALESCE((permissions->>'can_add_new_product')::boolean, false)
-)
-WHERE NOT permissions ? 'can_edit_product_details'
-   OR NOT permissions ? 'can_link_product_barcode'
-   OR NOT permissions ? 'can_archive_product'
-   OR NOT permissions ? 'can_restore_product'
-   OR NOT permissions ? 'can_publish_product';
+-- Split catalogue operations that previously shared can_add_new_product
+-- without rewriting existing staff rows. Missing new keys inherit the legacy
+-- grant dynamically; as soon as an administrator saves an explicit new key,
+-- that independent value takes precedence.
+CREATE OR REPLACE FUNCTION public.has_perm(_flag text) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+  SELECT CASE
+    WHEN (SELECT auth.uid()) IS NULL THEN false
+    WHEN public.is_app_supervisor() THEN true
+    ELSE coalesce((
+      SELECT CASE
+        WHEN a.permissions ? _flag THEN (a.permissions ->> _flag)::boolean
+        WHEN _flag = ANY (ARRAY[
+          'can_edit_product_details', 'can_link_product_barcode',
+          'can_archive_product', 'can_restore_product', 'can_publish_product'
+        ]) THEN coalesce((a.permissions ->> 'can_add_new_product')::boolean, false)
+        ELSE false
+      END
+        FROM public.app_users a
+       WHERE a.is_active
+         AND (a.auth_user_id = (SELECT auth.uid())
+              OR lower(a.email) = lower(coalesce((SELECT auth.jwt()) ->> 'email', '')))
+       LIMIT 1), false)
+  END
+$$;
 
 CREATE OR REPLACE FUNCTION public.enforce_product_price_permissions()
 RETURNS trigger

@@ -414,7 +414,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
                     tabIndex={0}
                     onClick={() => void openActivity(r)}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") void openActivity(r);
+                      if (event.target !== event.currentTarget) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        void openActivity(r);
+                      }
                     }}
                   >
                     <div className="flex items-start gap-2">

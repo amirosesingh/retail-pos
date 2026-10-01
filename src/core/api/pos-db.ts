@@ -25,7 +25,7 @@ import {
 import { hydrateTerminalConfig, readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { isOperationalTable } from "@/lib/pos-auth-route";
 import { keyset, nextCursor, PAGE_SIZE, type Cursor, type Page } from "@/lib/keyset";
-import { readAllPages } from "@/lib/paged-read";
+import { MAX_ROWS, PAGE, readAllPages, type PagedRead, type PageResult } from "@/lib/paged-read";
 import { loadCashierToken, readCredentials } from "@/lib/pos-credentials";
 import { normalizeReceiptLogoLayout } from "@/lib/receipt-logo";
 import {
@@ -1089,6 +1089,46 @@ export async function loadLocationDirectory(): Promise<LocationDirectoryResult> 
   }
 }
 
+/**
+ * Read the complete active catalogue with an immutable ID cursor. Product
+ * updates cannot move a row between pages, which avoids the omissions caused
+ * by offset windows ordered by mutable updated_at values.
+ */
+async function loadCompleteProductCatalogue(): Promise<PagedRead<Row>> {
+  type ProductPageQuery = PromiseLike<PageResult<Row>> & {
+    gt: (column: string, value: string) => PromiseLike<PageResult<Row>>;
+  };
+  const rows: Row[] = [];
+  let afterId = "";
+  let total: number | null = null;
+  for (;;) {
+    const baseQuery = supabase
+      .from("products")
+      .select("*", total === null ? { count: "exact" } : {})
+      .is("deleted_at", null)
+      .order("id", { ascending: true })
+      .limit(PAGE) as unknown as ProductPageQuery;
+    const result: PageResult<Row> = await (afterId ? baseQuery.gt("id", afterId) : baseQuery);
+    if (result.error) return { data: null, error: result.error, total, capped: false };
+    if (total === null) total = typeof result.count === "number" ? result.count : null;
+    const page = (result.data as Row[] | null) ?? [];
+    rows.push(...page);
+    if (page.length < PAGE)
+      return { data: rows, error: null, total: total ?? rows.length, capped: false };
+    if (rows.length >= MAX_ROWS)
+      return { data: rows.slice(0, MAX_ROWS), error: null, total, capped: true };
+    const lastId = page.at(-1)?.id;
+    if (typeof lastId !== "string" || !lastId)
+      return {
+        data: null,
+        error: { message: "Product catalogue pagination returned a row without an ID." },
+        total,
+        capped: false,
+      };
+    afterId = lastId;
+  }
+}
+
 export async function loadCloudState(
   storeId?: string | null,
   locationTask?: Promise<LocationDirectoryResult>,
@@ -1110,18 +1150,7 @@ export async function loadCloudState(
   const [tiers, products, priceOverrides, members, sales, promotions, settings, stores, shifts] =
     await Promise.all([
       supabase.from("membership_tiers").select("id, name").is("deleted_at", null),
-      // Supabase caps one response at 1,000 rows. Read the catalogue in
-      // counted, concurrent windows so inventory never silently stops at the
-      // first 1,000/2,000 items while keeping each database response small.
-      readAllPages<Row>((from, to, withCount) =>
-        supabase
-          .from("products")
-          .select("*", withCount ? { count: "exact" } : {})
-          .is("deleted_at", null)
-          .order("updated_at", { ascending: false })
-          .order("id")
-          .range(from, to),
-      ),
+      loadCompleteProductCatalogue(),
       supabase
         .from("settings_scoped")
         .select("scope, scope_id, key, value")
@@ -1174,6 +1203,11 @@ export async function loadCloudState(
   const err =
     tiers.error ||
     products.error ||
+    (products.capped
+      ? new Error(
+          `The product catalogue has ${products.total ?? `more than ${MAX_ROWS}`} rows and cannot be loaded completely.`,
+        )
+      : null) ||
     priceOverrides.error ||
     members.error ||
     sales.error ||
@@ -1196,7 +1230,9 @@ export async function loadCloudState(
   const activeStore = stores.ok ? stores.stores.find((store) => store.id === storeId) : undefined;
   return {
     products: applyScopedProductPrices(
-      (products.data ?? []).map(rowToProduct),
+      [...new Map((products.data ?? []).map((row) => [String(row.id), row])).values()].map(
+        rowToProduct,
+      ),
       (priceOverrides.data ?? []) as Row[],
       { branchId: storeId, terminalId: terminal?.tokenId, clusterId: activeStore?.groupId },
     ),
@@ -1630,6 +1666,32 @@ export async function loadReceivingInvoices(
   const res = await q;
   if (res.error) throw res.error;
   return ((res.data as Row[] | null) ?? []).map(rowToReceivingInvoice);
+}
+
+/** Complete posted receiving history for reports that derive product arrival dates. */
+export async function loadCompleteReceivingHistory(
+  storeId: string | null,
+  allStores = false,
+): Promise<ReceivingInvoice[]> {
+  const result = await readAllPages<Row>((from, to, withCount) => {
+    let query = supabase
+      .from("purchase_orders" as never)
+      .select("*, purchase_order_items(*)", withCount ? { count: "exact" } : {})
+      .or("status.eq.posted,status.is.null")
+      .order("invoice_entry_date", { ascending: false })
+      .order("id", { ascending: false });
+    if (storeId && !allStores) {
+      const quoted = `"${storeId.replace(/"/g, '\\"')}"`;
+      query = query.or(`store_id.eq.${quoted},store_id.is.null`) as typeof query;
+    }
+    return query.range(from, to);
+  });
+  if (result.error) throw result.error;
+  if (result.capped)
+    throw new Error(
+      `Receiving history is incomplete (${result.data?.length ?? 0} of ${result.total ?? "more"} rows).`,
+    );
+  return (result.data ?? []).map(rowToReceivingInvoice);
 }
 
 /** Unfinished receiving orders for a branch, newest first. */

@@ -235,11 +235,9 @@ export type SessionState = "active" | "locked" | "logged-out" | "expired" | "sig
  * "useAuth must be used inside AuthProvider" crash on pages like /settings.
  */
 const AUTH_CTX_KEY = "__nwPosAuthContext__";
-const AUTH_LOADS_KEY = "__nwPosAuthModuleLoads__";
 
 type AuthGlobal = {
   [AUTH_CTX_KEY]?: Context<AuthCtx | null>;
-  [AUTH_LOADS_KEY]?: number;
 };
 
 const authGlobal = globalThis as unknown as AuthGlobal;
@@ -247,18 +245,6 @@ const authGlobal = globalThis as unknown as AuthGlobal;
 const AuthContext: Context<AuthCtx | null> =
   authGlobal[AUTH_CTX_KEY] ?? createContext<AuthCtx | null>(null);
 authGlobal[AUTH_CTX_KEY] = AuthContext;
-
-authGlobal[AUTH_LOADS_KEY] = (authGlobal[AUTH_LOADS_KEY] ?? 0) + 1;
-if (import.meta.env.DEV && (authGlobal[AUTH_LOADS_KEY] ?? 0) > 1) {
-  console.warn(
-    `[pos-auth] This auth module has been loaded ${authGlobal[AUTH_LOADS_KEY]} times. ` +
-      "Duplicate instances usually mean the same file is imported through different " +
-      'specifiers (e.g. "@/lib/pos-auth" in one file and "./pos-auth" in another), or a ' +
-      "stale Vite cache after a rename.\n" +
-      'Fix: import it as "@/lib/pos-auth" everywhere, then hard-reload the preview. ' +
-      "The shared context registry keeps the app working meanwhile.",
-  );
-}
 
 const norm = (v: string) => v.trim().toLowerCase();
 

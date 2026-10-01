@@ -34,6 +34,7 @@ import {
 } from "@/lib/authorization";
 import { subscribeApprovals } from "@/lib/approval-centre";
 import { syncNow } from "@/lib/sync-engine";
+import { lineDiscountTotal, r2 } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/approvals")({
   component: ApprovalsPage,
@@ -543,15 +544,22 @@ function ApprovalAmountReview({
   const requestedIndex = Number(row.payload["target_index"]);
   const targetLine =
     snapshot && Number.isInteger(requestedIndex) ? snapshot.lines[requestedIndex] : undefined;
-  const unitAfter =
+  const lineAfter =
     targetLine && grant !== null
-      ? Math.max(
-          0,
-          targetLine.unitPrice -
-            (type === "percent" ? (targetLine.unitPrice * Math.min(100, grant)) / 100 : grant),
+      ? r2(
+          Math.abs(targetLine.unitPrice * targetLine.qty) -
+            lineDiscountTotal({
+              price: targetLine.unitPrice,
+              qty: targetLine.qty,
+              discount: grant,
+              discountType: type,
+            }),
         )
       : null;
-  const lineAfter = targetLine && unitAfter !== null ? unitAfter * targetLine.qty : null;
+  const unitAfter =
+    targetLine && lineAfter !== null && Math.abs(targetLine.qty) > 0
+      ? r2(lineAfter / Math.abs(targetLine.qty))
+      : null;
   const billAfter =
     snapshot && scope === "bill" && grant !== null
       ? Math.max(

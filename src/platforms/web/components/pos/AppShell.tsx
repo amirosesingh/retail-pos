@@ -114,6 +114,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     isSupervisor,
     canSwitchStores,
     terminalStoreId,
+    authUserId,
+    terminalUser,
     logout,
     lock,
     can,
@@ -143,7 +145,14 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // only the most recent identity also means A -> B -> A starts A fresh.
   useEffect(() => {
     if (!user) return;
-    const identity = user.staffId || user.email || user.name;
+    // Profile hydration may replace the provisional staffId after sign-in.
+    // The authentication account / terminal person key remains stable and
+    // must be used so an in-flight page is not mistaken for another user.
+    const identity = authUserId
+      ? `auth:${authUserId}`
+      : terminalUser?.userCode
+        ? `terminal:${terminalUser.userCode}`
+        : `user:${user.email || user.staffId || user.name}`;
     const key = "pos.last-signed-in-identity";
     let previous: string;
     try {
@@ -155,7 +164,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     if (previous && previous !== identity && location.pathname !== "/") {
       window.location.replace("/");
     }
-  }, [user, location.pathname]);
+  }, [user, authUserId, terminalUser?.userCode, location.pathname]);
 
   useDisplayProfile(state.settings.integrations.displayProfile);
   // Terminal-wide font / control scaling preference.

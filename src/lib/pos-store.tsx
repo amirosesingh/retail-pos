@@ -58,6 +58,7 @@ import {
   openShiftOnServer,
 } from "@/core/api/pos-db";
 import { recordActivity } from "./activity-events";
+import { notifyError } from "./notify";
 import type { CloudSlice, CommitTarget } from "@/core/api/pos-db";
 import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 import { platformName } from "@/platform-config/platform";
@@ -375,6 +376,8 @@ type Ctx = {
   saveConfiguredSettings: () => Promise<void>;
   /** Which settings blocks each tier overrides, and which are locked globally. */
   settingsScope: BranchSettingsState;
+  /** The persisted global record before cluster/store/terminal overrides are resolved. */
+  configuredGlobalSettings: AppSettings;
   /** The cluster, branch and selected terminal ids used for configuration. */
   scopeIds: ScopeIds;
   settingsScopeLoading: boolean;
@@ -2588,6 +2591,45 @@ export function PosProvider({ children }: { children: ReactNode }) {
     [patchProducts],
   );
 
+  // Existing installations may already have the option enabled before the
+  // database lifecycle trigger is installed. Reconcile the loaded catalogue
+  // once per app start as well, in bounded batches, so zero-stock products do
+  // not remain active indefinitely and replenished products return immediately.
+  const autoArchiveReconciledRef = useRef(false);
+  useEffect(() => {
+    const enabled = state.settings.integrations.autoArchiveZeroStock === true;
+    if (!enabled) {
+      autoArchiveReconciledRef.current = false;
+      return;
+    }
+    if (!ready || autoArchiveReconciledRef.current || !state.products.length) return;
+    autoArchiveReconciledRef.current = true;
+    const zeroActive = state.products
+      .filter(
+        (product) =>
+          !product.archived && Object.values(product.stockByStore).every((qty) => qty <= 0),
+      )
+      .map((product) => product.id);
+    const positiveArchived = state.products
+      .filter(
+        (product) => product.archived && Object.values(product.stockByStore).some((qty) => qty > 0),
+      )
+      .map((product) => product.id);
+    void (async () => {
+      try {
+        for (let start = 0; start < zeroActive.length; start += 200) {
+          await patchProducts(zeroActive.slice(start, start + 200), { archived: true });
+        }
+        for (let start = 0; start < positiveArchived.length; start += 200) {
+          await patchProducts(positiveArchived.slice(start, start + 200), { archived: false });
+        }
+      } catch (error) {
+        autoArchiveReconciledRef.current = false;
+        notifyError(error, "Reconciling automatic catalogue archiving");
+      }
+    })();
+  }, [patchProducts, ready, state.products, state.settings.integrations.autoArchiveZeroStock]);
+
   /**
    * Folds duplicate product records into one master: branch stock is added
    * together and every losing barcode/SKU becomes an alias on the master, so
@@ -3572,6 +3614,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     retryLoad,
     state: effectiveState,
     settingsScope: scope,
+    configuredGlobalSettings: state.settings,
     scopeIds,
     settingsScopeLoading: confirmedScopeKey !== JSON.stringify(scopeIds),
     settingsTerminalId,

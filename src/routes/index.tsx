@@ -390,6 +390,9 @@ function Register() {
     getMemberName: () => member?.name ?? null,
     // A discount unlock lasts for this ticket only.
     onReset: () => setDiscountOverride(false),
+    // Tax is configured once for the business scope; product records are not a
+    // second source of truth for the rate applied at the till.
+    taxRate: state.settings.tax.enabled ? state.settings.tax.rate / 100 : 0,
     // The register settings decide whether an out-of-stock item can be sold.
     preventNegativeStock: rules.prevent_negative_stock_sale,
   });
@@ -952,6 +955,8 @@ function Register() {
     subtotal: totals.subtotal,
     discount: totals.discount,
     tax: totals.tax,
+    taxRate: taxSettings.rate,
+    taxEnabled: taxSettings.enabled,
     total: totals.total,
     paid: 0,
     change: 0,
@@ -1076,6 +1081,8 @@ function Register() {
     t: totals.total,
     d: totals.discount,
     x: totals.tax,
+    xr: taxSettings.rate,
+    xe: taxSettings.enabled,
     m: member?.id ?? null,
     s: currentStore.id,
   });
@@ -1900,7 +1907,8 @@ function Register() {
                     </div>
                   )}
                   <p className="numeric text-[11px] text-muted-foreground">
-                    {money(l.price)} · tax {(l.taxRate * 100).toFixed(0)}%
+                    {money(l.price)}
+                    {taxSettings.enabled ? ` · tax ${taxSettings.rate}%` : ""}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
@@ -2617,7 +2625,7 @@ function Register() {
                   cost: 0,
                   stockByStore: { [currentStore.id]: 1 },
                   reorderLevel: 0,
-                  taxRate: state.settings.tax.enabled ? state.settings.tax.rate : 0,
+                  taxRate: state.settings.tax.enabled ? state.settings.tax.rate / 100 : 0,
                 };
                 await upsertProduct(created);
                 toast.success(`${created.name} added to the catalogue`);

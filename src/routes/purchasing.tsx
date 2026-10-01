@@ -389,10 +389,11 @@ function Purchasing() {
     below and the Save draft button both call this, so a click during an
     autosave cannot write the same entry twice or mint a second draft.
   */
-  const draftSavePromiseRef = useRef<Promise<boolean> | null>(null);
+  type SavedDraftIdentity = { id: string; reference: string };
+  const draftSavePromiseRef = useRef<Promise<SavedDraftIdentity | null> | null>(null);
   const finalizingRef = useRef(false);
-  async function persistDraft(): Promise<boolean> {
-    if (!lines.length || finalizingRef.current) return false;
+  async function persistDraft(): Promise<SavedDraftIdentity | null> {
+    if (!lines.length || finalizingRef.current) return null;
     if (draftSavePromiseRef.current) return draftSavePromiseRef.current;
     const id = openDraftId ?? crypto.randomUUID();
     // The reference is minted with the draft row and never regenerated.
@@ -411,10 +412,10 @@ function Purchasing() {
         setReference(ref);
         setDraftLineRemovals((r) => r.filter((x) => !removals.includes(x)));
         setDraftSavedAt(new Date().toISOString());
-        return true;
+        return { id, reference: ref };
       } catch {
         /* the outbox retries; the queue on screen is unaffected */
-        return false;
+        return null;
       }
     })();
     draftSavePromiseRef.current = save;
@@ -438,8 +439,8 @@ function Purchasing() {
     if (!lines.length) return toast.error("Scan at least one item before saving a draft");
     setSavingDraft(true);
     try {
-      const ok = await persistDraft();
-      if (ok) toast.success("Draft saved");
+      const saved = await persistDraft();
+      if (saved) toast.success("Draft saved");
       else toast.message("Saving…", { description: "The last change is still being written." });
       await refreshDrafts();
     } finally {
@@ -659,8 +660,9 @@ function Purchasing() {
       // Finish any autosave that already started, then block later draft saves.
       // Otherwise a slow draft write can arrive after the posted write and
       // incorrectly put a finalized receiving order back into Draft.
-      await draftSavePromiseRef.current;
-      const attemptId = openDraftId ?? finalizeAttempt.current ?? crypto.randomUUID();
+      const savedDraft = await draftSavePromiseRef.current;
+      const attemptId =
+        savedDraft?.id ?? openDraftId ?? finalizeAttempt.current ?? crypto.randomUUID();
       finalizeAttempt.current = attemptId;
       if (await invoiceNumberTaken(ref, attemptId)) {
         toast.error(`Invoice ${ref} already exists`, {
@@ -682,9 +684,10 @@ function Purchasing() {
       const hubId = hub.id || storeId;
       // Finalizing a resumed draft posts the very same record, so the entry
       // keeps its id and can never be posted twice as two invoices.
-      const wasDraft = openDraftId;
+      const wasDraft = savedDraft?.id ?? openDraftId;
       // A never-autosaved entry still needs its own goods-received number.
       const grn =
+        savedDraft?.reference ??
         reference ??
         nextStockRef(
           state.settings.integrations.receivingNumbering ?? {},

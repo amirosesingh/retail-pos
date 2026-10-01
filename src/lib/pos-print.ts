@@ -911,7 +911,11 @@ function bookingBody(booking: Booking, member: Member | null, pay: PaymentDetail
     <hr><table>
       <tr><td>Subtotal</td><td class="r">${fmt(booking.subtotal)}</td></tr>
       <tr><td>Discount</td><td class="r">-${fmt(booking.discount)}</td></tr>
-      ${receiptCfg.showTax ? `<tr><td>Tax</td><td class="r">${fmt(booking.tax)}</td></tr>` : ""}
+      ${
+        receiptCfg.showTax && taxCfg.enabled && booking.tax
+          ? `<tr><td>Tax ${taxCfg.rate}%${taxCfg.mode === "inclusive" ? " incl." : ""}</td><td class="r">${fmt(booking.tax)}</td></tr>`
+          : ""
+      }
       <tr class="b"><td>TOTAL</td><td class="r">${fmt(booking.total)}</td></tr>
     </table>
     <hr><div class="muted">Payments received</div>

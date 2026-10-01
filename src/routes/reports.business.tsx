@@ -23,7 +23,7 @@ import {
   downloadCsv,
   inRange,
 } from "@/platforms/web/components/pos/report-kit";
-import { loadReceivingInvoices } from "@/core/api/pos-db";
+import { loadCompleteReceivingHistory } from "@/core/api/pos-db";
 
 export const Route = createFileRoute("/reports/business")({
   head: () => ({
@@ -80,7 +80,7 @@ function BusinessReport() {
   const arrivals = useQuery({
     queryKey: ["business-report-arrivals", storeId],
     queryFn: () =>
-      loadReceivingInvoices(storeId === "all" ? null : storeId, 5000, storeId === "all"),
+      loadCompleteReceivingHistory(storeId === "all" ? null : storeId, storeId === "all"),
     staleTime: 60_000,
   });
   const arrivedByProduct = useMemo(() => {

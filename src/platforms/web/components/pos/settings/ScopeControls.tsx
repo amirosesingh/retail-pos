@@ -12,6 +12,13 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import {
@@ -33,6 +40,24 @@ const TONE: Record<SettingSource, string> = {
   CLUSTER: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
   BRANCH: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
   TERMINAL: "bg-violet-500/15 text-violet-600 dark:text-violet-300",
+};
+
+const scopeExplanation = (tier: SettingSource, family: "business" | "terminal") => {
+  if (tier === "GLOBAL")
+    return family === "business"
+      ? "Saved once for every store; a cluster or store override may replace it."
+      : "Saved once for every terminal; a cluster or terminal override may replace it.";
+  if (tier === "CLUSTER") return "Saved for every store and terminal in the selected cluster.";
+  if (tier === "BRANCH") return "Saved only for the selected store.";
+  return "Saved only for the selected terminal.";
+};
+
+const displayValue = (value: unknown, inherited = false) => {
+  if (value === undefined) return inherited ? "Inherited" : "Application default";
+  if (value === null) return "None";
+  if (typeof value === "boolean") return value ? "On" : "Off";
+  if (typeof value === "string" || typeof value === "number") return String(value) || "Empty";
+  return JSON.stringify(value);
 };
 
 /** Read-only marker telling a cashier where the active rule comes from. */
@@ -74,11 +99,15 @@ export function SectionScope({
     sourceOfPath,
     saveConfiguredSettings,
     settingsScopeLoading,
+    configuredGlobalSettings,
+    state,
   } = usePos();
+  const [compareOpen, setCompareOpen] = useState(false);
   const { isAdmin } = useAuth();
   const def = SECTION_BY_ID[section];
   if (!def) return null;
   const allowedTiers = SETTING_TIERS.filter((tier) => sectionAllowsTier(section, tier));
+  const selectableTiers: SettingSource[] = ["GLOBAL", ...allowedTiers];
   const locked = !!settingsScope.locks[section];
   const active: SettingSource =
     [...allowedTiers].reverse().find((t) => settingsScope.overrides[t][section]) ?? "GLOBAL";
@@ -95,6 +124,7 @@ export function SectionScope({
         : inheritedSource
           ? `Inherited from ${TIER_LABELS[inheritedSource]}`
           : "Inherited from multiple parent settings";
+  const targetText = `Edits save to ${TIER_LABELS[active]} · ${scopeExplanation(active, def.scopeFamily)}`;
 
   const choose = async (tier: SettingSource) => {
     if (tier === active) return;
@@ -134,10 +164,14 @@ export function SectionScope({
       <div className="min-w-0">
         <p className="text-xs font-medium">{def.label}</p>
         <p className="text-[11px] text-muted-foreground">{def.blurb}</p>
-        <p className="mt-1 text-[11px] font-medium text-primary">{sourceText}</p>
+        <p className="mt-1 text-[11px] font-medium text-primary">Current value: {sourceText}</p>
+        <p className="text-[11px] text-muted-foreground">{targetText}</p>
+        <p className="text-[11px] text-muted-foreground">
+          Available scopes: {selectableTiers.map((tier) => TIER_LABELS[tier]).join(" · ")}
+        </p>
       </div>
       <div className="ml-auto flex flex-wrap items-center gap-1">
-        {(["GLOBAL", ...allowedTiers] as SettingSource[]).map((tier) => (
+        {selectableTiers.map((tier) => (
           <Button
             key={tier}
             size="sm"
@@ -148,7 +182,7 @@ export function SectionScope({
               (locked && tier !== "GLOBAL") ||
               (tier !== "GLOBAL" && !scopeIds[tier])
             }
-            title={scopeName(tier)}
+            title={`${scopeName(tier) ? `${scopeName(tier)} · ` : ""}${scopeExplanation(tier, def.scopeFamily)}`}
             onClick={() => void choose(tier)}
           >
             {TIER_LABELS[tier]}
@@ -170,7 +204,68 @@ export function SectionScope({
             <Link to={editRoute as never}>Edit values</Link>
           </Button>
         )}
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-7 text-[11px]"
+          onClick={() => setCompareOpen(true)}
+        >
+          Compare values
+        </Button>
       </div>
+      <Dialog open={compareOpen} onOpenChange={setCompareOpen}>
+        <DialogContent className="max-h-[90vh] w-[min(96vw,70rem)] max-w-5xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{def.label} values by scope</DialogTitle>
+            <DialogDescription>
+              Global is the business-wide value. “Inherited” means that scope stores no copy and
+              follows its parent dynamically. Effective is what the selected POS uses now.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="overflow-x-auto rounded-lg border">
+            <table className="w-full min-w-[760px] text-left text-xs">
+              <thead className="bg-muted/60">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Setting</th>
+                  <th className="px-3 py-2 font-medium">Global</th>
+                  {allowedTiers.map((tier) => (
+                    <th key={tier} className="px-3 py-2 font-medium">
+                      {TIER_LABELS[tier]}
+                    </th>
+                  ))}
+                  <th className="px-3 py-2 font-medium">Effective now</th>
+                </tr>
+              </thead>
+              <tbody>
+                {def.paths.map((path) => (
+                  <tr key={path} className="border-t align-top">
+                    <td className="px-3 py-2 font-medium">{path}</td>
+                    <td className="max-w-64 break-words px-3 py-2">
+                      {displayValue(getPath(configuredGlobalSettings, path))}
+                    </td>
+                    {allowedTiers.map((tier) => (
+                      <td key={tier} className="max-w-64 break-words px-3 py-2">
+                        {displayValue(getPath(settingsScope.overrides[tier][section], path), true)}
+                      </td>
+                    ))}
+                    <td className="max-w-64 break-words bg-primary/5 px-3 py-2 font-medium">
+                      {displayValue(getPath(state.settings, path))}
+                      <span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">
+                        From {TIER_LABELS[sourceOfPath(path)]}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Next edit target: <strong>{TIER_LABELS[active]}</strong>.{" "}
+            {scopeExplanation(active, def.scopeFamily)}
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

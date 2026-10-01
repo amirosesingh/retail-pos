@@ -546,16 +546,6 @@ function Inventory() {
                           catalogue are refused, and every variant scans to this product.
                         </p>
                       </Field>
-                      <Field label="Tax rate %">
-                        <Input
-                          disabled={!canChangeDetails}
-                          className="numeric"
-                          value={draft.taxRate * 100}
-                          onChange={(e) =>
-                            setDraft({ ...draft, taxRate: (Number(e.target.value) || 0) / 100 })
-                          }
-                        />
-                      </Field>
                       <Field label="Price">
                         <Input
                           disabled={!canPrice}
@@ -647,7 +637,9 @@ function Inventory() {
                           toast.error("Product name is required");
                           return;
                         }
-                        const codeProblems = productCodeProblems(state.products, draft);
+                        const codeProblems = branchPriceOnly
+                          ? []
+                          : productCodeProblems(state.products, draft);
                         if (codeProblems.length) {
                           toast.error("SKU or barcode is already in use", {
                             description: codeProblems.join(" "),

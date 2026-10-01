@@ -133,7 +133,8 @@ export function previewStockRef(
   at: Date = new Date(),
 ): string {
   const key = counterKey(cfg, branchCode, at, series);
-  const next = readAll()[key] ?? Math.max(1, Math.round(cfg.startNumber ?? 1));
+  const all = readAll();
+  const next = sequenceFor(all, key, legacyStockCounterKey(cfg, branchCode, at, series), cfg);
   return build(cfg, branchCode, at, next, series);
 }
 
@@ -142,6 +143,27 @@ const counterKey = (cfg: StockNumberingSettings, branchCode: string, at: Date, s
     at,
     cfg.reset ?? "monthly",
   )}`;
+
+/** Counter used before stock-count references changed their display prefix from SO to SC. */
+const legacyStockCounterKey = (
+  cfg: StockNumberingSettings,
+  branchCode: string,
+  at: Date,
+  series: RefSeries,
+) =>
+  series === "stock" && !clean(cfg.prefix, "")
+    ? `stock|SO|${clean(branchCode, "BR")}|${periodStamp(at, cfg.reset ?? "monthly")}`
+    : null;
+
+const sequenceFor = (
+  all: SeqStore,
+  key: string,
+  legacyKey: string | null,
+  cfg: StockNumberingSettings,
+) =>
+  all[key] ??
+  (legacyKey ? all[legacyKey] : undefined) ??
+  Math.max(1, Math.round(cfg.startNumber ?? 1));
 
 /**
  * Reserve the next reference for a new draft. Consumes the counter, so it is
@@ -155,7 +177,7 @@ export function nextStockRef(
 ): string {
   const key = counterKey(cfg, branchCode, at, series);
   const all = readAll();
-  const seq = all[key] ?? Math.max(1, Math.round(cfg.startNumber ?? 1));
+  const seq = sequenceFor(all, key, legacyStockCounterKey(cfg, branchCode, at, series), cfg);
   all[key] = seq + 1;
   writeAll(all);
   return build(cfg, branchCode, at, seq, series);

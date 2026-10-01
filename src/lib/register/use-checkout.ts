@@ -114,6 +114,16 @@ export function useCheckout(deps: CheckoutDeps) {
   const inFlight = useRef(false);
 
   /**
+   * Stamp the effective global rate on committed lines. Totals already use
+   * this setting; keeping the same rate on the sale makes receipts, returns
+   * and historical reports agree even when a product has an old legacy rate.
+   */
+  const linesWithEffectiveTax = (lines: CartLine[]) => {
+    const taxRate = state.settings.tax.enabled ? state.settings.tax.rate / 100 : 0;
+    return lines.map((line) => (line.taxRate === taxRate ? line : { ...line, taxRate }));
+  };
+
+  /**
    * Sends the finished bill to the customer's WhatsApp.
    *
    * The shared helper clears the "sending" flag in every outcome and turns a
@@ -145,7 +155,7 @@ export function useCheckout(deps: CheckoutDeps) {
     const activeShift = deps.getActiveShift();
     const currentStore = deps.getCurrentStore();
     const activeCashier = deps.getActiveCashier();
-    const lines = deps.getLines();
+    const lines = linesWithEffectiveTax(deps.getLines());
     const totals = deps.getTotals();
     const member = deps.getMember();
     const memberId = deps.getMemberId();
@@ -383,7 +393,7 @@ export function useCheckout(deps: CheckoutDeps) {
     const activeShift = deps.getActiveShift();
     const currentStore = deps.getCurrentStore();
     const activeCashier = deps.getActiveCashier();
-    const lines = deps.getLines();
+    const lines = linesWithEffectiveTax(deps.getLines());
     const totals = deps.getTotals();
     const member = deps.getMember();
     const memberId = deps.getMemberId();

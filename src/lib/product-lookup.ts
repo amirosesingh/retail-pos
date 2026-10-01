@@ -70,20 +70,34 @@ export function findDuplicateProductCodes(products: Product[]): DuplicateProduct
 
 /** Validate all codes on one edited item before any write is attempted. */
 export function productCodeProblems(products: Product[], draft: Product): string[] {
+  const previous = products.find((product) => product.id === draft.id);
+  const previousCounts = new Map<string, number>();
+  for (const code of previous ? productCodes(previous) : []) {
+    previousCounts.set(code, (previousCounts.get(code) ?? 0) + 1);
+  }
   const raw = [
     draft.sku,
     draft.barcode,
     ...(draft.barcodes ?? []),
     ...(draft.variants ?? []).map((variant) => variant.code),
   ]
-    .map((code) => code.trim())
+    .map((code) => (code ?? "").trim())
     .filter(Boolean);
-  const duplicateWithin = raw.find(
-    (code, index) =>
-      raw.findIndex((other) => normaliseCode(other) === normaliseCode(code)) !== index,
+  const nextCounts = new Map<string, number>();
+  for (const code of raw.map(normaliseCode)) {
+    nextCounts.set(code, (nextCounts.get(code) ?? 0) + 1);
+  }
+  const changedCodes = new Set(
+    [...nextCounts]
+      .filter(([code, count]) => count > (previousCounts.get(code) ?? 0))
+      .map(([code]) => code),
   );
+  const duplicateWithin = raw.find((code) => {
+    const normalized = normaliseCode(code);
+    return changedCodes.has(normalized) && (nextCounts.get(normalized) ?? 0) > 1;
+  });
   const problems = duplicateWithin ? [`${duplicateWithin} is repeated on this product.`] : [];
-  for (const code of new Set(raw.map(normaliseCode))) {
+  for (const code of changedCodes) {
     const clash = codeTakenBy(products, code, draft.id);
     if (clash)
       problems.push(`${code} already belongs to ${clash.name} (${clash.sku || clash.barcode}).`);

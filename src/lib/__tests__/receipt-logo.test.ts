@@ -100,3 +100,31 @@ describe("receipt logo layout", () => {
     expect(html.indexOf('<div class="logo"')).toBeGreaterThan(html.indexOf("VAT / Tax No."));
   });
 });
+
+describe("receipt tax visibility", () => {
+  const taxableSale: Sale = {
+    ...sale,
+    subtotal: 100,
+    tax: 8,
+    total: 108,
+    paid: 108,
+  };
+
+  it("does not print tax when the global tax switch is off", () => {
+    setPreviewReceiptCfg(
+      { ...defaultReceiptSettings, showTax: true },
+      { enabled: false, rate: 8, mode: "exclusive" },
+    );
+    const html = saleReceiptPreview(taxableSale, null, "sale");
+    expect(html).not.toContain("Tax 8%");
+  });
+
+  it("prints the configured global percentage when tax is on", () => {
+    setPreviewReceiptCfg(
+      { ...defaultReceiptSettings, showTax: true },
+      { enabled: true, rate: 8, mode: "exclusive" },
+    );
+    const html = saleReceiptPreview(taxableSale, null, "sale");
+    expect(html).toContain("Tax 8%");
+  });
+});

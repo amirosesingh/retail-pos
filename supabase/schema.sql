@@ -3269,7 +3269,14 @@ CREATE OR REPLACE FUNCTION public.has_perm(_flag text) RETURNS boolean
     WHEN (SELECT auth.uid()) IS NULL THEN false
     WHEN public.is_app_supervisor() THEN true
     ELSE coalesce((
-      SELECT (a.permissions ->> _flag)::boolean
+      SELECT CASE
+        WHEN a.permissions ? _flag THEN (a.permissions ->> _flag)::boolean
+        WHEN _flag = ANY (ARRAY[
+          'can_edit_product_details', 'can_link_product_barcode',
+          'can_archive_product', 'can_restore_product', 'can_publish_product'
+        ]) THEN coalesce((a.permissions ->> 'can_add_new_product')::boolean, false)
+        ELSE false
+      END
         FROM public.app_users a
        WHERE a.is_active
          AND (a.auth_user_id = (SELECT auth.uid())

@@ -7,7 +7,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
+import { ScopeBadge } from "@/platforms/web/components/pos/settings/ScopeControls";
 import { usePos } from "@/lib/pos-store";
 import { ROUNDING_UNITS, roundingOf } from "@/core/pricing/rounding";
 import type { TaxMode } from "@/core/types/pos-types";
@@ -41,8 +43,10 @@ function TaxSettingsPage() {
     >
       <SettingsTabs current="/settings/tax" />
 
-      <TaxForm />
-      <RoundingForm />
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <TaxForm />
+        <RoundingForm />
+      </div>
     </SettingsFrame>
   );
 }
@@ -56,12 +60,12 @@ function RoundingForm() {
     updateSettings({ integrations: { ...integrations, rounding: { ...rounding, ...p } } });
 
   return (
-    <section className="mt-6 space-y-4 rounded-lg border border-border p-4">
+    <section className="space-y-4 rounded-lg border border-border p-4">
       <div>
         <h2 className="text-sm font-semibold">Billing &amp; totals</h2>
         <p className="text-[11px] text-muted-foreground">
-          Rounding applies to the final total only — after discounts, coupons and tax. Line items
-          are never changed.
+          Rounding applies to the final amount the customer pays. Line-item prices are never
+          changed.
         </p>
       </div>
 
@@ -140,11 +144,22 @@ function RoundingForm() {
 function TaxForm() {
   const { tax, updateSettings } = useSettingsCtx();
   return (
-    <div className="grid gap-4 md:grid-cols-3">
+    <section className="space-y-4 rounded-lg border border-border p-4">
+      <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-sm font-semibold">Tax</h2>
+          <ScopeBadge path="tax.enabled" />
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          One effective percentage is applied to every taxable item at this settings scope.
+        </p>
+      </div>
       <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
         <div>
           <p className="text-sm font-medium">Enable tax</p>
-          <p className="text-[11px] text-muted-foreground">Global tax calculation</p>
+          <p className="text-[11px] text-muted-foreground">
+            Show and calculate tax throughout the POS
+          </p>
         </div>
         <Switch
           checked={tax.enabled}
@@ -152,37 +167,62 @@ function TaxForm() {
           onCheckedChange={(v) => updateSettings({ tax: { ...tax, enabled: v } })}
         />
       </div>
-      <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">Tax rate (%)</Label>
-        <Input
-          className="numeric"
-          value={tax.rate}
-          onChange={(e) => updateSettings({ tax: { ...tax, rate: Number(e.target.value) || 0 } })}
-        />
-      </div>
-      <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">Tax mode</Label>
-        <div className="flex overflow-hidden rounded-md border border-border">
-          {(
-            [
-              { m: "inclusive", label: "Prices Include Tax" },
-              { m: "exclusive", label: "Tax Added at Checkout" },
-            ] as { m: TaxMode; label: string }[]
-          ).map((o) => (
-            <button
-              key={o.m}
-              onClick={() => updateSettings({ tax: { ...tax, mode: o.m } })}
-              className={`flex-1 px-2 py-2 text-xs ${
-                tax.mode === o.m
-                  ? "bg-primary/15 text-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {o.label}
-            </button>
-          ))}
+      {tax.enabled ? (
+        <div className="space-y-4 rounded-md border border-border bg-muted/20 p-3">
+          <div className="space-y-1">
+            <Label htmlFor="global-tax-rate" className="text-xs text-muted-foreground">
+              Tax percentage applied to all items
+            </Label>
+            <div className="relative">
+              <Input
+                id="global-tax-rate"
+                type="number"
+                min={0}
+                max={100}
+                step="0.01"
+                className="numeric pr-8"
+                value={tax.rate}
+                onChange={(e) => {
+                  const next = Math.min(100, Math.max(0, Number(e.target.value) || 0));
+                  updateSettings({ tax: { ...tax, rate: next } });
+                }}
+              />
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground">
+                %
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              The selling screen and receipt will display Tax {tax.rate}%.
+            </p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">How prices use tax</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {(
+                [
+                  { m: "inclusive", label: "Included in prices" },
+                  { m: "exclusive", label: "Added at checkout" },
+                ] as { m: TaxMode; label: string }[]
+              ).map((o) => (
+                <Button
+                  type="button"
+                  key={o.m}
+                  variant={tax.mode === o.m ? "default" : "outline"}
+                  onClick={() => updateSettings({ tax: { ...tax, mode: o.m } })}
+                  className="h-auto min-h-9 whitespace-normal px-2 py-2 text-xs"
+                >
+                  {o.label}
+                </Button>
+              ))}
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      ) : (
+        <p className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+          Tax is off. The POS will not calculate or show tax on items, totals, customer displays, or
+          receipts.
+        </p>
+      )}
+    </section>
   );
 }

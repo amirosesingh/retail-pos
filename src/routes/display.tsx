@@ -208,7 +208,9 @@ function CustomerDisplay() {
           <div className="rounded-xl border border-border p-5">
             <Row label="Subtotal" value={money(snap?.subtotal ?? 0)} />
             <Row label="Discount" value={`-${money(snap?.discount ?? 0)}`} />
-            <Row label="Tax" value={money(snap?.tax ?? 0)} />
+            {snap?.taxEnabled && (snap.tax ?? 0) > 0 ? (
+              <Row label={`Tax ${snap.taxRate ?? 0}%`} value={money(snap.tax)} />
+            ) : null}
             {snap?.promos?.length ? (
               <ul className="mt-2 space-y-0.5 border-t border-border pt-2">
                 {snap.promos.map((p) => (

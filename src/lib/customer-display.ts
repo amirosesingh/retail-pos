@@ -27,6 +27,10 @@ export type DisplaySnapshot = {
   subtotal: number;
   discount: number;
   tax: number;
+  /** Effective global percentage used on this ticket. */
+  taxRate?: number;
+  /** Explicit switch so a zero-valued taxable ticket is distinct from tax being disabled. */
+  taxEnabled?: boolean;
   total: number;
   /** paid / change / balance figures for the "paid" and "booking" modes */
   paid: number;
