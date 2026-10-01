@@ -75,7 +75,7 @@ function RulesSettings() {
     rowVersion,
   } = usePosRules();
 
-  const { currentStore, state, updateSettings, saveConfiguredSettings } = usePos();
+  const { currentStore } = usePos();
   const { isAdmin, can } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
 
@@ -86,11 +86,6 @@ function RulesSettings() {
   const [savingIdle, setSavingIdle] = useState(false);
   const [idleLoaded, setIdleLoaded] = useState(false);
   const [savedIdle, setSavedIdle] = useState<number | null>(null);
-  const [savingScoped, setSavingScoped] = useState(false);
-  const [scopedTouched, setScopedTouched] = useState(false);
-  const [savedScoped, setSavedScoped] = useState(() =>
-    JSON.stringify({ hours: state.settings.hours, review: state.settings.review }),
-  );
   const [checking, setChecking] = useState(false);
   const previouslyConfirmed = useRef(rules);
   const draftScope = useRef(currentStore.id);
@@ -132,22 +127,6 @@ function RulesSettings() {
     }
   }
 
-  async function saveScopedSettings() {
-    setSavingScoped(true);
-    try {
-      await saveConfiguredSettings();
-      setSavedScoped(
-        JSON.stringify({ hours: state.settings.hours, review: state.settings.review }),
-      );
-      setScopedTouched(false);
-      toast.success("Trading hours and review thresholds saved");
-    } catch (error) {
-      notifyError(error, "Could not save the scoped settings");
-    } finally {
-      setSavingScoped(false);
-    }
-  }
-
   // Accept background refreshes while the editor is clean. A focus/timer
   // refresh must never erase an unfinished administrator draft.
   useEffect(() => {
@@ -165,19 +144,7 @@ function RulesSettings() {
     forceNextRules.current = false;
   }, [currentStore.id, rules]);
 
-  useEffect(() => {
-    if (scopedTouched) return;
-    setSavedScoped(JSON.stringify({ hours: state.settings.hours, review: state.settings.review }));
-  }, [scopedTouched, state.settings.hours, state.settings.review]);
-
-  useEffect(() => {
-    setScopedTouched(false);
-  }, [currentStore.id]);
-
   const dirty = JSON.stringify(draft) !== JSON.stringify(rules);
-  const scopedDirty =
-    scopedTouched &&
-    JSON.stringify({ hours: state.settings.hours, review: state.settings.review }) !== savedScoped;
   const idleDirty = idleLoaded && savedIdle !== null && idle !== savedIdle;
 
   const statusView =
@@ -321,7 +288,7 @@ function RulesSettings() {
 
   return (
     <SettingsShell>
-      <div className="mx-auto w-full max-w-4xl space-y-5 p-6">
+      <div className="mx-auto w-full max-w-7xl space-y-5 p-6">
         <div className="sticky top-0 z-20 -mx-6 -mt-6 border-b border-border bg-background/95 px-4 py-2 backdrop-blur">
           <Button asChild variant="ghost" size="sm" className="h-8 text-xs">
             <Link to="/settings">
@@ -454,34 +421,6 @@ function RulesSettings() {
                           checked={Boolean(draft[field.key])}
                           onCheckedChange={(v) => set(field.key, v)}
                         />
-                      ) : field.key === "auto_lock_timeout_seconds" ? (
-                        <PresetNumber
-                          label={field.label}
-                          disabled={!mayEdit}
-                          value={
-                            state.settings.integrations.autoLockTimeoutSeconds ??
-                            Number(draft[field.key])
-                          }
-                          onChange={(v) =>
-                            updateSettings({
-                              integrations: {
-                                ...state.settings.integrations,
-                                autoLockTimeoutSeconds: v,
-                              },
-                            })
-                          }
-                          min={0}
-                          max={86400}
-                          options={[0, 30, 60, 90, 180, 300, 600, 900, 1800, 3600].map((value) => ({
-                            value,
-                            label:
-                              value === 0
-                                ? "Disabled"
-                                : value < 60
-                                  ? `${value} seconds`
-                                  : `${value / 60} minutes`,
-                          }))}
-                        />
                       ) : (
                         <Input
                           aria-label={field.label}
@@ -500,134 +439,6 @@ function RulesSettings() {
           />
         </section>
 
-        <section className="space-y-5 rounded-lg border border-border bg-card p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold">Trading policy</h2>
-              <p className="text-xs text-muted-foreground">
-                Trading hours, shift duration and activity-review thresholds for this branch.
-              </p>
-            </div>
-            <SaveIndicator
-              dirty={scopedDirty}
-              saving={savingScoped}
-              savedText="Trading policy saved"
-              dirtyText="Unsaved trading changes"
-            />
-          </div>
-          <div className="grid gap-4 border-t border-border/60 pt-4 sm:grid-cols-2">
-            <label className="space-y-1 text-sm">
-              <span>Trading day starts</span>
-              <Input
-                type="time"
-                disabled={!mayEdit}
-                value={state.settings.hours.dayStart}
-                onChange={(event) => (
-                  setScopedTouched(true),
-                  updateSettings({
-                    hours: { ...state.settings.hours, dayStart: event.target.value },
-                  })
-                )}
-              />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span>Trading day ends</span>
-              <Input
-                type="time"
-                disabled={!mayEdit}
-                value={state.settings.hours.dayEnd}
-                onChange={(event) => (
-                  setScopedTouched(true),
-                  updateSettings({ hours: { ...state.settings.hours, dayEnd: event.target.value } })
-                )}
-              />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span>Maximum shift hours</span>
-              <Input
-                type="number"
-                min={1}
-                max={48}
-                disabled={!mayEdit}
-                value={state.settings.hours.maxShiftHours}
-                onChange={(event) => (
-                  setScopedTouched(true),
-                  updateSettings({
-                    hours: {
-                      ...state.settings.hours,
-                      maxShiftHours: Math.min(48, Math.max(1, Number(event.target.value) || 1)),
-                    },
-                  })
-                )}
-              />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span>Shift reminder (minutes)</span>
-              <Input
-                type="number"
-                min={0}
-                max={240}
-                disabled={!mayEdit}
-                value={state.settings.hours.reminderMinutes}
-                onChange={(event) => (
-                  setScopedTouched(true),
-                  updateSettings({
-                    hours: {
-                      ...state.settings.hours,
-                      reminderMinutes: Math.min(240, Math.max(0, Number(event.target.value) || 0)),
-                    },
-                  })
-                )}
-              />
-            </label>
-          </div>
-          <div className="grid gap-4 border-t border-border/60 pt-4 sm:grid-cols-2 lg:grid-cols-3">
-            {(
-              [
-                ["maxVoids", "Voids before review"],
-                ["maxRefunds", "Refunds before review"],
-                ["maxRefundValue", "Refund value before review"],
-                ["maxNoSaleOpens", "No-sale opens before review"],
-                ["maxDiscountPct", "Discount % before review"],
-              ] as const
-            ).map(([key, label]) => (
-              <label key={key} className="space-y-1 text-sm">
-                <span>{label}</span>
-                <Input
-                  type="number"
-                  min={0}
-                  disabled={!mayEdit}
-                  value={state.settings.review[key]}
-                  onChange={(event) => (
-                    setScopedTouched(true),
-                    updateSettings({
-                      review: {
-                        ...state.settings.review,
-                        [key]: Math.max(0, Number(event.target.value) || 0),
-                      },
-                    })
-                  )}
-                />
-              </label>
-            ))}
-          </div>
-          {mayEdit && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={savingScoped || !scopedDirty}
-              onClick={() => void saveScopedSettings()}
-            >
-              {savingScoped ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Save className="size-4" />
-              )}
-              Save trading policy
-            </Button>
-          )}
-        </section>
-
         <AuthorizationRulesPanel
           storeId={currentStore.id}
           storeName={currentStore.name}
@@ -640,9 +451,8 @@ function RulesSettings() {
             <div>
               <h2 className="text-sm font-semibold">Session security</h2>
               <p className="text-xs text-muted-foreground">
-                Server session idle limit for new sign-ins at this branch (1–1440 minutes). Existing
-                sessions keep the limit assigned at sign-in. Use Auto-lock under Terminal security &
-                access above to set when the screen returns to sign-in.
+                Default sign-out time for new sessions at this branch. A personal limit may be
+                shorter, but never longer. Saving here changes only this session setting.
               </p>
             </div>
             {idleLoaded ? (

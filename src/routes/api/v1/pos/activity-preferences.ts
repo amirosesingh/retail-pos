@@ -59,12 +59,17 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         // signed claims. The former hand-rolled lookup missed those legitimate
         // supervisor sessions and returned a false 403.
         const scope = await resolveRelayScope(caller);
-        if (
-          scope.stale ||
-          !scope.staffUserId ||
-          !(scope.isSupervisor || scope.permissions.can_view_audit_trail === true)
-        )
+        if (scope.stale || !scope.staffUserId)
           return reply({ ok: false, error: "Activity access denied" }, 403);
+        const mayViewGeneralActivity =
+          scope.isSupervisor || scope.permissions.can_view_audit_trail === true;
+        const audienceIdentity = {
+          userIds: [scope.staffUserId, scope.label].filter(Boolean) as string[],
+          role: scope.roleSlug ?? scope.role,
+          storeId: scope.storeId,
+          terminalId: scope.terminalId,
+          mayViewGeneralActivity,
+        };
 
         const branch = scope.storeId;
         const isAdmin = scope.role === "admin" || scope.roleSlug === "admin";
@@ -72,6 +77,15 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         if (input.action === "clear") {
           if (!input.eventId || input.cleared === undefined)
             return reply({ ok: false, error: "Event and clear state are required" }, 400);
+          const eventResponse = await serviceRest(
+            `activity_events?id=eq.${encodeURIComponent(input.eventId)}&select=store_id,terminal_id,meta&limit=1`,
+          );
+          const eventRows = eventResponse.ok
+            ? ((await eventResponse.json()) as Record<string, unknown>[])
+            : [];
+          const { activityVisibleTo } = await import("@/lib/activity-audience");
+          if (!eventRows[0] || !activityVisibleTo(eventRows[0], audienceIdentity))
+            return reply({ ok: false, error: "Notification access denied" }, 403);
           const response = await serviceRest("rpc/pos_set_activity_event_cleared", {
             method: "POST",
             body: JSON.stringify({
@@ -86,6 +100,8 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         }
 
         if (input.action === "clear_all") {
+          if (!mayViewGeneralActivity)
+            return reply({ ok: false, error: "Clear notifications one at a time" }, 403);
           const response = await serviceRest("rpc/pos_set_all_activity_events_cleared", {
             method: "POST",
             body: JSON.stringify({
@@ -100,9 +116,7 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
 
         const params = new URLSearchParams({
           select: "*",
-          order: `${input.sortBy ?? "created_at"}.${input.sortDirection ?? "desc"}`,
-          limit: String(input.limit ?? 200),
-          offset: String(input.offset ?? 0),
+          order: `${input.sortBy ?? "created_at"}.${input.sortDirection ?? "desc"},id.asc`,
         });
         if (input.types?.length) params.set("event_type", `in.(${input.types.join(",")})`);
         if (input.severities?.length) params.set("severity", `in.(${input.severities.join(",")})`);
@@ -122,12 +136,36 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         }
         if (input.from) params.set("created_at", `gte.${input.from}`);
         if (input.to) params.append("created_at", `lte.${input.to}`);
-        const response = await serviceRest(`activity_events?${params}`, { prefer: "count=exact" });
-        if (!response.ok) return reply({ ok: false, error: "Could not load activity" }, 503);
-        const range = response.headers.get("content-range") ?? "";
-        const total = Number(range.split("/").at(-1));
-        const rows = await response.json();
-        return reply({ ok: true, rows, total: Number.isFinite(total) ? total : rows.length });
+        const { activityVisibleTo } = await import("@/lib/activity-audience");
+        const offset = input.offset ?? 0;
+        const limit = input.limit ?? 200;
+        const target = offset + limit + 1;
+        const visibleRows: Record<string, unknown>[] = [];
+        const batchSize = 1000;
+        let sourceOffset = 0;
+        let exhausted = false;
+        // Continue from the last bounded source batch until the requested
+        // audience-filtered page is full; large valid offsets remain reachable.
+        while (visibleRows.length < target) {
+          const page = new URLSearchParams(params);
+          page.set("limit", String(batchSize));
+          page.set("offset", String(sourceOffset));
+          const response = await serviceRest(`activity_events?${page}`);
+          if (!response.ok) return reply({ ok: false, error: "Could not load activity" }, 503);
+          const rows = (await response.json()) as Record<string, unknown>[];
+          visibleRows.push(...rows.filter((row) => activityVisibleTo(row, audienceIdentity)));
+          if (rows.length < batchSize) {
+            exhausted = true;
+            break;
+          }
+          sourceOffset += rows.length;
+        }
+        return reply({
+          ok: true,
+          rows: visibleRows.slice(offset, offset + limit),
+          total: visibleRows.length,
+          totalExact: exhausted,
+        });
       },
       OPTIONS: async ({ request }) => corsPreflight(request),
     },

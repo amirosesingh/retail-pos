@@ -7,8 +7,8 @@
  * ticket trail shown at the bottom of the page.
  */
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useState } from "react";
-import { PauseCircle, PlayCircle, Trash2, User } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { PauseCircle, PlayCircle, ShieldCheck, Trash2, User } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,8 @@ import { useAuth } from "@/lib/pos-auth";
 import { useUserPermissions } from "@/lib/pos-permissions";
 import { removeHeldOrder, useHeldOrders, type HeldOrder } from "@/lib/held-orders";
 import { TICKET_ACTIONS, logTicketEvent, useTicketTrail } from "@/lib/ticket-audit";
+import { loadApprovalCentre, subscribeApprovals } from "@/lib/approval-centre";
+import type { AuthorizationRequest } from "@/lib/authorization";
 
 export const Route = createFileRoute("/holds")({
   head: () => ({
@@ -58,21 +60,52 @@ function heldFor(iso: string) {
 
 function HoldTickets() {
   const { currentStore } = usePos();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const { requirePermission } = useUserPermissions();
   const navigate = useNavigate();
   const held = useHeldOrders();
   const trail = useTicketTrail();
   const [openId, setOpenId] = useState<string | null>(null);
+  const [approvalRequests, setApprovalRequests] = useState<AuthorizationRequest[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      const centre = await loadApprovalCentre(currentStore.id);
+      if (active) {
+        setApprovalRequests([
+          ...centre.toDecide,
+          ...centre.waiting,
+          ...centre.ready,
+          ...centre.history,
+        ]);
+      }
+    };
+    void refresh();
+    const unsubscribe = subscribeApprovals(() => void refresh());
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [currentStore.id]);
+
+  const approvalById = useMemo(
+    () => new Map(approvalRequests.map((request) => [request.id, request])),
+    [approvalRequests],
+  );
 
   const tickets = held.filter((h) => !h.storeId || h.storeId === currentStore.id);
 
   function reopen(order: HeldOrder) {
+    if (!can("can_reopen_held_order")) {
+      toast.error("Reopen held ticket permission is required");
+      return;
+    }
     void navigate({ to: "/", search: { resume: order.id } });
   }
 
   async function discard(order: HeldOrder) {
-    if (!(await requirePermission("can_void_cart"))) return;
+    if (!(await requirePermission("can_discard_held_order"))) return;
     removeHeldOrder(order.id);
     logTicketEvent(TICKET_ACTIONS.discarded, {
       holdRef: order.id,
@@ -137,6 +170,29 @@ function HoldTickets() {
                             {h.memberName}
                           </Badge>
                         )}
+                        {h.pendingRequestId && (
+                          <Badge
+                            variant={
+                              approvalById.get(h.pendingRequestId)?.status === "approved"
+                                ? "default"
+                                : "outline"
+                            }
+                          >
+                            <ShieldCheck className="mr-1 size-3" />
+                            {approvalById.get(h.pendingRequestId)?.status === "approved"
+                              ? approvalById.get(h.pendingRequestId)?.consumedAt
+                                ? "Approval applied"
+                                : "Approved — ready"
+                              : approvalById.get(h.pendingRequestId)?.status === "rejected"
+                                ? "Approval rejected"
+                                : approvalById.get(h.pendingRequestId)?.status === "expired"
+                                  ? "Approval expired"
+                                  : h.status === "ready"
+                                    ? "Decision ready"
+                                    : "Waiting approval"}
+                            {` · #${h.pendingRequestId.slice(-8).toUpperCase()}`}
+                          </Badge>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-sm">{h.heldBy ?? "—"}</TableCell>
@@ -147,13 +203,18 @@ function HoldTickets() {
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-2">
-                        <Button size="sm" onClick={() => reopen(h)}>
+                        <Button
+                          size="sm"
+                          disabled={!can("can_reopen_held_order")}
+                          onClick={() => reopen(h)}
+                        >
                           <PlayCircle className="size-4" /> Reopen
                         </Button>
                         <Button
                           size="sm"
                           variant="ghost"
                           className="text-destructive hover:text-destructive"
+                          disabled={!can("can_discard_held_order")}
                           onClick={() => void discard(h)}
                         >
                           <Trash2 className="size-4" />

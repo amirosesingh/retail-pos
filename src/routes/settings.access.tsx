@@ -78,7 +78,10 @@ const PERMISSION_EFFECT: Partial<Record<PermissionKey, string>> = {
   can_manage_promotions: "Opens Promotions and Coupons.",
   can_manage_bookings: "Shows Bookings / pay-later.",
   can_add_member: "Shows Members and the quick add-member box.",
-  can_hold_cart: "Shows Held orders.",
+  can_hold_cart: "Allows parking the current cart. It does not expose the held-ticket page.",
+  can_view_held_orders: "Allows opening and inspecting the Held tickets page.",
+  can_reopen_held_order: "Allows moving a parked ticket back to the register.",
+  can_discard_held_order: "Allows permanently discarding a parked ticket.",
   can_close_shift: "Shows Shifts and the close-shift button.",
   can_manage_locations: "Opens Branches / locations.",
 };
@@ -242,8 +245,8 @@ function AccessSettingsPage() {
               <header>
                 <h2 className="text-sm font-semibold">What this role may do</h2>
                 <p className="text-xs text-muted-foreground">
-                  Switching one on shows the matching screen straight away — nothing else overrules
-                  it. A person's own record can still be tuned in Staff management.
+                  Each switch controls one operation. Screen visibility is configured separately
+                  below. A person's own record can still be tuned in Staff management.
                 </p>
               </header>
               {permissionRows.map((group) => (

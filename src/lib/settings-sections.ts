@@ -14,8 +14,6 @@ export type SettingsSectionId =
   | "printer"
   | "terminalSecurity"
   | "tax"
-  | "review"
-  | "hours"
   | "receiptIdentity"
   | "receiptLayout"
   | "payment"
@@ -90,27 +88,11 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     scopeFamily: "business",
   },
   {
-    id: "review",
-    label: "Audit & review thresholds",
-    blurb: "Void, refund and discount limits that flag a cashier for review.",
-    paths: ["review"],
-    lockedByDefault: true,
-    scopeFamily: "business",
-  },
-  {
     id: "visibility",
     label: "Screen visibility",
     blurb: "Which roles can see which elements of the till.",
     paths: ["visibility"],
     lockedByDefault: true,
-    scopeFamily: "business",
-  },
-  {
-    id: "hours",
-    label: "Trading hours",
-    blurb: "Day start, day end and shift length limits.",
-    paths: ["hours"],
-    lockedByDefault: false,
     scopeFamily: "business",
   },
   {

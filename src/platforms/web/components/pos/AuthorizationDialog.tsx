@@ -28,7 +28,11 @@ import { authorizeWithPin, submitAuthorizationRequest } from "@/lib/authorizatio
 import { looksOffline, parkGovernanceRow } from "@/lib/governance-offline";
 import { useAuthOptional } from "@/lib/pos-auth";
 import type { AuthActionKey, AuthMode, AuthPayload, AuthorizationRule } from "@/lib/authorization";
-import { APPROVAL_TTL_MS, canAuthorizeAmount } from "@/lib/authorization";
+import {
+  APPROVAL_TTL_MS,
+  approvalReference,
+  canAuthorizeAmount,
+} from "@/lib/authorization";
 import { verifyLocalPin } from "@/core/local-db/local-staff";
 import { normalizeSnapshot, snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
 import { syncNow } from "@/lib/sync-engine";
@@ -193,7 +197,7 @@ export function AuthorizationDialog({
       return;
     }
     toast.success("Recorded on this till", {
-      description: "It will reach the approvals queue as soon as the line is back.",
+      description: `${approvalReference({ id, terminalId: prompt?.terminalId ?? "", createdAt })} will reach the approvals queue as soon as the line is back.`,
     });
     onFinish({ kind: "submitted", requestId: id });
   }
@@ -281,7 +285,7 @@ export function AuthorizationDialog({
         return;
       }
       toast.success("Sent for approval", {
-        description: "You will be able to continue once it is approved.",
+        description: `${approvalReference(res.request)} · You can continue once it is approved.`,
       });
       onFinish({ kind: "submitted", requestId: res.request.id });
       // Supabase is authoritative online. Mirroring it to SQL Server is an

@@ -46,19 +46,7 @@ export async function resolveIdleMinutes(input: {
   };
 
   try {
-    // Cashiers are app_users now. The legacy cashiers table never owned this
-    // column, and probing it produced a guaranteed 400 on every PIN login.
-    if (input.staffUserId) {
-      const res = await serviceRest(
-        `app_users?user_id=eq.${encodeURIComponent(input.staffUserId)}&select=idle_timeout_minutes&limit=1`,
-      );
-      if (res.ok) {
-        const row = one<{ idle_timeout_minutes: number | null }>(await res.json());
-        const own = clamp(row?.idle_timeout_minutes);
-        if (own) return own;
-      }
-    }
-
+    let branchDefault: number | null = null;
     const scopes = [input.branchId?.trim() || "", ""].filter((v, i, a) => a.indexOf(v) === i);
     for (const scope of scopes) {
       const res = await serviceRest(
@@ -67,8 +55,25 @@ export async function resolveIdleMinutes(input: {
       if (!res.ok) continue;
       const row = one<{ idle_timeout_minutes: number | null }>(await res.json());
       const value = clamp(row?.idle_timeout_minutes);
-      if (value) return value;
+      if (value) {
+        branchDefault = value;
+        break;
+      }
     }
+
+    // A personal choice may tighten the administrator's rule, never extend it.
+    // Cashiers are app_users now; the legacy cashiers table is not probed.
+    if (input.staffUserId) {
+      const res = await serviceRest(
+        `app_users?user_id=eq.${encodeURIComponent(input.staffUserId)}&select=idle_timeout_minutes&limit=1`,
+      );
+      if (res.ok) {
+        const row = one<{ idle_timeout_minutes: number | null }>(await res.json());
+        const own = clamp(row?.idle_timeout_minutes);
+        if (own) return Math.min(own, branchDefault ?? DEFAULT_IDLE_MINUTES);
+      }
+    }
+    if (branchDefault) return branchDefault;
   } catch {
     /* fall through to the shipped default */
   }

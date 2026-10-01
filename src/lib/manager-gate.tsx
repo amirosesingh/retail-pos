@@ -90,7 +90,11 @@ export function ManagerGateProvider({
     queryFn: async () => {
       const caller = await getPosCallerAuth();
       const res = await getAuthorizationRules({ data: { ...caller, storeId: storeId ?? "" } });
-      if (!res.ok) throw new Error(res.error);
+      if (!res.ok) {
+        const message = res.error || "Could not load authorization rules";
+        if (import.meta.env.DEV) console.warn(`[authorization] rules unavailable: ${message}`);
+        throw new Error(message);
+      }
       return res.rules;
     },
   });
@@ -107,13 +111,28 @@ export function ManagerGateProvider({
 
   const authorize = useCallback(
     async (request: GateRequest): Promise<GateResult> => {
+      // This provider is mounted behind the terminal shell, so its first rules
+      // query can run while the sign-in screen is still visible. Retry once at
+      // the moment a restricted action is attempted; by then the cashier proof
+      // has been stored. This also recovers cleanly after a transient outage.
+      let activeRules = rules;
       if (!query.data) {
-        toast.error("Authorization rules are not available", {
-          description: "The restricted action was blocked. Reconnect and try again.",
-        });
-        return { ok: false, grantToken: null };
+        const refreshed = await query.refetch();
+        if (refreshed.data) {
+          activeRules = resolveRules(
+            refreshed.data.map((row) => ({ ...row })),
+            storeId ?? "",
+          );
+        } else {
+          const failure = refreshed.error ?? query.error;
+          const detail = failure instanceof Error ? failure.message : "Reconnect and try again.";
+          toast.error("Authorization rules are not available", {
+            description: `The restricted action was blocked. ${detail}`,
+          });
+          return { ok: false, grantToken: null };
+        }
       }
-      const rule = rules[request.action];
+      const rule = activeRules[request.action];
       const mode = rule?.mode ?? "none";
 
       // 1 · this branch does not gate the action
@@ -202,7 +221,7 @@ export function ManagerGateProvider({
       }
       return { ok: false, grantToken: null };
     },
-    [rules, legacyRules, query.data],
+    [rules, legacyRules, query, storeId],
   );
 
   const value = useMemo<Ctx>(() => ({ authorize, rules }), [authorize, rules]);

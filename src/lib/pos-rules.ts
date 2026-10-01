@@ -137,7 +137,6 @@ export function normalizeRules(input: unknown): PosRules {
       const off = raw === false || raw === "false" || raw === 0 || raw === "0";
       if (on || off) (out as Record<string, unknown>)[key] = on;
     } else {
-
       const n = Number(raw);
       if (Number.isFinite(n)) (out as Record<string, unknown>)[key] = n;
     }
@@ -160,14 +159,54 @@ export const RULE_GROUPS: RuleGroup[] = [
     label: "Shift & cash management",
     blurb: "How a till is opened, counted and handed back.",
     fields: [
-      { key: "block_shift_close_on_hold", kind: "switch", label: "Block shift close on held bills", blurb: "The shift cannot be closed while tickets are parked." },
-      { key: "require_daily_sales_for_shift_close", kind: "switch", label: "Require closing cash count", blurb: "Counted cash must be declared before closing." },
-      { key: "require_counted_cash_on_close", kind: "switch", label: "Require counted cash before shift close", blurb: "The drawer amount must be typed in — an empty box blocks the close." },
-      { key: "require_opening_float_count", kind: "switch", label: "Require opening float count", blurb: "Cashier confirms the starting drawer balance." },
-      { key: "enable_blind_cash_count", kind: "switch", label: "Blind cash count", blurb: "Hide the expected drawer total while counting." },
-      { key: "max_drawer_cash_limit", kind: "number", label: "Max cash in drawer", blurb: "Prompts for a safe drop above this amount." },
-      { key: "require_reason_for_payout", kind: "switch", label: "Reason for pay-in / pay-out", blurb: "Petty cash movements need a reason code." },
-      { key: "allow_multiple_shifts_per_terminal", kind: "switch", label: "Allow multiple shifts per terminal", blurb: "Off means one open shift per till." },
+      {
+        key: "block_shift_close_on_hold",
+        kind: "switch",
+        label: "Block shift close on held bills",
+        blurb: "The shift cannot be closed while tickets are parked.",
+      },
+      {
+        key: "require_daily_sales_for_shift_close",
+        kind: "switch",
+        label: "Require closing cash count",
+        blurb: "Counted cash must be declared before closing.",
+      },
+      {
+        key: "require_counted_cash_on_close",
+        kind: "switch",
+        label: "Require counted cash before shift close",
+        blurb: "The drawer amount must be typed in — an empty box blocks the close.",
+      },
+      {
+        key: "require_opening_float_count",
+        kind: "switch",
+        label: "Require opening float count",
+        blurb: "Cashier confirms the starting drawer balance.",
+      },
+      {
+        key: "enable_blind_cash_count",
+        kind: "switch",
+        label: "Blind cash count",
+        blurb: "Hide the expected drawer total while counting.",
+      },
+      {
+        key: "max_drawer_cash_limit",
+        kind: "number",
+        label: "Max cash in drawer",
+        blurb: "Prompts for a safe drop above this amount.",
+      },
+      {
+        key: "require_reason_for_payout",
+        kind: "switch",
+        label: "Reason for pay-in / pay-out",
+        blurb: "Petty cash movements need a reason code.",
+      },
+      {
+        key: "allow_multiple_shifts_per_terminal",
+        kind: "switch",
+        label: "Allow multiple shifts per terminal",
+        blurb: "Off means one open shift per till.",
+      },
     ],
   },
   {
@@ -175,13 +214,49 @@ export const RULE_GROUPS: RuleGroup[] = [
     label: "Shift close screen",
     blurb: "What the cashier sees while counting the drawer, and the mid-shift X report.",
     fields: [
-      { key: "enable_cashier_x_report", kind: "switch", label: "Cashiers may print the X report", blurb: "Off means only supervisors and admins can take a mid-shift snapshot." },
-      { key: "show_opening_float_at_close", kind: "switch", label: "Show opening float at close", blurb: "Display the float the shift started with. It is read-only." },
-      { key: "show_expected_totals_at_close", kind: "switch", label: "Show expected totals at close", blurb: "Display the system-expected cash, card and mobile figures while counting." },
-      { key: "show_live_variance_at_close", kind: "switch", label: "Show live variance at close", blurb: "Update the shortage / overage as the count is typed." },
-      { key: "show_itemized_tender_breakdown", kind: "switch", label: "Itemised tender breakdown", blurb: "Show card, mobile and voucher lines instead of a single cash total." },
-      { key: "require_manager_pin_on_variance", kind: "switch", label: "Manager PIN on large variance", blurb: "A manager must approve the close when the count is off by more than the limit below." },
-      { key: "variance_pin_threshold", kind: "number", label: "Variance limit before manager PIN", blurb: "Absolute shortage or overage allowed without approval." },
+      {
+        key: "enable_cashier_x_report",
+        kind: "switch",
+        label: "Cashiers may print the X report",
+        blurb: "Off means only supervisors and admins can take a mid-shift snapshot.",
+      },
+      {
+        key: "show_opening_float_at_close",
+        kind: "switch",
+        label: "Show opening float at close",
+        blurb: "Display the float the shift started with. It is read-only.",
+      },
+      {
+        key: "show_expected_totals_at_close",
+        kind: "switch",
+        label: "Show expected totals at close",
+        blurb: "Display the system-expected cash, card and mobile figures while counting.",
+      },
+      {
+        key: "show_live_variance_at_close",
+        kind: "switch",
+        label: "Show live variance at close",
+        blurb: "Update the shortage / overage as the count is typed.",
+      },
+      {
+        key: "show_itemized_tender_breakdown",
+        kind: "switch",
+        label: "Itemised tender breakdown",
+        blurb: "Show card, mobile and voucher lines instead of a single cash total.",
+      },
+      {
+        key: "require_manager_pin_on_variance",
+        kind: "switch",
+        label: "Manager PIN on large variance",
+        blurb:
+          "A manager must approve the close when the count is off by more than the limit below.",
+      },
+      {
+        key: "variance_pin_threshold",
+        kind: "number",
+        label: "Variance limit before manager PIN",
+        blurb: "Absolute shortage or overage allowed without approval.",
+      },
     ],
   },
   {
@@ -189,12 +264,42 @@ export const RULE_GROUPS: RuleGroup[] = [
     label: "Discounts, pricing & overrides",
     blurb: "What a cashier may change without a manager.",
     fields: [
-      { key: "max_cashier_discount_percent", kind: "number", label: "Max cashier discount (%)", blurb: "Above this a manager PIN is required." },
-      { key: "max_cart_discount_amount", kind: "number", label: "Max flat bill discount", blurb: "Above this a manager PIN is required." },
-      { key: "allow_discount_stacking", kind: "switch", label: "Allow discount stacking", blurb: "Line discounts together with bill coupons." },
-      { key: "require_reason_for_price_override", kind: "switch", label: "Reason for price override", blurb: "Manual price changes need a reason code." },
-      { key: "prevent_below_cost_sale", kind: "switch", label: "Prevent below-cost sale", blurb: "Selling under unit cost needs a manager." },
-      { key: "allow_tax_exemption", kind: "switch", label: "Allow tax exemption", blurb: "Needs a customer tax ID and manager approval." },
+      {
+        key: "max_cashier_discount_percent",
+        kind: "number",
+        label: "Max cashier discount (%)",
+        blurb: "Above this a manager PIN is required.",
+      },
+      {
+        key: "max_cart_discount_amount",
+        kind: "number",
+        label: "Max flat bill discount",
+        blurb: "Above this a manager PIN is required.",
+      },
+      {
+        key: "allow_discount_stacking",
+        kind: "switch",
+        label: "Allow discount stacking",
+        blurb: "Line discounts together with bill coupons.",
+      },
+      {
+        key: "require_reason_for_price_override",
+        kind: "switch",
+        label: "Reason for price override",
+        blurb: "Manual price changes need a reason code.",
+      },
+      {
+        key: "prevent_below_cost_sale",
+        kind: "switch",
+        label: "Prevent below-cost sale",
+        blurb: "Selling under unit cost needs a manager.",
+      },
+      {
+        key: "allow_tax_exemption",
+        kind: "switch",
+        label: "Allow tax exemption",
+        blurb: "Needs a customer tax ID and manager approval.",
+      },
     ],
   },
   {
@@ -202,10 +307,30 @@ export const RULE_GROUPS: RuleGroup[] = [
     label: "Inventory, orders & refunds",
     blurb: "Stock guards and the returns policy.",
     fields: [
-      { key: "prevent_negative_stock_sale", kind: "switch", label: "Prevent negative stock sale", blurb: "Block adding an out-of-stock item." },
-      { key: "require_receipt_for_refund", kind: "switch", label: "Require receipt for refund", blurb: "The original bill must be looked up." },
-      { key: "max_refund_days_limit", kind: "number", label: "Refund window (days)", blurb: "Older purchases cannot be refunded." },
-      { key: "track_item_voids", kind: "switch", label: "Track item voids", blurb: "Log line removals; manager PIN after 3." },
+      {
+        key: "prevent_negative_stock_sale",
+        kind: "switch",
+        label: "Prevent negative stock sale",
+        blurb: "Block adding an out-of-stock item.",
+      },
+      {
+        key: "require_receipt_for_refund",
+        kind: "switch",
+        label: "Require receipt for refund",
+        blurb: "The original bill must be looked up.",
+      },
+      {
+        key: "max_refund_days_limit",
+        kind: "number",
+        label: "Refund window (days)",
+        blurb: "Older purchases cannot be refunded.",
+      },
+      {
+        key: "track_item_voids",
+        kind: "switch",
+        label: "Track item voids",
+        blurb: "Log line removals; manager PIN after 3.",
+      },
     ],
   },
   {
@@ -213,8 +338,12 @@ export const RULE_GROUPS: RuleGroup[] = [
     label: "Terminal security & access",
     blurb: "Locking the screen and guarding the drawer.",
     fields: [
-      { key: "auto_lock_timeout_seconds", kind: "number", label: "Auto-lock after (seconds)", blurb: "0 disables the idle lock." },
-      { key: "enable_manager_pin_audit_log", kind: "switch", label: "Manager override audit log", blurb: "Record who approved what, and when." },
+      {
+        key: "enable_manager_pin_audit_log",
+        kind: "switch",
+        label: "Manager override audit log",
+        blurb: "Record who approved what, and when.",
+      },
     ],
   },
   {
@@ -223,17 +352,72 @@ export const RULE_GROUPS: RuleGroup[] = [
     blurb:
       "Switch on the actions that need a manager's authorisation. Admins are never prompted — their approval is recorded automatically.",
     fields: [
-      { key: "require_manager_pin_for_refund", kind: "switch", label: "Refunds", blurb: "Returning money to a customer." },
-      { key: "require_pin_void_cart", kind: "switch", label: "Void the whole cart", blurb: "Abandoning a ticket in progress." },
-      { key: "require_pin_void_line", kind: "switch", label: "Void / delete a line", blurb: "Removing an item already scanned." },
-      { key: "require_pin_reduce_qty", kind: "switch", label: "Reduce a quantity", blurb: "Lowering the count on a scanned line." },
-      { key: "require_pin_manual_discount", kind: "switch", label: "Manual discounts", blurb: "Any hand-typed line or bill discount." },
-      { key: "require_pin_price_override", kind: "switch", label: "Price override", blurb: "Typing a different price at the till." },
-      { key: "require_manager_pin_for_cash_drawer_open", kind: "switch", label: "No-sale drawer open", blurb: "Opening the drawer without a sale." },
-      { key: "require_pin_stock_adjustment", kind: "switch", label: "Stock adjustment", blurb: "Recounting or writing off stock." },
-      { key: "require_pin_shift_close", kind: "switch", label: "Close a shift", blurb: "Running the Z-report and handing back the till." },
-      { key: "require_pin_edit_tenders", kind: "switch", label: "Edit split payments", blurb: "Changing tenders on a bill." },
-      { key: "require_pin_terminal_reset", kind: "switch", label: "Unpair / reset a terminal", blurb: "Sending this machine back to the activation screen." },
+      {
+        key: "require_manager_pin_for_refund",
+        kind: "switch",
+        label: "Refunds",
+        blurb: "Returning money to a customer.",
+      },
+      {
+        key: "require_pin_void_cart",
+        kind: "switch",
+        label: "Void the whole cart",
+        blurb: "Abandoning a ticket in progress.",
+      },
+      {
+        key: "require_pin_void_line",
+        kind: "switch",
+        label: "Void / delete a line",
+        blurb: "Removing an item already scanned.",
+      },
+      {
+        key: "require_pin_reduce_qty",
+        kind: "switch",
+        label: "Reduce a quantity",
+        blurb: "Lowering the count on a scanned line.",
+      },
+      {
+        key: "require_pin_manual_discount",
+        kind: "switch",
+        label: "Manual discounts",
+        blurb: "Any hand-typed line or bill discount.",
+      },
+      {
+        key: "require_pin_price_override",
+        kind: "switch",
+        label: "Price override",
+        blurb: "Typing a different price at the till.",
+      },
+      {
+        key: "require_manager_pin_for_cash_drawer_open",
+        kind: "switch",
+        label: "No-sale drawer open",
+        blurb: "Opening the drawer without a sale.",
+      },
+      {
+        key: "require_pin_stock_adjustment",
+        kind: "switch",
+        label: "Stock adjustment",
+        blurb: "Recounting or writing off stock.",
+      },
+      {
+        key: "require_pin_shift_close",
+        kind: "switch",
+        label: "Close a shift",
+        blurb: "Running the Z-report and handing back the till.",
+      },
+      {
+        key: "require_pin_edit_tenders",
+        kind: "switch",
+        label: "Edit split payments",
+        blurb: "Changing tenders on a bill.",
+      },
+      {
+        key: "require_pin_terminal_reset",
+        kind: "switch",
+        label: "Unpair / reset a terminal",
+        blurb: "Sending this machine back to the activation screen.",
+      },
     ],
   },
   {
@@ -242,18 +426,78 @@ export const RULE_GROUPS: RuleGroup[] = [
     blurb:
       "What a manager may authorise at the till when the central system cannot be reached. Every offline approval is recorded and uploaded with everything else.",
     fields: [
-      { key: "allow_offline_approvals", kind: "switch", label: "Allow approvals while offline", blurb: "Off means no approval can be given until the connection is back." },
-      { key: "offline_approval_requires_pin", kind: "switch", label: "Offline approval needs a manager PIN", blurb: "Off lets a recent approval on this till stand in for a fresh PIN." },
-      { key: "online_only_refund", kind: "switch", label: "Refunds need the central system", blurb: "Refund approvals are refused while offline." },
-      { key: "online_only_void_cart", kind: "switch", label: "Void the whole cart needs the central system", blurb: "Refused while offline." },
-      { key: "online_only_void_line", kind: "switch", label: "Void a line needs the central system", blurb: "Refused while offline." },
-      { key: "online_only_reduce_qty", kind: "switch", label: "Reduce a quantity needs the central system", blurb: "Refused while offline." },
-      { key: "online_only_manual_discount", kind: "switch", label: "Manual discounts need the central system", blurb: "Refused while offline." },
-      { key: "online_only_price_override", kind: "switch", label: "Price override needs the central system", blurb: "Refused while offline." },
-      { key: "online_only_stock_adjustment", kind: "switch", label: "Stock adjustment needs the central system", blurb: "Refused while offline." },
-      { key: "online_only_shift_close", kind: "switch", label: "Shift close needs the central system", blurb: "Refused while offline." },
-      { key: "online_only_edit_tenders", kind: "switch", label: "Editing split payments needs the central system", blurb: "Refused while offline." },
-      { key: "online_only_terminal_reset", kind: "switch", label: "Terminal reset needs the central system", blurb: "Refused while offline." },
+      {
+        key: "allow_offline_approvals",
+        kind: "switch",
+        label: "Allow approvals while offline",
+        blurb: "Off means no approval can be given until the connection is back.",
+      },
+      {
+        key: "offline_approval_requires_pin",
+        kind: "switch",
+        label: "Offline approval needs a manager PIN",
+        blurb: "Off lets a recent approval on this till stand in for a fresh PIN.",
+      },
+      {
+        key: "online_only_refund",
+        kind: "switch",
+        label: "Refunds need the central system",
+        blurb: "Refund approvals are refused while offline.",
+      },
+      {
+        key: "online_only_void_cart",
+        kind: "switch",
+        label: "Void the whole cart needs the central system",
+        blurb: "Refused while offline.",
+      },
+      {
+        key: "online_only_void_line",
+        kind: "switch",
+        label: "Void a line needs the central system",
+        blurb: "Refused while offline.",
+      },
+      {
+        key: "online_only_reduce_qty",
+        kind: "switch",
+        label: "Reduce a quantity needs the central system",
+        blurb: "Refused while offline.",
+      },
+      {
+        key: "online_only_manual_discount",
+        kind: "switch",
+        label: "Manual discounts need the central system",
+        blurb: "Refused while offline.",
+      },
+      {
+        key: "online_only_price_override",
+        kind: "switch",
+        label: "Price override needs the central system",
+        blurb: "Refused while offline.",
+      },
+      {
+        key: "online_only_stock_adjustment",
+        kind: "switch",
+        label: "Stock adjustment needs the central system",
+        blurb: "Refused while offline.",
+      },
+      {
+        key: "online_only_shift_close",
+        kind: "switch",
+        label: "Shift close needs the central system",
+        blurb: "Refused while offline.",
+      },
+      {
+        key: "online_only_edit_tenders",
+        kind: "switch",
+        label: "Editing split payments needs the central system",
+        blurb: "Refused while offline.",
+      },
+      {
+        key: "online_only_terminal_reset",
+        kind: "switch",
+        label: "Terminal reset needs the central system",
+        blurb: "Refused while offline.",
+      },
     ],
   },
 ];

@@ -17,9 +17,7 @@ const credentials = readCredentials;
 export type SyncHealth = { serviceKey: boolean; posUrl: boolean; host: string };
 
 /** Why the setup probe could not be read, in words staff can act on. */
-export type SyncHealthResult =
-  | { ok: true; health: SyncHealth }
-  | { ok: false; reason: string };
+export type SyncHealthResult = { ok: true; health: SyncHealth } | { ok: false; reason: string };
 
 /**
  * Ask the server that is actually answering this device whether it holds the
@@ -52,8 +50,7 @@ export async function syncHealthResult(): Promise<SyncHealthResult> {
   } catch {
     /* handled below */
   }
-  if (!res.ok)
-    return { ok: false, reason: `${where} refused the setup check (${res.status}).` };
+  if (!res.ok) return { ok: false, reason: `${where} refused the setup check (${res.status}).` };
   if (!body || typeof body.serviceKey !== "boolean")
     return {
       ok: false,
@@ -74,7 +71,6 @@ export async function syncHealth(): Promise<SyncHealth | null> {
   const res = await syncHealthResult();
   return res.ok ? res.health : null;
 }
-
 
 /** Every relay call carries the bearer token as well as the credential body. */
 async function relayHeaders(): Promise<Record<string, string>> {
@@ -99,7 +95,16 @@ export function hasStaffSession(): boolean {
     const raw = window.localStorage.getItem("sb-external-auth-token");
     if (!raw) return false;
     const parsed = JSON.parse(raw) as { access_token?: string } | null;
-    return !!parsed?.access_token;
+    const token = parsed?.access_token;
+    if (!token) return false;
+    const encoded = token.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") ?? "";
+    const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=");
+    const payload = JSON.parse(
+      atob(padded),
+    ) as { exp?: number };
+    // Leave a small margin so a token cannot expire between this check and
+    // the business-table request it is supposed to authorize.
+    return typeof payload.exp === "number" && payload.exp * 1000 > Date.now() + 30_000;
   } catch {
     return false;
   }
@@ -126,35 +131,31 @@ export function canRelay(): boolean {
  * session — so devices use the alias, which runs the identical handler and
  * the identical caller checks.
  */
-const syncPath = (): string =>
-  serverOrigin() ? "/api/public/sync" : "/api/v1/pos/sync";
-
+const syncPath = (): string => (serverOrigin() ? "/api/public/sync" : "/api/v1/pos/sync");
 
 /** Push one operation through the relay. */
-export async function relayOp(
-  op: SyncOp,
-): Promise<{ ok: boolean; error?: string; code?: string }> {
+export async function relayOp(op: SyncOp): Promise<{ ok: boolean; error?: string; code?: string }> {
   try {
     const res = await fetch(serverUrl(syncPath()), {
       method: "POST",
       headers: await relayHeaders(),
       body: JSON.stringify({ ...(await credentials()), ops: [op] }),
     });
-    const body = (await res.json().catch(() => null)) as
-      | {
-          ok?: boolean;
-          error?: string;
-          code?: string;
-          detail?: { table?: string; kind?: string; role?: string | null; branch?: string | null };
-          results?: { ok: boolean; error?: string }[];
-        }
-      | null;
+    const body = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      code?: string;
+      detail?: { table?: string; kind?: string; role?: string | null; branch?: string | null };
+      results?: { ok: boolean; error?: string }[];
+    } | null;
     await inspectRelay(res, body);
     if (!res.ok) {
       const d = body?.detail;
-      const where = d?.table ? ` (${d.kind ?? "write"} on ${d.table}` +
-        `${d.role ? `, signed in as ${d.role}` : ""}` +
-        `${d.branch ? `, branch ${d.branch}` : ""})` : "";
+      const where = d?.table
+        ? ` (${d.kind ?? "write"} on ${d.table}` +
+          `${d.role ? `, signed in as ${d.role}` : ""}` +
+          `${d.branch ? `, branch ${d.branch}` : ""})`
+        : "";
       return {
         ok: false,
         error: `${body?.error ?? `Relay refused (${res.status})`}${where}`,
@@ -178,9 +179,12 @@ export async function relayActiveShift(
       headers: await relayHeaders(),
       body: JSON.stringify({ ...(await credentials()), read: { kind: "activeShift", storeId } }),
     });
-    const body = (await res.json().catch(() => null)) as
-      | { ok?: boolean; row?: Record<string, unknown> | null; error?: string; code?: string }
-      | null;
+    const body = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      row?: Record<string, unknown> | null;
+      error?: string;
+      code?: string;
+    } | null;
     await inspectRelay(res, body);
     if (!res.ok || !body?.ok)
       return { ok: false, error: body?.error ?? `Relay refused (${res.status})` };
@@ -202,9 +206,12 @@ export async function relayStores(): Promise<{
       headers: await relayHeaders(),
       body: JSON.stringify({ ...(await credentials()), read: { kind: "stores" } }),
     });
-    const body = (await res.json().catch(() => null)) as
-      | { ok?: boolean; rows?: Record<string, unknown>[]; error?: string; code?: string }
-      | null;
+    const body = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      rows?: Record<string, unknown>[];
+      error?: string;
+      code?: string;
+    } | null;
     await inspectRelay(res, body);
     if (!res.ok || !body?.ok)
       return { ok: false, error: body?.error ?? `Relay refused (${res.status})` };
@@ -225,9 +232,7 @@ export async function probeRelay(): Promise<{ ok: boolean; error?: string; code?
         ops: [{ kind: "update", table: "shift_sessions", values: {}, match: { id: "probe" } }],
       }),
     });
-    const body = (await res.json().catch(() => null)) as
-      | { error?: string; code?: string }
-      | null;
+    const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
     await inspectRelay(res, body);
     if (res.status === 401)
       return {

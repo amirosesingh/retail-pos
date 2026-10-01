@@ -43,6 +43,14 @@ export function isTerminalApp(): boolean {
   return isNative() || isElectron();
 }
 
+/** Allow terminal flows in a local Vite browser for end-to-end development only. */
+export function isLocalWebCashierTest(
+  hostname = typeof window === "undefined" ? "" : window.location.hostname,
+  development = import.meta.env.DEV,
+): boolean {
+  return development && (hostname === "localhost" || hostname === "127.0.0.1");
+}
+
 /** True when a request to the cloud has any chance of succeeding. */
 export function hasConnection(): boolean {
   if (typeof navigator === "undefined") return true;

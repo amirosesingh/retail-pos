@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  approvalReference,
   canAuthorizeAmount,
+  canAuthorize,
   canAuthorizeEscalated,
   canDecideRequestAmount,
   canRequestApproval,
@@ -23,6 +25,16 @@ const rule = {
 };
 
 describe("central relative approval authority", () => {
+  it("builds a short day and terminal based approval reference", () => {
+    expect(
+      approvalReference({
+        id: "c14c82d3-2f83-40fe-98a1-46a18b6eb80c",
+        terminalId: "T-88254622",
+        createdAt: "2026-09-30T08:33:29.000Z",
+      }),
+    ).toBe("APR-260930-254622-C14C82");
+  });
+
   it("keeps request rights separate from decision rights", () => {
     expect(canRequestApproval(rule, { role: "cashier" })).toBe(true);
     expect(canRequestApproval(rule, { role: "guest" })).toBe(false);
@@ -288,6 +300,64 @@ describe("central relative approval authority", () => {
         { userId: "manager-1", role: "manager" },
         legacyRequest,
         false,
+      ),
+    ).toBe(false);
+  });
+
+  it("lets role rules exclude one person without removing the role", () => {
+    const withExceptions = {
+      ...rule,
+      allowedRoles: ["manager"],
+      allowedUserIds: ["extra-approver", "!manager-7"],
+      requesterRoles: ["cashier"],
+      requesterUserIds: ["!cashier-9"],
+    };
+    expect(canAuthorize(withExceptions, { userId: "manager-6", role: "manager" })).toBe(true);
+    expect(canAuthorize(withExceptions, { userId: "manager-7", role: "manager" })).toBe(false);
+    expect(canAuthorize(withExceptions, { userId: "extra-approver", role: "staff" })).toBe(true);
+    expect(canRequestApproval(withExceptions, { userId: "cashier-8", role: "cashier" })).toBe(true);
+    expect(canRequestApproval(withExceptions, { userId: "cashier-9", role: "cashier" })).toBe(
+      false,
+    );
+  });
+
+  it("lets an administrator audit routed approval history for a visible branch", () => {
+    const createdAt = "2026-09-30T00:00:00.000Z";
+    const routedRequest = {
+      createdAt,
+      requestedBy: "cashier-1",
+      requestedAmount: 25,
+      requesterDirectLimit: 10,
+      approvalRoute: {
+        primaryRoles: ["manager"],
+        primaryUserIds: ["manager-1"],
+        primaryApprovers: [{ id: "manager-1", name: "Manager", role: "manager" }],
+        escalationAfterMinutes: null,
+        escalationRoles: [],
+        escalationApprovers: [],
+        ruleScopeType: "branch" as const,
+        ruleScopeId: "store-1",
+      },
+    };
+
+    expect(
+      canViewAuthorizationRequest(
+        rule,
+        { userId: "admin-1", role: "admin" },
+        routedRequest,
+        true,
+        Date.parse(createdAt),
+        true,
+      ),
+    ).toBe(true);
+    expect(
+      canViewAuthorizationRequest(
+        rule,
+        { userId: "admin-1", role: "admin" },
+        routedRequest,
+        false,
+        Date.parse(createdAt),
+        true,
       ),
     ).toBe(false);
   });

@@ -25,8 +25,13 @@ import { notifySessionExpired, onSessionExpired } from "@/lib/session-expiry";
 import { validateStoredAuthSession } from "@/lib/auth-session-guard";
 import { setCentralAuthSessionPresent } from "@/lib/session-presence";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
-import { clearAutoLockActivity, markAutoLockActivity } from "@/lib/auto-lock";
+import {
+  clearAutoLockActivity,
+  markAutoLockActivity,
+  setSessionIdleMinutes,
+} from "@/lib/auto-lock";
 import { markStartupStage, resetStartupTiming } from "@/lib/startup-timing";
+import { setActivityAudienceIdentity } from "@/lib/activity-audience";
 import { bumpSessionEpoch, isCurrentEpoch, sessionEpoch } from "@/lib/session-epoch";
 import { awaitProfileHydrated } from "@/lib/connection-profile";
 import { hydrateTerminalConfig, readTerminalConfig } from "@/core/activation/terminal-tokens";
@@ -572,7 +577,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
           },
         });
-        if (started.ok) await saveSessionToken(started.token);
+        if (started.ok) {
+          await saveSessionToken(started.token);
+          setSessionIdleMinutes(started.idleMinutes);
+        }
       }
     } catch {
       /* the account token still works on its own */
@@ -622,6 +630,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         authTokenHash?: string;
         cashierToken?: string;
         sessionToken?: string;
+        idleMinutes?: number;
         cashier?: {
           id: string;
           username: string;
@@ -800,6 +809,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await saveCashierToken(cashierToken);
           if (sessionToken) {
             await saveSessionToken(sessionToken);
+            setSessionIdleMinutes(Number(verified?.idleMinutes ?? 0));
             // The hosted endpoint has verified the PIN, signed the cashier
             // identity and opened this server-side device session. In Electron
             // these are the authoritative credentials used by local SQL and
@@ -818,7 +828,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
               },
             });
-            if (started.ok) await saveSessionToken(started.token);
+            if (started.ok) {
+              await saveSessionToken(started.token);
+              setSessionIdleMinutes(started.idleMinutes);
+            }
           }
         }
       } catch {
@@ -857,7 +870,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return {
               ok: false,
               code: "session-open-failed",
-              error: "Your PIN was verified, but the secure database session could not be opened. Ask an administrator to repair this staff login.",
+              error:
+                "Your PIN was verified, but the secure database session could not be opened. Ask an administrator to repair this staff login.",
             };
           }
         }
@@ -1045,6 +1059,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (user) setSessionState("active");
   }, [user]);
 
+  useEffect(() => {
+    setActivityAudienceIdentity(
+      user
+        ? {
+            userIds: [user.staffId, user.email].filter(Boolean),
+            role: user.metaRole ?? user.roles[0] ?? user.role,
+            storeId: user.storeId,
+            terminalId: readTerminalConfig()?.tokenId ?? null,
+            mayViewGeneralActivity:
+              user.role === "admin" || user.permissions.can_view_audit_trail === true,
+          }
+        : null,
+    );
+    return () => setActivityAudienceIdentity(null);
+  }, [user]);
+
   // Local, per-terminal record of who signed in today. Lets a shift opened by
   // one cashier be continued by another while still showing every user.
   useEffect(() => {
@@ -1135,11 +1165,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // or server failure leaves the user's work and session untouched.
         const authCheck = await validateCentralAuthSession(true);
         setCentralAuthSessionPresent(Boolean(authCheck.session));
-        if (authCheck.state === "rejected") {
+        const creds = await readCredentials();
+        const hasIndependentPosProof = Boolean(
+          creds.sessionToken || creds.cashierToken || creds.terminalToken,
+        );
+        // A cashier PIN login can coexist with a secondary Supabase Auth
+        // session. If that browser token expires, keep the proven POS session
+        // and let the server validate its revocable device/cashier proof below.
+        if (authCheck.state === "rejected" && !hasIndependentPosProof) {
           notifySessionExpired();
           return;
         }
-        const creds = await readCredentials();
         if (!creds.cashierToken && !creds.terminalToken && !creds.accessToken) return;
         const startedAt = sessionEpoch();
         const { verifySession } = await import("@/lib/session-verify.functions");

@@ -1669,8 +1669,6 @@ export type Database = {
           company_name: string
           custom_lines: Json
           date_format: string
-          day_end_time: string
-          day_start_time: string
           enable_tax: boolean
           fonts: Json
           footer_text: string | null
@@ -1678,7 +1676,6 @@ export type Database = {
           id: number
           integration_settings: Json
           logo_data_url: string | null
-          max_shift_hours: number
           notification_settings: Json
           paper_size: string
           phone: string | null
@@ -1687,13 +1684,7 @@ export type Database = {
           receipt_design: Json
           reg_number: string | null
           region_country: string
-          review_max_discount_pct: number
-          review_max_nosale: number
-          review_max_refund_value: number
-          review_max_refunds: number
-          review_max_voids: number
           row_version: number
-          shift_reminder_minutes: number
           show_barcode: boolean
           show_logo: boolean
           show_points: boolean
@@ -1712,8 +1703,6 @@ export type Database = {
           company_name?: string
           custom_lines?: Json
           date_format?: string
-          day_end_time?: string
-          day_start_time?: string
           enable_tax?: boolean
           fonts?: Json
           footer_text?: string | null
@@ -1721,7 +1710,6 @@ export type Database = {
           id?: number
           integration_settings?: Json
           logo_data_url?: string | null
-          max_shift_hours?: number
           notification_settings?: Json
           paper_size?: string
           phone?: string | null
@@ -1730,13 +1718,7 @@ export type Database = {
           receipt_design?: Json
           reg_number?: string | null
           region_country?: string
-          review_max_discount_pct?: number
-          review_max_nosale?: number
-          review_max_refund_value?: number
-          review_max_refunds?: number
-          review_max_voids?: number
           row_version?: number
-          shift_reminder_minutes?: number
           show_barcode?: boolean
           show_logo?: boolean
           show_points?: boolean
@@ -1755,8 +1737,6 @@ export type Database = {
           company_name?: string
           custom_lines?: Json
           date_format?: string
-          day_end_time?: string
-          day_start_time?: string
           enable_tax?: boolean
           fonts?: Json
           footer_text?: string | null
@@ -1764,7 +1744,6 @@ export type Database = {
           id?: number
           integration_settings?: Json
           logo_data_url?: string | null
-          max_shift_hours?: number
           notification_settings?: Json
           paper_size?: string
           phone?: string | null
@@ -1773,13 +1752,7 @@ export type Database = {
           receipt_design?: Json
           reg_number?: string | null
           region_country?: string
-          review_max_discount_pct?: number
-          review_max_nosale?: number
-          review_max_refund_value?: number
-          review_max_refunds?: number
-          review_max_voids?: number
           row_version?: number
-          shift_reminder_minutes?: number
           show_barcode?: boolean
           show_logo?: boolean
           show_points?: boolean

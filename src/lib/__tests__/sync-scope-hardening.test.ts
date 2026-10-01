@@ -31,9 +31,9 @@ describe("scoped SQL Server synchronization", () => {
     const endpoint = read("src/lib/sync-endpoint.server.ts");
     const relay = read("src/core/api/pos-relay.server.ts");
     const main = read("electron/main.cjs");
-    expect(endpoint).toContain('p_terminal_id:scope.terminalId ?? ""');
+    expect(endpoint).toContain('p_terminal_id: scope.terminalId ?? ""');
     expect(endpoint).toContain('terminalSync && !scope.terminalId');
-    expect(endpoint).toContain('code:"TERMINAL_REQUIRED"');
+    expect(endpoint).toContain('code: "TERMINAL_REQUIRED"');
     expect(relay).toContain("terminalId = input.terminalToken");
     expect(main).toContain("const branchId=localBranchId()");
     expect(main).not.toContain("branchId:input.branchId??localBranchId()");

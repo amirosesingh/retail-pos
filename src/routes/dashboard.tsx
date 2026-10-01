@@ -28,6 +28,7 @@ import { useDrawerEvents } from "@/lib/drawer-events";
 import { hourlyProfit, profitOf } from "@/core/pricing/profit";
 import { paymentsLabel } from "@/core/types/pos-types";
 import { formatTime, posDayKey, posHour } from "@/lib/time-zone";
+import { defaultReviewThresholds } from "@/lib/pos-seed";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -53,7 +54,7 @@ export const Route = createFileRoute("/dashboard")({
 function Dashboard() {
   const { state, currentStore } = usePos();
   const drawer = useDrawerEvents();
-  const thresholds = state.settings.review;
+  const thresholds = defaultReviewThresholds;
 
   const today = posDayKey();
   const sales = useMemo(
@@ -87,7 +88,10 @@ function Dashboard() {
         const k = posDayKey(s.createdAt);
         if (buckets.has(k)) buckets.set(k, (buckets.get(k) ?? 0) + s.total);
       });
-    return Array.from(buckets, ([day, total]) => ({ day: day.slice(5), total: Number(total.toFixed(2)) }));
+    return Array.from(buckets, ([day, total]) => ({
+      day: day.slice(5),
+      total: Number(total.toFixed(2)),
+    }));
   }, [sales]);
 
   /** Transactions per hour today — shows the peak trading window. */
@@ -106,18 +110,35 @@ function Dashboard() {
     (d) => posDayKey(d.at) === today && d.storeId === currentStore.id,
   );
   const splitSales = live.filter(
-    (sale) => (sale.payments?.length ?? 0) > 1 || sale.payments?.some((payment) => payment.bankName),
+    (sale) =>
+      (sale.payments?.length ?? 0) > 1 || sale.payments?.some((payment) => payment.bankName),
   );
 
   /** Per-cashier behaviour with fixed thresholds plus relative outliers. */
   const cashiers = useMemo(() => {
     const map = new Map<
       string,
-      { name: string; bills: number; revenue: number; refunds: number; refundValue: number; discount: number; noSale: number }
+      {
+        name: string;
+        bills: number;
+        revenue: number;
+        refunds: number;
+        refundValue: number;
+        discount: number;
+        noSale: number;
+      }
     >();
     const get = (name: string) => {
       if (!map.has(name))
-        map.set(name, { name, bills: 0, revenue: 0, refunds: 0, refundValue: 0, discount: 0, noSale: 0 });
+        map.set(name, {
+          name,
+          bills: 0,
+          revenue: 0,
+          refunds: 0,
+          refundValue: 0,
+          discount: 0,
+          noSale: 0,
+        });
       return map.get(name)!;
     };
     todaySales.forEach((s) => {
@@ -142,8 +163,7 @@ function Dashboard() {
       const discountPct = r.revenue > 0 ? (r.discount / r.revenue) * 100 : 0;
       const flags: string[] = [];
       if (r.refunds > thresholds.maxRefunds) flags.push(`${r.refunds} refunds`);
-      if (r.refundValue > thresholds.maxRefundValue)
-        flags.push(`${money(r.refundValue)} refunded`);
+      if (r.refundValue > thresholds.maxRefundValue) flags.push(`${money(r.refundValue)} refunded`);
       if (r.noSale > thresholds.maxNoSaleOpens) flags.push(`${r.noSale} no-sale opens`);
       if (discountPct > thresholds.maxDiscountPct)
         flags.push(`${discountPct.toFixed(1)}% discounting`);
@@ -172,7 +192,10 @@ function Dashboard() {
           <Kpi label="Total COGS" value={money(profit.cogs)} />
           <Kpi label="Gross margin" value={`${margin.toFixed(1)}%`} />
           <Kpi label="Bills" value={String(live.length)} />
-          <Kpi label="Refunds" value={`${refunds.length} · ${money(refunds.reduce((a, s) => a + Math.abs(s.total), 0))}`} />
+          <Kpi
+            label="Refunds"
+            value={`${refunds.length} · ${money(refunds.reduce((a, s) => a + Math.abs(s.total), 0))}`}
+          />
           <Kpi label="No-sale drawer opens" value={String(todayDrawer.length)} />
         </div>
 
@@ -186,7 +209,13 @@ function Dashboard() {
                   <XAxis dataKey="day" fontSize={11} stroke="var(--muted-foreground)" />
                   <YAxis fontSize={11} stroke="var(--muted-foreground)" />
                   <Tooltip />
-                  <Line type="monotone" dataKey="total" stroke="var(--primary)" strokeWidth={2} dot={false} />
+                  <Line
+                    type="monotone"
+                    dataKey="total"
+                    stroke="var(--primary)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -200,7 +229,12 @@ function Dashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hourly}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="hour" fontSize={10} interval={2} stroke="var(--muted-foreground)" />
+                  <XAxis
+                    dataKey="hour"
+                    fontSize={10}
+                    interval={2}
+                    stroke="var(--muted-foreground)"
+                  />
                   <YAxis fontSize={11} allowDecimals={false} stroke="var(--muted-foreground)" />
                   <Tooltip />
                   <Bar dataKey="bills" fill="var(--primary)" radius={[4, 4, 0, 0]} />
@@ -221,8 +255,18 @@ function Dashboard() {
                 <XAxis dataKey="hour" fontSize={10} interval={2} stroke="var(--muted-foreground)" />
                 <YAxis fontSize={11} stroke="var(--muted-foreground)" />
                 <Tooltip />
-                <Bar dataKey="revenue" name="Revenue" fill="var(--muted-foreground)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="profit" name="Gross profit" fill="var(--primary)" radius={[4, 4, 0, 0]} />
+                <Bar
+                  dataKey="revenue"
+                  name="Revenue"
+                  fill="var(--muted-foreground)"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  dataKey="profit"
+                  name="Gross profit"
+                  fill="var(--primary)"
+                  radius={[4, 4, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -298,11 +342,10 @@ function Dashboard() {
             <TableBody>
               {todayDrawer.map((d) => (
                 <TableRow key={d.id}>
-                  <TableCell className="text-muted-foreground">
-                    {formatTime(d.at)}
-                  </TableCell>
+                  <TableCell className="text-muted-foreground">{formatTime(d.at)}</TableCell>
                   <TableCell>
-                    {d.staffName} <span className="text-[11px] text-muted-foreground">({d.role})</span>
+                    {d.staffName}{" "}
+                    <span className="text-[11px] text-muted-foreground">({d.role})</span>
                   </TableCell>
                   <TableCell>{d.reason}</TableCell>
                   <TableCell className="text-muted-foreground">{d.note || "—"}</TableCell>
@@ -334,15 +377,13 @@ function Dashboard() {
             </TableHeader>
             <TableBody>
               {splitSales.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="numeric">{s.receiptNo}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatTime(s.createdAt)}
-                    </TableCell>
-                    <TableCell>{paymentsLabel(s.payments)}</TableCell>
-                    <TableCell className="numeric text-right">{money(s.total)}</TableCell>
-                  </TableRow>
-                ))}
+                <TableRow key={s.id}>
+                  <TableCell className="numeric">{s.receiptNo}</TableCell>
+                  <TableCell className="text-muted-foreground">{formatTime(s.createdAt)}</TableCell>
+                  <TableCell>{paymentsLabel(s.payments)}</TableCell>
+                  <TableCell className="numeric text-right">{money(s.total)}</TableCell>
+                </TableRow>
+              ))}
               {!splitSales.length && (
                 <TableRow>
                   <TableCell colSpan={4} className="py-10 text-center text-muted-foreground">

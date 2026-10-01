@@ -46,16 +46,15 @@ export const Route = createFileRoute("/settings/catalog")({
   component: CatalogMetaSettings,
 });
 
-
 function ListEditor({
-kind,
-title,
-hint,
-placeholder,
-categories,
-allowed,
-onRename,
-onRemove,
+  kind,
+  title,
+  hint,
+  placeholder,
+  categories,
+  allowed,
+  onRename,
+  onRemove,
 }: {
   kind: CatalogKind;
   title: string;
@@ -116,7 +115,11 @@ onRemove,
         {items.map((item) => (
           <div key={item.id} className="flex items-center justify-between gap-2 px-3 py-2">
             <span className="flex min-w-0 items-center gap-2 truncate text-sm">
-              <span className={isActive(item) ? "truncate" : "truncate text-muted-foreground line-through"}>
+              <span
+                className={
+                  isActive(item) ? "truncate" : "truncate text-muted-foreground line-through"
+                }
+              >
                 {item.name}
               </span>
               {!isActive(item) && (
@@ -181,7 +184,6 @@ onRemove,
   );
 }
 
-
 function CatalogMetaSettings() {
   const { can } = useAuth();
   const allowed = can("can_manage_categories");
@@ -245,7 +247,7 @@ function CatalogMetaSettings() {
 
   return (
     <SettingsShell>
-      <div className="max-w-5xl space-y-6 p-6">
+      <div className="mx-auto w-full max-w-7xl space-y-6 p-6">
         <header>
           <h1 className="text-2xl font-semibold tracking-tight">Categories & Units</h1>
           <p className="text-sm text-muted-foreground">
@@ -345,7 +347,9 @@ function CatalogMetaSettings() {
                 <span className="numeric font-medium">{u.code}</span>
                 <span className="text-muted-foreground">{u.name}</span>
                 {u.allowDecimal && <span className="text-[10px] text-accent">decimal</span>}
-                {!isActive(u) && <span className="text-[10px] text-muted-foreground">inactive</span>}
+                {!isActive(u) && (
+                  <span className="text-[10px] text-muted-foreground">inactive</span>
+                )}
                 <Switch
                   checked={isActive(u)}
                   disabled={!allowed}

@@ -7,9 +7,9 @@
  * taken from the material parts of that picture, so the server can refuse an
  * approval whose ticket has since changed.
  *
- * The snapshot never carries anything about the customer beyond what the
- * decision needs — a name, the membership level and the points that are in
- * play. No address, no phone, no purchase history.
+ * The snapshot carries the member fields shown on the bill review. It remains
+ * deliberately bounded: contact and loyalty summary are retained, while
+ * addresses and purchase history are not copied into an approval request.
  */
 
 export type SnapshotLine = {
@@ -25,9 +25,13 @@ export type SnapshotLine = {
 
 export type SnapshotMember = {
   id: string;
+  code?: string;
   name: string;
+  phone?: string;
+  email?: string;
   tier?: string;
   points?: number;
+  totalSpend?: number;
 };
 
 export type TicketSnapshot = {
@@ -56,6 +60,24 @@ const num = (v: unknown): number => {
 };
 
 const text = (v: unknown, max = 200): string => String(v ?? "").slice(0, max);
+
+/** Keep enough contact context to identify a member without retaining it whole in history. */
+export function maskSnapshotPhone(value: unknown): string {
+  const raw = text(value, 60).trim();
+  if (!raw) return "";
+  if (raw.includes("•")) return raw;
+  const visible = raw.slice(-4);
+  return `${"•".repeat(Math.min(6, Math.max(2, raw.length - visible.length)))} ${visible}`;
+}
+
+export function maskSnapshotEmail(value: unknown): string {
+  const raw = text(value, 160).trim();
+  if (!raw) return "";
+  if (raw.includes("•")) return raw;
+  const at = raw.indexOf("@");
+  if (at <= 0) return `${raw.slice(0, 1)}•••`;
+  return `${raw.slice(0, 1)}•••${raw.slice(at)}`;
+}
 
 /** Coerce anything into a snapshot the approver can read and the server can compare. */
 export function normalizeSnapshot(input: unknown): TicketSnapshot | null {
@@ -98,11 +120,17 @@ export function normalizeSnapshot(input: unknown): TicketSnapshot | null {
     member: memberRow
       ? {
           id: text(memberRow["id"], 80),
+          ...(memberRow["code"] ? { code: text(memberRow["code"], 80) } : {}),
           name: text(memberRow["name"], 160),
+          ...(memberRow["phone"] ? { phone: maskSnapshotPhone(memberRow["phone"]) } : {}),
+          ...(memberRow["email"] ? { email: maskSnapshotEmail(memberRow["email"]) } : {}),
           ...(memberRow["tier"] ? { tier: text(memberRow["tier"], 60) } : {}),
           ...(memberRow["points"] === undefined || memberRow["points"] === null
             ? {}
             : { points: num(memberRow["points"]) }),
+          ...(memberRow["totalSpend"] === undefined || memberRow["totalSpend"] === null
+            ? {}
+            : { totalSpend: num(memberRow["totalSpend"]) }),
         }
       : null,
   };

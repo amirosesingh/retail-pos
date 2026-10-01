@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Sheet,
   SheetContent,
@@ -400,23 +401,23 @@ function Locations() {
                 {draft.kind === "warehouse" && (
                   <div className="space-y-3 rounded-md border border-border/70 bg-muted/30 p-3">
                     <label className="flex items-center gap-2 text-xs">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={draft.isCentral}
-                        onChange={(e) => setDraft({ ...draft, isCentral: e.target.checked })}
+                        onCheckedChange={(checked) =>
+                          setDraft({ ...draft, isCentral: checked === true })
+                        }
                       />
                       Central hub — all inbound stock is received here first
                     </label>
                     <label className="flex items-center gap-2 text-xs">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={draft.wantsSubs}
-                        onChange={(e) =>
+                        onCheckedChange={(checked) =>
                           setDraft({
                             ...draft,
-                            wantsSubs: e.target.checked,
+                            wantsSubs: checked === true,
                             subs:
-                              e.target.checked && draft.subs.length === 0
+                              checked === true && draft.subs.length === 0
                                 ? [
                                     { id: null, name: "Warehouse 1 — Ground Floor", primary: true },
                                     { id: null, name: "Warehouse 2 — Upper Floor", primary: false },

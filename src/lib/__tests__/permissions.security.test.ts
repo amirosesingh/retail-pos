@@ -32,6 +32,8 @@ const CASHIER_ALLOWED: PermissionKey[] = [
   "can_shift_cash_count",
   "can_process_sale",
   "can_hold_cart",
+  "can_view_held_orders",
+  "can_reopen_held_order",
   "can_reprint_bill",
   "can_manage_bookings",
   // Bookings are taken at the till: a cashier raises the booking and takes
@@ -64,6 +66,26 @@ const granted = (matrix: Record<string, boolean>) =>
 describe("permission presets", () => {
   it("cashiers keep exactly the till-floor permissions", () => {
     expect(granted(CASHIER_PERMISSIONS)).toEqual([...CASHIER_ALLOWED].sort());
+  });
+
+  it("keeps held-ticket visibility and actions independently configurable", () => {
+    const matrix = normalizePermissions({
+      can_hold_cart: true,
+      can_view_held_orders: false,
+      can_reopen_held_order: false,
+      can_discard_held_order: true,
+    });
+    expect(matrix.can_hold_cart).toBe(true);
+    expect(matrix.can_view_held_orders).toBe(false);
+    expect(matrix.can_reopen_held_order).toBe(false);
+    expect(matrix.can_discard_held_order).toBe(true);
+  });
+
+  it("maps an older hold permission to view and reopen only until the role is saved again", () => {
+    const matrix = normalizePermissions({ can_hold_cart: true });
+    expect(matrix.can_view_held_orders).toBe(true);
+    expect(matrix.can_reopen_held_order).toBe(true);
+    expect(matrix.can_discard_held_order).toBe(false);
   });
 
   it("warehouse users keep exactly the stock permissions", () => {
@@ -167,7 +189,9 @@ describe("permission tags", () => {
       expect(SUPERVISOR_PERMISSIONS[key], key).toBe(false);
     }
     expect(SUPERVISOR_PERMISSIONS.can_manage_terminals).toBe(true);
-    expect(normalizePermissions({ can_manage_terminals: false }, "supervisor").can_manage_terminals).toBe(true);
+    expect(
+      normalizePermissions({ can_manage_terminals: false }, "supervisor").can_manage_terminals,
+    ).toBe(true);
     expect(SUPERVISOR_PERMISSIONS.can_process_sale).toBe(true);
   });
 

@@ -936,8 +936,6 @@ export type AppSettings = {
   receipt: ReceiptSettings;
   payment: PaymentDetails;
   whatsapp: WhatsAppSettings;
-  review: ReviewThresholds;
-  hours: TradingHours;
   /** Domains, approval rules and other operational switches. */
   integrations: IntegrationSettings;
   /** Admin-controlled screen elements hidden from chosen roles. */

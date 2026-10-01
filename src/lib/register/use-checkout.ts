@@ -20,11 +20,20 @@ import { isoDaysFromNow } from "@/lib/register/use-booking-intake";
 import type { useBookingIntake } from "@/lib/register/use-booking-intake";
 import { cartTotals, money, usePos } from "@/lib/pos-store";
 import { db } from "@/core/api/pos-db";
+import { defaultTradingHours } from "@/lib/pos-seed";
 
 import { applyRounding, roundingOf } from "@/core/pricing/rounding";
 import { applyCombo, intakeTotals, newJobTag } from "@/lib/booking-charges";
 import { bookingRulesOf, paymentsLabel, r2, validateTenders } from "@/core/types/pos-types";
-import type { Store, CartLine, Payment, PaymentMethod, Sale, Booking, Member } from "@/core/types/pos-types";
+import type {
+  Store,
+  CartLine,
+  Payment,
+  PaymentMethod,
+  Sale,
+  Booking,
+  Member,
+} from "@/core/types/pos-types";
 import type { CartCoupon } from "@/lib/register/use-cart";
 import type { NewBooking } from "@/lib/pos-store";
 
@@ -132,7 +141,6 @@ export function useCheckout(deps: CheckoutDeps) {
     });
   }
 
-
   async function bookAndPayLater() {
     const activeShift = deps.getActiveShift();
     const currentStore = deps.getCurrentStore();
@@ -147,7 +155,12 @@ export function useCheckout(deps: CheckoutDeps) {
     const bookingRules = bookingRulesOf(state.settings.integrations.bookingRules);
     const racketMode = bi.bookMode === "racket";
     const combo = applyCombo(bi.intakeCharges, bookingRules);
-    const intake = intakeTotals(combo.charges, state.settings.tax, 0, state.settings.integrations.categoryMap);
+    const intake = intakeTotals(
+      combo.charges,
+      state.settings.tax,
+      0,
+      state.settings.integrations.categoryMap,
+    );
     const serviceCharge = racketMode ? intake.subtotal : 0;
     const bookingTotal = r2(totals.total + serviceCharge);
     const highTension =
@@ -173,7 +186,11 @@ export function useCheckout(deps: CheckoutDeps) {
     }
     if (!(await deps.requirePermission("can_create_booking"))) return;
     const paidNow =
-      bi.payTiming === "collection" ? 0 : bi.payTiming === "now" ? bookingTotal : r2(Math.max(0, Number(bi.deposit || 0)));
+      bi.payTiming === "collection"
+        ? 0
+        : bi.payTiming === "now"
+          ? bookingTotal
+          : r2(Math.max(0, Number(bi.deposit || 0)));
     if (paidNow > bookingTotal) {
       toast.error("Deposit cannot exceed the booking total");
       return;
@@ -206,7 +223,11 @@ export function useCheckout(deps: CheckoutDeps) {
         toast.error("Choose a ready-by date and time");
         return;
       }
-      if (bookingRules.requireLiabilityAccept && bookingRules.serviceTerms.trim() && !bi.liabilityOk) {
+      if (
+        bookingRules.requireLiabilityAccept &&
+        bookingRules.serviceTerms.trim() &&
+        !bi.liabilityOk
+      ) {
         toast.error("The customer must accept the service & liability terms", {
           description: highTension
             ? "This job is flagged high tension — acceptance is required."
@@ -216,7 +237,7 @@ export function useCheckout(deps: CheckoutDeps) {
       }
       if (bookingRules.warnOutsideTradingHours && bi.promisedAt) {
         const hhmm = bi.promisedAt.slice(11, 16);
-        const { dayStart, dayEnd } = state.settings.hours;
+        const { dayStart, dayEnd } = defaultTradingHours;
         if (dayStart && dayEnd && (hhmm < dayStart || hhmm > dayEnd))
           toast.warning(`Ready-by time is outside trading hours (${dayStart}–${dayEnd})`);
       }
@@ -228,7 +249,9 @@ export function useCheckout(deps: CheckoutDeps) {
     let booking: Booking;
     try {
       setSaving(true);
-      const serviceTypes = (state.settings.integrations.serviceTypes ?? []).filter((s) => s.active && s.name.trim());
+      const serviceTypes = (state.settings.integrations.serviceTypes ?? []).filter(
+        (s) => s.active && s.name.trim(),
+      );
       const pickedService = serviceTypes.find((s) => s.id === bi.serviceId) ?? null;
       const newBooking: NewBooking = {
         storeId: currentStore.id,
@@ -239,7 +262,9 @@ export function useCheckout(deps: CheckoutDeps) {
         tax: totals.tax,
         total: bookingTotal,
         serviceTypeId: racketMode ? pickedService?.id : undefined,
-        serviceName: racketMode ? (serviceLabel(pickedService, bi.customService) || undefined) : undefined,
+        serviceName: racketMode
+          ? serviceLabel(pickedService, bi.customService) || undefined
+          : undefined,
         serviceFee: serviceCharge || undefined,
         charges:
           racketMode && bi.intakeCharges.length
@@ -258,10 +283,13 @@ export function useCheckout(deps: CheckoutDeps) {
         customerPhone: bi.bookPhone.trim() || member?.phone || "",
         note: bi.bookNote.trim(),
         cashier: activeCashier,
-        tagId: racketMode ? bi.jobTag || (bookingRules.autoJobTag ? newJobTag() : undefined) : undefined,
+        tagId: racketMode
+          ? bi.jobTag || (bookingRules.autoJobTag ? newJobTag() : undefined)
+          : undefined,
         stringOrigin: racketMode ? (bi.stringCustomerOwned ? "customer" : "store") : undefined,
         liabilityAccepted: bi.liabilityOk,
-        stringProductId: racketMode && !bi.stringCustomerOwned ? bi.stringProductId || undefined : undefined,
+        stringProductId:
+          racketMode && !bi.stringCustomerOwned ? bi.stringProductId || undefined : undefined,
         intakeNote: racketMode ? bi.grommetNotes.trim() || undefined : undefined,
         job: racketMode
           ? {
@@ -336,7 +364,9 @@ export function useCheckout(deps: CheckoutDeps) {
     bi.setBookMode("cart");
     bi.setPayTiming("deposit");
     bi.setDueDate(isoDaysFromNow(14));
-    toast.success(`Booking ${booking.ref} reserved until ${new Date(booking.dueDate).toDateString()}`);
+    toast.success(
+      `Booking ${booking.ref} reserved until ${new Date(booking.dueDate).toDateString()}`,
+    );
   }
 
   async function completeSale() {
@@ -427,7 +457,12 @@ export function useCheckout(deps: CheckoutDeps) {
       toast.error(`Enter the serial / reference number for ${activeMethodName}`);
       return;
     }
-    if (!isRefund && !splitting && method === "points" && (member?.points ?? 0) < chargeTotal * 100) {
+    if (
+      !isRefund &&
+      !splitting &&
+      method === "points" &&
+      (member?.points ?? 0) < chargeTotal * 100
+    ) {
       toast.error("Not enough points on this member");
       return;
     }
@@ -439,7 +474,9 @@ export function useCheckout(deps: CheckoutDeps) {
             method,
             amount: r2(Math.abs(chargeTotal)),
             ...(method === "card" && bankName.trim() ? { bankName: bankName.trim() } : {}),
-            ...(method === "bank_transfer" && transferRef.trim() ? { ref: transferRef.trim() } : {}),
+            ...(method === "bank_transfer" && transferRef.trim()
+              ? { ref: transferRef.trim() }
+              : {}),
             ...(needsTenderRef
               ? {
                   requiresReference: true,
@@ -521,7 +558,6 @@ export function useCheckout(deps: CheckoutDeps) {
         });
       }
       return;
-
     } finally {
       setSaving(false);
     }
@@ -551,7 +587,9 @@ export function useCheckout(deps: CheckoutDeps) {
     deps.setMemberId(null);
     deps.resetTender();
     toast.success(
-      exchangeRef ? `Exchange ${sale.receiptNo} completed against ${exchangeRef}` : `Sale ${sale.receiptNo} completed`,
+      exchangeRef
+        ? `Exchange ${sale.receiptNo} completed against ${exchangeRef}`
+        : `Sale ${sale.receiptNo} completed`,
     );
 
     if (coupon) {
@@ -566,11 +604,16 @@ export function useCheckout(deps: CheckoutDeps) {
           billTotal: sale.total,
           storeId: sale.storeId,
         });
-      } catch { /* audit recovery must not break a completed checkout */ }
+      } catch {
+        /* audit recovery must not break a completed checkout */
+      }
     }
     if (payments.some((p) => p.method === "cash")) {
-      try { openCashDrawer(); }
-      catch (error) { notifyError(error, "Sale saved, but the drawer did not open"); }
+      try {
+        openCashDrawer();
+      } catch (error) {
+        notifyError(error, "Sale saved, but the drawer did not open");
+      }
     }
     if (voucherToken) {
       void redeemVoucher({
@@ -589,7 +632,9 @@ export function useCheckout(deps: CheckoutDeps) {
           tenders: paymentsLabel(payments),
           storeId: sale.storeId,
         });
-      } catch { /* audit recovery must not break a completed checkout */ }
+      } catch {
+        /* audit recovery must not break a completed checkout */
+      }
     }
     if (method === "bank_transfer") {
       try {
@@ -599,7 +644,9 @@ export function useCheckout(deps: CheckoutDeps) {
           transferRef: sale.transferRef,
           bank: state.settings.payment.bankName,
         });
-      } catch { /* audit recovery must not break a completed checkout */ }
+      } catch {
+        /* audit recovery must not break a completed checkout */
+      }
     }
     try {
       printSaleReceipt(sale, member, "sale");

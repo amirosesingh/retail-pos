@@ -3498,15 +3498,6 @@ IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NULL BEGIN CREATE TABLE dbo.[pos_sett
   [fonts] nvarchar(max) NOT NULL CONSTRAINT [DF_pos_settings_fonts] DEFAULT (N'{}'),
   [custom_lines] nvarchar(max) NOT NULL CONSTRAINT [DF_pos_settings_custom_lines] DEFAULT (N'[]'),
   [qr] nvarchar(max) NOT NULL CONSTRAINT [DF_pos_settings_qr] DEFAULT (N'{}'),
-  [review_max_voids] int NOT NULL CONSTRAINT [DF_pos_settings_review_max_voids] DEFAULT (5),
-  [review_max_refunds] int NOT NULL CONSTRAINT [DF_pos_settings_review_max_refunds] DEFAULT (3),
-  [review_max_refund_value] decimal(38,12) NOT NULL CONSTRAINT [DF_pos_settings_review_max_refund_value] DEFAULT (200),
-  [review_max_nosale] int NOT NULL CONSTRAINT [DF_pos_settings_review_max_nosale] DEFAULT (5),
-  [review_max_discount_pct] decimal(38,12) NOT NULL CONSTRAINT [DF_pos_settings_review_max_discount_pct] DEFAULT (15),
-  [day_start_time] nvarchar(max) NOT NULL CONSTRAINT [DF_pos_settings_day_start_time] DEFAULT ('09:00'),
-  [day_end_time] nvarchar(max) NOT NULL CONSTRAINT [DF_pos_settings_day_end_time] DEFAULT ('22:00'),
-  [max_shift_hours] decimal(38,12) NOT NULL CONSTRAINT [DF_pos_settings_max_shift_hours] DEFAULT (12),
-  [shift_reminder_minutes] int NOT NULL CONSTRAINT [DF_pos_settings_shift_reminder_minutes] DEFAULT (30),
   [ui_visibility] nvarchar(max) NOT NULL CONSTRAINT [DF_pos_settings_ui_visibility] DEFAULT (N'{"hidden": {}}'),
   [integration_settings] nvarchar(max) NOT NULL CONSTRAINT [DF_pos_settings_integration_settings] DEFAULT (N'{}'),
   [region_country] nvarchar(max) NOT NULL CONSTRAINT [DF_pos_settings_region_country] DEFAULT (''),
@@ -3723,123 +3714,6 @@ IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_set
 IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'qr' AND is_nullable=1) BEGIN
   EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [qr]=N''{}'' WHERE [qr] IS NULL;';
   ALTER TABLE dbo.[pos_settings] ALTER COLUMN [qr] nvarchar(max) NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.pos_settings', N'review_max_voids') IS NULL ALTER TABLE dbo.[pos_settings] ADD [review_max_voids] int NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'review_max_voids') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'review_max_voids'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_review_max_voids] DEFAULT (5) FOR [review_max_voids];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'review_max_voids' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [review_max_voids]=5 WHERE [review_max_voids] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [review_max_voids] int NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.pos_settings', N'review_max_refunds') IS NULL ALTER TABLE dbo.[pos_settings] ADD [review_max_refunds] int NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'review_max_refunds') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'review_max_refunds'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_review_max_refunds] DEFAULT (3) FOR [review_max_refunds];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'review_max_refunds' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [review_max_refunds]=3 WHERE [review_max_refunds] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [review_max_refunds] int NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.pos_settings', N'review_max_refund_value') IS NULL ALTER TABLE dbo.[pos_settings] ADD [review_max_refund_value] decimal(38,12) NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'review_max_refund_value') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'review_max_refund_value'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_review_max_refund_value] DEFAULT (200) FOR [review_max_refund_value];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'review_max_refund_value' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [review_max_refund_value]=200 WHERE [review_max_refund_value] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [review_max_refund_value] decimal(38,12) NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.pos_settings', N'review_max_nosale') IS NULL ALTER TABLE dbo.[pos_settings] ADD [review_max_nosale] int NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'review_max_nosale') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'review_max_nosale'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_review_max_nosale] DEFAULT (5) FOR [review_max_nosale];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'review_max_nosale' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [review_max_nosale]=5 WHERE [review_max_nosale] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [review_max_nosale] int NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.pos_settings', N'review_max_discount_pct') IS NULL ALTER TABLE dbo.[pos_settings] ADD [review_max_discount_pct] decimal(38,12) NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'review_max_discount_pct') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'review_max_discount_pct'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_review_max_discount_pct] DEFAULT (15) FOR [review_max_discount_pct];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'review_max_discount_pct' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [review_max_discount_pct]=15 WHERE [review_max_discount_pct] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [review_max_discount_pct] decimal(38,12) NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.pos_settings', N'day_start_time') IS NULL ALTER TABLE dbo.[pos_settings] ADD [day_start_time] nvarchar(max) NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'day_start_time') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'day_start_time'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_day_start_time] DEFAULT ('09:00') FOR [day_start_time];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'day_start_time' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [day_start_time]=''09:00'' WHERE [day_start_time] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [day_start_time] nvarchar(max) NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.pos_settings', N'day_end_time') IS NULL ALTER TABLE dbo.[pos_settings] ADD [day_end_time] nvarchar(max) NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'day_end_time') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'day_end_time'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_day_end_time] DEFAULT ('22:00') FOR [day_end_time];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'day_end_time' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [day_end_time]=''22:00'' WHERE [day_end_time] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [day_end_time] nvarchar(max) NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.pos_settings', N'max_shift_hours') IS NULL ALTER TABLE dbo.[pos_settings] ADD [max_shift_hours] decimal(38,12) NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'max_shift_hours') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'max_shift_hours'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_max_shift_hours] DEFAULT (12) FOR [max_shift_hours];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'max_shift_hours' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [max_shift_hours]=12 WHERE [max_shift_hours] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [max_shift_hours] decimal(38,12) NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.pos_settings', N'shift_reminder_minutes') IS NULL ALTER TABLE dbo.[pos_settings] ADD [shift_reminder_minutes] int NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'shift_reminder_minutes') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'shift_reminder_minutes'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_shift_reminder_minutes] DEFAULT (30) FOR [shift_reminder_minutes];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'shift_reminder_minutes' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [shift_reminder_minutes]=30 WHERE [shift_reminder_minutes] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [shift_reminder_minutes] int NOT NULL;
 END;
 
 IF COL_LENGTH(N'dbo.pos_settings', N'ui_visibility') IS NULL ALTER TABLE dbo.[pos_settings] ADD [ui_visibility] nvarchar(max) NULL;
@@ -10353,6 +10227,120 @@ END;
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.store_groups') AND c.name=N'updated_at' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[store_groups] ALTER COLUMN [updated_at] datetimeoffset(7) NOT NULL;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.store_groups') AND name=N'IX_store_groups_updated_at') CREATE INDEX [IX_store_groups_updated_at] ON dbo.[store_groups]([updated_at]);
+
+IF OBJECT_ID(N'dbo.change_history', N'U') IS NULL BEGIN CREATE TABLE dbo.[change_history] (
+
+  [id] uniqueidentifier NOT NULL CONSTRAINT [DF_change_history_id] DEFAULT (NEWID()),
+  [organization_id] nvarchar(450) NOT NULL CONSTRAINT [DF_change_history_organization_id] DEFAULT ('default'),
+  [entity_type] nvarchar(max) NOT NULL,
+  [entity_id] nvarchar(max) NOT NULL,
+  [action] nvarchar(max) NOT NULL,
+  [old_value] nvarchar(max) NULL,
+  [new_value] nvarchar(max) NULL,
+  [revision] bigint NOT NULL,
+  [scope_type] nvarchar(max) NOT NULL CONSTRAINT [DF_change_history_scope_type] DEFAULT ('GLOBAL'),
+  [scope_id] nvarchar(max) NULL,
+  [changed_by] nvarchar(max) NULL,
+  [source_application] nvarchar(max) NOT NULL CONSTRAINT [DF_change_history_source_application] DEFAULT ('web'),
+  [device_id] nvarchar(max) NULL,
+  [terminal_id] nvarchar(max) NULL,
+  [server_timestamp] datetimeoffset(7) NOT NULL CONSTRAINT [DF_change_history_server_timestamp] DEFAULT (SYSDATETIMEOFFSET()),
+  CONSTRAINT [PK_change_history] PRIMARY KEY ([id])
+
+); END;
+
+IF OBJECT_ID(N'dbo.change_history', N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.change_tracking_tables WHERE object_id=OBJECT_ID(N'dbo.change_history')) ALTER TABLE dbo.[change_history] ENABLE CHANGE_TRACKING;
+
+IF COL_LENGTH(N'dbo.change_history', N'id') IS NULL ALTER TABLE dbo.[change_history] ADD [id] uniqueidentifier NULL;
+
+IF OBJECT_ID(N'dbo.change_history', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.change_history', N'id') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.change_history') AND c.name=N'id'
+) ALTER TABLE dbo.[change_history] ADD CONSTRAINT [DF_change_history_id] DEFAULT (NEWID()) FOR [id];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.change_history') AND name=N'id' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[change_history] SET [id]=NEWID() WHERE [id] IS NULL;';
+  ALTER TABLE dbo.[change_history] ALTER COLUMN [id] uniqueidentifier NOT NULL;
+END;
+
+IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.change_history') AND c.name=N'id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[change_history] ALTER COLUMN [id] uniqueidentifier NOT NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'organization_id') IS NULL ALTER TABLE dbo.[change_history] ADD [organization_id] nvarchar(450) NULL;
+
+IF OBJECT_ID(N'dbo.change_history', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.change_history', N'organization_id') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.change_history') AND c.name=N'organization_id'
+) ALTER TABLE dbo.[change_history] ADD CONSTRAINT [DF_change_history_organization_id] DEFAULT ('default') FOR [organization_id];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.change_history') AND name=N'organization_id' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[change_history] SET [organization_id]=''default'' WHERE [organization_id] IS NULL;';
+  ALTER TABLE dbo.[change_history] ALTER COLUMN [organization_id] nvarchar(450) NOT NULL;
+END;
+
+IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.change_history') AND c.name=N'organization_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[change_history] ALTER COLUMN [organization_id] nvarchar(450) NOT NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'entity_type') IS NULL ALTER TABLE dbo.[change_history] ADD [entity_type] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'entity_id') IS NULL ALTER TABLE dbo.[change_history] ADD [entity_id] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'action') IS NULL ALTER TABLE dbo.[change_history] ADD [action] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'old_value') IS NULL ALTER TABLE dbo.[change_history] ADD [old_value] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'new_value') IS NULL ALTER TABLE dbo.[change_history] ADD [new_value] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'revision') IS NULL ALTER TABLE dbo.[change_history] ADD [revision] bigint NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'scope_type') IS NULL ALTER TABLE dbo.[change_history] ADD [scope_type] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.change_history', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.change_history', N'scope_type') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.change_history') AND c.name=N'scope_type'
+) ALTER TABLE dbo.[change_history] ADD CONSTRAINT [DF_change_history_scope_type] DEFAULT ('GLOBAL') FOR [scope_type];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.change_history') AND name=N'scope_type' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[change_history] SET [scope_type]=''GLOBAL'' WHERE [scope_type] IS NULL;';
+  ALTER TABLE dbo.[change_history] ALTER COLUMN [scope_type] nvarchar(max) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.change_history', N'scope_id') IS NULL ALTER TABLE dbo.[change_history] ADD [scope_id] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'changed_by') IS NULL ALTER TABLE dbo.[change_history] ADD [changed_by] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'source_application') IS NULL ALTER TABLE dbo.[change_history] ADD [source_application] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.change_history', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.change_history', N'source_application') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.change_history') AND c.name=N'source_application'
+) ALTER TABLE dbo.[change_history] ADD CONSTRAINT [DF_change_history_source_application] DEFAULT ('web') FOR [source_application];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.change_history') AND name=N'source_application' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[change_history] SET [source_application]=''web'' WHERE [source_application] IS NULL;';
+  ALTER TABLE dbo.[change_history] ALTER COLUMN [source_application] nvarchar(max) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.change_history', N'device_id') IS NULL ALTER TABLE dbo.[change_history] ADD [device_id] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'terminal_id') IS NULL ALTER TABLE dbo.[change_history] ADD [terminal_id] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.change_history', N'server_timestamp') IS NULL ALTER TABLE dbo.[change_history] ADD [server_timestamp] datetimeoffset(7) NULL;
+
+IF OBJECT_ID(N'dbo.change_history', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.change_history', N'server_timestamp') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.change_history') AND c.name=N'server_timestamp'
+) ALTER TABLE dbo.[change_history] ADD CONSTRAINT [DF_change_history_server_timestamp] DEFAULT (SYSDATETIMEOFFSET()) FOR [server_timestamp];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.change_history') AND name=N'server_timestamp' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[change_history] SET [server_timestamp]=SYSDATETIMEOFFSET() WHERE [server_timestamp] IS NULL;';
+  ALTER TABLE dbo.[change_history] ALTER COLUMN [server_timestamp] datetimeoffset(7) NOT NULL;
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.change_history') AND name=N'IX_change_history_organization_id') CREATE INDEX [IX_change_history_organization_id] ON dbo.[change_history]([organization_id]);
 
 IF OBJECT_ID(N'dbo.coupon_campaigns',N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.issued_vouchers') AND name=N'FK_issued_vouchers_campaign_id') ALTER TABLE dbo.[issued_vouchers] ADD CONSTRAINT [FK_issued_vouchers_campaign_id] FOREIGN KEY ([campaign_id]) REFERENCES dbo.[coupon_campaigns]([id]);
 

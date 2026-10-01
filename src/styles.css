@@ -5,7 +5,9 @@
 @custom-variant dark (&:is(.dark *));
 
 /* Compact cards key off the table's real content width, including sidebars and split panes. */
-.responsive-table-region { container-type: inline-size; }
+.responsive-table-region {
+  container-type: inline-size;
+}
 
 @container (max-width: 900px) {
   .responsive-table[data-mobile-cards="true"],
@@ -28,7 +30,9 @@
     border: 0;
   }
 
-  .responsive-table[data-mobile-cards="true"] tbody { padding: 0.5rem; }
+  .responsive-table[data-mobile-cards="true"] tbody {
+    padding: 0.5rem;
+  }
 
   .responsive-table[data-mobile-cards="true"] tbody tr {
     margin-bottom: 0.75rem;
@@ -56,7 +60,9 @@
     border-bottom: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
   }
 
-  .responsive-table[data-mobile-cards="true"] tbody td:last-child { border-bottom: 0; }
+  .responsive-table[data-mobile-cards="true"] tbody td:last-child {
+    border-bottom: 0;
+  }
 
   .responsive-table[data-mobile-cards="true"] tbody td::before {
     content: attr(data-label);
@@ -80,7 +86,9 @@
   }
 
   .responsive-table[data-mobile-cards="true"] tbody td[colspan]::before,
-  .responsive-table[data-mobile-cards="true"] tbody td[data-label=""]::before { content: none; }
+  .responsive-table[data-mobile-cards="true"] tbody td[data-label=""]::before {
+    content: none;
+  }
 
   .responsive-table[data-mobile-cards="true"] tbody td[data-label=""] {
     display: flex;
@@ -754,6 +762,13 @@
   }
 }
 
+/* Radix renders the shadcn Switch as a button. Keep its intended track size
+   instead of inheriting the register's full-size action-button minimum. */
+.pos-scaled button[data-slot="switch"] {
+  min-height: 1.5rem;
+  width: 2.75rem;
+}
+
 /* Frameless Electron window: the strip below the OS overlay drags the window,
    while interactive elements inside it stay clickable. */
 .app-drag {
@@ -810,8 +825,7 @@
 @media (pointer: fine) {
   * {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in oklab, var(--color-muted-foreground) 45%, transparent)
-      transparent;
+    scrollbar-color: color-mix(in oklab, var(--color-muted-foreground) 45%, transparent) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -949,13 +963,25 @@
 }
 
 @keyframes activity-table-row-in {
-  from { opacity: 0; transform: translateY(-0.35rem); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-0.35rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes activity-table-row-out {
-  from { opacity: 1; transform: translateX(0); }
-  to { opacity: 0; transform: translateX(0.75rem); }
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(0.75rem);
+  }
 }
 
 .activity-notification-row,

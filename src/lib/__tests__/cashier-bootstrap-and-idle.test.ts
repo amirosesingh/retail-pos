@@ -82,6 +82,15 @@ describe("continuous operator inactivity", () => {
     expect(auth).toContain("clearAutoLockActivity();");
     expect(auth).toContain("markAutoLockActivity();");
   });
+
+  it("uses one server-issued idle limit for screen lock and session expiry", () => {
+    const auth = read("src/lib/pos-auth.tsx");
+    const shell = read("src/platforms/web/components/pos/AppShell.tsx");
+    const guard = read("src/lib/session-guard.server.ts");
+    expect(auth).toContain("setSessionIdleMinutes(started.idleMinutes)");
+    expect(shell).toContain("sessionIdleSeconds()");
+    expect(guard).toContain("Math.min(own, branchDefault ?? DEFAULT_IDLE_MINUTES)");
+  });
 });
 
 describe("cashier location bootstrap", () => {
@@ -120,10 +129,10 @@ describe("cashier location bootstrap", () => {
   it("never replaces a real email password with a terminal approval PIN", () => {
     const staff = read("src/lib/staff-admin.server.ts");
     expect(staff).toContain("if (terminalAccount)");
-    expect(staff).toContain('email.endsWith(`@${INTERNAL_EMAIL_DOMAIN}`)');
+    expect(staff).toContain("email.endsWith(`@${INTERNAL_EMAIL_DOMAIN}`)");
     expect(staff).toContain("createVerifiedPinSignInToken");
     expect(staff.indexOf("if (terminalAccount)")).toBeLessThan(
-      staff.indexOf('body: JSON.stringify({ password: pin, email_confirm: true })'),
+      staff.indexOf("body: JSON.stringify({ password: pin, email_confirm: true })"),
     );
   });
 

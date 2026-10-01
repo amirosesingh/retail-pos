@@ -41,11 +41,14 @@ export async function queueRulesSave(input: {
   expectedVersion: number;
 }): Promise<QueuedRules> {
   const savedAt = Date.now();
+  // A pending local edit is a new revision. Reusing the cloud revision makes
+  // the next pull look equally new and can restore the old central values.
+  const nextVersion = Math.max(0, input.expectedVersion) + 1;
   const row: Record<string, unknown> = {
     store_id: input.branchId || "",
     ...input.patch,
     updated_at: new Date(savedAt).toISOString(),
-    row_version: input.expectedVersion,
+    row_version: nextVersion,
     base_version: input.expectedVersion,
   };
   if (input.actor) row["updated_by"] = input.actor;
@@ -66,7 +69,7 @@ export async function queueRulesSave(input: {
     syncedAt: savedAt,
     rules: input.rules,
     pending: true,
-    rowVersion: input.expectedVersion,
+    rowVersion: nextVersion,
     updatedAt: new Date(savedAt).toISOString(),
     updatedBy: input.actor ?? null,
   });
