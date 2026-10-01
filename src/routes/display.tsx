@@ -106,7 +106,7 @@ function CustomerDisplay() {
       </main>
     );
 
-  const idle = !snap || snap.mode === "idle" || snap.lines.length === 0;
+  const idle = !snap || snap.mode === "idle" || (snap.mode === "cart" && snap.lines.length === 0);
   if (idle)
     return (
       <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-8 text-foreground">

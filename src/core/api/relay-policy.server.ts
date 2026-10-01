@@ -142,6 +142,7 @@ const COLUMN_PERMISSIONS: Record<string, Record<string, string>> = {
     cost_price: "can_edit_product_price",
     ecom_price: "can_edit_product_price",
     landing_pct: "can_edit_product_price",
+    reorder_level: "can_edit_product_details",
     stock_quantity: "can_adjust_stock",
     stock_by_store: "can_adjust_stock",
   },

@@ -228,11 +228,29 @@ describe("central settings ownership UI", () => {
     expect(controls).toContain(">Edit values</Link>");
   });
 
-  it("creates an empty ownership marker instead of copying parent values", () => {
+  it("keeps a saved ownership patch and starts a new owner empty", () => {
     const store = read("src/lib/pos-store.tsx");
-    expect(store).toContain("Selecting an ownership tier must not copy inherited values");
-    expect(store).toMatch(/const patch: Record<string, unknown> = \{\};/);
+    expect(store).toContain("Re-selecting a tier must keep its saved values");
+    expect(store).toContain("scopeRef.current.overrides[tier][section] ?? {}");
     expect(store).not.toContain("pickSection(");
+  });
+
+  it("uses resolved settings when generating scoped stock references", () => {
+    const store = read("src/lib/pos-store.tsx");
+    const transfer = store.slice(
+      store.indexOf("const createTransfer = useCallback"),
+      store.indexOf("createTransferRef.current = createTransfer"),
+    );
+    expect(transfer).toContain("resolveScopedSettings(");
+    expect(transfer).toContain("scopeRef.current");
+    expect(transfer).not.toContain("stateRef.current.settings.integrations");
+  });
+
+  it("writes zero-stock lifecycle configuration only to the global record", () => {
+    const catalog = read("src/routes/settings.catalog.tsx");
+    expect(catalog).toContain("configuredGlobalSettings.integrations.autoArchiveZeroStock");
+    expect(catalog).toContain("updateGlobalSettings({");
+    expect(catalog).not.toContain("patchProducts(");
   });
 
   it("uses Store consistently in the inheritance interface while retaining BRANCH storage", () => {

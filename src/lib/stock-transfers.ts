@@ -21,6 +21,10 @@ type Row = Record<string, any>;
 
 export type TransferScope = "INTRA_GROUP" | "INTER_GROUP";
 
+/** Imported quantities use the same whole, nonnegative unit contract as submission. */
+export const normalizeTransferQuantity = (value: unknown): number =>
+  Math.max(0, Math.floor(Number(value) || 0));
+
 export const groupOf = (store: Store | undefined) => store?.groupId?.trim() || "default";
 
 /** Same cluster or across clusters? Drives the warning banner and the tabs. */

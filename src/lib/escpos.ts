@@ -129,7 +129,7 @@ function printerSafeText(s: string, encoding: SlipEncoding): string {
     .replace(/[‐‑‒–—―]/g, "-")
     .replace(/…/g, "...")
     .replace(/[•●]/g, "*")
-    .replace(/·/g, " | ")
+    .replace(/·/g, encoding === "ascii" ? " | " : "·")
     .replace(/→/g, "->")
     .replace(/←/g, "<-")
     .replace(/×/g, "x")

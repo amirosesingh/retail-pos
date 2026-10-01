@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { normalizeSnapshot } from "../ticket-snapshot";
+import { normalizeSnapshot, previewBillAfterDiscount } from "../ticket-snapshot";
 import { applyApprovedDiscount } from "../register/use-held-orders";
 import { cartTotals } from "../pos-store";
 
@@ -99,6 +99,36 @@ describe("approval bill details", () => {
     expect(cartTotals(applied.lines, applied.cartDiscount, applied.cartDiscountType).total).toBe(
       78,
     );
+  });
+
+  it("previews a bill discount from the pre-tax value after line discounts", () => {
+    const snapshot = normalizeSnapshot({
+      ticketId: "draft-42",
+      capturedAt: "2026-10-01T02:00:00.000Z",
+      storeId: "store-1",
+      terminalId: "till-2",
+      cashier: "Amina",
+      lines: [
+        { sku: "SKU-1", name: "Shuttlecock", qty: 2, unitPrice: 12, discount: 1, lineTotal: 23 },
+      ],
+      subtotal: 24,
+      discount: 1,
+      tax: 1.15,
+      serviceCharge: 0,
+      total: 24.15,
+    });
+
+    expect(snapshot).not.toBeNull();
+    expect(previewBillAfterDiscount(snapshot!, 10, "percent")).toBe(21.74);
+    expect(previewBillAfterDiscount(snapshot!, 30, "amount")).toBe(0);
+
+    expect(
+      previewBillAfterDiscount(
+        { ...snapshot!, tax: 1.1, serviceCharge: 2, total: 25 },
+        10,
+        "percent",
+      ),
+    ).toBe(22.7);
   });
 
   it("applies an approved fixed amount to the requested item", () => {

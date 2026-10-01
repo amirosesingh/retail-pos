@@ -35,6 +35,7 @@ import {
 import { subscribeApprovals } from "@/lib/approval-centre";
 import { syncNow } from "@/lib/sync-engine";
 import { lineDiscountTotal, r2 } from "@/core/types/pos-types";
+import { previewBillAfterDiscount } from "@/lib/ticket-snapshot";
 
 export const Route = createFileRoute("/approvals")({
   component: ApprovalsPage,
@@ -562,11 +563,7 @@ function ApprovalAmountReview({
       : null;
   const billAfter =
     snapshot && scope === "bill" && grant !== null
-      ? Math.max(
-          0,
-          snapshot.total -
-            (type === "percent" ? (snapshot.total * Math.min(100, grant)) / 100 : grant),
-        )
+      ? previewBillAfterDiscount(snapshot, grant, type)
       : null;
   return (
     <div className="space-y-2">

@@ -116,6 +116,8 @@ describe("canonical Supabase SQL", () => {
       expect(sql).toContain("FUNCTION public.backfill_zero_stock_catalog_lifecycle()");
       expect(sql).toContain("AFTER UPDATE OF integration_settings ON public.pos_settings");
       expect(sql).toContain("integration_settings ->> 'autoArchiveZeroStock'");
+      expect(sql).toContain("Reconcile products already present");
+      expect(sql).toContain("p.is_archived IS DISTINCT FROM NOT stock_state.has_stock");
       expect(sql).toContain(
         "REVOKE ALL ON FUNCTION public.apply_zero_stock_catalog_lifecycle() FROM PUBLIC, anon, authenticated",
       );
@@ -129,6 +131,14 @@ describe("canonical Supabase SQL", () => {
     const migration = read("supabase/migrations/20261001170000_granular_product_permissions.sql");
     expect(migration).toContain('DROP POLICY IF EXISTS "Staff can delete"');
     expect(migration).not.toContain('CREATE POLICY "Staff can delete"');
+  });
+
+  it("preserves explicit granular catalogue permissions during schema backfill", () => {
+    const schema = read("supabase/schema.sql");
+    expect(schema).toMatch(
+      /SET permissions = jsonb_build_object\([\s\S]*?'can_publish_product'[\s\S]*?\) \|\| permissions/,
+    );
+    expect(schema).not.toContain("SET permissions = permissions || jsonb_build_object(");
   });
 
   it("declares lifecycle state in the final product permission trigger", () => {

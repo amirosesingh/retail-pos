@@ -190,9 +190,15 @@ function CatalogMetaSettings() {
   const allowed = can("can_manage_categories");
   const categories = useCategories();
   const units = useUnits();
-  const { state, updateSettings, saveConfiguredSettings, settingsScopeLoading, patchProducts } =
-    usePos();
-  const autoArchiveZeroStock = state.settings.integrations.autoArchiveZeroStock === true;
+  const {
+    state,
+    configuredGlobalSettings,
+    updateGlobalSettings,
+    saveConfiguredSettings,
+    settingsScopeLoading,
+  } = usePos();
+  const autoArchiveZeroStock =
+    configuredGlobalSettings.integrations.autoArchiveZeroStock === true;
 
   const [unitCode, setUnitCode] = useState("");
   const [unitName, setUnitName] = useState("");
@@ -275,34 +281,11 @@ function CatalogMetaSettings() {
             onCheckedChange={(enabled) => {
               void (async () => {
                 try {
-                  const integrations = state.settings.integrations;
-                  updateSettings({
+                  const integrations = configuredGlobalSettings.integrations;
+                  updateGlobalSettings({
                     integrations: { ...integrations, autoArchiveZeroStock: enabled },
                   });
                   await saveConfiguredSettings();
-                  if (!enabled) return;
-                  const zero = state.products
-                    .filter((product) =>
-                      Object.values(product.stockByStore).every((qty) => qty <= 0),
-                    )
-                    .map((product) => product.id);
-                  const positiveArchived = state.products
-                    .filter(
-                      (product) =>
-                        product.archived &&
-                        Object.values(product.stockByStore).some((qty) => qty > 0),
-                    )
-                    .map((product) => product.id);
-                  // Lifecycle changes must not erase the merchant's saved
-                  // online-publication preference.
-                  // The database settings trigger performs the authoritative
-                  // backfill. Apply it immediately to the local catalogue only
-                  // when this operator also owns both lifecycle permissions.
-                  if (can("can_archive_product") && can("can_restore_product")) {
-                    if (zero.length) await patchProducts(zero, { archived: true });
-                    if (positiveArchived.length)
-                      await patchProducts(positiveArchived, { archived: false });
-                  }
                 } catch (error) {
                   notifyError(error, "Saving automatic catalogue archiving");
                 }

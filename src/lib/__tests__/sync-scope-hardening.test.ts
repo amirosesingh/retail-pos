@@ -96,6 +96,17 @@ describe("scoped SQL Server synchronization", () => {
     expect(operations).toContain("product_price:%");
     expect(operations).toContain("global: 0, cluster: 1, branch: 2, terminal: 3");
     expect(inventory).toContain("Use these prices only at {currentStore.name}");
+    expect(inventory).toContain(
+      "canCreate || canEditDetails || canPrice || canAdjustStock || canLinkBarcode",
+    );
+    expect(inventory).toContain(
+      "!canEditDetails && !canPrice && !canAdjustStock && !canLinkBarcode",
+    );
+    expect(inventory).toMatch(/\{showMoney && \(\s*<Field label="Cost">/);
+    expect(inventory).toMatch(/<Field label="Reorder level">\s*<Input\s*disabled=\{!canEditDetails\}/);
+    expect(read("src/core/api/relay-policy.server.ts")).toContain(
+      'reorder_level: "can_edit_product_details"',
+    );
     expect(inventory).toMatch(
       /upsertProductPriceOverride\(\s*draft\.id,\s*draft\.price,\s*draft\.ecomPrice,?\s*\)/,
     );
@@ -107,6 +118,20 @@ describe("scoped SQL Server synchronization", () => {
     expect(read("supabase/schema.sql")).toContain(
       "NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id",
     );
+  });
+
+  it("leaves zero-stock lifecycle decisions to the current database row", () => {
+    const store = read("src/lib/pos-store.tsx");
+    const catalog = read("src/routes/settings.catalog.tsx");
+    expect(store).not.toContain("autoArchiveReconciledRef");
+    expect(store).not.toContain("const zeroActive = state.products");
+    expect(catalog).not.toContain("patchProducts(");
+  });
+
+  it("keeps an empty booking visible on the customer display", () => {
+    const display = read("src/routes/display.tsx");
+    expect(display).toContain('(snap.mode === "cart" && snap.lines.length === 0)');
+    expect(display).not.toContain('snap.mode === "idle" || snap.lines.length === 0');
   });
 
   it("rejects generic local writes aimed at another branch or a central settings scope", () => {

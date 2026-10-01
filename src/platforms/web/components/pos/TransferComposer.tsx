@@ -33,7 +33,7 @@ import { Fact, Panel } from "@/platforms/web/components/pos/TransferWorkspace";
 import { stockAt, usePos } from "@/lib/pos-store";
 import { availableAt, planDeduction, subWarehouses } from "@/lib/locations";
 import { branchPolicy } from "@/lib/branch-policy";
-import { groupOf, scopeBetween } from "@/lib/stock-transfers";
+import { groupOf, normalizeTransferQuantity, scopeBetween } from "@/lib/stock-transfers";
 import { groupName, useStoreGroups } from "@/lib/store-groups";
 import type { TransferItem, TransferKind } from "@/core/types/pos-types";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
@@ -342,9 +342,11 @@ export function TransferComposer({
           setItems((current) => {
             const merged = current.map((line) => ({ ...line }));
             for (const row of rows) {
+              const quantity = normalizeTransferQuantity(row.quantity);
+              if (!quantity) continue;
               const hit = merged.find((line) => line.productId === row.product.id);
-              if (hit) hit.qty += row.quantity;
-              else merged.push({ productId: row.product.id, qty: row.quantity });
+              if (hit) hit.qty += quantity;
+              else merged.push({ productId: row.product.id, qty: quantity });
             }
             return merged;
           });

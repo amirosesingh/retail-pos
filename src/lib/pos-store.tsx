@@ -373,6 +373,8 @@ type Ctx = {
   removePromotion: (id: string) => Promise<void>;
   togglePromotion: (id: string, active: boolean) => Promise<void>;
   updateSettings: (patch: Partial<AppSettings>) => void;
+  /** Write directly to the company-wide record, bypassing inherited scopes. */
+  updateGlobalSettings: (patch: Partial<AppSettings>) => void;
   saveConfiguredSettings: () => Promise<void>;
   /** Which settings blocks each tier overrides, and which are locked globally. */
   settingsScope: BranchSettingsState;
@@ -2591,45 +2593,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
     [patchProducts],
   );
 
-  // Existing installations may already have the option enabled before the
-  // database lifecycle trigger is installed. Reconcile the loaded catalogue
-  // once per app start as well, in bounded batches, so zero-stock products do
-  // not remain active indefinitely and replenished products return immediately.
-  const autoArchiveReconciledRef = useRef(false);
-  useEffect(() => {
-    const enabled = state.settings.integrations.autoArchiveZeroStock === true;
-    if (!enabled) {
-      autoArchiveReconciledRef.current = false;
-      return;
-    }
-    if (!ready || autoArchiveReconciledRef.current || !state.products.length) return;
-    autoArchiveReconciledRef.current = true;
-    const zeroActive = state.products
-      .filter(
-        (product) =>
-          !product.archived && Object.values(product.stockByStore).every((qty) => qty <= 0),
-      )
-      .map((product) => product.id);
-    const positiveArchived = state.products
-      .filter(
-        (product) => product.archived && Object.values(product.stockByStore).some((qty) => qty > 0),
-      )
-      .map((product) => product.id);
-    void (async () => {
-      try {
-        for (let start = 0; start < zeroActive.length; start += 200) {
-          await patchProducts(zeroActive.slice(start, start + 200), { archived: true });
-        }
-        for (let start = 0; start < positiveArchived.length; start += 200) {
-          await patchProducts(positiveArchived.slice(start, start + 200), { archived: false });
-        }
-      } catch (error) {
-        autoArchiveReconciledRef.current = false;
-        notifyError(error, "Reconciling automatic catalogue archiving");
-      }
-    })();
-  }, [patchProducts, ready, state.products, state.settings.integrations.autoArchiveZeroStock]);
-
   /**
    * Folds duplicate product records into one master: branch stock is added
    * together and every losing barcode/SKU becomes an alias on the master, so
@@ -3093,9 +3056,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
       settingsWrites.current.revision++;
       try {
         if (on) {
-          // Selecting an ownership tier must not copy inherited values into
-          // the child. The first actual field edit adds only that field.
-          const patch: Record<string, unknown> = {};
+          // Re-selecting a tier must keep its saved values. A genuinely new
+          // owner starts empty so inherited values are not copied downward.
+          const patch: Record<string, unknown> = {
+            ...(scopeRef.current.overrides[tier][section] ?? {}),
+          };
           await saveSectionOverride(tier, target, section, patch, whoRef.current);
           setScope((s) => ({
             ...s,
@@ -3162,7 +3127,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const originStoreId = input.kind === "transfer" ? input.fromStoreId : input.toStoreId;
     const originCode =
       stateRef.current.stores.find((store) => store.id === originStoreId)?.code ?? "BR";
-    const integrations = stateRef.current.settings.integrations;
+    const integrations = resolveScopedSettings(
+      stateRef.current.settings,
+      scopeRef.current,
+      mergePatch,
+    ).settings.integrations;
     const numbering =
       series === "transfer"
         ? (integrations.transferNumbering ?? {})
@@ -3664,6 +3633,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     removePromotion,
     togglePromotion,
     updateSettings,
+    updateGlobalSettings: writeGlobalSettings,
     saveConfiguredSettings,
     createTransfer,
     approveTransfer,

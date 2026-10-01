@@ -392,7 +392,7 @@ export function normalizePermissions(
     "can_restore_product",
     "can_publish_product",
   ] as const) {
-    if (limited && !(key in raw)) base[key] = raw["can_add_new_product"] === true;
+    if (limited && !(key in raw)) base[key] = base.can_add_new_product === true;
   }
   // Terminal registration belongs to supervisors and administrators even when
   // an older stored matrix still carries the former supervisor default (false).

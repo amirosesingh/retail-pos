@@ -146,7 +146,7 @@ function Inventory() {
   const canBulk = can("can_bulk_edit_products");
   const canMerge = can("can_merge_products");
   const canEcom = canPublish;
-  const canOpenEditor = canCreate || canEditDetails || canPrice;
+  const canOpenEditor = canCreate || canEditDetails || canPrice || canAdjustStock || canLinkBarcode;
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Product | null>(null);
@@ -586,16 +586,18 @@ function Inventory() {
                           </div>
                         </Field>
                       )}
-                      <Field label="Cost">
-                        <Input
-                          disabled={!canPrice || branchPriceOnly}
-                          className="numeric"
-                          value={draft.cost}
-                          onChange={(e) =>
-                            setDraft({ ...draft, cost: Number(e.target.value) || 0 })
-                          }
-                        />
-                      </Field>
+                      {showMoney && (
+                        <Field label="Cost">
+                          <Input
+                            disabled={!canPrice || branchPriceOnly}
+                            className="numeric"
+                            value={draft.cost}
+                            onChange={(e) =>
+                              setDraft({ ...draft, cost: Number(e.target.value) || 0 })
+                            }
+                          />
+                        </Field>
+                      )}
                       <Field label={`Stock · ${currentStore.code}`}>
                         <Input
                           disabled={!canAdjustStock}
@@ -614,6 +616,7 @@ function Inventory() {
                       </Field>
                       <Field label="Reorder level">
                         <Input
+                          disabled={!canEditDetails}
                           className="numeric"
                           value={draft.reorderLevel}
                           onChange={(e) =>
@@ -940,7 +943,7 @@ function Inventory() {
                   <TableCell>
                     <button
                       className="text-left font-medium hover:text-primary"
-                      disabled={!canEditDetails && !canPrice}
+                      disabled={!canEditDetails && !canPrice && !canAdjustStock && !canLinkBarcode}
                       onClick={() => {
                         setBranchPriceOnly(false);
                         setDraft(p);

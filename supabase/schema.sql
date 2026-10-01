@@ -9143,13 +9143,13 @@ COMMENT ON TABLE public.settings_scoped IS
 -- Granular catalogue operations. Existing accounts keep their previous
 -- add-product behavior until an administrator tunes the new switches.
 UPDATE public.app_users
-SET permissions = permissions || jsonb_build_object(
+SET permissions = jsonb_build_object(
   'can_edit_product_details', COALESCE((permissions->>'can_add_new_product')::boolean, false),
   'can_link_product_barcode', COALESCE((permissions->>'can_add_new_product')::boolean, false),
   'can_archive_product', COALESCE((permissions->>'can_add_new_product')::boolean, false),
   'can_restore_product', COALESCE((permissions->>'can_add_new_product')::boolean, false),
   'can_publish_product', COALESCE((permissions->>'can_add_new_product')::boolean, false)
-)
+) || permissions
 WHERE NOT permissions ? 'can_edit_product_details'
    OR NOT permissions ? 'can_link_product_barcode'
    OR NOT permissions ? 'can_archive_product'
@@ -9306,6 +9306,38 @@ AFTER UPDATE OF integration_settings ON public.pos_settings
 FOR EACH ROW EXECUTE FUNCTION public.backfill_zero_stock_catalog_lifecycle();
 
 REVOKE ALL ON FUNCTION public.backfill_zero_stock_catalog_lifecycle() FROM PUBLIC, anon, authenticated;
+
+-- Reconcile products already present when this schema is applied to an
+-- installation whose lifecycle setting was enabled earlier. Future changes
+-- are handled by the two triggers above.
+WITH lifecycle AS (
+  SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, false) AS enabled
+    FROM public.pos_settings
+   WHERE id = 1
+), stock_state AS (
+  SELECT p.id,
+         EXISTS (
+           SELECT 1
+             FROM jsonb_each_text(COALESCE(p.stock_by_store, '{}'::jsonb))
+            WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
+              AND value::numeric > 0
+         ) AS has_stock
+    FROM public.products p
+)
+UPDATE public.products p
+   SET is_archived = NOT stock_state.has_stock,
+       archived_at = CASE
+         WHEN stock_state.has_stock THEN NULL
+         ELSE COALESCE(p.archived_at, now())
+       END
+  FROM lifecycle, stock_state
+ WHERE lifecycle.enabled
+   AND p.id = stock_state.id
+   AND (
+     p.is_archived IS DISTINCT FROM NOT stock_state.has_stock
+     OR (stock_state.has_stock AND p.archived_at IS NOT NULL)
+     OR (NOT stock_state.has_stock AND p.archived_at IS NULL)
+   );
 
 -- Close anonymous table access. Public coupon/member/terminal flows use the
 -- narrow SECURITY DEFINER routines granted above; visitors only need the

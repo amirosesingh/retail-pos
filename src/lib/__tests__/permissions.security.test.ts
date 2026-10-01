@@ -112,6 +112,16 @@ describe("permission presets", () => {
     expect(explicit.can_publish_product).toBe(false);
   });
 
+  it("migrates the legacy products alias into independent catalogue actions", () => {
+    const matrix = normalizePermissions({ products: true }, "warehouse");
+    expect(matrix.can_add_new_product).toBe(true);
+    expect(matrix.can_edit_product_details).toBe(true);
+    expect(matrix.can_link_product_barcode).toBe(true);
+    expect(matrix.can_archive_product).toBe(true);
+    expect(matrix.can_restore_product).toBe(true);
+    expect(matrix.can_publish_product).toBe(true);
+  });
+
   it("never grants cashiers money, settings or staff control", () => {
     for (const key of [
       "can_view_sales_reports",

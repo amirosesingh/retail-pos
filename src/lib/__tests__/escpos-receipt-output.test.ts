@@ -10,6 +10,10 @@ describe("thermal receipt output", () => {
     expect(output).not.toContain("?");
   });
 
+  it("keeps the middle dot when the selected printer code page supports it", () => {
+    expect(encodeText("A · B", "cp437")).toEqual([0x41, 0x20, 0xfa, 0x20, 0x42]);
+  });
+
   it("emits a length-prefixed Code 39 barcode", () => {
     const bytes = slipToBytes([{ text: "Receipt" }], { barcode: "RCPT-123" });
     const command = bytes.findIndex(
