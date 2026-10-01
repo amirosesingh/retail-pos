@@ -1,8 +1,13 @@
 import { StaffIdleTimeout } from "./StaffIdleTimeout";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ChevronDown,
+  ChevronRight,
+  Copy,
   KeyRound,
   Loader2,
+  Maximize2,
+  Minimize2,
   Pencil,
   Plus,
   RefreshCw,
@@ -124,6 +129,9 @@ export function StaffManager() {
   const [editing, setEditing] = useState<Row | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [permissionsFor, setPermissionsFor] = useState<Row | null>(null);
+  const [permissionGroupsOpen, setPermissionGroupsOpen] = useState<Set<string>>(
+    () => new Set(PERMISSION_GROUPS.map((group) => group.id)),
+  );
   const [deleteFor, setDeleteFor] = useState<Row | null>(null);
   const [confirmation, setConfirmation] = useState("");
   // The authorisation PIN is separate from signing in: it only approves a
@@ -481,9 +489,10 @@ export function StaffManager() {
                         variant="ghost"
                         title="Edit permissions"
                         disabled={offline}
-                        onClick={() =>
-                          setPermissionsFor({ ...row, permissions: { ...row.permissions } })
-                        }
+                        onClick={() => {
+                          setPermissionGroupsOpen(new Set(PERMISSION_GROUPS.map((g) => g.id)));
+                          setPermissionsFor({ ...row, permissions: { ...row.permissions } });
+                        }}
                       >
                         <KeyRound className="size-4" />
                       </Button>
@@ -712,38 +721,122 @@ export function StaffManager() {
               Changes apply to this account only. Administrators always retain full access.
             </DialogDescription>
           </DialogHeader>
+          {permissionsFor && (
+            <div className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-muted/30 p-3">
+              <label className="min-w-56 flex-1 space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Copy permissions from another account
+                </span>
+                <Select
+                  onValueChange={(userId) => {
+                    const source = rows.find((row) => row.user_id === userId);
+                    if (!source) return;
+                    setPermissionsFor({
+                      ...permissionsFor,
+                      permissions: { ...source.permissions },
+                    });
+                    toast.success(`Copied permissions from ${source.full_name}. Save to apply.`);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose staff account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {rows
+                      .filter((row) => row.user_id !== permissionsFor.user_id)
+                      .map((row) => (
+                        <SelectItem key={row.user_id} value={row.user_id}>
+                          {row.full_name} · {row.role_slug}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <Copy className="mb-2 size-4 text-muted-foreground" aria-hidden="true" />
+              <Button
+                size="icon"
+                variant="ghost"
+                className="bg-transparent shadow-none"
+                aria-label={
+                  permissionGroupsOpen.size === PERMISSION_GROUPS.length
+                    ? "Collapse all permission groups"
+                    : "Expand all permission groups"
+                }
+                title={
+                  permissionGroupsOpen.size === PERMISSION_GROUPS.length
+                    ? "Collapse all"
+                    : "Expand all"
+                }
+                onClick={() =>
+                  setPermissionGroupsOpen((current) =>
+                    current.size === PERMISSION_GROUPS.length
+                      ? new Set()
+                      : new Set(PERMISSION_GROUPS.map((group) => group.id)),
+                  )
+                }
+              >
+                {permissionGroupsOpen.size === PERMISSION_GROUPS.length ? (
+                  <Minimize2 className="size-4" />
+                ) : (
+                  <Maximize2 className="size-4" />
+                )}
+              </Button>
+            </div>
+          )}
           <div className="space-y-3">
             {permissionsFor &&
-              PERMISSION_GROUPS.map((group) => (
-                <section key={group.id} className="rounded-md border border-border">
-                  <h3 className="border-b border-border px-3 py-2 text-sm font-semibold">
-                    {group.label}
-                  </h3>
-                  <div className="grid gap-2 p-3 sm:grid-cols-2">
-                    {group.keys.map((key) => (
-                      <label key={key} className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={
-                            permissionsFor.role === "admin" ||
-                            permissionsFor.permissions[key as PermissionKey]
-                          }
-                          disabled={permissionsFor.role === "admin"}
-                          onCheckedChange={(checked) =>
-                            setPermissionsFor({
-                              ...permissionsFor,
-                              permissions: {
-                                ...permissionsFor.permissions,
-                                [key]: checked === true,
-                              },
-                            })
-                          }
-                        />
-                        <span>{PERMISSION_LABELS[key as PermissionKey]}</span>
-                      </label>
-                    ))}
-                  </div>
-                </section>
-              ))}
+              PERMISSION_GROUPS.map((group) => {
+                const open = permissionGroupsOpen.has(group.id);
+                return (
+                  <section key={group.id} className="rounded-md border border-border">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-semibold"
+                      aria-expanded={open}
+                      onClick={() =>
+                        setPermissionGroupsOpen((current) => {
+                          const next = new Set(current);
+                          if (open) next.delete(group.id);
+                          else next.add(group.id);
+                          return next;
+                        })
+                      }
+                    >
+                      <span>{group.label}</span>
+                      {open ? (
+                        <ChevronDown className="size-4" />
+                      ) : (
+                        <ChevronRight className="size-4" />
+                      )}
+                    </button>
+                    {open && (
+                      <div className="grid gap-2 border-t border-border p-3 sm:grid-cols-2">
+                        {group.keys.map((key) => (
+                          <label key={key} className="flex items-center gap-2 text-sm">
+                            <Checkbox
+                              checked={
+                                permissionsFor.role === "admin" ||
+                                permissionsFor.permissions[key as PermissionKey]
+                              }
+                              disabled={permissionsFor.role === "admin"}
+                              onCheckedChange={(checked) =>
+                                setPermissionsFor({
+                                  ...permissionsFor,
+                                  permissions: {
+                                    ...permissionsFor.permissions,
+                                    [key]: checked === true,
+                                  },
+                                })
+                              }
+                            />
+                            <span>{PERMISSION_LABELS[key as PermissionKey]}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPermissionsFor(null)}>

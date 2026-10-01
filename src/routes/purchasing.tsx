@@ -559,6 +559,12 @@ function Purchasing() {
       barcode: code,
       matched: false,
     });
+    if (!can("can_add_new_product")) {
+      toast.error("This barcode is not in the catalogue", {
+        description: "Add new products permission is required to create it during receiving.",
+      });
+      return;
+    }
     setDraftQty("1");
     setDraft({
       id: crypto.randomUUID(),
@@ -618,6 +624,9 @@ function Purchasing() {
 
   async function saveDraftInner() {
     if (!draft) return;
+    if (!can("can_add_new_product")) {
+      return toast.error("Add new products permission is required");
+    }
     if (!draft.name.trim()) return toast.error("Item name is required");
     if (!draft.price) return toast.error("Selling price is required");
     const qty = Math.max(1, Number(draftQty) || 1);

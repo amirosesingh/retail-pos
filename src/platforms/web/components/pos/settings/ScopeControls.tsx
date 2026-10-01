@@ -22,6 +22,7 @@ import {
 } from "@/lib/branch-settings";
 import {
   SECTION_BY_ID,
+  getPath,
   sectionAllowsTier,
   sectionOfPath,
   type SettingsSectionId,
@@ -70,6 +71,7 @@ export function SectionScope({
     setSectionLocked,
     scopeIds,
     currentStore,
+    sourceOfPath,
     saveConfiguredSettings,
     settingsScopeLoading,
   } = usePos();
@@ -80,6 +82,19 @@ export function SectionScope({
   const locked = !!settingsScope.locks[section];
   const active: SettingSource =
     [...allowedTiers].reverse().find((t) => settingsScope.overrides[t][section]) ?? "GLOBAL";
+  const activePatch = active === "GLOBAL" ? null : settingsScope.overrides[active][section];
+  const configuredHere =
+    !!activePatch && def.paths.some((path) => getPath(activePatch, path) !== undefined);
+  const effectiveSources = new Set(def.paths.map((path) => sourceOfPath(path)));
+  const inheritedSource = effectiveSources.size === 1 ? [...effectiveSources][0] : null;
+  const sourceText =
+    active === "GLOBAL"
+      ? "Global value · application default where unset"
+      : configuredHere
+        ? `Value configured here · ${TIER_LABELS[active]}`
+        : inheritedSource
+          ? `Inherited from ${TIER_LABELS[inheritedSource]}`
+          : "Inherited from multiple parent settings";
 
   const choose = async (tier: SettingSource) => {
     if (tier === active) return;
@@ -119,6 +134,7 @@ export function SectionScope({
       <div className="min-w-0">
         <p className="text-xs font-medium">{def.label}</p>
         <p className="text-[11px] text-muted-foreground">{def.blurb}</p>
+        <p className="mt-1 text-[11px] font-medium text-primary">{sourceText}</p>
       </div>
       <div className="ml-auto flex flex-wrap items-center gap-1">
         {(["GLOBAL", ...allowedTiers] as SettingSource[]).map((tier) => (
@@ -202,7 +218,7 @@ export function ScopePanel({
           ? "Business blocks use Branch → Cluster → Global. Terminal blocks use Terminal → Cluster → Global."
           : terminalScoped
             ? "Terminal overrides Cluster; Cluster overrides Global."
-            : "Branch overrides Cluster; Cluster overrides Global."}
+            : "Store overrides Cluster; Cluster overrides Global."}
       </p>
       {terminalScoped && (
         <label className="grid gap-1 text-xs">

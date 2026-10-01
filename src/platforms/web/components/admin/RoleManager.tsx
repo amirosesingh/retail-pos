@@ -4,8 +4,17 @@
  * Built-in roles keep their names and can never be removed; custom roles are
  * free to add, edit and delete while nobody holds them.
  */
-import { useEffect, useMemo, useState } from "react";
-import { Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +64,9 @@ export function RoleManager() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [base, setBase] = useState<StaffRole>("cashier");
+  const [openGroups, setOpenGroups] = useState<Set<string>>(
+    () => new Set(PERMISSION_GROUPS.map((group) => group.id)),
+  );
 
   const load = async () => {
     setLoading(true);
@@ -138,6 +150,33 @@ export function RoleManager() {
 
       <Separator />
 
+      <div className="flex justify-end gap-2">
+        <Button
+          size="icon"
+          variant="ghost"
+          className="bg-transparent shadow-none"
+          aria-label={
+            openGroups.size === PERMISSION_GROUPS.length
+              ? "Collapse all permission groups"
+              : "Expand all permission groups"
+          }
+          title={openGroups.size === PERMISSION_GROUPS.length ? "Collapse all" : "Expand all"}
+          onClick={() =>
+            setOpenGroups((current) =>
+              current.size === PERMISSION_GROUPS.length
+                ? new Set()
+                : new Set(PERMISSION_GROUPS.map((group) => group.id)),
+            )
+          }
+        >
+          {openGroups.size === PERMISSION_GROUPS.length ? (
+            <Minimize2 className="size-4" />
+          ) : (
+            <Maximize2 className="size-4" />
+          )}
+        </Button>
+      </div>
+
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-sm">
           <thead>
@@ -167,35 +206,58 @@ export function RoleManager() {
             </tr>
           </thead>
           <tbody>
-            {PERMISSION_GROUPS.map((group) => (
-              <>
-                <tr key={`g-${group.id}`} className="bg-muted/40">
-                  <td
-                    colSpan={columns.length + 1}
-                    className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
-                  >
-                    {group.label}
-                  </td>
-                </tr>
-                {group.keys.map((key) => (
-                  <tr key={key} className="border-b border-border/60">
-                    <td className="py-2 pr-2">{PERMISSION_LABELS[key as PermissionKey]}</td>
-                    {columns.map((r) => (
-                      <td key={`${r.slug}-${key}`} className="px-2 py-2 text-center">
-                        <Checkbox
-                          checked={!!r.permissions[key as PermissionKey]}
-                          disabled={saving === r.slug}
-                          onCheckedChange={(v) =>
-                            void toggle(r, key as PermissionKey, v === true)
-                          }
-                          aria-label={`${r.name}: ${PERMISSION_LABELS[key as PermissionKey]}`}
-                        />
-                      </td>
-                    ))}
+            {PERMISSION_GROUPS.map((group) => {
+              const expanded = openGroups.has(group.id);
+              return (
+                <Fragment key={group.id}>
+                  <tr key={`g-${group.id}`} className="bg-muted/40">
+                    <td
+                      colSpan={columns.length + 1}
+                      className="p-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+                    >
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between px-2 py-1.5 text-left"
+                        aria-expanded={expanded}
+                        onClick={() =>
+                          setOpenGroups((current) => {
+                            const next = new Set(current);
+                            if (expanded) next.delete(group.id);
+                            else next.add(group.id);
+                            return next;
+                          })
+                        }
+                      >
+                        <span>{group.label}</span>
+                        {expanded ? (
+                          <ChevronDown className="size-3" />
+                        ) : (
+                          <ChevronRight className="size-3" />
+                        )}
+                      </button>
+                    </td>
                   </tr>
-                ))}
-              </>
-            ))}
+                  {expanded &&
+                    group.keys.map((key) => (
+                      <tr key={key} className="border-b border-border/60">
+                        <td className="py-2 pr-2">{PERMISSION_LABELS[key as PermissionKey]}</td>
+                        {columns.map((r) => (
+                          <td key={`${r.slug}-${key}`} className="px-2 py-2 text-center">
+                            <Checkbox
+                              checked={!!r.permissions[key as PermissionKey]}
+                              disabled={saving === r.slug}
+                              onCheckedChange={(v) =>
+                                void toggle(r, key as PermissionKey, v === true)
+                              }
+                              aria-label={`${r.name}: ${PERMISSION_LABELS[key as PermissionKey]}`}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -49,6 +49,11 @@ const CASHIER_ALLOWED: PermissionKey[] = [
 const WAREHOUSE_ALLOWED: PermissionKey[] = [
   "can_view_inventory",
   "can_add_new_product",
+  "can_edit_product_details",
+  "can_link_product_barcode",
+  "can_archive_product",
+  "can_restore_product",
+  "can_publish_product",
   "can_receive_purchase_order",
   "can_adjust_stock",
   "can_create_transfer",
@@ -90,6 +95,21 @@ describe("permission presets", () => {
 
   it("warehouse users keep exactly the stock permissions", () => {
     expect(granted(WAREHOUSE_PERMISSIONS)).toEqual([...WAREHOUSE_ALLOWED].sort());
+  });
+
+  it("migrates the old add-product grant into independent catalogue actions", () => {
+    const matrix = normalizePermissions({ can_add_new_product: true }, "warehouse");
+    expect(matrix.can_edit_product_details).toBe(true);
+    expect(matrix.can_link_product_barcode).toBe(true);
+    expect(matrix.can_archive_product).toBe(true);
+    expect(matrix.can_restore_product).toBe(true);
+    expect(matrix.can_publish_product).toBe(true);
+
+    const explicit = normalizePermissions(
+      { can_add_new_product: true, can_publish_product: false },
+      "warehouse",
+    );
+    expect(explicit.can_publish_product).toBe(false);
   });
 
   it("never grants cashiers money, settings or staff control", () => {

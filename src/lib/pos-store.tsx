@@ -121,7 +121,6 @@ import {
   getPath,
   mergePatch,
   patchPaths,
-  pickSection,
   sectionAllowsTier,
   sectionOfPath,
   setPath,
@@ -161,10 +160,17 @@ export const reservedAt = (bookings: Booking[], productId: string, storeId: stri
 export const availableAt = (product: Product, storeId: string, bookings: Booking[] = []) =>
   stockAt(product, storeId) - reservedAt(bookings, product.id, storeId);
 
-const bump = (p: Product, storeId: string, delta: number): Product => ({
-  ...p,
-  stockByStore: { ...p.stockByStore, [storeId]: stockAt(p, storeId) + delta },
-});
+const bump = (p: Product, storeId: string, delta: number, lifecycle = false): Product => {
+  const hadStock = Object.values(p.stockByStore).some((qty) => qty > 0);
+  const stockByStore = { ...p.stockByStore, [storeId]: stockAt(p, storeId) + delta };
+  if (!lifecycle) return { ...p, stockByStore };
+  const hasStock = Object.values(stockByStore).some((qty) => qty > 0);
+  return {
+    ...p,
+    stockByStore,
+    archived: hadStock === hasStock ? p.archived : !hasStock,
+  };
+};
 
 type NewTransfer = {
   kind: TransferKind;
@@ -228,10 +234,11 @@ const bumpItems = (
   items: { productId: string; qty: number }[],
   storeId: string,
   sign: 1 | -1,
+  lifecycle = false,
 ) =>
   products.map((p) => {
     const item = items.find((i) => i.productId === p.id);
-    return item ? bump(p, storeId, sign * item.qty) : p;
+    return item ? bump(p, storeId, sign * item.qty, lifecycle) : p;
   });
 
 /** Where the first read of the shop's data has got to. */
@@ -1522,7 +1529,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         .filter((p) => input.lines.some((l) => l.productId === p.id))
         .map((p) => {
           const line = input.lines.find((l) => l.productId === p.id)!;
-          return bump(p, input.storeId, -line.qty);
+          return bump(
+            p,
+            input.storeId,
+            -line.qty,
+            snapshot.settings.integrations.autoArchiveZeroStock === true,
+          );
         });
       const member = snapshot.members.find((m) => m.id === input.memberId) ?? null;
       const updatedMember = member
@@ -1568,7 +1580,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setState((s) => {
         const products = s.products.map((p) => {
           const line = input.lines.find((l) => l.productId === p.id);
-          return line ? bump(p, input.storeId, -line.qty) : p;
+          return line
+            ? bump(
+                p,
+                input.storeId,
+                -line.qty,
+                s.settings.integrations.autoArchiveZeroStock === true,
+              )
+            : p;
         });
         const members = s.members.map((m) =>
           m.id === input.memberId
@@ -2166,7 +2185,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         if (!sale || sale.refunded) return s;
         const products = s.products.map((p) => {
           const line = sale.lines.find((l) => l.productId === p.id);
-          return line ? bump(p, sale.storeId, line.qty) : p;
+          return line
+            ? bump(p, sale.storeId, line.qty, s.settings.integrations.autoArchiveZeroStock === true)
+            : p;
         });
         return {
           ...s,
@@ -2624,7 +2645,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
       updatedStock: before ? stockAt(before, target) + delta : null,
     });
     if (!before) return null;
-    const updated = bump(before, target, delta);
+    const updated = bump(
+      before,
+      target,
+      delta,
+      stateRef.current.settings.integrations.autoArchiveZeroStock === true,
+    );
     const committed = await db.commitStockAdjustments(
       [updated],
       [
@@ -2644,7 +2670,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setState((s) => ({
       ...s,
       products: s.products.map((p) =>
-        p.id === id ? bump(p, storeId ?? s.currentStoreId, delta) : p,
+        p.id === id
+          ? bump(
+              p,
+              storeId ?? s.currentStoreId,
+              delta,
+              s.settings.integrations.autoArchiveZeroStock === true,
+            )
+          : p,
       ),
     }));
     return committed;
@@ -3018,10 +3051,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
       settingsWrites.current.revision++;
       try {
         if (on) {
-          const patch = pickSection(
-            resolveScopedSettings(stateRef.current.settings, scopeRef.current, mergePatch).settings,
-            def,
-          );
+          // Selecting an ownership tier must not copy inherited values into
+          // the child. The first actual field edit adds only that field.
+          const patch: Record<string, unknown> = {};
           await saveSectionOverride(tier, target, section, patch, whoRef.current);
           setScope((s) => ({
             ...s,
@@ -3228,7 +3260,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
       setState((s) => ({
         ...s,
-        products: bumpItems(s.products, moving, before.fromStoreId, -1),
+        products: bumpItems(
+          s.products,
+          moving,
+          before.fromStoreId,
+          -1,
+          s.settings.integrations.autoArchiveZeroStock === true,
+        ),
         transfers: s.transfers.map((x) =>
           x.id === id
             ? {
@@ -3385,7 +3423,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
       setState((s) => ({
         ...s,
-        products: bumpItems(s.products, arriving, before.toStoreId, 1),
+        products: bumpItems(
+          s.products,
+          arriving,
+          before.toStoreId,
+          1,
+          s.settings.integrations.autoArchiveZeroStock === true,
+        ),
         transfers: s.transfers.map((x) =>
           x.id === id
             ? {
@@ -3451,7 +3495,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setState((s) => ({
       ...s,
       products: returning.length
-        ? bumpItems(s.products, returning, before.fromStoreId, 1)
+        ? bumpItems(
+            s.products,
+            returning,
+            before.fromStoreId,
+            1,
+            s.settings.integrations.autoArchiveZeroStock === true,
+          )
         : s.products,
       transfers: s.transfers.map((x) =>
         x.id === id

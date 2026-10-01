@@ -30,6 +30,22 @@ describe("resolveScopedSettings", () => {
     expect(out.settings).toBe(base);
   });
 
+  it("does not duplicate inherited values when an empty child scope is selected", () => {
+    const base = { tax: { rate: 5 } };
+    const out = resolveScopedSettings(
+      base,
+      scope({ overrides: { CLUSTER: {}, BRANCH: { tax: {} }, TERMINAL: {} } }),
+      (target, patch) => ({
+        ...target,
+        tax: { ...target.tax, ...((patch as { tax?: object }).tax ?? {}) },
+      }),
+    );
+    expect(out.settings.tax.rate).toBe(5);
+    expect(
+      scope({ overrides: { CLUSTER: {}, BRANCH: { tax: {} }, TERMINAL: {} } }).overrides.BRANCH.tax,
+    ).toEqual({});
+  });
+
   it("lets a cluster override the global record", () => {
     const out = resolveScopedSettings(
       { taxRate: 5 },
@@ -210,5 +226,12 @@ describe("central settings ownership UI", () => {
     expect(controls).not.toContain('setSettingsTerminalId("");');
     expect(controls).toContain("sectionRoutes?.[id]");
     expect(controls).toContain(">Edit values</Link>");
+  });
+
+  it("creates an empty ownership marker instead of copying parent values", () => {
+    const store = read("src/lib/pos-store.tsx");
+    expect(store).toContain("Selecting an ownership tier must not copy inherited values");
+    expect(store).toMatch(/const patch: Record<string, unknown> = \{\};/);
+    expect(store).not.toContain("pickSection(");
   });
 });

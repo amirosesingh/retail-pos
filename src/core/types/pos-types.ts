@@ -1014,6 +1014,8 @@ export type IntegrationSettings = {
   requestNumbering?: import("@/lib/stock-ref").StockNumberingSettings;
   /** How branch stock-transfer references are built. */
   transferNumbering?: import("@/lib/stock-ref").StockNumberingSettings;
+  /** Retire products when company-wide stock reaches zero; restore on replenishment. */
+  autoArchiveZeroStock?: boolean;
   /** Cash-rounding of the final bill total. */
   rounding?: RoundingSettings;
 };

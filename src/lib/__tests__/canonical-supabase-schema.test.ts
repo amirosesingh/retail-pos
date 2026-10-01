@@ -71,6 +71,9 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261001043000_prevent_equal_version_rule_overwrite.sql",
       "supabase/migrations/20261001090000_remove_trading_policy.sql",
       "supabase/migrations/20261001133000_define_terminal_active_guard.sql",
+      "supabase/migrations/20261001160000_auto_archive_zero_stock_products.sql",
+      "supabase/migrations/20261001170000_granular_product_permissions.sql",
+      "supabase/migrations/20261001180000_retire_parallel_settings_api.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -99,6 +102,53 @@ describe("canonical Supabase SQL", () => {
         migration.slice(start, migration.indexOf("END $fn$;", start)),
         `${routine} must dispatch shift_notifications`,
       ).toContain("shift_notifications");
+    }
+  });
+
+  it("keeps the optional zero-stock catalogue lifecycle in the canonical schema", () => {
+    const migration = read(
+      "supabase/migrations/20261001160000_auto_archive_zero_stock_products.sql",
+    );
+    const schema = read("supabase/schema.sql");
+    for (const sql of [migration, schema]) {
+      expect(sql).toContain("FUNCTION public.apply_zero_stock_catalog_lifecycle()");
+      expect(sql).toContain("BEFORE INSERT OR UPDATE OF stock_by_store ON public.products");
+      expect(sql).toContain("FUNCTION public.backfill_zero_stock_catalog_lifecycle()");
+      expect(sql).toContain("AFTER UPDATE OF integration_settings ON public.pos_settings");
+      expect(sql).toContain("integration_settings ->> 'autoArchiveZeroStock'");
+      expect(sql).toContain(
+        "REVOKE ALL ON FUNCTION public.apply_zero_stock_catalog_lifecycle() FROM PUBLIC, anon, authenticated",
+      );
+      expect(sql).toContain(
+        "REVOKE ALL ON FUNCTION public.backfill_zero_stock_catalog_lifecycle() FROM PUBLIC, anon, authenticated",
+      );
+    }
+  });
+
+  it("archives catalogue products without exposing permanent client deletion", () => {
+    const migration = read("supabase/migrations/20261001170000_granular_product_permissions.sql");
+    expect(migration).toContain('DROP POLICY IF EXISTS "Staff can delete"');
+    expect(migration).not.toContain('CREATE POLICY "Staff can delete"');
+  });
+
+  it("declares lifecycle state in the final product permission trigger", () => {
+    const schema = read("supabase/schema.sql");
+    const start = schema.lastIndexOf(
+      "CREATE OR REPLACE FUNCTION public.enforce_product_price_permissions()",
+    );
+    const body = schema.slice(start, start + 5_000);
+    expect(body).toMatch(/AS \$\$\s*DECLARE/);
+    expect(body).toContain("automatic_lifecycle_change boolean := false");
+  });
+
+  it("keeps one authoritative POS settings runtime", () => {
+    const migration = read("supabase/migrations/20261001180000_retire_parallel_settings_api.sql");
+    const schema = read("supabase/schema.sql");
+    for (const sql of [migration, schema]) {
+      expect(sql).toContain(
+        "REVOKE EXECUTE ON FUNCTION public.settings_upsert(text, text, jsonb) FROM anon, authenticated",
+      );
+      expect(sql).toContain("scoped product-price overrides only");
     }
   });
 

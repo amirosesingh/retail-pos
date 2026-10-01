@@ -45,6 +45,19 @@ export type BoardData = {
   storeNames: Record<string, string>;
 };
 
+/** Current branch names win; sale snapshots only retain names for deleted branches. */
+export function resolveStoreNames(
+  directory: { id: unknown; name: unknown }[],
+  bills: { store_id: unknown; store_name_snapshot: unknown }[],
+): Record<string, string> {
+  return Object.fromEntries([
+    ...bills
+      .filter((row) => row.store_id && row.store_name_snapshot)
+      .map((row) => [String(row.store_id), String(row.store_name_snapshot)]),
+    ...directory.map((row) => [String(row.id), String(row.name || "Unnamed shop")]),
+  ]);
+}
+
 const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0) || 0);
 
 /** `to` is inclusive, so the upper bound is pushed to the end of that day. */
@@ -164,15 +177,8 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
       discount_amount: n(r.discount_amount),
       coupon_discount: n(r.coupon_discount),
     })),
-    storeNames: Object.fromEntries([
-      ...(directoryRes.data ?? []).map((row) => [
-        String(row.id),
-        String(row.name || "Unnamed shop"),
-      ]),
-      ...(billRes.data ?? [])
-        .filter((row) => row.store_id && row.store_name_snapshot)
-        .map((row) => [String(row.store_id), String(row.store_name_snapshot)]),
-    ]),
+    // Live directory names override historical sale snapshots.
+    storeNames: resolveStoreNames(directoryRes.data ?? [], billRes.data ?? []),
   };
 }
 

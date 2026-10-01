@@ -1,14 +1,6 @@
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
-import {
-  Loader2,
-  LogOut,
-  Menu,
-  MapPin,
-  ReceiptText,
-  Settings as SettingsIcon,
-  Store,
-} from "lucide-react";
+import { Loader2, LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { usePos } from "@/lib/pos-store";
 import { useAuth, type PermissionFlag } from "@/lib/pos-auth";
@@ -520,19 +512,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   <UpdateHeaderButton />
                 </span>
                 <span className="hidden sm:inline-flex">
-                  <Button
-                    asChild
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0"
-                    aria-label="Settings"
-                  >
-                    <Link to="/settings">
-                      <SettingsIcon className="size-4" />
-                    </Link>
-                  </Button>
-                </span>
-                <span className="hidden sm:inline-flex">
                   <ThemeToggle />
                 </span>
                 <ProfileMenu />
@@ -560,17 +539,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 <span className="hidden lg:inline-flex">
                   <UpdateHeaderButton />
                 </span>
-                <Button
-                  asChild
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0"
-                  aria-label="Settings"
-                >
-                  <Link to="/settings">
-                    <SettingsIcon className="size-4" />
-                  </Link>
-                </Button>
                 <ThemeToggle />
                 <ProfileMenu />
               </header>

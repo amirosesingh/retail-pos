@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { encodeText, slipToBytes } from "@/lib/escpos";
+import { barcodeSvg } from "@/lib/pos-print";
 
 describe("thermal receipt output", () => {
   it("transliterates receipt punctuation instead of printing question marks", () => {
@@ -17,5 +18,13 @@ describe("thermal receipt output", () => {
     expect(command).toBeGreaterThan(-1);
     expect(bytes[command + 3]).toBe(8);
     expect(String.fromCharCode(...bytes.slice(command + 4, command + 12))).toBe("RCPT-123");
+  });
+
+  it("prints browser barcodes as SVG with scanner quiet zones", () => {
+    const html = barcodeSvg("RCPT-123");
+    expect(html).toContain("<svg");
+    expect(html).toContain('preserveAspectRatio="xMidYMid meet"');
+    expect(html).toContain('<rect x="20"');
+    expect(html).toContain("RCPT-123");
   });
 });

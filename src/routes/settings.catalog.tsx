@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/pos-auth";
+import { notifyError } from "@/lib/notify";
 import {
   deleteCategory,
   deleteUnit,
@@ -189,7 +190,9 @@ function CatalogMetaSettings() {
   const allowed = can("can_manage_categories");
   const categories = useCategories();
   const units = useUnits();
-  const { state } = usePos();
+  const { state, updateSettings, saveConfiguredSettings, settingsScopeLoading, patchProducts } =
+    usePos();
+  const autoArchiveZeroStock = state.settings.integrations.autoArchiveZeroStock === true;
 
   const [unitCode, setUnitCode] = useState("");
   const [unitName, setUnitName] = useState("");
@@ -256,6 +259,57 @@ function CatalogMetaSettings() {
             say.
           </p>
         </header>
+
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4">
+          <div>
+            <p className="font-medium">Automatically archive zero-stock products</p>
+            <p className="text-xs text-muted-foreground">
+              Products with no stock in any branch leave the active catalogue. Receiving positive
+              stock restores them automatically.
+            </p>
+          </div>
+          <Switch
+            checked={autoArchiveZeroStock}
+            disabled={!allowed || settingsScopeLoading}
+            aria-label="Automatically archive zero-stock products"
+            onCheckedChange={(enabled) => {
+              void (async () => {
+                try {
+                  const integrations = state.settings.integrations;
+                  updateSettings({
+                    integrations: { ...integrations, autoArchiveZeroStock: enabled },
+                  });
+                  await saveConfiguredSettings();
+                  if (!enabled) return;
+                  const zero = state.products
+                    .filter((product) =>
+                      Object.values(product.stockByStore).every((qty) => qty <= 0),
+                    )
+                    .map((product) => product.id);
+                  const positiveArchived = state.products
+                    .filter(
+                      (product) =>
+                        product.archived &&
+                        Object.values(product.stockByStore).some((qty) => qty > 0),
+                    )
+                    .map((product) => product.id);
+                  // Lifecycle changes must not erase the merchant's saved
+                  // online-publication preference.
+                  // The database settings trigger performs the authoritative
+                  // backfill. Apply it immediately to the local catalogue only
+                  // when this operator also owns both lifecycle permissions.
+                  if (can("can_archive_product") && can("can_restore_product")) {
+                    if (zero.length) await patchProducts(zero, { archived: true });
+                    if (positiveArchived.length)
+                      await patchProducts(positiveArchived, { archived: false });
+                  }
+                } catch (error) {
+                  notifyError(error, "Saving automatic catalogue archiving");
+                }
+              })();
+            }}
+          />
+        </div>
 
         {!allowed && (
           <p className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">

@@ -20,7 +20,8 @@ export type SettingSource = "GLOBAL" | SettingTier;
 export const TIER_LABELS: Record<SettingSource, string> = {
   GLOBAL: "Global",
   CLUSTER: "Cluster",
-  BRANCH: "Branch",
+  // BRANCH is the persisted compatibility value; in the UI it is the store scope.
+  BRANCH: "Store",
   TERMINAL: "Terminal",
 };
 

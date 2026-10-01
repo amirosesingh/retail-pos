@@ -263,8 +263,10 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
           variant="ghost"
           size="icon"
           aria-label={badge ? `Approvals and activity: ${badge} new` : "Approvals and activity"}
-          title="Approvals and activity"
-          className={cn("relative shrink-0", badge ? "text-primary" : "")}
+          className={cn(
+            "relative shrink-0 bg-transparent shadow-none hover:bg-transparent",
+            badge ? "text-primary" : "",
+          )}
         >
           <Bell className="size-4" />
           {badge > 0 && (

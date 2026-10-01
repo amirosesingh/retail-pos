@@ -58,6 +58,8 @@ export function ProductSearchDialog({
   onAdd,
   onLinkBarcode,
   onCreateProduct,
+  canLinkBarcode,
+  canCreateProduct,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -76,6 +78,8 @@ export function ProductSearchDialog({
     barcode: string;
     sku: string;
   }) => Promise<void> | void;
+  canLinkBarcode: boolean;
+  canCreateProduct: boolean;
 }) {
   const [field, setField] = useState<Field>("all");
   const [selected, setSelected] = useState<string | null>(null);
@@ -192,22 +196,26 @@ export function ProductSearchDialog({
               </p>
             )}
 
-            {!creating && (
+            {!creating && (canLinkBarcode || canCreateProduct) && (
               <div className="grid gap-2 sm:grid-cols-2">
-                <Button
-                  variant="outline"
-                  disabled={!selected || !unknownCode || busy}
-                  onClick={() => void linkBarcode()}
-                >
-                  <Link2 className="size-4" /> Link barcode to selected item
-                </Button>
-                <Button disabled={busy} onClick={() => setCreating(true)}>
-                  <PackagePlus className="size-4" /> Create new product with this barcode
-                </Button>
+                {canLinkBarcode && (
+                  <Button
+                    variant="outline"
+                    disabled={!selected || !unknownCode || busy}
+                    onClick={() => void linkBarcode()}
+                  >
+                    <Link2 className="size-4" /> Link barcode to selected item
+                  </Button>
+                )}
+                {canCreateProduct && (
+                  <Button disabled={busy} onClick={() => setCreating(true)}>
+                    <PackagePlus className="size-4" /> Create new product with this barcode
+                  </Button>
+                )}
               </div>
             )}
 
-            {creating && (
+            {creating && canCreateProduct && (
               <div className="space-y-2">
                 <div className="grid gap-2 sm:grid-cols-3">
                   <div>
@@ -274,7 +282,9 @@ export function ProductSearchDialog({
                     </span>
                   </button>
                   <span className="flex shrink-0 items-center gap-2">
-                    <span className="numeric text-sm font-semibold text-primary">{money(p.price)}</span>
+                    <span className="numeric text-sm font-semibold text-primary">
+                      {money(p.price)}
+                    </span>
                     <Button size="sm" onClick={() => onAdd(p.id)}>
                       Add
                     </Button>

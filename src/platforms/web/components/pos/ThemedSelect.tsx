@@ -16,6 +16,7 @@ export function ThemedSelect({
   className,
   placeholder,
   ariaLabel,
+  disabled,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -23,9 +24,10 @@ export function ThemedSelect({
   className?: string;
   placeholder?: string;
   ariaLabel?: string;
+  disabled?: boolean;
 }) {
   return (
-    <Select value={value} onValueChange={onChange}>
+    <Select value={value} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger aria-label={ariaLabel} className={cn("h-9 text-sm", className)}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>

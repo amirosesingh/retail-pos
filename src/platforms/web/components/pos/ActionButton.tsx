@@ -54,36 +54,45 @@ export function ActionButton({
     timer.current = setTimeout(() => setHeld(true), 450);
   };
   const tip = props.disabled && disabledReason ? `${label} — ${disabledReason}` : label;
+  const control = (
+    <div className="min-w-0 flex-1">
+      <Button
+        aria-label={label}
+        {...(hideText || disabledReason ? { title: tip } : {})}
+        onTouchStart={startHold}
+        onTouchEnd={cancelHold}
+        onTouchCancel={cancelHold}
+        onTouchMove={cancelHold}
+        className={cn(
+          fill
+            ? "h-full min-h-0 w-full min-w-0 p-0 text-[length:var(--node-font,12px)] [&_svg]:size-[var(--node-icon,16px)]"
+            : "h-auto min-h-10 w-full min-w-0 px-2 py-2",
+          layout === "stack" && !hideText ? "flex-col gap-1" : "justify-center gap-2",
+          !fill && layout === "stack" ? "text-xs" : "",
+          className,
+        )}
+        {...props}
+      >
+        <span className="shrink-0" aria-hidden="true">
+          {icon}
+        </span>
+        {!hideText && (
+          <span
+            className={cn(
+              "min-w-0 leading-tight",
+              layout === "inline" ? "truncate whitespace-nowrap" : "line-clamp-2 break-words",
+            )}
+          >
+            {label}
+          </span>
+        )}
+      </Button>
+    </div>
+  );
+  if (!hideText && !disabledReason) return control;
   return (
     <Tooltip {...(held ? { open: true } : {})} onOpenChange={(o) => !o && cancelHold()}>
-      <TooltipTrigger asChild>
-        <div className="min-w-0">
-          <Button
-            aria-label={label}
-            title={tip}
-            onTouchStart={startHold}
-            onTouchEnd={cancelHold}
-            onTouchCancel={cancelHold}
-            onTouchMove={cancelHold}
-            className={cn(
-              fill
-                ? "h-full min-h-0 w-full min-w-0 p-0 text-[length:var(--node-font,12px)] [&_svg]:size-[var(--node-icon,16px)]"
-                : "h-auto min-h-10 w-full min-w-0 px-2 py-2",
-              layout === "stack" && !hideText ? "flex-col gap-1" : "justify-center gap-2",
-              !fill && layout === "stack" ? "text-xs" : "",
-              className,
-            )}
-            {...props}
-          >
-            <span className="shrink-0" aria-hidden="true">
-              {icon}
-            </span>
-            {!hideText && (
-              <span className="line-clamp-2 min-w-0 leading-tight break-words">{label}</span>
-            )}
-          </Button>
-        </div>
-      </TooltipTrigger>
+      <TooltipTrigger asChild>{control}</TooltipTrigger>
       <TooltipContent side="top">{tip}</TooltipContent>
     </Tooltip>
   );

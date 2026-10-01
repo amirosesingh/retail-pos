@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useDebounced } from "@/hooks/use-debounced";
 
 import {
+  Archive,
   ArrowLeftRight,
   Combine,
   FileSpreadsheet,
@@ -11,7 +12,6 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
-  Trash2,
   Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -65,6 +65,7 @@ import {
   checkCodeAvailable,
   findDuplicateProductCodes,
   productCodeProblems,
+  type DuplicateProductCode,
 } from "@/lib/product-lookup";
 
 import { ItemActivityDrawer } from "@/platforms/web/components/pos/ItemActivityDrawer";
@@ -121,8 +122,6 @@ function Inventory() {
     currentStore,
     upsertProduct,
     upsertProductPriceOverride,
-    removeProduct,
-    removeProducts,
     patchProducts,
     archiveProducts,
     restoreProducts,
@@ -135,12 +134,19 @@ function Inventory() {
   const showMoney = can("can_view_sales_reports") && visible("inventory.costColumns");
   const showStockValue = can("can_view_sales_reports") && visible("inventory.stockValue");
 
-  const canEdit = can("can_add_new_product");
+  const canCreate = can("can_add_new_product");
+  const canEditDetails = can("can_edit_product_details");
+  const canArchive = can("can_archive_product");
+  const canRestore = can("can_restore_product");
+  const canPublish = can("can_publish_product");
+  const canLinkBarcode = can("can_link_product_barcode");
+  const canAdjustStock = can("can_adjust_stock");
   const canPrice = can("can_edit_product_price");
 
   const canBulk = can("can_bulk_edit_products");
   const canMerge = can("can_merge_products");
-  const canEcom = canPrice;
+  const canEcom = canPublish;
+  const canOpenEditor = canCreate || canEditDetails || canPrice;
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Product | null>(null);
@@ -162,6 +168,11 @@ function Inventory() {
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [minMargin, setMinMargin] = useState("");
+  const [duplicateRows, setDuplicateRows] = useState<DuplicateProductCode[]>([]);
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
+  const duplicateAuditDone = useRef(false);
+  const draftIsExisting = !!draft && state.products.some((product) => product.id === draft.id);
+  const canChangeDetails = draftIsExisting ? canEditDetails : canCreate;
 
   const [logTarget, setLogTarget] = useState<Product | null>(null);
 
@@ -253,8 +264,17 @@ function Inventory() {
     [state.products, selectedSet],
   );
   const pager = usePagination(rows, 25);
+  const duplicatePager = usePagination(duplicateRows, 10);
   const pageRows = pager.pageItems;
   const allShownSelected = pageRows.length > 0 && pageRows.every((p) => selectedSet.has(p.id));
+
+  useEffect(() => {
+    if (duplicateAuditDone.current || !state.products.length) return;
+    duplicateAuditDone.current = true;
+    const duplicates = findDuplicateProductCodes(state.products);
+    setDuplicateRows(duplicates);
+    if (duplicates.length) setDuplicateOpen(true);
+  }, [state.products]);
 
   function toggle(id: string, on: boolean) {
     setSelected((prev) => (on ? [...new Set([...prev, id])] : prev.filter((x) => x !== id)));
@@ -305,7 +325,7 @@ function Inventory() {
                 className="w-full pl-9 sm:w-56"
               />
             </div>
-            {canEdit && (
+            {canBulk && (
               <Button variant="outline" onClick={() => setImportOpen(true)}>
                 📥 Bulk Import from Excel
               </Button>
@@ -314,24 +334,12 @@ function Inventory() {
               variant="outline"
               onClick={() => {
                 const duplicates = findDuplicateProductCodes(state.products);
+                setDuplicateRows(duplicates);
                 if (!duplicates.length) {
                   toast.success("No duplicate SKU or barcode values found");
                   return;
                 }
-                const sample = duplicates
-                  .slice(0, 3)
-                  .map(
-                    (entry) =>
-                      `${entry.code}: ${entry.products.map((product) => product.name).join(", ")}`,
-                  )
-                  .join(" · ");
-                toast.warning(
-                  `${duplicates.length} duplicate code${duplicates.length === 1 ? "" : "s"} found`,
-                  {
-                    description: sample,
-                    duration: 10_000,
-                  },
-                );
+                setDuplicateOpen(true);
               }}
             >
               Check duplicate codes
@@ -345,7 +353,7 @@ function Inventory() {
             >
               <FileSpreadsheet className="size-4" /> Export to Excel
             </Button>
-            {canEdit && (
+            {canOpenEditor && (
               <Dialog
                 open={!!draft}
                 onOpenChange={(o) => {
@@ -353,16 +361,18 @@ function Inventory() {
                   if (!o) setBranchPriceOnly(false);
                 }}
               >
-                <DialogTrigger asChild>
-                  <Button
-                    onClick={() => {
-                      setBranchPriceOnly(false);
-                      setDraft(blank(currentStore.id));
-                    }}
-                  >
-                    <Plus className="size-4" /> New product
-                  </Button>
-                </DialogTrigger>
+                {canCreate && (
+                  <DialogTrigger asChild>
+                    <Button
+                      onClick={() => {
+                        setBranchPriceOnly(false);
+                        setDraft(blank(currentStore.id));
+                      }}
+                    >
+                      <Plus className="size-4" /> New product
+                    </Button>
+                  </DialogTrigger>
+                )}
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>{draft?.name ? "Edit product" : "New product"}</DialogTitle>
@@ -371,12 +381,14 @@ function Inventory() {
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <Field label="Name" className="sm:col-span-2">
                         <Input
+                          disabled={!canChangeDetails}
                           value={draft.name}
                           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                         />
                       </Field>
                       <Field label="SKU">
                         <Input
+                          disabled={!canChangeDetails}
                           value={draft.sku}
                           readOnly={autoSku && !skuOverride}
                           placeholder={autoSku ? peekSku(state.products.map((p) => p.sku)) : ""}
@@ -385,7 +397,8 @@ function Inventory() {
                         {autoSku && (
                           <button
                             type="button"
-                            className="mt-1 text-[11px] text-muted-foreground underline"
+                            className="mt-1 text-[11px] text-muted-foreground underline disabled:opacity-50"
+                            disabled={!canChangeDetails}
                             onClick={() => setSkuOverride((v) => !v)}
                           >
                             {skuOverride ? "Use automatic number" : "Override this code"}
@@ -394,12 +407,14 @@ function Inventory() {
                       </Field>
                       <Field label="Barcode">
                         <Input
+                          disabled={!canChangeDetails}
                           value={draft.barcode}
                           onChange={(e) => setDraft({ ...draft, barcode: e.target.value })}
                         />
                       </Field>
                       <Field label="Category">
                         <ThemedSelect
+                          disabled={!canChangeDetails}
                           value={draft.category || NONE}
                           ariaLabel="Category"
                           placeholder="Choose a category"
@@ -409,6 +424,7 @@ function Inventory() {
                       </Field>
                       <Field label="Group">
                         <ThemedSelect
+                          disabled={!canChangeDetails}
                           value={draft.group || NONE}
                           ariaLabel="Group"
                           placeholder="Choose a group"
@@ -418,6 +434,7 @@ function Inventory() {
                       </Field>
                       <Field label="Sub-category">
                         <ThemedSelect
+                          disabled={!canChangeDetails}
                           value={draft.subCategory || NONE}
                           ariaLabel="Sub-category"
                           placeholder="Choose a sub-category"
@@ -427,6 +444,7 @@ function Inventory() {
                       </Field>
                       <Field label="Unit of measure">
                         <ThemedSelect
+                          disabled={!canChangeDetails}
                           value={draft.unit ?? "pcs"}
                           onChange={(v) => setDraft({ ...draft, unit: v })}
                           ariaLabel="Unit of measure"
@@ -450,6 +468,7 @@ function Inventory() {
                                 type="button"
                                 className="text-destructive"
                                 aria-label={`Remove variant ${v.code}`}
+                                disabled={!canLinkBarcode}
                                 onClick={() =>
                                   setDraft({
                                     ...draft,
@@ -474,6 +493,7 @@ function Inventory() {
                                 type="button"
                                 className="text-destructive"
                                 aria-label={`Remove barcode ${code}`}
+                                disabled={!canLinkBarcode}
                                 onClick={() =>
                                   setDraft({
                                     ...draft,
@@ -488,6 +508,7 @@ function Inventory() {
                         </div>
                         <div className="mt-1 flex flex-col gap-2 sm:flex-row">
                           <Input
+                            disabled={!canLinkBarcode}
                             value={aliasDraft}
                             placeholder="Scan or type another barcode for this item"
                             onChange={(e) => setAliasDraft(e.target.value)}
@@ -513,6 +534,7 @@ function Inventory() {
                             }}
                           />
                           <Input
+                            disabled={!canLinkBarcode}
                             value={variantLabel}
                             placeholder="Label (colour, size, pack)"
                             className="w-full sm:w-56"
@@ -526,6 +548,7 @@ function Inventory() {
                       </Field>
                       <Field label="Tax rate %">
                         <Input
+                          disabled={!canChangeDetails}
                           className="numeric"
                           value={draft.taxRate * 100}
                           onChange={(e) =>
@@ -566,6 +589,7 @@ function Inventory() {
                               </p>
                             </div>
                             <Switch
+                              disabled={!canPrice}
                               checked={branchPriceOnly}
                               onCheckedChange={setBranchPriceOnly}
                             />
@@ -584,6 +608,7 @@ function Inventory() {
                       </Field>
                       <Field label={`Stock · ${currentStore.code}`}>
                         <Input
+                          disabled={!canAdjustStock}
                           className="numeric"
                           value={stockAt(draft, currentStore.id)}
                           onChange={(e) =>
@@ -610,6 +635,13 @@ function Inventory() {
                   )}
                   <DialogFooter>
                     <Button
+                      disabled={
+                        draftIsExisting
+                          ? branchPriceOnly
+                            ? !canPrice
+                            : !(canChangeDetails || canPrice || canAdjustStock || canLinkBarcode)
+                          : !canCreate
+                      }
                       onClick={async () => {
                         if (!draft?.name.trim()) {
                           toast.error("Product name is required");
@@ -630,7 +662,11 @@ function Inventory() {
                           let target;
                           if (branchPriceOnly) {
                             // prettier-ignore -- security regression test asserts this scoped write signature.
-                            target = await upsertProductPriceOverride(draft.id, draft.price, draft.ecomPrice);
+                            target = await upsertProductPriceOverride(
+                              draft.id,
+                              draft.price,
+                              draft.ecomPrice,
+                            );
                           } else {
                             target = await upsertProduct({ ...draft, sku });
                           }
@@ -850,32 +886,26 @@ function Inventory() {
                   <Combine className="size-4" /> Merge duplicates
                 </Button>
               )}
-              {canBulk && (
+              {canArchive && (
                 <Button
                   size="sm"
-                  variant="destructive"
+                  variant="outline"
                   disabled={deleting.length > 0}
                   onClick={async () => {
-                    if (
-                      !window.confirm(
-                        `Delete ${selected.length} product${selected.length > 1 ? "s" : ""}? This cannot be undone.`,
-                      )
-                    )
-                      return;
                     setDeleting(selected);
                     try {
-                      const failed = await removeProducts(selected);
-                      const done = selected.length - failed.length;
-                      if (done) toast.success(`${done} product${done > 1 ? "s" : ""} deleted`);
-                      setSelected(failed.map((f) => f.id));
-                      if (failed.length) setBlocked(failed);
+                      await archiveProducts(selected);
+                      toast.success(
+                        `${selected.length} product${selected.length > 1 ? "s" : ""} archived`,
+                      );
+                      setSelected([]);
                     } finally {
                       setDeleting([]);
                     }
                   }}
                 >
-                  <Trash2 className="size-4" />{" "}
-                  {deleting.length > 1 ? "Checking sales history…" : "Delete selected"}
+                  <Archive className="size-4" />
+                  {deleting.length > 1 ? "Archiving…" : "Archive selected"}
                 </Button>
               )}
             </div>
@@ -918,6 +948,7 @@ function Inventory() {
                   <TableCell>
                     <button
                       className="text-left font-medium hover:text-primary"
+                      disabled={!canEditDetails && !canPrice}
                       onClick={() => {
                         setBranchPriceOnly(false);
                         setDraft(p);
@@ -989,18 +1020,17 @@ function Inventory() {
                     >
                       <History className="size-4" />
                     </Button>
-                    {canEdit && (
+                    {canArchive && (
                       <Button
                         size="icon"
                         variant="ghost"
                         disabled={deleting.includes(p.id)}
-                        title={deleting.includes(p.id) ? "Checking sales history…" : "Delete"}
+                        title={deleting.includes(p.id) ? "Archiving…" : "Archive"}
                         onClick={async () => {
                           setDeleting((d) => [...d, p.id]);
                           try {
-                            const failed = await removeProduct(p.id);
-                            if (failed.length) setBlocked(failed);
-                            else toast.success("Product removed");
+                            await archiveProducts([p.id]);
+                            toast.success("Product archived");
                           } finally {
                             setDeleting((d) => d.filter((id) => id !== p.id));
                           }
@@ -1009,11 +1039,11 @@ function Inventory() {
                         {deleting.includes(p.id) ? (
                           <Loader2 className="size-4 animate-spin text-muted-foreground" />
                         ) : (
-                          <Trash2 className="size-4 text-destructive" />
+                          <Archive className="size-4" />
                         )}
                       </Button>
                     )}
-                    {canEdit && p.archived && (
+                    {canRestore && p.archived && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -1044,7 +1074,7 @@ function Inventory() {
           />
         </div>
       </div>
-      {canEdit && <BulkImportDialog open={importOpen} onOpenChange={setImportOpen} />}
+      {canBulk && <BulkImportDialog open={importOpen} onOpenChange={setImportOpen} />}
       {canMerge && (
         <MergeProductsDialog
           open={mergeOpen}
@@ -1068,6 +1098,69 @@ function Inventory() {
         }}
       />
       <ItemActivityDrawer product={logTarget} onClose={() => setLogTarget(null)} />
+      <Dialog open={duplicateOpen} onOpenChange={setDuplicateOpen}>
+        <DialogContent className="max-h-[88vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Duplicate SKU and barcode values</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Each code must belong to one product. Open a product to correct its SKU, primary
+              barcode, alias, or variant code.
+            </p>
+          </DialogHeader>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Duplicate code</TableHead>
+                <TableHead>Products using it</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {duplicatePager.pageItems.map((entry) => (
+                <TableRow key={entry.code}>
+                  <TableCell className="font-mono font-medium">{entry.code}</TableCell>
+                  <TableCell>{entry.products.map((product) => product.name).join(", ")}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!canEditDetails}
+                      title={
+                        canEditDetails
+                          ? "Edit the first product using this code"
+                          : "Edit product details permission required"
+                      }
+                      onClick={() => {
+                        const product = state.products.find(
+                          (candidate) => candidate.id === entry.products[0]?.id,
+                        );
+                        if (product) {
+                          setDuplicateOpen(false);
+                          setBranchPriceOnly(false);
+                          setDraft(product);
+                        }
+                      }}
+                    >
+                      Open product
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <TablePagination
+            page={duplicatePager.page}
+            pageCount={duplicatePager.pageCount}
+            pageSize={duplicatePager.pageSize}
+            total={duplicatePager.total}
+            from={duplicatePager.from}
+            to={duplicatePager.to}
+            label="duplicate codes"
+            onPage={duplicatePager.setPage}
+            onPageSize={duplicatePager.setPageSize}
+          />
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }

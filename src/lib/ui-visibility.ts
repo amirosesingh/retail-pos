@@ -48,6 +48,30 @@ export type VisibilityElement = {
 /** Every element an administrator can hide, grouped by the screen it lives on. */
 export const VISIBILITY_ELEMENTS: VisibilityElement[] = [
   {
+    key: "workspace.shiftStatus",
+    label: "Workspace shift status",
+    blurb: "Open or closed shift card on the landing workspace.",
+    group: "Workspace overview",
+  },
+  {
+    key: "workspace.todayBills",
+    label: "Workspace today's bills",
+    blurb: "Number of completed bills today for the current branch.",
+    group: "Workspace overview",
+  },
+  {
+    key: "workspace.todayRevenue",
+    label: "Workspace today's revenue",
+    blurb: "Sales value completed today for the current branch.",
+    group: "Workspace overview",
+  },
+  {
+    key: "workspace.lowStock",
+    label: "Workspace low-stock count",
+    blurb: "Number of current-branch products at or below reorder level.",
+    group: "Workspace overview",
+  },
+  {
     key: "register.transactionActions",
     label: "Transaction actions card",
     blurb: "Hold order, void cart, apply coupon and split bill.",
