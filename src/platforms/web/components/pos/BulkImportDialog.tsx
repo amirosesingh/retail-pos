@@ -82,7 +82,7 @@ export function BulkImportDialog({
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  mode?: "inventory" | "receiving";
+  mode?: "inventory" | "receiving" | "transfer";
   onReceivingRows?: (
     rows: Array<{ product: Product; quantity: number; cost: number; price: number }>,
   ) => void;
@@ -151,7 +151,7 @@ export function BulkImportDialog({
     const catalogue = await lookupProductsByCodes(records.map(sourceBarcode), state.products);
     // One pass over the file and the matched catalogue — no per-row queries.
     const plan = planImportReview(records, catalogue, {
-      quantityRequired: mode === "receiving",
+      quantityRequired: mode !== "inventory",
     });
 
     setProgress(100);
@@ -191,7 +191,7 @@ export function BulkImportDialog({
     setBusy("saving");
     setProgress(0);
     setProgressLabel(
-      `${mode === "receiving" ? "Preparing" : "Saving"} ${readyRows.length - done.size} ready products…`,
+      `${mode === "inventory" ? "Saving" : "Preparing"} ${readyRows.length - done.size} ready products…`,
     );
 
     const journal: ImportRun = {
@@ -211,14 +211,14 @@ export function BulkImportDialog({
     saveRun(journal);
 
     const rowsToSave =
-      mode === "receiving"
+      mode !== "inventory"
         ? readyRows.map((row) => ({ ...row, updateExisting: false }))
         : readyRows;
     const result = await importProducts(rowsToSave, {
       importId,
       batchSize: DEFAULT_BATCH_SIZE,
       alreadyDone: [...done],
-      applyStock: mode !== "receiving",
+      applyStock: mode === "inventory",
       onProgress: (saved, count) => {
         const pct = Math.round((saved / Math.max(1, count)) * 100);
         setProgress(pct);
@@ -256,7 +256,7 @@ export function BulkImportDialog({
     }
 
     setBusy("");
-    if (mode === "receiving" && onReceivingRows) {
+    if (mode !== "inventory" && onReceivingRows) {
       const byCode = new Map<string, Product>();
       result.savedProducts.forEach((product) =>
         productCodes(product).forEach((code) => byCode.set(code, product)),
@@ -290,23 +290,25 @@ export function BulkImportDialog({
   const selectedSet = new Set(selected);
 
   const patchRow = (line: number, patch: Parameters<typeof updateReviewRow>[1]) =>
-    setRows((current) =>
-      current?.map((row) => (row.line === line ? updateReviewRow(row, patch) : row)) ?? null,
+    setRows(
+      (current) =>
+        current?.map((row) => (row.line === line ? updateReviewRow(row, patch) : row)) ?? null,
     );
 
   const applyBulk = () => {
     if (!selected.length) return toast.error("Select rows to update first");
     if (!bulkCategory.trim() && !bulkUnit.trim())
       return toast.error("Enter a category or unit to apply");
-    setRows((current) =>
-      current?.map((row) =>
-        selectedSet.has(row.line)
-          ? updateReviewRow(row, {
-              ...(bulkCategory.trim() ? { category: bulkCategory.trim() } : {}),
-              ...(bulkUnit.trim() ? { unit: bulkUnit.trim() } : {}),
-            })
-          : row,
-      ) ?? null,
+    setRows(
+      (current) =>
+        current?.map((row) =>
+          selectedSet.has(row.line)
+            ? updateReviewRow(row, {
+                ...(bulkCategory.trim() ? { category: bulkCategory.trim() } : {}),
+                ...(bulkUnit.trim() ? { unit: bulkUnit.trim() } : {}),
+              })
+            : row,
+        ) ?? null,
     );
   };
 
@@ -323,12 +325,18 @@ export function BulkImportDialog({
         <DialogContent className="max-h-[92vh] max-w-[min(96vw,90rem)] overflow-hidden">
           <DialogHeader>
             <DialogTitle>
-              {mode === "receiving" ? "Import receiving lines" : "Bulk import from Excel / CSV"}
+              {mode === "receiving"
+                ? "Import receiving lines"
+                : mode === "transfer"
+                  ? "Import transfer lines"
+                  : "Bulk import from Excel / CSV"}
             </DialogTitle>
             <DialogDescription>
               {mode === "receiving"
                 ? "Known products are linked to the invoice. New products are created with zero stock; quantities post only when the invoice is finalized."
-                : `Rows are added to ${currentStore.name}. Matching barcodes top up existing stock.`}
+                : mode === "transfer"
+                  ? "Known products are added to the transfer. Complete missing product details here; stock moves only after the transfer is approved, dispatched and received."
+                  : `Rows are added to ${currentStore.name}. Matching barcodes top up existing stock.`}
             </DialogDescription>
           </DialogHeader>
 
@@ -353,7 +361,12 @@ export function BulkImportDialog({
               >
                 <UploadCloud className="size-8 text-muted-foreground" />
                 <p className="text-sm font-medium">
-                  Drag &amp; drop your {mode === "receiving" ? "supplier" : "store inventory"}{" "}
+                  Drag &amp; drop your{" "}
+                  {mode === "inventory"
+                    ? "store inventory"
+                    : mode === "receiving"
+                      ? "supplier"
+                      : "transfer"}{" "}
                   spreadsheet (.xlsx, .csv) here
                 </p>
                 <p className="text-xs text-muted-foreground">or click to browse your files</p>
@@ -464,7 +477,9 @@ export function BulkImportDialog({
                       <TableHead className="w-9">
                         <Checkbox
                           aria-label="Select visible rows"
-                          checked={preview.length > 0 && preview.every((row) => selectedSet.has(row.line))}
+                          checked={
+                            preview.length > 0 && preview.every((row) => selectedSet.has(row.line))
+                          }
                           onCheckedChange={(checked) =>
                             setSelected((current) => {
                               const next = new Set(current);
@@ -550,11 +565,13 @@ export function BulkImportDialog({
                             inputMode="decimal"
                             value={r.price ?? ""}
                             aria-invalid={
-                              r.missingFields.includes("price") || r.conflictFields.includes("price")
+                              r.missingFields.includes("price") ||
+                              r.conflictFields.includes("price")
                             }
                             onChange={(event) =>
                               patchRow(r.line, {
-                                price: event.target.value === "" ? null : Number(event.target.value),
+                                price:
+                                  event.target.value === "" ? null : Number(event.target.value),
                               })
                             }
                           />
@@ -580,7 +597,9 @@ export function BulkImportDialog({
                             inputMode="numeric"
                             value={r.stock}
                             aria-invalid={r.missingFields.includes("stock")}
-                            onChange={(event) => patchRow(r.line, { stock: Number(event.target.value) })}
+                            onChange={(event) =>
+                              patchRow(r.line, { stock: Number(event.target.value) })
+                            }
                           />
                         </TableCell>
                         <TableCell className="min-w-36">
@@ -599,7 +618,9 @@ export function BulkImportDialog({
                                   ? "Information required"
                                   : "Conflict"}
                           </Badge>
-                          {(r.issue || r.missingFields.length > 0 || r.conflictFields.length > 0) && (
+                          {(r.issue ||
+                            r.missingFields.length > 0 ||
+                            r.conflictFields.length > 0) && (
                             <p className="mt-1 max-w-52 text-[11px] text-warning">
                               {r.issue ??
                                 (r.missingFields.length
@@ -616,12 +637,13 @@ export function BulkImportDialog({
                                 size="sm"
                                 variant="outline"
                                 onClick={() =>
-                                  setRows((current) =>
-                                    current?.map((row) =>
-                                      row.line === r.line
-                                        ? resolveReviewConflict(row, "database")
-                                        : row,
-                                    ) ?? null,
+                                  setRows(
+                                    (current) =>
+                                      current?.map((row) =>
+                                        row.line === r.line
+                                          ? resolveReviewConflict(row, "database")
+                                          : row,
+                                      ) ?? null,
                                   )
                                 }
                               >
@@ -632,10 +654,13 @@ export function BulkImportDialog({
                                 size="sm"
                                 variant="outline"
                                 onClick={() =>
-                                  setRows((current) =>
-                                    current?.map((row) =>
-                                      row.line === r.line ? resolveReviewConflict(row, "import") : row,
-                                    ) ?? null,
+                                  setRows(
+                                    (current) =>
+                                      current?.map((row) =>
+                                        row.line === r.line
+                                          ? resolveReviewConflict(row, "import")
+                                          : row,
+                                      ) ?? null,
                                   )
                                 }
                               >
@@ -655,8 +680,9 @@ export function BulkImportDialog({
               </div>
               {filtered.length > PREVIEW_LIMIT && (
                 <p className="text-[11px] text-muted-foreground">
-                  Showing the first {PREVIEW_LIMIT.toLocaleString()} of {filtered.length.toLocaleString()} filtered rows.
-                  Ready rows outside the preview are still processed.
+                  Showing the first {PREVIEW_LIMIT.toLocaleString()} of{" "}
+                  {filtered.length.toLocaleString()} filtered rows. Ready rows outside the preview
+                  are still processed.
                 </p>
               )}
 
@@ -672,7 +698,7 @@ export function BulkImportDialog({
                   <Download className="size-4" />
                   {resume
                     ? "Continue import"
-                    : mode === "receiving"
+                    : mode !== "inventory"
                       ? `Add ${(counts.ready + counts.new_product).toLocaleString()} ready lines`
                       : `Import ${(counts.ready + counts.new_product).toLocaleString()} ready items`}
                 </Button>
@@ -707,26 +733,32 @@ export function BulkImportDialog({
                 <li className="numeric">Rows in the file: {outcome.total}</li>
                 <li className="numeric">New products created: {outcome.created}</li>
                 <li className="numeric">
-                  Existing products {mode === "receiving" ? "matched" : "restocked"}: {outcome.restocked}
+                  Existing products {mode === "inventory" ? "restocked" : "matched"}:{" "}
+                  {outcome.restocked}
                 </li>
                 <li className="numeric">Skipped: {outcome.skipped.length}</li>
                 <li className="numeric">Failed: {outcome.failed.length}</li>
                 <li className="numeric">Still pending: {outcome.pending.length}</li>
               </ul>
 
-              {(outcome.skipped.length > 0 || outcome.failed.length > 0 || outcome.pending.length > 0) && (
+              {(outcome.skipped.length > 0 ||
+                outcome.failed.length > 0 ||
+                outcome.pending.length > 0) && (
                 <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                   <p className="flex items-center gap-1 font-semibold">
                     <AlertTriangle className="size-3.5" /> Not saved
                   </p>
-                  {[...outcome.skipped, ...outcome.failed, ...outcome.pending].slice(0, 8).map((e) => (
-                    <p key={`${e.line}-${e.reason}`}>
-                      Row {e.line} ({e.barcode}): {e.reason}
-                    </p>
-                  ))}
+                  {[...outcome.skipped, ...outcome.failed, ...outcome.pending]
+                    .slice(0, 8)
+                    .map((e) => (
+                      <p key={`${e.line}-${e.reason}`}>
+                        Row {e.line} ({e.barcode}): {e.reason}
+                      </p>
+                    ))}
                   {outcome.skipped.length + outcome.failed.length + outcome.pending.length > 8 && (
                     <p>
-                      +{outcome.skipped.length + outcome.failed.length + outcome.pending.length - 8} more in the report
+                      +{outcome.skipped.length + outcome.failed.length + outcome.pending.length - 8}{" "}
+                      more in the report
                     </p>
                   )}
                 </div>

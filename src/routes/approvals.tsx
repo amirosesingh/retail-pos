@@ -93,6 +93,7 @@ function ApprovalsPage() {
   const [note, setNote] = useState<Record<string, string>>({});
   // What the approver is granting, when it differs from what was asked.
   const [amount, setAmount] = useState<Record<string, string>>({});
+  const [amountMode, setAmountMode] = useState<Record<string, "total" | "extra">>({});
   const [amountInvalid, setAmountInvalid] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [openRequestId, setOpenRequestId] = useState<string | null>(null);
@@ -149,7 +150,13 @@ function ApprovalsPage() {
         return;
       }
       const rawAmount = (amount[row.id] ?? "").trim();
-      const approvedAmount = rawAmount === "" ? null : Number(rawAmount);
+      const enteredAmount = rawAmount === "" ? null : Number(rawAmount);
+      const approvedAmount =
+        enteredAmount === null
+          ? null
+          : amountMode[row.id] === "extra" && row.requesterDirectLimit !== null
+            ? row.requesterDirectLimit + enteredAmount
+            : enteredAmount;
       if (
         approve &&
         approvedAmount !== null &&
@@ -343,7 +350,11 @@ function ApprovalsPage() {
                       ))}
                     </dl>
                   ) : null}
-                  <ApprovalAmountReview row={row} draft={amount[row.id] ?? ""} />
+                  <ApprovalAmountReview
+                    row={row}
+                    draft={amount[row.id] ?? ""}
+                    mode={amountMode[row.id] ?? "total"}
+                  />
                   <TicketReview row={row} />
                   {row.status === "pending" ? (
                     mine ? (
@@ -378,9 +389,42 @@ function ApprovalsPage() {
                             />
                           </div>
                           <div className="space-y-1">
-                            <Label htmlFor={`approval-amount-${row.id}`} className="text-xs">
-                              Total approval to grant
-                            </Label>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <Label htmlFor={`approval-amount-${row.id}`} className="text-xs">
+                                {(amountMode[row.id] ?? "total") === "extra"
+                                  ? "Extra above cashier limit"
+                                  : "Total approval to grant"}
+                              </Label>
+                              <div className="flex rounded-md border border-border p-0.5">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    (amountMode[row.id] ?? "total") === "total"
+                                      ? "secondary"
+                                      : "ghost"
+                                  }
+                                  className="h-6 px-2 text-[11px]"
+                                  onClick={() =>
+                                    setAmountMode((current) => ({ ...current, [row.id]: "total" }))
+                                  }
+                                >
+                                  Total
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={amountMode[row.id] === "extra" ? "secondary" : "ghost"}
+                                  className="h-6 px-2 text-[11px]"
+                                  disabled={row.requesterDirectLimit === null}
+                                  onClick={() =>
+                                    setAmountMode((current) => ({ ...current, [row.id]: "extra" }))
+                                  }
+                                >
+                                  Extra
+                                </Button>
+                              </div>
+                            </div>
                             <Input
                               id={`approval-amount-${row.id}`}
                               className="h-9"
@@ -388,9 +432,20 @@ function ApprovalsPage() {
                               min="0"
                               step="any"
                               placeholder={
-                                typeof row.requestedAmount === "number"
-                                  ? approvalValue(row.requestedAmount, row.valueUnit)
-                                  : "No amount requested"
+                                (amountMode[row.id] ?? "total") === "extra"
+                                  ? approvalValue(
+                                      row.requestedAmount !== null &&
+                                        row.requesterDirectLimit !== null
+                                        ? Math.max(
+                                            0,
+                                            row.requestedAmount - row.requesterDirectLimit,
+                                          )
+                                        : null,
+                                      row.valueUnit,
+                                    )
+                                  : typeof row.requestedAmount === "number"
+                                    ? approvalValue(row.requestedAmount, row.valueUnit)
+                                    : "No amount requested"
                               }
                               value={amount[row.id] ?? ""}
                               aria-invalid={amountInvalid[row.id] || undefined}
@@ -436,10 +491,10 @@ function ApprovalsPage() {
                         : row.status}
                       {row.decisionNote ? ` — ${row.decisionNote}` : ""}
                       {typeof row.requestedAmount === "number"
-                        ? ` · asked ${money(row.requestedAmount)}`
+                        ? ` · asked ${approvalValue(row.requestedAmount, row.valueUnit)}`
                         : ""}
                       {typeof row.approvedAmount === "number"
-                        ? ` · granted ${money(row.approvedAmount)}`
+                        ? ` · granted ${approvalValue(row.approvedAmount, row.valueUnit)}`
                         : ""}
                       {row.consumedAt ? " · used" : ""}
                     </p>
@@ -454,8 +509,22 @@ function ApprovalsPage() {
   );
 }
 
-function ApprovalAmountReview({ row, draft }: { row: AuthorizationRequest; draft: string }) {
-  const entered = draft.trim() === "" ? row.requestedAmount : Number(draft);
+function ApprovalAmountReview({
+  row,
+  draft,
+  mode,
+}: {
+  row: AuthorizationRequest;
+  draft: string;
+  mode: "total" | "extra";
+}) {
+  const typed = draft.trim() === "" ? null : Number(draft);
+  const entered =
+    typed === null
+      ? row.requestedAmount
+      : mode === "extra" && row.requesterDirectLimit !== null
+        ? row.requesterDirectLimit + typed
+        : typed;
   const grant = entered !== null && Number.isFinite(entered) ? entered : null;
   const extraRequested =
     row.requestedAmount !== null && row.requesterDirectLimit !== null
@@ -465,43 +534,100 @@ function ApprovalAmountReview({ row, draft }: { row: AuthorizationRequest; draft
     grant !== null && row.requesterDirectLimit !== null
       ? Math.max(0, grant - row.requesterDirectLimit)
       : null;
+  const snapshot = row.snapshot;
+  const scope = String(row.payload["discount_scope"] ?? "");
+  const type =
+    row.payload["discount_type"] === "percent" || row.valueUnit === "percent"
+      ? "percent"
+      : "amount";
+  const requestedIndex = Number(row.payload["target_index"]);
+  const targetLine =
+    snapshot && Number.isInteger(requestedIndex) ? snapshot.lines[requestedIndex] : undefined;
+  const unitAfter =
+    targetLine && grant !== null
+      ? Math.max(
+          0,
+          targetLine.unitPrice -
+            (type === "percent" ? (targetLine.unitPrice * Math.min(100, grant)) / 100 : grant),
+        )
+      : null;
+  const lineAfter = targetLine && unitAfter !== null ? unitAfter * targetLine.qty : null;
+  const billAfter =
+    snapshot && scope === "bill" && grant !== null
+      ? Math.max(
+          0,
+          snapshot.total -
+            (type === "percent" ? (snapshot.total * Math.min(100, grant)) / 100 : grant),
+        )
+      : null;
   return (
-    <dl className="grid gap-2 rounded-md bg-muted/50 p-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
-      <div>
-        <dt className="text-muted-foreground">Requested total</dt>
-        <dd className="font-semibold">{approvalValue(row.requestedAmount, row.valueUnit)}</dd>
-      </div>
-      <div>
-        <dt className="text-muted-foreground">Cashier's current limit</dt>
-        <dd className="font-semibold">{approvalValue(row.requesterDirectLimit, row.valueUnit)}</dd>
-      </div>
-      <div>
-        <dt className="text-muted-foreground">
-          {row.status === "pending" ? "Extra requested" : "Approved total"}
-        </dt>
-        <dd className="font-semibold text-primary">
-          {approvalValue(
-            row.status === "pending" ? extraRequested : row.approvedAmount,
-            row.valueUnit,
-          )}
-        </dd>
-      </div>
-      <div>
-        <dt className="text-muted-foreground">
-          {row.status === "pending" ? "Extra being granted" : "Extra approved"}
-        </dt>
-        <dd className="font-semibold text-primary">
-          {approvalValue(
-            row.status === "pending"
-              ? extraGrant
-              : row.approvedAmount !== null && row.requesterDirectLimit !== null
-                ? Math.max(0, row.approvedAmount - row.requesterDirectLimit)
-                : null,
-            row.valueUnit,
-          )}
-        </dd>
-      </div>
-    </dl>
+    <div className="space-y-2">
+      <dl className="grid gap-2 rounded-md bg-muted/50 p-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+        <div>
+          <dt className="text-muted-foreground">Requested total</dt>
+          <dd className="font-semibold">{approvalValue(row.requestedAmount, row.valueUnit)}</dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Cashier's current limit</dt>
+          <dd className="font-semibold">
+            {approvalValue(row.requesterDirectLimit, row.valueUnit)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">
+            {row.status === "pending" ? "Extra requested" : "Approved total"}
+          </dt>
+          <dd className="font-semibold text-primary">
+            {approvalValue(
+              row.status === "pending" ? extraRequested : row.approvedAmount,
+              row.valueUnit,
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">
+            {row.status === "pending" ? "Extra being granted" : "Extra approved"}
+          </dt>
+          <dd className="font-semibold text-primary">
+            {approvalValue(
+              row.status === "pending"
+                ? extraGrant
+                : row.approvedAmount !== null && row.requesterDirectLimit !== null
+                  ? Math.max(0, row.approvedAmount - row.requesterDirectLimit)
+                  : null,
+              row.valueUnit,
+            )}
+          </dd>
+        </div>
+      </dl>
+      {targetLine && unitAfter !== null && lineAfter !== null ? (
+        <dl className="grid gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-xs sm:grid-cols-4">
+          <div>
+            <dt className="text-muted-foreground">Approved item</dt>
+            <dd className="font-semibold">{targetLine.name || targetLine.sku || "Item"}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Quantity · original unit</dt>
+            <dd className="font-semibold">
+              {targetLine.qty} × {money(targetLine.unitPrice)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Unit after approval</dt>
+            <dd className="font-semibold text-primary">{money(unitAfter)}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Line after approval</dt>
+            <dd className="font-semibold text-primary">{money(lineAfter)}</dd>
+          </div>
+        </dl>
+      ) : billAfter !== null ? (
+        <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-xs">
+          Bill total after this approval:{" "}
+          <strong className="text-primary">{money(billAfter)}</strong>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

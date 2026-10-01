@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useDebounced } from "@/hooks/use-debounced";
 
 import {
@@ -10,6 +10,7 @@ import {
   History,
   Plus,
   Search,
+  SlidersHorizontal,
   Trash2,
   Loader2,
 } from "lucide-react";
@@ -60,7 +61,11 @@ import {
   useCategories,
   useUnits,
 } from "@/lib/catalog-meta";
-import { checkCodeAvailable } from "@/lib/product-lookup";
+import {
+  checkCodeAvailable,
+  findDuplicateProductCodes,
+  productCodeProblems,
+} from "@/lib/product-lookup";
 
 import { ItemActivityDrawer } from "@/platforms/web/components/pos/ItemActivityDrawer";
 import { OtherSourcesPopover } from "@/platforms/web/components/pos/OtherSourcesPopover";
@@ -151,6 +156,12 @@ function Inventory() {
   const [groupFilter, setGroupFilter] = useState("all");
   const [subFilter, setSubFilter] = useState("all");
   const [bulkCategory, setBulkCategory] = useState("");
+  const [advanced, setAdvanced] = useState(false);
+  const [skuFilter, setSkuFilter] = useState("");
+  const [stockFilter, setStockFilter] = useState("all");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [minMargin, setMinMargin] = useState("");
 
   const [logTarget, setLogTarget] = useState<Product | null>(null);
 
@@ -203,6 +214,16 @@ function Inventory() {
       if (catFilter !== "all" && p.category !== catFilter) return false;
       if (groupFilter !== "all" && (p.group ?? "") !== groupFilter) return false;
       if (subFilter !== "all" && (p.subCategory ?? "") !== subFilter) return false;
+      const skuNeedle = skuFilter.trim().toLowerCase();
+      if (skuNeedle && !`${p.sku} ${p.barcode}`.toLowerCase().includes(skuNeedle)) return false;
+      const branchStock = stockAt(p, state.currentStoreId);
+      if (stockFilter === "in" && branchStock <= 0) return false;
+      if (stockFilter === "out" && branchStock > 0) return false;
+      if (stockFilter === "low" && branchStock > p.reorderLevel) return false;
+      if (minPrice !== "" && p.price < Number(minPrice)) return false;
+      if (maxPrice !== "" && p.price > Number(maxPrice)) return false;
+      const margin = p.price ? ((p.price - p.cost) / p.price) * 100 : 0;
+      if (minMargin !== "" && margin < Number(minMargin)) return false;
       if (!needle) return true;
       // Cheapest fields first — most searches stop on the name.
       return `${p.name} ${p.sku} ${p.barcode} ${(p.barcodes ?? []).join(" ")} ${(p.variants ?? [])
@@ -220,6 +241,11 @@ function Inventory() {
     groupFilter,
     subFilter,
     settledQuery,
+    skuFilter,
+    stockFilter,
+    minPrice,
+    maxPrice,
+    minMargin,
   ]);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const selectedProducts = useMemo(
@@ -287,6 +313,32 @@ function Inventory() {
             <Button
               variant="outline"
               onClick={() => {
+                const duplicates = findDuplicateProductCodes(state.products);
+                if (!duplicates.length) {
+                  toast.success("No duplicate SKU or barcode values found");
+                  return;
+                }
+                const sample = duplicates
+                  .slice(0, 3)
+                  .map(
+                    (entry) =>
+                      `${entry.code}: ${entry.products.map((product) => product.name).join(", ")}`,
+                  )
+                  .join(" · ");
+                toast.warning(
+                  `${duplicates.length} duplicate code${duplicates.length === 1 ? "" : "s"} found`,
+                  {
+                    description: sample,
+                    duration: 10_000,
+                  },
+                );
+              }}
+            >
+              Check duplicate codes
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
                 void exportProductsXlsx(rows, stores, `products-${currentStore.code}`);
                 toast.success(`Exporting ${rows.length} products to Excel`);
               }}
@@ -302,7 +354,12 @@ function Inventory() {
                 }}
               >
                 <DialogTrigger asChild>
-                  <Button onClick={() => { setBranchPriceOnly(false); setDraft(blank(currentStore.id)); }}>
+                  <Button
+                    onClick={() => {
+                      setBranchPriceOnly(false);
+                      setDraft(blank(currentStore.id));
+                    }}
+                  >
                     <Plus className="size-4" /> New product
                   </Button>
                 </DialogTrigger>
@@ -500,12 +557,18 @@ function Inventory() {
                         <Field label="Price scope" className="sm:col-span-2">
                           <div className="flex items-center justify-between gap-3 rounded-md border p-3">
                             <div>
-                              <p className="text-sm font-medium">Use these prices only at {currentStore.name}</p>
+                              <p className="text-sm font-medium">
+                                Use these prices only at {currentStore.name}
+                              </p>
                               <p className="text-[11px] text-muted-foreground">
-                                Keeps the global product price unchanged. Only Price and E-com price are saved in this mode.
+                                Keeps the global product price unchanged. Only Price and E-com price
+                                are saved in this mode.
                               </p>
                             </div>
-                            <Switch checked={branchPriceOnly} onCheckedChange={setBranchPriceOnly} />
+                            <Switch
+                              checked={branchPriceOnly}
+                              onCheckedChange={setBranchPriceOnly}
+                            />
                           </div>
                         </Field>
                       )}
@@ -552,14 +615,25 @@ function Inventory() {
                           toast.error("Product name is required");
                           return;
                         }
+                        const codeProblems = productCodeProblems(state.products, draft);
+                        if (codeProblems.length) {
+                          toast.error("SKU or barcode is already in use", {
+                            description: codeProblems.join(" "),
+                          });
+                          return;
+                        }
                         const sku =
                           draft.sku.trim() ||
                           (autoSku ? nextSku(state.products.map((p) => p.sku)) : "");
                         try {
                           // Saved only once the write is confirmed stored.
-                          const target = branchPriceOnly
-                            ? await upsertProductPriceOverride(draft.id, draft.price, draft.ecomPrice)
-                            : await upsertProduct({ ...draft, sku });
+                          let target;
+                          if (branchPriceOnly) {
+                            // prettier-ignore -- security regression test asserts this scoped write signature.
+                            target = await upsertProductPriceOverride(draft.id, draft.price, draft.ecomPrice);
+                          } else {
+                            target = await upsertProduct({ ...draft, sku });
+                          }
                           setDraft(null);
                           setBranchPriceOnly(false);
                           setSkuOverride(false);
@@ -592,56 +666,144 @@ function Inventory() {
               {showArchived ? "Showing archived" : "Show archived"}
             </Button>
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Category</Label>
-            <ThemedSelect
-              value={catFilter}
-              onChange={(v) => {
-                setCatFilter(v);
-                setGroupFilter("all");
-                setSubFilter("all");
-              }}
-              ariaLabel="Filter by category"
-              className="w-48"
-              options={[
-                { value: "all", label: "All categories" },
-                ...categoryNames.map((c) => ({ value: c, label: c })),
-              ]}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Group</Label>
-            <ThemedSelect
-              value={groupFilter}
-              onChange={(v) => {
-                setGroupFilter(v);
-                setSubFilter("all");
-              }}
-              ariaLabel="Filter by group"
-              className="w-48"
-              options={[
-                { value: "all", label: "All groups" },
-                ...groupNames.map((c) => ({ value: c, label: c })),
-              ]}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Sub-category</Label>
-            <ThemedSelect
-              value={subFilter}
-              onChange={setSubFilter}
-              ariaLabel="Filter by sub-category"
-              className="w-48"
-              options={[
-                { value: "all", label: "All sub-categories" },
-                ...subNames.map((c) => ({ value: c, label: c })),
-              ]}
-            />
-          </div>
+          <Button
+            size="sm"
+            variant={advanced ? "default" : "outline"}
+            onClick={() => setAdvanced((value) => !value)}
+          >
+            <SlidersHorizontal className="size-4" /> Advanced filters
+          </Button>
           <p className="pb-2 text-xs text-muted-foreground">
             Showing <span className="numeric">{rows.length}</span> of{" "}
             <span className="numeric">{state.products.length}</span> products
           </p>
+          {advanced && <div className="basis-full border-t border-border" />}
+          {advanced && (
+            <div className="space-y-1">
+              <Label className="text-xs">Category</Label>
+              <ThemedSelect
+                value={catFilter}
+                onChange={(v) => {
+                  setCatFilter(v);
+                  setGroupFilter("all");
+                  setSubFilter("all");
+                }}
+                ariaLabel="Filter by category"
+                className="w-48"
+                options={[
+                  { value: "all", label: "All categories" },
+                  ...categoryNames.map((c) => ({ value: c, label: c })),
+                ]}
+              />
+            </div>
+          )}
+          {advanced && (
+            <div className="space-y-1">
+              <Label className="text-xs">Group</Label>
+              <ThemedSelect
+                value={groupFilter}
+                onChange={(v) => {
+                  setGroupFilter(v);
+                  setSubFilter("all");
+                }}
+                ariaLabel="Filter by group"
+                className="w-48"
+                options={[
+                  { value: "all", label: "All groups" },
+                  ...groupNames.map((c) => ({ value: c, label: c })),
+                ]}
+              />
+            </div>
+          )}
+          {advanced && (
+            <div className="space-y-1">
+              <Label className="text-xs">Sub-category</Label>
+              <ThemedSelect
+                value={subFilter}
+                onChange={setSubFilter}
+                ariaLabel="Filter by sub-category"
+                className="w-48"
+                options={[
+                  { value: "all", label: "All sub-categories" },
+                  ...subNames.map((c) => ({ value: c, label: c })),
+                ]}
+              />
+            </div>
+          )}
+          {advanced && (
+            <>
+              <div className="space-y-1">
+                <Label className="text-xs">SKU or barcode</Label>
+                <Input
+                  value={skuFilter}
+                  onChange={(e) => setSkuFilter(e.target.value)}
+                  className="h-9 w-48"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Stock</Label>
+                <ThemedSelect
+                  value={stockFilter}
+                  onChange={setStockFilter}
+                  className="w-40"
+                  options={[
+                    { value: "all", label: "Any stock" },
+                    { value: "in", label: "In stock" },
+                    { value: "low", label: "Low stock" },
+                    { value: "out", label: "Out of stock" },
+                  ]}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Price range</Label>
+                <div className="flex gap-1">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={minPrice}
+                    onChange={(e) => setMinPrice(e.target.value)}
+                    placeholder="Min"
+                    className="h-9 w-24"
+                  />
+                  <Input
+                    type="number"
+                    min="0"
+                    value={maxPrice}
+                    onChange={(e) => setMaxPrice(e.target.value)}
+                    placeholder="Max"
+                    className="h-9 w-24"
+                  />
+                </div>
+              </div>
+              {showMoney && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Minimum margin %</Label>
+                  <Input
+                    type="number"
+                    value={minMargin}
+                    onChange={(e) => setMinMargin(e.target.value)}
+                    className="h-9 w-36"
+                  />
+                </div>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setCatFilter("all");
+                  setGroupFilter("all");
+                  setSubFilter("all");
+                  setSkuFilter("");
+                  setStockFilter("all");
+                  setMinPrice("");
+                  setMaxPrice("");
+                  setMinMargin("");
+                }}
+              >
+                Clear filters
+              </Button>
+            </>
+          )}
         </div>
 
         {selected.length > 0 && (
@@ -731,15 +893,15 @@ function Inventory() {
                     aria-label="Select all products"
                   />
                 </TableHead>
-                <TableHead>Product</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Sub-category</TableHead>
-                {showMoney && <TableHead className="text-right">Cost</TableHead>}
-                <TableHead className="text-right">Price</TableHead>
-                {showMoney && <TableHead className="text-right">Margin</TableHead>}
-                {canEcom && <TableHead className="text-center">On web</TableHead>}
-                <TableHead className="text-center">Stock · {currentStore.code}</TableHead>
-                <TableHead className="text-center">Other stores</TableHead>
+                <ResizableHead>Product</ResizableHead>
+                <ResizableHead>Category</ResizableHead>
+                <ResizableHead>Sub-category</ResizableHead>
+                {showMoney && <ResizableHead className="text-right">Cost</ResizableHead>}
+                <ResizableHead className="text-right">Price</ResizableHead>
+                {showMoney && <ResizableHead className="text-right">Margin</ResizableHead>}
+                {canEcom && <ResizableHead className="text-center">On web</ResizableHead>}
+                <ResizableHead className="text-center">Stock · {currentStore.code}</ResizableHead>
+                <ResizableHead className="text-center">Other stores</ResizableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -756,7 +918,10 @@ function Inventory() {
                   <TableCell>
                     <button
                       className="text-left font-medium hover:text-primary"
-                      onClick={() => { setBranchPriceOnly(false); setDraft(p); }}
+                      onClick={() => {
+                        setBranchPriceOnly(false);
+                        setDraft(p);
+                      }}
                     >
                       {p.name}
                     </button>
@@ -808,7 +973,11 @@ function Inventory() {
                     </div>
                   </TableCell>
                   <TableCell className="text-center">
-                    <OtherSourcesPopover product={p} stores={stores} currentStoreId={currentStore.id} />
+                    <OtherSourcesPopover
+                      product={p}
+                      stores={stores}
+                      currentStoreId={currentStore.id}
+                    />
                   </TableCell>
                   <TableCell className="text-right">
                     <Button
@@ -900,6 +1069,14 @@ function Inventory() {
       />
       <ItemActivityDrawer product={logTarget} onClose={() => setLogTarget(null)} />
     </AppShell>
+  );
+}
+
+function ResizableHead({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <TableHead className={`min-w-24 ${className}`}>
+      <div className="min-w-full resize-x overflow-hidden pr-3">{children}</div>
+    </TableHead>
   );
 }
 

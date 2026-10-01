@@ -3084,7 +3084,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
       status: transfer.status,
     });
     const transferCounter = stateRef.current.transferCounter + 1;
-    transfer.ref = `${input.kind === "transfer" ? "TRF" : "REQ"}-${String(transferCounter).padStart(5, "0")}`;
+    const series = input.kind === "transfer" ? "transfer" : "request";
+    const originStoreId = input.kind === "transfer" ? input.fromStoreId : input.toStoreId;
+    const originCode =
+      stateRef.current.stores.find((store) => store.id === originStoreId)?.code ?? "BR";
+    const integrations = stateRef.current.settings.integrations;
+    const numbering =
+      series === "transfer"
+        ? (integrations.transferNumbering ?? {})
+        : (integrations.requestNumbering ?? {});
+    const { nextStockRef } = await import("./stock-ref");
+    transfer.ref = nextStockRef(numbering, originCode, series);
     await saveTransfer({
       transfer,
       from: stateRef.current.stores.find((x) => x.id === transfer.fromStoreId),
@@ -3092,6 +3102,25 @@ export function PosProvider({ children }: { children: ReactNode }) {
       products: stateRef.current.products,
     });
     setState((s) => ({ ...s, transferCounter, transfers: [transfer, ...s.transfers] }));
+    if (transfer.kind === "request") {
+      const requester = stateRef.current.stores.find((x) => x.id === transfer.toStoreId)?.name;
+      recordActivity({
+        type: "stock_request_received",
+        severity: "warning",
+        title: `Stock request ${transfer.ref} received`,
+        message: `${requester || "Another branch"} requested ${transfer.items.reduce((sum, item) => sum + item.qty, 0)} unit(s).`,
+        actorName: transfer.createdBy,
+        storeId: transfer.fromStoreId,
+        entityType: "stock_request",
+        entityId: transfer.id,
+        meta: {
+          route: `/requests/${transfer.id}`,
+          audience: "branch_stock_team",
+          audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
+          requester_store_id: transfer.toStoreId,
+        },
+      });
+    }
     return transfer;
   }, []);
 
@@ -3258,6 +3287,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
         actorName: actorRef.current,
         storeId: before.fromStoreId,
         metadata: { ref: before.ref, toStoreId: before.toStoreId, fulfilment, lines: sent },
+      });
+      const source = s0.stores.find((x) => x.id === before.fromStoreId)?.name;
+      recordActivity({
+        type: "transfer_sent",
+        title: `Transfer ${before.ref} is on its way`,
+        message: `${source || "The sending branch"} dispatched ${total} unit(s) to this branch.`,
+        actorName: actorRef.current,
+        storeId: before.toStoreId,
+        entityType: "stock_transfer",
+        entityId: before.id,
+        meta: {
+          route: `/transfers/${before.id}`,
+          audience: "receiving_branch",
+          audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
+          sender_store_id: before.fromStoreId,
+        },
       });
       return { success: true };
     },

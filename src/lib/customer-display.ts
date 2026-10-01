@@ -17,6 +17,8 @@ export type DisplaySnapshot = {
   at: number;
   mode: "idle" | "cart" | "paid" | "booking" | "transfer";
   companyName: string;
+  /** configured business mark shown on the customer-facing display */
+  logo?: string;
   storeName: string;
   cashier: string;
   memberName: string | null;

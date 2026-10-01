@@ -56,6 +56,8 @@ type HeldOrdersDeps = {
     approvedPayload: AuthPayload;
     grantToken: string;
     approvedAmount: number | null;
+    requestedAmount: number | null;
+    requesterDirectLimit: number | null;
     valueUnit: "percent" | "currency" | "quantity" | "number";
   }) => void;
   /** Clears approval UI/state before another parked ticket becomes active. */
@@ -149,15 +151,24 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
             approvedPayload: claimed.approvedPayload,
             grantToken: claimed.grantToken,
             approvedAmount: claimed.approvedAmount ?? null,
+            requestedAmount: claimed.requestedAmount ?? null,
+            requesterDirectLimit: claimed.requesterDirectLimit ?? null,
             valueUnit: claimed.valueUnit,
           };
         }
       }
       const parked = deps.lines.length ? holdOrder(true) : null;
       deps.onApprovalCleared?.();
-      deps.setLines(order.lines);
-      deps.setCartDiscount(order.cartDiscount ?? 0);
-      deps.setCartDiscountType(order.cartDiscountType ?? "amount");
+      const approvedDiscount = restoredApproval
+        ? applyApprovedDiscount(order, restoredApproval)
+        : {
+            lines: order.lines,
+            cartDiscount: order.cartDiscount ?? 0,
+            cartDiscountType: order.cartDiscountType ?? ("amount" as DiscountType),
+          };
+      deps.setLines(approvedDiscount.lines);
+      deps.setCartDiscount(approvedDiscount.cartDiscount);
+      deps.setCartDiscountType(approvedDiscount.cartDiscountType);
       deps.setExchangeRef(order.exchangeRef ?? null);
       deps.setMemberId(order.memberId ?? null);
       deps.setCoupon((order.coupon as CartCoupon | null) ?? null);
@@ -183,4 +194,44 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   }
 
   return { held, holdOrder, resumeHeld };
+}
+
+type ClaimedGrant = Parameters<NonNullable<HeldOrdersDeps["onApprovalClaimed"]>>[0];
+
+/** Apply the value the manager actually granted to the exact bill/line target. */
+export function applyApprovedDiscount(order: HeldOrder, grant: ClaimedGrant) {
+  const fallback = {
+    lines: order.lines,
+    cartDiscount: order.cartDiscount ?? 0,
+    cartDiscountType: order.cartDiscountType ?? ("amount" as DiscountType),
+  };
+  if (grant.actionKey !== "discount_over_limit" || grant.approvedAmount === null) return fallback;
+
+  const payload = grant.approvedPayload;
+  const type: DiscountType =
+    payload["discount_type"] === "percent" || grant.valueUnit === "percent" ? "percent" : "amount";
+  const value = Math.max(0, Number(grant.approvedAmount) || 0);
+  if (payload["discount_scope"] === "bill") {
+    return { ...fallback, cartDiscount: value, cartDiscountType: type };
+  }
+
+  const productId = String(payload["target_product_id"] ?? "");
+  const requestedIndex = Number(payload["target_index"]);
+  const indexedLine = Number.isInteger(requestedIndex) ? order.lines[requestedIndex] : undefined;
+  const matchingIndexes = productId
+    ? order.lines.flatMap((line, index) => (line.productId === productId ? [index] : []))
+    : [];
+  const targetIndex =
+    indexedLine && (!productId || indexedLine.productId === productId)
+      ? requestedIndex
+      : matchingIndexes.length === 1
+        ? matchingIndexes[0]
+        : -1;
+  if (targetIndex < 0 || targetIndex >= order.lines.length) return fallback;
+  return {
+    ...fallback,
+    lines: order.lines.map((line, index) =>
+      index === targetIndex ? { ...line, discount: value, discountType: type } : line,
+    ),
+  };
 }

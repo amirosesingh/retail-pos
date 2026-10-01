@@ -106,6 +106,32 @@ function CustomerDisplay() {
       </main>
     );
 
+  const idle = !snap || snap.mode === "idle" || snap.lines.length === 0;
+  if (idle)
+    return (
+      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-8 text-foreground">
+        <div className="absolute -left-24 top-[-12rem] size-[34rem] rounded-full bg-primary/20 blur-3xl" />
+        <div className="absolute -bottom-48 right-[-8rem] size-[38rem] rounded-full bg-accent/20 blur-3xl" />
+        <button
+          type="button"
+          onClick={exit}
+          aria-label="Close customer display"
+          className="absolute right-6 top-6 z-10 flex items-center gap-2 rounded-full border border-border/70 bg-background/70 px-4 py-2 text-sm text-muted-foreground backdrop-blur hover:text-foreground"
+        >
+          <X className="size-4" /> Back to till
+        </button>
+        <div className="relative z-10 flex max-w-2xl flex-col items-center rounded-[2rem] border border-white/10 bg-card/60 px-16 py-14 text-center shadow-2xl backdrop-blur-xl">
+          <BrandMark logo={snap?.logo} name={snap?.companyName || "Welcome"} large />
+          <h1 className="mt-7 text-5xl font-bold tracking-tight">
+            {snap?.companyName || "Welcome"}
+          </h1>
+          <p className="mt-3 text-lg text-muted-foreground">
+            {snap?.storeName || "Your items will appear here as they are scanned."}
+          </p>
+        </div>
+      </main>
+    );
+
   return (
     <main className="flex min-h-screen flex-col bg-background text-foreground">
       <header className="flex items-baseline justify-between border-b border-border px-8 py-5">
@@ -132,53 +158,53 @@ function CustomerDisplay() {
         </button>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 p-8 lg:grid-cols-[1.4fr_1fr]">
-        <section className="flex min-h-0 flex-col">
-          {!snap || snap.mode === "idle" || snap.lines.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center text-center">
-              <p className="text-4xl font-bold tracking-tight">Welcome</p>
-              <p className="mt-2 text-muted-foreground">
-                Your items will appear here as they are scanned.
-              </p>
-              <p className="mt-6 max-w-md text-xs text-muted-foreground/80">
-                This is the customer-facing screen. It is meant for a second display or tablet next
-                to the till — on the same device as the register it will simply mirror the basket.
-              </p>
-            </div>
-          ) : (
-            <ul className="min-h-0 flex-1 space-y-2 overflow-auto pr-2">
-              {snap.lines.map((l, i) => (
-                <li
-                  key={`${l.name}-${i}`}
-                  className="flex items-start justify-between rounded-lg border border-border px-4 py-3"
-                >
-                  <div>
-                    <p className="text-lg font-medium">
-                      {l.name}
-                      {l.foc && (
-                        <span className="ml-2 rounded bg-success/15 px-2 py-0.5 text-xs text-success">
-                          FREE
-                        </span>
-                      )}
-                      {l.credit && (
-                        <span className="ml-2 rounded bg-accent/15 px-2 py-0.5 text-xs text-accent">
-                          RETURN
-                        </span>
-                      )}
-                    </p>
-                    <p className="numeric text-sm text-muted-foreground">
-                      {l.qty} × {money(l.price)}
-                      {l.discount ? ` · less ${money(l.discount)}` : ""}
-                    </p>
-                  </div>
-                  <span className="numeric text-lg font-semibold">{money(l.lineTotal)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 p-8 lg:grid-cols-[minmax(15rem,0.7fr)_minmax(0,1.6fr)]">
+        <section className="relative hidden min-h-0 overflow-hidden rounded-[2rem] border border-border bg-gradient-to-br from-primary/20 via-card to-accent/15 p-8 lg:row-span-2 lg:flex lg:flex-col lg:items-center lg:justify-center lg:text-center">
+          <div className="absolute -left-20 -top-20 size-64 rounded-full bg-primary/25 blur-3xl" />
+          <div className="absolute -bottom-24 -right-20 size-72 rounded-full bg-accent/20 blur-3xl" />
+          <div className="relative z-10">
+            <BrandMark logo={snap.logo} name={snap.companyName} large />
+            <p className="mt-6 text-2xl font-bold tracking-tight">{snap.companyName}</p>
+            <p className="mt-2 text-sm text-muted-foreground">{snap.storeName}</p>
+            <p className="mt-8 text-xs uppercase tracking-[0.24em] text-muted-foreground">
+              Thank you for shopping with us
+            </p>
+          </div>
         </section>
 
-        <aside className="flex flex-col gap-4">
+        <section className="flex min-h-0 flex-col lg:col-start-2">
+          <ul className="min-h-0 flex-1 space-y-2 overflow-auto pr-2">
+            {snap.lines.map((l, i) => (
+              <li
+                key={`${l.name}-${i}`}
+                className="flex items-start justify-between rounded-lg border border-border px-4 py-3"
+              >
+                <div>
+                  <p className="text-lg font-medium">
+                    {l.name}
+                    {l.foc && (
+                      <span className="ml-2 rounded bg-success/15 px-2 py-0.5 text-xs text-success">
+                        FREE
+                      </span>
+                    )}
+                    {l.credit && (
+                      <span className="ml-2 rounded bg-accent/15 px-2 py-0.5 text-xs text-accent">
+                        RETURN
+                      </span>
+                    )}
+                  </p>
+                  <p className="numeric text-sm text-muted-foreground">
+                    {l.qty} × {money(l.price)}
+                    {l.discount ? ` · less ${money(l.discount)}` : ""}
+                  </p>
+                </div>
+                <span className="numeric text-lg font-semibold">{money(l.lineTotal)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <aside className="flex flex-col gap-4 lg:col-start-2">
           <div className="rounded-xl border border-border p-5">
             <Row label="Subtotal" value={money(snap?.subtotal ?? 0)} />
             <Row label="Discount" value={`-${money(snap?.discount ?? 0)}`} />
@@ -284,6 +310,34 @@ function Row({ label, value, strong }: { label: string; value: string; strong?: 
     <div className="flex items-center justify-between py-0.5">
       <span className="text-sm text-muted-foreground">{label}</span>
       <span className={`numeric text-sm ${strong ? "font-bold" : ""}`}>{value}</span>
+    </div>
+  );
+}
+
+function BrandMark({
+  logo,
+  name,
+  large = false,
+}: {
+  logo?: string;
+  name: string;
+  large?: boolean;
+}) {
+  const size = large ? "size-36" : "size-20";
+  if (logo) {
+    return (
+      <img
+        src={logo}
+        alt={`${name} logo`}
+        className={`${size} mx-auto rounded-3xl object-contain drop-shadow-2xl`}
+      />
+    );
+  }
+  return (
+    <div
+      className={`${size} mx-auto grid place-items-center rounded-3xl bg-primary text-5xl font-bold text-primary-foreground shadow-2xl`}
+    >
+      {(name.trim()[0] || "P").toUpperCase()}
     </div>
   );
 }

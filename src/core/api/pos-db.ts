@@ -126,6 +126,7 @@ export async function productDeleteBlock(id: string): Promise<DeleteGuardVerdict
 
 export const rowToProduct = (r: Row): Product => ({
   id: r.id,
+  createdAt: r.created_at ?? undefined,
   name: r.name,
   sku: r.sku ?? r.barcode ?? "",
   barcode: r.barcode ?? "",
@@ -1109,16 +1110,18 @@ export async function loadCloudState(
   const [tiers, products, priceOverrides, members, sales, promotions, settings, stores, shifts] =
     await Promise.all([
       supabase.from("membership_tiers").select("id, name").is("deleted_at", null),
-      // Keep bootstrap bounded. Search and barcode resolution query the indexed
-      // database on demand, so a large catalogue is never materialised in a
-      // browser/WebView heap merely to open the register.
-      supabase
-        .from("products")
-        .select("*")
-        .is("deleted_at", null)
-        .order("updated_at", { ascending: false })
-        .order("id")
-        .limit(2000),
+      // Supabase caps one response at 1,000 rows. Read the catalogue in
+      // counted, concurrent windows so inventory never silently stops at the
+      // first 1,000/2,000 items while keeping each database response small.
+      readAllPages<Row>((from, to, withCount) =>
+        supabase
+          .from("products")
+          .select("*", withCount ? { count: "exact" } : {})
+          .is("deleted_at", null)
+          .order("updated_at", { ascending: false })
+          .order("id")
+          .range(from, to),
+      ),
       supabase
         .from("settings_scoped")
         .select("scope, scope_id, key, value")

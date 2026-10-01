@@ -47,7 +47,8 @@ export const Route = createFileRoute("/analytics")({
       { property: "og:title", content: "Live Business Board — every shop combined" },
       {
         property: "og:description",
-        content: "Category performance, item drilldown, revenue share, margin and giveaways for every shop.",
+        content:
+          "Category performance, item drilldown, revenue share, margin and giveaways for every shop.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -72,7 +73,7 @@ const PALETTE = [
 const shift = (days: number) => isoDay(new Date(Date.now() - days * 86_400_000));
 
 function LiveBoard() {
-  const { stores } = usePos();
+  const { allStores } = usePos();
   const { can, isAdmin } = useAuth();
   const allowed = isAdmin || can("can_view_sales_reports");
 
@@ -98,12 +99,15 @@ function LiveBoard() {
     staleTime: 30_000,
   });
 
-  const nameOf = useCallback(
-    (id: string) => stores.find((s) => s.id === id)?.name ?? (id || "Unassigned"),
-    [stores],
-  );
   const filter = useMemo(() => (picked.length ? new Set(picked) : undefined), [picked]);
   const data = query.data;
+  const nameOf = useCallback(
+    (id: string) =>
+      data?.storeNames[id] ??
+      allStores.find((s) => s.id === id || s.code === id)?.name ??
+      (id ? "Archived or unavailable shop" : "Unassigned shop"),
+    [allStores, data?.storeNames],
+  );
 
   const shops = useMemo(
     () => (data ? shopSlices(data, nameOf, filter) : []),
@@ -115,10 +119,7 @@ function LiveBoard() {
     [data, filter],
   );
 
-  const combinedCategories = useMemo(
-    () => topCategories(itemRows, topBy, 10),
-    [itemRows, topBy],
-  );
+  const combinedCategories = useMemo(() => topCategories(itemRows, topBy, 10), [itemRows, topBy]);
   const categoryItems = useMemo(
     () =>
       selectedCategory
@@ -148,9 +149,7 @@ function LiveBoard() {
     const bills = shops.reduce((a, s) => a + s.bills, 0);
     const given = shops.reduce((a, s) => a + s.givenAway, 0);
     const days = new Set(trend.map((t) => t.label.slice(0, 10))).size || 1;
-    const months = new Set(
-      (data?.storeDays ?? []).map((r) => r.sale_month),
-    ).size || 1;
+    const months = new Set((data?.storeDays ?? []).map((r) => r.sale_month)).size || 1;
     return {
       revenue,
       profit: revenue - cost,
@@ -166,7 +165,19 @@ function LiveBoard() {
 
   const exportRows = () =>
     downloadCsv("live-business-board", [
-      ["Shop", "Bills", "Revenue", "Cost", "Profit", "Margin %", "Share %", "Item discount", "Bill discount", "Coupons", "Free items"],
+      [
+        "Shop",
+        "Bills",
+        "Revenue",
+        "Cost",
+        "Profit",
+        "Margin %",
+        "Share %",
+        "Item discount",
+        "Bill discount",
+        "Coupons",
+        "Free items",
+      ],
       ...shops.map((s) => [
         s.name,
         s.bills,
@@ -206,8 +217,8 @@ function LiveBoard() {
             </Link>
             <h1 className="text-2xl font-semibold tracking-tight">Live Business Board</h1>
             <p className="text-sm text-muted-foreground">
-              Every shop combined — categories first, item drilldown, revenue share, margin and what we gave away.
-              Refreshes on its own every minute.
+              Every shop combined — categories first, item drilldown, revenue share, margin and what
+              we gave away. Refreshes on its own every minute.
             </p>
           </div>
           <div className="flex gap-2">
@@ -268,7 +279,7 @@ function LiveBoard() {
               >
                 All
               </Button>
-              {stores.map((s) => (
+              {allStores.map((s) => (
                 <Button
                   key={s.id}
                   size="sm"
@@ -297,9 +308,17 @@ function LiveBoard() {
             value={money(totals.profit)}
             hint={`${totals.marginPct.toFixed(1)}% margin`}
           />
-          <StatCard label="Given away" value={money(totals.given)} hint="Discounts, coupons, free items" />
+          <StatCard
+            label="Given away"
+            value={money(totals.given)}
+            hint="Discounts, coupons, free items"
+          />
           <StatCard label="Avg basket" value={money(totals.basket)} hint="Per bill" />
-          <StatCard label="Avg / day" value={money(totals.perDay)} hint={`${totals.days} trading days`} />
+          <StatCard
+            label="Avg / day"
+            value={money(totals.perDay)}
+            hint={`${totals.days} trading days`}
+          />
           <StatCard label="Avg / month" value={money(totals.perMonth)} hint="Across the range" />
         </div>
 
@@ -317,8 +336,8 @@ function LiveBoard() {
 
         {!empty && !query.isLoading && (
           <>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <section className="rounded-lg border border-border p-4">
+            <div className="grid items-stretch gap-4 xl:grid-cols-12">
+              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="text-sm font-semibold">Top categories — all shops combined</h2>
                   <div className="flex gap-1">
@@ -359,7 +378,10 @@ function LiveBoard() {
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">{category.name}</span>
                         <span className="block text-[11px] text-muted-foreground">
-                          {category.itemCount} item{category.itemCount === 1 ? "" : "s"} · {topBy === "revenue" ? money(category.revenue) : `${category.units} units`}
+                          {category.itemCount} item{category.itemCount === 1 ? "" : "s"} ·{" "}
+                          {topBy === "revenue"
+                            ? money(category.revenue)
+                            : `${category.units} units`}
                         </span>
                       </span>
                     </button>
@@ -372,7 +394,7 @@ function LiveBoard() {
                 </div>
               </section>
 
-              <section className="rounded-lg border border-border p-4">
+              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-5">
                 <h2 className="mb-3 text-sm font-semibold">Revenue share by shop</h2>
                 <ResponsiveContainer width="100%" height={320}>
                   <PieChart>
@@ -406,17 +428,20 @@ function LiveBoard() {
                       <Package className="size-4 text-primary" /> Items in {selectedCategory}
                     </h2>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setSelectedCategory(null)}
-                  >
+                  <Button size="sm" variant="ghost" onClick={() => setSelectedCategory(null)}>
                     <X className="size-4" /> Close items
                   </Button>
                 </div>
                 {categoryItems.length ? (
-                  <ResponsiveContainer width="100%" height={Math.max(240, categoryItems.length * 34)}>
-                    <BarChart data={categoryItems} layout="vertical" margin={{ left: 12, right: 20 }}>
+                  <ResponsiveContainer
+                    width="100%"
+                    height={Math.max(240, categoryItems.length * 34)}
+                  >
+                    <BarChart
+                      data={categoryItems}
+                      layout="vertical"
+                      margin={{ left: 12, right: 20 }}
+                    >
                       <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                       <XAxis type="number" fontSize={11} />
                       <YAxis type="category" dataKey="name" width={130} fontSize={11} />
@@ -440,49 +465,58 @@ function LiveBoard() {
 
             <section className="rounded-lg border border-border p-4">
               <h2 className="mb-3 text-sm font-semibold">Top categories per shop</h2>
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {shops.map((shop) => {
-                  const rows = topCategories(
-                    itemRows.filter((r) => (r.store_id ?? "") === shop.storeId),
-                    topBy,
-                    5,
-                  );
-                  return (
-                    <div key={shop.storeId} className="rounded-md border border-border p-3">
-                      <p className="text-xs font-medium">{shop.name}</p>
-                      <p className="mb-1 text-[11px] text-muted-foreground">
-                        {money(shop.revenue)} · {shop.sharePct.toFixed(1)}% of group
-                      </p>
-                      <div className="mt-3 space-y-1.5">
-                        {rows.map((category, index) => (
-                          <button
-                            key={category.name}
-                            type="button"
-                            onClick={() => setSelectedCategory(category.name)}
-                            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
-                          >
-                            <span
-                              className="size-2.5 shrink-0 rounded-full"
-                              style={{ background: PALETTE[index % PALETTE.length] }}
-                            />
-                            <span className="min-w-0 flex-1 truncate">{category.name}</span>
-                            <span className="numeric shrink-0 text-muted-foreground">
-                              {topBy === "revenue" ? money(category.revenue) : category.units}
-                            </span>
-                          </button>
-                        ))}
-                        {!rows.length && (
-                          <p className="py-5 text-center text-xs text-muted-foreground">No category sales</p>
-                        )}
+              <div className="max-h-[34rem] overflow-y-auto overscroll-contain pr-2">
+                <div className="grid auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {shops.map((shop) => {
+                    const rows = topCategories(
+                      itemRows.filter((r) => (r.store_id ?? "") === shop.storeId),
+                      topBy,
+                      5,
+                    );
+                    return (
+                      <div
+                        key={shop.storeId}
+                        className="min-h-48 rounded-md border border-border p-3"
+                      >
+                        <p className="truncate text-sm font-semibold" title={shop.name}>
+                          {shop.name}
+                        </p>
+                        <p className="mb-1 text-[11px] text-muted-foreground">
+                          {money(shop.revenue)} · {shop.sharePct.toFixed(1)}% of group
+                        </p>
+                        <div className="mt-3 space-y-1.5">
+                          {rows.map((category, index) => (
+                            <button
+                              key={category.name}
+                              type="button"
+                              onClick={() => setSelectedCategory(category.name)}
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
+                            >
+                              <span
+                                className="size-2.5 shrink-0 rounded-full"
+                                style={{ background: PALETTE[index % PALETTE.length] }}
+                              />
+                              <span className="min-w-0 flex-1 truncate">{category.name}</span>
+                              <span className="numeric shrink-0 text-muted-foreground">
+                                {topBy === "revenue" ? money(category.revenue) : category.units}
+                              </span>
+                            </button>
+                          ))}
+                          {!rows.length && (
+                            <p className="py-5 text-center text-xs text-muted-foreground">
+                              No category sales
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </section>
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <section className="rounded-lg border border-border p-4">
+            <div className="grid items-stretch gap-4 xl:grid-cols-12">
+              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
                 <h2 className="mb-3 text-sm font-semibold">Revenue, cost, profit and margin</h2>
                 <ResponsiveContainer width="100%" height={320}>
                   <ComposedChart data={shops}>
@@ -498,13 +532,33 @@ function LiveBoard() {
                     />
                     <Tooltip
                       formatter={(v, key) =>
-                        key === "marginPct" ? `${Number(v ?? 0).toFixed(1)}%` : money(Number(v ?? 0))
+                        key === "marginPct"
+                          ? `${Number(v ?? 0).toFixed(1)}%`
+                          : money(Number(v ?? 0))
                       }
                     />
                     <Legend />
-                    <Bar yAxisId="left" dataKey="revenue" name="Revenue" fill="var(--primary)" radius={[4, 4, 0, 0]} />
-                    <Bar yAxisId="left" dataKey="cost" name="Cost" fill="var(--muted-foreground)" radius={[4, 4, 0, 0]} />
-                    <Bar yAxisId="left" dataKey="profit" name="Profit" fill="var(--success)" radius={[4, 4, 0, 0]} />
+                    <Bar
+                      yAxisId="left"
+                      dataKey="revenue"
+                      name="Revenue"
+                      fill="var(--primary)"
+                      radius={[4, 4, 0, 0]}
+                    />
+                    <Bar
+                      yAxisId="left"
+                      dataKey="cost"
+                      name="Cost"
+                      fill="var(--muted-foreground)"
+                      radius={[4, 4, 0, 0]}
+                    />
+                    <Bar
+                      yAxisId="left"
+                      dataKey="profit"
+                      name="Profit"
+                      fill="var(--success)"
+                      radius={[4, 4, 0, 0]}
+                    />
                     <Line
                       yAxisId="right"
                       type="monotone"
@@ -518,7 +572,7 @@ function LiveBoard() {
                 </ResponsiveContainer>
               </section>
 
-              <section className="rounded-lg border border-border p-4">
+              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-5">
                 <h2 className="mb-3 text-sm font-semibold">Where the money went</h2>
                 <ResponsiveContainer width="100%" height={320}>
                   <BarChart data={shops}>
@@ -528,10 +582,25 @@ function LiveBoard() {
                     <Tooltip formatter={(v) => money(Number(v ?? 0))} />
                     <Legend />
                     <Bar dataKey="profit" stackId="m" name="Kept as profit" fill="var(--success)" />
-                    <Bar dataKey="itemDiscount" stackId="m" name="Item discounts" fill="var(--primary)" />
-                    <Bar dataKey="billDiscount" stackId="m" name="Bill discounts" fill="var(--accent)" />
+                    <Bar
+                      dataKey="itemDiscount"
+                      stackId="m"
+                      name="Item discounts"
+                      fill="var(--primary)"
+                    />
+                    <Bar
+                      dataKey="billDiscount"
+                      stackId="m"
+                      name="Bill discounts"
+                      fill="var(--accent)"
+                    />
                     <Bar dataKey="coupon" stackId="m" name="Coupons" fill="var(--warning)" />
-                    <Bar dataKey="focValue" stackId="m" name="Free items" fill="var(--destructive)" />
+                    <Bar
+                      dataKey="focValue"
+                      stackId="m"
+                      name="Free items"
+                      fill="var(--destructive)"
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </section>
@@ -564,8 +633,22 @@ function LiveBoard() {
                   <YAxis fontSize={11} />
                   <Tooltip formatter={(v) => money(Number(v ?? 0))} />
                   <Legend />
-                  <Line type="monotone" dataKey="revenue" name="Revenue" stroke="var(--primary)" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="profit" name="Profit" stroke="var(--success)" strokeWidth={2} dot={false} />
+                  <Line
+                    type="monotone"
+                    dataKey="revenue"
+                    name="Revenue"
+                    stroke="var(--primary)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="profit"
+                    name="Profit"
+                    stroke="var(--success)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </section>

@@ -244,9 +244,11 @@ export async function createRequest(input: {
   throw new Error("Could not confirm the approval request");
 }
 
-/** Anything still pending past its window is reported as expired. */
+/** Pending and unused approved requests both expire at the configured deadline. */
 const withExpiry = (r: AuthorizationRequest): AuthorizationRequest =>
-  r.status === "pending" && r.expiresAt && Date.parse(r.expiresAt) < Date.now()
+  (r.status === "pending" || (r.status === "approved" && !r.consumedAt)) &&
+  r.expiresAt &&
+  Date.parse(r.expiresAt) < Date.now()
     ? { ...r, status: "expired" }
     : r;
 
@@ -270,14 +272,14 @@ export async function listRequests(opts: {
 }
 
 /**
- * Persist elapsed approval windows before a queue is read. The pending guard
+ * Persist elapsed approval windows before a queue is read. The status guard
  * makes this safe when several tills poll at once: only one caller receives
  * each expired row and therefore writes its audit/notification side effects.
  */
 export async function expirePendingRequests(): Promise<AuthorizationRequest[]> {
   const now = new Date().toISOString();
   const res = await rest(
-    `authorization_requests?status=eq.pending&expires_at=lt.${encodeURIComponent(now)}`,
+    `authorization_requests?status=in.(pending,approved)&consumed_at=is.null&expires_at=lt.${encodeURIComponent(now)}`,
     {
       method: "PATCH",
       body: JSON.stringify({
@@ -346,7 +348,7 @@ export async function consumeRequest(id: string, expectedHash?: string): Promise
   const guard =
     expectedHash === undefined ? "" : `&snapshot_hash=eq.${encodeURIComponent(expectedHash)}`;
   const res = await rest(
-    `authorization_requests?id=eq.${encodeURIComponent(id)}&status=eq.approved&consumed_at=is.null${guard}`,
+    `authorization_requests?id=eq.${encodeURIComponent(id)}&status=eq.approved&consumed_at=is.null&expires_at=gt.${encodeURIComponent(new Date().toISOString())}${guard}`,
     {
       method: "PATCH",
       body: JSON.stringify({ consumed_at: new Date().toISOString() }),

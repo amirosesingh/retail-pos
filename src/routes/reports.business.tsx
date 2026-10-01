@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Label } from "@/components/ui/label";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
@@ -15,7 +16,14 @@ import { TablePagination, usePagination } from "@/platforms/web/components/pos/T
 import { money, usePos } from "@/lib/pos-store";
 import { useReportSales } from "@/lib/use-report-sales";
 import { lineCost, saleLineRevenues, saleNetRevenue } from "@/core/pricing/profit";
-import { ReportHeader, StatCard, defaultRange, downloadCsv, inRange } from "@/platforms/web/components/pos/report-kit";
+import {
+  ReportHeader,
+  StatCard,
+  defaultRange,
+  downloadCsv,
+  inRange,
+} from "@/platforms/web/components/pos/report-kit";
+import { loadReceivingInvoices } from "@/core/api/pos-db";
 
 export const Route = createFileRoute("/reports/business")({
   head: () => ({
@@ -49,6 +57,7 @@ type ProductRow = {
   perDay: number;
   onHand: number;
   daysCover: number;
+  arrivalDate: string | null;
 };
 
 type CashierRow = {
@@ -68,6 +77,25 @@ function BusinessReport() {
   const [storeId, setStoreId] = useState("all");
   const reportStoreIds = storeId === "all" ? stores.map((store) => store.id) : [storeId];
   const history = useReportSales(state.sales, reportStoreIds, from, to);
+  const arrivals = useQuery({
+    queryKey: ["business-report-arrivals", storeId],
+    queryFn: () =>
+      loadReceivingInvoices(storeId === "all" ? null : storeId, 5000, storeId === "all"),
+    staleTime: 60_000,
+  });
+  const arrivedByProduct = useMemo(() => {
+    const dates = new Map<string, string>();
+    for (const invoice of arrivals.data ?? []) {
+      if (storeId !== "all" && invoice.storeId && invoice.storeId !== storeId) continue;
+      const arrived = invoice.entryDate || invoice.createdAt;
+      for (const line of invoice.lines) {
+        if (!line.productId || !arrived) continue;
+        const previous = dates.get(line.productId);
+        if (!previous || arrived > previous) dates.set(line.productId, arrived);
+      }
+    }
+    return dates;
+  }, [arrivals.data, storeId]);
   const [view, setView] = useState<"products" | "cashiers">("products");
 
   const sales = useMemo(
@@ -94,20 +122,19 @@ function BusinessReport() {
         if (l.qty <= 0) continue;
         const revenue = Math.max(0, revenues[index] ?? 0);
         const cost = lineCost(l, state.products);
-        const row =
-          map.get(l.productId) ??
-          {
-            id: l.productId,
-            name: l.name,
-            qty: 0,
-            revenue: 0,
-            cost: 0,
-            profit: 0,
-            margin: 0,
-            perDay: 0,
-            onHand: 0,
-            daysCover: 0,
-          };
+        const row = map.get(l.productId) ?? {
+          id: l.productId,
+          name: l.name,
+          qty: 0,
+          revenue: 0,
+          cost: 0,
+          profit: 0,
+          margin: 0,
+          perDay: 0,
+          onHand: 0,
+          daysCover: 0,
+          arrivalDate: null,
+        };
         row.qty += l.qty;
         row.revenue += revenue;
         row.cost += cost;
@@ -129,16 +156,24 @@ function BusinessReport() {
         onHand,
         perDay,
         daysCover: perDay > 0 ? onHand / perDay : 0,
+        arrivalDate: arrivedByProduct.get(r.id) ?? product?.createdAt ?? null,
       };
     });
     return out.sort((a, b) => b.profit - a.profit);
-  }, [sales, state.products, storeId, days]);
+  }, [sales, state.products, storeId, days, arrivedByProduct]);
 
   const cashiers = useMemo(() => {
     const map = new Map<string, CashierRow>();
     for (const s of sales) {
       const key = s.cashier || "Unknown";
-      const row = map.get(key) ?? { name: key, bills: 0, revenue: 0, profit: 0, discount: 0, avgBill: 0 };
+      const row = map.get(key) ?? {
+        name: key,
+        bills: 0,
+        revenue: 0,
+        profit: 0,
+        discount: 0,
+        avgBill: 0,
+      };
       const cost = s.lines.reduce((a, l) => a + lineCost(l, state.products), 0);
       row.bills += 1;
       const revenue = saleNetRevenue(s);
@@ -165,9 +200,21 @@ function BusinessReport() {
   const exportCsv = () => {
     if (view === "products") {
       downloadCsv("retail-performance-products", [
-        ["Product", "Units", "Revenue", "Cost", "Profit", "Margin %", "Units/day", "On hand", "Days cover"],
+        [
+          "Product",
+          "Arrived",
+          "Units",
+          "Revenue",
+          "Cost",
+          "Profit",
+          "Margin %",
+          "Units/day",
+          "On hand",
+          "Days cover",
+        ],
         ...products.map((r) => [
           r.name,
+          r.arrivalDate ? r.arrivalDate.slice(0, 10) : "",
           r.qty,
           r.revenue.toFixed(2),
           r.cost.toFixed(2),
@@ -233,7 +280,9 @@ function BusinessReport() {
           </div>
         </ReportHeader>
 
-        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.loading ? (
+          <p className="text-sm text-muted-foreground">Loading complete SQL history…</p>
+        ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-4">
@@ -253,6 +302,7 @@ function BusinessReport() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Product</TableHead>
+                  <TableHead>Arrived</TableHead>
                   <TableHead className="text-right">Units</TableHead>
                   <TableHead className="text-right">Revenue</TableHead>
                   <TableHead className="text-right">Profit</TableHead>
@@ -265,7 +315,10 @@ function BusinessReport() {
               <TableBody>
                 {products.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell
+                      colSpan={9}
+                      className="py-8 text-center text-sm text-muted-foreground"
+                    >
                       Nothing sold in this period.
                     </TableCell>
                   </TableRow>
@@ -273,6 +326,11 @@ function BusinessReport() {
                   prodPage.pageItems.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell className="font-medium">{r.name}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        {r.arrivalDate
+                          ? new Date(r.arrivalDate).toLocaleDateString()
+                          : "Not recorded"}
+                      </TableCell>
                       <TableCell className="text-right">{r.qty}</TableCell>
                       <TableCell className="text-right">{money(r.revenue)}</TableCell>
                       <TableCell className="text-right">{money(r.profit)}</TableCell>
@@ -302,7 +360,10 @@ function BusinessReport() {
               <TableBody>
                 {cashiers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell
+                      colSpan={6}
+                      className="py-8 text-center text-sm text-muted-foreground"
+                    >
                       No bills in this period.
                     </TableCell>
                   </TableRow>

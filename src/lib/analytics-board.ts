@@ -31,6 +31,7 @@ export type ItemDayRow = {
 
 export type BillRow = {
   store_id: string | null;
+  store_name: string | null;
   created_at: string;
   total: number;
   discount_amount: number;
@@ -41,6 +42,7 @@ export type BoardData = {
   storeDays: StoreDayRow[];
   itemDays: ItemDayRow[];
   bills: BillRow[];
+  storeNames: Record<string, string>;
 };
 
 const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0) || 0);
@@ -85,26 +87,39 @@ function classify(source: string, sqlFile: string, message: string): BoardIssue 
       detail: message,
       advice: `"${source}" does not exist in the database yet. Run ${sqlFile} in the SQL editor to create it.`,
     };
-  return { source, kind: "other", sqlFile, detail: message, advice: `Reading "${source}" failed. Re-running ${sqlFile} usually repairs it.` };
+  return {
+    source,
+    kind: "other",
+    sqlFile,
+    detail: message,
+    advice: `Reading "${source}" failed. Re-running ${sqlFile} usually repairs it.`,
+  };
 }
 
 export async function fetchBoard(from: string, to: string): Promise<BoardData> {
-  const [storeRes, itemRes, billRes] = await Promise.all([
+  const [storeRes, itemRes, billRes, directoryRes] = await Promise.all([
     supabase
       .from("v_daily_store_sales")
-      .select("sale_day, sale_month, store_id, bills, revenue, cost, profit, discount, foc_value, units")
+      .select(
+        "sale_day, sale_month, store_id, bills, revenue, cost, profit, discount, foc_value, units",
+      )
       .gte("sale_day", from)
       .lte("sale_day", to),
     supabase
       .from("v_daily_item_sales")
-      .select("sale_day, store_id, product_id, product_name, units, revenue, cost, profit, product_category")
+      .select(
+        "sale_day, store_id, product_id, product_name, units, revenue, cost, profit, product_category",
+      )
       .gte("sale_day", from)
       .lte("sale_day", to),
     supabase
       .from("sales")
-      .select("store_id, created_at, total_amount, discount_amount, coupon_discount")
+      .select(
+        "store_id, store_name_snapshot, created_at, total_amount, discount_amount, coupon_discount",
+      )
       .gte("created_at", from)
       .lte("created_at", endOfDay(to)),
+    supabase.from("stores").select("id, name"),
   ]);
 
   const issues: BoardIssue[] = [];
@@ -112,8 +127,9 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
     issues.push(classify("v_daily_store_sales", "supabase/schema.sql", storeRes.error.message));
   if (itemRes.error)
     issues.push(classify("v_daily_item_sales", "supabase/schema.sql", itemRes.error.message));
-  if (billRes.error)
-    issues.push(classify("sales", "supabase/schema.sql", billRes.error.message));
+  if (billRes.error) issues.push(classify("sales", "supabase/schema.sql", billRes.error.message));
+  if (directoryRes.error)
+    issues.push(classify("stores", "supabase/schema.sql", directoryRes.error.message));
   if (issues.length) throw new BoardError(issues);
 
   return {
@@ -142,11 +158,21 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
     })),
     bills: (billRes.data ?? []).map((r) => ({
       store_id: r.store_id,
+      store_name: r.store_name_snapshot,
       created_at: String(r.created_at),
       total: n(r.total_amount),
       discount_amount: n(r.discount_amount),
       coupon_discount: n(r.coupon_discount),
     })),
+    storeNames: Object.fromEntries([
+      ...(directoryRes.data ?? []).map((row) => [
+        String(row.id),
+        String(row.name || "Unnamed shop"),
+      ]),
+      ...(billRes.data ?? [])
+        .filter((row) => row.store_id && row.store_name_snapshot)
+        .map((row) => [String(row.store_id), String(row.store_name_snapshot)]),
+    ]),
   };
 }
 

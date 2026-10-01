@@ -210,8 +210,29 @@ function Register() {
   const [appliedApproval, setAppliedApproval] = useState<{
     requestId: string;
     approvedAmount: number | null;
+    requestedAmount: number | null;
+    requesterDirectLimit: number | null;
     valueUnit: "percent" | "currency" | "quantity" | "number";
   } | null>(null);
+  const appliedApprovalText = appliedApproval
+    ? (() => {
+        const formatValue = (value: number) =>
+          appliedApproval.valueUnit === "percent"
+            ? `${value.toFixed(2)}%`
+            : appliedApproval.valueUnit === "currency"
+              ? money(value)
+              : value.toFixed(2);
+        const approved =
+          appliedApproval.approvedAmount === null
+            ? ""
+            : ` · ${formatValue(appliedApproval.approvedAmount)} approved`;
+        const extra =
+          appliedApproval.approvedAmount !== null && appliedApproval.requesterDirectLimit !== null
+            ? ` · ${formatValue(Math.max(0, appliedApproval.approvedAmount - appliedApproval.requesterDirectLimit))} extra`
+            : "";
+        return `#${appliedApproval.requestId.slice(-8).toUpperCase()}${approved}${extra}`;
+      })()
+    : "";
   const askManager = async (request: GateRequest) => {
     const baseSnapshot = ticketSnapshot.current();
     const snapshot = baseSnapshot
@@ -798,6 +819,8 @@ function Register() {
       setAppliedApproval({
         requestId: grant.requestId,
         approvedAmount: grant.approvedAmount,
+        requestedAmount: grant.requestedAmount,
+        requesterDirectLimit: grant.requesterDirectLimit,
         valueUnit: grant.valueUnit,
       });
       toast.success(
@@ -913,6 +936,7 @@ function Register() {
 
   const displayBase = {
     companyName: state.settings.receipt.companyName || currentStore.name,
+    logo: state.settings.receipt.showLogo ? state.settings.receipt.logo || "" : "",
     storeName: `${currentStore.name} (${currentStore.code})`,
     cashier: activeCashier,
     payment: state.settings.payment,
@@ -1463,7 +1487,7 @@ function Register() {
       </p>
       {appliedApproval && (
         <p className="truncate text-[10px] font-medium text-success">
-          Approved · #{appliedApproval.requestId.slice(-8).toUpperCase()}
+          Approval applied · {appliedApprovalText}
         </p>
       )}
     </div>
@@ -1522,14 +1546,7 @@ function Register() {
           </p>
           {appliedApproval && (
             <p className="truncate text-[10px] font-medium text-success">
-              Approval applied · #{appliedApproval.requestId.slice(-8).toUpperCase()}
-              {appliedApproval.approvedAmount === null
-                ? ""
-                : appliedApproval.valueUnit === "percent"
-                  ? ` · ${appliedApproval.approvedAmount.toFixed(2)}%`
-                  : appliedApproval.valueUnit === "currency"
-                    ? ` · ${money(appliedApproval.approvedAmount)}`
-                    : ` · ${appliedApproval.approvedAmount.toFixed(2)}`}
+              Approval applied · {appliedApprovalText}
             </p>
           )}
         </div>

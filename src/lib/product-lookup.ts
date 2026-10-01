@@ -41,7 +41,54 @@ export function checkCodeAvailable(
   const trimmed = code.trim();
   if (!trimmed) return "Enter a barcode";
   const clash = codeTakenBy(products, trimmed, exceptId);
-  return clash ? `${trimmed} already belongs to ${clash.name} (${clash.sku || clash.barcode})` : null;
+  return clash
+    ? `${trimmed} already belongs to ${clash.name} (${clash.sku || clash.barcode})`
+    : null;
+}
+
+export type DuplicateProductCode = {
+  code: string;
+  products: Pick<Product, "id" | "name" | "sku" | "barcode">[];
+};
+
+/** Audit every SKU and barcode shape, including aliases and variants. */
+export function findDuplicateProductCodes(products: Product[]): DuplicateProductCode[] {
+  const owners = new Map<string, Map<string, Product>>();
+  for (const product of products) {
+    for (const code of new Set(productCodes(product))) {
+      if (!code) continue;
+      const byProduct = owners.get(code) ?? new Map<string, Product>();
+      byProduct.set(product.id, product);
+      owners.set(code, byProduct);
+    }
+  }
+  return [...owners.entries()]
+    .filter(([, entries]) => entries.size > 1)
+    .map(([code, entries]) => ({ code, products: [...entries.values()] }))
+    .sort((a, b) => a.code.localeCompare(b.code));
+}
+
+/** Validate all codes on one edited item before any write is attempted. */
+export function productCodeProblems(products: Product[], draft: Product): string[] {
+  const raw = [
+    draft.sku,
+    draft.barcode,
+    ...(draft.barcodes ?? []),
+    ...(draft.variants ?? []).map((variant) => variant.code),
+  ]
+    .map((code) => code.trim())
+    .filter(Boolean);
+  const duplicateWithin = raw.find(
+    (code, index) =>
+      raw.findIndex((other) => normaliseCode(other) === normaliseCode(code)) !== index,
+  );
+  const problems = duplicateWithin ? [`${duplicateWithin} is repeated on this product.`] : [];
+  for (const code of new Set(raw.map(normaliseCode))) {
+    const clash = codeTakenBy(products, code, draft.id);
+    if (clash)
+      problems.push(`${code} already belongs to ${clash.name} (${clash.sku || clash.barcode}).`);
+  }
+  return problems;
 }
 
 /** Products that look like the scanned item, for the "already exists?" hint. */
