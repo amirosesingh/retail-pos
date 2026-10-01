@@ -41,7 +41,7 @@ export function ScopeBadge({ path, className = "" }: { path: string; className?:
   const source = sourceOfPath(path);
   const label =
     source === "BRANCH"
-      ? `Branch: ${currentStore.name}`
+      ? `Store: ${currentStore.name}`
       : source === "CLUSTER"
         ? `Cluster: ${scopeIds.CLUSTER || "—"}`
         : source === "TERMINAL"
@@ -215,7 +215,7 @@ export function ScopePanel({
       <p className="text-xs font-medium">{heading}</p>
       <p className="text-[11px] text-muted-foreground">
         {terminalScoped && businessScoped
-          ? "Business blocks use Branch → Cluster → Global. Terminal blocks use Terminal → Cluster → Global."
+          ? "Business blocks use Store → Cluster → Global. Terminal blocks use Terminal → Cluster → Global."
           : terminalScoped
             ? "Terminal overrides Cluster; Cluster overrides Global."
             : "Store overrides Cluster; Cluster overrides Global."}

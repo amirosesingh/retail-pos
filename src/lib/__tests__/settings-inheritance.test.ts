@@ -234,4 +234,14 @@ describe("central settings ownership UI", () => {
     expect(store).toMatch(/const patch: Record<string, unknown> = \{\};/);
     expect(store).not.toContain("pickSection(");
   });
+
+  it("uses Store consistently in the inheritance interface while retaining BRANCH storage", () => {
+    const controls = read("src/platforms/web/components/pos/settings/ScopeControls.tsx");
+    const resolver = read("src/lib/branch-settings.ts");
+
+    expect(controls).toContain('`Store: ${currentStore.name}`');
+    expect(controls).not.toContain('`Branch: ${currentStore.name}`');
+    expect(resolver).toContain('BRANCH: "Store"');
+    expect(resolver).toContain('match: { scope: tier, scope_id: scopeId }');
+  });
 });
