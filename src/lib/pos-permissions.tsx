@@ -201,6 +201,10 @@ function PermissionsInner({ children }: { children: ReactNode }) {
       setError(result.error ?? "Invalid supervisor User ID or PIN");
       return;
     }
+    if (result.manager.role !== "admin" && result.manager.role !== "manager") {
+      setError("That account is not a supervisor");
+      return;
+    }
     close(true);
   };
 
