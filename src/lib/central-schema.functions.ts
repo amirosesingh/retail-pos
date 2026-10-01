@@ -8,6 +8,14 @@
  * Thin wrapper: all logic lives in the server module it imports.
  */
 import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+
+const callerProof = z.object({
+  sessionToken: z.string().max(400).optional(),
+  cashierToken: z.string().max(2000).optional(),
+  terminalToken: z.string().max(200).optional(),
+  accessToken: z.string().max(4000).optional(),
+});
 
 export type CentralSchemaColumn = {
   table: string;
@@ -18,11 +26,17 @@ export type CentralSchemaColumn = {
 };
 
 export type CentralSchemaResult =
-  | { ok: true; rows: CentralSchemaColumn[] }
-  | { ok: false; error: string };
+  { ok: true; rows: CentralSchemaColumn[] } | { ok: false; error: string };
 
-export const fetchCentralSchema = createServerFn({ method: "GET" }).handler(
-  async (): Promise<CentralSchemaResult> => {
+export const fetchCentralSchema = createServerFn({ method: "POST" })
+  .validator((input: unknown) => callerProof.parse(input))
+  .handler(async ({ data }): Promise<CentralSchemaResult> => {
+    const { requireCallerScope } = await import("./privileged-caller.server");
+    try {
+      await requireCallerScope(data, { permission: "can_manage_sync_backup" });
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
     const { hasServiceKey, runRelayRead } = await import("@/core/api/pos-relay.server");
     if (!hasServiceKey()) {
       return {
@@ -43,8 +57,7 @@ export const fetchCentralSchema = createServerFn({ method: "GET" }).handler(
       }))
       .filter((r) => r.table && r.column);
     return { ok: true, rows };
-  },
-);
+  });
 
 export type CentralProbeRow = {
   table: string;
@@ -54,16 +67,22 @@ export type CentralProbeRow = {
 };
 
 export type CentralProbeResult =
-  | { ok: true; rows: CentralProbeRow[] }
-  | { ok: false; error: string };
+  { ok: true; rows: CentralProbeRow[] } | { ok: false; error: string };
 
 /**
  * Probe every table in the authoritative central schema with a one-row read.
  * The result names, per table, the exact failure (missing table, permission
  * denied, connectivity) instead of a generic "unable to fetch".
  */
-export const probeCentralTables = createServerFn({ method: "GET" }).handler(
-  async (): Promise<CentralProbeResult> => {
+export const probeCentralTables = createServerFn({ method: "POST" })
+  .validator((input: unknown) => callerProof.parse(input))
+  .handler(async ({ data }): Promise<CentralProbeResult> => {
+    const { requireCallerScope } = await import("./privileged-caller.server");
+    try {
+      await requireCallerScope(data, { permission: "can_manage_sync_backup" });
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
     const { hasServiceKey, runRelayRead } = await import("@/core/api/pos-relay.server");
     const { CENTRAL_SCHEMA } = await import("./central-schema");
     if (!hasServiceKey()) {
@@ -84,5 +103,4 @@ export const probeCentralTables = createServerFn({ method: "GET" }).handler(
       });
     }
     return { ok: true, rows };
-  },
-);
+  });

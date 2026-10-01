@@ -329,10 +329,17 @@ async function callerId(accessToken: string): Promise<string> {
   return body.id;
 }
 
-export async function permanentlyDeleteStaff(username: string, accessToken: string): Promise<void> {
+export async function permanentlyDeleteStaff(
+  username: string,
+  caller: { accessToken?: string; staffUserId?: string | null },
+): Promise<void> {
   const profile = await staffProfile(username);
   if (!profile?.auth_user_id) throw new Error("The staff account could not be found");
-  if (profile.auth_user_id === await callerId(accessToken)) {
+  const callerAuthId = caller.accessToken ? await callerId(caller.accessToken) : null;
+  if (
+    profile.auth_user_id === callerAuthId ||
+    (!!caller.staffUserId && profile.user_id === caller.staffUserId)
+  ) {
     throw new Error("CANNOT_DELETE_CURRENT_ACCOUNT");
   }
   await serviceRpc("staff_account_delete_profile", {

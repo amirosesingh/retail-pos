@@ -35,7 +35,6 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { ADMIN_OFFLINE_MESSAGE } from "@/lib/admin-session";
 import { isConnectionError } from "@/core/local-db/db-mode";
 import { notifyError } from "@/lib/notify";
@@ -56,6 +55,7 @@ import { syncNow } from "@/lib/sync-engine";
 import { isExternalEmail, isInternalAddress } from "@/lib/internal-domains";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { setStaffAuthorizationPin } from "@/lib/authorization-client";
+import { listManagedStaffAccounts, setManagedStaffPermissions } from "@/lib/staff-admin.functions";
 import {
   createStaffMember,
   looksLikeEmail,
@@ -157,15 +157,15 @@ export function StaffManager() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data, error }, roleList] = await Promise.all([
-        supabaseExternal.rpc("list_app_users"),
+      const [staffResult, roleList] = await Promise.all([
+        getPosCallerAuth().then((auth) => listManagedStaffAccounts({ data: auth })),
         getRolesWithPermissions(),
       ]);
-      if (error) throw error;
+      if (!staffResult.ok) throw new Error(staffResult.error);
       setOffline(false);
       setRoles(roleList);
       setRows(
-        ((data ?? []) as Record<string, unknown>[]).map((r) => {
+        staffResult.rows.map((r) => {
           const role = fromDbRole(String(r["role"] ?? "staff"));
           return {
             auth_user_id: (r["auth_user_id"] as string | null) ?? null,
@@ -267,11 +267,14 @@ export function StaffManager() {
         });
         if (editing.role_slug !== selectedRole.slug) {
           const permissions = selectedRole.permissions ?? rolePermissions(selectedRole.baseLevel);
-          const { error } = await supabaseExternal.rpc("set_app_user_permissions", {
-            p_user_id: editing.user_id,
-            p_permissions: permissions,
+          const permissionResult = await setManagedStaffPermissions({
+            data: {
+              ...(await getPosCallerAuth()),
+              userId: editing.user_id,
+              permissions,
+            },
           });
-          if (error) throw error;
+          if (!permissionResult.ok) throw new Error(permissionResult.error);
         }
         toast.success(`${form.displayName.trim()} saved — ${branchLabel}`);
       } else {
@@ -317,20 +320,23 @@ export function StaffManager() {
   const savePermissions = async () => {
     if (!permissionsFor) return;
     setBusy("permissions");
-    const { error } = await supabaseExternal.rpc("set_app_user_permissions", {
-      p_user_id: permissionsFor.user_id,
-      p_permissions: permissionsFor.permissions,
+    const result = await setManagedStaffPermissions({
+      data: {
+        ...(await getPosCallerAuth()),
+        userId: permissionsFor.user_id,
+        permissions: permissionsFor.permissions,
+      },
     });
     setBusy("");
-    if (error) {
+    if (!result.ok) {
       // Permissions live centrally only; queueing them offline would let two
       // tills disagree about who may do what, so the change is refused.
-      if (isConnectionError(error)) {
+      if (isConnectionError(new Error(result.error))) {
         setOffline(true);
         toast.error(ADMIN_OFFLINE_MESSAGE);
         return;
       }
-      notifyError(error, "Could not save permissions");
+      notifyError(new Error(result.error), "Could not save permissions");
       return;
     }
     setRows((current) =>

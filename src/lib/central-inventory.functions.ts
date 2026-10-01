@@ -5,6 +5,7 @@
  * PostgREST description document and says so on screen.
  */
 import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 
 export type CentralInventoryResult =
   | {
@@ -27,8 +28,22 @@ export function classifyCentralInventoryError(error: string): CentralInventoryFa
   return "unavailable";
 }
 
-export const fetchCentralInventory = createServerFn({ method: "GET" }).handler(
-  async (): Promise<CentralInventoryResult> => {
+const callerProof = z.object({
+  sessionToken: z.string().max(400).optional(),
+  cashierToken: z.string().max(2000).optional(),
+  terminalToken: z.string().max(200).optional(),
+  accessToken: z.string().max(4000).optional(),
+});
+
+export const fetchCentralInventory = createServerFn({ method: "POST" })
+  .validator((input: unknown) => callerProof.parse(input))
+  .handler(async ({ data }): Promise<CentralInventoryResult> => {
+    const { requireCallerScope } = await import("./privileged-caller.server");
+    try {
+      await requireCallerScope(data, { permission: "can_manage_sync_backup" });
+    } catch (error) {
+      return { ok: false, error: (error as Error).message, reason: "not_permitted" };
+    }
     const { hasServiceKey, runRelayRead } = await import("@/core/api/pos-relay.server");
     if (!hasServiceKey()) {
       return {
@@ -45,7 +60,9 @@ export const fetchCentralInventory = createServerFn({ method: "GET" }).handler(
         error:
           res.error ??
           "The deep inventory helper is not installed in the central database (schema_inventory_deep).",
-        reason: classifyCentralInventoryError(res.error ?? "schema_inventory_deep is not installed"),
+        reason: classifyCentralInventoryError(
+          res.error ?? "schema_inventory_deep is not installed",
+        ),
       };
     }
     return {
@@ -54,5 +71,4 @@ export const fetchCentralInventory = createServerFn({ method: "GET" }).handler(
       mode: res.inventoryMode ?? "deep",
       ...(res.inventoryWarning ? { warning: res.inventoryWarning } : {}),
     };
-  },
-);
+  });

@@ -4,7 +4,6 @@
  * The browser never holds the key that can create accounts: every call here
  * goes to the server, which checks that the person asking is a supervisor.
  */
-import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { listTerminalStaffAccounts, preparePinSignIn } from "@/lib/staff-admin.functions";
 import {
   deleteStaffAccount,
@@ -16,6 +15,7 @@ import {
 import type { StaffRole } from "@/lib/permissions";
 import { isExternalEmail } from "@/lib/internal-domains";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 
 export type StaffAccountInput = {
   displayName: string;
@@ -36,13 +36,6 @@ export const looksLikeEmail = (input: string) => isExternalEmail(input);
 export const dbBaseRole = (role: StaffRole): "admin" | "manager" | "staff" =>
   role === "admin" ? "admin" : role === "supervisor" ? "manager" : "staff";
 
-async function accessToken(): Promise<string> {
-  const { data } = await supabaseExternal.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Please sign in again to manage staff");
-  return token;
-}
-
 /** Create a staff member, or update the one that already holds this username. */
 export async function createStaffMember(input: StaffAccountInput): Promise<void> {
   const identifier = input.username.trim().toLowerCase();
@@ -56,7 +49,7 @@ export async function createStaffMember(input: StaffAccountInput): Promise<void>
   }
   const res = await saveStaffAccount({
     data: {
-      accessToken: await accessToken(),
+      ...(await getPosCallerAuth()),
       displayName: input.displayName,
       username: identifier,
       ...(emailMode ? { password: input.password ?? "" } : { pin: input.pin ?? "" }),
@@ -72,7 +65,7 @@ export async function createStaffMember(input: StaffAccountInput): Promise<void>
 /** Turn an account on or off. A blocked person cannot sign in anywhere. */
 export async function toggleStaffStatus(username: string, active: boolean): Promise<void> {
   const res = await setStaffAccountActive({
-    data: { accessToken: await accessToken(), username, active },
+    data: { ...(await getPosCallerAuth()), username, active },
   });
   if (!res.ok) throw new Error(res.error);
 }
@@ -88,7 +81,7 @@ export async function updateStaffMember(input: {
 }): Promise<void> {
   const res = await updateStaffAccount({
     data: {
-      accessToken: await accessToken(),
+      ...(await getPosCallerAuth()),
       ...input,
       baseRole: dbBaseRole(input.baseRole),
     },
@@ -98,14 +91,14 @@ export async function updateStaffMember(input: {
 
 export async function permanentlyDeleteStaffMember(username: string): Promise<void> {
   const res = await deleteStaffAccount({
-    data: { accessToken: await accessToken(), username },
+    data: { ...(await getPosCallerAuth()), username },
   });
   if (!res.ok) throw new Error(res.error);
 }
 
 /** Copy any remaining old cashier records onto real accounts. */
 export async function migrateLegacyCashiers(): Promise<number> {
-  const res = await migrateCashiersToAccounts({ data: { accessToken: await accessToken() } });
+  const res = await migrateCashiersToAccounts({ data: await getPosCallerAuth() });
   if (!res.ok) throw new Error(res.error);
   return res.migrated;
 }
@@ -181,7 +174,17 @@ export async function listTerminalStaff(storeId: string | null): Promise<Termina
       return done(await mirror(rows(await res.json().catch(() => null))));
     }
 
-    return done(await mirror(rows(await listTerminalStaffAccounts({ data: { storeId } }))));
+    const terminalToken = readTerminalConfig()?.tokenId;
+    if (!terminalToken) return { staff: [], reason: "not-authorised" };
+    return done(
+      await mirror(
+        rows(
+          await listTerminalStaffAccounts({
+            data: { storeId, terminalToken },
+          }),
+        ),
+      ),
+    );
   } catch {
     // A till must still be able to sign in by typing a username.
     return { staff: [], reason: "unreachable" };

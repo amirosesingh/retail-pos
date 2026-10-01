@@ -13,7 +13,7 @@ import {
   loadNotificationSettings,
   saveNotificationSettings,
 } from "@/lib/activity-events.functions";
-import { requireAdminToken } from "@/lib/admin-session";
+import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 
 type Channel = "off" | "app" | "whatsapp";
 
@@ -40,10 +40,13 @@ function NotificationSettingsPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const loaded = (await loadNotificationSettings({})) as Settings;
-        setCfg(loaded);
-      } catch {
-        toast.error("Could not load alert settings");
+        const result = await loadNotificationSettings({
+          data: await getPosCallerAuth(),
+        });
+        if (!result.ok) throw new Error(result.error);
+        setCfg(result.settings as Settings);
+      } catch (error) {
+        toast.error((error as Error).message || "Could not load alert settings");
       }
     })();
   }, []);
@@ -53,14 +56,8 @@ function NotificationSettingsPage() {
   const save = async () => {
     if (!cfg) return;
     setBusy(true);
-    const auth = await requireAdminToken();
-    if (!auth.ok) {
-      setBusy(false);
-      toast.error(auth.message);
-      return;
-    }
     const res = await saveNotificationSettings({
-      data: { accessToken: auth.token, settings: cfg },
+      data: { ...(await getPosCallerAuth()), settings: cfg },
     });
     setBusy(false);
     if (res.ok) toast.success("Alert settings saved");

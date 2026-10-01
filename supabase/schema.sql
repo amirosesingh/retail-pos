@@ -3758,9 +3758,8 @@ BEGIN
     WHERE n.nspname = 'public' AND p.prosecdef
       AND has_function_privilege('anon', p.oid, 'execute')
       AND p.proname NOT IN ('coupon_claim', 'member_welcome_claim', 'voucher_by_token',
-                            'verify_cashier_pin', 'verify_terminal_pin',
                             'terminal_token_status', 'terminal_token_claim',
-                            'terminal_token_heartbeat', 'security_report_findings')
+                            'terminal_token_heartbeat')
   LOOP
     _found := _found || jsonb_build_object(
       'id', 'anon_definer:' || r.name, 'severity', 'high',
@@ -15390,12 +15389,9 @@ $privilege_hardening$;
 GRANT EXECUTE ON FUNCTION public.coupon_claim(text, text, text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.member_welcome_claim(text, text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.voucher_by_token(text) TO anon;
-GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text, text) TO anon;
-GRANT EXECUTE ON FUNCTION public.verify_terminal_pin(text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_status(uuid) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_claim(uuid, text, text, text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_heartbeat(uuid, boolean, text, boolean, text) TO anon;
-GRANT EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb) TO anon;
 
 -- These tables are implementation details behind privileged routines.  RLS
 -- remains enabled as defence in depth, while client roles have no table-level
@@ -15730,15 +15726,24 @@ BEGIN
 END;
 $final_privilege_hardening$;
 
+-- These privileged routines are only called by the application server.  A
+-- direct client call would bypass its PIN throttling or signed ingest check.
+REVOKE EXECUTE ON FUNCTION public.verify_cashier_pin(text, text)
+  FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.verify_terminal_pin(text, text)
+  FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.verify_terminal_pin(text, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb) TO service_role;
+
 GRANT EXECUTE ON FUNCTION public.coupon_claim(text, text, text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.member_welcome_claim(text, text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.voucher_by_token(text) TO anon;
-GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text, text) TO anon;
-GRANT EXECUTE ON FUNCTION public.verify_terminal_pin(text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_status(uuid) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_claim(uuid, text, text, text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.terminal_token_heartbeat(uuid, boolean, text, boolean, text) TO anon;
-GRANT EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb) TO anon;
 -- ---------------------------------------------------------------------------
 -- Device session lifecycle and final least-privilege grants
 -- ---------------------------------------------------------------------------

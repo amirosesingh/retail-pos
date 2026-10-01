@@ -36,9 +36,8 @@ async function handle({ request }: { request: Request }) {
     return Response.json({ ok: false, error: "Invalid request" }, { status: 400 });
   }
 
-  const { verifyRelayCaller, serviceRest, hasServiceKey, serviceKey } = await import(
-    "@/core/api/pos-relay.server"
-  );
+  const { verifyRelayCaller, serviceRest, hasServiceKey, serviceKey } =
+    await import("@/core/api/pos-relay.server");
   if (!hasServiceKey()) {
     return Response.json(
       { ok: false, error: "This server does not hold the central database key." },
@@ -63,9 +62,13 @@ async function handle({ request }: { request: Request }) {
       { status: 401 },
     );
   }
-  // The full table and column inventory is administrative information: bare
-  // terminal identity or a cashier PIN session is not enough to read it.
-  if (caller.kind !== "staff" && !caller.staffUserId) {
+  const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
+  const scope = await resolveRelayScope(caller);
+  // The full table and column inventory is administrative information.
+  if (
+    scope.stale ||
+    (!scope.isSupervisor && scope.permissions["can_manage_sync_backup"] !== true)
+  ) {
     return Response.json(
       {
         ok: false,
@@ -74,7 +77,6 @@ async function handle({ request }: { request: Request }) {
       { status: 403 },
     );
   }
-
 
   try {
     if (body.action === "relations") {
@@ -102,10 +104,7 @@ async function handle({ request }: { request: Request }) {
       );
     }
     const spec = (await res.json()) as import("@/lib/health-function-metadata").OpenApiFunctions & {
-      definitions?: Record<
-        string,
-        { properties?: Record<string, unknown>; required?: string[] }
-      >;
+      definitions?: Record<string, { properties?: Record<string, unknown>; required?: string[] }>;
     };
     const { trulyRequired } = await import("@/lib/schema-required");
     const tables: Record<string, { columns: string[]; required: string[] }> = {};

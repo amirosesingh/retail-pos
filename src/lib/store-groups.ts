@@ -7,7 +7,8 @@
  * the picker it had yesterday.
  */
 import { useEffect, useState } from "react";
-import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { getPosCallerAuth } from "@/lib/pos-caller-auth";
+import { loadStoreGroupsForCaller, saveStoreGroupForCaller } from "@/lib/store-groups.functions";
 
 export type StoreGroup = {
   id: string;
@@ -62,9 +63,9 @@ const toGroup = (r: Row): StoreGroup => ({
 });
 
 export async function loadStoreGroups(): Promise<StoreGroup[]> {
-  const { data, error } = await supabaseExternal.from("store_groups").select("*");
-  if (error || !data) return readStoreGroups();
-  const list = (data as unknown as Row[]).map(toGroup).sort(byName);
+  const result = await loadStoreGroupsForCaller({ data: await getPosCallerAuth() });
+  if (!result.ok) return readStoreGroups();
+  const list = (result.rows as Row[]).map(toGroup).sort(byName);
   writeLocal(list);
   return list;
 }
@@ -98,9 +99,11 @@ export async function saveStoreGroup(
     is_active: group.isActive,
     archived_at: group.archivedAt ?? null,
   };
-  const { error } = await supabaseExternal.from("store_groups").upsert(row);
-  if (error) throw error;
-  const saved = toGroup(row as Row);
+  const result = await saveStoreGroupForCaller({
+    data: { ...(await getPosCallerAuth()), group: row },
+  });
+  if (!result.ok) throw new Error(result.error);
+  const saved = toGroup(result.group as Row);
   writeLocal([...readStoreGroups().filter((g) => g.id !== saved.id), saved].sort(byName));
   return saved;
 }
