@@ -7,12 +7,11 @@
  * predictable click instead of a fold-out tree.
  */
 import { Link, useRouterState } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, Search, Settings as SettingsIcon, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Settings as SettingsIcon } from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
 import { navGroups, navItemKey, type NavItem } from "./nav-config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/lib/pos-auth";
 import { useNavPins } from "@/lib/nav-pins";
@@ -116,7 +115,6 @@ export function SidebarNav({
   footer,
 }: Props) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
-  const [query, setQuery] = useState("");
   const { authUserId, isAdmin, isSupervisor, can } = useAuth();
   const { state } = usePos();
   const { pins } = useNavPins(authUserId ?? null);
@@ -205,11 +203,6 @@ export function SidebarNav({
     };
   }, [canSee]);
 
-  const q = query.trim().toLowerCase();
-  const match = (e: Entry) => !q || e.label.toLowerCase().includes(q);
-  const visiblePinned = pinnedEntries.filter(match);
-  const visibleSections = sections.filter(match);
-
   const isActive = (e: Entry) => {
     if (e.to === "/") return pathname === "/";
     if (!e.prefix) return pathname === e.to;
@@ -220,30 +213,8 @@ export function SidebarNav({
     <div className="flex h-full min-h-0 flex-col">
       {header}
 
-      {!collapsed && (
-        <div className="relative px-2 pb-2">
-          <Search className="pointer-events-none absolute left-4 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search menu…"
-            className="h-8 pl-7 pr-7 text-xs"
-          />
-          {query && (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => setQuery("")}
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              <X className="size-3.5" />
-            </button>
-          )}
-        </div>
-      )}
-
       <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-2">
-        {registerEntry && match(registerEntry) && (
+        {registerEntry && (
           <SidebarRow
             entry={registerEntry}
             collapsed={collapsed}
@@ -253,14 +224,14 @@ export function SidebarNav({
           />
         )}
 
-        {visiblePinned.length > 0 && (
+        {pinnedEntries.length > 0 && (
           <>
             {!collapsed && (
               <p className="px-2 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Pinned
               </p>
             )}
-            {visiblePinned.map((e) => (
+            {pinnedEntries.map((e) => (
               <SidebarRow
                 key={e.key}
                 entry={e}
@@ -274,7 +245,7 @@ export function SidebarNav({
           </>
         )}
 
-        {visibleSections.map((e) => (
+        {sections.map((e) => (
           <SidebarRow
             key={e.key}
             entry={e}
@@ -284,12 +255,6 @@ export function SidebarNav({
             onNavigate={onNavigate}
           />
         ))}
-
-        {visibleSections.length === 0 &&
-          visiblePinned.length === 0 &&
-          !(registerEntry && match(registerEntry)) && (
-            <p className="px-2 py-4 text-center text-xs text-muted-foreground">No matches</p>
-          )}
       </nav>
 
       {footer}

@@ -38,6 +38,8 @@ export type LocationType = "store" | "main_building" | "sub_warehouse" | "centra
 
 export type Product = {
   id: string;
+  /** first time this catalogue item was recorded; fallback arrival date */
+  createdAt?: string;
   name: string;
   sku: string;
   barcode: string;
@@ -1008,6 +1010,12 @@ export type IntegrationSettings = {
   stockNumbering?: import("@/lib/stock-ref").StockNumberingSettings;
   /** How goods-received (purchasing) reference numbers are built. */
   receivingNumbering?: import("@/lib/stock-ref").StockNumberingSettings;
+  /** How branch stock-request references are built. */
+  requestNumbering?: import("@/lib/stock-ref").StockNumberingSettings;
+  /** How branch stock-transfer references are built. */
+  transferNumbering?: import("@/lib/stock-ref").StockNumberingSettings;
+  /** Retire products when company-wide stock reaches zero; restore on replenishment. */
+  autoArchiveZeroStock?: boolean;
   /** Cash-rounding of the final bill total. */
   rounding?: RoundingSettings;
 };

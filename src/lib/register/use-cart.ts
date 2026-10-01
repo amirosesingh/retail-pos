@@ -45,6 +45,8 @@ type CartDeps = {
   getMemberName: () => string | null;
   /** Fired when the ticket is emptied, so one-off unlocks do not linger. */
   onReset?: () => void;
+  /** The effective business tax rate, stored as a decimal on every new sale line. */
+  taxRate: number;
   /**
    * The register setting "Prevent negative stock sale". The till used to block
    * an out-of-stock item outright, whatever the branch had chosen, so the
@@ -96,7 +98,7 @@ export function useCart(deps: CartDeps) {
           name: product.name,
           price: product.price,
           qty: 1,
-          taxRate: product.taxRate,
+          taxRate: deps.taxRate,
           discount: 0,
           discountType: "percent",
         },

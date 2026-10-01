@@ -42,7 +42,11 @@ import { money, stockAt, usePos } from "@/lib/pos-store";
 import { resolveByBarcode } from "@/lib/product-lookup";
 import { nextStockRef } from "@/lib/stock-ref";
 import { saveRecordEditHistory, type EditGrant } from "@/lib/record-edit-flow";
-import { STOCK_ADJUSTMENT_REASONS, type StockAdjustmentReason } from "@/core/types/pos-types";
+import {
+  STOCK_ADJUSTMENT_REASONS,
+  type StockAdjustmentReason,
+  type Store,
+} from "@/core/types/pos-types";
 
 export type CountRow = {
   productId: string;
@@ -169,6 +173,7 @@ export function ReviewTable({
 export function StockCountDialog({
   open,
   draft,
+  targetStore,
   onOpenChange,
   onChanged,
   onDiscard,
@@ -177,6 +182,8 @@ export function StockCountDialog({
   open: boolean;
   /** A draft being resumed, or null for a fresh count. */
   draft?: StockRecordRow | null;
+  /** Locked destination; later branch switches cannot redirect this count. */
+  targetStore: Store;
   /** Set when a *posted* record was reopened under authorisation. */
   editGrant?: EditGrant | null;
   onOpenChange: (open: boolean) => void;
@@ -185,7 +192,7 @@ export function StockCountDialog({
   /** Ask the page to confirm discarding this draft. */
   onDiscard: (id: string) => void;
 }) {
-  const { state, currentStore, applyStockCount } = usePos();
+  const { state, applyStockCount } = usePos();
   const { user } = useAuth();
   const products = state.products;
   const numbering = useMemo(
@@ -228,7 +235,7 @@ export function StockCountDialog({
       let moved = 0;
       const restored = saved.map((line) => {
         const product = products.find((p: (typeof products)[number]) => p.id === line.productId);
-        const system = product ? stockAt(product, currentStore.id) : line.system;
+        const system = product ? stockAt(product, targetStore.id) : line.system;
         if (system !== line.system) moved += 1;
         return { ...line, system, cost: product?.cost ?? line.cost };
       });
@@ -270,14 +277,14 @@ export function StockCountDialog({
         let ref = reference;
         if (!id) {
           id = crypto.randomUUID();
-          ref = nextStockRef(numbering, currentStore.code || currentStore.id);
+          ref = nextStockRef(numbering, targetStore.code || targetStore.id);
           draftCreatedAt.current = new Date().toISOString();
         }
         await db.saveStockCountDraft({
           id,
           reference: ref,
-          storeId: currentStore.id,
-          storeCode: currentStore.code ?? null,
+          storeId: targetStore.id,
+          storeCode: targetStore.code ?? null,
           terminalId: localTerminalId(),
           staffId: user?.staffId ?? null,
           staffName: user?.name ?? null,
@@ -300,7 +307,7 @@ export function StockCountDialog({
     })();
     savingRef.current = run;
     return run;
-  }, [rows, reason, note, draftId, reference, numbering, currentStore, user, onChanged]);
+  }, [rows, reason, note, draftId, reference, numbering, targetStore, user, onChanged]);
 
   /** Auto-save: the same write, after the counter pauses. */
   useEffect(() => {
@@ -340,7 +347,7 @@ export function StockCountDialog({
         sku: p.sku ?? "",
         category: p.category ?? "",
         subCategory: p.subCategory ?? "",
-        system: stockAt(p, currentStore.id),
+        system: stockAt(p, targetStore.id),
         counted: Math.max(0, Math.round(qty)),
         cost: p.cost ?? 0,
       };
@@ -408,7 +415,7 @@ export function StockCountDialog({
         entries,
         reason,
         note,
-        currentStore.id,
+        targetStore.id,
         persistedDraftId,
         user?.name ?? null,
       );
@@ -421,7 +428,7 @@ export function StockCountDialog({
           kind: "stock_count",
           recordId: draftId,
           ...(reference ? { reference } : {}),
-          storeId: draft?.store_id ?? currentStore.id,
+          storeId: draft?.store_id ?? targetStore.id,
           actionKey: "edit_posted_stock",
           grant: editGrant ?? null,
           before,
@@ -484,8 +491,8 @@ export function StockCountDialog({
             {reference ? <span className="ml-2 font-mono text-sm">{reference}</span> : null}
           </DialogTitle>
           <DialogDescription>
-            {currentStore.name} · the draft saves itself as you count, and nothing changes stock
-            until it is posted.
+            Writing to {targetStore.code || targetStore.id} · {targetStore.name}. This branch is
+            locked for the count; nothing changes stock until it is posted.
           </DialogDescription>
         </DialogHeader>
 
@@ -521,7 +528,7 @@ export function StockCountDialog({
                   />
                   <p className="mt-1 text-xs text-muted-foreground">
                     {match
-                      ? `${match.name} · system stock ${stockAt(match, currentStore.id)}`
+                      ? `${match.name} · system stock ${stockAt(match, targetStore.id)}`
                       : "Waiting for a scan…"}
                   </p>
                 </div>
@@ -543,8 +550,8 @@ export function StockCountDialog({
                   />
                   <p className="mt-1 text-xs text-muted-foreground">
                     {match && counted.trim() && !Number.isNaN(Number(counted))
-                      ? `Delta ${Number(counted) - stockAt(match, currentStore.id) >= 0 ? "+" : ""}${
-                          Number(counted) - stockAt(match, currentStore.id)
+                      ? `Delta ${Number(counted) - stockAt(match, targetStore.id) >= 0 ? "+" : ""}${
+                          Number(counted) - stockAt(match, targetStore.id)
                         }`
                       : "Press Enter to queue"}
                   </p>

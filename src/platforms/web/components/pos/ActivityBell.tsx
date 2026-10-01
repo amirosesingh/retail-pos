@@ -8,7 +8,7 @@
  * decision and the audit trail are never touched.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Bell, Check, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -51,7 +51,8 @@ const when = (iso: string) => {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
 };
 
-export function ActivityBell({ compact }: { compact?: boolean }) {
+export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
+  const navigate = useNavigate();
   const { isSupervisor, user } = useAuth();
   const pos = usePosOptional();
   const refs = useMemo(
@@ -111,6 +112,32 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
       }
     },
     [meKey],
+  );
+
+  const openActivity = useCallback(
+    async (row: ActivityEvent) => {
+      const configured = typeof row.meta["route"] === "string" ? row.meta["route"] : "";
+      const route =
+        configured ||
+        (row.entityType === "authorization_request"
+          ? "/approvals"
+          : row.entityType === "stock_request" && row.entityId
+            ? `/requests/${row.entityId}`
+            : row.entityType === "stock_transfer" && row.entityId
+              ? `/transfers/${row.entityId}`
+              : "");
+      if (!route) return;
+      const saved = await clearActivityEntry(meKey, row.id);
+      if (!saved) {
+        toast.error("Could not clear notification. Check the connection and try again.");
+        return;
+      }
+      setRows((current) => current.filter((item) => item.id !== row.id));
+      toast.dismiss(`activity-${row.id}`);
+      setOpen(false);
+      void navigate({ to: route });
+    },
+    [meKey, navigate],
   );
 
   const refreshCentre = useCallback(async () => {
@@ -233,18 +260,16 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
     >
       <PopoverTrigger asChild>
         <Button
-          variant="outline"
-          size={compact ? "icon" : "sm"}
+          variant="ghost"
+          size="icon"
           aria-label={badge ? `Approvals and activity: ${badge} new` : "Approvals and activity"}
           className={cn(
-            "relative h-8 shrink-0",
-            compact ? "w-8" : "px-2 text-[11px]",
-            badge ? "border-primary/40 bg-primary/10 text-primary" : "",
+            "relative shrink-0 bg-transparent shadow-none hover:bg-transparent",
+            badge ? "text-primary" : "",
           )}
         >
-          <Bell className="size-3.5" />
-          {!compact && <span>{badge ? `${badge} new` : "Activity"}</span>}
-          {compact && badge > 0 && (
+          <Bell className="size-4" />
+          {badge > 0 && (
             <span className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] font-semibold text-primary-foreground">
               {badge > 9 ? "9+" : badge}
             </span>
@@ -376,7 +401,26 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                   </p>
                 }
                 renderItem={(r) => (
-                  <div className="activity-notification-row border-b border-border/60 px-3 py-2 last:border-0">
+                  <div
+                    className={cn(
+                      "activity-notification-row border-b border-border/60 px-3 py-2 last:border-0",
+                      (typeof r.meta["route"] === "string" ||
+                        r.entityType === "authorization_request" ||
+                        r.entityType === "stock_request" ||
+                        r.entityType === "stock_transfer") &&
+                        "cursor-pointer hover:bg-muted/60",
+                    )}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => void openActivity(r)}
+                    onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        void openActivity(r);
+                      }
+                    }}
+                  >
                     <div className="flex items-start gap-2">
                       <span
                         className={cn(
@@ -394,13 +438,14 @@ export function ActivityBell({ compact }: { compact?: boolean }) {
                         className="ml-auto h-6 touch-manipulation gap-1 px-2 text-[10px] text-muted-foreground"
                         disabled={preferenceBusy.has(r.id)}
                         aria-busy={preferenceBusy.has(r.id)}
-                        onClick={() =>
+                        onClick={(event) => {
+                          event.stopPropagation();
                           void updatePreference(
                             r.id,
                             () => clearActivityEntry(meKey, r.id),
                             "Could not clear notification. Check the connection and try again.",
-                          )
-                        }
+                          );
+                        }}
                       >
                         {preferenceBusy.has(r.id) ? (
                           <LoaderCircle className="size-3 animate-spin" />

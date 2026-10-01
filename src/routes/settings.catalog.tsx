@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/pos-auth";
+import { notifyError } from "@/lib/notify";
 import {
   deleteCategory,
   deleteUnit,
@@ -189,7 +190,15 @@ function CatalogMetaSettings() {
   const allowed = can("can_manage_categories");
   const categories = useCategories();
   const units = useUnits();
-  const { state } = usePos();
+  const {
+    state,
+    configuredGlobalSettings,
+    updateGlobalSettings,
+    saveConfiguredSettings,
+    settingsScopeLoading,
+  } = usePos();
+  const autoArchiveZeroStock =
+    configuredGlobalSettings.integrations.autoArchiveZeroStock === true;
 
   const [unitCode, setUnitCode] = useState("");
   const [unitName, setUnitName] = useState("");
@@ -256,6 +265,34 @@ function CatalogMetaSettings() {
             say.
           </p>
         </header>
+
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4">
+          <div>
+            <p className="font-medium">Automatically archive zero-stock products</p>
+            <p className="text-xs text-muted-foreground">
+              Products with no stock in any branch leave the active catalogue. Receiving positive
+              stock restores them automatically.
+            </p>
+          </div>
+          <Switch
+            checked={autoArchiveZeroStock}
+            disabled={!allowed || settingsScopeLoading}
+            aria-label="Automatically archive zero-stock products"
+            onCheckedChange={(enabled) => {
+              void (async () => {
+                try {
+                  const integrations = configuredGlobalSettings.integrations;
+                  updateGlobalSettings({
+                    integrations: { ...integrations, autoArchiveZeroStock: enabled },
+                  });
+                  await saveConfiguredSettings();
+                } catch (error) {
+                  notifyError(error, "Saving automatic catalogue archiving");
+                }
+              })();
+            }}
+          />
+        </div>
 
         {!allowed && (
           <p className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">

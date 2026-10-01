@@ -26,6 +26,7 @@ import { printTransferNote } from "@/lib/pos-print";
 import type { Transfer, TransferKind } from "@/core/types/pos-types";
 import { TRANSFER_STATUS_LABELS } from "@/core/types/pos-types";
 import { fulfilmentLabel, statusStyle } from "@/platforms/web/components/pos/TransferWorkspace";
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 
 type TransferSearch = { items?: string; kind?: TransferKind };
 
@@ -89,6 +90,7 @@ function Transfers() {
       ),
     [mine, scopeTab, stores],
   );
+  const pagination = usePagination(visible);
 
   const inbound = mine.filter((t) => t.toStoreId === currentStore.id && t.status === "dispatched");
   const toVerify = mine.filter((t) => t.toStoreId === currentStore.id && t.status === "received");
@@ -112,7 +114,8 @@ function Transfers() {
           <div>
             <h1 className="text-2xl font-semibold">Stock movements</h1>
             <p className="text-sm text-muted-foreground">
-              Requests and transfers touching <span className="text-primary">{currentStore.name}</span>
+              Requests and transfers touching{" "}
+              <span className="text-primary">{currentStore.name}</span>
             </p>
           </div>
           <div className="flex gap-2">
@@ -178,8 +181,11 @@ function Transfers() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visible.map((t) => {
+              {pagination.pageItems.map((t) => {
                 const isRequest = t.kind === "request";
+                const sourceRequest = t.sourceRequestId
+                  ? state.transfers.find((row) => row.id === t.sourceRequestId)
+                  : null;
                 const needsCount =
                   t.toStoreId === currentStore.id &&
                   (t.status === "received" || t.status === "dispatched");
@@ -190,6 +196,11 @@ function Transfers() {
                       <div className="text-[11px] text-muted-foreground">
                         {new Date(t.createdAt).toLocaleString()}
                       </div>
+                      {sourceRequest ? (
+                        <div className="text-[11px] text-primary">
+                          Fulfils request {sourceRequest.ref}
+                        </div>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <div className="space-y-0.5">
@@ -285,6 +296,17 @@ function Transfers() {
               )}
             </TableBody>
           </Table>
+          <TablePagination
+            page={pagination.page}
+            pageCount={pagination.pageCount}
+            pageSize={pagination.pageSize}
+            total={pagination.total}
+            from={pagination.from}
+            to={pagination.to}
+            label="movements"
+            onPage={pagination.setPage}
+            onPageSize={pagination.setPageSize}
+          />
         </section>
       </div>
     </AppShell>

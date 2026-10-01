@@ -278,11 +278,17 @@ function AudienceSelector({
   return (
     <section className={cn("space-y-3 rounded-lg border p-4", invalid && "border-destructive")}>
       <div>
-        <h3 className="font-medium">{title}</h3>
+        <h3 className="flex items-center gap-1.5 font-medium">
+          {title}
+          <HelpTip text={help} />
+        </h3>
         <p className="text-xs text-muted-foreground">{help}</p>
       </div>
       <div className="space-y-2">
-        <Label className="text-sm">Roles</Label>
+        <Label className="flex items-center gap-1.5 text-sm">
+          Roles
+          <HelpTip text="Everyone with a selected active role is included automatically. Use the person lists only for exceptions." />
+        </Label>
         <RoleChoices
           id={`${id}-roles`}
           roles={roles}
@@ -296,25 +302,31 @@ function AudienceSelector({
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={disabled}
-          onClick={() => setPeopleDialog("include")}
-        >
-          <UserRoundPlus className="size-4" />
-          Additional people ({included.length})
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={disabled || !roles.length}
-          onClick={() => setPeopleDialog("exclude")}
-        >
-          Excluded people ({excluded.length})
-        </Button>
+        <span className="inline-flex items-center gap-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            onClick={() => setPeopleDialog("include")}
+          >
+            <UserRoundPlus className="size-4" />
+            Additional people ({included.length})
+          </Button>
+          <HelpTip text="Add specific people who are not already covered by the selected roles." />
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={disabled || !roles.length}
+            onClick={() => setPeopleDialog("exclude")}
+          >
+            Excluded people ({excluded.length})
+          </Button>
+          <HelpTip text="Remove specific people from the selected roles for this rule only." />
+        </span>
       </div>
       <Dialog open={peopleDialog !== null} onOpenChange={(open) => !open && setPeopleDialog(null)}>
         <DialogContent className="w-[min(94vw,48rem)] max-w-3xl">
@@ -404,7 +416,10 @@ function AuthorityFields({
   return (
     <div className="space-y-2">
       <div>
-        <Label className="text-sm">{title}</Label>
+        <Label className="flex items-center gap-1.5 text-sm">
+          {title}
+          <HelpTip text={help} />
+        </Label>
         <p className="text-xs text-muted-foreground">{help}</p>
       </div>
       {subjects.length ? (
@@ -490,7 +505,10 @@ function RuleConfigurationDialog({
             <div className="space-y-5 overflow-y-auto px-6 py-5">
               <section className="rounded-lg border bg-muted/30 p-4">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Authorization method
+                  <span className="inline-flex items-center gap-1.5">
+                    Authorization method
+                    <HelpTip text="Choose whether this action needs no approval, a manager PIN at the till, or a request that another person decides." />
+                  </span>
                 </p>
                 <p className="mt-1 text-base font-semibold">{methodLabel(rule.mode)}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -556,7 +574,10 @@ function RuleConfigurationDialog({
                   {action.thresholdLabel || authorityUnit ? (
                     <section className="space-y-4 rounded-lg border p-4">
                       <div>
-                        <h3 className="font-medium">Approval authority / limit</h3>
+                        <h3 className="flex items-center gap-1.5 font-medium">
+                          Approval authority / limit
+                          <HelpTip text="Define the value that triggers approval and, where supported, the maximum each selected role or person may approve." />
+                        </h3>
                         <p className="text-xs text-muted-foreground">
                           Only limits supported by this rule are shown.
                         </p>
@@ -704,7 +725,10 @@ function RuleConfigurationDialog({
                               hasIssue("escalation-roles") && "border-destructive",
                             )}
                           >
-                            <Label className="text-sm">Backup approver roles</Label>
+                            <Label className="flex items-center gap-1.5 text-sm">
+                              Backup approver roles
+                              <HelpTip text="These roles are notified only after the escalation delay when the original request remains unanswered." />
+                            </Label>
                             <RoleChoices
                               id={`escalation-role-${action.key}`}
                               roles={rule.escalationRoles}
@@ -713,7 +737,10 @@ function RuleConfigurationDialog({
                               onChange={(escalationRoles) => onChange({ escalationRoles })}
                             />
                             <label className="block space-y-1 pt-2 text-xs">
-                              <span>Other configured roles</span>
+                              <span className="flex items-center gap-1.5">
+                                Other configured roles
+                                <HelpTip text="Enter custom organization role names that are not shown in the standard role choices. Separate multiple roles with commas." />
+                              </span>
                               <Input
                                 className="h-9"
                                 disabled={!mayEdit}
@@ -750,7 +777,10 @@ function RuleConfigurationDialog({
                     <section className="space-y-4 rounded-lg border p-4">
                       <div className="flex items-center justify-between gap-4">
                         <div>
-                          <h3 className="font-medium">Extra approval authority</h3>
+                          <h3 className="flex items-center gap-1.5 font-medium">
+                            Extra approval authority
+                            <HelpTip text="Let an approver grant a controlled amount above the requester's own limit, optionally capped by a hard maximum." />
+                          </h3>
                           <p className="text-xs text-muted-foreground">
                             Optionally add authority above the requester’s own limit.
                           </p>
@@ -805,7 +835,10 @@ function RuleConfigurationDialog({
 
                   <section className="flex items-center justify-between gap-4 rounded-lg border p-4">
                     <div>
-                      <h3 className="font-medium">Reason required</h3>
+                      <h3 className="flex items-center gap-1.5 font-medium">
+                        Reason required
+                        <HelpTip text="When enabled, the requester or authorizer must enter a reason that is stored in the approval audit history." />
+                      </h3>
                       <p className="text-xs text-muted-foreground">
                         Require the workflow to record why this action is needed.
                       </p>

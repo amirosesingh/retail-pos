@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useDebounced } from "@/hooks/use-debounced";
 
 import {
+  Archive,
   ArrowLeftRight,
   Combine,
   FileSpreadsheet,
@@ -10,7 +11,7 @@ import {
   History,
   Plus,
   Search,
-  Trash2,
+  SlidersHorizontal,
   Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -60,7 +61,12 @@ import {
   useCategories,
   useUnits,
 } from "@/lib/catalog-meta";
-import { checkCodeAvailable } from "@/lib/product-lookup";
+import {
+  checkCodeAvailable,
+  findDuplicateProductCodes,
+  productCodeProblems,
+  type DuplicateProductCode,
+} from "@/lib/product-lookup";
 
 import { ItemActivityDrawer } from "@/platforms/web/components/pos/ItemActivityDrawer";
 import { OtherSourcesPopover } from "@/platforms/web/components/pos/OtherSourcesPopover";
@@ -116,8 +122,6 @@ function Inventory() {
     currentStore,
     upsertProduct,
     upsertProductPriceOverride,
-    removeProduct,
-    removeProducts,
     patchProducts,
     archiveProducts,
     restoreProducts,
@@ -130,12 +134,19 @@ function Inventory() {
   const showMoney = can("can_view_sales_reports") && visible("inventory.costColumns");
   const showStockValue = can("can_view_sales_reports") && visible("inventory.stockValue");
 
-  const canEdit = can("can_add_new_product");
+  const canCreate = can("can_add_new_product");
+  const canEditDetails = can("can_edit_product_details");
+  const canArchive = can("can_archive_product");
+  const canRestore = can("can_restore_product");
+  const canPublish = can("can_publish_product");
+  const canLinkBarcode = can("can_link_product_barcode");
+  const canAdjustStock = can("can_adjust_stock");
   const canPrice = can("can_edit_product_price");
 
   const canBulk = can("can_bulk_edit_products");
   const canMerge = can("can_merge_products");
-  const canEcom = canPrice;
+  const canEcom = canPublish;
+  const canOpenEditor = canCreate || canEditDetails || canPrice || canAdjustStock || canLinkBarcode;
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Product | null>(null);
@@ -151,6 +162,17 @@ function Inventory() {
   const [groupFilter, setGroupFilter] = useState("all");
   const [subFilter, setSubFilter] = useState("all");
   const [bulkCategory, setBulkCategory] = useState("");
+  const [advanced, setAdvanced] = useState(false);
+  const [skuFilter, setSkuFilter] = useState("");
+  const [stockFilter, setStockFilter] = useState("all");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [minMargin, setMinMargin] = useState("");
+  const [duplicateRows, setDuplicateRows] = useState<DuplicateProductCode[]>([]);
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
+  const duplicateAuditDone = useRef(false);
+  const draftIsExisting = !!draft && state.products.some((product) => product.id === draft.id);
+  const canChangeDetails = draftIsExisting ? canEditDetails : canCreate;
 
   const [logTarget, setLogTarget] = useState<Product | null>(null);
 
@@ -203,6 +225,16 @@ function Inventory() {
       if (catFilter !== "all" && p.category !== catFilter) return false;
       if (groupFilter !== "all" && (p.group ?? "") !== groupFilter) return false;
       if (subFilter !== "all" && (p.subCategory ?? "") !== subFilter) return false;
+      const skuNeedle = skuFilter.trim().toLowerCase();
+      if (skuNeedle && !`${p.sku} ${p.barcode}`.toLowerCase().includes(skuNeedle)) return false;
+      const branchStock = stockAt(p, state.currentStoreId);
+      if (stockFilter === "in" && branchStock <= 0) return false;
+      if (stockFilter === "out" && branchStock > 0) return false;
+      if (stockFilter === "low" && branchStock > p.reorderLevel) return false;
+      if (minPrice !== "" && p.price < Number(minPrice)) return false;
+      if (maxPrice !== "" && p.price > Number(maxPrice)) return false;
+      const margin = p.price ? ((p.price - p.cost) / p.price) * 100 : 0;
+      if (minMargin !== "" && margin < Number(minMargin)) return false;
       if (!needle) return true;
       // Cheapest fields first — most searches stop on the name.
       return `${p.name} ${p.sku} ${p.barcode} ${(p.barcodes ?? []).join(" ")} ${(p.variants ?? [])
@@ -220,6 +252,11 @@ function Inventory() {
     groupFilter,
     subFilter,
     settledQuery,
+    skuFilter,
+    stockFilter,
+    minPrice,
+    maxPrice,
+    minMargin,
   ]);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const selectedProducts = useMemo(
@@ -227,8 +264,17 @@ function Inventory() {
     [state.products, selectedSet],
   );
   const pager = usePagination(rows, 25);
+  const duplicatePager = usePagination(duplicateRows, 10);
   const pageRows = pager.pageItems;
   const allShownSelected = pageRows.length > 0 && pageRows.every((p) => selectedSet.has(p.id));
+
+  useEffect(() => {
+    if (duplicateAuditDone.current || !state.products.length) return;
+    duplicateAuditDone.current = true;
+    const duplicates = findDuplicateProductCodes(state.products);
+    setDuplicateRows(duplicates);
+    if (duplicates.length) setDuplicateOpen(true);
+  }, [state.products]);
 
   function toggle(id: string, on: boolean) {
     setSelected((prev) => (on ? [...new Set([...prev, id])] : prev.filter((x) => x !== id)));
@@ -279,11 +325,25 @@ function Inventory() {
                 className="w-full pl-9 sm:w-56"
               />
             </div>
-            {canEdit && (
+            {canBulk && (
               <Button variant="outline" onClick={() => setImportOpen(true)}>
                 📥 Bulk Import from Excel
               </Button>
             )}
+            <Button
+              variant="outline"
+              onClick={() => {
+                const duplicates = findDuplicateProductCodes(state.products);
+                setDuplicateRows(duplicates);
+                if (!duplicates.length) {
+                  toast.success("No duplicate SKU or barcode values found");
+                  return;
+                }
+                setDuplicateOpen(true);
+              }}
+            >
+              Check duplicate codes
+            </Button>
             <Button
               variant="outline"
               onClick={() => {
@@ -293,7 +353,7 @@ function Inventory() {
             >
               <FileSpreadsheet className="size-4" /> Export to Excel
             </Button>
-            {canEdit && (
+            {canOpenEditor && (
               <Dialog
                 open={!!draft}
                 onOpenChange={(o) => {
@@ -301,11 +361,18 @@ function Inventory() {
                   if (!o) setBranchPriceOnly(false);
                 }}
               >
-                <DialogTrigger asChild>
-                  <Button onClick={() => { setBranchPriceOnly(false); setDraft(blank(currentStore.id)); }}>
-                    <Plus className="size-4" /> New product
-                  </Button>
-                </DialogTrigger>
+                {canCreate && (
+                  <DialogTrigger asChild>
+                    <Button
+                      onClick={() => {
+                        setBranchPriceOnly(false);
+                        setDraft(blank(currentStore.id));
+                      }}
+                    >
+                      <Plus className="size-4" /> New product
+                    </Button>
+                  </DialogTrigger>
+                )}
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>{draft?.name ? "Edit product" : "New product"}</DialogTitle>
@@ -314,12 +381,14 @@ function Inventory() {
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <Field label="Name" className="sm:col-span-2">
                         <Input
+                          disabled={!canChangeDetails}
                           value={draft.name}
                           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                         />
                       </Field>
                       <Field label="SKU">
                         <Input
+                          disabled={!canChangeDetails}
                           value={draft.sku}
                           readOnly={autoSku && !skuOverride}
                           placeholder={autoSku ? peekSku(state.products.map((p) => p.sku)) : ""}
@@ -328,7 +397,8 @@ function Inventory() {
                         {autoSku && (
                           <button
                             type="button"
-                            className="mt-1 text-[11px] text-muted-foreground underline"
+                            className="mt-1 text-[11px] text-muted-foreground underline disabled:opacity-50"
+                            disabled={!canChangeDetails}
                             onClick={() => setSkuOverride((v) => !v)}
                           >
                             {skuOverride ? "Use automatic number" : "Override this code"}
@@ -337,12 +407,14 @@ function Inventory() {
                       </Field>
                       <Field label="Barcode">
                         <Input
+                          disabled={!canChangeDetails}
                           value={draft.barcode}
                           onChange={(e) => setDraft({ ...draft, barcode: e.target.value })}
                         />
                       </Field>
                       <Field label="Category">
                         <ThemedSelect
+                          disabled={!canChangeDetails}
                           value={draft.category || NONE}
                           ariaLabel="Category"
                           placeholder="Choose a category"
@@ -352,6 +424,7 @@ function Inventory() {
                       </Field>
                       <Field label="Group">
                         <ThemedSelect
+                          disabled={!canChangeDetails}
                           value={draft.group || NONE}
                           ariaLabel="Group"
                           placeholder="Choose a group"
@@ -361,6 +434,7 @@ function Inventory() {
                       </Field>
                       <Field label="Sub-category">
                         <ThemedSelect
+                          disabled={!canChangeDetails}
                           value={draft.subCategory || NONE}
                           ariaLabel="Sub-category"
                           placeholder="Choose a sub-category"
@@ -370,6 +444,7 @@ function Inventory() {
                       </Field>
                       <Field label="Unit of measure">
                         <ThemedSelect
+                          disabled={!canChangeDetails}
                           value={draft.unit ?? "pcs"}
                           onChange={(v) => setDraft({ ...draft, unit: v })}
                           ariaLabel="Unit of measure"
@@ -393,6 +468,7 @@ function Inventory() {
                                 type="button"
                                 className="text-destructive"
                                 aria-label={`Remove variant ${v.code}`}
+                                disabled={!canLinkBarcode}
                                 onClick={() =>
                                   setDraft({
                                     ...draft,
@@ -417,6 +493,7 @@ function Inventory() {
                                 type="button"
                                 className="text-destructive"
                                 aria-label={`Remove barcode ${code}`}
+                                disabled={!canLinkBarcode}
                                 onClick={() =>
                                   setDraft({
                                     ...draft,
@@ -431,6 +508,7 @@ function Inventory() {
                         </div>
                         <div className="mt-1 flex flex-col gap-2 sm:flex-row">
                           <Input
+                            disabled={!canLinkBarcode}
                             value={aliasDraft}
                             placeholder="Scan or type another barcode for this item"
                             onChange={(e) => setAliasDraft(e.target.value)}
@@ -456,6 +534,7 @@ function Inventory() {
                             }}
                           />
                           <Input
+                            disabled={!canLinkBarcode}
                             value={variantLabel}
                             placeholder="Label (colour, size, pack)"
                             className="w-full sm:w-56"
@@ -466,15 +545,6 @@ function Inventory() {
                           Press Enter in the barcode box to add. Codes already used anywhere in the
                           catalogue are refused, and every variant scans to this product.
                         </p>
-                      </Field>
-                      <Field label="Tax rate %">
-                        <Input
-                          className="numeric"
-                          value={draft.taxRate * 100}
-                          onChange={(e) =>
-                            setDraft({ ...draft, taxRate: (Number(e.target.value) || 0) / 100 })
-                          }
-                        />
                       </Field>
                       <Field label="Price">
                         <Input
@@ -500,27 +570,37 @@ function Inventory() {
                         <Field label="Price scope" className="sm:col-span-2">
                           <div className="flex items-center justify-between gap-3 rounded-md border p-3">
                             <div>
-                              <p className="text-sm font-medium">Use these prices only at {currentStore.name}</p>
+                              <p className="text-sm font-medium">
+                                Use these prices only at {currentStore.name}
+                              </p>
                               <p className="text-[11px] text-muted-foreground">
-                                Keeps the global product price unchanged. Only Price and E-com price are saved in this mode.
+                                Keeps the global product price unchanged. Only Price and E-com price
+                                are saved in this mode.
                               </p>
                             </div>
-                            <Switch checked={branchPriceOnly} onCheckedChange={setBranchPriceOnly} />
+                            <Switch
+                              disabled={!canPrice}
+                              checked={branchPriceOnly}
+                              onCheckedChange={setBranchPriceOnly}
+                            />
                           </div>
                         </Field>
                       )}
-                      <Field label="Cost">
-                        <Input
-                          disabled={!canPrice || branchPriceOnly}
-                          className="numeric"
-                          value={draft.cost}
-                          onChange={(e) =>
-                            setDraft({ ...draft, cost: Number(e.target.value) || 0 })
-                          }
-                        />
-                      </Field>
+                      {showMoney && (
+                        <Field label="Cost">
+                          <Input
+                            disabled={!canPrice || branchPriceOnly}
+                            className="numeric"
+                            value={draft.cost}
+                            onChange={(e) =>
+                              setDraft({ ...draft, cost: Number(e.target.value) || 0 })
+                            }
+                          />
+                        </Field>
+                      )}
                       <Field label={`Stock · ${currentStore.code}`}>
                         <Input
+                          disabled={!canAdjustStock}
                           className="numeric"
                           value={stockAt(draft, currentStore.id)}
                           onChange={(e) =>
@@ -536,6 +616,7 @@ function Inventory() {
                       </Field>
                       <Field label="Reorder level">
                         <Input
+                          disabled={!canEditDetails}
                           className="numeric"
                           value={draft.reorderLevel}
                           onChange={(e) =>
@@ -547,9 +628,25 @@ function Inventory() {
                   )}
                   <DialogFooter>
                     <Button
+                      disabled={
+                        draftIsExisting
+                          ? branchPriceOnly
+                            ? !canPrice
+                            : !(canChangeDetails || canPrice || canAdjustStock || canLinkBarcode)
+                          : !canCreate
+                      }
                       onClick={async () => {
                         if (!draft?.name.trim()) {
                           toast.error("Product name is required");
+                          return;
+                        }
+                        const codeProblems = branchPriceOnly
+                          ? []
+                          : productCodeProblems(state.products, draft);
+                        if (codeProblems.length) {
+                          toast.error("SKU or barcode is already in use", {
+                            description: codeProblems.join(" "),
+                          });
                           return;
                         }
                         const sku =
@@ -557,9 +654,17 @@ function Inventory() {
                           (autoSku ? nextSku(state.products.map((p) => p.sku)) : "");
                         try {
                           // Saved only once the write is confirmed stored.
-                          const target = branchPriceOnly
-                            ? await upsertProductPriceOverride(draft.id, draft.price, draft.ecomPrice)
-                            : await upsertProduct({ ...draft, sku });
+                          let target;
+                          if (branchPriceOnly) {
+                            // prettier-ignore -- security regression test asserts this scoped write signature.
+                            target = await upsertProductPriceOverride(
+                              draft.id,
+                              draft.price,
+                              draft.ecomPrice,
+                            );
+                          } else {
+                            target = await upsertProduct({ ...draft, sku });
+                          }
                           setDraft(null);
                           setBranchPriceOnly(false);
                           setSkuOverride(false);
@@ -592,56 +697,144 @@ function Inventory() {
               {showArchived ? "Showing archived" : "Show archived"}
             </Button>
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Category</Label>
-            <ThemedSelect
-              value={catFilter}
-              onChange={(v) => {
-                setCatFilter(v);
-                setGroupFilter("all");
-                setSubFilter("all");
-              }}
-              ariaLabel="Filter by category"
-              className="w-48"
-              options={[
-                { value: "all", label: "All categories" },
-                ...categoryNames.map((c) => ({ value: c, label: c })),
-              ]}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Group</Label>
-            <ThemedSelect
-              value={groupFilter}
-              onChange={(v) => {
-                setGroupFilter(v);
-                setSubFilter("all");
-              }}
-              ariaLabel="Filter by group"
-              className="w-48"
-              options={[
-                { value: "all", label: "All groups" },
-                ...groupNames.map((c) => ({ value: c, label: c })),
-              ]}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Sub-category</Label>
-            <ThemedSelect
-              value={subFilter}
-              onChange={setSubFilter}
-              ariaLabel="Filter by sub-category"
-              className="w-48"
-              options={[
-                { value: "all", label: "All sub-categories" },
-                ...subNames.map((c) => ({ value: c, label: c })),
-              ]}
-            />
-          </div>
+          <Button
+            size="sm"
+            variant={advanced ? "default" : "outline"}
+            onClick={() => setAdvanced((value) => !value)}
+          >
+            <SlidersHorizontal className="size-4" /> Advanced filters
+          </Button>
           <p className="pb-2 text-xs text-muted-foreground">
             Showing <span className="numeric">{rows.length}</span> of{" "}
             <span className="numeric">{state.products.length}</span> products
           </p>
+          {advanced && <div className="basis-full border-t border-border" />}
+          {advanced && (
+            <div className="space-y-1">
+              <Label className="text-xs">Category</Label>
+              <ThemedSelect
+                value={catFilter}
+                onChange={(v) => {
+                  setCatFilter(v);
+                  setGroupFilter("all");
+                  setSubFilter("all");
+                }}
+                ariaLabel="Filter by category"
+                className="w-48"
+                options={[
+                  { value: "all", label: "All categories" },
+                  ...categoryNames.map((c) => ({ value: c, label: c })),
+                ]}
+              />
+            </div>
+          )}
+          {advanced && (
+            <div className="space-y-1">
+              <Label className="text-xs">Group</Label>
+              <ThemedSelect
+                value={groupFilter}
+                onChange={(v) => {
+                  setGroupFilter(v);
+                  setSubFilter("all");
+                }}
+                ariaLabel="Filter by group"
+                className="w-48"
+                options={[
+                  { value: "all", label: "All groups" },
+                  ...groupNames.map((c) => ({ value: c, label: c })),
+                ]}
+              />
+            </div>
+          )}
+          {advanced && (
+            <div className="space-y-1">
+              <Label className="text-xs">Sub-category</Label>
+              <ThemedSelect
+                value={subFilter}
+                onChange={setSubFilter}
+                ariaLabel="Filter by sub-category"
+                className="w-48"
+                options={[
+                  { value: "all", label: "All sub-categories" },
+                  ...subNames.map((c) => ({ value: c, label: c })),
+                ]}
+              />
+            </div>
+          )}
+          {advanced && (
+            <>
+              <div className="space-y-1">
+                <Label className="text-xs">SKU or barcode</Label>
+                <Input
+                  value={skuFilter}
+                  onChange={(e) => setSkuFilter(e.target.value)}
+                  className="h-9 w-48"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Stock</Label>
+                <ThemedSelect
+                  value={stockFilter}
+                  onChange={setStockFilter}
+                  className="w-40"
+                  options={[
+                    { value: "all", label: "Any stock" },
+                    { value: "in", label: "In stock" },
+                    { value: "low", label: "Low stock" },
+                    { value: "out", label: "Out of stock" },
+                  ]}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Price range</Label>
+                <div className="flex gap-1">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={minPrice}
+                    onChange={(e) => setMinPrice(e.target.value)}
+                    placeholder="Min"
+                    className="h-9 w-24"
+                  />
+                  <Input
+                    type="number"
+                    min="0"
+                    value={maxPrice}
+                    onChange={(e) => setMaxPrice(e.target.value)}
+                    placeholder="Max"
+                    className="h-9 w-24"
+                  />
+                </div>
+              </div>
+              {showMoney && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Minimum margin %</Label>
+                  <Input
+                    type="number"
+                    value={minMargin}
+                    onChange={(e) => setMinMargin(e.target.value)}
+                    className="h-9 w-36"
+                  />
+                </div>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setCatFilter("all");
+                  setGroupFilter("all");
+                  setSubFilter("all");
+                  setSkuFilter("");
+                  setStockFilter("all");
+                  setMinPrice("");
+                  setMaxPrice("");
+                  setMinMargin("");
+                }}
+              >
+                Clear filters
+              </Button>
+            </>
+          )}
         </div>
 
         {selected.length > 0 && (
@@ -688,32 +881,26 @@ function Inventory() {
                   <Combine className="size-4" /> Merge duplicates
                 </Button>
               )}
-              {canBulk && (
+              {canArchive && (
                 <Button
                   size="sm"
-                  variant="destructive"
+                  variant="outline"
                   disabled={deleting.length > 0}
                   onClick={async () => {
-                    if (
-                      !window.confirm(
-                        `Delete ${selected.length} product${selected.length > 1 ? "s" : ""}? This cannot be undone.`,
-                      )
-                    )
-                      return;
                     setDeleting(selected);
                     try {
-                      const failed = await removeProducts(selected);
-                      const done = selected.length - failed.length;
-                      if (done) toast.success(`${done} product${done > 1 ? "s" : ""} deleted`);
-                      setSelected(failed.map((f) => f.id));
-                      if (failed.length) setBlocked(failed);
+                      await archiveProducts(selected);
+                      toast.success(
+                        `${selected.length} product${selected.length > 1 ? "s" : ""} archived`,
+                      );
+                      setSelected([]);
                     } finally {
                       setDeleting([]);
                     }
                   }}
                 >
-                  <Trash2 className="size-4" />{" "}
-                  {deleting.length > 1 ? "Checking sales history…" : "Delete selected"}
+                  <Archive className="size-4" />
+                  {deleting.length > 1 ? "Archiving…" : "Archive selected"}
                 </Button>
               )}
             </div>
@@ -731,15 +918,15 @@ function Inventory() {
                     aria-label="Select all products"
                   />
                 </TableHead>
-                <TableHead>Product</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Sub-category</TableHead>
-                {showMoney && <TableHead className="text-right">Cost</TableHead>}
-                <TableHead className="text-right">Price</TableHead>
-                {showMoney && <TableHead className="text-right">Margin</TableHead>}
-                {canEcom && <TableHead className="text-center">On web</TableHead>}
-                <TableHead className="text-center">Stock · {currentStore.code}</TableHead>
-                <TableHead className="text-center">Other stores</TableHead>
+                <ResizableHead>Product</ResizableHead>
+                <ResizableHead>Category</ResizableHead>
+                <ResizableHead>Sub-category</ResizableHead>
+                {showMoney && <ResizableHead className="text-right">Cost</ResizableHead>}
+                <ResizableHead className="text-right">Price</ResizableHead>
+                {showMoney && <ResizableHead className="text-right">Margin</ResizableHead>}
+                {canEcom && <ResizableHead className="text-center">On web</ResizableHead>}
+                <ResizableHead className="text-center">Stock · {currentStore.code}</ResizableHead>
+                <ResizableHead className="text-center">Other stores</ResizableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -756,7 +943,11 @@ function Inventory() {
                   <TableCell>
                     <button
                       className="text-left font-medium hover:text-primary"
-                      onClick={() => { setBranchPriceOnly(false); setDraft(p); }}
+                      disabled={!canEditDetails && !canPrice && !canAdjustStock && !canLinkBarcode}
+                      onClick={() => {
+                        setBranchPriceOnly(false);
+                        setDraft(p);
+                      }}
                     >
                       {p.name}
                     </button>
@@ -808,7 +999,11 @@ function Inventory() {
                     </div>
                   </TableCell>
                   <TableCell className="text-center">
-                    <OtherSourcesPopover product={p} stores={stores} currentStoreId={currentStore.id} />
+                    <OtherSourcesPopover
+                      product={p}
+                      stores={stores}
+                      currentStoreId={currentStore.id}
+                    />
                   </TableCell>
                   <TableCell className="text-right">
                     <Button
@@ -820,18 +1015,17 @@ function Inventory() {
                     >
                       <History className="size-4" />
                     </Button>
-                    {canEdit && (
+                    {canArchive && (
                       <Button
                         size="icon"
                         variant="ghost"
                         disabled={deleting.includes(p.id)}
-                        title={deleting.includes(p.id) ? "Checking sales history…" : "Delete"}
+                        title={deleting.includes(p.id) ? "Archiving…" : "Archive"}
                         onClick={async () => {
                           setDeleting((d) => [...d, p.id]);
                           try {
-                            const failed = await removeProduct(p.id);
-                            if (failed.length) setBlocked(failed);
-                            else toast.success("Product removed");
+                            await archiveProducts([p.id]);
+                            toast.success("Product archived");
                           } finally {
                             setDeleting((d) => d.filter((id) => id !== p.id));
                           }
@@ -840,11 +1034,11 @@ function Inventory() {
                         {deleting.includes(p.id) ? (
                           <Loader2 className="size-4 animate-spin text-muted-foreground" />
                         ) : (
-                          <Trash2 className="size-4 text-destructive" />
+                          <Archive className="size-4" />
                         )}
                       </Button>
                     )}
-                    {canEdit && p.archived && (
+                    {canRestore && p.archived && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -875,7 +1069,7 @@ function Inventory() {
           />
         </div>
       </div>
-      {canEdit && <BulkImportDialog open={importOpen} onOpenChange={setImportOpen} />}
+      {canBulk && <BulkImportDialog open={importOpen} onOpenChange={setImportOpen} />}
       {canMerge && (
         <MergeProductsDialog
           open={mergeOpen}
@@ -899,7 +1093,78 @@ function Inventory() {
         }}
       />
       <ItemActivityDrawer product={logTarget} onClose={() => setLogTarget(null)} />
+      <Dialog open={duplicateOpen} onOpenChange={setDuplicateOpen}>
+        <DialogContent className="max-h-[88vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Duplicate SKU and barcode values</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Each code must belong to one product. Open a product to correct its SKU, primary
+              barcode, alias, or variant code.
+            </p>
+          </DialogHeader>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Duplicate code</TableHead>
+                <TableHead>Products using it</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {duplicatePager.pageItems.map((entry) => (
+                <TableRow key={entry.code}>
+                  <TableCell className="font-mono font-medium">{entry.code}</TableCell>
+                  <TableCell>{entry.products.map((product) => product.name).join(", ")}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!canEditDetails}
+                      title={
+                        canEditDetails
+                          ? "Edit the first product using this code"
+                          : "Edit product details permission required"
+                      }
+                      onClick={() => {
+                        const product = state.products.find(
+                          (candidate) => candidate.id === entry.products[0]?.id,
+                        );
+                        if (product) {
+                          setDuplicateOpen(false);
+                          setBranchPriceOnly(false);
+                          setDraft(product);
+                        }
+                      }}
+                    >
+                      Open product
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <TablePagination
+            page={duplicatePager.page}
+            pageCount={duplicatePager.pageCount}
+            pageSize={duplicatePager.pageSize}
+            total={duplicatePager.total}
+            from={duplicatePager.from}
+            to={duplicatePager.to}
+            label="duplicate codes"
+            onPage={duplicatePager.setPage}
+            onPageSize={duplicatePager.setPageSize}
+          />
+        </DialogContent>
+      </Dialog>
     </AppShell>
+  );
+}
+
+function ResizableHead({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <TableHead className={`min-w-24 ${className}`}>
+      <div className="min-w-full resize-x overflow-hidden pr-3">{children}</div>
+    </TableHead>
   );
 }
 

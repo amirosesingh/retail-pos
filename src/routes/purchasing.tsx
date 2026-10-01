@@ -68,6 +68,7 @@ import { canEditPosted, nextStockRef } from "@/lib/stock-ref";
 import { ReceivingRecordView } from "@/platforms/web/components/pos/ReceivingRecordView";
 import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
 import { subscribeDataChange } from "@/lib/sync-engine";
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 
 /** Sentinel for "no value picked" — Radix selects cannot hold an empty value. */
 const PO_NONE = "__none";
@@ -142,8 +143,7 @@ function Purchasing() {
   useEffect(() => {
     void myServerId().then(setMeId);
   }, []);
-  const { state, currentStore, allStores, upsertProduct, moveStock, syncProducts } =
-    usePos();
+  const { state, currentStore, allStores, upsertProduct, moveStock, syncProducts } = usePos();
   const { can, user, isAdmin, isSupervisor } = useAuth();
   const [invoiceNo, setInvoiceNo] = useState("");
   const [supplier, setSupplier] = useState("");
@@ -347,6 +347,7 @@ function Purchasing() {
     () => (statusFilter === "all" ? history : history.filter((h) => h.status === statusFilter)),
     [history, statusFilter],
   );
+  const historyPagination = usePagination(visibleHistory);
 
   const buildInvoice = (
     status: "draft" | "posted",
@@ -388,10 +389,12 @@ function Purchasing() {
     below and the Save draft button both call this, so a click during an
     autosave cannot write the same entry twice or mint a second draft.
   */
-  const savingDraftRef = useRef(false);
-  async function persistDraft(): Promise<boolean> {
-    if (!lines.length || savingDraftRef.current) return false;
-    savingDraftRef.current = true;
+  type SavedDraftIdentity = { id: string; reference: string };
+  const draftSavePromiseRef = useRef<Promise<SavedDraftIdentity | null> | null>(null);
+  const finalizingRef = useRef(false);
+  async function persistDraft(): Promise<SavedDraftIdentity | null> {
+    if (!lines.length || finalizingRef.current) return null;
+    if (draftSavePromiseRef.current) return draftSavePromiseRef.current;
     const id = openDraftId ?? crypto.randomUUID();
     // The reference is minted with the draft row and never regenerated.
     const ref =
@@ -402,18 +405,24 @@ function Purchasing() {
         "receiving",
       );
     const removals = draftLineRemovals;
+    const save = (async () => {
+      try {
+        await db.saveReceivingDraft(buildInvoice("draft", id, ref), removals);
+        setOpenDraftId(id);
+        setReference(ref);
+        setDraftLineRemovals((r) => r.filter((x) => !removals.includes(x)));
+        setDraftSavedAt(new Date().toISOString());
+        return { id, reference: ref };
+      } catch {
+        /* the outbox retries; the queue on screen is unaffected */
+        return null;
+      }
+    })();
+    draftSavePromiseRef.current = save;
     try {
-      await db.saveReceivingDraft(buildInvoice("draft", id, ref), removals);
-      setOpenDraftId(id);
-      setReference(ref);
-      setDraftLineRemovals((r) => r.filter((x) => !removals.includes(x)));
-      setDraftSavedAt(new Date().toISOString());
-      return true;
-    } catch {
-      /* the outbox retries; the queue on screen is unaffected */
-      return false;
+      return await save;
     } finally {
-      savingDraftRef.current = false;
+      if (draftSavePromiseRef.current === save) draftSavePromiseRef.current = null;
     }
   }
 
@@ -430,8 +439,8 @@ function Purchasing() {
     if (!lines.length) return toast.error("Scan at least one item before saving a draft");
     setSavingDraft(true);
     try {
-      const ok = await persistDraft();
-      if (ok) toast.success("Draft saved");
+      const saved = await persistDraft();
+      if (saved) toast.success("Draft saved");
       else toast.message("Saving…", { description: "The last change is still being written." });
       await refreshDrafts();
     } finally {
@@ -551,6 +560,12 @@ function Purchasing() {
       barcode: code,
       matched: false,
     });
+    if (!can("can_add_new_product")) {
+      toast.error("This barcode is not in the catalogue", {
+        description: "Add new products permission is required to create it during receiving.",
+      });
+      return;
+    }
     setDraftQty("1");
     setDraft({
       id: crypto.randomUUID(),
@@ -610,6 +625,9 @@ function Purchasing() {
 
   async function saveDraftInner() {
     if (!draft) return;
+    if (!can("can_add_new_product")) {
+      return toast.error("Add new products permission is required");
+    }
     if (!draft.name.trim()) return toast.error("Item name is required");
     if (!draft.price) return toast.error("Selling price is required");
     const qty = Math.max(1, Number(draftQty) || 1);
@@ -636,9 +654,15 @@ function Purchasing() {
     if (!lines.length) return toast.error("Scan at least one item into the invoice");
     if (saving) return;
 
+    finalizingRef.current = true;
     setSaving(true);
     try {
-      const attemptId = openDraftId ?? finalizeAttempt.current ?? crypto.randomUUID();
+      // Finish any autosave that already started, then block later draft saves.
+      // Otherwise a slow draft write can arrive after the posted write and
+      // incorrectly put a finalized receiving order back into Draft.
+      const savedDraft = await draftSavePromiseRef.current;
+      const attemptId =
+        savedDraft?.id ?? openDraftId ?? finalizeAttempt.current ?? crypto.randomUUID();
       finalizeAttempt.current = attemptId;
       if (await invoiceNumberTaken(ref, attemptId)) {
         toast.error(`Invoice ${ref} already exists`, {
@@ -660,9 +684,10 @@ function Purchasing() {
       const hubId = hub.id || storeId;
       // Finalizing a resumed draft posts the very same record, so the entry
       // keeps its id and can never be posted twice as two invoices.
-      const wasDraft = openDraftId;
+      const wasDraft = savedDraft?.id ?? openDraftId;
       // A never-autosaved entry still needs its own goods-received number.
       const grn =
+        savedDraft?.reference ??
         reference ??
         nextStockRef(
           state.settings.integrations.receivingNumbering ?? {},
@@ -738,6 +763,7 @@ function Purchasing() {
     } catch (e) {
       notifyError(e, "The invoice was not saved");
     } finally {
+      finalizingRef.current = false;
       setSaving(false);
       scanRef.current?.focus();
     }
@@ -778,7 +804,10 @@ function Purchasing() {
       };
       // Corrections append only the quantity difference under stable retry IDs.
       if (!original) throw new Error("Reload the invoice before editing it");
-      await db.updateReceivingInvoice(next, removedLineIds, next.storeId, { previous: original, attemptId: editAttempt.current });
+      await db.updateReceivingInvoice(next, removedLineIds, next.storeId, {
+        previous: original,
+        attemptId: editAttempt.current,
+      });
 
       // Deltas only: nothing is removed and re-added, so history stays intact.
       const deltas: Record<string, number> = {};
@@ -791,7 +820,11 @@ function Purchasing() {
       // Retain the movement difference for the audit record.
       const auditDeltas: Record<string, number> = { ...deltas };
       // Stock and pricing were committed above; do not apply a second adjustment.
-      await syncProducts([...new Set([...next.lines, ...original.lines].map((line) => line.productId ?? "").filter(Boolean))]);
+      await syncProducts([
+        ...new Set(
+          [...next.lines, ...original.lines].map((line) => line.productId ?? "").filter(Boolean),
+        ),
+      ]);
 
       logger.log("inventory_edit", "Receiving invoice corrected", "purchasing", {
         invoiceId: next.id,
@@ -981,8 +1014,9 @@ function Purchasing() {
               }
               logger.log("inventory_edit", "Receiving lines imported from file", "purchasing", {
                 rows: imported.length,
-                created: imported.filter((row) => !state.products.some((p) => p.id === row.product.id))
-                  .length,
+                created: imported.filter(
+                  (row) => !state.products.some((p) => p.id === row.product.id),
+                ).length,
               });
               toast.success(`${imported.length} validated lines added to this invoice`);
             }}
@@ -1253,7 +1287,7 @@ function Purchasing() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visibleHistory.map((h) => (
+              {historyPagination.pageItems.map((h) => (
                 <TableRow key={h.id}>
                   <TableCell className="numeric font-medium">{h.reference ?? "—"}</TableCell>
                   <TableCell>
@@ -1364,6 +1398,17 @@ function Purchasing() {
               )}
             </TableBody>
           </Table>
+          <TablePagination
+            page={historyPagination.page}
+            pageCount={historyPagination.pageCount}
+            pageSize={historyPagination.pageSize}
+            total={historyPagination.total}
+            from={historyPagination.from}
+            to={historyPagination.to}
+            label="receiving records"
+            onPage={historyPagination.setPage}
+            onPageSize={historyPagination.setPageSize}
+          />
         </section>
       </div>
 

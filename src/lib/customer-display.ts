@@ -17,6 +17,8 @@ export type DisplaySnapshot = {
   at: number;
   mode: "idle" | "cart" | "paid" | "booking" | "transfer";
   companyName: string;
+  /** configured business mark shown on the customer-facing display */
+  logo?: string;
   storeName: string;
   cashier: string;
   memberName: string | null;
@@ -25,6 +27,10 @@ export type DisplaySnapshot = {
   subtotal: number;
   discount: number;
   tax: number;
+  /** Effective global percentage used on this ticket. */
+  taxRate?: number;
+  /** Explicit switch so a zero-valued taxable ticket is distinct from tax being disabled. */
+  taxEnabled?: boolean;
   total: number;
   /** paid / change / balance figures for the "paid" and "booking" modes */
   paid: number;

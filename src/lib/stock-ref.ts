@@ -2,7 +2,7 @@
  * Stock Operations reference numbers.
  *
  *   [PREFIX]-[BRANCH]-[PERIOD]-[SEQUENCE]
- *   SO-B101-202608-0007
+ *   SC-B101-202608-0007
  *
  * Styled after the bill numbering module, but with its own counter so a
  * physical count never borrows a receipt number. The reference is minted once,
@@ -16,14 +16,19 @@ export type StockNumberReset = "never" | "yearly" | "monthly";
  * Which run of numbers a reference comes from. Each series keeps its own
  * counter, so a goods-received note can never take a stock count's number.
  */
-export type RefSeries = "stock" | "receiving";
+export type RefSeries = "stock" | "receiving" | "request" | "transfer";
 
 /** The prefix each series falls back to when the admin has not set one. */
-const SERIES_PREFIX: Record<RefSeries, string> = { stock: "SO", receiving: "GRN" };
+const SERIES_PREFIX: Record<RefSeries, string> = {
+  stock: "SC",
+  receiving: "GRN",
+  request: "SR",
+  transfer: "ST",
+};
 
 /** Everything an admin can change about stock reference numbers. */
 export type StockNumberingSettings = {
-  /** Leading marker, default "SO". */
+  /** Leading marker, default "SC" for stock counts. */
   prefix?: string;
   /** First running number to hand out, default 1. */
   startNumber?: number;
@@ -98,8 +103,7 @@ export async function restoreStockRefCounter(): Promise<void> {
 /** The period segment for a reference, empty when numbering never resets. */
 export function periodStamp(at: Date, reset: StockNumberReset): string {
   if (reset === "yearly") return String(at.getFullYear());
-  if (reset === "monthly")
-    return `${at.getFullYear()}${`${at.getMonth() + 1}`.padStart(2, "0")}`;
+  if (reset === "monthly") return `${at.getFullYear()}${`${at.getMonth() + 1}`.padStart(2, "0")}`;
   return "";
 }
 
@@ -129,20 +133,37 @@ export function previewStockRef(
   at: Date = new Date(),
 ): string {
   const key = counterKey(cfg, branchCode, at, series);
-  const next = readAll()[key] ?? Math.max(1, Math.round(cfg.startNumber ?? 1));
+  const all = readAll();
+  const next = sequenceFor(all, key, legacyStockCounterKey(cfg, branchCode, at, series), cfg);
   return build(cfg, branchCode, at, next, series);
 }
 
-const counterKey = (
+const counterKey = (cfg: StockNumberingSettings, branchCode: string, at: Date, series: RefSeries) =>
+  `${series}|${clean(cfg.prefix, SERIES_PREFIX[series])}|${clean(branchCode, "BR")}|${periodStamp(
+    at,
+    cfg.reset ?? "monthly",
+  )}`;
+
+/** Counter used before stock-count references changed their display prefix from SO to SC. */
+const legacyStockCounterKey = (
   cfg: StockNumberingSettings,
   branchCode: string,
   at: Date,
   series: RefSeries,
 ) =>
-  `${series}|${clean(cfg.prefix, SERIES_PREFIX[series])}|${clean(branchCode, "BR")}|${periodStamp(
-    at,
-    cfg.reset ?? "monthly",
-  )}`;
+  series === "stock" && !clean(cfg.prefix, "")
+    ? `stock|SO|${clean(branchCode, "BR")}|${periodStamp(at, cfg.reset ?? "monthly")}`
+    : null;
+
+const sequenceFor = (
+  all: SeqStore,
+  key: string,
+  legacyKey: string | null,
+  cfg: StockNumberingSettings,
+) =>
+  all[key] ??
+  (legacyKey ? all[legacyKey] : undefined) ??
+  Math.max(1, Math.round(cfg.startNumber ?? 1));
 
 /**
  * Reserve the next reference for a new draft. Consumes the counter, so it is
@@ -156,7 +177,7 @@ export function nextStockRef(
 ): string {
   const key = counterKey(cfg, branchCode, at, series);
   const all = readAll();
-  const seq = all[key] ?? Math.max(1, Math.round(cfg.startNumber ?? 1));
+  const seq = sequenceFor(all, key, legacyStockCounterKey(cfg, branchCode, at, series), cfg);
   all[key] = seq + 1;
   writeAll(all);
   return build(cfg, branchCode, at, seq, series);

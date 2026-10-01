@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/pos-auth";
 import { usePos } from "@/lib/pos-store";
+import { useVisibility } from "@/lib/ui-visibility";
 
 type WorkspaceAction = {
   label: string;
@@ -221,6 +222,7 @@ const ACTIONS: Record<TerminalPurpose, WorkspaceAction[]> = {
 export function TerminalWorkspaceHome() {
   const { state, currentStore, activeShift } = usePos();
   const { isAdmin, isSupervisor, can, user } = useAuth();
+  const { visible } = useVisibility();
   const configured = state.settings.integrations.terminalPurpose ?? "retail";
   const purpose: TerminalPurpose = isAdmin ? "management" : configured;
   const detail = PURPOSE_DETAILS[purpose];
@@ -273,21 +275,33 @@ export function TerminalWorkspaceHome() {
           </header>
 
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric
-              label="Shift"
-              value={activeShift ? "Open" : "Closed"}
-              hint={activeShift ? activeShift.cashier : "Open a shift before cash sales"}
-            />
-            <Metric label="Today's bills" value={String(todaySales.length)} hint="Current branch" />
-            <Metric
-              label="Today's revenue"
-              value={todayRevenue.toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
-              hint="Completed sales"
-            />
-            <Metric label="Low stock" value={String(lowStock)} hint="At or below reorder level" />
+            {visible("workspace.shiftStatus") && (
+              <Metric
+                label="Shift"
+                value={activeShift ? "Open" : "Closed"}
+                hint={activeShift ? activeShift.cashier : "Open a shift before cash sales"}
+              />
+            )}
+            {can("can_view_sales_reports") && visible("workspace.todayBills") && (
+              <Metric
+                label="Today's bills"
+                value={String(todaySales.length)}
+                hint="Current branch"
+              />
+            )}
+            {can("can_view_sales_reports") && visible("workspace.todayRevenue") && (
+              <Metric
+                label="Today's revenue"
+                value={todayRevenue.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+                hint="Completed sales"
+              />
+            )}
+            {can("can_view_inventory") && visible("workspace.lowStock") && (
+              <Metric label="Low stock" value={String(lowStock)} hint="At or below reorder level" />
+            )}
           </section>
 
           <section>

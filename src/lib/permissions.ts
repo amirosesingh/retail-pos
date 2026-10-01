@@ -67,6 +67,11 @@ export const PERMISSION_GROUPS = [
       "can_view_inventory",
       "can_edit_product_price",
       "can_add_new_product",
+      "can_edit_product_details",
+      "can_link_product_barcode",
+      "can_archive_product",
+      "can_restore_product",
+      "can_publish_product",
       "can_receive_purchase_order",
       "can_adjust_stock",
       "can_create_transfer",
@@ -155,6 +160,11 @@ export type PermissionKey =
   | "can_view_inventory"
   | "can_edit_product_price"
   | "can_add_new_product"
+  | "can_edit_product_details"
+  | "can_link_product_barcode"
+  | "can_archive_product"
+  | "can_restore_product"
+  | "can_publish_product"
   | "can_receive_purchase_order"
   | "can_adjust_stock"
   | "can_create_transfer"
@@ -222,6 +232,11 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_view_inventory: "View inventory",
   can_edit_product_price: "Edit product pricing",
   can_add_new_product: "Add new products",
+  can_edit_product_details: "Edit product details",
+  can_link_product_barcode: "Link barcodes to products",
+  can_archive_product: "Archive products",
+  can_restore_product: "Restore archived products",
+  can_publish_product: "Show or hide products online",
   can_receive_purchase_order: "Receive purchase orders",
   can_adjust_stock: "Adjust / recount stock",
   can_create_transfer: "Create stock transfer requests",
@@ -289,6 +304,11 @@ export const DEFAULT_PERMISSIONS = CASHIER_PERMISSIONS;
 export const WAREHOUSE_PERMISSIONS: StaffPermissions = build([
   "can_view_inventory",
   "can_add_new_product",
+  "can_edit_product_details",
+  "can_link_product_barcode",
+  "can_archive_product",
+  "can_restore_product",
+  "can_publish_product",
   "can_receive_purchase_order",
   "can_adjust_stock",
   "can_create_transfer",
@@ -363,6 +383,17 @@ export function normalizePermissions(
     base.can_reopen_held_order = raw["can_hold_cart"] === true;
   if (limited && !("can_discard_held_order" in raw))
     base.can_discard_held_order = raw["can_void_cart"] === true;
+  // Product catalogue actions used to share can_add_new_product. Preserve the
+  // old behavior once, then store each choice independently on the next save.
+  for (const key of [
+    "can_edit_product_details",
+    "can_link_product_barcode",
+    "can_archive_product",
+    "can_restore_product",
+    "can_publish_product",
+  ] as const) {
+    if (limited && !(key in raw)) base[key] = base.can_add_new_product === true;
+  }
   // Terminal registration belongs to supervisors and administrators even when
   // an older stored matrix still carries the former supervisor default (false).
   if (role === "supervisor") base.can_manage_terminals = true;
@@ -562,6 +593,11 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
         "can_view_inventory",
         "can_edit_product_price",
         "can_add_new_product",
+        "can_edit_product_details",
+        "can_link_product_barcode",
+        "can_archive_product",
+        "can_restore_product",
+        "can_publish_product",
         "can_receive_purchase_order",
         "can_adjust_stock",
         "can_create_transfer",

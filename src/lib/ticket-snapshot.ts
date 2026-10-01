@@ -54,6 +54,30 @@ export type TicketSnapshot = {
   member?: SnapshotMember | null;
 };
 
+/** Preview a replacement bill discount on the pre-tax value after line discounts. */
+export function previewBillAfterDiscount(
+  snapshot: TicketSnapshot,
+  grant: number,
+  type: "percent" | "amount",
+): number {
+  const lineDiscount = snapshot.lines.reduce((total, line) => {
+    const gross = Math.abs(line.unitPrice * line.qty);
+    return total + Math.max(0, gross - Math.max(0, line.lineTotal));
+  }, 0);
+  const base = Math.max(0, snapshot.subtotal - lineDiscount);
+  const discount = type === "percent" ? (base * Math.min(100, grant)) / 100 : grant;
+  const discountedBase = Math.max(0, base - discount);
+  const currentNet = Math.max(0, snapshot.subtotal - snapshot.discount);
+  const serviceCharge = Math.max(0, snapshot.serviceCharge);
+  const exclusiveTotal = currentNet + snapshot.tax + serviceCharge;
+  const inclusiveTotal = currentNet + serviceCharge;
+  const taxIsAdditional =
+    Math.abs(snapshot.total - exclusiveTotal) <= Math.abs(snapshot.total - inclusiveTotal);
+  const taxRate = currentNet > 0 ? Math.max(0, snapshot.tax) / currentNet : 0;
+  const nextTax = taxIsAdditional ? discountedBase * taxRate : 0;
+  return Math.round((discountedBase + nextTax + serviceCharge) * 100) / 100;
+}
+
 const num = (v: unknown): number => {
   const n = Number(v);
   return Number.isFinite(n) ? Math.round(n * 1000) / 1000 : 0;

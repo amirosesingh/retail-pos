@@ -35,20 +35,79 @@ const CODE_PAGE: Partial<Record<SlipEncoding, number>> = {
  * anything else degrades to '?'.
  */
 const CP437_HIGH: Record<string, number> = {
-  "Ç": 0x80, "ü": 0x81, "é": 0x82, "â": 0x83, "ä": 0x84, "à": 0x85, "å": 0x86,
-  "ç": 0x87, "ê": 0x88, "ë": 0x89, "è": 0x8a, "ï": 0x8b, "î": 0x8c, "ì": 0x8d,
-  "Ä": 0x8e, "Å": 0x8f, "É": 0x90, "æ": 0x91, "Æ": 0x92, "ô": 0x93, "ö": 0x94,
-  "ò": 0x95, "û": 0x96, "ù": 0x97, "ÿ": 0x98, "Ö": 0x99, "Ü": 0x9a, "¢": 0x9b,
-  "£": 0x9c, "¥": 0x9d, "ƒ": 0x9f, "á": 0xa0, "í": 0xa1, "ó": 0xa2, "ú": 0xa3,
-  "ñ": 0xa4, "Ñ": 0xa5, "ª": 0xa6, "º": 0xa7, "¿": 0xa8, "½": 0xab, "¼": 0xac,
-  "¡": 0xad, "«": 0xae, "»": 0xaf, "░": 0xb0, "─": 0xc4, "═": 0xcd, "°": 0xf8,
-  "·": 0xfa, "²": 0xfd, "■": 0xfe,
+  Ç: 0x80,
+  ü: 0x81,
+  é: 0x82,
+  â: 0x83,
+  ä: 0x84,
+  à: 0x85,
+  å: 0x86,
+  ç: 0x87,
+  ê: 0x88,
+  ë: 0x89,
+  è: 0x8a,
+  ï: 0x8b,
+  î: 0x8c,
+  ì: 0x8d,
+  Ä: 0x8e,
+  Å: 0x8f,
+  É: 0x90,
+  æ: 0x91,
+  Æ: 0x92,
+  ô: 0x93,
+  ö: 0x94,
+  ò: 0x95,
+  û: 0x96,
+  ù: 0x97,
+  ÿ: 0x98,
+  Ö: 0x99,
+  Ü: 0x9a,
+  "¢": 0x9b,
+  "£": 0x9c,
+  "¥": 0x9d,
+  ƒ: 0x9f,
+  á: 0xa0,
+  í: 0xa1,
+  ó: 0xa2,
+  ú: 0xa3,
+  ñ: 0xa4,
+  Ñ: 0xa5,
+  ª: 0xa6,
+  º: 0xa7,
+  "¿": 0xa8,
+  "½": 0xab,
+  "¼": 0xac,
+  "¡": 0xad,
+  "«": 0xae,
+  "»": 0xaf,
+  "░": 0xb0,
+  "─": 0xc4,
+  "═": 0xcd,
+  "°": 0xf8,
+  "·": 0xfa,
+  "²": 0xfd,
+  "■": 0xfe,
 };
 
 const CP850_EXTRA: Record<string, number> = {
-  "ø": 0x9b, "Ø": 0x9d, "×": 0x9e, "®": 0xa9, "©": 0xb8, "¤": 0xcf, "ð": 0xd0,
-  "Ð": 0xd1, "þ": 0xe7, "Þ": 0xe8, "µ": 0xe6, "±": 0xf1, "¾": 0xf3, "¶": 0xf4,
-  "§": 0xf5, "÷": 0xf6, "¹": 0xfb, "³": 0xfc,
+  ø: 0x9b,
+  Ø: 0x9d,
+  "×": 0x9e,
+  "®": 0xa9,
+  "©": 0xb8,
+  "¤": 0xcf,
+  ð: 0xd0,
+  Ð: 0xd1,
+  þ: 0xe7,
+  Þ: 0xe8,
+  µ: 0xe6,
+  "±": 0xf1,
+  "¾": 0xf3,
+  "¶": 0xf4,
+  "§": 0xf5,
+  "÷": 0xf6,
+  "¹": 0xfb,
+  "³": 0xfc,
 };
 
 // CP858 is CP850 with the euro sign at 0xD5.
@@ -60,12 +119,31 @@ function highMap(encoding: SlipEncoding): Record<string, number> {
   return CP437_HIGH;
 }
 
+function printerSafeText(s: string, encoding: SlipEncoding): string {
+  if (encoding === "utf8") return s;
+  // Receipt copy uses typographic punctuation, while many thermal printers
+  // only expose a DOS code page. Preserve the meaning instead of printing ?.
+  return s
+    .replace(/[‘’‚‛]/g, "'")
+    .replace(/[“”„‟]/g, '"')
+    .replace(/[‐‑‒–—―]/g, "-")
+    .replace(/…/g, "...")
+    .replace(/[•●]/g, "*")
+    .replace(/·/g, encoding === "ascii" ? " | " : "·")
+    .replace(/→/g, "->")
+    .replace(/←/g, "<-")
+    .replace(/×/g, "x")
+    .replace(/−/g, "-")
+    .replace(/\u00a0/g, " ");
+}
+
 /** Encode one string into printer bytes for the chosen encoding. */
 export function encodeText(s: string, encoding: SlipEncoding): number[] {
-  if (encoding === "utf8") return Array.from(new TextEncoder().encode(s));
+  const safe = printerSafeText(s, encoding);
+  if (encoding === "utf8") return Array.from(new TextEncoder().encode(safe));
   const map = encoding === "ascii" ? {} : highMap(encoding);
   const out: number[] = [];
-  for (const ch of s) {
+  for (const ch of safe) {
     const code = ch.codePointAt(0) ?? 0x3f;
     if (code < 0x80) out.push(code);
     else out.push(map[ch] ?? 0x3f);
@@ -109,10 +187,15 @@ function columns(left: string, right: string, cols: number): string[] {
 }
 
 /** Convert one receipt HTML document into printable slip lines. */
-export function htmlToSlip(html: string, cols: number): SlipLine[] {
+export function htmlToSlip(
+  html: string,
+  cols: number,
+  encoding: SlipEncoding = "utf8",
+): SlipLine[] {
   if (typeof window === "undefined" || typeof DOMParser === "undefined") return [];
   const doc = new DOMParser().parseFromString(html, "text/html");
   const lines: SlipLine[] = [];
+  const receiptText = (value: string) => collapse(printerSafeText(value, encoding));
   const push = (line: SlipLine) => {
     if (line.text.trim() === "" && lines[lines.length - 1]?.text.trim() === "") return;
     lines.push(line);
@@ -138,17 +221,19 @@ export function htmlToSlip(html: string, cols: number): SlipLine[] {
           const leftCell = cells[0];
           const rightCell = cells[1];
           const notes = leftCell
-            ? Array.from(leftCell.querySelectorAll("div")).map((d) => collapse(d.textContent ?? ""))
+            ? Array.from(leftCell.querySelectorAll("div")).map((d) =>
+                receiptText(d.textContent ?? ""),
+              )
             : [];
           const leftMain = leftCell
-            ? collapse(
+            ? receiptText(
                 Array.from(leftCell.childNodes)
                   .filter((n) => !(n instanceof HTMLElement && n.tagName === "DIV"))
                   .map((n) => n.textContent ?? "")
                   .join(" "),
               )
             : "";
-          const right = rightCell ? collapse(rightCell.textContent ?? "") : "";
+          const right = rightCell ? receiptText(rightCell.textContent ?? "") : "";
           for (const l of columns(leftMain, right, cols))
             push({ text: l, bold: rowBold || rowBig });
           for (const n of notes.filter(Boolean))
@@ -166,10 +251,15 @@ export function htmlToSlip(html: string, cols: number): SlipLine[] {
           continue;
         }
       }
-      const text = collapse(child.textContent ?? "");
+      const text = receiptText(child.textContent ?? "");
       if (!text) continue;
       for (const l of wrap(text, cols))
-        push({ text: l, ...(centered ? { align: "center" as const } : {}), bold, big: tag === "h1" });
+        push({
+          text: l,
+          ...(centered ? { align: "center" as const } : {}),
+          bold,
+          big: tag === "h1",
+        });
     }
   };
 
@@ -210,15 +300,19 @@ export function slipToBytes(
   }
 
   bytes.push(ESC, 0x61, 0, ESC, 0x45, 0, GS, 0x21, 0x00);
-  const bc = (opts.barcode ?? "").toUpperCase().replace(/[^0-9A-Z\-.$/+% ]/g, "");
+  const bc = (opts.barcode ?? "")
+    .toUpperCase()
+    .replace(/[^0-9A-Z\-.$/+% ]/g, "")
+    .slice(0, 255);
   if (bc) {
     bytes.push(ESC, 0x61, 1); // centre
     bytes.push(GS, 0x68, 60); // barcode height
     bytes.push(GS, 0x77, 2); // module width
     bytes.push(GS, 0x48, 2); // print the number below the bars
-    bytes.push(GS, 0x6b, 4); // Code 39, NUL-terminated
+    // Function B is length-prefixed and is understood by current Epson-compatible
+    // printers and clones that ignore the older NUL-terminated command.
+    bytes.push(GS, 0x6b, 69, bc.length); // Code 39, length-prefixed
     for (const b of encodeText(bc, "ascii")) bytes.push(b);
-    bytes.push(0x00);
     bytes.push(...eol);
     bytes.push(ESC, 0x61, 0);
   }
@@ -244,6 +338,9 @@ export function htmlToEscPos(
     cols?: number;
   } = {},
 ): number[] {
-  const cols = Math.max(paper === "30mm" ? 8 : 16, (opts.cols ?? columnsForPaper(paper)) - Math.max(0, opts.indent ?? 0));
-  return slipToBytes(htmlToSlip(html, cols), opts);
+  const cols = Math.max(
+    paper === "30mm" ? 8 : 16,
+    (opts.cols ?? columnsForPaper(paper)) - Math.max(0, opts.indent ?? 0),
+  );
+  return slipToBytes(htmlToSlip(html, cols, opts.encoding ?? "cp437"), opts);
 }

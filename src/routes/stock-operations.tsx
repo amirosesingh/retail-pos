@@ -49,6 +49,7 @@ import {
   type StockRecordRow,
 } from "@/platforms/web/components/pos/StockCountDialog";
 import { StockRecordView } from "@/platforms/web/components/pos/StockRecordView";
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 
 const ALL = "all";
 
@@ -56,10 +57,13 @@ function StockOperationsPage() {
   const { state, currentStore } = usePos();
   const { authorize } = useManagerGate();
 
-  const { user } = useAuth();
+  const { user, isAdmin, isSupervisor } = useAuth();
   const multiBranch = state.stores.length > 1;
+  const mayPickCountStore = multiBranch && (isAdmin || isSupervisor);
 
   const [tab, setTab] = useState("records");
+  const [countStoreId, setCountStoreId] = useState(currentStore.id);
+  const [activeCountStoreId, setActiveCountStoreId] = useState(currentStore.id);
   const [records, setRecords] = useState<StockRecordRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
@@ -71,6 +75,10 @@ function StockOperationsPage() {
   const [editGrant, setEditGrant] = useState<EditGrant | null>(null);
   const [meId, setMeId] = useState("");
   const [busyRow, setBusyRow] = useState("");
+
+  useEffect(() => {
+    setCountStoreId(currentStore.id);
+  }, [currentStore.id]);
 
   useEffect(() => {
     void myServerId().then(setMeId);
@@ -98,14 +106,31 @@ function StockOperationsPage() {
     () => records.filter((r) => statusFilter === ALL || r.status === statusFilter),
     [records, statusFilter],
   );
+  const pagination = usePagination(visible);
+  const activeStores = useMemo(
+    () => state.stores.filter((store) => store.active !== false),
+    [state.stores],
+  );
   const openDrafts = records.filter((r) => r.status === "draft").length;
 
   const startNew = () => {
+    const targetId = mayPickCountStore ? countStoreId : currentStore.id;
+    const target = activeStores.find((store) => store.id === targetId);
+    if (!target) {
+      setCountStoreId(currentStore.id);
+      toast.error("That branch is archived. Choose an active branch before starting the count.");
+      return;
+    }
     setResuming(null);
+    setActiveCountStoreId(target.id);
     setCountOpen(true);
+    toast.info(`New stock count will write to ${target.name}`, {
+      description: `Branch ${target.code || target.id}. This destination is locked for the count.`,
+    });
   };
 
   const resume = (row: StockRecordRow) => {
+    setActiveCountStoreId(row.store_id ?? currentStore.id);
     setResuming(row);
     setCountOpen(true);
   };
@@ -218,9 +243,27 @@ function StockOperationsPage() {
                   </div>
                 )}
               </div>
-              <Button onClick={startNew}>
-                <Plus className="mr-2 size-4" /> New count
-              </Button>
+              <div className="flex flex-wrap items-end gap-2">
+                {mayPickCountStore ? (
+                  <div className="w-64">
+                    <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+                      New count writes to
+                    </p>
+                    <ThemedSelect
+                      value={countStoreId}
+                      onChange={setCountStoreId}
+                      options={activeStores.map((store) => ({
+                        value: store.id,
+                        label: `${store.code || store.id} · ${store.name}`,
+                      }))}
+                      ariaLabel="Stock count destination branch"
+                    />
+                  </div>
+                ) : null}
+                <Button onClick={startNew}>
+                  <Plus className="mr-2 size-4" /> New count
+                </Button>
+              </div>
             </div>
 
             {loading ? (
@@ -248,7 +291,7 @@ function StockOperationsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {visible.map((r) => (
+                    {pagination.pageItems.map((r) => (
                       <TableRow key={r.id}>
                         <TableCell className="font-mono">{r.reference || "—"}</TableCell>
                         <TableCell>
@@ -349,6 +392,17 @@ function StockOperationsPage() {
                     ))}
                   </TableBody>
                 </Table>
+                <TablePagination
+                  page={pagination.page}
+                  pageCount={pagination.pageCount}
+                  pageSize={pagination.pageSize}
+                  total={pagination.total}
+                  from={pagination.from}
+                  to={pagination.to}
+                  label="stock counts"
+                  onPage={pagination.setPage}
+                  onPageSize={pagination.setPageSize}
+                />
               </div>
             )}
           </TabsContent>
@@ -370,6 +424,7 @@ function StockOperationsPage() {
       <StockCountDialog
         open={countOpen}
         draft={resuming}
+        targetStore={state.stores.find((store) => store.id === activeCountStoreId) ?? currentStore}
         editGrant={editGrant}
         onOpenChange={(open) => {
           setCountOpen(open);

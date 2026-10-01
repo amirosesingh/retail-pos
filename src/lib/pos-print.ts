@@ -235,7 +235,10 @@ export function barcodeSvg(value: string, height = 44) {
   if (!clean) return "";
   const NARROW = 2;
   const WIDE = 5;
-  let x = 0;
+  // Code 39 requires a blank quiet zone on both sides. Keep it inside the SVG
+  // so browser and Windows print drivers cannot crop the first or last bars.
+  const QUIET = NARROW * 10;
+  let x = QUIET;
   let rects = "";
   const chars = `*${clean}*`.split("");
   chars.forEach((ch, idx) => {
@@ -249,7 +252,8 @@ export function barcodeSvg(value: string, height = 44) {
     }
     if (idx < chars.length - 1) x += NARROW; // inter-character gap
   });
-  return `<div class="barcode"><svg width="100%" height="${height}" viewBox="0 0 ${x} ${height}" preserveAspectRatio="none" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><rect width="${x}" height="${height}" fill="#fff"/>${rects}</svg></div><div class="bc-text">${esc(
+  const width = x + QUIET;
+  return `<div class="barcode"><svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><rect width="${width}" height="${height}" fill="#fff"/>${rects}</svg></div><div class="bc-text">${esc(
     clean,
   )}</div>`;
 }
@@ -611,20 +615,39 @@ function shiftBody(
       <tr><td>Opened</td><td class="r">${new Date(shift.openedAt).toLocaleString()}</td></tr>
       <tr><td>Closed</td><td class="r">${shift.closedAt ? new Date(shift.closedAt).toLocaleString() : "—"}</td></tr>
     </table><hr>
-    ${access.financialSummary ? `<table>
+    ${
+      access.financialSummary
+        ? `<table>
       <tr><td>Transactions</td><td class="r">${active.length}</td></tr>
-      ${access.paymentBreakdown ? byMethod
-        .map((b) => `<tr><td>${b.m.toUpperCase()} (${b.n})</td><td class="r">${fmt(b.v)}</td></tr>`)
-        .join("") : ""}
+      ${
+        access.paymentBreakdown
+          ? byMethod
+              .map(
+                (b) =>
+                  `<tr><td>${b.m.toUpperCase()} (${b.n})</td><td class="r">${fmt(b.v)}</td></tr>`,
+              )
+              .join("")
+          : ""
+      }
       <tr><td>Tax collected</td><td class="r">${fmt(tax)}</td></tr>
       <tr class="b big"><td>GROSS</td><td class="r">${fmt(gross)}</td></tr>
-    </table><hr>` : ""}
-    ${access.expected || access.counted || access.variance ? `<table>
-      ${access.expected ? `<tr><td>Opening float</td><td class="r">${fmt(shift.openingFloat)}</td></tr>
-      <tr><td>Expected drawer</td><td class="r">${fmt(expected)}</td></tr>` : ""}
+    </table><hr>`
+        : ""
+    }
+    ${
+      access.expected || access.counted || access.variance
+        ? `<table>
+      ${
+        access.expected
+          ? `<tr><td>Opening float</td><td class="r">${fmt(shift.openingFloat)}</td></tr>
+      <tr><td>Expected drawer</td><td class="r">${fmt(expected)}</td></tr>`
+          : ""
+      }
       ${access.counted ? `<tr><td>Counted</td><td class="r">${fmt(counted)}</td></tr>` : ""}
       ${access.variance ? `<tr class="b"><td>Variance</td><td class="r">${fmt(counted - expected)}</td></tr>` : ""}
-    </table>` : ""}
+    </table>`
+        : ""
+    }
     ${shift.note ? `<hr><div class="muted">Note: ${esc(shift.note)}</div>` : ""}
     ${
       kind === "xreport"
@@ -666,7 +689,12 @@ function memberBody(member: Member, sales: Sale[]) {
  */
 export type PrintResult = { ok: boolean; handled: boolean; error?: string };
 
-async function printHtml(title: string, body: string, slip = true, barcode?: string): Promise<PrintResult> {
+async function printHtml(
+  title: string,
+  body: string,
+  slip = true,
+  barcode?: string,
+): Promise<PrintResult> {
   if (!canPrintReceipts()) {
     toast.error("Printing not available on this device", {
       description: "Receipts print from the Windows till or a browser with a printer attached.",
@@ -703,12 +731,17 @@ async function printHtml(title: string, body: string, slip = true, barcode?: str
     const printed = await silentPrint(desktopHtml, paper, mode !== "direct");
     if (!printed.handled) {
       const ok = browserPrint(shell(title, body));
-      return { ok, handled: ok, ...(ok ? {} : { error: "The browser print window could not be opened." }) };
+      return {
+        ok,
+        handled: ok,
+        ...(ok ? {} : { error: "The browser print window could not be opened." }),
+      };
     }
     if (!printed.ok) toast.error("Printing failed", { description: printed.error });
     return printed;
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "The printer did not accept the receipt.";
+    const message =
+      error instanceof Error ? error.message : "The printer did not accept the receipt.";
     toast.error("Printing failed", {
       description: message,
     });
@@ -878,7 +911,11 @@ function bookingBody(booking: Booking, member: Member | null, pay: PaymentDetail
     <hr><table>
       <tr><td>Subtotal</td><td class="r">${fmt(booking.subtotal)}</td></tr>
       <tr><td>Discount</td><td class="r">-${fmt(booking.discount)}</td></tr>
-      ${receiptCfg.showTax ? `<tr><td>Tax</td><td class="r">${fmt(booking.tax)}</td></tr>` : ""}
+      ${
+        receiptCfg.showTax && taxCfg.enabled && booking.tax
+          ? `<tr><td>Tax ${taxCfg.rate}%${taxCfg.mode === "inclusive" ? " incl." : ""}</td><td class="r">${fmt(booking.tax)}</td></tr>`
+          : ""
+      }
       <tr class="b"><td>TOTAL</td><td class="r">${fmt(booking.total)}</td></tr>
     </table>
     <hr><div class="muted">Payments received</div>
@@ -1111,7 +1148,8 @@ export async function openCashDrawer(reason = "Cash drawer opened", shiftId?: st
     return { ok: false, error: "Cash drawer not available on this device" };
   }
   const bytes = drawerPulseBytes();
-  return protectedDrawerOpen(reason, shiftId).then((res) => {
+  return protectedDrawerOpen(reason, shiftId)
+    .then((res) => {
       if (res.handled) {
         // Desktop shell: never print a slip — that is the symptom, not a fallback.
         if (!res.ok) {
@@ -1132,10 +1170,14 @@ export async function openCashDrawer(reason = "Cash drawer opened", shiftId?: st
         ),
       );
       return { ok: true };
-  }).catch((error: unknown) => {
+    })
+    .catch((error: unknown) => {
       toast.error("Drawer did not open", {
         description: error instanceof Error ? error.message : "The printer connection failed.",
       });
-      return { ok: false, error: error instanceof Error ? error.message : "The printer connection failed." };
-  });
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "The printer connection failed.",
+      };
+    });
 }

@@ -202,8 +202,13 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   {
     id: "stockNumbering",
     label: "Inventory document numbering",
-    blurb: "Stock-count and goods-received reference formats.",
-    paths: ["integrations.stockNumbering", "integrations.goodsReceivedNumbering"],
+    blurb: "Stock-count, receiving, request and transfer reference formats.",
+    paths: [
+      "integrations.stockNumbering",
+      "integrations.receivingNumbering",
+      "integrations.requestNumbering",
+      "integrations.transferNumbering",
+    ],
     lockedByDefault: false,
     scopeFamily: "business",
   },

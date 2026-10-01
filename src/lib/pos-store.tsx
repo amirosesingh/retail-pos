@@ -58,6 +58,7 @@ import {
   openShiftOnServer,
 } from "@/core/api/pos-db";
 import { recordActivity } from "./activity-events";
+import { notifyError } from "./notify";
 import type { CloudSlice, CommitTarget } from "@/core/api/pos-db";
 import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 import { platformName } from "@/platform-config/platform";
@@ -121,7 +122,6 @@ import {
   getPath,
   mergePatch,
   patchPaths,
-  pickSection,
   sectionAllowsTier,
   sectionOfPath,
   setPath,
@@ -161,10 +161,17 @@ export const reservedAt = (bookings: Booking[], productId: string, storeId: stri
 export const availableAt = (product: Product, storeId: string, bookings: Booking[] = []) =>
   stockAt(product, storeId) - reservedAt(bookings, product.id, storeId);
 
-const bump = (p: Product, storeId: string, delta: number): Product => ({
-  ...p,
-  stockByStore: { ...p.stockByStore, [storeId]: stockAt(p, storeId) + delta },
-});
+const bump = (p: Product, storeId: string, delta: number, lifecycle = false): Product => {
+  const hadStock = Object.values(p.stockByStore).some((qty) => qty > 0);
+  const stockByStore = { ...p.stockByStore, [storeId]: stockAt(p, storeId) + delta };
+  if (!lifecycle) return { ...p, stockByStore };
+  const hasStock = Object.values(stockByStore).some((qty) => qty > 0);
+  return {
+    ...p,
+    stockByStore,
+    archived: hadStock === hasStock ? p.archived : !hasStock,
+  };
+};
 
 type NewTransfer = {
   kind: TransferKind;
@@ -228,10 +235,11 @@ const bumpItems = (
   items: { productId: string; qty: number }[],
   storeId: string,
   sign: 1 | -1,
+  lifecycle = false,
 ) =>
   products.map((p) => {
     const item = items.find((i) => i.productId === p.id);
-    return item ? bump(p, storeId, sign * item.qty) : p;
+    return item ? bump(p, storeId, sign * item.qty, lifecycle) : p;
   });
 
 /** Where the first read of the shop's data has got to. */
@@ -365,9 +373,13 @@ type Ctx = {
   removePromotion: (id: string) => Promise<void>;
   togglePromotion: (id: string, active: boolean) => Promise<void>;
   updateSettings: (patch: Partial<AppSettings>) => void;
+  /** Write directly to the company-wide record, bypassing inherited scopes. */
+  updateGlobalSettings: (patch: Partial<AppSettings>) => void;
   saveConfiguredSettings: () => Promise<void>;
   /** Which settings blocks each tier overrides, and which are locked globally. */
   settingsScope: BranchSettingsState;
+  /** The persisted global record before cluster/store/terminal overrides are resolved. */
+  configuredGlobalSettings: AppSettings;
   /** The cluster, branch and selected terminal ids used for configuration. */
   scopeIds: ScopeIds;
   settingsScopeLoading: boolean;
@@ -1522,7 +1534,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         .filter((p) => input.lines.some((l) => l.productId === p.id))
         .map((p) => {
           const line = input.lines.find((l) => l.productId === p.id)!;
-          return bump(p, input.storeId, -line.qty);
+          return bump(
+            p,
+            input.storeId,
+            -line.qty,
+            snapshot.settings.integrations.autoArchiveZeroStock === true,
+          );
         });
       const member = snapshot.members.find((m) => m.id === input.memberId) ?? null;
       const updatedMember = member
@@ -1568,7 +1585,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setState((s) => {
         const products = s.products.map((p) => {
           const line = input.lines.find((l) => l.productId === p.id);
-          return line ? bump(p, input.storeId, -line.qty) : p;
+          return line
+            ? bump(
+                p,
+                input.storeId,
+                -line.qty,
+                s.settings.integrations.autoArchiveZeroStock === true,
+              )
+            : p;
         });
         const members = s.members.map((m) =>
           m.id === input.memberId
@@ -2166,7 +2190,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         if (!sale || sale.refunded) return s;
         const products = s.products.map((p) => {
           const line = sale.lines.find((l) => l.productId === p.id);
-          return line ? bump(p, sale.storeId, line.qty) : p;
+          return line
+            ? bump(p, sale.storeId, line.qty, s.settings.integrations.autoArchiveZeroStock === true)
+            : p;
         });
         return {
           ...s,
@@ -2624,7 +2650,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
       updatedStock: before ? stockAt(before, target) + delta : null,
     });
     if (!before) return null;
-    const updated = bump(before, target, delta);
+    const updated = bump(
+      before,
+      target,
+      delta,
+      stateRef.current.settings.integrations.autoArchiveZeroStock === true,
+    );
     const committed = await db.commitStockAdjustments(
       [updated],
       [
@@ -2644,7 +2675,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setState((s) => ({
       ...s,
       products: s.products.map((p) =>
-        p.id === id ? bump(p, storeId ?? s.currentStoreId, delta) : p,
+        p.id === id
+          ? bump(
+              p,
+              storeId ?? s.currentStoreId,
+              delta,
+              s.settings.integrations.autoArchiveZeroStock === true,
+            )
+          : p,
       ),
     }));
     return committed;
@@ -3018,10 +3056,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
       settingsWrites.current.revision++;
       try {
         if (on) {
-          const patch = pickSection(
-            resolveScopedSettings(stateRef.current.settings, scopeRef.current, mergePatch).settings,
-            def,
-          );
+          // Re-selecting a tier must keep its saved values. A genuinely new
+          // owner starts empty so inherited values are not copied downward.
+          const patch: Record<string, unknown> = {
+            ...(scopeRef.current.overrides[tier][section] ?? {}),
+          };
           await saveSectionOverride(tier, target, section, patch, whoRef.current);
           setScope((s) => ({
             ...s,
@@ -3084,7 +3123,21 @@ export function PosProvider({ children }: { children: ReactNode }) {
       status: transfer.status,
     });
     const transferCounter = stateRef.current.transferCounter + 1;
-    transfer.ref = `${input.kind === "transfer" ? "TRF" : "REQ"}-${String(transferCounter).padStart(5, "0")}`;
+    const series = input.kind === "transfer" ? "transfer" : "request";
+    const originStoreId = input.kind === "transfer" ? input.fromStoreId : input.toStoreId;
+    const originCode =
+      stateRef.current.stores.find((store) => store.id === originStoreId)?.code ?? "BR";
+    const integrations = resolveScopedSettings(
+      stateRef.current.settings,
+      scopeRef.current,
+      mergePatch,
+    ).settings.integrations;
+    const numbering =
+      series === "transfer"
+        ? (integrations.transferNumbering ?? {})
+        : (integrations.requestNumbering ?? {});
+    const { nextStockRef } = await import("./stock-ref");
+    transfer.ref = nextStockRef(numbering, originCode, series);
     await saveTransfer({
       transfer,
       from: stateRef.current.stores.find((x) => x.id === transfer.fromStoreId),
@@ -3092,6 +3145,25 @@ export function PosProvider({ children }: { children: ReactNode }) {
       products: stateRef.current.products,
     });
     setState((s) => ({ ...s, transferCounter, transfers: [transfer, ...s.transfers] }));
+    if (transfer.kind === "request") {
+      const requester = stateRef.current.stores.find((x) => x.id === transfer.toStoreId)?.name;
+      recordActivity({
+        type: "stock_request_received",
+        severity: "warning",
+        title: `Stock request ${transfer.ref} received`,
+        message: `${requester || "Another branch"} requested ${transfer.items.reduce((sum, item) => sum + item.qty, 0)} unit(s).`,
+        actorName: transfer.createdBy,
+        storeId: transfer.fromStoreId,
+        entityType: "stock_request",
+        entityId: transfer.id,
+        meta: {
+          route: `/requests/${transfer.id}`,
+          audience: "branch_stock_team",
+          audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
+          requester_store_id: transfer.toStoreId,
+        },
+      });
+    }
     return transfer;
   }, []);
 
@@ -3199,7 +3271,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
       setState((s) => ({
         ...s,
-        products: bumpItems(s.products, moving, before.fromStoreId, -1),
+        products: bumpItems(
+          s.products,
+          moving,
+          before.fromStoreId,
+          -1,
+          s.settings.integrations.autoArchiveZeroStock === true,
+        ),
         transfers: s.transfers.map((x) =>
           x.id === id
             ? {
@@ -3258,6 +3336,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
         actorName: actorRef.current,
         storeId: before.fromStoreId,
         metadata: { ref: before.ref, toStoreId: before.toStoreId, fulfilment, lines: sent },
+      });
+      const source = s0.stores.find((x) => x.id === before.fromStoreId)?.name;
+      recordActivity({
+        type: "transfer_sent",
+        title: `Transfer ${before.ref} is on its way`,
+        message: `${source || "The sending branch"} dispatched ${total} unit(s) to this branch.`,
+        actorName: actorRef.current,
+        storeId: before.toStoreId,
+        entityType: "stock_transfer",
+        entityId: before.id,
+        meta: {
+          route: `/transfers/${before.id}`,
+          audience: "receiving_branch",
+          audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
+          sender_store_id: before.fromStoreId,
+        },
       });
       return { success: true };
     },
@@ -3340,7 +3434,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
       setState((s) => ({
         ...s,
-        products: bumpItems(s.products, arriving, before.toStoreId, 1),
+        products: bumpItems(
+          s.products,
+          arriving,
+          before.toStoreId,
+          1,
+          s.settings.integrations.autoArchiveZeroStock === true,
+        ),
         transfers: s.transfers.map((x) =>
           x.id === id
             ? {
@@ -3406,7 +3506,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setState((s) => ({
       ...s,
       products: returning.length
-        ? bumpItems(s.products, returning, before.fromStoreId, 1)
+        ? bumpItems(
+            s.products,
+            returning,
+            before.fromStoreId,
+            1,
+            s.settings.integrations.autoArchiveZeroStock === true,
+          )
         : s.products,
       transfers: s.transfers.map((x) =>
         x.id === id
@@ -3477,6 +3583,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     retryLoad,
     state: effectiveState,
     settingsScope: scope,
+    configuredGlobalSettings: state.settings,
     scopeIds,
     settingsScopeLoading: confirmedScopeKey !== JSON.stringify(scopeIds),
     settingsTerminalId,
@@ -3526,6 +3633,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     removePromotion,
     togglePromotion,
     updateSettings,
+    updateGlobalSettings: writeGlobalSettings,
     saveConfiguredSettings,
     createTransfer,
     approveTransfer,

@@ -41,7 +41,68 @@ export function checkCodeAvailable(
   const trimmed = code.trim();
   if (!trimmed) return "Enter a barcode";
   const clash = codeTakenBy(products, trimmed, exceptId);
-  return clash ? `${trimmed} already belongs to ${clash.name} (${clash.sku || clash.barcode})` : null;
+  return clash
+    ? `${trimmed} already belongs to ${clash.name} (${clash.sku || clash.barcode})`
+    : null;
+}
+
+export type DuplicateProductCode = {
+  code: string;
+  products: Pick<Product, "id" | "name" | "sku" | "barcode">[];
+};
+
+/** Audit every SKU and barcode shape, including aliases and variants. */
+export function findDuplicateProductCodes(products: Product[]): DuplicateProductCode[] {
+  const owners = new Map<string, Map<string, Product>>();
+  for (const product of products) {
+    for (const code of new Set(productCodes(product))) {
+      if (!code) continue;
+      const byProduct = owners.get(code) ?? new Map<string, Product>();
+      byProduct.set(product.id, product);
+      owners.set(code, byProduct);
+    }
+  }
+  return [...owners.entries()]
+    .filter(([, entries]) => entries.size > 1)
+    .map(([code, entries]) => ({ code, products: [...entries.values()] }))
+    .sort((a, b) => a.code.localeCompare(b.code));
+}
+
+/** Validate all codes on one edited item before any write is attempted. */
+export function productCodeProblems(products: Product[], draft: Product): string[] {
+  const previous = products.find((product) => product.id === draft.id);
+  const previousCounts = new Map<string, number>();
+  for (const code of previous ? productCodes(previous) : []) {
+    previousCounts.set(code, (previousCounts.get(code) ?? 0) + 1);
+  }
+  const raw = [
+    draft.sku,
+    draft.barcode,
+    ...(draft.barcodes ?? []),
+    ...(draft.variants ?? []).map((variant) => variant.code),
+  ]
+    .map((code) => (code ?? "").trim())
+    .filter(Boolean);
+  const nextCounts = new Map<string, number>();
+  for (const code of raw.map(normaliseCode)) {
+    nextCounts.set(code, (nextCounts.get(code) ?? 0) + 1);
+  }
+  const changedCodes = new Set(
+    [...nextCounts]
+      .filter(([code, count]) => count > (previousCounts.get(code) ?? 0))
+      .map(([code]) => code),
+  );
+  const duplicateWithin = raw.find((code) => {
+    const normalized = normaliseCode(code);
+    return changedCodes.has(normalized) && (nextCounts.get(normalized) ?? 0) > 1;
+  });
+  const problems = duplicateWithin ? [`${duplicateWithin} is repeated on this product.`] : [];
+  for (const code of changedCodes) {
+    const clash = codeTakenBy(products, code, draft.id);
+    if (clash)
+      problems.push(`${code} already belongs to ${clash.name} (${clash.sku || clash.barcode}).`);
+  }
+  return problems;
 }
 
 /** Products that look like the scanned item, for the "already exists?" hint. */

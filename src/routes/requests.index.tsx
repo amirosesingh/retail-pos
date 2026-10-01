@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table";
 import { usePos } from "@/lib/pos-store";
 import { TRANSFER_STATUS_LABELS } from "@/core/types/pos-types";
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 
 export const Route = createFileRoute("/requests/")({
   head: () => ({
@@ -63,6 +64,7 @@ function RequestsIndex() {
       return mine.filter((t) => t.status === "awaiting_approval" || t.status === "approved");
     return mine;
   }, [state.transfers, currentStore.id, scope]);
+  const pagination = usePagination(rows);
 
   const tabs: Array<{ id: Scope; label: string }> = [
     { id: "all", label: "All" },
@@ -118,12 +120,15 @@ function RequestsIndex() {
             <TableBody>
               {rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={6}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     No stock requests yet. Raise one with “New request”.
                   </TableCell>
                 </TableRow>
               )}
-              {rows.map((t) => (
+              {pagination.pageItems.map((t) => (
                 <TableRow key={t.id}>
                   <TableCell className="font-mono text-xs">{t.ref}</TableCell>
                   <TableCell>{storeName(t.fromStoreId)}</TableCell>
@@ -144,6 +149,17 @@ function RequestsIndex() {
               ))}
             </TableBody>
           </Table>
+          <TablePagination
+            page={pagination.page}
+            pageCount={pagination.pageCount}
+            pageSize={pagination.pageSize}
+            total={pagination.total}
+            from={pagination.from}
+            to={pagination.to}
+            label="requests"
+            onPage={pagination.setPage}
+            onPageSize={pagination.setPageSize}
+          />
         </div>
 
         <p className="flex items-center gap-2 text-xs text-muted-foreground">

@@ -39,7 +39,6 @@ import { Route as StoresRouteImport } from './routes/stores'
 import { Route as SuppliersRouteImport } from './routes/suppliers'
 import { Route as VerificationsRouteImport } from './routes/verifications'
 import { Route as ApiCashierLoginRouteImport } from './routes/api/cashier-login'
-import { Route as ApiSettingsRouteImport } from './routes/api/settings'
 import { Route as CTokenSlugRouteImport } from './routes/c.$tokenSlug'
 import { Route as ClaimCampaignSlugRouteImport } from './routes/claim.$campaignSlug'
 import { Route as PosGeneralBookingRouteImport } from './routes/pos.general-booking'
@@ -119,8 +118,6 @@ import { Route as ApiPublicStaffIdleTimeoutRouteImport } from './routes/api/publ
 import { Route as ApiPublicSyncRouteImport } from './routes/api/public/sync'
 import { Route as ApiPublicSyncHealthRouteImport } from './routes/api/public/sync-health'
 import { Route as ApiPublicTerminalStaffRouteImport } from './routes/api/public/terminal-staff'
-import { Route as ApiSettingsSyncBatchRouteImport } from './routes/api/settings.sync-batch'
-import { Route as ApiSettingsUpsertRouteImport } from './routes/api/settings.upsert'
 import { Route as ApiPublicPosRulesSaveRouteImport } from './routes/api/public/pos-rules.save'
 import { Route as ApiV1PosActivityPreferencesRouteImport } from './routes/api/v1/pos/activity-preferences'
 import { Route as ApiV1PosAuthorizationRouteImport } from './routes/api/v1/pos/authorization'
@@ -276,11 +273,6 @@ const VerificationsRoute = VerificationsRouteImport.update({
 const ApiCashierLoginRoute = ApiCashierLoginRouteImport.update({
   id: '/api/cashier-login',
   path: '/api/cashier-login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiSettingsRoute = ApiSettingsRouteImport.update({
-  id: '/api/settings',
-  path: '/api/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CTokenSlugRoute = CTokenSlugRouteImport.update({
@@ -680,16 +672,6 @@ const ApiPublicTerminalStaffRoute = ApiPublicTerminalStaffRouteImport.update({
   path: '/api/public/terminal-staff',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiSettingsSyncBatchRoute = ApiSettingsSyncBatchRouteImport.update({
-  id: '/sync-batch',
-  path: '/sync-batch',
-  getParentRoute: () => ApiSettingsRoute,
-} as any)
-const ApiSettingsUpsertRoute = ApiSettingsUpsertRouteImport.update({
-  id: '/upsert',
-  path: '/upsert',
-  getParentRoute: () => ApiSettingsRoute,
-} as any)
 const ApiPublicPosRulesSaveRoute = ApiPublicPosRulesSaveRouteImport.update({
   id: '/save',
   path: '/save',
@@ -753,7 +735,6 @@ export interface FileRoutesByFullPath {
   '/suppliers': typeof SuppliersRoute
   '/verifications': typeof VerificationsRoute
   '/api/cashier-login': typeof ApiCashierLoginRoute
-  '/api/settings': typeof ApiSettingsRouteWithChildren
   '/c/$tokenSlug': typeof CTokenSlugRoute
   '/claim/$campaignSlug': typeof ClaimCampaignSlugRoute
   '/pos/general-booking': typeof PosGeneralBookingRoute
@@ -833,8 +814,6 @@ export interface FileRoutesByFullPath {
   '/api/public/sync': typeof ApiPublicSyncRoute
   '/api/public/sync-health': typeof ApiPublicSyncHealthRoute
   '/api/public/terminal-staff': typeof ApiPublicTerminalStaffRoute
-  '/api/settings/sync-batch': typeof ApiSettingsSyncBatchRoute
-  '/api/settings/upsert': typeof ApiSettingsUpsertRoute
   '/api/public/pos-rules/save': typeof ApiPublicPosRulesSaveRoute
   '/api/v1/pos/activity-preferences': typeof ApiV1PosActivityPreferencesRoute
   '/api/v1/pos/authorization': typeof ApiV1PosAuthorizationRoute
@@ -873,7 +852,6 @@ export interface FileRoutesByTo {
   '/suppliers': typeof SuppliersRoute
   '/verifications': typeof VerificationsRoute
   '/api/cashier-login': typeof ApiCashierLoginRoute
-  '/api/settings': typeof ApiSettingsRouteWithChildren
   '/c/$tokenSlug': typeof CTokenSlugRoute
   '/claim/$campaignSlug': typeof ClaimCampaignSlugRoute
   '/pos/general-booking': typeof PosGeneralBookingRoute
@@ -953,8 +931,6 @@ export interface FileRoutesByTo {
   '/api/public/sync': typeof ApiPublicSyncRoute
   '/api/public/sync-health': typeof ApiPublicSyncHealthRoute
   '/api/public/terminal-staff': typeof ApiPublicTerminalStaffRoute
-  '/api/settings/sync-batch': typeof ApiSettingsSyncBatchRoute
-  '/api/settings/upsert': typeof ApiSettingsUpsertRoute
   '/api/public/pos-rules/save': typeof ApiPublicPosRulesSaveRoute
   '/api/v1/pos/activity-preferences': typeof ApiV1PosActivityPreferencesRoute
   '/api/v1/pos/authorization': typeof ApiV1PosAuthorizationRoute
@@ -994,7 +970,6 @@ export interface FileRoutesById {
   '/suppliers': typeof SuppliersRoute
   '/verifications': typeof VerificationsRoute
   '/api/cashier-login': typeof ApiCashierLoginRoute
-  '/api/settings': typeof ApiSettingsRouteWithChildren
   '/c/$tokenSlug': typeof CTokenSlugRoute
   '/claim/$campaignSlug': typeof ClaimCampaignSlugRoute
   '/pos/general-booking': typeof PosGeneralBookingRoute
@@ -1074,8 +1049,6 @@ export interface FileRoutesById {
   '/api/public/sync': typeof ApiPublicSyncRoute
   '/api/public/sync-health': typeof ApiPublicSyncHealthRoute
   '/api/public/terminal-staff': typeof ApiPublicTerminalStaffRoute
-  '/api/settings/sync-batch': typeof ApiSettingsSyncBatchRoute
-  '/api/settings/upsert': typeof ApiSettingsUpsertRoute
   '/api/public/pos-rules/save': typeof ApiPublicPosRulesSaveRoute
   '/api/v1/pos/activity-preferences': typeof ApiV1PosActivityPreferencesRoute
   '/api/v1/pos/authorization': typeof ApiV1PosAuthorizationRoute
@@ -1116,7 +1089,6 @@ export interface FileRouteTypes {
     | '/suppliers'
     | '/verifications'
     | '/api/cashier-login'
-    | '/api/settings'
     | '/c/$tokenSlug'
     | '/claim/$campaignSlug'
     | '/pos/general-booking'
@@ -1196,8 +1168,6 @@ export interface FileRouteTypes {
     | '/api/public/sync'
     | '/api/public/sync-health'
     | '/api/public/terminal-staff'
-    | '/api/settings/sync-batch'
-    | '/api/settings/upsert'
     | '/api/public/pos-rules/save'
     | '/api/v1/pos/activity-preferences'
     | '/api/v1/pos/authorization'
@@ -1236,7 +1206,6 @@ export interface FileRouteTypes {
     | '/suppliers'
     | '/verifications'
     | '/api/cashier-login'
-    | '/api/settings'
     | '/c/$tokenSlug'
     | '/claim/$campaignSlug'
     | '/pos/general-booking'
@@ -1316,8 +1285,6 @@ export interface FileRouteTypes {
     | '/api/public/sync'
     | '/api/public/sync-health'
     | '/api/public/terminal-staff'
-    | '/api/settings/sync-batch'
-    | '/api/settings/upsert'
     | '/api/public/pos-rules/save'
     | '/api/v1/pos/activity-preferences'
     | '/api/v1/pos/authorization'
@@ -1356,7 +1323,6 @@ export interface FileRouteTypes {
     | '/suppliers'
     | '/verifications'
     | '/api/cashier-login'
-    | '/api/settings'
     | '/c/$tokenSlug'
     | '/claim/$campaignSlug'
     | '/pos/general-booking'
@@ -1436,8 +1402,6 @@ export interface FileRouteTypes {
     | '/api/public/sync'
     | '/api/public/sync-health'
     | '/api/public/terminal-staff'
-    | '/api/settings/sync-batch'
-    | '/api/settings/upsert'
     | '/api/public/pos-rules/save'
     | '/api/v1/pos/activity-preferences'
     | '/api/v1/pos/authorization'
@@ -1477,7 +1441,6 @@ export interface RootRouteChildren {
   SuppliersRoute: typeof SuppliersRoute
   VerificationsRoute: typeof VerificationsRoute
   ApiCashierLoginRoute: typeof ApiCashierLoginRoute
-  ApiSettingsRoute: typeof ApiSettingsRouteWithChildren
   CTokenSlugRoute: typeof CTokenSlugRoute
   ClaimCampaignSlugRoute: typeof ClaimCampaignSlugRoute
   PosGeneralBookingRoute: typeof PosGeneralBookingRoute
@@ -1774,13 +1737,6 @@ declare module '@tanstack/react-router' {
       path: '/api/cashier-login'
       fullPath: '/api/cashier-login'
       preLoaderRoute: typeof ApiCashierLoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/settings': {
-      id: '/api/settings'
-      path: '/api/settings'
-      fullPath: '/api/settings'
-      preLoaderRoute: typeof ApiSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/c/$tokenSlug': {
@@ -2336,20 +2292,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicTerminalStaffRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/settings/sync-batch': {
-      id: '/api/settings/sync-batch'
-      path: '/sync-batch'
-      fullPath: '/api/settings/sync-batch'
-      preLoaderRoute: typeof ApiSettingsSyncBatchRouteImport
-      parentRoute: typeof ApiSettingsRoute
-    }
-    '/api/settings/upsert': {
-      id: '/api/settings/upsert'
-      path: '/upsert'
-      fullPath: '/api/settings/upsert'
-      preLoaderRoute: typeof ApiSettingsUpsertRouteImport
-      parentRoute: typeof ApiSettingsRoute
-    }
     '/api/public/pos-rules/save': {
       id: '/api/public/pos-rules/save'
       path: '/save'
@@ -2395,20 +2337,6 @@ declare module '@tanstack/react-router' {
   }
 }
 
-interface ApiSettingsRouteChildren {
-  ApiSettingsSyncBatchRoute: typeof ApiSettingsSyncBatchRoute
-  ApiSettingsUpsertRoute: typeof ApiSettingsUpsertRoute
-}
-
-const ApiSettingsRouteChildren: ApiSettingsRouteChildren = {
-  ApiSettingsSyncBatchRoute: ApiSettingsSyncBatchRoute,
-  ApiSettingsUpsertRoute: ApiSettingsUpsertRoute,
-}
-
-const ApiSettingsRouteWithChildren = ApiSettingsRoute._addFileChildren(
-  ApiSettingsRouteChildren,
-)
-
 interface ApiPublicPosRulesRouteChildren {
   ApiPublicPosRulesSaveRoute: typeof ApiPublicPosRulesSaveRoute
 }
@@ -2451,7 +2379,6 @@ const rootRouteChildren: RootRouteChildren = {
   SuppliersRoute: SuppliersRoute,
   VerificationsRoute: VerificationsRoute,
   ApiCashierLoginRoute: ApiCashierLoginRoute,
-  ApiSettingsRoute: ApiSettingsRouteWithChildren,
   CTokenSlugRoute: CTokenSlugRoute,
   ClaimCampaignSlugRoute: ClaimCampaignSlugRoute,
   PosGeneralBookingRoute: PosGeneralBookingRoute,

@@ -7,9 +7,8 @@
  * and the stock figures stay identical.
  */
 import { useMemo, useRef, useState } from "react";
-import { FileSpreadsheet, Loader2, Trash2, Upload } from "lucide-react";
+import { Loader2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
-import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,9 +33,11 @@ import { Fact, Panel } from "@/platforms/web/components/pos/TransferWorkspace";
 import { stockAt, usePos } from "@/lib/pos-store";
 import { availableAt, planDeduction, subWarehouses } from "@/lib/locations";
 import { branchPolicy } from "@/lib/branch-policy";
-import { groupOf, scopeBetween } from "@/lib/stock-transfers";
+import { groupOf, normalizeTransferQuantity, scopeBetween } from "@/lib/stock-transfers";
 import { groupName, useStoreGroups } from "@/lib/store-groups";
 import type { TransferItem, TransferKind } from "@/core/types/pos-types";
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
+import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
 
 export type ComposerResult = {
   otherStoreId: string;
@@ -71,6 +72,7 @@ export function TransferComposer({
   );
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const submittingRef = useRef(false);
 
   const otherStore = stores.find((s) => s.id === otherStoreId);
@@ -88,74 +90,6 @@ export function TransferComposer({
         ? prev.map((i) => (i.productId === productId ? { ...i, qty: i.qty + add } : i))
         : [...prev, { productId, qty: add }],
     );
-  }
-
-  async function importSheet(file: File) {
-    try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
-      const sheetName = wb.SheetNames[0];
-      const sheet = sheetName ? wb.Sheets[sheetName] : undefined;
-      if (!sheet) throw new Error("empty workbook");
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-      const pick = (r: Record<string, unknown>, keys: string[]) => {
-        for (const [k, v] of Object.entries(r)) {
-          if (keys.includes(k.trim().toLowerCase())) return String(v).trim();
-        }
-        return "";
-      };
-      const next: TransferItem[] = [];
-      let missing = 0;
-      for (const r of rows) {
-        const key = pick(r, ["barcode", "sku", "code", "product", "name", "item"]);
-        const qty = Math.floor(Number(pick(r, ["qty", "quantity", "units"])) || 0);
-        if (!key || qty <= 0) continue;
-        const needle = key.toLowerCase();
-        const p = state.products.find(
-          (x) =>
-            x.barcode?.toLowerCase() === needle ||
-            x.sku?.toLowerCase() === needle ||
-            x.name.toLowerCase() === needle,
-        );
-        if (!p) {
-          missing += 1;
-          continue;
-        }
-        const found = next.find((i) => i.productId === p.id);
-        if (found) found.qty += qty;
-        else next.push({ productId: p.id, qty });
-      }
-      if (!next.length) {
-        toast.error("Nothing matched — use columns Barcode / SKU / Name and Qty");
-        return;
-      }
-      setItems((prev) => {
-        const merged = prev.map((i) => ({ ...i }));
-        for (const i of next) {
-          const hit = merged.find((x) => x.productId === i.productId);
-          if (hit) hit.qty += i.qty;
-          else merged.push(i);
-        }
-        return merged;
-      });
-      toast.success(
-        `${next.length} line${next.length > 1 ? "s" : ""} imported${
-          missing ? ` · ${missing} unknown item(s) skipped` : ""
-        }`,
-      );
-    } catch {
-      toast.error("Could not read that file — use a .xlsx or .csv sheet");
-    }
-  }
-
-  function downloadTemplate() {
-    const ws = XLSX.utils.aoa_to_sheet([
-      ["Barcode", "Qty"],
-      ...state.products.slice(0, 3).map((p) => [p.barcode ?? p.sku ?? p.name, 1]),
-    ]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Transfer");
-    XLSX.writeFile(wb, "stock-transfer-template.xlsx");
   }
 
   async function submit() {
@@ -207,6 +141,7 @@ export function TransferComposer({
   }
 
   const totalUnits = items.reduce((a, i) => a + (Number(i.qty) || 0), 0);
+  const linePagination = usePagination(items, 25);
 
   return (
     <div className="space-y-6">
@@ -236,23 +171,8 @@ export function TransferComposer({
             />
 
             <div className="flex flex-wrap items-center gap-2 pt-3">
-              <Button asChild variant="outline" size="sm">
-                <label className="cursor-pointer">
-                  <Upload className="size-3.5" /> Import Excel / CSV
-                  <input
-                    type="file"
-                    accept=".csv,.xlsx,.xls"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) void importSheet(f);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-              </Button>
-              <Button variant="ghost" size="sm" onClick={downloadTemplate}>
-                <FileSpreadsheet className="size-3.5" /> Template
+              <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+                <Upload className="size-3.5" /> Import Excel / CSV
               </Button>
             </div>
           </Panel>
@@ -316,7 +236,7 @@ export function TransferComposer({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((i) => {
+              {linePagination.pageItems.map((i) => {
                 const p = productOf(i.productId);
                 const plan =
                   kind === "transfer" && p && sourceLevels.length
@@ -389,6 +309,17 @@ export function TransferComposer({
               )}
             </TableBody>
           </Table>
+          <TablePagination
+            page={linePagination.page}
+            pageCount={linePagination.pageCount}
+            pageSize={linePagination.pageSize}
+            total={linePagination.total}
+            from={linePagination.from}
+            to={linePagination.to}
+            label="lines"
+            onPage={linePagination.setPage}
+            onPageSize={linePagination.setPageSize}
+          />
 
           <div className="flex justify-end pt-5">
             <Button
@@ -403,6 +334,24 @@ export function TransferComposer({
           </div>
         </Panel>
       </div>
+      <BulkImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        mode="transfer"
+        onReceivingRows={(rows) => {
+          setItems((current) => {
+            const merged = current.map((line) => ({ ...line }));
+            for (const row of rows) {
+              const quantity = normalizeTransferQuantity(row.quantity);
+              if (!quantity) continue;
+              const hit = merged.find((line) => line.productId === row.product.id);
+              if (hit) hit.qty += quantity;
+              else merged.push({ productId: row.product.id, qty: quantity });
+            }
+            return merged;
+          });
+        }}
+      />
     </div>
   );
 }

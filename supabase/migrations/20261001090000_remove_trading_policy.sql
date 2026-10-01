@@ -51,13 +51,32 @@ BEGIN
 END
 $fn$;
 
-ALTER TABLE public.pos_settings
-  DROP COLUMN IF EXISTS review_max_voids,
-  DROP COLUMN IF EXISTS review_max_refunds,
-  DROP COLUMN IF EXISTS review_max_refund_value,
-  DROP COLUMN IF EXISTS review_max_nosale,
-  DROP COLUMN IF EXISTS review_max_discount_pct,
-  DROP COLUMN IF EXISTS day_start_time,
-  DROP COLUMN IF EXISTS day_end_time,
-  DROP COLUMN IF EXISTS max_shift_hours,
-  DROP COLUMN IF EXISTS shift_reminder_minutes;
+-- Preserve all upgrade data. These legacy fields are intentionally omitted
+-- from the sync function above, so they are inert without being destroyed.
+-- A fresh schema no longer creates them; upgraded databases may retain them
+-- for audit/recovery until a separately approved archival migration exists.
+DO $preserve_legacy$
+DECLARE
+  v_column_name text;
+BEGIN
+  FOREACH v_column_name IN ARRAY ARRAY[
+    'review_max_voids', 'review_max_refunds', 'review_max_refund_value',
+    'review_max_nosale', 'review_max_discount_pct', 'day_start_time',
+    'day_end_time', 'max_shift_hours', 'shift_reminder_minutes'
+  ] LOOP
+    IF EXISTS (
+      SELECT 1
+        FROM information_schema.columns AS c
+       WHERE c.table_schema = 'public'
+         AND c.table_name = 'pos_settings'
+         AND c.column_name = v_column_name
+    ) THEN
+      EXECUTE format(
+        'COMMENT ON COLUMN public.pos_settings.%I IS %L',
+        v_column_name,
+        'Legacy trading-policy value retained for audit; ignored by the current POS runtime.'
+      );
+    END IF;
+  END LOOP;
+END
+$preserve_legacy$;

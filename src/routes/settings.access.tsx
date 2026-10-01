@@ -7,9 +7,8 @@
  * what the person gets, on their next screen load.
  */
 import { useEffect, useMemo, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
-import { Loader2, Lock, RotateCcw, Search } from "lucide-react";
-import { toast } from "sonner";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { Loader2, Lock, Search, Users } from "lucide-react";
 
 import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Badge } from "@/components/ui/badge";
@@ -25,15 +24,8 @@ import {
 } from "@/components/ui/select";
 import { notifyError } from "@/lib/notify";
 import { useAuth } from "@/lib/pos-auth";
-import {
-  PERMISSION_GROUPS,
-  PERMISSION_LABELS,
-  rolePermissions,
-  type PermissionKey,
-  type StaffPermissions,
-  type StaffRole,
-} from "@/lib/permissions";
-import { getRolesWithPermissions, updateRolePermissions, type RoleDef } from "@/lib/role-admin";
+import type { StaffRole } from "@/lib/permissions";
+import { getRolesWithPermissions, type RoleDef } from "@/lib/role-admin";
 import {
   VISIBILITY_ELEMENTS,
   VISIBILITY_GROUPS,
@@ -63,29 +55,6 @@ export const Route = createFileRoute("/settings/access")({
   component: AccessSettingsPage,
 });
 
-/** What each permission actually controls, in plain words. */
-const PERMISSION_EFFECT: Partial<Record<PermissionKey, string>> = {
-  can_view_inventory: "Shows Inventory and Stock on hand in the sidebar.",
-  can_create_transfer: "Shows Transfers and the “send stock” action.",
-  can_receive_transfer: "Shows incoming transfers waiting to be accepted.",
-  can_adjust_stock: "Shows Stock operations (recount, damage, write-off).",
-  can_receive_purchase_order: "Shows Purchasing and Suppliers.",
-  can_view_sales_reports: "Shows Reports, Analytics and bill history.",
-  can_view_dashboard: "Shows the live Dashboard.",
-  can_view_audit_trail: "Shows Register activity and the audit log.",
-  can_access_pos_settings: "Opens the Settings workspace.",
-  can_manage_staff: "Opens Staff management.",
-  can_manage_promotions: "Opens Promotions and Coupons.",
-  can_manage_bookings: "Shows Bookings / pay-later.",
-  can_add_member: "Shows Members and the quick add-member box.",
-  can_hold_cart: "Allows parking the current cart. It does not expose the held-ticket page.",
-  can_view_held_orders: "Allows opening and inspecting the Held tickets page.",
-  can_reopen_held_order: "Allows moving a parked ticket back to the register.",
-  can_discard_held_order: "Allows permanently discarding a parked ticket.",
-  can_close_shift: "Shows Shifts and the close-shift button.",
-  can_manage_locations: "Opens Branches / locations.",
-};
-
 const isBuiltIn = (slug: string): slug is StaffRole =>
   slug === "cashier" || slug === "warehouse" || slug === "supervisor" || slug === "admin";
 
@@ -96,7 +65,6 @@ function AccessSettingsPage() {
   const [roles, setRoles] = useState<RoleDef[]>([]);
   const [loading, setLoading] = useState(true);
   const [slug, setSlug] = useState<string>("cashier");
-  const [saving, setSaving] = useState(false);
   const [term, setTerm] = useState("");
 
   const load = async () => {
@@ -124,37 +92,6 @@ function AccessSettingsPage() {
     return base === "admin" ? null : (base as VisibilityRole);
   }, [role, slug]);
 
-  const setPermission = async (key: PermissionKey, value: boolean) => {
-    if (!role) return;
-    const next: StaffPermissions = { ...role.permissions, [key]: value };
-    setRoles((rs) => rs.map((r) => (r.slug === role.slug ? { ...r, permissions: next } : r)));
-    setSaving(true);
-    try {
-      await updateRolePermissions(role, next);
-    } catch (e) {
-      notifyError(e, "That permission could not be saved");
-      void load();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const resetToDefault = async () => {
-    if (!role) return;
-    const preset = rolePermissions(role.baseLevel);
-    setRoles((rs) => rs.map((r) => (r.slug === role.slug ? { ...r, permissions: preset } : r)));
-    setSaving(true);
-    try {
-      await updateRolePermissions(role, preset);
-      toast.success(`${role.name} reset to its default permissions`);
-    } catch (e) {
-      notifyError(e, "The role could not be reset");
-      void load();
-    } finally {
-      setSaving(false);
-    }
-  };
-
   if (!can("can_manage_staff")) {
     return (
       <SettingsFrame
@@ -168,15 +105,6 @@ function AccessSettingsPage() {
       </SettingsFrame>
     );
   }
-
-  const permissionRows = PERMISSION_GROUPS.map((group) => ({
-    ...group,
-    rows: [...group.keys].filter((key) => {
-      if (!query) return true;
-      const effect = PERMISSION_EFFECT[key] ?? "";
-      return `${PERMISSION_LABELS[key]} ${effect} ${key}`.toLowerCase().includes(query);
-    }),
-  })).filter((g) => g.rows.length);
 
   const screenGroups = VISIBILITY_GROUPS.map((group) => ({
     group,
@@ -222,16 +150,12 @@ function AccessSettingsPage() {
               className="pl-8"
             />
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void resetToDefault()}
-            disabled={!role || saving}
-          >
-            <RotateCcw className="size-4" />
-            Reset to role default
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/staff">
+              <Users className="size-4" /> Manage roles and permissions
+            </Link>
           </Button>
-          {(loading || saving) && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          {loading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
         </div>
 
         {adminSelected ? (
@@ -241,46 +165,6 @@ function AccessSettingsPage() {
           </p>
         ) : (
           <>
-            <section className="space-y-3">
-              <header>
-                <h2 className="text-sm font-semibold">What this role may do</h2>
-                <p className="text-xs text-muted-foreground">
-                  Each switch controls one operation. Screen visibility is configured separately
-                  below. A person's own record can still be tuned in Staff management.
-                </p>
-              </header>
-              {permissionRows.map((group) => (
-                <div key={group.id} className="overflow-hidden rounded-lg border border-border">
-                  <div className="bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground">
-                    {group.label}
-                  </div>
-                  <ul>
-                    {group.rows.map((key) => (
-                      <li
-                        key={key}
-                        className="flex items-start justify-between gap-3 border-t border-border px-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <span className="block text-sm">{PERMISSION_LABELS[key]}</span>
-                          {PERMISSION_EFFECT[key] && (
-                            <span className="block text-xs text-muted-foreground">
-                              {PERMISSION_EFFECT[key]}
-                            </span>
-                          )}
-                        </div>
-                        <Switch
-                          checked={!!role?.permissions[key]}
-                          aria-label={`${PERMISSION_LABELS[key]} allowed`}
-                          disabled={!role}
-                          onCheckedChange={(on) => void setPermission(key, on)}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </section>
-
             <section className="space-y-3">
               <header>
                 <h2 className="text-sm font-semibold">What this role sees</h2>

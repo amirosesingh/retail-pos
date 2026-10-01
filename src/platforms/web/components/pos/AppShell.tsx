@@ -1,15 +1,6 @@
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
-import {
-  Loader2,
-  Lock,
-  LogOut,
-  Menu,
-  MapPin,
-  ReceiptText,
-  Settings as SettingsIcon,
-  Store,
-} from "lucide-react";
+import { Loader2, LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { usePos } from "@/lib/pos-store";
 import { useAuth, type PermissionFlag } from "@/lib/pos-auth";
@@ -45,6 +36,14 @@ import { UpdateHeaderButton } from "@/platforms/web/components/pos/UpdateHeaderB
 import { routePermissionForPath, type NavItem } from "@/platforms/web/components/pos/nav-config";
 import { setPrintStore, setPrintSettings, setServiceTerms } from "@/lib/pos-print";
 import { bookingRulesOf } from "@/core/types/pos-types";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -115,6 +114,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     isSupervisor,
     canSwitchStores,
     terminalStoreId,
+    authUserId,
+    terminalUser,
     logout,
     lock,
     can,
@@ -137,6 +138,33 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   const startup = useStartupGate();
   const location = useLocation();
   const { visibleRoute } = useVisibility();
+
+  // A route belongs to the person who opened it. The immediately returning
+  // operator may carry on, but a different sign-in starts at the workspace so
+  // an admin settings URL can never leak into a cashier session. Remembering
+  // only the most recent identity also means A -> B -> A starts A fresh.
+  useEffect(() => {
+    if (!user) return;
+    // Profile hydration may replace the provisional staffId after sign-in.
+    // The authentication account / terminal person key remains stable and
+    // must be used so an in-flight page is not mistaken for another user.
+    const identity = authUserId
+      ? `auth:${authUserId}`
+      : terminalUser?.userCode
+        ? `terminal:${terminalUser.userCode}`
+        : `user:${user.email || user.staffId || user.name}`;
+    const key = "pos.last-signed-in-identity";
+    let previous: string;
+    try {
+      previous = window.sessionStorage.getItem(key) ?? "";
+      window.sessionStorage.setItem(key, identity);
+    } catch {
+      return;
+    }
+    if (previous && previous !== identity && location.pathname !== "/") {
+      window.location.replace("/");
+    }
+  }, [user, authUserId, terminalUser?.userCode, location.pathname]);
 
   useDisplayProfile(state.settings.integrations.displayProfile);
   // Terminal-wide font / control scaling preference.
@@ -368,35 +396,40 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       </div>
     );
 
-  const Footer = ({ mini }: { mini?: boolean }) =>
-    mini ? (
-      <div className="px-2 pb-2">
+  const ProfileMenu = () => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
-          size="sm"
-          className="h-8 w-full justify-center px-0"
-          onClick={logout}
-          aria-label="Sign out"
+          size="icon"
+          className="shrink-0 rounded-full"
+          aria-label={`Open profile for ${user.name}`}
+          title={user.name}
         >
-          <LogOut className="size-4" />
+          <span className="flex size-7 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+            {user.name
+              .split(/\s+/)
+              .slice(0, 2)
+              .map((part) => part[0])
+              .join("")
+              .toUpperCase() || "U"}
+          </span>
         </Button>
-      </div>
-    ) : (
-      <div className="space-y-2 px-3 pb-2">
-        <div className="rounded-md border border-border px-2 py-2">
-          <p className="truncate text-xs font-medium">{user.name}</p>
-          <p className="text-[11px] capitalize text-muted-foreground">{user.role}</p>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-1 h-7 w-full justify-start px-1 text-xs"
-            onClick={logout}
-          >
-            <LogOut className="size-3.5" /> Sign out
-          </Button>
-        </div>
-      </div>
-    );
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel>
+          <span className="block truncate text-sm">{user.name}</span>
+          <span className="block text-xs font-normal capitalize text-muted-foreground">
+            {user.metaRole ?? user.role}
+          </span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => void logout()}>
+          <LogOut className="mr-2 size-4" /> Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   return (
     <TooltipProvider delayDuration={250} skipDelayDuration={100} disableHoverableContent>
@@ -433,7 +466,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                     {!collapsed && <div className="px-3 pb-3">{<StorePicker />}</div>}
                   </>
                 }
-                footer={<div className="mt-auto">{<Footer mini={collapsed} />}</div>}
               />
             </aside>
 
@@ -468,7 +500,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                           </div>
                         </>
                       }
-                      footer={<div className="mt-auto">{<Footer />}</div>}
                     />
                   </SheetContent>
                 </Sheet>
@@ -490,39 +521,13 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   <UpdateHeaderButton />
                 </span>
                 <span className="hidden sm:inline-flex">
-                  <Button
-                    asChild
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0"
-                    aria-label="Settings"
-                  >
-                    <Link to="/settings">
-                      <SettingsIcon className="size-4" />
-                    </Link>
-                  </Button>
-                </span>
-                <span className="hidden sm:inline-flex">
                   <ThemeToggle />
                 </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="touch-target shrink-0 px-2 text-[11px]"
-                  onClick={() => void lock()}
-                >
-                  <Lock className="size-3.5" /> <span className="hidden sm:inline">Lock</span>
-                </Button>
+                <ProfileMenu />
               </header>
 
-              {/* Desktop header: signed-in cashier + quick lock / switch user */}
+              {/* Desktop header: system controls and signed-in operator profile. */}
               <header className="sticky top-0 z-30 hidden shrink-0 items-center gap-3 border-b border-border bg-sidebar px-4 py-2 md:flex">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{user.name}</p>
-                  <p className="text-[11px] capitalize text-muted-foreground">
-                    {user.metaRole ?? user.role}
-                  </p>
-                </div>
                 <div className="ml-auto" />
                 <span className="hidden xl:inline-flex">
                   <LiveClock />
@@ -543,27 +548,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 <span className="hidden lg:inline-flex">
                   <UpdateHeaderButton />
                 </span>
-                <Button
-                  asChild
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0"
-                  aria-label="Settings"
-                >
-                  <Link to="/settings">
-                    <SettingsIcon className="size-4" />
-                  </Link>
-                </Button>
                 <ThemeToggle />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="size-8 shrink-0 px-0 text-xs xl:h-8 xl:w-auto xl:px-3"
-                  onClick={() => void lock()}
-                >
-                  <Lock className="size-3.5" />{" "}
-                  <span className="hidden xl:inline">Lock / Switch user</span>
-                </Button>
+                <ProfileMenu />
               </header>
 
               <main

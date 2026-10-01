@@ -30,6 +30,22 @@ describe("resolveScopedSettings", () => {
     expect(out.settings).toBe(base);
   });
 
+  it("does not duplicate inherited values when an empty child scope is selected", () => {
+    const base = { tax: { rate: 5 } };
+    const out = resolveScopedSettings(
+      base,
+      scope({ overrides: { CLUSTER: {}, BRANCH: { tax: {} }, TERMINAL: {} } }),
+      (target, patch) => ({
+        ...target,
+        tax: { ...target.tax, ...((patch as { tax?: object }).tax ?? {}) },
+      }),
+    );
+    expect(out.settings.tax.rate).toBe(5);
+    expect(
+      scope({ overrides: { CLUSTER: {}, BRANCH: { tax: {} }, TERMINAL: {} } }).overrides.BRANCH.tax,
+    ).toEqual({});
+  });
+
   it("lets a cluster override the global record", () => {
     const out = resolveScopedSettings(
       { taxRate: 5 },
@@ -210,5 +226,40 @@ describe("central settings ownership UI", () => {
     expect(controls).not.toContain('setSettingsTerminalId("");');
     expect(controls).toContain("sectionRoutes?.[id]");
     expect(controls).toContain(">Edit values</Link>");
+  });
+
+  it("keeps a saved ownership patch and starts a new owner empty", () => {
+    const store = read("src/lib/pos-store.tsx");
+    expect(store).toContain("Re-selecting a tier must keep its saved values");
+    expect(store).toContain("scopeRef.current.overrides[tier][section] ?? {}");
+    expect(store).not.toContain("pickSection(");
+  });
+
+  it("uses resolved settings when generating scoped stock references", () => {
+    const store = read("src/lib/pos-store.tsx");
+    const transfer = store.slice(
+      store.indexOf("const createTransfer = useCallback"),
+      store.indexOf("createTransferRef.current = createTransfer"),
+    );
+    expect(transfer).toContain("resolveScopedSettings(");
+    expect(transfer).toContain("scopeRef.current");
+    expect(transfer).not.toContain("stateRef.current.settings.integrations");
+  });
+
+  it("writes zero-stock lifecycle configuration only to the global record", () => {
+    const catalog = read("src/routes/settings.catalog.tsx");
+    expect(catalog).toContain("configuredGlobalSettings.integrations.autoArchiveZeroStock");
+    expect(catalog).toContain("updateGlobalSettings({");
+    expect(catalog).not.toContain("patchProducts(");
+  });
+
+  it("uses Store consistently in the inheritance interface while retaining BRANCH storage", () => {
+    const controls = read("src/platforms/web/components/pos/settings/ScopeControls.tsx");
+    const resolver = read("src/lib/branch-settings.ts");
+
+    expect(controls).toContain('`Store: ${currentStore.name}`');
+    expect(controls).not.toContain('`Branch: ${currentStore.name}`');
+    expect(resolver).toContain('BRANCH: "Store"');
+    expect(resolver).toContain('match: { scope: tier, scope_id: scopeId }');
   });
 });

@@ -210,8 +210,29 @@ function Register() {
   const [appliedApproval, setAppliedApproval] = useState<{
     requestId: string;
     approvedAmount: number | null;
+    requestedAmount: number | null;
+    requesterDirectLimit: number | null;
     valueUnit: "percent" | "currency" | "quantity" | "number";
   } | null>(null);
+  const appliedApprovalText = appliedApproval
+    ? (() => {
+        const formatValue = (value: number) =>
+          appliedApproval.valueUnit === "percent"
+            ? `${value.toFixed(2)}%`
+            : appliedApproval.valueUnit === "currency"
+              ? money(value)
+              : value.toFixed(2);
+        const approved =
+          appliedApproval.approvedAmount === null
+            ? ""
+            : ` · ${formatValue(appliedApproval.approvedAmount)} approved`;
+        const extra =
+          appliedApproval.approvedAmount !== null && appliedApproval.requesterDirectLimit !== null
+            ? ` · ${formatValue(Math.max(0, appliedApproval.approvedAmount - appliedApproval.requesterDirectLimit))} extra`
+            : "";
+        return `#${appliedApproval.requestId.slice(-8).toUpperCase()}${approved}${extra}`;
+      })()
+    : "";
   const askManager = async (request: GateRequest) => {
     const baseSnapshot = ticketSnapshot.current();
     const snapshot = baseSnapshot
@@ -369,6 +390,9 @@ function Register() {
     getMemberName: () => member?.name ?? null,
     // A discount unlock lasts for this ticket only.
     onReset: () => setDiscountOverride(false),
+    // Tax is configured once for the business scope; product records are not a
+    // second source of truth for the rate applied at the till.
+    taxRate: state.settings.tax.enabled ? state.settings.tax.rate / 100 : 0,
     // The register settings decide whether an out-of-stock item can be sold.
     preventNegativeStock: rules.prevent_negative_stock_sale,
   });
@@ -798,6 +822,8 @@ function Register() {
       setAppliedApproval({
         requestId: grant.requestId,
         approvedAmount: grant.approvedAmount,
+        requestedAmount: grant.requestedAmount,
+        requesterDirectLimit: grant.requesterDirectLimit,
         valueUnit: grant.valueUnit,
       });
       toast.success(
@@ -913,6 +939,7 @@ function Register() {
 
   const displayBase = {
     companyName: state.settings.receipt.companyName || currentStore.name,
+    logo: state.settings.receipt.showLogo ? state.settings.receipt.logo || "" : "",
     storeName: `${currentStore.name} (${currentStore.code})`,
     cashier: activeCashier,
     payment: state.settings.payment,
@@ -928,6 +955,8 @@ function Register() {
     subtotal: totals.subtotal,
     discount: totals.discount,
     tax: totals.tax,
+    taxRate: taxSettings.rate,
+    taxEnabled: taxSettings.enabled,
     total: totals.total,
     paid: 0,
     change: 0,
@@ -1052,6 +1081,8 @@ function Register() {
     t: totals.total,
     d: totals.discount,
     x: totals.tax,
+    xr: taxSettings.rate,
+    xe: taxSettings.enabled,
     m: member?.id ?? null,
     s: currentStore.id,
   });
@@ -1463,7 +1494,7 @@ function Register() {
       </p>
       {appliedApproval && (
         <p className="truncate text-[10px] font-medium text-success">
-          Approved · #{appliedApproval.requestId.slice(-8).toUpperCase()}
+          Approval applied · {appliedApprovalText}
         </p>
       )}
     </div>
@@ -1522,14 +1553,7 @@ function Register() {
           </p>
           {appliedApproval && (
             <p className="truncate text-[10px] font-medium text-success">
-              Approval applied · #{appliedApproval.requestId.slice(-8).toUpperCase()}
-              {appliedApproval.approvedAmount === null
-                ? ""
-                : appliedApproval.valueUnit === "percent"
-                  ? ` · ${appliedApproval.approvedAmount.toFixed(2)}%`
-                  : appliedApproval.valueUnit === "currency"
-                    ? ` · ${money(appliedApproval.approvedAmount)}`
-                    : ` · ${appliedApproval.approvedAmount.toFixed(2)}`}
+              Approval applied · {appliedApprovalText}
             </p>
           )}
         </div>
@@ -1544,11 +1568,6 @@ function Register() {
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {can("can_close_shift") && (
-          <Button asChild variant="outline" size="sm">
-            <Link to="/shifts">View shift</Link>
-          </Button>
-        )}
         {visible("register.exchange") && (
           <Button
             variant="outline"
@@ -1560,6 +1579,21 @@ function Register() {
             <Repeat className="size-4" /> Exchange
           </Button>
         )}
+        <div className="relative">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={tillLocked}
+            onClick={() => setBookingHubOpen(true)}
+          >
+            <CalendarClock className="size-4" /> Manage Booking
+          </Button>
+          {activeBookingCount > 0 && (
+            <Badge className="absolute -right-2 -top-2 h-5 min-w-5 justify-center px-1 text-[10px]">
+              {activeBookingCount}
+            </Badge>
+          )}
+        </div>
         <Button
           variant="ghost"
           size="sm"
@@ -1627,12 +1661,13 @@ function Register() {
             </p>
           )}
           {standardLookupProducts.map((product) => (
-            <button
+            <Button
               key={product.id}
               type="button"
+              variant="outline"
               disabled={!activeShift}
               onClick={() => addLine(product.id)}
-              className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/60 hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
+              className="grid h-auto w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg bg-card px-3 py-2.5 text-left font-normal hover:border-primary/60 hover:bg-primary/5"
             >
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium">{product.name}</span>
@@ -1643,7 +1678,7 @@ function Register() {
               <span className="numeric shrink-0 text-sm font-semibold text-primary">
                 {money(product.price)}
               </span>
-            </button>
+            </Button>
           ))}
           {!standardLookupProducts.length && (
             <div className="px-4 py-10 text-center">
@@ -1860,17 +1895,20 @@ function Register() {
                             {chip}
                           </Badge>
                         ))}
-                      <button
+                      <Button
                         type="button"
-                        className="text-[11px] text-primary underline-offset-2 hover:underline"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 text-[11px]"
                         onClick={() => editBookingSpecs(l.bookingId!)}
                       >
                         Edit specs
-                      </button>
+                      </Button>
                     </div>
                   )}
                   <p className="numeric text-[11px] text-muted-foreground">
-                    {money(l.price)} · tax {(l.taxRate * 100).toFixed(0)}%
+                    {money(l.price)}
+                    {taxSettings.enabled ? ` · tax ${taxSettings.rate}%` : ""}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
@@ -1900,16 +1938,19 @@ function Register() {
               </div>
               {!l.credit && !l.foc && !discountAllowed && (
                 <div className="mt-2 flex justify-end">
-                  <button
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
                     onClick={() => void unlockDiscounts()}
-                    className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                    className="h-auto p-0 text-[11px] text-muted-foreground"
                   >
                     Discount locked · supervisor override
-                  </button>
+                  </Button>
                 </div>
               )}
               {!l.credit && !l.foc && discountAllowed && (
-                <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
                   <span className="truncate text-[11px] text-muted-foreground">Disc</span>
                   <ActionButton
                     layout="inline"
@@ -1924,9 +1965,21 @@ function Register() {
                     }
                     icon={<Percent className="size-4" />}
                   />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-9 shrink-0 px-2 text-[11px] text-muted-foreground"
+                    onClick={() => {
+                      setPriceTarget(i);
+                      setPriceDraft(String(l.price));
+                      setPriceReason("");
+                    }}
+                  >
+                    <Pencil className="size-3" /> Override price
+                  </Button>
                 </div>
               )}
-              {!l.credit && !l.foc && (
+              {!l.credit && !l.foc && !discountAllowed && (
                 <div className="mt-2 flex justify-end">
                   <Button
                     size="sm"
@@ -1980,15 +2033,17 @@ function Register() {
         <Row label={`Store credit #${exchangeRef ?? ""}`} value={`-${money(totals.credit)}`} />
       )}
       {!discountAllowed && (
-        <button
+        <Button
+          type="button"
+          variant="ghost"
           onClick={() => void unlockDiscounts()}
-          className="flex w-full min-w-0 items-center justify-between gap-3 text-muted-foreground"
+          className="flex h-auto w-full min-w-0 items-center justify-between gap-3 px-0 py-1 font-normal text-muted-foreground"
         >
           <span className="min-w-0 truncate">Bill discount</span>
           <span className="shrink-0 text-[11px] underline-offset-2 hover:underline">
             locked · supervisor override
           </span>
-        </button>
+        </Button>
       )}
       {/* Label left, control flush right — sized by its own content so it can
           never push past the panel edge. */}
@@ -2086,10 +2141,10 @@ function Register() {
   );
 
   const atom_actCharge = (
-    <div className="flex h-full min-w-0 items-center px-1">
+    <div className="flex h-full min-w-0 items-center">
       <ActionButton
         layout="inline"
-        className="h-full w-full text-base"
+        className="h-full w-full rounded-xl border-transparent bg-primary px-6 text-lg font-semibold text-primary-foreground shadow-md transition-[transform,box-shadow] hover:bg-primary/90 hover:shadow-lg active:scale-[0.995]"
         disabled={!lines.length || tillLocked || (refundDue > 0 && !canRefund)}
         disabledReason={tillLocked ? lockedReason : undefined}
         onClick={() => openPayment()}
@@ -2208,17 +2263,14 @@ function Register() {
   ) : null;
 
   const slot_billFooter = (
-    <div className="w-full min-w-0 shrink-0 space-y-2 border-t border-border py-1 text-sm">
+    <div className="w-full min-w-0 shrink-0 space-y-2 border-t border-border pb-4 pt-2 text-sm">
       {atom_totalsBlock}
       <div className="px-4">
         <Separator />
       </div>
       <div className="h-12">{atom_balanceDue}</div>
       {visible("register.paymentExecution") && (
-        <>
-          <div className="h-12 px-3">{atom_actCharge}</div>
-          <div className="h-11 px-3">{atom_actBooking}</div>
-        </>
+        <div className="h-14 px-4 pt-1">{atom_actCharge}</div>
       )}
       {lastSale && <div className="border-t border-border">{atom_reprintDeck}</div>}
     </div>
@@ -2301,20 +2353,22 @@ function Register() {
           </Link>
         </div>
         {held.map((h) => (
-          <button
+          <Button
             key={h.id}
+            type="button"
+            variant="outline"
             onClick={() => {
               if (can("can_reopen_held_order")) void resumeHeld(h.id);
               else toast.error("Reopen held ticket permission is required");
             }}
-            className="flex w-full items-center justify-between rounded-md border border-border px-2 py-1.5 text-[11px] hover:border-primary/60"
+            className="flex h-auto w-full items-center justify-between rounded-md px-2 py-1.5 text-[11px] font-normal hover:border-primary/60"
           >
             <span className="truncate">
               {h.cancelledFrom ? "↩ " : ""}
               {h.label}
             </span>
             <span className="numeric font-semibold">{money(h.total)}</span>
-          </button>
+          </Button>
         ))}
       </div>
     ) : null;
@@ -2395,10 +2449,11 @@ function Register() {
   return (
     <AppShell>
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex shrink-0 items-center border-b border-border bg-background px-3 py-2">
+        <div className="flex shrink-0 items-center border-b border-border bg-background px-2 py-1">
           <Button
             variant="ghost"
             size="sm"
+            className="h-7 gap-1.5 rounded-md px-2 text-xs text-muted-foreground"
             onClick={() => void navigate({ to: "/", search: {}, replace: true })}
           >
             <ArrowLeft className="size-4" /> Back to workspace
@@ -2441,7 +2496,7 @@ function Register() {
                   <div className="pos-scaled flex h-full min-h-0 min-w-0 flex-col overflow-hidden lg:flex-row">
                     {/* Product lookup stays deliberately smaller than the sale. */}
                     <section
-                      className="flex max-h-[42%] min-h-0 w-full shrink-0 flex-col border-b border-border lg:max-h-none lg:w-[var(--lookup-w)] lg:min-w-[280px] lg:max-w-[42%] lg:border-b-0"
+                      className="flex max-h-[42%] min-h-0 w-full shrink-0 flex-col border-b border-border lg:max-h-none lg:w-[var(--lookup-w)] lg:min-w-[240px] lg:border-b-0"
                       style={{ ["--lookup-w" as string]: `${lookupWidth}px` }}
                     >
                       {slot_standardProductLookup}
@@ -2450,8 +2505,8 @@ function Register() {
                     <ColumnResizer
                       width={lookupWidth}
                       onWidth={setLookupWidth}
-                      min={280}
-                      max={520}
+                      min={240}
+                      max={1200}
                       direction="right"
                       label="Resize product lookup"
                     />
@@ -2530,6 +2585,8 @@ function Register() {
               products={visibleProducts}
               storeId={currentStore.id}
               unknownCode={unknownCode}
+              canCreateProduct={can("can_add_new_product")}
+              canLinkBarcode={can("can_link_product_barcode")}
               onAdd={(id) => {
                 addLine(id);
                 setCatalogOpen(false);
@@ -2537,12 +2594,16 @@ function Register() {
                 setQuery("");
               }}
               onLinkBarcode={async (id, code) => {
+                if (!can("can_link_product_barcode")) {
+                  toast.error("Link barcodes to products permission required");
+                  return;
+                }
                 const product = state.products.find((p) => p.id === id);
                 if (!product) return;
                 await upsertProduct({
                   ...product,
                   barcodes: Array.from(new Set([...(product.barcodes ?? []), code])),
-                  ...(product.barcode ? {} : { barcode: code }),
+                  ...(product.barcode || !can("can_edit_product_details") ? {} : { barcode: code }),
                 });
                 toast.success(`${code} linked to ${product.name}`);
                 addLine(id);
@@ -2550,6 +2611,10 @@ function Register() {
                 setQuery("");
               }}
               onCreateProduct={async (draft) => {
+                if (!can("can_add_new_product")) {
+                  toast.error("Add new products permission required");
+                  return;
+                }
                 const created = {
                   id: crypto.randomUUID(),
                   name: draft.name,
@@ -2560,7 +2625,7 @@ function Register() {
                   cost: 0,
                   stockByStore: { [currentStore.id]: 1 },
                   reorderLevel: 0,
-                  taxRate: state.settings.tax.enabled ? state.settings.tax.rate : 0,
+                  taxRate: state.settings.tax.enabled ? state.settings.tax.rate / 100 : 0,
                 };
                 await upsertProduct(created);
                 toast.success(`${created.name} added to the catalogue`);

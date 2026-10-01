@@ -96,6 +96,7 @@ export const EVENT_CATALOG: { group: string; types: { type: string; label: strin
     group: "Stock & purchasing",
     types: [
       { type: "stock_adjust", label: "Stock adjusted" },
+      { type: "stock_request_received", label: "Stock request received" },
       { type: "transfer_sent", label: "Transfer sent" },
       { type: "transfer_received", label: "Transfer received" },
       { type: "po_finalised", label: "Purchase order finalised" },

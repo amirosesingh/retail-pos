@@ -1031,6 +1031,8 @@ export const claimAuthorizationRequest = createServerFn({ method: "POST" })
         status: "approved" as const,
         actionKey: request.actionKey,
         approvedAmount: request.approvedAmount ?? request.requestedAmount,
+        requestedAmount: request.requestedAmount,
+        requesterDirectLimit: request.requesterDirectLimit,
         valueUnit: request.valueUnit,
         approvedPayload: request.approvedPayload,
         grantToken: signOverrideGrant({

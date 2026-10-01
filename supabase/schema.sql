@@ -3185,6 +3185,10 @@ CREATE OR REPLACE FUNCTION public.enforce_product_price_permissions() RETURNS tr
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
     AS $$
+DECLARE
+  lifecycle_enabled boolean := false;
+  has_stock boolean := false;
+  automatic_lifecycle_change boolean := false;
 BEGIN
   IF (SELECT auth.uid()) IS NULL THEN RETURN NEW; END IF;
 
@@ -3265,7 +3269,14 @@ CREATE OR REPLACE FUNCTION public.has_perm(_flag text) RETURNS boolean
     WHEN (SELECT auth.uid()) IS NULL THEN false
     WHEN public.is_app_supervisor() THEN true
     ELSE coalesce((
-      SELECT (a.permissions ->> _flag)::boolean
+      SELECT CASE
+        WHEN a.permissions ? _flag THEN (a.permissions ->> _flag)::boolean
+        WHEN _flag = ANY (ARRAY[
+          'can_edit_product_details', 'can_link_product_barcode',
+          'can_archive_product', 'can_restore_product', 'can_publish_product'
+        ]) THEN coalesce((a.permissions ->> 'can_add_new_product')::boolean, false)
+        ELSE false
+      END
         FROM public.app_users a
        WHERE a.is_active
          AND (a.auth_user_id = (SELECT auth.uid())
@@ -9119,6 +9130,214 @@ ALTER TABLE public.shift_notifications ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.shift_notifications FROM anon;
 GRANT SELECT, INSERT ON public.shift_notifications TO authenticated;
 GRANT ALL ON public.shift_notifications TO service_role;
+
+-- Retire the unused generic scoped-settings API. settings_scoped remains only
+-- for the existing branch product-price override contract; regular POS
+-- settings resolve from pos_settings plus settings_overrides.
+REVOKE EXECUTE ON FUNCTION public.settings_effective(text, text) FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.settings_upsert(text, text, jsonb) FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.settings_sync_batch(text, text, text[]) FROM anon, authenticated;
+COMMENT ON TABLE public.settings_scoped IS
+  'Backward-compatible scoped product-price overrides only. POS configuration resolves from pos_settings and settings_overrides.';
+
+-- Granular catalogue operations. Existing accounts keep their previous
+-- add-product behavior until an administrator tunes the new switches.
+UPDATE public.app_users
+SET permissions = jsonb_build_object(
+  'can_edit_product_details', COALESCE((permissions->>'can_add_new_product')::boolean, false),
+  'can_link_product_barcode', COALESCE((permissions->>'can_add_new_product')::boolean, false),
+  'can_archive_product', COALESCE((permissions->>'can_add_new_product')::boolean, false),
+  'can_restore_product', COALESCE((permissions->>'can_add_new_product')::boolean, false),
+  'can_publish_product', COALESCE((permissions->>'can_add_new_product')::boolean, false)
+) || permissions
+WHERE NOT permissions ? 'can_edit_product_details'
+   OR NOT permissions ? 'can_link_product_barcode'
+   OR NOT permissions ? 'can_archive_product'
+   OR NOT permissions ? 'can_restore_product'
+   OR NOT permissions ? 'can_publish_product';
+
+CREATE OR REPLACE FUNCTION public.enforce_product_price_permissions() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $$
+DECLARE
+  lifecycle_enabled boolean := false;
+  has_stock boolean := false;
+  automatic_lifecycle_change boolean := false;
+BEGIN
+  IF (SELECT auth.uid()) IS NULL THEN RETURN NEW; END IF;
+  IF TG_OP = 'INSERT' AND NOT public.has_perm('can_add_new_product') THEN
+    RAISE EXCEPTION 'PERMISSION_DENIED_PRODUCT';
+  END IF;
+  IF TG_OP = 'UPDATE' THEN
+    IF (COALESCE(NEW.selling_price,0) <> COALESCE(OLD.selling_price,0)
+        OR COALESCE(NEW.cost_price,0) <> COALESCE(OLD.cost_price,0)
+        OR COALESCE(NEW.ecom_price,-1) IS DISTINCT FROM COALESCE(OLD.ecom_price,-1))
+       AND NOT public.has_perm('can_edit_product_price') THEN
+      RAISE EXCEPTION 'PERMISSION_DENIED_PRICE';
+    END IF;
+    IF (NEW.name IS DISTINCT FROM OLD.name OR NEW.sku IS DISTINCT FROM OLD.sku
+        OR NEW.barcode IS DISTINCT FROM OLD.barcode OR NEW.category IS DISTINCT FROM OLD.category
+        OR NEW.sub_category IS DISTINCT FROM OLD.sub_category
+        OR NEW.product_group IS DISTINCT FROM OLD.product_group OR NEW.brand IS DISTINCT FROM OLD.brand
+        OR NEW.unit IS DISTINCT FROM OLD.unit OR NEW.packs IS DISTINCT FROM OLD.packs
+        OR NEW.reorder_level IS DISTINCT FROM OLD.reorder_level OR NEW.tax_rate IS DISTINCT FROM OLD.tax_rate)
+       AND NOT public.has_perm('can_edit_product_details') THEN
+      RAISE EXCEPTION 'PERMISSION_DENIED_PRODUCT_DETAILS';
+    END IF;
+    IF (NEW.barcode_aliases IS DISTINCT FROM OLD.barcode_aliases
+        OR NEW.barcode_variants IS DISTINCT FROM OLD.barcode_variants)
+       AND NOT public.has_perm('can_link_product_barcode') THEN
+      RAISE EXCEPTION 'PERMISSION_DENIED_PRODUCT_BARCODE';
+    END IF;
+    IF NEW.ecom_visible IS DISTINCT FROM OLD.ecom_visible
+       AND NOT public.has_perm('can_publish_product') THEN
+      RAISE EXCEPTION 'PERMISSION_DENIED_PRODUCT_PUBLISH';
+    END IF;
+    IF NEW.is_archived IS DISTINCT FROM OLD.is_archived THEN
+      SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, false)
+        INTO lifecycle_enabled
+        FROM public.pos_settings
+       WHERE id = 1;
+      SELECT EXISTS (
+        SELECT 1
+          FROM jsonb_each_text(COALESCE(NEW.stock_by_store, '{}'::jsonb))
+         WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
+           AND value::numeric > 0
+      ) INTO has_stock;
+      automatic_lifecycle_change := lifecycle_enabled
+        AND (NEW.stock_by_store IS DISTINCT FROM OLD.stock_by_store OR pg_trigger_depth() > 1)
+        AND NEW.is_archived = NOT has_stock;
+
+      IF NOT automatic_lifecycle_change THEN
+        IF NEW.is_archived AND NOT public.has_perm('can_archive_product') THEN
+          RAISE EXCEPTION 'PERMISSION_DENIED_PRODUCT_ARCHIVE';
+        END IF;
+        IF NOT NEW.is_archived AND NOT public.has_perm('can_restore_product') THEN
+          RAISE EXCEPTION 'PERMISSION_DENIED_PRODUCT_RESTORE';
+        END IF;
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.enforce_product_price_permissions() FROM PUBLIC;
+DROP POLICY IF EXISTS "Staff can delete" ON public.products;
+
+-- Optional catalogue lifecycle: zero company-wide stock retires the product,
+-- and the next positive receipt restores it without a manual archive edit.
+CREATE OR REPLACE FUNCTION public.apply_zero_stock_catalog_lifecycle()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  enabled boolean := false;
+  had_stock boolean := false;
+  has_stock boolean := false;
+BEGIN
+  SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, false)
+    INTO enabled FROM public.pos_settings WHERE id = 1;
+  IF NOT enabled THEN RETURN NEW; END IF;
+  SELECT EXISTS (
+    SELECT 1 FROM jsonb_each_text(COALESCE(NEW.stock_by_store, '{}'::jsonb))
+     WHERE value ~ '^-?[0-9]+([.][0-9]+)?$' AND value::numeric > 0
+  ) INTO has_stock;
+  IF TG_OP = 'INSERT' AND NOT has_stock THEN
+    NEW.is_archived := true;
+    NEW.archived_at := COALESCE(NEW.archived_at, now());
+  ELSIF TG_OP = 'INSERT' AND has_stock THEN
+    NEW.is_archived := false;
+    NEW.archived_at := NULL;
+  ELSE
+    SELECT EXISTS (
+      SELECT 1 FROM jsonb_each_text(COALESCE(OLD.stock_by_store, '{}'::jsonb))
+       WHERE value ~ '^-?[0-9]+([.][0-9]+)?$' AND value::numeric > 0
+    ) INTO had_stock;
+    IF had_stock AND NOT has_stock THEN
+      NEW.is_archived := true;
+      NEW.archived_at := COALESCE(NEW.archived_at, now());
+    ELSIF NOT had_stock AND has_stock THEN
+      NEW.is_archived := false;
+      NEW.archived_at := NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS products_zero_stock_catalog_lifecycle ON public.products;
+CREATE TRIGGER products_zero_stock_catalog_lifecycle
+BEFORE INSERT OR UPDATE OF stock_by_store ON public.products
+FOR EACH ROW EXECUTE FUNCTION public.apply_zero_stock_catalog_lifecycle();
+REVOKE ALL ON FUNCTION public.apply_zero_stock_catalog_lifecycle() FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.backfill_zero_stock_catalog_lifecycle()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF COALESCE((NEW.integration_settings ->> 'autoArchiveZeroStock')::boolean, false)
+     AND NOT COALESCE((OLD.integration_settings ->> 'autoArchiveZeroStock')::boolean, false) THEN
+    UPDATE public.products
+       SET is_archived = NOT EXISTS (
+             SELECT 1
+               FROM jsonb_each_text(COALESCE(products.stock_by_store, '{}'::jsonb))
+              WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
+                AND value::numeric > 0
+           ),
+           archived_at = CASE
+             WHEN EXISTS (
+               SELECT 1
+                 FROM jsonb_each_text(COALESCE(products.stock_by_store, '{}'::jsonb))
+                WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
+                  AND value::numeric > 0
+             ) THEN NULL
+             ELSE COALESCE(products.archived_at, now())
+           END;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS pos_settings_zero_stock_catalog_backfill ON public.pos_settings;
+CREATE TRIGGER pos_settings_zero_stock_catalog_backfill
+AFTER UPDATE OF integration_settings ON public.pos_settings
+FOR EACH ROW EXECUTE FUNCTION public.backfill_zero_stock_catalog_lifecycle();
+
+REVOKE ALL ON FUNCTION public.backfill_zero_stock_catalog_lifecycle() FROM PUBLIC, anon, authenticated;
+
+-- Reconcile products already present when this schema is applied to an
+-- installation whose lifecycle setting was enabled earlier. Future changes
+-- are handled by the two triggers above.
+WITH lifecycle AS (
+  SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, false) AS enabled
+    FROM public.pos_settings
+   WHERE id = 1
+), stock_state AS (
+  SELECT p.id,
+         EXISTS (
+           SELECT 1
+             FROM jsonb_each_text(COALESCE(p.stock_by_store, '{}'::jsonb))
+            WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
+              AND value::numeric > 0
+         ) AS has_stock
+    FROM public.products p
+)
+UPDATE public.products p
+   SET is_archived = NOT stock_state.has_stock,
+       archived_at = CASE
+         WHEN stock_state.has_stock THEN NULL
+         ELSE COALESCE(p.archived_at, now())
+       END
+  FROM lifecycle, stock_state
+ WHERE lifecycle.enabled
+   AND p.id = stock_state.id
+   AND (
+     p.is_archived IS DISTINCT FROM NOT stock_state.has_stock
+     OR (stock_state.has_stock AND p.archived_at IS NOT NULL)
+     OR (NOT stock_state.has_stock AND p.archived_at IS NULL)
+   );
 
 -- Close anonymous table access. Public coupon/member/terminal flows use the
 -- narrow SECURITY DEFINER routines granted above; visitors only need the

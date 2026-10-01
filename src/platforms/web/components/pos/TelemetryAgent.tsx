@@ -12,6 +12,7 @@ import { runPendingCommands } from "@/lib/terminal-commands";
 import { hasSignedInIdentity } from "@/lib/session-presence";
 import { isWindowsShell } from "@/platform-config/features";
 import { localDb } from "@/core/local-db/local-db";
+import { hasStaffSession } from "@/core/api/sync-relay";
 
 export function TelemetryAgent() {
   const { user, terminalUser } = useAuth();
@@ -42,6 +43,10 @@ export function TelemetryAgent() {
       // before anyone signs in would only be rejected by the database.
       if (!hasSignedInIdentity()) return;
       await publishTelemetry({ name, role });
+      // terminal_commands is deliberately hidden from anon. PIN/session-token
+      // users reconcile through the protected relay; only a staff JWT may
+      // query this table directly from a browser.
+      if (!hasStaffSession()) return;
       try {
         await runPendingCommands(refreshCatalogue);
       } catch {
