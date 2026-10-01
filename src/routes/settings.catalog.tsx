@@ -270,8 +270,8 @@ function CatalogMetaSettings() {
           <div>
             <p className="font-medium">Automatically archive zero-stock products</p>
             <p className="text-xs text-muted-foreground">
-              Products with no stock in any branch leave the active catalogue. Receiving positive
-              stock restores them automatically.
+              Enabled by default. Products with no stock in any branch move out of the active
+              catalogue and cannot be restored until positive stock is received.
             </p>
           </div>
           <Switch

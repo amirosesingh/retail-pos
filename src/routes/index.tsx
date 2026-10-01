@@ -1573,7 +1573,7 @@ function Register() {
       </p>
       {appliedApproval && (
         <p className="truncate text-[10px] font-medium text-success">
-          Approval applied · {appliedApprovalText}
+          Approval certificate · {appliedApprovalText}
         </p>
       )}
     </div>
@@ -1632,7 +1632,7 @@ function Register() {
           </p>
           {appliedApproval && (
             <p className="truncate text-[10px] font-medium text-success">
-              Approval applied · {appliedApprovalText}
+              Approval certificate · {appliedApprovalText}
             </p>
           )}
         </div>

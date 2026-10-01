@@ -138,6 +138,10 @@ import {
   type ImportRow,
 } from "./product-import";
 import { productCodes } from "./product-lookup";
+import {
+  applyZeroStockLifecycle,
+  applyZeroStockLifecycleToProducts,
+} from "./product-lifecycle";
 import { nextSku, readSkuSettings } from "./sku";
 
 const LEGACY_STATE_KEY = "pos-state-v2";
@@ -441,9 +445,16 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
   const cloudPromotions = cloud.promotions ?? [];
   const cloudStores = cloud.stores ?? [];
   const cloudSettings = cloud.settings ?? ({} as CloudSlice["settings"]);
+  const settings = mergeCloudSettings(cloudSettings);
   return {
     ...s,
-    products: cloudProducts,
+    // Older installations may not have the database lifecycle trigger yet.
+    // Keep stale zero-stock rows out of the active catalogue immediately; the
+    // trigger/backfill remains responsible for persisting the same state.
+    products: applyZeroStockLifecycleToProducts(
+      cloudProducts,
+      settings.integrations.autoArchiveZeroStock === true,
+    ),
     members: cloudMembers,
     sales: (() => {
       if (!pendingSales?.size) return cloudSales;
@@ -470,7 +481,7 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
       if (!cloudStores.length) return s.currentStoreId;
       return cloudStores.find((x) => x.id === s.currentStoreId)?.id ?? cloudStores[0].id;
     })(),
-    settings: mergeCloudSettings(cloudSettings),
+    settings,
     // Keep the bill counter ahead of every receipt already in the cloud.
     counter: cloudSales.reduce(
       (max, sale) => Math.max(max, receiptSequence(sale.receiptNo)),
@@ -2235,7 +2246,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     for (const store of stateRef.current.stores) {
       if (stockByStore[store.id] === undefined) stockByStore[store.id] = 0;
     }
-    const record: Product = { ...product, stockByStore };
+    const record = applyZeroStockLifecycle(
+      { ...product, stockByStore },
+      stateRef.current.settings.integrations.autoArchiveZeroStock === true,
+    );
     logger.log("inventory_edit", prev ? "Product updated" : "Product created", "inventory", {
       productId: record.id,
       name: record.name,
@@ -2342,6 +2356,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (!todo.length) return result;
 
       const privateCatalogue = branchPolicy(stateRef.current.settings, storeId).privateCatalogue;
+      const zeroStockLifecycle =
+        stateRef.current.settings.integrations.autoArchiveZeroStock === true;
       const autoSku = readSkuSettings().mode === "auto";
       // One running list of codes, so the auto numbering never has to re-scan
       // the catalogue per row.
@@ -2387,7 +2403,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
             for (const id of storeIds) {
               if (record.stockByStore[id] === undefined) record.stockByStore[id] = 0;
             }
-            entries.push({ row, record, existing: true });
+            entries.push({
+              row,
+              record: applyZeroStockLifecycle(record, zeroStockLifecycle),
+              existing: true,
+            });
           } else {
             const sku = autoSku ? nextSku(skuPool) : row.barcode;
             skuPool.push(sku);
@@ -2413,7 +2433,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
               customPoints: row.customPoints,
               ...(privateCatalogue ? { ownerStoreId: storeId } : {}),
             };
-            entries.push({ row, record, existing: false });
+            entries.push({
+              row,
+              record: applyZeroStockLifecycle(record, zeroStockLifecycle),
+              existing: false,
+            });
           }
         }
 
@@ -2561,9 +2585,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
   /** Bulk field edit (category, tax, web visibility…) across a selection. */
   const patchProducts = useCallback(async (ids: string[], patch: Partial<Product>) => {
     const set = new Set(ids);
+    const zeroStockLifecycle =
+      stateRef.current.settings.integrations.autoArchiveZeroStock === true;
     const updated = stateRef.current.products
       .filter((p) => set.has(p.id))
-      .map((p) => ({ ...p, ...patch }));
+      .map((p) => applyZeroStockLifecycle({ ...p, ...patch }, zeroStockLifecycle));
     logger.log("inventory_edit", "Products bulk edited", "inventory", {
       count: updated.length,
       changes: patch,
@@ -2572,7 +2598,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const target = await db.commitProducts(updated);
     setState((s) => ({
       ...s,
-      products: s.products.map((p) => (set.has(p.id) ? { ...p, ...patch } : p)),
+      products: s.products.map((p) =>
+        set.has(p.id)
+          ? applyZeroStockLifecycle(
+              { ...p, ...patch },
+              s.settings.integrations.autoArchiveZeroStock === true,
+            )
+          : p,
+      ),
     }));
     return target;
   }, []);
@@ -2940,17 +2973,24 @@ export function PosProvider({ children }: { children: ReactNode }) {
           }),
       );
     }
-    setState((s) => ({
-      ...s,
-      settings: {
+    setState((s) => {
+      const settings = {
         tax: { ...s.settings.tax, ...(patch.tax ?? {}) },
         receipt: { ...s.settings.receipt, ...(patch.receipt ?? {}) },
         payment: { ...s.settings.payment, ...(patch.payment ?? {}) },
         whatsapp: { ...s.settings.whatsapp, ...(patch.whatsapp ?? {}) },
         integrations: { ...s.settings.integrations, ...(patch.integrations ?? {}) },
         visibility: { ...s.settings.visibility, ...(patch.visibility ?? {}) },
-      },
-    }));
+      };
+      return {
+        ...s,
+        settings,
+        products: applyZeroStockLifecycleToProducts(
+          s.products,
+          settings.integrations.autoArchiveZeroStock === true,
+        ),
+      };
+    });
   }, []);
 
   /**

@@ -9,7 +9,7 @@ DECLARE
   had_stock boolean := false;
   has_stock boolean := false;
 BEGIN
-  SELECT lower(COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'false')) = 'true'
+  SELECT lower(COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')) = 'true'
     INTO enabled
     FROM public.pos_settings
    WHERE id = 1;
@@ -48,7 +48,7 @@ BEGIN
     ELSE
       had_stock := true;
     END IF;
-    IF had_stock AND NOT has_stock THEN
+    IF NOT has_stock THEN
       NEW.is_archived := true;
       NEW.archived_at := COALESCE(NEW.archived_at, now());
     ELSIF NOT had_stock AND has_stock THEN
@@ -62,7 +62,7 @@ $$;
 
 DROP TRIGGER IF EXISTS products_zero_stock_catalog_lifecycle ON public.products;
 CREATE TRIGGER products_zero_stock_catalog_lifecycle
-BEFORE INSERT OR UPDATE OF stock_by_store ON public.products
+BEFORE INSERT OR UPDATE OF stock_by_store, is_archived ON public.products
 FOR EACH ROW EXECUTE FUNCTION public.apply_zero_stock_catalog_lifecycle();
 
 COMMENT ON FUNCTION public.apply_zero_stock_catalog_lifecycle() IS
@@ -77,7 +77,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  IF lower(COALESCE(NEW.integration_settings ->> 'autoArchiveZeroStock', 'false')) = 'true'
+  IF lower(COALESCE(NEW.integration_settings ->> 'autoArchiveZeroStock', 'true')) = 'true'
      AND lower(COALESCE(OLD.integration_settings ->> 'autoArchiveZeroStock', 'false')) <> 'true' THEN
     WITH stock_state AS (
       SELECT p.id,
@@ -119,7 +119,7 @@ REVOKE ALL ON FUNCTION public.backfill_zero_stock_catalog_lifecycle() FROM PUBLI
 -- installation whose lifecycle setting was enabled earlier. Future changes
 -- are handled by the two triggers above.
 WITH lifecycle AS (
-  SELECT lower(COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'false')) = 'true' AS enabled
+  SELECT lower(COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')) = 'true' AS enabled
     FROM public.pos_settings
    WHERE id = 1
 ), stock_state AS (

@@ -81,6 +81,13 @@ describe("approval bill details", () => {
     expect(page).toContain("Total approval to grant");
     expect(page).toContain("Extra above cashier limit");
     expect(page).toContain("This request was created without a bill snapshot");
+    expect(page).toContain("Decided approvals");
+    expect(page).toContain("Include decided");
+    expect(page).toContain("Bill number");
+    expect(page).toContain("Purpose");
+    expect(page).toContain("After discount");
+    expect(page).toContain("Open ${row.status} approval details");
+    expect(page).toContain('if (unit === "currency") return `$${money(value)}`');
     expect(page).toContain("e.target.validity.badInput || value.length > 12");
     expect(page).not.toContain("e.target.value.slice(0, 12)");
   });
@@ -148,14 +155,14 @@ describe("approval bill details", () => {
         target_line_key: "B-1001|0|product-1|1|100",
       },
       grantToken: "grant",
-      approvedAmount: 20,
-      requestedAmount: 20,
+      approvedAmount: 2,
+      requestedAmount: 2,
       requesterDirectLimit: 10,
       valueUnit: "currency",
     });
-    expect(applied.lines[0]).toMatchObject({ discount: 20, discountType: "amount" });
+    expect(applied.lines[0]).toMatchObject({ discount: 2, discountType: "amount" });
     expect(cartTotals(applied.lines, applied.cartDiscount, applied.cartDiscountType).total).toBe(
-      80,
+      98,
     );
   });
 
@@ -293,7 +300,7 @@ describe("approval bill details", () => {
     const register = readFileSync("src/routes/index.tsx", "utf8");
     const holds = readFileSync("src/routes/holds.tsx", "utf8");
     expect(held).toContain("resuming.current.has(id)");
-    expect(register).toContain("Approval applied · {appliedApprovalText}");
+    expect(register).toContain("Approval certificate · {appliedApprovalText}");
     expect(register).toContain("approvedAmount - appliedApproval.requesterDirectLimit");
     expect(register).not.toContain("existing.grantToken");
     expect(holds).toContain("Approved — ready");

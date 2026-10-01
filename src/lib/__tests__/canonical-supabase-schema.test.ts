@@ -112,10 +112,15 @@ describe("canonical Supabase SQL", () => {
     const schema = read("supabase/schema.sql");
     for (const sql of [migration, schema]) {
       expect(sql).toContain("FUNCTION public.apply_zero_stock_catalog_lifecycle()");
-      expect(sql).toContain("BEFORE INSERT OR UPDATE OF stock_by_store ON public.products");
+      expect(sql).toContain(
+        "BEFORE INSERT OR UPDATE OF stock_by_store, is_archived ON public.products",
+      );
       expect(sql).toContain("FUNCTION public.backfill_zero_stock_catalog_lifecycle()");
       expect(sql).toContain("AFTER UPDATE OF integration_settings ON public.pos_settings");
       expect(sql).toContain("integration_settings ->> 'autoArchiveZeroStock'");
+      expect(sql).toContain(
+        "COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')",
+      );
       expect(sql).toContain("Reconcile products already present");
       expect(sql).toContain("p.is_archived IS DISTINCT FROM NOT stock_state.has_stock");
       expect(sql).toContain(
