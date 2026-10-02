@@ -1,14 +1,41 @@
 import * as React from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ListFilter, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+
+type TableSortDirection = "asc" | "desc";
+type TableSortState = { column: number; direction: TableSortDirection } | null;
+type TableFilters = Record<number, string>;
+type ColumnWidths = Record<number, number>;
+
+type TableControls = {
+  sort: TableSortState;
+  toggleSort: (column: number) => void;
+  filters: TableFilters;
+  activeFilter: number | null;
+  setActiveFilter: (column: number | null) => void;
+  setFilter: (column: number, value: string) => void;
+  widths: ColumnWidths;
+  startResize: (column: number, event: React.PointerEvent<HTMLSpanElement>) => void;
+};
+
+const TableControlsContext = React.createContext<TableControls | null>(null);
+const HeaderColumnContext = React.createContext<{ current: number } | null>(null);
 
 const TableHeader = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
->(({ className, ...props }, ref) => (
-  <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props} />
-));
+>(({ className, children, ...props }, ref) => {
+  const cursor = React.useRef(0);
+  cursor.current = 0;
+  return (
+    <HeaderColumnContext.Provider value={cursor}>
+      <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props}>
+        {children}
+      </thead>
+    </HeaderColumnContext.Provider>
+  );
+});
 TableHeader.displayName = "TableHeader";
 
 const TableBody = React.forwardRef<
@@ -45,19 +72,126 @@ const TableRow = React.forwardRef<HTMLTableRowElement, React.HTMLAttributes<HTML
 );
 TableRow.displayName = "TableRow";
 
-const TableHead = React.forwardRef<
-  HTMLTableCellElement,
-  React.ThHTMLAttributes<HTMLTableCellElement>
->(({ className, ...props }, ref) => (
-  <th
-    ref={ref}
-    className={cn(
-      "h-10 px-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
-      className,
-    )}
-    {...props}
-  />
-));
+type TableHeadProps = React.ThHTMLAttributes<HTMLTableCellElement> & {
+  "data-sortable"?: boolean | "true" | "false";
+};
+
+const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
+  ({ className, children, ...props }, ref) => {
+    const controls = React.useContext(TableControlsContext);
+    const cursor = React.useContext(HeaderColumnContext);
+    const column = cursor?.current ?? 0;
+    if (cursor) cursor.current += Number(props.colSpan ?? 1);
+    const label = plainText(children);
+    const sortable =
+      controls &&
+      props["data-sortable"] !== false &&
+      props["data-sortable"] !== "false" &&
+      sortableHeaderLabel(label) &&
+      !hasInteractiveContent(children) &&
+      Number(props.colSpan ?? 1) === 1;
+    const active = sortable && controls.sort?.column === column;
+    const direction = active ? controls.sort?.direction : null;
+    const Icon = direction === "asc" ? ArrowUp : direction === "desc" ? ArrowDown : ArrowUpDown;
+    const rightAligned = String(className ?? "").includes("text-right");
+    const width = sortable ? controls.widths[column] : undefined;
+    return (
+      <th
+        ref={ref}
+        className={cn(
+          "h-10 px-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+          sortable && "relative",
+          className,
+        )}
+        aria-sort={
+          sortable
+            ? direction === "asc"
+              ? "ascending"
+              : direction === "desc"
+                ? "descending"
+                : "none"
+            : undefined
+        }
+        {...props}
+        style={{ ...props.style, ...(width ? { width } : {}) }}
+      >
+        {sortable ? (
+          <div className="relative min-w-24">
+            <div className={cn("flex items-center", rightAligned && "justify-end")}>
+              <button
+                type="button"
+                className={cn(
+                  "group inline-flex min-h-8 min-w-0 flex-1 items-center gap-1 rounded-sm px-1 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  rightAligned ? "justify-end" : "justify-start",
+                )}
+                aria-label={`${label}, ${direction ? `sorted ${direction}` : "not sorted"}. Sort ${direction === "asc" ? "descending" : "ascending"}`}
+                onClick={() => controls.toggleSort(column)}
+              >
+                <span className="truncate">{children}</span>
+                <Icon
+                  aria-hidden="true"
+                  className={cn(
+                    "size-3.5 shrink-0",
+                    active
+                      ? "text-foreground"
+                      : "text-muted-foreground/70 group-hover:text-foreground",
+                  )}
+                />
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "grid size-7 shrink-0 place-items-center rounded-sm hover:bg-muted hover:text-foreground",
+                  controls.filters[column] && "text-primary",
+                )}
+                aria-label={`Filter ${label}`}
+                onClick={() =>
+                  controls.setActiveFilter(controls.activeFilter === column ? null : column)
+                }
+              >
+                <ListFilter className="size-3.5" />
+              </button>
+            </div>
+            {controls.activeFilter === column && (
+              <div className="flex items-center gap-1 pb-1">
+                <input
+                  autoFocus
+                  value={controls.filters[column] ?? ""}
+                  onChange={(event) => controls.setFilter(column, event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") controls.setActiveFilter(null);
+                  }}
+                  placeholder={`Filter ${label}`}
+                  aria-label={`Filter ${label} values`}
+                  className="h-7 min-w-20 flex-1 rounded border border-input bg-background px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                />
+                {controls.filters[column] && (
+                  <button
+                    type="button"
+                    className="grid size-7 place-items-center rounded hover:bg-muted"
+                    aria-label={`Clear ${label} filter`}
+                    onClick={() => controls.setFilter(column, "")}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </div>
+            )}
+            <span
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={`Resize ${label} column`}
+              className="absolute -right-2 top-0 h-full w-2 cursor-col-resize touch-none select-none hover:bg-primary/50"
+              onPointerDown={(event) => controls.startResize(column, event)}
+            />
+          </div>
+        ) : (
+          children
+        )}
+      </th>
+    );
+  },
+);
 TableHead.displayName = "TableHead";
 
 const TableCell = React.forwardRef<
@@ -89,8 +223,13 @@ function plainText(node: React.ReactNode): string {
   return React.Children.toArray(node.props.children).map(plainText).join(" ").trim();
 }
 
-type TableSortDirection = "asc" | "desc";
-type TableSortState = { column: number; direction: TableSortDirection } | null;
+function isTableComponent(node: React.ReactNode, component: unknown, displayName: string): boolean {
+  if (!React.isValidElement(node)) return false;
+  if (node.type === component) return true;
+  if (typeof node.type === "string") return false;
+  const named = node.type as { displayName?: string; name?: string };
+  return named.displayName === displayName || named.name === displayName;
+}
 
 function hasInteractiveContent(node: React.ReactNode): boolean {
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return false;
@@ -110,10 +249,16 @@ function decorateHeaderCells(
   node: React.ReactNode,
   sort: TableSortState,
   toggleSort: (column: number) => void,
+  filters: TableFilters,
+  activeFilter: number | null,
+  setActiveFilter: (column: number | null) => void,
+  setFilter: (column: number, value: string) => void,
+  widths: ColumnWidths,
+  startResize: (column: number, event: React.PointerEvent<HTMLSpanElement>) => void,
   cursor: { column: number },
 ): React.ReactNode {
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
-  if (node.type === TableHead) {
+  if (isTableComponent(node, TableHead, "TableHead")) {
     type SortableHeadProps = React.ThHTMLAttributes<HTMLTableCellElement> & {
       "data-sortable"?: boolean | "true" | "false";
     };
@@ -138,34 +283,97 @@ function decorateHeaderCells(
     return React.cloneElement(
       head,
       {
+        className: cn("relative", head.props.className),
+        style: { ...head.props.style, ...(widths[column] ? { width: widths[column] } : {}) },
         "aria-sort":
           direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none",
       },
-      <button
-        type="button"
-        className={cn(
-          "group inline-flex min-h-8 w-full items-center gap-1 rounded-sm px-1 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          rightAligned ? "justify-end" : "justify-start",
+      <div className="relative min-w-24">
+        <div className={cn("flex items-center", rightAligned && "justify-end")}>
+          <button
+            type="button"
+            className={cn(
+              "group inline-flex min-h-8 min-w-0 flex-1 items-center gap-1 rounded-sm px-1 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              rightAligned ? "justify-end" : "justify-start",
+            )}
+            aria-label={`${label}, ${direction ? `sorted ${direction === "asc" ? "ascending" : "descending"}` : "not sorted"}. Sort ${nextDirection}`}
+            onClick={() => toggleSort(column)}
+          >
+            <span className="truncate">{head.props.children}</span>
+            <Icon
+              aria-hidden="true"
+              className={cn(
+                "h-3.5 w-3.5 shrink-0",
+                active ? "text-foreground" : "text-muted-foreground/70 group-hover:text-foreground",
+              )}
+            />
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "grid size-7 shrink-0 place-items-center rounded-sm hover:bg-muted hover:text-foreground",
+              filters[column] && "text-primary",
+            )}
+            aria-label={`Filter ${label}`}
+            onClick={() => setActiveFilter(activeFilter === column ? null : column)}
+          >
+            <ListFilter className="size-3.5" />
+          </button>
+        </div>
+        {activeFilter === column && (
+          <div
+            className="flex items-center gap-1 pb-1"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <input
+              autoFocus
+              value={filters[column] ?? ""}
+              onChange={(event) => setFilter(column, event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setActiveFilter(null);
+              }}
+              placeholder={`Filter ${label}`}
+              aria-label={`Filter ${label} values`}
+              className="h-7 min-w-20 flex-1 rounded border border-input bg-background px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+            />
+            {filters[column] && (
+              <button
+                type="button"
+                className="grid size-7 place-items-center rounded hover:bg-muted"
+                aria-label={`Clear ${label} filter`}
+                onClick={() => setFilter(column, "")}
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
         )}
-        aria-label={`${label}, ${direction ? `sorted ${direction === "asc" ? "ascending" : "descending"}` : "not sorted"}. Sort ${nextDirection}`}
-        onClick={() => toggleSort(column)}
-      >
-        <span>{head.props.children}</span>
-        <Icon
-          aria-hidden="true"
-          className={cn(
-            "h-3.5 w-3.5 shrink-0",
-            active ? "text-foreground" : "text-muted-foreground/70 group-hover:text-foreground",
-          )}
+        <span
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize ${label} column`}
+          className="absolute -right-2 top-0 h-full w-2 cursor-col-resize touch-none select-none hover:bg-primary/50"
+          onPointerDown={(event) => startResize(column, event)}
         />
-      </button>,
+      </div>,
     );
   }
   return React.cloneElement(
     node,
     undefined,
     React.Children.map(node.props.children, (child) =>
-      decorateHeaderCells(child, sort, toggleSort, cursor),
+      decorateHeaderCells(
+        child,
+        sort,
+        toggleSort,
+        filters,
+        activeFilter,
+        setActiveFilter,
+        setFilter,
+        widths,
+        startResize,
+        cursor,
+      ),
     ),
   );
 }
@@ -174,15 +382,32 @@ function decorateTableHeaders(
   node: React.ReactNode,
   sort: TableSortState,
   toggleSort: (column: number) => void,
+  filters: TableFilters,
+  activeFilter: number | null,
+  setActiveFilter: (column: number | null) => void,
+  setFilter: (column: number, value: string) => void,
+  widths: ColumnWidths,
+  startResize: (column: number, event: React.PointerEvent<HTMLSpanElement>) => void,
 ): React.ReactNode {
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
-  if (node.type === TableHeader) {
+  if (isTableComponent(node, TableHeader, "TableHeader")) {
     const cursor = { column: 0 };
     return React.cloneElement(
       node,
       undefined,
       React.Children.map(node.props.children, (child) =>
-        decorateHeaderCells(child, sort, toggleSort, cursor),
+        decorateHeaderCells(
+          child,
+          sort,
+          toggleSort,
+          filters,
+          activeFilter,
+          setActiveFilter,
+          setFilter,
+          widths,
+          startResize,
+          cursor,
+        ),
       ),
     );
   }
@@ -190,7 +415,17 @@ function decorateTableHeaders(
     node,
     undefined,
     React.Children.map(node.props.children, (child) =>
-      decorateTableHeaders(child, sort, toggleSort),
+      decorateTableHeaders(
+        child,
+        sort,
+        toggleSort,
+        filters,
+        activeFilter,
+        setActiveFilter,
+        setFilter,
+        widths,
+        startResize,
+      ),
     ),
   );
 }
@@ -199,7 +434,7 @@ function firstTableRow(
   node: React.ReactNode,
 ): React.ReactElement<{ children?: React.ReactNode }> | null {
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return null;
-  if (node.type === TableRow) return node;
+  if (isTableComponent(node, TableRow, "TableRow")) return node;
   for (const child of React.Children.toArray(node.props.children)) {
     const row = firstTableRow(child);
     if (row) return row;
@@ -215,7 +450,11 @@ function tableCellText(rowGroup: React.ReactNode, targetColumn: number): string 
     type SortableCellProps = React.TdHTMLAttributes<HTMLTableCellElement> & {
       "data-sort-value"?: string | number;
     };
-    if (!React.isValidElement<SortableCellProps>(cell) || cell.type !== TableCell) continue;
+    if (
+      !React.isValidElement<SortableCellProps>(cell) ||
+      !isTableComponent(cell, TableCell, "TableCell")
+    )
+      continue;
     const span = Number(cell.props.colSpan ?? 1);
     if (targetColumn >= column && targetColumn < column + span) {
       if (span !== 1) return null;
@@ -251,7 +490,7 @@ function compareTableText(left: string, right: string): number {
 
 function sortTableBodies(node: React.ReactNode, sort: TableSortState): React.ReactNode {
   if (!sort || !React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
-  if (node.type === TableBody) {
+  if (isTableComponent(node, TableBody, "TableBody")) {
     const groups = React.Children.toArray(node.props.children).map((child, index) => ({
       child,
       index,
@@ -279,13 +518,36 @@ function sortTableBodies(node: React.ReactNode, sort: TableSortState): React.Rea
   );
 }
 
+function filterTableBodies(node: React.ReactNode, filters: TableFilters): React.ReactNode {
+  if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
+  if (isTableComponent(node, TableBody, "TableBody")) {
+    const active = Object.entries(filters).filter(([, value]) => value.trim());
+    if (!active.length) return node;
+    const rows = React.Children.toArray(node.props.children).filter((child) =>
+      active.every(([column, query]) => {
+        const value = tableCellText(child, Number(column));
+        return (
+          value !== null && value.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+        );
+      }),
+    );
+    return React.cloneElement(node, undefined, rows);
+  }
+  return React.cloneElement(
+    node,
+    undefined,
+    React.Children.map(node.props.children, (child) => filterTableBodies(child, filters)),
+  );
+}
+
 function findHeaderLabels(node: React.ReactNode): string[] {
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return [];
-  if (node.type === TableHeader) {
+  if (isTableComponent(node, TableHeader, "TableHeader")) {
     const labels: string[] = [];
     const visit = (child: React.ReactNode) => {
       if (!React.isValidElement<{ children?: React.ReactNode }>(child)) return;
-      if (child.type === TableHead) labels.push(plainText(child.props.children));
+      if (isTableComponent(child, TableHead, "TableHead"))
+        labels.push(plainText(child.props.children));
       else React.Children.forEach(child.props.children, visit);
     };
     React.Children.forEach(node.props.children, visit);
@@ -300,14 +562,14 @@ function findHeaderLabels(node: React.ReactNode): string[] {
 
 function labelBodyRows(node: React.ReactNode, labels: string[]): React.ReactNode {
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
-  if (node.type === TableRow) {
+  if (isTableComponent(node, TableRow, "TableRow")) {
     let column = 0;
     const children = React.Children.map(node.props.children, (cell) => {
       type ResponsiveCellProps = React.TdHTMLAttributes<HTMLTableCellElement> & {
         "data-label"?: string;
       };
       if (!React.isValidElement<ResponsiveCellProps>(cell)) return cell;
-      if (cell.type !== TableCell) return cell;
+      if (!isTableComponent(cell, TableCell, "TableCell")) return cell;
       const label = cell.props["data-label"] ?? labels[column] ?? "";
       column += Number(cell.props.colSpan ?? 1);
       return React.cloneElement(cell, { "data-label": label });
@@ -320,7 +582,7 @@ function labelBodyRows(node: React.ReactNode, labels: string[]): React.ReactNode
 
 function labelTableBodies(node: React.ReactNode, labels: string[]): React.ReactNode {
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
-  if (node.type === TableBody)
+  if (isTableComponent(node, TableBody, "TableBody"))
     return React.cloneElement(
       node,
       undefined,
@@ -340,34 +602,87 @@ type TableProps = React.HTMLAttributes<HTMLTableElement> & {
 
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
   ({ className, children, mobileCards = true, ...props }, ref) => {
+    const internalRef = React.useRef<HTMLTableElement>(null);
+    React.useImperativeHandle(ref, () => internalRef.current as HTMLTableElement, []);
     const [sort, setSort] = React.useState<TableSortState>(null);
+    const [filters, setFilters] = React.useState<TableFilters>({});
+    const [activeFilter, setActiveFilter] = React.useState<number | null>(null);
+    const [widths, setWidths] = React.useState<ColumnWidths>({});
     const toggleSort = React.useCallback((column: number) => {
       setSort((current) => ({
         column,
         direction: current?.column === column && current.direction === "asc" ? "desc" : "asc",
       }));
     }, []);
+    const setFilter = React.useCallback((column: number, value: string) => {
+      setFilters((current) => {
+        if (value) return { ...current, [column]: value };
+        const next = { ...current };
+        delete next[column];
+        return next;
+      });
+    }, []);
+    const startResize = React.useCallback(
+      (column: number, event: React.PointerEvent<HTMLSpanElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const header = event.currentTarget.closest("th");
+        if (!header) return;
+        const startX = event.clientX;
+        const startWidth = header.getBoundingClientRect().width;
+        const move = (moveEvent: PointerEvent) => {
+          setWidths((current) => ({
+            ...current,
+            [column]: Math.max(72, Math.round(startWidth + moveEvent.clientX - startX)),
+          }));
+        };
+        const stop = () => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", stop);
+          document.body.style.cursor = "";
+          document.body.style.userSelect = "";
+        };
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", stop);
+      },
+      [],
+    );
     let labels: string[] = [];
     for (const child of React.Children.toArray(children)) {
       labels = findHeaderLabels(child);
       if (labels.length) break;
     }
-    const sorted = React.Children.map(children, (child) => sortTableBodies(child, sort));
-    const labelled = React.Children.map(sorted, (child) => labelTableBodies(child, labels));
-    const content = React.Children.map(labelled, (child) =>
-      decorateTableHeaders(child, sort, toggleSort),
+    const labelled = React.Children.map(children, (child) => labelTableBodies(child, labels));
+    const sorted = React.Children.map(labelled, (child) => sortTableBodies(child, sort));
+    const content = React.Children.map(sorted, (child) => filterTableBodies(child, filters));
+    const controls = React.useMemo<TableControls>(
+      () => ({
+        sort,
+        toggleSort,
+        filters,
+        activeFilter,
+        setActiveFilter,
+        setFilter,
+        widths,
+        startResize,
+      }),
+      [sort, toggleSort, filters, activeFilter, setFilter, widths, startResize],
     );
     return (
-      <div className="responsive-table-region relative w-full max-w-full overflow-x-auto overscroll-x-contain">
-        <table
-          ref={ref}
-          data-mobile-cards={mobileCards ? "true" : "false"}
-          className={cn("responsive-table w-full caption-bottom text-sm", className)}
-          {...props}
-        >
-          {content}
-        </table>
-      </div>
+      <TableControlsContext.Provider value={controls}>
+        <div className="responsive-table-region relative w-full max-w-full overflow-x-auto overscroll-x-contain">
+          <table
+            ref={internalRef}
+            data-mobile-cards={mobileCards ? "true" : "false"}
+            className={cn("responsive-table w-full caption-bottom text-sm", className)}
+            {...props}
+          >
+            {content}
+          </table>
+        </div>
+      </TableControlsContext.Provider>
     );
   },
 );

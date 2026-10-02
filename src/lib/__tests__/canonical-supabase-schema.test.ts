@@ -75,6 +75,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261001170000_granular_product_permissions.sql",
       "supabase/migrations/20261001180000_retire_parallel_settings_api.sql",
       "supabase/migrations/20261002010743_enforce_zero_stock_catalog_lifecycle.sql",
+      "supabase/migrations/20261002023000_admin_only_posted_record_corrections.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -205,8 +206,24 @@ describe("canonical Supabase SQL", () => {
     const body = sql.slice(start, start + 1_800);
     expect(body).toContain("NEW.payment_type IS DISTINCT FROM OLD.payment_type");
     expect(body).toContain("NEW.payments IS DISTINCT FROM OLD.payments");
-    expect(body).toContain("public.has_perm('can_edit_tenders')");
-    expect(body).toContain("PERMISSION_DENIED_TENDER_EDIT");
+    expect(body).toContain("coalesce(v_role, '') <> 'admin'");
+    expect(body).toContain("ADMIN_REQUIRED_TENDER_EDIT");
+  });
+
+  it("keeps closed-shift corrections append-only and service-role only", () => {
+    const sql = read(
+      "supabase/migrations/20261002023000_admin_only_posted_record_corrections.sql",
+    );
+    expect(sql).toContain("FUNCTION public.pos_admin_correct_closed_shift");
+    expect(sql).toContain("'RECOUNT'");
+    expect(sql).toContain("INSERT INTO public.record_edits");
+    expect(sql).toContain("'SHIFT_CLOSE_CORRECTED'");
+    expect(sql).toContain("p_client_key");
+    expect(sql).toContain("TO service_role");
+    expect(sql).toContain("FROM PUBLIC, anon, authenticated");
+    expect(sql).toContain("ADMIN_REQUIRED_TENDER_EDIT");
+    expect(sql).toContain('POLICY "server-only deny client access" ON public.user_sessions');
+    expect(sql).not.toMatch(/\b(?:DELETE|TRUNCATE|DROP\s+TABLE)\b/i);
   });
 
   it("enforces and audits cross-user or cross-terminal shift closure in the database", () => {

@@ -12,7 +12,6 @@ import { toast } from "sonner";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import type { GateRequest, GateResult } from "@/lib/manager-gate";
 import {
-  holdRecordForEdit,
   logRecordEdit,
   resumeRecordEdit,
   whoAmI,
@@ -33,7 +32,7 @@ export type BeginOutcome =
 
 /** Ask for permission to edit a posted record. */
 export async function beginPostedEdit(
-  authorize: (r: GateRequest) => Promise<GateResult>,
+  _authorize: (r: GateRequest) => Promise<GateResult>,
   opts: {
     action: "edit_posted_stock" | "edit_posted_purchase";
     recordKind: RecordKind;
@@ -45,53 +44,20 @@ export async function beginPostedEdit(
     detail?: string;
   },
 ): Promise<BeginOutcome> {
-  const res = await authorize({
-    action: opts.action,
-    title: opts.title,
-    reason: `Reopen ${opts.reference || opts.recordId}`,
-    ...(opts.storeId ? { storeId: opts.storeId } : {}),
-    ...(opts.terminalId ? { terminalId: opts.terminalId } : {}),
-    ...(opts.detail ? { detail: opts.detail } : {}),
-    payload: {
-      recordKind: opts.recordKind,
-      recordId: opts.recordId,
-      reference: opts.reference,
-      summary: opts.detail ?? "",
+  const auth = await getPosCallerAuth();
+  const identity = await whoAmI({ data: auth });
+  if (!identity.ok || identity.role.trim().toLowerCase() !== "admin") {
+    toast.error("Only an administrator can correct a posted record.");
+    return { kind: "blocked" };
+  }
+  return {
+    kind: "open",
+    grant: {
+      grantToken: null,
+      authorizedBy: identity.name || identity.id,
+      modeUsed: "none",
     },
-  });
-
-  if (res.ok) {
-    return {
-      kind: "open",
-      grant: {
-        grantToken: res.grantToken,
-        authorizedBy: "",
-        modeUsed: res.grantToken ? "pin" : "none",
-      },
-    };
-  }
-
-  if (res.pendingRequestId) {
-    const auth = await getPosCallerAuth();
-    const held = await holdRecordForEdit({
-      data: {
-        ...auth,
-        kind: opts.recordKind,
-        recordId: opts.recordId,
-        requestId: res.pendingRequestId,
-      },
-    });
-    if (!held.ok) {
-      toast.error(held.error ?? "Could not hold this record");
-      return { kind: "blocked" };
-    }
-    toast.success("Sent for approval", {
-      description: "The record stays as posted until the request is approved.",
-    });
-    return { kind: "queued" };
-  }
-
-  return { kind: "blocked" };
+  };
 }
 
 /** Come back to a record that was sent for approval. */

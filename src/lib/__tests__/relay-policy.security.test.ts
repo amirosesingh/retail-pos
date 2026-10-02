@@ -116,11 +116,27 @@ describe("relay authorisation", () => {
     expect(denied.ok).toBe(false);
     if (!denied.ok) expect(denied.code).toBe("PERMISSION_DENIED");
 
-    const allowed = await safeAuthorizeRelayOp(
+    const permissionAloneIsDenied = await safeAuthorizeRelayOp(
       { kind: "update", table: "sales", values: { payment_type: "cash" }, match: { id: "s1" } },
       { ...cashier, permissions: { ...cashier.permissions, can_edit_tenders: true } },
     );
+    expect(permissionAloneIsDenied.ok).toBe(false);
+
+    const allowed = await safeAuthorizeRelayOp(
+      { kind: "update", table: "sales", values: { payment_type: "cash" }, match: { id: "s1" } },
+      admin,
+    );
     expect(allowed.ok).toBe(true);
+  });
+
+  it("accepts correction history only from an administrator", async () => {
+    const op = {
+      kind: "insert" as const,
+      table: "record_edits",
+      rows: [{ record_type: "sale", record_id: "s1", store_id: "STORE-A" }],
+    };
+    expect((await safeAuthorizeRelayOp(op, cashier)).ok).toBe(false);
+    expect((await safeAuthorizeRelayOp(op, admin)).ok).toBe(true);
   });
 
   it("allows a supervisor across branches", async () => {

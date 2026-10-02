@@ -10,10 +10,15 @@ const mocks = vi.hoisted(() => ({
   range: vi.fn(),
   checkpoint: vi.fn(),
   getUser: vi.fn(),
+  getSession: vi.fn(),
   expired: vi.fn(),
 }));
 vi.mock("@/integrations/supabase/external-client", () => ({
-  supabaseExternal: { from: mocks.from, auth: { getUser: mocks.getUser } },
+  supabaseExternal: { from: mocks.from, auth: { getUser: mocks.getUser, getSession: mocks.getSession } },
+  externalClientSnapshot: () => ({
+    from: mocks.from,
+    auth: { getUser: mocks.getUser, getSession: mocks.getSession },
+  }),
 }));
 vi.mock("@/core/api/sync-relay", () => ({
   hasStaffSession: mocks.staff,
@@ -54,6 +59,10 @@ beforeEach(() => {
   mocks.relay.mockResolvedValue({ ok: true });
   mocks.upsert.mockResolvedValue({ error: null });
   mocks.getUser.mockResolvedValue({ data: { user: { id: "staff-1" } }, error: null });
+  mocks.getSession.mockResolvedValue({
+    data: { session: { access_token: "staff-jwt" } },
+    error: null,
+  });
   const query = {
     select: vi.fn(),
     gt: vi.fn(),
@@ -185,5 +194,12 @@ describe("signed-in audit uploads", () => {
       { onConflict: "id", ignoreDuplicates: true },
     );
     expect(mocks.relay).not.toHaveBeenCalled();
+  });
+
+  it("does not probe protected tables when Auth has no bearer session", async () => {
+    mocks.staff.mockReturnValue(true);
+    mocks.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    await expect(pullDelta()).resolves.toEqual({ merged: 0 });
+    expect(mocks.from).not.toHaveBeenCalled();
   });
 });

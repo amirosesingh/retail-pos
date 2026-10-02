@@ -196,3 +196,31 @@ export async function listRecordEdits(
     created_at: String(r["created_at"] ?? ""),
   }));
 }
+
+/** Recent posted-record corrections for the management audit screen. */
+export async function listRecentRecordEdits(
+  storeId: string | null,
+  limit = 200,
+): Promise<RecordEditRow[]> {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 500);
+  const branch = storeId ? `&store_id=eq.${encodeURIComponent(storeId)}` : "";
+  const res = await rest(`record_edits?select=*${branch}&order=created_at.desc&limit=${safeLimit}`);
+  if (!res.ok) return [];
+  return ((await res.json()) as Row[]).map((r) => ({
+    id: String(r["id"] ?? ""),
+    record_type: String(r["record_type"] ?? ""),
+    record_id: String(r["record_id"] ?? ""),
+    reference: (r["reference"] as string) ?? null,
+    store_id: (r["store_id"] as string) ?? null,
+    action_key: String(r["action_key"] ?? ""),
+    edited_by: (r["edited_by"] as string) ?? null,
+    edited_by_name: (r["edited_by_name"] as string) ?? null,
+    authorized_by: (r["authorized_by"] as string) ?? null,
+    mode_used: (r["mode_used"] as string) ?? null,
+    before_value: asText(r["before_value"]),
+    after_value: asText(r["after_value"]),
+    stock_deltas: asText(r["stock_deltas"]),
+    note: (r["note"] as string) ?? null,
+    created_at: String(r["created_at"] ?? ""),
+  }));
+}

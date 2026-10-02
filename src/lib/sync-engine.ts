@@ -1,4 +1,7 @@
-import { supabaseExternal } from "@/integrations/supabase/external-client";
+import {
+  externalClientSnapshot,
+  supabaseExternal,
+} from "@/integrations/supabase/external-client";
 import { logSync } from "./sync-log";
 import { hasRequiredPlatformConfig } from "./platform-config-ready";
 import { hasSignedInIdentity } from "./session-presence";
@@ -344,13 +347,14 @@ let pulling = false;
 const stampColumn = new Map<string, "updated_at" | "created_at">();
 
 async function readChangedPage(
+  client: ReturnType<typeof externalClientSnapshot>,
   table: (typeof PULL_TABLES)[number],
   since: string,
   through: string,
   from: number,
 ) {
   const ask = (column: string) =>
-    supabaseExternal
+    client
       .from(table)
       .select(`id,${column}`)
       .gt(column, since)
@@ -391,15 +395,22 @@ export async function pullDelta(): Promise<{ merged: number }> {
   // finishing its sign-out/refresh callback. Prove the user once before the
   // table loop; otherwise every protected table repeats the same anonymous
   // 401/42501 failure and floods the database log.
-  let verified: Awaited<ReturnType<typeof supabaseExternal.auth.getUser>>;
+  const client = externalClientSnapshot();
+  let verified: Awaited<ReturnType<typeof client.auth.getUser>>;
+  let session: Awaited<ReturnType<typeof client.auth.getSession>>;
   try {
-    verified = await supabaseExternal.auth.getUser();
+    [verified, session] = await Promise.all([client.auth.getUser(), client.auth.getSession()]);
   } catch {
     // A rejected promise is a connectivity failure, not proof that the token
     // is invalid. Keep the signed-in session and retry on the next sync pass.
     return { merged: 0 };
   }
-  if (verified.error || !verified.data.user) {
+  if (
+    verified.error ||
+    !verified.data.user ||
+    session.error ||
+    !session.data.session?.access_token
+  ) {
     const { isTokenRejection, notifySessionExpired } = await import("./session-expiry");
     const rejected = verified.error
       ? isTokenRejection(
@@ -429,7 +440,7 @@ export async function pullDelta(): Promise<{ merged: number }> {
       let offset = 0;
       let tableError: { message: string; status?: number } | null = null;
       for (;;) {
-        const page = await readChangedPage(table, since, startedAt, offset);
+          const page = await readChangedPage(client, table, since, startedAt, offset);
         if (page.error) {
           tableError = page.error;
           break;

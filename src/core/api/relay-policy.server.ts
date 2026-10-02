@@ -338,6 +338,19 @@ export async function authorizeRelayOp(
       "Your account details could not be confirmed — sign in again to refresh them.",
     );
 
+  const isAdmin = scope.role === "admin" || scope.roleSlug === "admin";
+  if (
+    op.table === "sales" &&
+    op.kind === "update" &&
+    (op.values["payment_type"] !== undefined || op.values["payments"] !== undefined) &&
+    !isAdmin
+  ) {
+    return deny("PERMISSION_DENIED", "Only an administrator can correct a completed payment.");
+  }
+  if (op.table === "record_edits" && !isAdmin) {
+    return deny("PERMISSION_DENIED", "Only an administrator can write correction history.");
+  }
+
   if (op.table === "authorization_requests" && !scope.isSupervisor) {
     if (op.kind !== "insert" && op.kind !== "upsert")
       return deny("PERMISSION_DENIED", "Only a supervisor can change an authorization decision.");

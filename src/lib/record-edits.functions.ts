@@ -17,6 +17,12 @@ const kind = z.enum(["stock_count", "purchase_order", "sale"]);
 
 type Caller = { id: string; name: string; role: string; isSupervisor: boolean };
 
+function requireAdmin(who: Caller): void {
+  if (who.role.trim().toLowerCase() !== "admin") {
+    throw new Error("Only an administrator can correct a posted record");
+  }
+}
+
 /** Any signed-in till user: a staff account or a cashier PIN session. */
 async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
   if (data.accessToken) {
@@ -57,6 +63,7 @@ export const holdRecordForEdit = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
+      requireAdmin(who);
       const { getRequest } = await import("./authorization.server");
       const request = await getRequest(data.requestId);
       if (!request || request.requestedBy.toLowerCase() !== who.id.toLowerCase()) {
@@ -93,6 +100,7 @@ export const resumeRecordEdit = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
+      requireAdmin(who);
       const { readPendingEdit, clearPendingEdit } = await import("./record-edits.server");
       const hold = await readPendingEdit(data.kind, data.recordId);
       if (!hold?.requestId) return { ok: true as const, status: "none" as const, grantToken: "" };
@@ -151,6 +159,7 @@ export const withdrawRecordEdit = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
+      requireAdmin(who);
       const { readPendingEdit, clearPendingEdit } = await import("./record-edits.server");
       const hold = await readPendingEdit(data.kind, data.recordId);
       if (!hold?.requestId) return { ok: true as const };
@@ -192,6 +201,7 @@ export const logRecordEdit = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
+      requireAdmin(who);
       const { writeRecordEdit, clearPendingEdit } = await import("./record-edits.server");
       const written = await writeRecordEdit({
         recordType: data.kind,
@@ -229,6 +239,36 @@ export const getRecordEdits = createServerFn({ method: "POST" })
       await assertCaller(data);
       const { listRecordEdits } = await import("./record-edits.server");
       return { ok: true as const, edits: await listRecordEdits(data.kind, data.recordId) };
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message.slice(0, 300), edits: [] };
+    }
+  });
+
+/** Management audit feed of recent corrections, scoped to the caller's branch. */
+export const getRecentRecordEdits = createServerFn({ method: "POST" })
+  .validator((data: unknown) =>
+    caller
+      .extend({ storeId: z.string().max(64).nullish(), limit: z.number().int().min(1).max(500) })
+      .parse(data),
+  )
+  .handler(async ({ data }) => {
+    try {
+      const [{ verifyRelayCaller }, { resolveRelayScope }] = await Promise.all([
+        import("@/core/api/pos-relay.server"),
+        import("@/core/api/relay-policy.server"),
+      ]);
+      const verified = await verifyRelayCaller(data);
+      const scope = await resolveRelayScope(verified);
+      if (!scope.isSupervisor && scope.permissions.can_view_audit_trail !== true) {
+        return { ok: false as const, error: "Audit-trail permission is required", edits: [] };
+      }
+      const allBranches = scope.roleSlug === "admin" || scope.role === "admin";
+      const storeId = allBranches ? (data.storeId ?? null) : scope.storeId || null;
+      if (!allBranches && data.storeId && data.storeId !== storeId) {
+        return { ok: false as const, error: "Cross-branch access is not allowed", edits: [] };
+      }
+      const { listRecentRecordEdits } = await import("./record-edits.server");
+      return { ok: true as const, edits: await listRecentRecordEdits(storeId, data.limit) };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300), edits: [] };
     }

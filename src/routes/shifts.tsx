@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Printer, RotateCcw, Users, Vault } from "lucide-react";
+import { Pencil, Printer, RotateCcw, Users, Vault } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -33,6 +42,9 @@ import { usePosRules } from "@/lib/pos-rules.tsx";
 import { useManagerGate } from "@/lib/manager-gate";
 import { ShiftCloseDialog } from "@/platforms/web/components/pos/ShiftCloseDialog";
 import { logSystemAction } from "@/lib/system-audit";
+import { correctClosedShift } from "@/lib/shift-corrections.functions";
+import { getPosCallerAuth } from "@/lib/pos-caller-auth";
+import type { Shift } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/shifts")({
   head: () => ({
@@ -62,6 +74,12 @@ function Shifts() {
   const [closeOpen, setCloseOpen] = useState(false);
   const [signIns, setSignIns] = useState<SignInEntry[]>([]);
   const [sessions, setSessions] = useState<ShiftSession[]>([]);
+  const [correcting, setCorrecting] = useState<Shift | null>(null);
+  const [correctCash, setCorrectCash] = useState("");
+  const [correctCard, setCorrectCard] = useState("");
+  const [correctDigital, setCorrectDigital] = useState("");
+  const [correctReason, setCorrectReason] = useState("");
+  const [correctBusy, setCorrectBusy] = useState(false);
 
   // Local per-terminal log — read after mount so SSR and hydration match.
   useEffect(() => {
@@ -115,6 +133,53 @@ function Shifts() {
     (isAdmin || isSupervisor || rules.enable_cashier_x_report);
   const storeIndex = stores.findIndex((s) => s.id === currentStore.id);
   const storeLabel = `Store ${storeIndex + 1}`;
+
+  const openShiftCorrection = (shift: Shift) => {
+    setCorrecting(shift);
+    setCorrectCash(String(shift.countedCash ?? shift.closingFloat ?? ""));
+    setCorrectCard(shift.countedCard == null ? "" : String(shift.countedCard));
+    setCorrectDigital(shift.countedDigital == null ? "" : String(shift.countedDigital));
+    setCorrectReason("");
+  };
+
+  const submitShiftCorrection = async () => {
+    if (!correcting || !isAdmin) return;
+    const cash = parsePositiveAmount(correctCash);
+    const card = correctCard.trim() ? parsePositiveAmount(correctCard) : null;
+    const digital = correctDigital.trim() ? parsePositiveAmount(correctDigital) : null;
+    if (cash === null || (correctCard.trim() && card === null) || (correctDigital.trim() && digital === null)) {
+      toast.error("Enter valid non-negative tender counts.");
+      return;
+    }
+    if (correctReason.trim().length < 3) {
+      toast.error("Type why this closed shift is being corrected.");
+      return;
+    }
+    setCorrectBusy(true);
+    try {
+      const auth = await getPosCallerAuth();
+      const result = await correctClosedShift({
+        data: {
+          ...auth,
+          shiftId: correcting.id,
+          storeId: correcting.storeId,
+          cash,
+          card,
+          digital,
+          reason: correctReason.trim(),
+          terminalId: correcting.terminalId ?? null,
+          clientKey: crypto.randomUUID(),
+        },
+      });
+      if (!result.ok) throw new Error(result.error);
+      setCorrecting(null);
+      toast.success("Shift correction saved with its original and corrected values.");
+    } catch (error) {
+      notifyError(error, "Correcting the closed shift");
+    } finally {
+      setCorrectBusy(false);
+    }
+  };
 
   return (
     <AppShell>
@@ -519,6 +584,7 @@ function Shifts() {
                   {can("can_shift_report_reprint") && (
                     <TableHead className="text-right">Z report</TableHead>
                   )}
+                  {isAdmin && <TableHead className="text-right">Correction</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -601,6 +667,18 @@ function Shifts() {
                         </Button>
                       </TableCell>
                     )}
+                    {isAdmin && (
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={!sh.closedAt}
+                          onClick={() => openShiftCorrection(sh)}
+                        >
+                          <Pencil className="size-4" /> Correct
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
                 {!storeShifts.length && (
@@ -617,6 +695,45 @@ function Shifts() {
       </div>
 
       <ShiftCloseDialog open={closeOpen} onOpenChange={setCloseOpen} />
+      <Dialog open={!!correcting} onOpenChange={(open) => !open && setCorrecting(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Correct closed shift count</DialogTitle>
+            <DialogDescription>
+              Administrator only. The original declaration is retained and this recount is added to
+              the audit history.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-1">
+              <Label>Counted cash</Label>
+              <Input inputMode="decimal" value={correctCash} onChange={(e) => setCorrectCash(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Counted card</Label>
+              <Input inputMode="decimal" value={correctCard} onChange={(e) => setCorrectCard(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Counted digital</Label>
+              <Input inputMode="decimal" value={correctDigital} onChange={(e) => setCorrectDigital(e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label>Correction reason</Label>
+            <Textarea
+              value={correctReason}
+              onChange={(e) => setCorrectReason(e.target.value)}
+              placeholder="Explain the original mistake and why these counts are correct"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCorrecting(null)}>Cancel</Button>
+            <Button disabled={correctBusy} onClick={() => void submitShiftCorrection()}>
+              {correctBusy ? "Saving…" : "Save audited correction"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }

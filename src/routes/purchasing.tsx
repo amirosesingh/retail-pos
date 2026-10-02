@@ -1382,7 +1382,7 @@ function Purchasing() {
                         >
                           <Pencil className="size-3.5" /> Resume
                         </Button>
-                      ) : h.status === "posted" ? (
+                      ) : h.status === "posted" && isAdmin ? (
                         h.pendingEditRequestId ? (
                           !!meId && (h.pendingEditBy ?? "").toLowerCase() === meId.toLowerCase() ? (
                             <>

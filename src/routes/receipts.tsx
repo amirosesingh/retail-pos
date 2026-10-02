@@ -71,7 +71,7 @@ const TEMPLATES: { key: Template; label: string; icon: typeof Printer }[] = [
 
 function ReceiptVault() {
   const { state, currentStore, activeShift, refundSale, changeSalePayment } = usePos();
-  const { user, can } = useAuth();
+  const { user, can, isAdmin } = useAuth();
   const { requirePermission } = useUserPermissions();
   const { authorize, rules: authorizationRules } = useManagerGate();
   const [query, setQuery] = useState("");
@@ -268,7 +268,7 @@ function ReceiptVault() {
     if (!selected) return;
     // Payment corrections are sensitive posted-record edits. The relay
     // independently checks this same permission before changing the sale.
-    if (!can("can_edit_tenders")) {
+    if (!isAdmin || !can("can_edit_tenders")) {
       toast.error("Administrator permission is required to correct a completed payment.");
       return;
     }
@@ -497,14 +497,16 @@ function ReceiptVault() {
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Bill corrections
               </p>
-              <Button
-                variant="outline"
-                className="w-full justify-start"
-                disabled={!selected}
-                onClick={() => void openPaymentFix()}
-              >
-                <Wallet className="size-4" /> Change payment method
-              </Button>
+              {isAdmin && (
+                <Button
+                  variant="outline"
+                  className="w-full justify-start"
+                  disabled={!selected}
+                  onClick={() => void openPaymentFix()}
+                >
+                  <Wallet className="size-4" /> Change payment method
+                </Button>
+              )}
               <Button
                 variant="outline"
                 className="w-full justify-start text-destructive hover:text-destructive"
