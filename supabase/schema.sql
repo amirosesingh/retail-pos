@@ -4418,11 +4418,18 @@ BEGIN
     RAISE EXCEPTION 'TERMINAL_DEVICE_PROOF_REQUIRED';
   END IF;
 
+  -- Phone-assisted approval stores the proof displayed by the PC before the
+  -- claim. A copied UUID can therefore never activate a different device.
+  IF nullif(btrim(coalesce(t.claim_proof, '')), '') IS NOT NULL
+     AND lower(t.claim_proof) <> lower(p_proof_hash) THEN
+    RAISE EXCEPTION 'TERMINAL_DEVICE_PROOF_MISMATCH';
+  END IF;
+
   -- An interrupted client may have committed the claim before it persisted
   -- its sealed local config. Let that same device recover even after the
   -- redemption deadline; another device still receives only false.
   IF t.status <> 'active' OR t.claimed_at IS NOT NULL THEN
-    IF coalesce(t.claim_proof, t.claimed_proof_hash) = p_proof_hash THEN
+    IF lower(coalesce(t.claim_proof, t.claimed_proof_hash)) = lower(p_proof_hash) THEN
       UPDATE public.terminal_tokens
       SET last_seen_at = now()
       WHERE id = p_token_id;
@@ -4446,8 +4453,8 @@ BEGIN
   UPDATE public.terminal_tokens
   SET status = 'used',
       claimed_by_device = left(coalesce(p_device, claimed_by_device), 120),
-      claim_proof = p_proof_hash,
-      claimed_proof_hash = p_proof_hash,
+      claim_proof = lower(p_proof_hash),
+      claimed_proof_hash = lower(p_proof_hash),
       claimed_platform = coalesce(nullif(btrim(coalesce(p_platform, '')), ''), claimed_platform),
       claimed_os = coalesce(nullif(btrim(coalesce(p_os, '')), ''), claimed_os),
       is_claimed = true,
@@ -9159,6 +9166,33 @@ ALTER TABLE public.shift_notifications ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.shift_notifications FROM anon;
 GRANT SELECT, INSERT ON public.shift_notifications TO authenticated;
 GRANT ALL ON public.shift_notifications TO service_role;
+
+-- Deployment-owned public routes. Preserve values already saved by an admin.
+UPDATE public.pos_settings
+SET integration_settings = jsonb_set(
+  jsonb_set(
+    coalesce(integration_settings, '{}'::jsonb),
+    '{memberDomain}',
+    to_jsonb(CASE
+      WHEN btrim(coalesce(integration_settings->>'memberDomain', '')) = ''
+        THEN 'https://member.luckycharmsdnbhd.com'
+      ELSE integration_settings->>'memberDomain'
+    END),
+    true
+  ),
+  '{redeemDomain}',
+  to_jsonb(CASE
+    WHEN btrim(coalesce(integration_settings->>'redeemDomain', '')) = ''
+      THEN 'https://redeem.luckycharmsdnbhd.com'
+    ELSE integration_settings->>'redeemDomain'
+  END),
+  true
+)
+WHERE btrim(coalesce(integration_settings->>'memberDomain', '')) = ''
+   OR btrim(coalesce(integration_settings->>'redeemDomain', '')) = '';
+
+COMMENT ON COLUMN public.pos_settings.integration_settings IS
+  'System integration configuration; public member/redeem domains remain administrator-editable.';
 
 -- Retire the unused generic scoped-settings API. settings_scoped remains only
 -- for the existing branch product-price override contract; regular POS

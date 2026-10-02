@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  decodePairingRequest,
+  encodePairingRequest,
   isRetryableActivationError,
   withActivationRetry,
 } from "@/core/activation/terminal-tokens";
@@ -42,11 +44,36 @@ describe("terminal registration trust boundary", () => {
       schema.indexOf("CREATE OR REPLACE FUNCTION public.terminal_token_heartbeat"),
     );
     expect(claim).toContain("TERMINAL_DEVICE_PROOF_REQUIRED");
-    expect(claim).toContain("coalesce(t.claim_proof, t.claimed_proof_hash) = p_proof_hash");
-    expect(claim.indexOf("coalesce(t.claim_proof")).toBeLessThan(
+    expect(claim).toContain("TERMINAL_DEVICE_PROOF_MISMATCH");
+    expect(claim).toContain("lower(t.claim_proof) <> lower(p_proof_hash)");
+    expect(claim).toContain(
+      "lower(coalesce(t.claim_proof, t.claimed_proof_hash)) = lower(p_proof_hash)",
+    );
+    expect(claim.indexOf("lower(coalesce(t.claim_proof")).toBeLessThan(
       claim.indexOf("TERMINAL_TOKEN_EXPIRED"),
     );
     expect(claim).toContain("is_claimed = true");
+  });
+
+  it("accepts only proof-bound phone pairing payloads", () => {
+    const request = {
+      tokenId: "3e8b4d95-9b6b-4a8a-8bf7-3698f0fb0be0",
+      deviceName: "Counter 3",
+      proofHash: "a".repeat(64),
+    };
+    expect(decodePairingRequest(encodePairingRequest(request))).toEqual(request);
+    expect(decodePairingRequest(request.tokenId)).toBeNull();
+    expect(
+      decodePairingRequest(`POSPAIR1:${btoa(JSON.stringify({ ...request, proofHash: "short" }))}`),
+    ).toBeNull();
+  });
+
+  it("keeps pairing credentials behind the hosted proof-check endpoint", () => {
+    const endpoint = source("src/routes/api/public/terminal-pairing.ts");
+    expect(endpoint).toContain("claim_proof=eq.");
+    expect(endpoint).toContain("Cache-Control");
+    expect(endpoint).toContain("supabaseConfig()");
+    expect(endpoint).not.toContain("SERVICE_ROLE_KEY");
   });
 
   it("keeps the PC/mobile claim boundary fail-closed", () => {
