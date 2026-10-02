@@ -51,7 +51,7 @@ import {
 import {
   AUDIT_CATEGORIES,
   AUDIT_CATEGORY_LABELS,
-  displayCategory,
+  resolveCategory,
   auditToCsv,
   logger,
   useAuditLogs,
@@ -71,13 +71,13 @@ import { branchDisplayName } from "@/lib/human-readable";
 export const Route = createFileRoute("/audit")({
   head: () => ({
     meta: [
-      { title: "Audit Logs & Activity Trail — Retail" },
+      { title: "Activity Trails — Retail" },
       {
         name: "description",
         content:
           "Filterable compliance trail of every click, sale, inventory edit and sync event captured across the point of sale.",
       },
-      { property: "og:title", content: "Audit Logs & Activity Trail — Retail" },
+      { property: "og:title", content: "Activity Trails — Retail" },
       {
         property: "og:description",
         content: "Staff activity telemetry with detail inspector and CSV export.",
@@ -109,10 +109,13 @@ const categoryVisual: Record<string, { icon: typeof ShoppingCart; className: str
 const visualFor = (l: AuditLog) => {
   if (l.action.toLowerCase().includes("exchange"))
     return { icon: RefreshCw, className: "bg-orange-500/15 text-orange-500" };
-  return categoryVisual[displayCategory(l.category)] ?? categoryVisual["other"]!;
+  return categoryVisual[effectiveCategory(l)] ?? categoryVisual["other"]!;
 };
 
-const categoryLabel = (c: string) => AUDIT_CATEGORY_LABELS[displayCategory(c)] ?? c;
+const effectiveCategory = (log: AuditLog) =>
+  resolveCategory(log.category, log.action, log.module);
+
+const categoryLabel = (log: AuditLog) => AUDIT_CATEGORY_LABELS[effectiveCategory(log)] ?? log.category;
 
 const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
@@ -215,7 +218,7 @@ function AuditPage() {
         if (to && t > new Date(`${to}T23:59:59`).getTime()) return false;
       }
       if (who !== "all" && l.staffId !== who) return false;
-      const cat = displayCategory(l.category);
+      const cat = effectiveCategory(l);
       if (category !== "all" && cat !== category) return false;
       // Screen views and searches are noise for a manager — off unless asked for.
       if (category !== "browse" && !showBrowse && cat === "browse") return false;
@@ -277,7 +280,7 @@ function AuditPage() {
       <div className="space-y-5 p-6">
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold">Audit logs &amp; activity trail</h1>
+            <h1 className="text-2xl font-semibold">Activity Trails</h1>
             <p className="text-sm text-muted-foreground">
               {rows.length} of {logs.length} events · local-first telemetry
             </p>
@@ -456,7 +459,7 @@ function AuditPage() {
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                         <span className="numeric">{new Date(l.at).toLocaleString()}</span>
                         <Badge variant="outline" className="text-[10px]">
-                          {categoryLabel(l.category)}
+                          {categoryLabel(l)}
                         </Badge>
                         <span className="capitalize">{l.module}</span>
                         <Badge
@@ -522,7 +525,7 @@ function AuditPage() {
                       </span>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{categoryLabel(l.category)}</Badge>
+                      <Badge variant="outline">{categoryLabel(l)}</Badge>
                     </TableCell>
                     <TableCell className="max-w-md">{describeLog(l)}</TableCell>
                     <TableCell>
@@ -644,7 +647,7 @@ function AuditPage() {
               </p>
               <dl className="grid grid-cols-2 gap-2 text-sm">
                 <Row label="Staff" value={`${detail.staffName} (${detail.staffId})`} />
-                <Row label="Category" value={categoryLabel(detail.category)} />
+                <Row label="Category" value={categoryLabel(detail)} />
                 <Row label="Route" value={detail.route} />
                 <Row
                   label="Store"

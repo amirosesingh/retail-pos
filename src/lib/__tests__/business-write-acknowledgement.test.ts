@@ -12,7 +12,25 @@ describe("business UI persistence acknowledgements", () => {
     expect(store.indexOf("await db.refundSale")).toBeLessThan(
       store.indexOf("sales: s.sales.map((x) => (x.id === saleId"),
     );
-    expect(receipts).toContain("await refundSale(selected.id, grant.grantToken)");
+    expect(receipts).toContain("await refundSale(selected.id, grant.grantToken, selected)");
+    expect(receipts).toContain('actionKey: "SALE_CORRECTION_STARTED"');
+    expect(receipts).toContain('actionKey: "SALE_REVERSED_FOR_CORRECTION"');
+    expect(receipts).toContain("if (!auditReady)");
+    expect(receipts).toContain("if (!reversed)");
+    expect(receipts).toContain("if (!auditSaved)");
+    expect(receipts).toContain("setPendingCorrectionAudit({ input: completedAudit");
+    expect(receipts).toContain("rememberPendingRecordEditHistory(completedAudit)");
+    expect(receipts).toContain("historyId: crypto.randomUUID()");
+    expect(receipts).toContain("loadPendingRecordEditHistory(selected.id)");
+    expect(receipts).toContain("Retry saving correction audit");
+    expect(receipts).toContain("pendingCorrectionAudit && retryingCorrectionAudit");
+    expect(receipts).toContain("pendingCorrectionAudit?.input.recordId === selected?.id");
+    expect(receipts.indexOf('actionKey: "SALE_CORRECTION_STARTED"')).toBeLessThan(
+      receipts.indexOf("await refundSale(selected.id"),
+    );
+    expect(receipts.indexOf("await refundSale(selected.id")).toBeLessThan(
+      receipts.indexOf('actionKey: "SALE_REVERSED_FOR_CORRECTION"'),
+    );
     expect(receipts).toContain("await changeSalePayment(selected.id");
     expect(shifts).toContain("await refundSale(s.id, grant.grantToken)");
   });

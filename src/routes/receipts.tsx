@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Ban, Gift, Printer, ReceiptText, Search, ScrollText, Wallet } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Ban, Gift, Printer, ReceiptText, Search, ScrollText, Wallet, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -31,7 +31,13 @@ import {
 import type { PaymentMethod, Sale } from "@/core/types/pos-types";
 import { findReceiptExact, loadSalesPage } from "@/core/api/pos-db";
 import type { Cursor } from "@/lib/keyset";
-import { saveRecordEditHistory } from "@/lib/record-edit-flow";
+import {
+  clearPendingRecordEditHistory,
+  loadPendingRecordEditHistory,
+  type RecordEditHistoryInput,
+  rememberPendingRecordEditHistory,
+  saveRecordEditHistory,
+} from "@/lib/record-edit-flow";
 import { useManagerGate } from "@/lib/manager-gate";
 
 export const Route = createFileRoute("/receipts")({
@@ -83,6 +89,11 @@ function ReceiptVault() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [cancelMode, setCancelMode] = useState<"cancel" | "correct">("cancel");
+  const [pendingCorrectionAudit, setPendingCorrectionAudit] = useState<{
+    input: RecordEditHistoryInput;
+    persisted: boolean;
+  } | null>(null);
   const [payOpen, setPayOpen] = useState(false);
   const [payMethod, setPayMethod] = useState<PaymentMethod>("cash");
   const [payReason, setPayReason] = useState("");
@@ -166,6 +177,25 @@ function ReceiptVault() {
   });
 
   const selected: Sale | null = rows.find((s) => s.id === selectedId) ?? rows[0] ?? null;
+  const retryingCorrectionAudit = pendingCorrectionAudit?.input.recordId === selected?.id;
+
+  useEffect(() => {
+    if (!selected?.id) return;
+    let active = true;
+    void loadPendingRecordEditHistory(selected.id)
+      .then((pending) => {
+        if (!active) return;
+        setPendingCorrectionAudit((current) => {
+          if (pending) return { input: pending, persisted: true };
+          if (current?.input.recordId === selected.id && current.persisted) return null;
+          return current;
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [selected?.id]);
   const member = selected ? (state.members.find((m) => m.id === selected.memberId) ?? null) : null;
   const shift = selected ? (state.shifts.find((s) => s.id === selected.shiftId) ?? null) : null;
 
@@ -207,11 +237,35 @@ function ReceiptVault() {
       !(await requirePermission("can_process_refund"))
     )
       return;
+    setCancelMode("cancel");
+    setCancelReason("");
+    setCancelOpen(true);
+  }
+
+  function openSaleCorrection() {
+    if (!selected) return;
+    if (!isAdmin) {
+      toast.error("Only an administrator can correct a finalized sale.");
+      return;
+    }
+    setCancelMode("correct");
     setCancelReason("");
     setCancelOpen(true);
   }
 
   async function confirmCancel() {
+    if (pendingCorrectionAudit && retryingCorrectionAudit) {
+      const saved = await saveRecordEditHistory(pendingCorrectionAudit.input);
+      if (!saved) {
+        toast.error("The sale is already reversed, but its completed audit entry still needs saving.");
+        return;
+      }
+      await clearPendingRecordEditHistory(pendingCorrectionAudit.input.recordId);
+      setPendingCorrectionAudit(null);
+      setCancelOpen(false);
+      toast.success("The completed correction audit entry is now saved.");
+      return;
+    }
     if (!selected) return;
     const reason = cancelReason.trim();
     if (reason.length < 3) {
@@ -238,16 +292,85 @@ function ReceiptVault() {
       return;
     }
     try {
-      await refundSale(selected.id, grant.grantToken);
+      const saleSnapshot = {
+        receiptNo: selected.receiptNo,
+        subtotal: selected.subtotal,
+        discount: selected.discount,
+        tax: selected.tax,
+        total: selected.total,
+        paymentMethod: selected.method,
+        refunded: selected.refunded,
+        lines: selected.lines,
+      };
+      const stockDeltas = selected.lines.reduce<Record<string, number>>((changes, line) => {
+        changes[line.productId] = (changes[line.productId] ?? 0) + line.qty;
+        return changes;
+      }, {});
+      if (cancelMode === "correct") {
+        const auditReady = await saveRecordEditHistory({
+          kind: "sale",
+          recordId: selected.id,
+          reference: selected.receiptNo,
+          storeId: selected.storeId,
+          actionKey: "SALE_CORRECTION_STARTED",
+          before: saleSnapshot,
+          after: saleSnapshot,
+          stockDeltas: {},
+          note: reason,
+        });
+        if (!auditReady) {
+          toast.error("Correction stopped because its audit record could not be saved.");
+          return;
+        }
+      }
+      const reversed = await refundSale(selected.id, grant.grantToken, selected);
+      if (!reversed) {
+        toast.error("The bill could not be reversed. No correction draft was created.");
+        return;
+      }
+      setOlder((rows) =>
+        rows.map((row) => (row.id === selected.id ? { ...row, refunded: true } : row)),
+      );
       holdCancelledBill({
         receiptNo: selected.receiptNo,
         total: selected.total,
         lines: selected.lines,
       });
+      if (cancelMode === "correct") {
+        const completedAudit = {
+          historyId: crypto.randomUUID(),
+          kind: "sale",
+          recordId: selected.id,
+          reference: selected.receiptNo,
+          storeId: selected.storeId,
+          actionKey: "SALE_REVERSED_FOR_CORRECTION",
+          before: saleSnapshot,
+          after: {
+            ...saleSnapshot,
+            refunded: true,
+          },
+          stockDeltas,
+          note: reason,
+        } satisfies Parameters<typeof saveRecordEditHistory>[0];
+        const auditSaved = await saveRecordEditHistory(completedAudit);
+        if (!auditSaved) {
+          const retryRemembered = await rememberPendingRecordEditHistory(completedAudit);
+          setPendingCorrectionAudit({ input: completedAudit, persisted: retryRemembered });
+          logActivity(selected, reason);
+          toast.error(
+            retryRemembered
+              ? "The bill was reversed and placed in Holds, but its completed audit entry still needs saving. The retry is secured on this device."
+              : "The bill was reversed, but this device could not preserve the audit retry. Keep this dialog open and retry before leaving.",
+          );
+          return;
+        }
+      }
       logActivity(selected, reason);
       setCancelOpen(false);
       toast.success(
-        `Bill ${selected.receiptNo} cancelled — the items are waiting on the register's hold list`,
+        cancelMode === "correct"
+          ? `Bill ${selected.receiptNo} reversed — open it from Holds, correct it, and complete a replacement receipt`
+          : `Bill ${selected.receiptNo} cancelled — the items are waiting on the register's hold list`,
       );
     } catch (error) {
       notifyError(error, "Cancelling the bill");
@@ -498,14 +621,36 @@ function ReceiptVault() {
                 Bill corrections
               </p>
               {isAdmin && (
-                <Button
-                  variant="outline"
-                  className="w-full justify-start"
-                  disabled={!selected}
-                  onClick={() => void openPaymentFix()}
-                >
-                  <Wallet className="size-4" /> Change payment method
-                </Button>
+                <>
+                  {retryingCorrectionAudit && (
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start border-amber-500/60 text-amber-600"
+                      onClick={() => {
+                        setCancelMode("correct");
+                        setCancelOpen(true);
+                      }}
+                    >
+                      <ScrollText className="size-4" /> Retry saving correction audit
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start"
+                    disabled={!selected || selected.refunded}
+                    onClick={openSaleCorrection}
+                  >
+                    <Wrench className="size-4" /> Correct items or amounts
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start"
+                    disabled={!selected}
+                    onClick={() => void openPaymentFix()}
+                  >
+                    <Wallet className="size-4" /> Change payment method
+                  </Button>
+                </>
               )}
               <Button
                 variant="outline"
@@ -541,11 +686,15 @@ function ReceiptVault() {
       <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Cancel bill {selected?.receiptNo}</DialogTitle>
+            <DialogTitle>
+              {cancelMode === "correct" ? "Correct finalized bill" : "Cancel bill"}{" "}
+              {selected?.receiptNo}
+            </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            The items go back into stock at {currentStore.name} and the receipt is flagged as
-            cancelled. This is recorded against {user?.name}.
+            {cancelMode === "correct"
+              ? `The original receipt remains immutable and is reversed, its stock is restored at ${currentStore.name}, and its lines are placed in Holds. Correct them there and complete a new replacement receipt. This works even when the original shift is closed.`
+              : `The items go back into stock at ${currentStore.name} and the receipt is flagged as cancelled. This is recorded against ${user?.name}.`}
           </p>
           <div className="space-y-2">
             <Label htmlFor="cancel-reason">Reason (required)</Label>
@@ -553,7 +702,11 @@ function ReceiptVault() {
               id="cancel-reason"
               value={cancelReason}
               maxLength={200}
-              placeholder="e.g. customer changed their mind before leaving"
+              placeholder={
+                cancelMode === "correct"
+                  ? "e.g. cashier entered the wrong quantity on the original receipt"
+                  : "e.g. customer changed their mind before leaving"
+              }
               onChange={(e) => setCancelReason(e.target.value)}
             />
           </div>
@@ -562,7 +715,11 @@ function ReceiptVault() {
               Keep bill
             </Button>
             <Button variant="destructive" onClick={confirmCancel}>
-              Cancel bill
+              {retryingCorrectionAudit
+                ? "Retry saving completed audit"
+                : cancelMode === "correct"
+                  ? "Reverse and prepare correction"
+                  : "Cancel bill"}
             </Button>
           </DialogFooter>
         </DialogContent>

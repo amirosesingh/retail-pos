@@ -81,4 +81,15 @@ describe("readAllPages", () => {
     expect(res.capped).toBe(true);
     expect(res.data?.length).toBe(2000);
   });
+
+  it("loads a 100,000-item catalogue without truncating the 1,000-row API windows", async () => {
+    const t = table(100_000);
+    const res = await readAllPages<Row>(t.build);
+    expect(res.error).toBeNull();
+    expect(res.capped).toBe(false);
+    expect(res.total).toBe(100_000);
+    expect(res.data).toHaveLength(100_000);
+    expect(res.data?.at(-1)?.id).toBe(99_999);
+    expect(t.calls).toHaveLength(100);
+  });
 });

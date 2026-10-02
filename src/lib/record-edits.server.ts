@@ -98,6 +98,7 @@ export async function releaseDecidedHold(requestId: string): Promise<void> {
 
 /** One immutable line of record history: what it was, and what it became. */
 export async function writeRecordEdit(entry: {
+  historyId?: string;
   recordType: RecordKind;
   recordId: string;
   reference?: string | null;
@@ -120,6 +121,7 @@ export async function writeRecordEdit(entry: {
       method: "POST",
       body: JSON.stringify([
         {
+          ...(entry.historyId ? { id: entry.historyId } : {}),
           record_type: entry.recordType,
           record_id: entry.recordId,
           reference: entry.reference ?? null,
@@ -138,7 +140,9 @@ export async function writeRecordEdit(entry: {
           note: entry.note ?? null,
         },
       ]),
-      prefer: "return=minimal",
+      // A stable caller-supplied id makes recovery retries harmless when the
+      // first insert succeeded but its local acknowledgement was interrupted.
+      prefer: "resolution=ignore-duplicates,return=minimal",
     });
     if (!res.ok) throw new Error((await res.text()).slice(0, 200));
     return { ok: true };

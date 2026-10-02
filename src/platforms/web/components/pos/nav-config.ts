@@ -324,7 +324,7 @@ export const navGroups: NavGroup[] = [
       },
       {
         to: "/audit",
-        label: "Audit Logs & Activity",
+        label: "Activity Trails",
         icon: ScanEye,
         adminOnly: true,
         flag: "can_view_audit_trail",

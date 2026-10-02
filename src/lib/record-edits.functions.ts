@@ -181,6 +181,7 @@ export const logRecordEdit = createServerFn({ method: "POST" })
   .validator((data: unknown) =>
     caller
       .extend({
+        historyId: z.string().uuid().optional(),
         kind,
         recordId: z.string().min(1).max(64),
         reference: z.string().max(64).optional(),
@@ -203,6 +204,7 @@ export const logRecordEdit = createServerFn({ method: "POST" })
       requireAdmin(who);
       const { writeRecordEdit, clearPendingEdit } = await import("./record-edits.server");
       const written = await writeRecordEdit({
+        historyId: data.historyId,
         recordType: data.kind,
         recordId: data.recordId,
         reference: data.reference ?? null,

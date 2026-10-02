@@ -300,7 +300,11 @@ type Ctx = {
     sale: Omit<Sale, "id" | "receiptNo" | "createdAt"> & { receiptNo?: string },
     memberSnapshot?: Member | null,
   ) => Promise<Sale>;
-  refundSale: (saleId: string, grantToken?: string | null) => Promise<boolean>;
+  refundSale: (
+    saleId: string,
+    grantToken?: string | null,
+    loadedSale?: Sale,
+  ) => Promise<boolean>;
   changeSalePayment: (saleId: string, method: PaymentMethod, reason?: string) => Promise<boolean>;
   createBooking: (input: NewBooking) => Promise<Booking>;
   setBookingJobStatus: (
@@ -2166,8 +2170,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
   );
 
   const refundSale = useCallback(
-    async (saleId: string, grantToken?: string | null): Promise<boolean> => {
-      const sale = stateRef.current.sales.find((x) => x.id === saleId);
+    async (
+      saleId: string,
+      grantToken?: string | null,
+      loadedSale?: Sale,
+    ): Promise<boolean> => {
+      const sale = stateRef.current.sales.find((x) => x.id === saleId) ?? loadedSale;
       if (!sale || sale.refunded) return false;
       const payload = {
         sale_id: sale.id,
@@ -2196,21 +2204,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
         saleId,
         receiptNo: sale.receiptNo,
       });
-      {
-        const refunded = stateRef.current.sales.find((x) => x.id === saleId);
-        recordActivity({
-          type: "sale_refund",
-          severity: "critical",
-          title: "Refund issued",
-          message: `Bill ${refunded?.receiptNo ?? saleId} was refunded.`,
-          storeId: refunded?.storeId ?? null,
-          entityType: "sale",
-          entityId: refunded?.receiptNo ?? saleId,
-          amount: refunded?.total ?? null,
-        });
-      }
+      recordActivity({
+        type: "sale_refund",
+        severity: "critical",
+        title: "Refund issued",
+        message: `Bill ${sale.receiptNo} was refunded.`,
+        storeId: sale.storeId ?? null,
+        entityType: "sale",
+        entityId: sale.receiptNo,
+        amount: sale.total,
+      });
       setState((s) => {
-        const sale = s.sales.find((x) => x.id === saleId);
+        const existingSale = s.sales.find((x) => x.id === saleId);
+        const sale = existingSale ?? loadedSale;
         if (!sale || sale.refunded) return s;
         const products = s.products.map((p) => {
           const quantity = sale.lines.reduce(
@@ -2229,7 +2235,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         return {
           ...s,
           products,
-          sales: s.sales.map((x) => (x.id === saleId ? { ...x, refunded: true } : x)),
+          sales: existingSale
+            ? s.sales.map((x) => (x.id === saleId ? { ...x, refunded: true } : x))
+            : [{ ...sale, refunded: true }, ...s.sales],
         };
       });
       return true;

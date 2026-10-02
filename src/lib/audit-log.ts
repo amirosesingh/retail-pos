@@ -111,14 +111,23 @@ const MODULE_CATEGORY: Record<string, AuditCategory> = {
  * finally the screen it happened on.
  */
 export function resolveCategory(raw: string, action: string, module = ""): AuditCategory {
+  const a = action.toLowerCase();
+  const isPaymentAction =
+    /payment|tender|paid/.test(a) || (/\bcard\b/.test(a) && !/\bjob card\b/.test(a));
+  // Older synchronized rows were normalized to the broad `sale` category.
+  // Recover only the three unambiguous financial subtypes from their action;
+  // all other explicit categories continue to win below.
+  if (raw === "sale") {
+    if (/refund|exchange|void|return/.test(a)) return "refund";
+    if (/coupon|voucher|promotion|discount|tier/.test(a)) return "discount";
+    if (isPaymentAction) return "payment";
+  }
   // 1. an explicit, known group always wins
   if (AUDIT_CATEGORY_LABELS[raw] && raw !== "other") return raw as AuditCategory;
   const legacy = LEGACY[raw];
   if (legacy === "browse") return "browse";
-  if (legacy && legacy !== "other") return legacy;
 
   // 2. read the wording of the action
-  const a = action.toLowerCase();
   if (/refund|exchange|void|return/.test(a)) return "refund";
   if (/drawer|no.?sale|cash count|float/.test(a)) return "drawer";
   if (/shift|attendance|sign.?in|signed in|sign.?out/.test(a)) return "shift";
@@ -128,7 +137,7 @@ export function resolveCategory(raw: string, action: string, module = ""): Audit
   if (/receiving|purchase order|supplier|barcode scanned/.test(a)) return "inventory";
   if (/coupon|voucher|promotion|discount|tier/.test(a)) return "discount";
   if (/stock transfer/.test(a)) return "inventory";
-  if (/payment|tender|paid|card/.test(a)) return "payment";
+  if (isPaymentAction) return "payment";
   if (/print/.test(a)) return "print";
   if (/export|report/.test(a)) return "report";
   if (/bill|sale|booking|pay later|deposit|collect|receipt printed/.test(a)) return "sale";
@@ -136,7 +145,9 @@ export function resolveCategory(raw: string, action: string, module = ""): Audit
   if (/member|points|loyalty/.test(a)) return "member";
   if (/setting/.test(a)) return "settings";
 
-  // 3. fall back to the screen, then the legacy name
+  // 3. fall back to the screen, then the legacy group. Legacy producers used
+  // broad names such as sale_event, so the action wording above must get the
+  // first opportunity to file refunds, payments and discounts correctly.
   const byModule = MODULE_CATEGORY[module.toLowerCase()];
   if (byModule) return byModule;
   if (legacy) return legacy;

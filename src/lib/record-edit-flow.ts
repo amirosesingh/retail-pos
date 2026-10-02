@@ -9,6 +9,7 @@
  */
 import { toast } from "sonner";
 
+import { clearDeviceSecret, getDeviceSecret, setDeviceSecret } from "@/lib/device-secrets";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import type { GateRequest, GateResult } from "@/lib/manager-gate";
 import {
@@ -26,6 +27,66 @@ export type EditGrant = {
   modeUsed: "none" | "pin" | "request";
   requestId?: string;
 };
+
+export type RecordEditHistoryInput = {
+  historyId?: string;
+  kind: RecordKind;
+  recordId: string;
+  reference?: string;
+  storeId?: string | null;
+  actionKey: string;
+  grant?: EditGrant | null;
+  before: unknown;
+  after: unknown;
+  stockDeltas?: Record<string, number>;
+  note?: string;
+};
+
+const PENDING_EDIT_HISTORY_KEY = "pending-record-edit-history";
+
+/** Keep an unfinished history write sealed on this device until it is retried. */
+export async function rememberPendingRecordEditHistory(
+  input: RecordEditHistoryInput,
+): Promise<boolean> {
+  try {
+    const pending =
+      (await getDeviceSecret<Record<string, RecordEditHistoryInput>>(PENDING_EDIT_HISTORY_KEY)) ??
+      {};
+    pending[input.recordId] = input;
+    await setDeviceSecret(PENDING_EDIT_HISTORY_KEY, pending);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function loadPendingRecordEditHistory(
+  recordId: string,
+): Promise<RecordEditHistoryInput | null> {
+  try {
+    const pending = await getDeviceSecret<Record<string, RecordEditHistoryInput>>(
+      PENDING_EDIT_HISTORY_KEY,
+    );
+    return pending?.[recordId] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearPendingRecordEditHistory(recordId: string): Promise<void> {
+  try {
+    const pending = await getDeviceSecret<Record<string, RecordEditHistoryInput>>(
+      PENDING_EDIT_HISTORY_KEY,
+    );
+    if (!pending?.[recordId]) return;
+    delete pending[recordId];
+    if (Object.keys(pending).length) await setDeviceSecret(PENDING_EDIT_HISTORY_KEY, pending);
+    else clearDeviceSecret(PENDING_EDIT_HISTORY_KEY);
+  } catch {
+    // Best effort: a stale retry marker is safe because the central insert is
+    // idempotent and the UI never repeats the financial reversal.
+  }
+}
 
 export type BeginOutcome =
   { kind: "open"; grant: EditGrant } | { kind: "queued" } | { kind: "blocked" };
@@ -110,23 +171,13 @@ export async function withdrawPostedEdit(kind: RecordKind, recordId: string): Pr
 }
 
 /** Write what actually changed, old values beside new ones. */
-export async function saveRecordEditHistory(input: {
-  kind: RecordKind;
-  recordId: string;
-  reference?: string;
-  storeId?: string | null;
-  actionKey: string;
-  grant?: EditGrant | null;
-  before: unknown;
-  after: unknown;
-  stockDeltas?: Record<string, number>;
-  note?: string;
-}): Promise<void> {
+export async function saveRecordEditHistory(input: RecordEditHistoryInput): Promise<boolean> {
   try {
     const auth = await getPosCallerAuth();
     const res = await logRecordEdit({
       data: {
         ...auth,
+        ...(input.historyId ? { historyId: input.historyId } : {}),
         kind: input.kind,
         recordId: input.recordId,
         ...(input.reference ? { reference: input.reference } : {}),
@@ -141,7 +192,7 @@ export async function saveRecordEditHistory(input: {
         ...(input.note ? { note: input.note } : {}),
       },
     });
-    if (res.ok) return;
+    if (res.ok) return true;
   } catch {
     /* falls through to the local trail below */
   }
@@ -149,27 +200,18 @@ export async function saveRecordEditHistory(input: {
   // the change is never invisible, and let the sync worker push it later.
   if (await parkRecordEdit(input)) {
     toast.info("Saved. Its history entry will reach head office when the line is back.");
-    return;
+    return true;
   }
-  toast.warning("The change was saved, but its history entry could not be written.");
+  toast.warning("The history entry could not be written.");
+  return false;
 }
 
 /** Store one edit history entry in the till's own database. */
-async function parkRecordEdit(input: {
-  kind: RecordKind;
-  recordId: string;
-  reference?: string;
-  storeId?: string | null;
-  actionKey: string;
-  grant?: EditGrant | null;
-  before: unknown;
-  after: unknown;
-  stockDeltas?: Record<string, number>;
-  note?: string;
-}): Promise<boolean> {
+async function parkRecordEdit(input: RecordEditHistoryInput): Promise<boolean> {
   try {
     const { parkGovernanceRow } = await import("@/lib/governance-offline");
     const res = await parkGovernanceRow("record_edits", {
+      ...(input.historyId ? { id: input.historyId } : {}),
       record_type: input.kind,
       record_id: input.recordId,
       reference: input.reference ?? null,

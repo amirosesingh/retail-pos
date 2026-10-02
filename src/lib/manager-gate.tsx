@@ -28,6 +28,7 @@ import { GATE_RULE_KEY, offlineApprovalMode, type GateAction } from "@/lib/pos-r
 import { isOnline } from "@/lib/sync-outbox";
 import { getAuthorizationRules } from "@/lib/authorization-client";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
+import { hasSignedInIdentity } from "@/lib/session-presence";
 import {
   AUTH_ACTION_LABEL,
   authorizationBinding,
@@ -92,11 +93,13 @@ export function ManagerGateProvider({
       const res = await getAuthorizationRules({ data: { ...caller, storeId: storeId ?? "" } });
       if (!res.ok) {
         const message = res.error || "Could not load authorization rules";
-        if (import.meta.env.DEV) console.warn(`[authorization] rules unavailable: ${message}`);
+        if (import.meta.env.DEV && hasSignedInIdentity())
+          console.warn(`[authorization] rules unavailable: ${message}`);
         throw new Error(message);
       }
       return res.rules;
     },
+    retry: false,
   });
 
   // Until the table answers, the branch's existing manager-PIN switches decide.

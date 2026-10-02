@@ -23,4 +23,10 @@ describe("POS rules logging", () => {
 
     expect(warn).toHaveBeenCalledOnce();
   });
+
+  it("does not warn while the sign-in screen has no terminal identity", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    logRules("POS_RULES_LOAD_FAILED", { branch_id: "branch-1", category: "none" });
+    expect(warn).not.toHaveBeenCalled();
+  });
 });
