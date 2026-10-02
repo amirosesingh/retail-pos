@@ -77,6 +77,8 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261002010743_enforce_zero_stock_catalog_lifecycle.sql",
       "supabase/migrations/20261002023000_admin_only_posted_record_corrections.sql",
       "supabase/migrations/20261002053711_close_review_integrity_gaps.sql",
+      "supabase/migrations/20261002061927_close_coderabbit_review_edges.sql",
+      "supabase/migrations/20261002062526_use_net_stock_for_catalog_lifecycle.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -214,9 +216,7 @@ describe("canonical Supabase SQL", () => {
   });
 
   it("keeps closed-shift corrections append-only and service-role only", () => {
-    const sql = read(
-      "supabase/migrations/20261002023000_admin_only_posted_record_corrections.sql",
-    );
+    const sql = read("supabase/migrations/20261002023000_admin_only_posted_record_corrections.sql");
     expect(sql).toContain("FUNCTION public.pos_admin_correct_closed_shift");
     expect(sql).toContain("'RECOUNT'");
     expect(sql).toContain("INSERT INTO public.record_edits");

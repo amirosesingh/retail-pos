@@ -259,8 +259,8 @@ export const productToRow = (p: Product): Row => {
       .map((v) => ({
         code: String(v?.code ?? "").trim(),
         label: v?.label?.trim() || undefined,
-        cost: v?.cost == null ? undefined : safeNum(v.cost),
-        price: v?.price == null ? undefined : safeNum(v.price),
+        cost: safeNumOrNull(v?.cost) ?? undefined,
+        price: safeNumOrNull(v?.price) ?? undefined,
       }))
       .filter((v) => v.code),
     cost_price: safeNum(p.cost),

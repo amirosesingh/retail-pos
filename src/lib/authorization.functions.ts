@@ -150,6 +150,7 @@ type Caller = {
   storeId: string;
   canAccessAllBranches: boolean;
   canManageRules: boolean;
+  canDiscardHeldOrder: boolean;
 };
 
 /** Any signed-in till user: a staff account or a cashier PIN session. */
@@ -174,6 +175,7 @@ async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
     canAccessAllBranches: role === "admin",
     canManageRules:
       role === "admin" || role === "manager" || scope.permissions.can_access_pos_settings === true,
+    canDiscardHeldOrder: scope.isSupervisor || scope.permissions.can_discard_held_order === true,
   };
 }
 
@@ -1115,14 +1117,23 @@ export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
       const who = await assertCaller(data);
       const { cancelRequest, getRequest, writeLog } = await import("./authorization.server");
       const request = await getRequest(data.id);
-      if (!request || request.requestedBy.toLowerCase() !== who.id.toLowerCase()) {
-        return { ok: false as const, error: "That request cannot be cancelled" };
+      // A request may already have expired or been removed. That is the same
+      // safe outcome the discard flow is trying to achieve.
+      if (!request) {
+        return { ok: true as const, changed: false, status: "missing" as const };
       }
       callerStore(who, request.storeId);
+      const ownsRequest = request.requestedBy.toLowerCase() === who.id.toLowerCase();
+      if (!ownsRequest && !who.isSupervisor && !who.canDiscardHeldOrder) {
+        return { ok: false as const, error: "That request cannot be cancelled" };
+      }
       if (request.status !== "pending" && request.status !== "approved") {
         return { ok: true as const, changed: false, status: request.status };
       }
-      const done = await cancelRequest(data.id, who.id, data.reason);
+      // cancelRequest deliberately filters by the original owner. Passing the
+      // acting supervisor here would turn a valid cross-cashier discard into
+      // a silent no-op.
+      const done = await cancelRequest(data.id, request.requestedBy, data.reason);
       if (!done) return { ok: false as const, error: "That request could not be cancelled" };
       const logged = await writeLog({
         actionKey: request.actionKey,

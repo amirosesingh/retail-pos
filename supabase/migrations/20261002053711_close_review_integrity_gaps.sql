@@ -242,7 +242,7 @@ BEGIN
     RETURN jsonb_build_object('ok', true, 'replayed', true, 'shift_id', v_count);
   END IF;
 
-  IF v.status <> 'CLOSED' OR coalesce(v.state, 'CLOSED') <> 'CLOSED' THEN
+  IF v.status IS DISTINCT FROM 'CLOSED' OR coalesce(v.state, 'CLOSED') <> 'CLOSED' THEN
     RAISE EXCEPTION 'Only a closed shift can be corrected.';
   END IF;
   SELECT * INTO e FROM public.shift_expected_totals(p_shift);
@@ -420,8 +420,11 @@ BEGIN
     NEW.is_archived := true;
     NEW.archived_at := COALESCE(NEW.archived_at, now());
   ELSIF TG_OP = 'INSERT' AND has_stock THEN
-    NEW.is_archived := false;
-    NEW.archived_at := NULL;
+    NEW.is_archived := COALESCE(NEW.is_archived, false);
+    NEW.archived_at := CASE
+      WHEN NEW.is_archived THEN COALESCE(NEW.archived_at, now())
+      ELSE NULL
+    END;
   ELSE
     IF jsonb_typeof(OLD.stock_by_store) = 'object' THEN
       SELECT EXISTS (

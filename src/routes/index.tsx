@@ -261,7 +261,7 @@ function Register() {
           },
         );
         setBillNo(reserved);
-        baseSnapshot = { ...baseSnapshot, billNo: reserved };
+        baseSnapshot = { ...baseSnapshot, ticketId: reserved, billNo: reserved };
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Could not reserve a bill number.");
         return null;
@@ -302,6 +302,13 @@ function Register() {
         : {}),
     };
     const verifyGrant = async (grantToken: string | null) => {
+      const resumedGrant = appliedApprovalRef.current;
+      const requestedAmount =
+        request.requestedAmount ??
+        snapshot?.requestedValue ??
+        resumedGrant?.requestedAmount ??
+        resumedGrant?.approvedAmount ??
+        null;
       const result = await verifyBusinessAuthorization({
         data: {
           ...(await getPosCallerAuth()),
@@ -309,8 +316,7 @@ function Register() {
           storeId: request.storeId ?? currentStore.id,
           payload,
           snapshotHash: snapshot ? snapshotFingerprint(snapshot) : "",
-          requestedAmount:
-            request.requestedAmount ?? snapshot?.requestedValue ?? null,
+          requestedAmount,
           grantToken,
         },
       });

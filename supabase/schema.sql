@@ -9243,6 +9243,8 @@ DECLARE
   enabled boolean := false;
   had_stock boolean := false;
   has_stock boolean := false;
+  net_stock numeric := 0;
+  old_net_stock numeric := 0;
 BEGIN
   SELECT lower(COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')) = 'true'
     INTO enabled FROM public.pos_settings WHERE id = 1;
@@ -9252,22 +9254,27 @@ BEGIN
   IF jsonb_typeof(NEW.stock_by_store) IS DISTINCT FROM 'object' THEN
     RETURN NEW;
   END IF;
-  SELECT EXISTS (
-    SELECT 1 FROM jsonb_each_text(COALESCE(NEW.stock_by_store, '{}'::jsonb))
-     WHERE value ~ '^-?[0-9]+([.][0-9]+)?$' AND value::numeric > 0
-  ) INTO has_stock;
+  SELECT COALESCE(sum(value::numeric), 0)
+    INTO net_stock
+    FROM jsonb_each_text(COALESCE(NEW.stock_by_store, '{}'::jsonb))
+   WHERE value ~ '^-?[0-9]+([.][0-9]+)?$';
+  has_stock := net_stock > 0;
   IF TG_OP = 'INSERT' AND NOT has_stock THEN
     NEW.is_archived := true;
     NEW.archived_at := COALESCE(NEW.archived_at, now());
   ELSIF TG_OP = 'INSERT' AND has_stock THEN
-    NEW.is_archived := false;
-    NEW.archived_at := NULL;
+    NEW.is_archived := COALESCE(NEW.is_archived, false);
+    NEW.archived_at := CASE
+      WHEN NEW.is_archived THEN COALESCE(NEW.archived_at, now())
+      ELSE NULL
+    END;
   ELSE
     IF jsonb_typeof(OLD.stock_by_store) = 'object' THEN
-      SELECT EXISTS (
-        SELECT 1 FROM jsonb_each_text(OLD.stock_by_store)
-         WHERE value ~ '^-?[0-9]+([.][0-9]+)?$' AND value::numeric > 0
-      ) INTO had_stock;
+      SELECT COALESCE(sum(value::numeric), 0)
+        INTO old_net_stock
+        FROM jsonb_each_text(OLD.stock_by_store)
+       WHERE value ~ '^-?[0-9]+([.][0-9]+)?$';
+      had_stock := old_net_stock > 0;
     ELSE
       had_stock := true;
     END IF;
@@ -16014,7 +16021,7 @@ BEGIN
     RETURN jsonb_build_object('ok', true, 'replayed', true, 'shift_id', v_count);
   END IF;
 
-  IF v.status <> 'CLOSED' OR coalesce(v.state, 'CLOSED') <> 'CLOSED' THEN
+  IF v.status IS DISTINCT FROM 'CLOSED' OR coalesce(v.state, 'CLOSED') <> 'CLOSED' THEN
     RAISE EXCEPTION 'Only a closed shift can be corrected.';
   END IF;
   SELECT * INTO e FROM public.shift_expected_totals(p_shift);

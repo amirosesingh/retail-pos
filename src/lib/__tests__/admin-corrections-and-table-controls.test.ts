@@ -41,7 +41,7 @@ describe("administrator corrections and shared table controls", () => {
 
   it("provides sort, per-column filter and resize controls on shared table headers", () => {
     const source = read("src/components/ui/table.tsx");
-    expect(source).toContain("Sort ${direction === \"asc\" ? \"descending\" : \"ascending\"}");
+    expect(source).toContain('Sort ${direction === "asc" ? "descending" : "ascending"}');
     expect(source).toContain("Filter ${label} values");
     expect(source).toContain("Resize ${label} column");
     expect(source).toContain('event.key !== "ArrowLeft" && event.key !== "ArrowRight"');
@@ -52,16 +52,32 @@ describe("administrator corrections and shared table controls", () => {
     expect(source).toContain("sortTableBodies(child, sort)");
     expect(source).toContain("filterTableBodies(child, filters)");
     expect(source).toContain("clientDataControls");
-    expect(read("src/routes/audit.tsx")).toContain('<Table clientDataControls={false}>');
+    expect(read("src/routes/audit.tsx")).toContain("<Table clientDataControls={false}>");
   });
 
   it("deploys the post-review database integrity follow-up", () => {
-    const migration = read(
-      "supabase/migrations/20261002053711_close_review_integrity_gaps.sql",
-    );
+    const migration = read("supabase/migrations/20261002053711_close_review_integrity_gaps.sql");
     expect(migration).toContain("variant_code, unit_price");
     expect(migration).toContain("v_existing_cash IS DISTINCT FROM p_cash");
     expect(migration).toContain("AND NOT stock_state.has_stock");
     expect(migration).toContain("TO service_role");
+  });
+
+  it("deploys the final null-state and manual-archive safeguards", () => {
+    const migration = read("supabase/migrations/20261002061927_close_coderabbit_review_edges.sql");
+    expect(migration).toContain("v.status IS DISTINCT FROM 'CLOSED'");
+    expect(migration).toContain("NEW.is_archived := COALESCE(NEW.is_archived, false)");
+    expect(migration).toContain("WHEN NEW.is_archived THEN COALESCE(NEW.archived_at, now())");
+    expect(migration).not.toMatch(/\b(UPDATE|DELETE)\s+public\.products\b/i);
+  });
+
+  it("uses net company stock for the zero-stock catalogue lifecycle", () => {
+    const migration = read(
+      "supabase/migrations/20261002062526_use_net_stock_for_catalog_lifecycle.sql",
+    );
+    expect(migration).toContain("has_stock := net_stock > 0");
+    expect(migration).toContain("had_stock := old_net_stock > 0");
+    expect(migration).toContain("AND s.quantity <= 0");
+    expect(migration).toContain("AND p.is_archived IS NOT TRUE");
   });
 });

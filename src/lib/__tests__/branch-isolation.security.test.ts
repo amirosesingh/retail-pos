@@ -108,6 +108,23 @@ describe("the owner survives a round trip through the database", () => {
     ]);
   });
 
+  it("does not turn blank or invalid variation prices into real zero prices", () => {
+    const row = productToRow(
+      product({
+        variants: [
+          {
+            code: "BLANK-1",
+            cost: "" as unknown as number,
+            price: "not-a-price" as unknown as number,
+          },
+        ],
+      }),
+    );
+    expect(row.barcode_variants).toEqual([
+      { code: "BLANK-1", label: undefined, cost: undefined, price: undefined },
+    ]);
+  });
+
   it("carries the branch privacy switch on the branch record", () => {
     const branch: Store = {
       id: "branch-a",

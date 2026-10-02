@@ -243,9 +243,7 @@ describe("approval bill details", () => {
   it("finds the approved line safely after an earlier line is removed", () => {
     const item = removeApprovedDiscount(
       {
-        lines: [
-          { ...held.lines[0], qty: 2, price: 80, discount: 15, discountType: "percent" },
-        ],
+        lines: [{ ...held.lines[0], qty: 2, price: 80, discount: 15, discountType: "percent" }],
         cartDiscount: 0,
         cartDiscountType: "amount",
       },
@@ -327,6 +325,11 @@ describe("approval bill details", () => {
     expect(register).toContain("resumedGrant.grantToken");
     expect(register).toContain("revokeApprovalDiscountRef.current(resumedGrant)");
     expect(register).toContain("activeApproval: appliedApproval");
+    expect(functions).toContain("!who.canDiscardHeldOrder");
+    expect(functions).toContain("cancelRequest(data.id, request.requestedBy");
+    expect(functions).toContain('status: "missing"');
+    expect(register).toContain("ticketId: reserved, billNo: reserved");
+    expect(register).toContain("resumedGrant?.requestedAmount");
   });
 
   it("returns and displays the durable approver identity and payable total", () => {
