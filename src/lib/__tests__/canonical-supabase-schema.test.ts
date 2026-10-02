@@ -79,6 +79,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261002053711_close_review_integrity_gaps.sql",
       "supabase/migrations/20261002061927_close_coderabbit_review_edges.sql",
       "supabase/migrations/20261002062526_use_net_stock_for_catalog_lifecycle.sql",
+      "supabase/migrations/20261002063556_align_net_stock_backfill.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

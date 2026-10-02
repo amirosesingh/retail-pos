@@ -65,6 +65,12 @@ type HeldOrdersDeps = {
   /** Clears approval UI/state before another parked ticket becomes active. */
   onApprovalCleared?: () => void;
   activeApproval?: Pick<ClaimedGrant, "actionKey" | "approvedPayload"> | null;
+  /** Reprices a cleaned ticket with the register's tax/promotion rules. */
+  calculateTotal?: (
+    lines: CartLine[],
+    cartDiscount: number,
+    cartDiscountType: DiscountType,
+  ) => number;
 };
 
 export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
@@ -89,11 +95,15 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         )
       : { lines, cartDiscount: deps.cartDiscount, cartDiscountType: deps.cartDiscountType };
     const snapshot = cleaned.lines;
+    const heldTotal = deps.activeApproval
+      ? (deps.calculateTotal?.(cleaned.lines, cleaned.cartDiscount, cleaned.cartDiscountType) ??
+        total)
+      : total;
     const id = requestedId ?? `H${Date.now()}`;
     const order: HeldOrder = {
       id,
       label: `${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${snapshot.length} item(s)`,
-      total,
+      total: heldTotal,
       lines: snapshot,
       heldAt: new Date().toISOString(),
       storeId,
@@ -110,7 +120,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
     logTicketEvent(TICKET_ACTIONS.held, {
       holdRef: id,
       lines: snapshot.length,
-      value: total,
+      value: heldTotal,
       storeId,
       memberId,
       member: memberName,
@@ -257,12 +267,7 @@ export function removeApprovedDiscount(
     (!expectedProductId || indexed.productId === expectedProductId) &&
     (!Number.isFinite(expectedQty) || indexed.qty === expectedQty) &&
     (!Number.isFinite(expectedPrice) || indexed.price === expectedPrice);
-  const targetIndex =
-    indexedMatches
-      ? requestedIndex
-      : matches.length === 1
-        ? matches[0]
-        : -1;
+  const targetIndex = indexedMatches ? requestedIndex : matches.length === 1 ? matches[0] : -1;
   if (targetIndex < 0) return state;
   return {
     ...state,

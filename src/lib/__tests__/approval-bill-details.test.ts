@@ -310,6 +310,7 @@ describe("approval bill details", () => {
     const functions = readFileSync("src/lib/authorization.functions.ts", "utf8");
     const holds = readFileSync("src/routes/holds.tsx", "utf8");
     const register = readFileSync("src/routes/index.tsx", "utf8");
+    const heldOrders = readFileSync("src/lib/register/use-held-orders.ts", "utf8");
     const discardStart = holds.indexOf("async function discard");
     const discard = holds.slice(discardStart, holds.indexOf("\n  return (", discardStart));
 
@@ -330,6 +331,12 @@ describe("approval bill details", () => {
     expect(functions).toContain('status: "missing"');
     expect(register).toContain("ticketId: reserved, billNo: reserved");
     expect(register).toContain("resumedGrant?.requestedAmount");
+    expect(register).toContain("false,");
+    expect(register).toContain("setLines(");
+    expect(register).toContain("setCartDiscount((current)");
+    expect(heldOrders).toContain("calculateTotal");
+    expect(heldOrders).toContain("total: heldTotal");
+    expect(heldOrders).toContain("value: heldTotal");
   });
 
   it("returns and displays the durable approver identity and payable total", () => {

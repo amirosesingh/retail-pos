@@ -61,7 +61,12 @@ REVOKE ALL ON FUNCTION public.apply_zero_stock_catalog_lifecycle() FROM PUBLIC, 
 -- One-way, bounded repair: only active products whose numeric branch stock
 -- adds up to zero or less are retired. Positive-stock and manually archived
 -- rows are untouched.
-WITH net_stock AS (
+WITH lifecycle_setting AS (
+  SELECT lower(COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')) = 'true'
+           AS enabled
+    FROM public.pos_settings
+   WHERE id = 1
+), net_stock AS (
   SELECT p.id,
          COALESCE(sum(e.value::numeric) FILTER (
            WHERE e.value ~ '^-?[0-9]+([.][0-9]+)?$'
@@ -80,6 +85,7 @@ UPDATE public.products p
        archived_at = COALESCE(p.archived_at, now())
   FROM net_stock s
  WHERE p.id = s.id
+   AND COALESCE((SELECT enabled FROM lifecycle_setting), true)
    AND s.quantity <= 0
    AND p.is_archived IS NOT TRUE;
 

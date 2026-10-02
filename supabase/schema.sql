@@ -9306,14 +9306,13 @@ BEGIN
      AND lower(COALESCE(OLD.integration_settings ->> 'autoArchiveZeroStock', 'false')) <> 'true' THEN
     WITH stock_state AS (
       SELECT p.id,
-             EXISTS (
-               SELECT 1
-                 FROM jsonb_each_text(p.stock_by_store)
-                WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
-                  AND value::numeric > 0
-             ) AS has_stock
+             COALESCE(sum(e.value::numeric) FILTER (
+               WHERE e.value ~ '^-?[0-9]+([.][0-9]+)?$'
+             ), 0) > 0 AS has_stock
         FROM public.products p
+        LEFT JOIN LATERAL jsonb_each_text(p.stock_by_store) e ON true
        WHERE jsonb_typeof(p.stock_by_store) = 'object'
+       GROUP BY p.id
     )
     UPDATE public.products p
        SET is_archived = true,

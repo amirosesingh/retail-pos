@@ -225,10 +225,10 @@ function Register() {
     setAppliedApproval(null);
   }, []);
   const invalidateAppliedApproval = useCallback(
-    async (reason: string) => {
+    async (reason: string, revokeDiscount = true) => {
       const approval = appliedApprovalRef.current;
       if (!approval) return true;
-      revokeApprovalDiscountRef.current(approval);
+      if (revokeDiscount) revokeApprovalDiscountRef.current(approval);
       clearAppliedApproval();
       const cancelled = await cancelAuthorizationRequest({
         data: {
@@ -449,6 +449,7 @@ function Register() {
       if (reason === "voided" || reason === "cleared") {
         void invalidateAppliedApproval(
           reason === "voided" ? "Bill voided before completion" : "Bill cleared before completion",
+          false,
         );
       } else {
         clearAppliedApproval();
@@ -461,11 +462,19 @@ function Register() {
     preventNegativeStock: rules.prevent_negative_stock_sale,
   });
   revokeApprovalDiscountRef.current = (approval) => {
-    const next = removeApprovedDiscount({ lines, cartDiscount, cartDiscountType }, approval);
-    if (next.lines !== lines) setLines(next.lines);
-    if (next.cartDiscount !== cartDiscount) setCartDiscount(next.cartDiscount);
-    if (next.cartDiscountType !== cartDiscountType) {
-      setCartDiscountType(next.cartDiscountType);
+    // Functional updates cannot overwrite a cart mutation that landed after
+    // the invalidation callback was created.
+    setLines(
+      (current) =>
+        removeApprovedDiscount(
+          { lines: current, cartDiscount: 0, cartDiscountType: "amount" },
+          approval,
+        ).lines,
+    );
+    if (approval.actionKey === "discount_over_limit") {
+      setCartDiscount((current) =>
+        approval.approvedPayload["discount_scope"] === "bill" ? 0 : current,
+      );
     }
   };
   /** Cashier-adjustable column widths, remembered on this device. */
@@ -901,6 +910,22 @@ function Register() {
     snapshot: () => ticketSnapshot.current(),
     onApprovalCleared: clearAppliedApproval,
     activeApproval: appliedApproval,
+    calculateTotal: (nextLines, nextCartDiscount, nextCartDiscountType) => {
+      const nextPreTotals = cartTotals(nextLines, 0, "amount", taxSettings);
+      const nextPromo = evaluatePromotions({
+        promotions: state.promotions,
+        products: state.products,
+        base: r2(nextPreTotals.subtotal - nextPreTotals.lineDiscount),
+        member,
+      });
+      return cartTotals(
+        nextLines,
+        nextCartDiscount,
+        nextCartDiscountType,
+        taxSettings,
+        r2(nextPromo.promoDiscount + billCouponDiscount),
+      ).total;
+    },
     onApprovalClaimed: (grant) => {
       const applied: AppliedApproval = {
         requestId: grant.requestId,

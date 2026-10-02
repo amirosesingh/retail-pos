@@ -79,5 +79,14 @@ describe("administrator corrections and shared table controls", () => {
     expect(migration).toContain("had_stock := old_net_stock > 0");
     expect(migration).toContain("AND s.quantity <= 0");
     expect(migration).toContain("AND p.is_archived IS NOT TRUE");
+    expect(migration).toContain("lifecycle_setting");
+    expect(migration).toContain("COALESCE((SELECT enabled FROM lifecycle_setting), true)");
+  });
+
+  it("aligns setting-toggle backfills with net stock", () => {
+    const migration = read("supabase/migrations/20261002063556_align_net_stock_backfill.sql");
+    expect(migration).toContain("FUNCTION public.backfill_zero_stock_catalog_lifecycle()");
+    expect(migration).toContain("COALESCE(sum(e.value::numeric) FILTER");
+    expect(migration).toContain(") > 0 AS has_stock");
   });
 });
