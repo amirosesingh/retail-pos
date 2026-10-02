@@ -168,7 +168,20 @@ function AuditPage() {
       try {
         const auth = await getPosCallerAuth();
         const result = await getRecentRecordEdits({ data: { ...auth, limit: 200 } });
-        if (alive && result.ok) setCorrections(result.edits);
+        if (!alive) return;
+        if (result.ok) {
+          setCorrections(result.edits);
+        } else {
+          toast.error("Could not load correction history", {
+            description: result.error || "Reconnect and try again.",
+          });
+        }
+      } catch (error) {
+        if (alive) {
+          toast.error("Could not load correction history", {
+            description: error instanceof Error ? error.message : "Reconnect and try again.",
+          });
+        }
       } finally {
         if (alive) setCorrectionsLoading(false);
       }

@@ -53,6 +53,9 @@ describe("administrator corrections and shared table controls", () => {
     expect(source).toContain("filterTableBodies(child, filters)");
     expect(source).toContain("clientDataControls");
     expect(read("src/routes/audit.tsx")).toContain("<Table clientDataControls={false}>");
+    expect(read("src/routes/audit.tsx")).toContain(
+      'toast.error("Could not load correction history"',
+    );
   });
 
   it("deploys the post-review database integrity follow-up", () => {
