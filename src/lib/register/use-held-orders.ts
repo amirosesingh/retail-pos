@@ -64,6 +64,7 @@ type HeldOrdersDeps = {
   }) => void;
   /** Clears approval UI/state before another parked ticket becomes active. */
   onApprovalCleared?: () => void;
+  activeApproval?: Pick<ClaimedGrant, "actionKey" | "approvedPayload"> | null;
 };
 
 export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
@@ -77,7 +78,17 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   function holdOrder(silent = false, requestedId?: string) {
     const { lines, total, storeId, memberId, memberName } = deps;
     if (!lines.length) return null;
-    const snapshot = lines;
+    const cleaned = deps.activeApproval
+      ? removeApprovedDiscount(
+          {
+            lines,
+            cartDiscount: deps.cartDiscount,
+            cartDiscountType: deps.cartDiscountType,
+          },
+          deps.activeApproval,
+        )
+      : { lines, cartDiscount: deps.cartDiscount, cartDiscountType: deps.cartDiscountType };
+    const snapshot = cleaned.lines;
     const id = requestedId ?? `H${Date.now()}`;
     const order: HeldOrder = {
       id,
@@ -87,7 +98,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       heldAt: new Date().toISOString(),
       storeId,
       heldBy: deps.cashier,
-      cartDiscount: deps.cartDiscount,
+      cartDiscount: cleaned.cartDiscount,
       ...(deps.billNo ? { billNo: deps.billNo } : {}),
       cartDiscountType: deps.cartDiscountType,
       exchangeRef: deps.exchangeRef,
@@ -226,12 +237,33 @@ export function removeApprovedDiscount(
   }
 
   const productId = String(payload["target_product_id"] ?? "");
-  const targetIndex = Number(payload["target_index"]);
-  if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= state.lines.length) {
-    return state;
-  }
-  const target = state.lines[targetIndex];
-  if (!target || (productId && target.productId !== productId)) return state;
+  const requestedIndex = Number(payload["target_index"]);
+  const indexed = Number.isInteger(requestedIndex) ? state.lines[requestedIndex] : undefined;
+  const rawLineKey = String(payload["target_line_key"] ?? "");
+  const keyParts = rawLineKey.split("|");
+  const hasLineKey = rawLineKey.length > 0 && keyParts.length >= 5;
+  const expectedProductId = hasLineKey ? (keyParts.at(-3) ?? productId) : productId;
+  const expectedQty = hasLineKey ? Number(keyParts.at(-2)) : Number.NaN;
+  const expectedPrice = hasLineKey ? Number(keyParts.at(-1)) : Number.NaN;
+  const matches = state.lines.flatMap((line, index) =>
+    (!expectedProductId || line.productId === expectedProductId) &&
+    (!Number.isFinite(expectedQty) || line.qty === expectedQty) &&
+    (!Number.isFinite(expectedPrice) || line.price === expectedPrice)
+      ? [index]
+      : [],
+  );
+  const indexedMatches =
+    indexed &&
+    (!expectedProductId || indexed.productId === expectedProductId) &&
+    (!Number.isFinite(expectedQty) || indexed.qty === expectedQty) &&
+    (!Number.isFinite(expectedPrice) || indexed.price === expectedPrice);
+  const targetIndex =
+    indexedMatches
+      ? requestedIndex
+      : matches.length === 1
+        ? matches[0]
+        : -1;
+  if (targetIndex < 0) return state;
   return {
     ...state,
     lines: state.lines.map((line, index) =>

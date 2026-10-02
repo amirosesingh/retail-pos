@@ -4940,6 +4940,7 @@ IF OBJECT_ID(N'dbo.sale_items', N'U') IS NULL BEGIN CREATE TABLE dbo.[sale_items
   [sale_id] uniqueidentifier NOT NULL,
   [product_id] uniqueidentifier NULL,
   [product_name] nvarchar(max) NOT NULL,
+  [variant_code] nvarchar(max) NULL,
   [unit_price] decimal(38,12) NOT NULL CONSTRAINT [DF_sale_items_unit_price] DEFAULT (0),
   [quantity] int NOT NULL CONSTRAINT [DF_sale_items_quantity] DEFAULT (1),
   [discount_percent] decimal(38,12) NOT NULL CONSTRAINT [DF_sale_items_discount_percent] DEFAULT (0),
@@ -4985,6 +4986,8 @@ IF COL_LENGTH(N'dbo.sale_items', N'product_id') IS NULL ALTER TABLE dbo.[sale_it
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.sale_items') AND c.name=N'product_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[sale_items] ALTER COLUMN [product_id] uniqueidentifier NULL;
 
 IF COL_LENGTH(N'dbo.sale_items', N'product_name') IS NULL ALTER TABLE dbo.[sale_items] ADD [product_name] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.sale_items', N'variant_code') IS NULL ALTER TABLE dbo.[sale_items] ADD [variant_code] nvarchar(max) NULL;
 
 IF COL_LENGTH(N'dbo.sale_items', N'unit_price') IS NULL ALTER TABLE dbo.[sale_items] ADD [unit_price] decimal(38,12) NULL;
 

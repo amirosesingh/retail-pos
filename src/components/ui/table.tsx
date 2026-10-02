@@ -20,20 +20,15 @@ type TableControls = {
 };
 
 const TableControlsContext = React.createContext<TableControls | null>(null);
-const HeaderColumnContext = React.createContext<{ current: number } | null>(null);
 
 const TableHeader = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
 >(({ className, children, ...props }, ref) => {
-  const cursor = React.useRef(0);
-  cursor.current = 0;
   return (
-    <HeaderColumnContext.Provider value={cursor}>
-      <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props}>
-        {children}
-      </thead>
-    </HeaderColumnContext.Provider>
+    <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props}>
+      {assignHeaderColumns(children)}
+    </thead>
   );
 });
 TableHeader.displayName = "TableHeader";
@@ -74,14 +69,13 @@ TableRow.displayName = "TableRow";
 
 type TableHeadProps = React.ThHTMLAttributes<HTMLTableCellElement> & {
   "data-sortable"?: boolean | "true" | "false";
+  "data-table-column"?: number;
 };
 
 const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
   ({ className, children, ...props }, ref) => {
     const controls = React.useContext(TableControlsContext);
-    const cursor = React.useContext(HeaderColumnContext);
-    const column = cursor?.current ?? 0;
-    if (cursor) cursor.current += Number(props.colSpan ?? 1);
+    const column = props["data-table-column"] ?? 0;
     const label = plainText(children);
     const sortable =
       controls &&
@@ -219,8 +213,57 @@ TableCaption.displayName = "TableCaption";
 
 function plainText(node: React.ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(plainText).filter(Boolean).join(" ").trim();
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return "";
   return React.Children.toArray(node.props.children).map(plainText).join(" ").trim();
+}
+
+/** Assign each header cell to its real body column, including multi-row headers. */
+function assignHeaderColumns(node: React.ReactNode): React.ReactNode {
+  const occupied: number[] = [];
+  const visit = (child: React.ReactNode): React.ReactNode => {
+    if (!React.isValidElement<{ children?: React.ReactNode }>(child)) return child;
+    if (isTableComponent(child, TableRow, "TableRow")) {
+      let cursor = 0;
+      const decorateCell = (cell: React.ReactNode): React.ReactNode => {
+        if (!React.isValidElement<{ children?: React.ReactNode }>(cell)) return cell;
+        if (!isTableComponent(cell, TableHead, "TableHead")) {
+          return React.cloneElement(
+            cell,
+            undefined,
+            React.Children.map(cell.props.children, decorateCell),
+          );
+        }
+        while ((occupied[cursor] ?? 0) > 0) cursor += 1;
+        const props = cell.props as TableHeadProps;
+        const column = cursor;
+        const colSpan = Math.max(1, Number(props.colSpan ?? 1));
+        const rowSpan = Math.max(1, Number(props.rowSpan ?? 1));
+        for (let offset = 0; offset < colSpan; offset += 1) {
+          occupied[column + offset] = Math.max(occupied[column + offset] ?? 0, rowSpan);
+        }
+        cursor += colSpan;
+        return React.cloneElement(cell as React.ReactElement<TableHeadProps>, {
+          "data-table-column": column,
+        });
+      };
+      const row = React.cloneElement(
+        child,
+        undefined,
+        React.Children.map(child.props.children, decorateCell),
+      );
+      for (let index = 0; index < occupied.length; index += 1) {
+        if (occupied[index] > 0) occupied[index] -= 1;
+      }
+      return row;
+    }
+    return React.cloneElement(
+      child,
+      undefined,
+      React.Children.map(child.props.children, visit),
+    );
+  };
+  return React.Children.map(node, visit);
 }
 
 function isTableComponent(node: React.ReactNode, component: unknown, displayName: string): boolean {
@@ -479,9 +522,6 @@ function numericTableValue(value: string): number | null {
 }
 
 function compareTableText(left: string, right: string): number {
-  if (!left && !right) return 0;
-  if (!left) return 1;
-  if (!right) return -1;
   const leftNumber = numericTableValue(left);
   const rightNumber = numericTableValue(right);
   if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
@@ -503,6 +543,11 @@ function sortTableBodies(node: React.ReactNode, sort: TableSortState): React.Rea
       if (left.value === null && right.value === null) return left.index - right.index;
       if (left.value === null) return 1;
       if (right.value === null) return -1;
+      const leftMissing = !left.value.trim() || left.value.trim() === "—";
+      const rightMissing = !right.value.trim() || right.value.trim() === "—";
+      if (leftMissing && rightMissing) return left.index - right.index;
+      if (leftMissing) return 1;
+      if (rightMissing) return -1;
       return compareTableText(left.value, right.value) * direction || left.index - right.index;
     });
     return React.cloneElement(

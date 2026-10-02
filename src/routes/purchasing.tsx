@@ -929,8 +929,14 @@ function Purchasing() {
           </div>
           <Button
             onClick={() => {
-              clearForm();
-              setEntryOpen(true);
+              void (async () => {
+                if (lines.length && !(await persistDraft())) {
+                  toast.error("The current receiving draft could not be saved");
+                  return;
+                }
+                clearForm();
+                setEntryOpen(true);
+              })();
             }}
           >
             <PackagePlus className="size-4" /> Add new stock

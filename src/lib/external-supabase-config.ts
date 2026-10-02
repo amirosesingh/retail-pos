@@ -122,7 +122,8 @@ export class SupabaseConfigError extends Error {
       isTerminalApp()
         ? "Cloud sync is not set up on this device. Open Settings → Database & Cloud Connection " +
             "and enter the central database URL and API key. Local trading is unaffected."
-        : "Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in the " +
+        : "Supabase is not configured. Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY " +
+            "(or SUPABASE_ANON_KEY) in the " +
             "hosting variables (Cloudflare: Workers → Settings → Variables & Secrets) " +
             "to your own Supabase project before starting the app.",
     );

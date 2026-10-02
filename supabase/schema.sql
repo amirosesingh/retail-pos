@@ -622,6 +622,7 @@ CREATE TABLE IF NOT EXISTS public.sale_items (
     sale_id uuid NOT NULL,
     product_id uuid,
     product_name text NOT NULL,
+    variant_code text,
     unit_price numeric DEFAULT 0 NOT NULL,
     quantity integer DEFAULT 1 NOT NULL,
     discount_percent numeric DEFAULT 0 NOT NULL,

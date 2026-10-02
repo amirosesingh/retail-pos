@@ -3,15 +3,26 @@
  * user's role is re-checked on the server for every request.
  */
 import { serviceRest } from "@/core/api/pos-relay.server";
-import { supabaseConfig } from "@/lib/external-supabase-config";
+import { SupabaseConfigError, supabaseConfig } from "@/lib/external-supabase-config";
 
 const SUPERVISOR_ROLES = new Set(["admin", "owner", "manager", "supervisor"]);
+
+function configuredSupabase(): ReturnType<typeof supabaseConfig> | null {
+  try {
+    return supabaseConfig();
+  } catch (error) {
+    if (error instanceof SupabaseConfigError) return null;
+    throw error;
+  }
+}
 
 /** Who is behind an access token, for attribution in the edit history. */
 export async function describeAccessToken(
   accessToken: string,
 ): Promise<{ id: string | null; name: string | null; role: string | null }> {
-  const { url, key } = supabaseConfig();
+  const config = configuredSupabase();
+  if (!config) return { id: null, name: null, role: null };
+  const { url, key } = config;
   const res = await fetch(`${url}/auth/v1/user`, {
     headers: { apikey: key, Authorization: `Bearer ${accessToken}` },
   });
@@ -38,7 +49,9 @@ export async function describeAccessToken(
 }
 
 export async function verifySupervisorToken(accessToken: string): Promise<boolean> {
-  const { url, key } = supabaseConfig();
+  const config = configuredSupabase();
+  if (!config) return false;
+  const { url, key } = config;
   const res = await fetch(`${url}/auth/v1/user`, {
     headers: { apikey: key, Authorization: `Bearer ${accessToken}` },
   });
@@ -64,7 +77,9 @@ export async function verifySupervisorToken(accessToken: string): Promise<boolea
 
 /** Destructive operational cleanup is reserved for an active administrator. */
 export async function verifyAdminToken(accessToken: string): Promise<boolean> {
-  const { url, key } = supabaseConfig();
+  const config = configuredSupabase();
+  if (!config) return false;
+  const { url, key } = config;
   const res = await fetch(`${url}/auth/v1/user`, {
     headers: { apikey: key, Authorization: `Bearer ${accessToken}` },
   });

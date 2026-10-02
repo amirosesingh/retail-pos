@@ -38,8 +38,12 @@ BEGIN
     NEW.is_archived := true;
     NEW.archived_at := COALESCE(NEW.archived_at, now());
   ELSIF TG_OP = 'INSERT' AND has_stock THEN
-    NEW.is_archived := false;
-    NEW.archived_at := NULL;
+    NEW.is_archived := COALESCE(NEW.is_archived, false);
+    IF NEW.is_archived THEN
+      NEW.archived_at := COALESCE(NEW.archived_at, now());
+    ELSE
+      NEW.archived_at := NULL;
+    END IF;
   ELSE
     IF jsonb_typeof(OLD.stock_by_store) = 'object' THEN
       SELECT EXISTS (

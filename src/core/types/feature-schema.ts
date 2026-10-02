@@ -111,7 +111,7 @@ export const FEATURES: FeatureDef[] = [
         kind: "write",
         source: "src/lib/pos-db.ts:589 (saleItemRows)",
         columns: [
-          "sale_id", "product_id", "product_name", "unit_price", "unit_cost", "quantity",
+          "sale_id", "product_id", "product_name", "variant_code", "unit_price", "unit_cost", "quantity",
           "discount_percent", "discount_amount", "tax_rate", "is_return", "is_foc",
           "promo_id", "coupon_code", "coupon_discount",
         ],

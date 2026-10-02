@@ -308,6 +308,7 @@ function Register() {
     const resumedGrant = appliedApprovalRef.current;
     if (resumedGrant?.grantToken && resumedGrant.actionKey === request.action) {
       const verified = await verifyGrant(resumedGrant.grantToken);
+      if (verified === null) revokeApprovalDiscountRef.current(resumedGrant);
       clearAppliedApproval();
       return verified;
     }
@@ -878,6 +879,7 @@ function Register() {
     resetCart,
     snapshot: () => ticketSnapshot.current(),
     onApprovalCleared: clearAppliedApproval,
+    activeApproval: appliedApproval,
     onApprovalClaimed: (grant) => {
       const applied: AppliedApproval = {
         requestId: grant.requestId,

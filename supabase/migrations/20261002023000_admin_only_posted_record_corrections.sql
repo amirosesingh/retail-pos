@@ -1,6 +1,10 @@
 -- Administrator-only corrections for posted financial records.
 -- This migration is additive: original cash declarations and audit rows remain immutable.
 
+-- Preserve the exact scanned variation on future sale lines. Existing rows
+-- remain valid and intentionally retain NULL when the historical code is unknown.
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS variant_code text;
+
 -- Session rows are server-owned. An explicit deny policy documents that
 -- boundary and avoids the ambiguous "RLS enabled, no policy" configuration.
 REVOKE ALL ON TABLE public.user_sessions FROM PUBLIC, anon, authenticated;

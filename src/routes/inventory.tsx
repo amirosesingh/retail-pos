@@ -509,14 +509,21 @@ function Inventory() {
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={variant.cost ?? draft.cost}
+                                    value={variant.cost ?? ""}
+                                    placeholder={String(draft.cost)}
                                     aria-label={`Cost for ${variant.code}`}
                                     onChange={(event) =>
                                       setDraft({
                                         ...draft,
                                         variants: (draft.variants ?? []).map((entry) =>
                                           entry.code === variant.code
-                                            ? { ...entry, cost: Number(event.target.value) || 0 }
+                                            ? {
+                                                ...entry,
+                                                cost:
+                                                  event.target.value.trim() === ""
+                                                    ? undefined
+                                                    : Number(event.target.value),
+                                              }
                                             : entry,
                                         ),
                                       })
@@ -529,14 +536,21 @@ function Inventory() {
                                   type="number"
                                   min="0"
                                   step="0.01"
-                                  value={variant.price ?? draft.price}
+                                  value={variant.price ?? ""}
+                                  placeholder={String(draft.price)}
                                   aria-label={`Selling price for ${variant.code}`}
                                   onChange={(event) =>
                                     setDraft({
                                       ...draft,
                                       variants: (draft.variants ?? []).map((entry) =>
                                         entry.code === variant.code
-                                          ? { ...entry, price: Number(event.target.value) || 0 }
+                                          ? {
+                                              ...entry,
+                                              price:
+                                                event.target.value.trim() === ""
+                                                  ? undefined
+                                                  : Number(event.target.value),
+                                            }
                                           : entry,
                                       ),
                                     })
@@ -617,10 +631,12 @@ function Inventory() {
                                   {
                                     code,
                                     label: variantLabel.trim() || undefined,
-                                    cost: showMoney
-                                      ? Number(variantCost || draft.cost) || 0
-                                      : undefined,
-                                    price: Number(variantPrice || draft.price) || 0,
+                                    cost:
+                                      showMoney && variantCost.trim() !== ""
+                                        ? Number(variantCost)
+                                        : undefined,
+                                    price:
+                                      variantPrice.trim() !== "" ? Number(variantPrice) : undefined,
                                   },
                                 ],
                               });

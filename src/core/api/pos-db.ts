@@ -589,7 +589,7 @@ const SALE_COLUMNS_BASE =
   "payments, points_earned, is_refunded, original_bill_number, exchanged_to_bill_number, " +
   "exchange_credit, coupon_code, coupon_promo_id, coupon_scope, coupon_discount, created_at, " +
   "store_name_snapshot, store_address_snapshot, " +
-  "sale_items(product_id, product_name, unit_price, quantity, tax_rate, discount_percent, " +
+  "sale_items(product_id, product_name, variant_code, unit_price, quantity, tax_rate, discount_percent, " +
   "discount_amount, is_return, is_foc, promo_id, coupon_code, coupon_discount, unit_cost)";
 
 /**
@@ -663,6 +663,7 @@ export const rowToSale = (r: Row): Sale => ({
   lines: ((r.sale_items ?? []) as Row[]).map((l) => ({
     productId: l.product_id ?? "",
     name: l.product_name,
+    variantCode: l.variant_code ?? undefined,
     price: num(l.unit_price),
     qty: Number(l.quantity),
     taxRate: num(l.tax_rate),
@@ -797,6 +798,7 @@ const saleItemRows = (s: Sale) =>
     branch_id: s.storeId,
     product_id: l.productId || null,
     product_name: l.name,
+    variant_code: l.variantCode ?? null,
     unit_price: l.price,
     unit_cost: l.cost ?? 0,
     quantity: l.qty,

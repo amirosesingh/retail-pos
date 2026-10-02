@@ -240,6 +240,28 @@ describe("approval bill details", () => {
     expect(item.lines[0]?.discount).toBe(0);
   });
 
+  it("finds the approved line safely after an earlier line is removed", () => {
+    const item = removeApprovedDiscount(
+      {
+        lines: [
+          { ...held.lines[0], qty: 2, price: 80, discount: 15, discountType: "percent" },
+        ],
+        cartDiscount: 0,
+        cartDiscountType: "amount",
+      },
+      {
+        actionKey: "discount_over_limit",
+        approvedPayload: {
+          discount_scope: "item",
+          target_index: 1,
+          target_product_id: "product-1",
+          target_line_key: "B-1001|1|product-1|2|80",
+        },
+      },
+    );
+    expect(item.lines[0]?.discount).toBe(0);
+  });
+
   it("refuses to redirect an approval to another bill or changed item", () => {
     const wrongBill = applyApprovedDiscount(held, {
       requestId: "request-wrong-bill",
@@ -303,6 +325,8 @@ describe("approval bill details", () => {
     expect(register).toContain("appliedSnapshotHash");
     expect(register).toContain("revokeApprovalDiscountRef.current(approval)");
     expect(register).toContain("resumedGrant.grantToken");
+    expect(register).toContain("revokeApprovalDiscountRef.current(resumedGrant)");
+    expect(register).toContain("activeApproval: appliedApproval");
   });
 
   it("returns and displays the durable approver identity and payable total", () => {
