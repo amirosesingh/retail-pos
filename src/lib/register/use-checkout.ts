@@ -502,49 +502,54 @@ export function useCheckout(deps: CheckoutDeps) {
     try {
       setSaving(true);
       if (!attemptId.current) attemptId.current = crypto.randomUUID();
-      sale = await recordSale({
-        storeId: currentStore.id,
-        clientTxnId: attemptId.current,
-        ...(billNo ? { receiptNo: billNo } : {}),
-        shiftId: activeShift.id,
-        lines,
-        subtotal: totals.subtotal,
-        discount: totals.discount,
-        tax: totals.tax,
-        total: chargeTotal,
-        paid,
-        change: r2(Math.max(0, paid - chargeTotal)),
-        method: splitting ? headline : method,
-        payments,
-        memberId,
-        pointsEarned,
-        cashier: activeCashier,
-        // Always recorded for reconciliation, even when nothing is printed.
-        roundingAdjustment: rounding.adjustment,
-        ...(rounding.adjustment ? { roundingLabel: roundingOf(roundingCfg).receiptLabel } : {}),
-        ...(method === "bank_transfer" ? { transferRef: transferRef.trim() } : {}),
-        ...(exchangeRef ? { exchangeOfReceiptNo: exchangeRef, exchangeCredit: totals.credit } : {}),
-        ...(() => {
-          const grant = deps.getAuthorization?.();
-          return grant
+      sale = await recordSale(
+        {
+          storeId: currentStore.id,
+          clientTxnId: attemptId.current,
+          ...(billNo ? { receiptNo: billNo } : {}),
+          shiftId: activeShift.id,
+          lines,
+          subtotal: totals.subtotal,
+          discount: totals.discount,
+          tax: totals.tax,
+          total: chargeTotal,
+          paid,
+          change: r2(Math.max(0, paid - chargeTotal)),
+          method: splitting ? headline : method,
+          payments,
+          memberId,
+          pointsEarned,
+          cashier: activeCashier,
+          // Always recorded for reconciliation, even when nothing is printed.
+          roundingAdjustment: rounding.adjustment,
+          ...(rounding.adjustment ? { roundingLabel: roundingOf(roundingCfg).receiptLabel } : {}),
+          ...(method === "bank_transfer" ? { transferRef: transferRef.trim() } : {}),
+          ...(exchangeRef
+            ? { exchangeOfReceiptNo: exchangeRef, exchangeCredit: totals.credit }
+            : {}),
+          ...(() => {
+            const grant = deps.getAuthorization?.();
+            return grant
+              ? {
+                  authorizationRequestId: grant.requestId,
+                  authorizedBy: grant.approvedBy ?? null,
+                  authorizedAt: new Date().toISOString(),
+                }
+              : {};
+          })(),
+          ...(coupon
             ? {
-                authorizationRequestId: grant.requestId,
-                authorizedBy: grant.approvedBy ?? null,
-                authorizedAt: new Date().toISOString(),
+                couponCode: coupon.code,
+                couponPromoId: coupon.promoId,
+                couponScope: coupon.scope,
+                couponDiscount: coupon.discount,
+                couponName: coupon.name,
+                couponRemaining: coupon.remaining,
               }
-            : {};
-        })(),
-        ...(coupon
-          ? {
-              couponCode: coupon.code,
-              couponPromoId: coupon.promoId,
-              couponScope: coupon.scope,
-              couponDiscount: coupon.discount,
-              couponName: coupon.name,
-              couponRemaining: coupon.remaining,
-            }
-          : {}),
-      });
+            : {}),
+        },
+        member,
+      );
     } catch (e) {
       // The sale header may already be committed even though a later step
       // failed. Never tell the cashier "nothing was stored" in that case —
@@ -667,6 +672,7 @@ export function useCheckout(deps: CheckoutDeps) {
       void sendSaleOnWhatsApp(sale, customerNumber);
     }
     if (paidDisplay) publishDisplay(paidDisplay);
+
   }
 
   return {

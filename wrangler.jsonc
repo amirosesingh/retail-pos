@@ -15,7 +15,7 @@
   // wiped values typed into the dashboard. `keep_vars` stops that: variables
   // and secrets set in the dashboard survive each deploy.
   "keep_vars": true,
-  // The two public values (SUPABASE_URL, SUPABASE_ANON_KEY) are set as plain
+  // The POS and membership public URL/publishable-key pairs are set as plain
   // variables in the dashboard. They are deliberately NOT listed here: a value
   // written in this file would overwrite the dashboard one on every deploy.
   // One Worker serves the back office and both public storefront hosts.
@@ -27,6 +27,7 @@
   ]
   // Server-only values stay encrypted secrets, never committed here:
   //   wrangler secret put POS_SUPABASE_SERVICE_ROLE_KEY
+  //   wrangler secret put MEMBERSHIP_SUPABASE_SERVICE_ROLE_KEY
   //   wrangler secret put SETTINGS_ENCRYPTION_KEY
   //   wrangler secret put SECURITY_ALERT_INGEST_SECRET
 }

@@ -61,6 +61,12 @@ function message(error: { message?: string } | null, fallback: string): string {
     return "This membership is already linked to another login. Please contact the store for help.";
   }
   if (raw.includes("MEMBERSHIP_AUTH_REQUIRED")) return "Your login expired. Please sign in again.";
+  if (raw.includes("MEMBERSHIP_PHONE_VERIFICATION_REQUIRED")) {
+    return "Verify your mobile number by SMS before creating a membership.";
+  }
+  if (raw.includes("MEMBERSHIP_PHONE_ALREADY_REGISTERED")) {
+    return "This mobile number already belongs to a membership. Sign in with SMS OTP instead.";
+  }
   return raw;
 }
 

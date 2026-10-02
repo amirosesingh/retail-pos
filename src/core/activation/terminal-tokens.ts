@@ -22,6 +22,7 @@ import { recordActivationAttempt } from "@/core/activation/terminal-activation-l
 import { resetHealthCache } from "@/core/activation/connection-health";
 import { canRelay, relayOp } from "@/core/api/sync-relay";
 import { saveBackendUrl } from "@/lib/backend-config";
+import { serverOrigin } from "@/lib/server-origin";
 import {
   canRuntimeClaimToken,
   terminalRuntimePlatform,
@@ -36,6 +37,15 @@ import {
 } from "@/lib/external-supabase-config";
 
 export type TokenStatus = "active" | "used" | "revoked";
+
+/** Company HTTPS gateway embedded in activation QR codes. */
+function activationBackendUrl(): string | undefined {
+  const configured = serverOrigin();
+  if (configured) return configured;
+  if (typeof window === "undefined") return undefined;
+  const origin = window.location.origin.trim().replace(/\/+$/, "");
+  return /^https:\/\//i.test(origin) ? origin : undefined;
+}
 
 /** Best-effort operating system name from the browser/shell. */
 function claimOs(): string {
@@ -292,7 +302,7 @@ export async function issueTerminalToken(input: {
     code: await encryptActivationV1({
       supabaseUrl: supabaseConfig().url,
       supabaseAnonKey: supabaseConfig().key,
-      backendUrl: typeof window !== "undefined" ? window.location.origin : undefined,
+      backendUrl: activationBackendUrl(),
       pairToken: id,
       ts: issuedAt,
       deviceName: input.deviceName,
@@ -343,7 +353,7 @@ export async function reissueTerminalToken(
     code: await encryptActivationV1({
       supabaseUrl: supabaseConfig().url,
       supabaseAnonKey: supabaseConfig().key,
-      backendUrl: typeof window !== "undefined" ? window.location.origin : undefined,
+      backendUrl: activationBackendUrl(),
       pairToken: id,
       ts: issuedAt,
       deviceName: token.deviceName,

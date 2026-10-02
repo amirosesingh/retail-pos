@@ -8,11 +8,10 @@ describe("customer membership portal security", () => {
   it("isolates member authentication from the staff Supabase session", () => {
     const client = read("src/integrations/supabase/external-client.ts");
     expect(client).toContain('const MEMBER_STORAGE_KEY = "sb-member-portal-auth-token"');
-    expect(client).toContain(
-      "createExternalClient(MEMBER_STORAGE_KEY, MEMBER_PROJECT_MARK_KEY, false, false)",
-    );
+    expect(client).toContain('"membership"');
     expect(client).toContain("storage: persistSession &&");
-    expect(client).toContain("const { url, key } = supabaseConfig()");
+    expect(client).toContain("const { url, key } = supabaseConfig(configScope)");
+    expect(client).toContain('configScope: "pos" | "membership" = "pos"');
   });
 
   it("binds portal reads and edits to verified auth ownership", () => {
@@ -58,5 +57,47 @@ describe("customer membership portal security", () => {
     expect(sql).toContain("nullif(btrim(phone), '') IS NOT NULL");
     expect(sql).toContain("USING ((SELECT public.is_staff_now()))");
     expect(sql).toContain("WITH CHECK ((SELECT public.is_staff_now()))");
+  });
+
+  it("keeps membership lookup private while SQL Server owns POS activity", () => {
+    const membershipSql = read(
+      "supabase/membership/migrations/20261002183000_isolated_membership_project.sql",
+    );
+    const lookupSql = read(
+      "supabase/membership/migrations/20261002183500_membership_lookup_scaling.sql",
+    );
+    const consistencySql = read(
+      "supabase/membership/migrations/20261002184000_membership_event_consistency.sql",
+    );
+    const phoneNumberSql = read(
+      "supabase/membership/migrations/20261002184200_phone_membership_number.sql",
+    );
+    const service = read("src/lib/membership-service.server.ts");
+    const client = read("src/lib/membership-service.functions.ts");
+    const register = read("src/routes/index.tsx");
+    const checkout = read("src/lib/register/use-checkout.ts");
+
+    expect(membershipSql).toContain("event_id text primary key");
+    expect(membershipSql).toContain("MEMBERSHIP_SERVICE_REQUIRED");
+    expect(lookupSql).toContain("v_phone <> ''");
+    expect(lookupSql).toContain("members_name_prefix_idx");
+    expect(consistencySql).toContain("round(coalesce((p_event->>'amount_delta')::numeric, 0), 2)");
+    expect(phoneNumberSql).toContain("MEMBERSHIP_PHONE_VERIFICATION_REQUIRED");
+    expect(phoneNumberSql).toContain("v_uid, v_phone, v_name");
+    expect(service).toContain("AbortSignal.timeout(8_000)");
+    expect(service).toContain("phone: row.member_code");
+    expect(service).toContain("await verifyRelayCaller(parsed.data)");
+    expect(client).toContain('posFetch("/api/v1/pos/sync?operation=membership_lookup"');
+    expect(client).not.toContain("MEMBERSHIP_SUPABASE_SERVICE_ROLE_KEY");
+    expect(register).toContain("void upsertMember(cached)");
+    expect(checkout).not.toContain("postMembershipSale");
+    expect(service).not.toContain("membership_event_outbox");
+  });
+
+  it("embeds the configured company gateway in phone-issued terminal QR codes", () => {
+    const activation = read("src/core/activation/terminal-tokens.ts");
+    expect(activation).toContain("const configured = serverOrigin()");
+    expect(activation).toContain("backendUrl: activationBackendUrl()");
+    expect(activation).not.toContain("backendUrl: typeof window !==");
   });
 });

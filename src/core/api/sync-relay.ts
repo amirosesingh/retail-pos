@@ -14,7 +14,12 @@ import type { SyncOp } from "@/lib/sync-outbox";
 const credentials = readCredentials;
 
 /** Answer from the server setup probe: presence only, never key material. */
-export type SyncHealth = { serviceKey: boolean; posUrl: boolean; host: string };
+export type SyncHealth = {
+  serviceKey: boolean;
+  posUrl: boolean;
+  membershipService: boolean;
+  host: string;
+};
 
 /** Why the setup probe could not be read, in words staff can act on. */
 export type SyncHealthResult = { ok: true; health: SyncHealth } | { ok: false; reason: string };
@@ -44,7 +49,7 @@ export async function syncHealthResult(): Promise<SyncHealthResult> {
     };
   }
   const text = await res.text().catch(() => "");
-  let body: { serviceKey?: boolean; posUrl?: boolean } | null = null;
+  let body: { serviceKey?: boolean; posUrl?: boolean; membershipService?: boolean } | null = null;
   try {
     body = JSON.parse(text) as { serviceKey?: boolean; posUrl?: boolean };
   } catch {
@@ -61,6 +66,7 @@ export async function syncHealthResult(): Promise<SyncHealthResult> {
     health: {
       serviceKey: !!body.serviceKey,
       posUrl: !!body.posUrl,
+      membershipService: !!body.membershipService,
       host: origin || (typeof window === "undefined" ? "" : window.location.host),
     },
   };

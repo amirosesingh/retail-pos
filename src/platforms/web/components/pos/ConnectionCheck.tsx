@@ -82,6 +82,16 @@ export function ConnectionCheck() {
           ? `Key present on ${health.health.host}`
           : `Key missing on ${health.health.host} — configure the service key on the hosted POS backend`,
     });
+    results.push({
+      label: "Membership gateway",
+      ok: health.ok && health.health.membershipService,
+      warn: !health.ok || !health.health.membershipService,
+      detail: !health.ok
+        ? health.reason
+        : health.health.membershipService
+          ? `Secure member lookup is ready on ${health.health.host}`
+          : `Membership variables are missing on ${health.health.host} — configure them on the hosted backend, not on this till`,
+    });
 
 
       setChecks(results);

@@ -31,6 +31,11 @@ export const Route = createFileRoute("/api/v1/pos/sync")({
           const { handleSystemAuditRequest } = await import("@/lib/system-audit-endpoint.server");
           return withCors(await handleSystemAuditRequest(request), request);
         }
+        if (new URL(request.url).searchParams.get("operation") === "membership_lookup") {
+          const { handleMembershipLookupRequest } =
+            await import("@/lib/membership-service.server");
+          return withCors(await handleMembershipLookupRequest(request), request);
+        }
         const { handleSyncRequest } = await import("@/lib/sync-endpoint.server");
         return withCors(await handleSyncRequest(request), request);
       },

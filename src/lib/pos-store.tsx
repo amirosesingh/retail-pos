@@ -294,6 +294,7 @@ type Ctx = {
   shiftChecked: boolean;
   recordSale: (
     sale: Omit<Sale, "id" | "receiptNo" | "createdAt"> & { receiptNo?: string },
+    memberSnapshot?: Member | null,
   ) => Promise<Sale>;
   refundSale: (saleId: string, grantToken?: string | null) => Promise<boolean>;
   changeSalePayment: (saleId: string, method: PaymentMethod, reason?: string) => Promise<boolean>;
@@ -1500,7 +1501,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
   );
 
   const recordSale = useCallback(
-    async (input: Omit<Sale, "id" | "receiptNo" | "createdAt"> & { receiptNo?: string }) => {
+    async (
+      input: Omit<Sale, "id" | "receiptNo" | "createdAt"> & { receiptNo?: string },
+      memberSnapshot?: Member | null,
+    ) => {
       const snapshot = stateRef.current;
       const counter = snapshot.counter + 1;
       // Never write a bill without a branch — the terminal's branch is authoritative.
@@ -1555,7 +1559,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
             snapshot.settings.integrations.autoArchiveZeroStock !== false,
           );
         });
-      const member = snapshot.members.find((m) => m.id === input.memberId) ?? null;
+      const member =
+        memberSnapshot?.id === input.memberId
+          ? memberSnapshot
+          : (snapshot.members.find((m) => m.id === input.memberId) ?? null);
       const updatedMember = member
         ? {
             ...member,
@@ -1611,16 +1618,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
               )
             : p;
         });
-        const members = s.members.map((m) =>
-          m.id === input.memberId
-            ? {
-                ...m,
-                points:
-                  m.points + input.pointsEarned - (input.method === "points" ? input.paid : 0),
-                totalSpend: Number((m.totalSpend + input.total).toFixed(2)),
-              }
-            : m,
-        );
+        const members = updatedMember
+          ? s.members.some((m) => m.id === updatedMember.id)
+            ? s.members.map((m) => (m.id === updatedMember.id ? updatedMember : m))
+            : [updatedMember, ...s.members]
+          : s.members;
         const existingSales = s.sales.filter((existing) => existing.id !== sale.id);
         const tagged = input.exchangeOfReceiptNo
           ? existingSales.map((x) =>
@@ -2212,7 +2214,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
             0,
           );
           return quantity
-            ? bump(p, sale.storeId, quantity, s.settings.integrations.autoArchiveZeroStock !== false)
+            ? bump(
+                p,
+                sale.storeId,
+                quantity,
+                s.settings.integrations.autoArchiveZeroStock !== false,
+              )
             : p;
         });
         return {
@@ -2595,7 +2602,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   /** Bulk field edit (category, tax, web visibility…) across a selection. */
   const patchProducts = useCallback(async (ids: string[], patch: Partial<Product>) => {
     const set = new Set(ids);
-    const zeroStockLifecycle = stateRef.current.settings.integrations.autoArchiveZeroStock !== false;
+    const zeroStockLifecycle =
+      stateRef.current.settings.integrations.autoArchiveZeroStock !== false;
     const explicitArchiveState = patch.archived !== undefined;
     const updated = stateRef.current.products
       .filter((p) => set.has(p.id))

@@ -6,9 +6,11 @@
  * origin, and browser connections are limited to the app and its configured
  * Supabase project.
  */
-export function contentSecurityPolicy(supabaseUrl?: string): string {
+export function contentSecurityPolicy(supabaseUrls?: string | string[]): string {
   const connections = new Set(["'self'", "https://cloudflareinsights.com"]);
-  if (supabaseUrl) {
+  for (const supabaseUrl of typeof supabaseUrls === "string"
+    ? [supabaseUrls]
+    : (supabaseUrls ?? [])) {
     try {
       const origin = new URL(supabaseUrl).origin;
       connections.add(origin);
@@ -40,7 +42,10 @@ export function contentSecurityPolicy(supabaseUrl?: string): string {
 }
 
 /** Clone a response with the hosted application's security boundary applied. */
-export function withWebSecurityHeaders(response: Response, supabaseUrl?: string): Response {
+export function withWebSecurityHeaders(
+  response: Response,
+  supabaseUrls?: string | string[],
+): Response {
   const headers = new Headers(response.headers);
   // The POS owns one enforced policy. Drop any report-only policy inherited
   // from an upstream renderer or proxy so browsers do not emit misleading
@@ -52,7 +57,7 @@ export function withWebSecurityHeaders(response: Response, supabaseUrl?: string)
     // can ask a new Workers deployment for chunks that no longer exist.
     headers.set("Cache-Control", "no-cache, must-revalidate");
   }
-  headers.set("Content-Security-Policy", contentSecurityPolicy(supabaseUrl));
+  headers.set("Content-Security-Policy", contentSecurityPolicy(supabaseUrls));
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   headers.set(

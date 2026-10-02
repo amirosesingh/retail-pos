@@ -48,7 +48,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
-import { commitLabel, searchCloudMembers } from "@/core/api/pos-db";
+import { commitLabel } from "@/core/api/pos-db";
+import { searchMembershipForPos } from "@/lib/membership-service.functions";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { ActionButton } from "@/platforms/web/components/pos/ActionButton";
 import { CatalogPanel } from "@/platforms/web/components/pos/CatalogPanel";
@@ -195,6 +196,7 @@ function Register() {
     openShift,
     currentStore,
     upsertProduct,
+    upsertMember,
     updateSettings,
   } = usePos();
   useUiScale();
@@ -689,9 +691,12 @@ function Register() {
     );
     let alive = true;
     const timer = window.setTimeout(() => {
-      void searchCloudMembers(q, 5).then((rows) => {
-        if (alive && rows.length) setMemberMatches(rows);
-      });
+      void getPosCallerAuth()
+        .then((auth) => searchMembershipForPos({ data: { ...auth, query: q, limit: 5 } }))
+        .then((rows) => {
+          if (alive && rows.length) setMemberMatches(rows as Member[]);
+        })
+        .catch(() => undefined);
     }, 250);
     return () => {
       alive = false;
@@ -707,9 +712,12 @@ function Register() {
     }
     let alive = true;
     const timer = window.setTimeout(() => {
-      void searchCloudMembers(q, 5).then((rows) => {
-        if (alive) setBookMemberMatches(rows);
-      });
+      void getPosCallerAuth()
+        .then((auth) => searchMembershipForPos({ data: { ...auth, query: q, limit: 5 } }))
+        .then((rows) => {
+          if (alive) setBookMemberMatches(rows as Member[]);
+        })
+        .catch(() => undefined);
     }, 250);
     return () => {
       alive = false;
@@ -1072,17 +1080,35 @@ function Register() {
 
   /** Attaches a member to the ticket and surfaces any vouchers they hold. */
   function attachMember(m: Member) {
-    setSelectedMember(m);
-    setMemberId(m.id);
+    const existing = state.members.find((candidate) => candidate.id === m.id);
+    // Online lookup returns the membership project's current identity fields,
+    // while SQL Server remains authoritative for locally accrued points and
+    // spend. Never replace those local totals with a stale lookup snapshot.
+    const cached = existing
+      ? {
+          ...m,
+          points: existing.points,
+          totalSpend: existing.totalSpend,
+          joinedAt: existing.joinedAt || m.joinedAt,
+        }
+      : m;
+    setSelectedMember(cached);
+    setMemberId(cached.id);
     setMemberQuery("");
-    toast.success(`${m.name} attached to receipt`);
-    void loadMemberVouchers(m.id)
+    toast.success(`${cached.name} attached to receipt`);
+    // Cache the verified member in the existing SQL members table as soon as
+    // they are attached. The till can then find and reuse the member during an
+    // outage or after an app restart; no separate membership outbox is needed.
+    void upsertMember(cached).catch((error) =>
+      notifyError(error, "Member attached, but the offline copy could not be saved"),
+    );
+    void loadMemberVouchers(cached.id)
       .then((vs) => {
         if (!vs.length) return;
         toast.info(
           vs.length === 1
-            ? `${m.name} has a voucher: ${vs[0]!.campaign.name}`
-            : `${m.name} has ${vs.length} vouchers available`,
+            ? `${cached.name} has a voucher: ${vs[0]!.campaign.name}`
+            : `${cached.name} has ${vs.length} vouchers available`,
           {
             action: {
               label: "Apply",

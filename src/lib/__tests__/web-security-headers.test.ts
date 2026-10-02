@@ -17,6 +17,17 @@ describe("hosted application security headers", () => {
     expect(policy).toContain("frame-ancestors 'none'");
   });
 
+  it("allows both isolated POS and membership Supabase projects", () => {
+    const policy = contentSecurityPolicy([
+      "https://pos-project.supabase.co",
+      "https://membership-project.supabase.co",
+    ]);
+    expect(policy).toContain("https://pos-project.supabase.co");
+    expect(policy).toContain("wss://pos-project.supabase.co");
+    expect(policy).toContain("https://membership-project.supabase.co");
+    expect(policy).toContain("wss://membership-project.supabase.co");
+  });
+
   it("preserves the response while applying browser protections", async () => {
     const secured = withWebSecurityHeaders(
       new Response("ready", {

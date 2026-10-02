@@ -10,6 +10,7 @@
 import { isTerminalApp } from "@/platform-config/platform";
 
 type Source = { url: string; key: string };
+export type SupabaseScope = "pos" | "membership";
 
 /**
  * No tenant is baked into the build. A shipped APK, installer or web bundle
@@ -37,7 +38,8 @@ let runtimeEnv: Record<string, unknown> | undefined;
 export function setRuntimeEnv(env: unknown): void {
   if (!env || typeof env !== "object") return;
   runtimeEnv = env as Record<string, unknown>;
-  cached = undefined;
+  cachedPos = undefined;
+  cachedMembership = undefined;
 }
 
 /**
@@ -51,14 +53,14 @@ export function setTerminalSupabaseOverride(url: string, key: string): boolean {
   if (!next.url || !next.key) return false;
   if (terminalOverride?.url === next.url && terminalOverride?.key === next.key) return false;
   terminalOverride = next;
-  cached = undefined;
+  cachedPos = undefined;
   return true;
 }
 
 export function clearTerminalSupabaseOverride(): boolean {
   if (!terminalOverride) return false;
   terminalOverride = undefined;
-  cached = undefined;
+  cachedPos = undefined;
   return true;
 }
 
@@ -101,11 +103,17 @@ function bags(): Record<string, unknown>[] {
  * another. The managed-platform `VITE_SUPABASE_*` names are deliberately not
  * accepted: the shop's own project is the only database this POS talks to.
  */
-const PAIRS: [string, string[]][] = [
+const PAIRS: Record<SupabaseScope, [string, string[]][]> = {
   // The sole web pair: hosting/runtime variables on the server, printed into
   // the page as __POS_CONFIG__ for the browser. Device builds never read it.
-  ["SUPABASE_URL", ["SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY"]],
-];
+  pos: [["SUPABASE_URL", ["SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY"]]],
+  membership: [
+    [
+      "MEMBERSHIP_SUPABASE_URL",
+      ["MEMBERSHIP_SUPABASE_PUBLISHABLE_KEY", "MEMBERSHIP_SUPABASE_ANON_KEY"],
+    ],
+  ],
+};
 
 /** First non-empty value among the accepted names for one setting. */
 function firstOf(bag: Record<string, unknown> | undefined, names: string[]): string {
@@ -117,12 +125,15 @@ function firstOf(bag: Record<string, unknown> | undefined, names: string[]): str
 }
 
 export class SupabaseConfigError extends Error {
-  constructor() {
+  constructor(scope: SupabaseScope = "pos") {
     super(
-      isTerminalApp()
-        ? "Cloud sync is not set up on this device. Open Settings → Database & Cloud Connection " +
+      scope === "membership"
+        ? "The membership service is not configured. Set MEMBERSHIP_SUPABASE_URL and " +
+            "MEMBERSHIP_SUPABASE_PUBLISHABLE_KEY in the web hosting variables."
+        : isTerminalApp()
+          ? "Cloud sync is not set up on this device. Open Settings → Database & Cloud Connection " +
             "and enter the central database URL and API key. Local trading is unaffected."
-        : "Supabase is not configured. Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY " +
+          : "Supabase is not configured. Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY " +
             "(or SUPABASE_ANON_KEY) in the " +
             "hosting variables (Cloudflare: Workers → Settings → Variables & Secrets) " +
             "to your own Supabase project before starting the app.",
@@ -131,35 +142,38 @@ export class SupabaseConfigError extends Error {
   }
 }
 
-let cached: Source | undefined;
+let cachedPos: Source | undefined;
+let cachedMembership: Source | undefined;
 
 /** Resolved connection details, or a hard error when nothing is configured. */
-export function supabaseConfig(): Source {
+export function supabaseConfig(scope: SupabaseScope = "pos"): Source {
+  const cached = scope === "pos" ? cachedPos : cachedMembership;
   if (cached) return cached;
-  if (terminalOverride) {
-    cached = terminalOverride;
-    return cached;
+  if (scope === "pos" && terminalOverride) {
+    cachedPos = terminalOverride;
+    return cachedPos;
   }
   // On a till or phone the tenant comes only from the sealed per-device store
   // (applied above as the terminal override). Bundle-baked and environment
   // values belong to the web deployment and are deliberately invisible here.
-  if (isTerminalApp()) throw new SupabaseConfigError();
+  if (isTerminalApp()) throw new SupabaseConfigError(scope);
   for (const bag of bags()) {
-    for (const [urlName, keyNames] of PAIRS) {
+    for (const [urlName, keyNames] of PAIRS[scope]) {
       const found = fromEnv(bag, urlName, keyNames);
       if (found.url && found.key) {
-        cached = found;
-        return cached;
+        if (scope === "pos") cachedPos = found;
+        else cachedMembership = found;
+        return found;
       }
     }
   }
-  throw new SupabaseConfigError();
+  throw new SupabaseConfigError(scope);
 }
 
 /** True when both halves are present — for health checks that must not throw. */
-export function hasSupabaseConfig(): boolean {
+export function hasSupabaseConfig(scope: SupabaseScope = "pos"): boolean {
   try {
-    supabaseConfig();
+    supabaseConfig(scope);
     return true;
   } catch {
     return false;
@@ -167,22 +181,26 @@ export function hasSupabaseConfig(): boolean {
 }
 
 /** Where the resolved values came from — for the health probe, never throws. */
-export function supabaseConfigSource(): "injected" | "runtime" | "build" | "missing" {
+export function supabaseConfigSource(
+  scope: SupabaseScope = "pos",
+): "injected" | "runtime" | "build" | "missing" {
   const check = (bag: Record<string, unknown> | undefined) =>
-    PAIRS.some(([urlName, keyNames]) => {
+    PAIRS[scope].some(([urlName, keyNames]) => {
       const found = fromEnv(bag, urlName, keyNames);
       return !!found.url && !!found.key;
     });
 
   if (check(injectedBag())) return "injected";
   if (check(runtimeEnv)) return "runtime";
-  return hasSupabaseConfig() ? "build" : "missing";
+  return hasSupabaseConfig(scope) ? "build" : "missing";
 }
 
 /** Only the public half — safe to print into the page for the browser. */
-export function publicSupabaseConfig(): { url: string; key: string } | undefined {
+export function publicSupabaseConfig(
+  scope: SupabaseScope = "pos",
+): { url: string; key: string } | undefined {
   try {
-    const { url, key } = supabaseConfig();
+    const { url, key } = supabaseConfig(scope);
     return { url, key };
   } catch {
     return undefined;

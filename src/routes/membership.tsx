@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   BadgeCheck,
@@ -30,6 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { money } from "@/lib/pos-store";
+import { isTerminalApp } from "@/platform-config/platform";
 import { internationalPhone, PHONE_COUNTRIES } from "@/lib/phone-countries";
 import {
   enrollMemberPortal,
@@ -46,6 +47,9 @@ import {
 } from "@/lib/member-portal";
 
 export const Route = createFileRoute("/membership")({
+  beforeLoad: () => {
+    if (isTerminalApp()) throw redirect({ to: "/" });
+  },
   head: () => ({
     meta: [
       { title: "My membership — Retail" },
@@ -64,8 +68,10 @@ function MembershipPage() {
   const [sales, setSales] = useState<MemberPortalSale[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const refreshSequence = useRef(0);
 
   const refresh = useCallback(async (activeSession: Session | null) => {
+    const sequence = ++refreshSequence.current;
     setSession(activeSession);
     if (!activeSession) {
       setProfile(null);
@@ -77,12 +83,16 @@ function MembershipPage() {
     setError("");
     try {
       const nextProfile = await loadMemberPortalProfile();
+      if (sequence !== refreshSequence.current) return;
       setProfile(nextProfile);
-      setSales(nextProfile ? await loadMemberPortalSales() : []);
+      const nextSales = nextProfile ? await loadMemberPortalSales() : [];
+      if (sequence !== refreshSequence.current) return;
+      setSales(nextSales);
     } catch (cause) {
+      if (sequence !== refreshSequence.current) return;
       setError(cause instanceof Error ? cause.message : "Could not load your membership.");
     } finally {
-      setLoading(false);
+      if (sequence === refreshSequence.current) setLoading(false);
     }
   }, []);
 
@@ -131,7 +141,7 @@ function MembershipPage() {
             </Button>
           ) : (
             <Link to="/join" className="text-sm font-medium text-primary hover:underline">
-              Create a membership
+              Become a Member
             </Link>
           )}
         </header>
@@ -148,7 +158,15 @@ function MembershipPage() {
             error={error}
             onSaved={(next) => {
               setProfile(next);
-              void loadMemberPortalSales().then(setSales);
+              void loadMemberPortalSales()
+                .then(setSales)
+                .catch((cause) =>
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "Your membership was saved, but purchase history could not be loaded.",
+                  ),
+                );
             }}
           />
         ) : (
@@ -242,7 +260,12 @@ function MemberLogin({ onSignedIn }: { onSignedIn: (session: Session) => void })
         </Label>
         <div className="flex gap-2">
           {channel === "phone" ? (
-            <CountrySelect value={countryCode} disabled={busy || sent} onChange={setCountryCode} compact />
+            <CountrySelect
+              value={countryCode}
+              disabled={busy || sent}
+              onChange={setCountryCode}
+              compact
+            />
           ) : null}
           <Input
             id="member-destination"
@@ -331,6 +354,7 @@ function MemberEnrollment({
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
   const contact = session.user.phone || session.user.email || "verified contact";
+  const verifiedPhone = session.user.phone?.trim() || "";
 
   return (
     <section className="mx-auto max-w-xl rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">
@@ -340,6 +364,12 @@ function MemberEnrollment({
         {contact} is verified. We could not find an existing membership for it, so complete your
         profile below.
       </p>
+      {!verifiedPhone ? (
+        <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+          A verified mobile number is required because your phone number is your membership number.
+          Sign out, choose SMS OTP, and verify your phone to continue.
+        </p>
+      ) : null}
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor="member-full-name">Full name</Label>
@@ -356,7 +386,13 @@ function MemberEnrollment({
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="member-postal">Postal code (optional)</Label>
-          <Input id="member-postal" value={postalCode} maxLength={32} autoComplete="postal-code" onChange={(e) => setPostalCode(e.target.value)} />
+          <Input
+            id="member-postal"
+            value={postalCode}
+            maxLength={32}
+            autoComplete="postal-code"
+            onChange={(e) => setPostalCode(e.target.value)}
+          />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="member-dob">Date of birth</Label>
@@ -385,7 +421,7 @@ function MemberEnrollment({
       ) : null}
       <Button
         className="mt-5 w-full"
-        disabled={busy || fullName.trim().length < 2}
+        disabled={busy || !verifiedPhone || fullName.trim().length < 2}
         onClick={() => {
           setBusy(true);
           setFormError("");
@@ -400,7 +436,7 @@ function MemberEnrollment({
         }}
       >
         {busy ? <Loader2 className="size-4 animate-spin" /> : <Gift className="size-4" />}
-        Create membership
+        Become a Member
       </Button>
     </section>
   );
@@ -425,6 +461,14 @@ function MemberDashboard({
   const [postalCode, setPostalCode] = useState(profile.postalCode);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  const resetDraft = () => {
+    setFullName(profile.fullName);
+    setAddress(profile.address);
+    setDateOfBirth(profile.dateOfBirth ?? "");
+    setCountryCode(profile.countryCode || "BN");
+    setPostalCode(profile.postalCode);
+  };
 
   return (
     <div className="space-y-5">
@@ -469,7 +513,14 @@ function MemberDashboard({
         <div className="p-6 sm:p-8">
           <div className="flex items-center justify-between gap-3">
             <h3 className="font-semibold">Profile details</h3>
-            <Button size="sm" variant="outline" onClick={() => setEditing((value) => !value)}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (editing) resetDraft();
+                setEditing((value) => !value);
+              }}
+            >
               <Pencil className="size-4" /> {editing ? "Cancel" : "Edit"}
             </Button>
           </div>
@@ -503,14 +554,25 @@ function MemberDashboard({
                 <CountrySelect value={countryCode} disabled={busy} onChange={setCountryCode} />
               </Field>
               <Field label="Postal code">
-                <Input value={postalCode} maxLength={32} autoComplete="postal-code" onChange={(e) => setPostalCode(e.target.value)} />
+                <Input
+                  value={postalCode}
+                  maxLength={32}
+                  autoComplete="postal-code"
+                  onChange={(e) => setPostalCode(e.target.value)}
+                />
               </Field>
               <div className="sm:col-span-2">
                 <Button
                   disabled={busy || fullName.trim().length < 2}
                   onClick={() => {
                     setBusy(true);
-                    void updateMemberPortal({ fullName, address, dateOfBirth, countryCode, postalCode })
+                    void updateMemberPortal({
+                      fullName,
+                      address,
+                      dateOfBirth,
+                      countryCode,
+                      postalCode,
+                    })
                       .then((next) => {
                         onProfile(next);
                         setEditing(false);
@@ -626,10 +688,23 @@ function countryName(code: string) {
   return PHONE_COUNTRIES.find((country) => country.code === code)?.name || "Not provided";
 }
 
-function CountrySelect({ value, disabled, onChange, compact = false }: { value: string; disabled: boolean; onChange: (value: string) => void; compact?: boolean }) {
+function CountrySelect({
+  value,
+  disabled,
+  onChange,
+  compact = false,
+}: {
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+  compact?: boolean;
+}) {
   return (
     <Select value={value} disabled={disabled} onValueChange={onChange}>
-      <SelectTrigger className={compact ? "w-[118px] shrink-0" : "w-full"} aria-label={compact ? "Phone country code" : "Country"}>
+      <SelectTrigger
+        className={compact ? "w-[118px] shrink-0" : "w-full"}
+        aria-label={compact ? "Phone country code" : "Country"}
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent className="max-h-72">

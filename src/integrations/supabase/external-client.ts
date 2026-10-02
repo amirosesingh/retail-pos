@@ -72,8 +72,9 @@ function createExternalClient(
   projectMarkKey = PROJECT_MARK_KEY,
   detectSessionInUrl = true,
   persistSession = true,
+  configScope: "pos" | "membership" = "pos",
 ) {
-  const { url, key } = supabaseConfig();
+  const { url, key } = supabaseConfig(configScope);
   dropForeignSession(url, storageKey, projectMarkKey);
   return createClient<Database>(url, key, {
     // Keep the key paired with the URL used to construct this client. A
@@ -112,7 +113,13 @@ export function externalClientSnapshot(): ReturnType<typeof createExternalClient
  */
 export function memberPortalClientSnapshot(): ReturnType<typeof createExternalClient> {
   if (!_memberClient) {
-    _memberClient = createExternalClient(MEMBER_STORAGE_KEY, MEMBER_PROJECT_MARK_KEY, false, false);
+    _memberClient = createExternalClient(
+      MEMBER_STORAGE_KEY,
+      MEMBER_PROJECT_MARK_KEY,
+      false,
+      false,
+      "membership",
+    );
   }
   return _memberClient;
 }

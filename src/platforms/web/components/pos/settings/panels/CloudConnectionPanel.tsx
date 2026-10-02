@@ -6,7 +6,7 @@
  *   1. Central database URL
  *   2. API key (publishable)
  *   3. POS backend address — the web address of your POS site, used for
- *      cashier sign-in and the sync relay
+ *      cashier sign-in, sync and the secure membership gateway
  *
  * Together they are one connection profile: they are tested together and
  * saved together (`saveConnectionProfile`), so a device can never end up with
@@ -141,7 +141,7 @@ export function CloudConnectionPanel({
               <DialogTitle>Database &amp; Cloud Connection</DialogTitle>
               <DialogDescription>
                 {terminal
-                  ? "Test and save the central database, publishable key, and POS backend as one connection profile."
+                  ? "Test and save the central database, publishable key, and company POS domain as one connection profile. Membership credentials remain on that server."
                   : "Review the cloud connection supplied by this website’s hosting environment."}
               </DialogDescription>
             </DialogHeader>
@@ -405,10 +405,11 @@ export function CloudConnectionPanel({
           {savedBackend
             ? `Sign-in and sync are sent to ${savedBackend}.`
             : "Not configured — this device cannot reach the POS backend for sign-in or sync."}{" "}
-          Enter the web address you open the POS on, for example{" "}
+          Enter the company web address you open the POS on, for example{" "}
           <code>https://pos.example.com</code>. This is <strong>not</strong> the database address:
-          the till talks to your POS site, and your POS site talks to the database with the key it
-          holds on the server.
+          the till performs a secure terminal handshake with your POS site. That server talks to
+          both database projects with credentials that never reach Electron. Do not enter the
+          membership project ID or service key on this PC.
         </p>
         {backendResult && (
           <p

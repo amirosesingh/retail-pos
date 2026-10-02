@@ -19,6 +19,7 @@ async function handleGet(): Promise<Response> {
         const { hasSupabaseConfig, supabaseConfigSource, runtimeEnvValue } = await import(
           "@/lib/external-supabase-config"
         );
+        const { hasMembershipGatewayConfig } = await import("@/lib/membership-service.server");
         // Presence only — never a value, a length or a prefix. Each line
         // accepts every name the resolver accepts, so a value supplied under
         // an alias is not reported as missing.
@@ -29,6 +30,9 @@ async function handleGet(): Promise<Response> {
             serviceKey: hasServiceKey(),
             posUrl: hasSupabaseConfig(),
             posUrlSource: supabaseConfigSource(),
+            // Presence only. The membership URL and privileged key never
+            // leave the hosted backend during the device handshake.
+            membershipService: hasMembershipGatewayConfig(),
             cloudflare: {
               SUPABASE_URL: present("SUPABASE_URL", "VITE_POS_SUPABASE_URL", "VITE_SUPABASE_URL"),
               SUPABASE_ANON_KEY: present(

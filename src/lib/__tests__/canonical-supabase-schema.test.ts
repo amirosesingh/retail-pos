@@ -20,6 +20,10 @@ function sqlFiles(directory = root): string[] {
 describe("canonical Supabase SQL", () => {
   it("keeps one manual upgrade, its CLI migrations, the installer and deliberate reset", () => {
     expect(sqlFiles().filter((file) => file.startsWith("supabase/"))).toEqual([
+      "supabase/membership/migrations/20261002183000_isolated_membership_project.sql",
+      "supabase/membership/migrations/20261002183500_membership_lookup_scaling.sql",
+      "supabase/membership/migrations/20261002184000_membership_event_consistency.sql",
+      "supabase/membership/migrations/20261002184200_phone_membership_number.sql",
       "supabase/migrations/20260925102835_fix_payment_transaction_idempotency.sql",
       "supabase/migrations/20260925105427_fix_pos_sale_commit_stock_alias.sql",
       "supabase/migrations/20260925105919_persist_pos_sale_payment_idempotency.sql",
@@ -84,6 +88,9 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261002093000_secure_member_portal.sql",
       "supabase/migrations/20261002163000_member_profile_details.sql",
       "supabase/migrations/20261002170000_harden_member_and_barcode_edges.sql",
+      "supabase/migrations/20261002184500_detach_pos_customer_auth.sql",
+      "supabase/migrations/20261002191500_remove_membership_event_outbox.sql",
+      "supabase/migrations/20261002192000_restore_staff_operational_policies.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

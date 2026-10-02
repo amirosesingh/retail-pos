@@ -11,16 +11,21 @@ type ServerEntry = {
 
 let serverEntryPromise: Promise<ServerEntry> | undefined;
 
-function configuredSupabaseUrl(): string | undefined {
-  try {
-    return supabaseConfig().url;
-  } catch {
-    return undefined;
+function configuredSupabaseUrls(): string[] {
+  const urls: string[] = [];
+  for (const scope of ["pos", "membership"] as const) {
+    try {
+      urls.push(supabaseConfig(scope).url);
+    } catch {
+      // The error page can still render while one independently configured
+      // backend is unavailable.
+    }
   }
+  return urls;
 }
 
 function secure(response: Response): Response {
-  return withWebSecurityHeaders(response, configuredSupabaseUrl());
+  return withWebSecurityHeaders(response, configuredSupabaseUrls());
 }
 
 async function getServerEntry(): Promise<ServerEntry> {

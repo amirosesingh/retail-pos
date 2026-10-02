@@ -1,6 +1,6 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { BadgeCheck, Gift, Loader2, Mail, MessageSquareText, PartyPopper } from "lucide-react";
+import { BadgeCheck, Gift, Loader2, MessageSquareText, PartyPopper } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,12 +21,16 @@ import {
 import { usePublicFlags } from "@/lib/public-flags";
 import { internationalPhone, PHONE_COUNTRIES } from "@/lib/phone-countries";
 import { PublicPageClosed } from "@/platforms/web/components/pos/PublicPageClosed";
+import { isTerminalApp } from "@/platform-config/platform";
 
 export const Route = createFileRoute("/join")({
+  beforeLoad: () => {
+    if (isTerminalApp()) throw redirect({ to: "/" });
+  },
   head: () => ({
     meta: [
-      { title: "Join the rewards club — Retail" },
-      { name: "description", content: "Create a verified membership with an email or SMS OTP." },
+      { title: "Become a Member — Retail" },
+      { name: "description", content: "Become a member using your verified mobile number." },
     ],
   }),
   component: JoinPage,
@@ -34,7 +38,7 @@ export const Route = createFileRoute("/join")({
 
 function JoinPage() {
   const { flags, ready } = usePublicFlags();
-  const [channel, setChannel] = useState<"email" | "phone">("phone");
+  const channel = "phone" as const;
   const [name, setName] = useState("");
   const [destination, setDestination] = useState("");
   const [address, setAddress] = useState("");
@@ -50,10 +54,7 @@ function JoinPage() {
 
   const validationError = () => {
     if (name.trim().length < 2) return "Enter your full name.";
-    if (channel === "email" && !/^\S+@\S+\.\S+$/.test(destination.trim())) {
-      return "Enter a valid email address.";
-    }
-    if (channel === "phone" && destination.replace(/\D/g, "").length < 6) {
+    if (destination.replace(/\D/g, "").length < 6) {
       return "Enter a valid mobile number.";
     }
     if (dateOfBirth && new Date(dateOfBirth) > new Date()) return "Enter a valid date of birth.";
@@ -125,30 +126,15 @@ function JoinPage() {
           <>
             <header className="text-center">
               <Gift className="mx-auto size-10 text-primary" aria-hidden />
-              <h1 className="mt-4 text-2xl font-semibold">Join the rewards club</h1>
+              <h1 className="mt-4 text-2xl font-semibold">Become a Member</h1>
               <p className="mt-2 text-sm text-muted-foreground">
-                Required: full name and one verified email or mobile number. Address and date of
-                birth, country and postal details complete your account profile.
+                Enter your details and verify your mobile number by SMS. Your verified phone number
+                will be your membership number.
               </p>
             </header>
 
-            <div className="mt-6 grid grid-cols-2 gap-2 rounded-lg bg-muted p-1">
-              <ChannelButton
-                active={channel === "phone"}
-                disabled={busy || step === "verify"}
-                onClick={() => switchChannel("phone", setChannel, setDestination, setError)}
-                icon={<MessageSquareText className="size-4" />}
-              >
-                SMS OTP
-              </ChannelButton>
-              <ChannelButton
-                active={channel === "email"}
-                disabled={busy || step === "verify"}
-                onClick={() => switchChannel("email", setChannel, setDestination, setError)}
-                icon={<Mail className="size-4" />}
-              >
-                Email OTP
-              </ChannelButton>
+            <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-muted p-3 text-sm font-medium">
+              <MessageSquareText className="size-4" /> SMS phone verification
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -162,21 +148,24 @@ function JoinPage() {
                   onChange={(e) => setName(e.target.value)}
                 />
               </Field>
-              <Field label={channel === "email" ? "Email address *" : "Mobile number *"} htmlFor="join-contact">
+              <Field label="Mobile number *" htmlFor="join-contact">
                 <div className="flex gap-2">
-                  {channel === "phone" ? (
-                    <CountrySelect value={countryCode} disabled={busy || step === "verify"} onChange={setCountryCode} compact />
-                  ) : null}
+                  <CountrySelect
+                    value={countryCode}
+                    disabled={busy || step === "verify"}
+                    onChange={setCountryCode}
+                    compact
+                  />
                   <Input
                     id="join-contact"
                     className="min-w-0 flex-1"
-                    type={channel === "email" ? "email" : "tel"}
-                    inputMode={channel === "email" ? "email" : "tel"}
+                    type="tel"
+                    inputMode="tel"
                     value={destination}
                     maxLength={160}
                     disabled={busy || step === "verify"}
-                    autoComplete={channel === "email" ? "email" : "tel-national"}
-                    placeholder={channel === "email" ? "you@example.com" : "8XX XXXX"}
+                    autoComplete="tel-national"
+                    placeholder="8XX XXXX"
                     onChange={(e) => setDestination(e.target.value)}
                   />
                 </div>
@@ -202,7 +191,11 @@ function JoinPage() {
                 />
               </Field>
               <Field label="Country" htmlFor="join-country">
-                <CountrySelect value={countryCode} disabled={busy || step === "verify"} onChange={setCountryCode} />
+                <CountrySelect
+                  value={countryCode}
+                  disabled={busy || step === "verify"}
+                  onChange={setCountryCode}
+                />
               </Field>
               <Field label="Postal code (optional)" htmlFor="join-postal">
                 <Input
@@ -221,7 +214,8 @@ function JoinPage() {
                 <div>
                   <Label>Six-digit verification code</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Sent to {otpDestination(channel, countryCode, destination)}. Nothing is saved until the code is verified.
+                    Sent to {otpDestination(channel, countryCode, destination)}. Nothing is saved
+                    until the code is verified.
                   </p>
                 </div>
                 <InputOTP
@@ -247,7 +241,7 @@ function JoinPage() {
                   ) : (
                     <BadgeCheck className="size-4" />
                   )}
-                  Verify and create membership
+                  Verify and become a member
                 </Button>
                 <div className="grid grid-cols-2 gap-2">
                   <Button
@@ -311,7 +305,11 @@ function CountrySelect({
 }) {
   return (
     <Select value={value} disabled={disabled} onValueChange={onChange}>
-      <SelectTrigger id={compact ? undefined : "join-country"} className={compact ? "w-[118px] shrink-0" : "w-full"} aria-label={compact ? "Phone country code" : "Country"}>
+      <SelectTrigger
+        id={compact ? undefined : "join-country"}
+        className={compact ? "w-[118px] shrink-0" : "w-full"}
+        aria-label={compact ? "Phone country code" : "Country"}
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent className="max-h-72">
@@ -322,43 +320,6 @@ function CountrySelect({
         ))}
       </SelectContent>
     </Select>
-  );
-}
-
-function switchChannel(
-  channel: "email" | "phone",
-  setChannel: (value: "email" | "phone") => void,
-  setDestination: (value: string) => void,
-  setError: (value: string) => void,
-) {
-  setChannel(channel);
-  setDestination("");
-  setError("");
-}
-
-function ChannelButton({
-  active,
-  disabled,
-  onClick,
-  icon,
-  children,
-}: {
-  active: boolean;
-  disabled: boolean;
-  onClick: () => void;
-  icon: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <Button
-      type="button"
-      variant={active ? "secondary" : "ghost"}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {icon}
-      {children}
-    </Button>
   );
 }
 

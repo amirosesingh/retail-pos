@@ -205,6 +205,7 @@ export async function testBackendUrl(value: string): Promise<BackendTestResult> 
   const data = (body ?? {}) as {
     serviceKey?: boolean;
     posUrl?: boolean;
+    membershipService?: boolean;
     message?: string;
     hint?: string;
     code?: string;
@@ -241,6 +242,19 @@ export async function testBackendUrl(value: string): Promise<BackendTestResult> 
         "This is the POS backend, but it has no central database key. An administrator must set SUPABASE_URL, SUPABASE_ANON_KEY and the service key on the hosting environment.",
     };
 
-  return { ok: true, url, detail: `${url} answered as your POS backend — sign-in and sync will work.` };
+  if (!data.membershipService)
+    return {
+      ok: false,
+      warn: true,
+      url,
+      detail:
+        "The POS backend handshake succeeded, but its membership gateway is not configured. Add the membership project variables only on the hosted backend; do not put them on this till.",
+    };
+
+  return {
+    ok: true,
+    url,
+    detail: `${url} verified the POS database and membership gateway — sign-in, sync and member lookup will work.`,
+  };
 }
 
