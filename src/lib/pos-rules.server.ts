@@ -26,6 +26,7 @@ export type OverrideGrant = {
   storeId: string;
   binding: string;
   requestId?: string;
+  approvedAmount?: number | null;
   exp: number;
 };
 

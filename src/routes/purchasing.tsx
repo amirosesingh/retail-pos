@@ -749,7 +749,6 @@ function Purchasing() {
         storeId,
         entityType: "receiving_order",
         entityId: invoice.id,
-        amount: totals.cost,
         meta: {
           route: "/purchasing",
           audience: "receiving_branch",

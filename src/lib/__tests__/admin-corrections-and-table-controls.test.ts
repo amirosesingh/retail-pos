@@ -9,6 +9,9 @@ describe("administrator corrections and shared table controls", () => {
     const server = read("src/lib/record-edits.functions.ts");
     const flow = read("src/lib/record-edit-flow.ts");
     expect(server).toContain('who.role.trim().toLowerCase() !== "admin"');
+    expect(server).toContain("verifyRelayCaller");
+    expect(server).toContain("resolveRelayScope");
+    expect(server).toContain("scope.roleSlug || scope.role");
     expect(server.match(/requireAdmin\(who\)/g)?.length).toBeGreaterThanOrEqual(4);
     expect(server).toContain('error: "A branch scope is required"');
     expect(flow).toContain('identity.role.trim().toLowerCase() !== "admin"');
@@ -33,6 +36,7 @@ describe("administrator corrections and shared table controls", () => {
       migration.indexOf("WHERE client_key = p_client_key"),
     );
     expect(migration).toContain("pg_advisory_xact_lock");
+    expect(migration).toContain("v_existing_cash IS DISTINCT FROM p_cash");
   });
 
   it("provides sort, per-column filter and resize controls on shared table headers", () => {
@@ -47,5 +51,17 @@ describe("administrator corrections and shared table controls", () => {
     expect(source).not.toContain("function decorateTableHeaders(");
     expect(source).toContain("sortTableBodies(child, sort)");
     expect(source).toContain("filterTableBodies(child, filters)");
+    expect(source).toContain("clientDataControls");
+    expect(read("src/routes/audit.tsx")).toContain('<Table clientDataControls={false}>');
+  });
+
+  it("deploys the post-review database integrity follow-up", () => {
+    const migration = read(
+      "supabase/migrations/20261002053711_close_review_integrity_gaps.sql",
+    );
+    expect(migration).toContain("variant_code, unit_price");
+    expect(migration).toContain("v_existing_cash IS DISTINCT FROM p_cash");
+    expect(migration).toContain("AND NOT stock_state.has_stock");
+    expect(migration).toContain("TO service_role");
   });
 });

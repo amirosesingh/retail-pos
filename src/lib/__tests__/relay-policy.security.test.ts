@@ -144,6 +144,20 @@ describe("relay authorisation", () => {
     restMock.mockResolvedValueOnce({
       ok: true,
       json: async () => [
+        {
+          id: "s-new",
+          payment_type: "cash",
+          payments: [{ amount: 10, method: "cash" }],
+        },
+      ],
+    });
+    expect(
+      (await safeAuthorizeRelayOp({ kind: "upsert", table: "sales", rows: [sale] }, cashier)).ok,
+    ).toBe(true);
+
+    restMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
         { id: "s-new", payment_type: "cash", payments: [{ method: "cash", amount: 10 }] },
       ],
     });

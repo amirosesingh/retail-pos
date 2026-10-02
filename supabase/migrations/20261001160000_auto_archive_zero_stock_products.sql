@@ -70,21 +70,15 @@ BEGIN
   IF COALESCE((NEW.integration_settings ->> 'autoArchiveZeroStock')::boolean, false)
      AND NOT COALESCE((OLD.integration_settings ->> 'autoArchiveZeroStock')::boolean, false) THEN
     UPDATE public.products
-       SET is_archived = NOT EXISTS (
+       SET is_archived = true,
+           archived_at = COALESCE(products.archived_at, now())
+     WHERE NOT EXISTS (
              SELECT 1
                FROM jsonb_each_text(COALESCE(products.stock_by_store, '{}'::jsonb))
               WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
                 AND value::numeric > 0
-           ),
-           archived_at = CASE
-             WHEN EXISTS (
-               SELECT 1
-                 FROM jsonb_each_text(COALESCE(products.stock_by_store, '{}'::jsonb))
-                WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
-                  AND value::numeric > 0
-             ) THEN NULL
-             ELSE COALESCE(products.archived_at, now())
-           END;
+           )
+       AND (NOT COALESCE(products.is_archived, false) OR products.archived_at IS NULL);
   END IF;
   RETURN NEW;
 END;
@@ -115,16 +109,10 @@ WITH lifecycle AS (
     FROM public.products p
 )
 UPDATE public.products p
-   SET is_archived = NOT stock_state.has_stock,
-       archived_at = CASE
-         WHEN stock_state.has_stock THEN NULL
-         ELSE COALESCE(p.archived_at, now())
-       END
+   SET is_archived = true,
+       archived_at = COALESCE(p.archived_at, now())
   FROM lifecycle, stock_state
  WHERE lifecycle.enabled
    AND p.id = stock_state.id
-   AND (
-     p.is_archived IS DISTINCT FROM NOT stock_state.has_stock
-     OR (stock_state.has_stock AND p.archived_at IS NOT NULL)
-     OR (NOT stock_state.has_stock AND p.archived_at IS NULL)
-   );
+   AND NOT stock_state.has_stock
+   AND (NOT COALESCE(p.is_archived, false) OR p.archived_at IS NULL);

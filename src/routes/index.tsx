@@ -249,10 +249,23 @@ function Register() {
     [clearAppliedApproval],
   );
   const askManager = async (request: GateRequest) => {
-    const baseSnapshot = ticketSnapshot.current();
+    let baseSnapshot = ticketSnapshot.current();
     if (baseSnapshot && !baseSnapshot.billNo) {
-      toast.info("The bill number is still being reserved. Try the approval again in a moment.");
-      return null;
+      try {
+        const reserved = await reserveBillNumber(
+          currentStore.receiptPrefix?.trim() || currentStore.code || "R",
+          state.sales.map((sale) => sale.receiptNo),
+          {
+            ...(state.settings.integrations.billNumbering ?? {}),
+            timeZone: state.settings.integrations.timeZone || undefined,
+          },
+        );
+        setBillNo(reserved);
+        baseSnapshot = { ...baseSnapshot, billNo: reserved };
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not reserve a bill number.");
+        return null;
+      }
     }
     const snapshot = baseSnapshot
       ? {
@@ -296,6 +309,8 @@ function Register() {
           storeId: request.storeId ?? currentStore.id,
           payload,
           snapshotHash: snapshot ? snapshotFingerprint(snapshot) : "",
+          requestedAmount:
+            request.requestedAmount ?? snapshot?.requestedValue ?? null,
           grantToken,
         },
       });

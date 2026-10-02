@@ -99,6 +99,7 @@ function NewTransferPage() {
                 actionKey: "stock_transfer",
                 storeId: currentStore.id,
                 payload,
+                requestedAmount: items.reduce((sum, item) => sum + item.qty, 0),
                 grantToken: grant.grantToken,
               },
             });

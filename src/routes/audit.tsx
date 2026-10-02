@@ -480,7 +480,7 @@ function AuditPage() {
           </section>
         ) : (
           <section className="rounded-lg border border-border bg-card">
-            <Table>
+            <Table clientDataControls={false}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Date &amp; time</TableHead>

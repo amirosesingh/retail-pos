@@ -98,18 +98,12 @@ BEGIN
        WHERE jsonb_typeof(p.stock_by_store) = 'object'
     )
     UPDATE public.products p
-       SET is_archived = NOT stock_state.has_stock,
-           archived_at = CASE
-             WHEN stock_state.has_stock THEN NULL
-             ELSE COALESCE(p.archived_at, now())
-           END
+       SET is_archived = true,
+           archived_at = COALESCE(p.archived_at, now())
       FROM stock_state
      WHERE p.id = stock_state.id
-       AND (
-         p.is_archived IS DISTINCT FROM NOT stock_state.has_stock
-         OR (stock_state.has_stock AND p.archived_at IS NOT NULL)
-         OR (NOT stock_state.has_stock AND p.archived_at IS NULL)
-       );
+       AND NOT stock_state.has_stock
+       AND (NOT COALESCE(p.is_archived, false) OR p.archived_at IS NULL);
   END IF;
   RETURN NEW;
 END;
@@ -140,16 +134,10 @@ WITH lifecycle AS (
    WHERE jsonb_typeof(p.stock_by_store) = 'object'
 )
 UPDATE public.products p
-   SET is_archived = NOT stock_state.has_stock,
-       archived_at = CASE
-         WHEN stock_state.has_stock THEN NULL
-         ELSE COALESCE(p.archived_at, now())
-       END
+   SET is_archived = true,
+       archived_at = COALESCE(p.archived_at, now())
   FROM lifecycle, stock_state
  WHERE lifecycle.enabled
    AND p.id = stock_state.id
-   AND (
-     p.is_archived IS DISTINCT FROM NOT stock_state.has_stock
-     OR (stock_state.has_stock AND p.archived_at IS NOT NULL)
-     OR (NOT stock_state.has_stock AND p.archived_at IS NULL)
-   );
+   AND NOT stock_state.has_stock
+   AND (NOT COALESCE(p.is_archived, false) OR p.archived_at IS NULL);

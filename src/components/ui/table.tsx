@@ -9,6 +9,7 @@ type TableFilters = Record<number, string>;
 type ColumnWidths = Record<number, number>;
 
 type TableControls = {
+  clientDataControls: boolean;
   sort: TableSortState;
   toggleSort: (column: number) => void;
   filters: TableFilters;
@@ -85,7 +86,8 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
       sortableHeaderLabel(label) &&
       !hasInteractiveContent(children) &&
       Number(props.colSpan ?? 1) === 1;
-    const active = sortable && controls.sort?.column === column;
+    const dataControls = sortable && controls.clientDataControls;
+    const active = dataControls && controls.sort?.column === column;
     const direction = active ? controls.sort?.direction : null;
     const Icon = direction === "asc" ? ArrowUp : direction === "desc" ? ArrowDown : ArrowUpDown;
     const rightAligned = String(className ?? "").includes("text-right");
@@ -99,7 +101,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
           className,
         )}
         aria-sort={
-          sortable
+          dataControls
             ? direction === "asc"
               ? "ascending"
               : direction === "desc"
@@ -113,41 +115,49 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
         {sortable ? (
           <div className="relative min-w-24">
             <div className={cn("flex items-center", rightAligned && "justify-end")}>
-              <button
-                type="button"
-                className={cn(
-                  "group inline-flex min-h-8 min-w-0 flex-1 items-center gap-1 rounded-sm px-1 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  rightAligned ? "justify-end" : "justify-start",
-                )}
-                aria-label={`${label}, ${direction ? `sorted ${direction}` : "not sorted"}. Sort ${direction === "asc" ? "descending" : "ascending"}`}
-                onClick={() => controls.toggleSort(column)}
-              >
-                <span className="truncate">{children}</span>
-                <Icon
-                  aria-hidden="true"
-                  className={cn(
-                    "size-3.5 shrink-0",
-                    active
-                      ? "text-foreground"
-                      : "text-muted-foreground/70 group-hover:text-foreground",
-                  )}
-                />
-              </button>
-              <button
-                type="button"
-                className={cn(
-                  "grid size-7 shrink-0 place-items-center rounded-sm hover:bg-muted hover:text-foreground",
-                  controls.filters[column] && "text-primary",
-                )}
-                aria-label={`Filter ${label}`}
-                onClick={() =>
-                  controls.setActiveFilter(controls.activeFilter === column ? null : column)
-                }
-              >
-                <ListFilter className="size-3.5" />
-              </button>
+              {dataControls ? (
+                <>
+                  <button
+                    type="button"
+                    className={cn(
+                      "group inline-flex min-h-8 min-w-0 flex-1 items-center gap-1 rounded-sm px-1 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      rightAligned ? "justify-end" : "justify-start",
+                    )}
+                    aria-label={`${label}, ${direction ? `sorted ${direction}` : "not sorted"}. Sort ${direction === "asc" ? "descending" : "ascending"}`}
+                    onClick={() => controls.toggleSort(column)}
+                  >
+                    <span className="truncate">{children}</span>
+                    <Icon
+                      aria-hidden="true"
+                      className={cn(
+                        "size-3.5 shrink-0",
+                        active
+                          ? "text-foreground"
+                          : "text-muted-foreground/70 group-hover:text-foreground",
+                      )}
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      "grid size-7 shrink-0 place-items-center rounded-sm hover:bg-muted hover:text-foreground",
+                      controls.filters[column] && "text-primary",
+                    )}
+                    aria-label={`Filter ${label}`}
+                    onClick={() =>
+                      controls.setActiveFilter(controls.activeFilter === column ? null : column)
+                    }
+                  >
+                    <ListFilter className="size-3.5" />
+                  </button>
+                </>
+              ) : (
+                <span className={cn("min-h-8 flex-1 px-1 leading-8", rightAligned && "text-right")}>
+                  {children}
+                </span>
+              )}
             </div>
-            {controls.activeFilter === column && (
+            {dataControls && controls.activeFilter === column && (
               <div className="flex items-center gap-1 pb-1">
                 <input
                   autoFocus
@@ -466,10 +476,12 @@ function labelTableBodies(node: React.ReactNode, labels: string[]): React.ReactN
 type TableProps = React.HTMLAttributes<HTMLTableElement> & {
   /** Collapse each row into a labelled card below tablet width. */
   mobileCards?: boolean;
+  /** Disable page-local sort/filter controls when the caller supplies a server-paged slice. */
+  clientDataControls?: boolean;
 };
 
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
-  ({ className, children, mobileCards = true, ...props }, ref) => {
+  ({ className, children, mobileCards = true, clientDataControls = true, ...props }, ref) => {
     const internalRef = React.useRef<HTMLTableElement>(null);
     React.useImperativeHandle(ref, () => internalRef.current as HTMLTableElement, []);
     const [sort, setSort] = React.useState<TableSortState>(null);
@@ -547,10 +559,15 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
       resizeCleanupRef.current?.();
     }, [labelSignature]);
     const labelled = React.Children.map(children, (child) => labelTableBodies(child, labels));
-    const sorted = React.Children.map(labelled, (child) => sortTableBodies(child, sort));
-    const content = React.Children.map(sorted, (child) => filterTableBodies(child, filters));
+    const sorted = clientDataControls
+      ? React.Children.map(labelled, (child) => sortTableBodies(child, sort))
+      : labelled;
+    const content = clientDataControls
+      ? React.Children.map(sorted, (child) => filterTableBodies(child, filters))
+      : sorted;
     const controls = React.useMemo<TableControls>(
       () => ({
+        clientDataControls,
         sort,
         toggleSort,
         filters,
@@ -561,7 +578,17 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
         startResize,
         resizeBy,
       }),
-      [sort, toggleSort, filters, activeFilter, setFilter, widths, startResize, resizeBy],
+      [
+        clientDataControls,
+        sort,
+        toggleSort,
+        filters,
+        activeFilter,
+        setFilter,
+        widths,
+        startResize,
+        resizeBy,
+      ],
     );
     return (
       <TableControlsContext.Provider value={controls}>

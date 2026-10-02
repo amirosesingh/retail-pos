@@ -138,6 +138,7 @@ const mutationInput = caller.extend({
   storeId: z.string().max(64),
   payload: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
   snapshotHash: z.string().max(40).default(""),
+  requestedAmount: z.number().finite().nonnegative().nullish(),
   grantToken: z.string().max(4096).nullish(),
 });
 
@@ -206,6 +207,15 @@ export const verifyBusinessAuthorization = createServerFn({ method: "POST" })
       });
       if (!grant) {
         return { ok: false as const, error: "A valid authorization grant is required" };
+      }
+      if (
+        grant.approvedAmount !== undefined &&
+        grant.approvedAmount !== null &&
+        (data.requestedAmount === undefined ||
+          data.requestedAmount === null ||
+          data.requestedAmount > grant.approvedAmount)
+      ) {
+        return { ok: false as const, error: "The requested value exceeds the approved amount" };
       }
       // A queued approval can be invalidated after it was claimed (for
       // example when its line or bill is voided). Signed tokens are therefore
@@ -483,6 +493,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         role: person.role,
         storeId,
         binding: data.binding,
+        approvedAmount: data.requestedAmount ?? null,
       }),
     };
   });
@@ -1066,6 +1077,7 @@ export const claimAuthorizationRequest = createServerFn({ method: "POST" })
         storeId: request.storeId,
         binding: authorizationBinding(request.payload, request.snapshotHash),
         requestId: request.id,
+        approvedAmount: request.approvedAmount ?? request.requestedAmount ?? null,
       });
       const claimed = await consumeRequest(
         request.id,

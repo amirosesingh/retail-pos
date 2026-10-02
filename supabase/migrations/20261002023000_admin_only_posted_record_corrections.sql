@@ -34,6 +34,9 @@ DECLARE
   e record;
   v_count uuid;
   v_rec uuid;
+  v_existing_cash numeric;
+  v_existing_card numeric;
+  v_existing_digital numeric;
   v_reason text := btrim(coalesce(p_reason, ''));
   v_before jsonb;
   v_after jsonb;
@@ -61,13 +64,19 @@ BEGIN
 
   -- Re-check only after acquiring locks. A concurrent first request may have
   -- committed while this retry was waiting.
-  SELECT shift_id INTO v_count
+  SELECT shift_id, counted_cash, counted_card, counted_digital
+    INTO v_count, v_existing_cash, v_existing_card, v_existing_digital
     FROM public.shift_cash_counts
    WHERE client_key = p_client_key
    LIMIT 1;
   IF FOUND THEN
     IF v_count <> p_shift THEN
       RAISE EXCEPTION 'That correction key was already used for another shift.';
+    END IF;
+    IF v_existing_cash IS DISTINCT FROM p_cash
+       OR v_existing_card IS DISTINCT FROM p_card
+       OR v_existing_digital IS DISTINCT FROM p_digital THEN
+      RAISE EXCEPTION 'That correction key was already used with different counted amounts.';
     END IF;
     RETURN jsonb_build_object('ok', true, 'replayed', true, 'shift_id', v_count);
   END IF;

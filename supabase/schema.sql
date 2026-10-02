@@ -9202,7 +9202,7 @@ BEGIN
       RAISE EXCEPTION 'PERMISSION_DENIED_PRODUCT_PUBLISH';
     END IF;
     IF NEW.is_archived IS DISTINCT FROM OLD.is_archived THEN
-      SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, false)
+      SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, true)
         INTO lifecycle_enabled
         FROM public.pos_settings
        WHERE id = 1;
@@ -9309,18 +9309,12 @@ BEGIN
        WHERE jsonb_typeof(p.stock_by_store) = 'object'
     )
     UPDATE public.products p
-       SET is_archived = NOT stock_state.has_stock,
-           archived_at = CASE
-             WHEN stock_state.has_stock THEN NULL
-             ELSE COALESCE(p.archived_at, now())
-           END
+       SET is_archived = true,
+           archived_at = COALESCE(p.archived_at, now())
       FROM stock_state
      WHERE p.id = stock_state.id
-       AND (
-         p.is_archived IS DISTINCT FROM NOT stock_state.has_stock
-         OR (stock_state.has_stock AND p.archived_at IS NOT NULL)
-         OR (NOT stock_state.has_stock AND p.archived_at IS NULL)
-       );
+       AND NOT stock_state.has_stock
+       AND (NOT COALESCE(p.is_archived, false) OR p.archived_at IS NULL);
   END IF;
   RETURN NEW;
 END;
@@ -9352,19 +9346,13 @@ WITH lifecycle AS (
    WHERE jsonb_typeof(p.stock_by_store) = 'object'
 )
 UPDATE public.products p
-   SET is_archived = NOT stock_state.has_stock,
-       archived_at = CASE
-         WHEN stock_state.has_stock THEN NULL
-         ELSE COALESCE(p.archived_at, now())
-       END
+   SET is_archived = true,
+       archived_at = COALESCE(p.archived_at, now())
   FROM lifecycle, stock_state
  WHERE lifecycle.enabled
    AND p.id = stock_state.id
-   AND (
-     p.is_archived IS DISTINCT FROM NOT stock_state.has_stock
-     OR (stock_state.has_stock AND p.archived_at IS NOT NULL)
-     OR (NOT stock_state.has_stock AND p.archived_at IS NULL)
-   );
+   AND NOT stock_state.has_stock
+   AND (NOT COALESCE(p.is_archived, false) OR p.archived_at IS NULL);
 
 -- Close anonymous table access. Public coupon/member/terminal flows use the
 -- narrow SECURITY DEFINER routines granted above; visitors only need the
@@ -11639,12 +11627,13 @@ BEGIN
 
   FOR entry IN SELECT value FROM jsonb_array_elements(COALESCE(_items,'[]'::jsonb)) LOOP
     INSERT INTO public.sale_items (
-      id, sale_id, product_id, product_name, unit_price, unit_cost, quantity,
+      id, sale_id, product_id, product_name, variant_code, unit_price, unit_cost, quantity,
       discount_percent, discount_amount, tax_rate, is_return, is_foc,
       promo_id, coupon_code, coupon_discount, created_at
     ) VALUES (
       (entry->>'id')::uuid, (s->>'id')::uuid, NULLIF(entry->>'product_id','')::uuid,
-      entry->>'product_name', COALESCE((entry->>'unit_price')::numeric,0),
+      entry->>'product_name', NULLIF(entry->>'variant_code',''),
+      COALESCE((entry->>'unit_price')::numeric,0),
       COALESCE((entry->>'unit_cost')::numeric,0), COALESCE((entry->>'quantity')::integer,1),
       COALESCE((entry->>'discount_percent')::numeric,0), COALESCE((entry->>'discount_amount')::numeric,0),
       COALESCE((entry->>'tax_rate')::numeric,0), COALESCE((entry->>'is_return')::boolean,false),
@@ -15989,6 +15978,7 @@ CREATE OR REPLACE FUNCTION public.pos_admin_correct_closed_shift(
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
 DECLARE
   v public.shifts%ROWTYPE; e record; v_count uuid; v_rec uuid;
+  v_existing_cash numeric; v_existing_card numeric; v_existing_digital numeric;
   v_reason text := btrim(coalesce(p_reason, ''));
   v_before jsonb; v_after jsonb;
   v_var_cash numeric; v_var_card numeric; v_var_digital numeric; v_total numeric; v_status text;
@@ -16008,11 +15998,18 @@ BEGIN
   SELECT * INTO v FROM public.shifts WHERE id = p_shift FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'That shift no longer exists.'; END IF;
 
-  SELECT shift_id INTO v_count FROM public.shift_cash_counts
+  SELECT shift_id, counted_cash, counted_card, counted_digital
+    INTO v_count, v_existing_cash, v_existing_card, v_existing_digital
+    FROM public.shift_cash_counts
    WHERE client_key = p_client_key LIMIT 1;
   IF FOUND THEN
     IF v_count <> p_shift THEN
       RAISE EXCEPTION 'That correction key was already used for another shift.';
+    END IF;
+    IF v_existing_cash IS DISTINCT FROM p_cash
+       OR v_existing_card IS DISTINCT FROM p_card
+       OR v_existing_digital IS DISTINCT FROM p_digital THEN
+      RAISE EXCEPTION 'That correction key was already used with different counted amounts.';
     END IF;
     RETURN jsonb_build_object('ok', true, 'replayed', true, 'shift_id', v_count);
   END IF;

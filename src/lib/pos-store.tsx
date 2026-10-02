@@ -451,7 +451,7 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
     // trigger/backfill remains responsible for persisting the same state.
     products: applyZeroStockLifecycleToProducts(
       cloudProducts,
-      settings.integrations.autoArchiveZeroStock === true,
+      settings.integrations.autoArchiveZeroStock !== false,
     ),
     members: cloudMembers,
     sales: (() => {
@@ -1544,12 +1544,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const touchedProducts = snapshot.products
         .filter((p) => input.lines.some((l) => l.productId === p.id))
         .map((p) => {
-          const line = input.lines.find((l) => l.productId === p.id)!;
+          const quantity = input.lines.reduce(
+            (total, line) => total + (line.productId === p.id ? line.qty : 0),
+            0,
+          );
           return bump(
             p,
             input.storeId,
-            -line.qty,
-            snapshot.settings.integrations.autoArchiveZeroStock === true,
+            -quantity,
+            snapshot.settings.integrations.autoArchiveZeroStock !== false,
           );
         });
       const member = snapshot.members.find((m) => m.id === input.memberId) ?? null;
@@ -1595,13 +1598,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
       pendingSalesRef.current.add(sale.id);
       setState((s) => {
         const products = s.products.map((p) => {
-          const line = input.lines.find((l) => l.productId === p.id);
-          return line
+          const quantity = input.lines.reduce(
+            (total, line) => total + (line.productId === p.id ? line.qty : 0),
+            0,
+          );
+          return quantity
             ? bump(
                 p,
                 input.storeId,
-                -line.qty,
-                s.settings.integrations.autoArchiveZeroStock === true,
+                -quantity,
+                s.settings.integrations.autoArchiveZeroStock !== false,
               )
             : p;
         });
@@ -2172,6 +2178,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           actionKey: "refund",
           storeId: sale.storeId,
           payload,
+          requestedAmount: Math.abs(sale.total),
           grantToken: grantToken ?? null,
         },
       });
@@ -2200,9 +2207,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const sale = s.sales.find((x) => x.id === saleId);
         if (!sale || sale.refunded) return s;
         const products = s.products.map((p) => {
-          const line = sale.lines.find((l) => l.productId === p.id);
-          return line
-            ? bump(p, sale.storeId, line.qty, s.settings.integrations.autoArchiveZeroStock === true)
+          const quantity = sale.lines.reduce(
+            (total, line) => total + (line.productId === p.id ? line.qty : 0),
+            0,
+          );
+          return quantity
+            ? bump(p, sale.storeId, quantity, s.settings.integrations.autoArchiveZeroStock !== false)
             : p;
         });
         return {
@@ -2248,7 +2258,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     }
     const record = applyZeroStockLifecycle(
       { ...product, stockByStore },
-      stateRef.current.settings.integrations.autoArchiveZeroStock === true,
+      stateRef.current.settings.integrations.autoArchiveZeroStock !== false,
     );
     logger.log("inventory_edit", prev ? "Product updated" : "Product created", "inventory", {
       productId: record.id,
@@ -2357,7 +2367,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
       const privateCatalogue = branchPolicy(stateRef.current.settings, storeId).privateCatalogue;
       const zeroStockLifecycle =
-        stateRef.current.settings.integrations.autoArchiveZeroStock === true;
+        stateRef.current.settings.integrations.autoArchiveZeroStock !== false;
       const autoSku = readSkuSettings().mode === "auto";
       // One running list of codes, so the auto numbering never has to re-scan
       // the catalogue per row.
@@ -2585,10 +2595,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
   /** Bulk field edit (category, tax, web visibility…) across a selection. */
   const patchProducts = useCallback(async (ids: string[], patch: Partial<Product>) => {
     const set = new Set(ids);
-    const zeroStockLifecycle = stateRef.current.settings.integrations.autoArchiveZeroStock === true;
+    const zeroStockLifecycle = stateRef.current.settings.integrations.autoArchiveZeroStock !== false;
+    const explicitArchiveState = patch.archived !== undefined;
     const updated = stateRef.current.products
       .filter((p) => set.has(p.id))
-      .map((p) => applyZeroStockLifecycle({ ...p, ...patch }, zeroStockLifecycle));
+      .map((p) =>
+        explicitArchiveState
+          ? { ...p, ...patch }
+          : applyZeroStockLifecycle({ ...p, ...patch }, zeroStockLifecycle),
+      );
     logger.log("inventory_edit", "Products bulk edited", "inventory", {
       count: updated.length,
       changes: patch,
@@ -2599,10 +2614,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
       ...s,
       products: s.products.map((p) =>
         set.has(p.id)
-          ? applyZeroStockLifecycle(
-              { ...p, ...patch },
-              s.settings.integrations.autoArchiveZeroStock === true,
-            )
+          ? explicitArchiveState
+            ? { ...p, ...patch }
+            : applyZeroStockLifecycle(
+                { ...p, ...patch },
+                s.settings.integrations.autoArchiveZeroStock !== false,
+              )
           : p,
       ),
     }));
@@ -2686,7 +2703,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       before,
       target,
       delta,
-      stateRef.current.settings.integrations.autoArchiveZeroStock === true,
+      stateRef.current.settings.integrations.autoArchiveZeroStock !== false,
     );
     const committed = await db.commitStockAdjustments(
       [updated],
@@ -2712,7 +2729,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
               p,
               storeId ?? s.currentStoreId,
               delta,
-              s.settings.integrations.autoArchiveZeroStock === true,
+              s.settings.integrations.autoArchiveZeroStock !== false,
             )
           : p,
       ),
@@ -2986,7 +3003,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         settings,
         products: applyZeroStockLifecycleToProducts(
           s.products,
-          settings.integrations.autoArchiveZeroStock === true,
+          settings.integrations.autoArchiveZeroStock !== false,
         ),
       };
     });
@@ -3315,7 +3332,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           moving,
           before.fromStoreId,
           -1,
-          s.settings.integrations.autoArchiveZeroStock === true,
+          s.settings.integrations.autoArchiveZeroStock !== false,
         ),
         transfers: s.transfers.map((x) =>
           x.id === id
@@ -3494,7 +3511,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           arriving,
           before.toStoreId,
           1,
-          s.settings.integrations.autoArchiveZeroStock === true,
+          s.settings.integrations.autoArchiveZeroStock !== false,
         ),
         transfers: s.transfers.map((x) =>
           x.id === id
@@ -3566,7 +3583,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             returning,
             before.fromStoreId,
             1,
-            s.settings.integrations.autoArchiveZeroStock === true,
+            s.settings.integrations.autoArchiveZeroStock !== false,
           )
         : s.products,
       transfers: s.transfers.map((x) =>

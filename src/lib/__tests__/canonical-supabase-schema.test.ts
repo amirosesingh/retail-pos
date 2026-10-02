@@ -76,6 +76,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261001180000_retire_parallel_settings_api.sql",
       "supabase/migrations/20261002010743_enforce_zero_stock_catalog_lifecycle.sql",
       "supabase/migrations/20261002023000_admin_only_posted_record_corrections.sql",
+      "supabase/migrations/20261002053711_close_review_integrity_gaps.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -122,7 +123,9 @@ describe("canonical Supabase SQL", () => {
       expect(sql).toContain("integration_settings ->> 'autoArchiveZeroStock'");
       expect(sql).toContain("COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')");
       expect(sql).toContain("Reconcile products already present");
-      expect(sql).toContain("p.is_archived IS DISTINCT FROM NOT stock_state.has_stock");
+      expect(sql).toContain("AND NOT stock_state.has_stock");
+      expect(sql).toContain("SET is_archived = true");
+      expect(sql).not.toContain("SET is_archived = NOT stock_state.has_stock");
       expect(sql).toContain(
         "REVOKE ALL ON FUNCTION public.apply_zero_stock_catalog_lifecycle() FROM PUBLIC, anon, authenticated",
       );

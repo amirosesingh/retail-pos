@@ -316,8 +316,31 @@ async function parentStore(child: string, id: unknown): Promise<string | null | 
 const visibleStore = (scope: RelayScope, storeId: string | null | undefined) =>
   scope.isSupervisor || (!!storeId && storeId === scope.storeId);
 
+function canonicalJsonValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return canonicalJsonValue(JSON.parse(trimmed));
+      } catch {
+        // Ordinary tender labels remain strings.
+      }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalJsonValue(item)]),
+    );
+  }
+  return value ?? null;
+}
+
 const sameJsonValue = (left: unknown, right: unknown) =>
-  JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+  JSON.stringify(canonicalJsonValue(left)) === JSON.stringify(canonicalJsonValue(right));
 
 /** A cashier may create a sale with tenders, but cannot change tenders later. */
 async function upsertChangesExistingTender(rows: Record<string, unknown>[]): Promise<boolean> {

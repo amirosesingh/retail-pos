@@ -198,7 +198,7 @@ function CatalogMetaSettings() {
     settingsScopeLoading,
   } = usePos();
   const autoArchiveZeroStock =
-    configuredGlobalSettings.integrations.autoArchiveZeroStock === true;
+    configuredGlobalSettings.integrations.autoArchiveZeroStock !== false;
 
   const [unitCode, setUnitCode] = useState("");
   const [unitName, setUnitName] = useState("");

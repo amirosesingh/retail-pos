@@ -25,20 +25,19 @@ function requireAdmin(who: Caller): void {
 
 /** Any signed-in till user: a staff account or a cashier PIN session. */
 async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
-  if (data.accessToken) {
-    const { verifyPosStaff } = await import("./secure-settings.server");
-    const staff = await verifyPosStaff(data.accessToken);
-    return { id: staff.userId, name: staff.userId, role: staff.role, isSupervisor: staff.isAdmin };
-  }
-  const sessionToken = data.cashierToken ?? data.terminalToken;
-  if (sessionToken) {
-    const { verifyCashierSession } = await import("./pos-session.server");
-    const session = verifyCashierSession(sessionToken);
-    if (session) {
-      return { id: session.id, name: session.username, role: "cashier", isSupervisor: false };
-    }
-  }
-  throw new Error("Not signed in");
+  const [{ verifyRelayCaller }, { resolveRelayScope }] = await Promise.all([
+    import("@/core/api/pos-relay.server"),
+    import("@/core/api/relay-policy.server"),
+  ]);
+  const verified = await verifyRelayCaller(data);
+  const scope = await resolveRelayScope(verified);
+  const role = scope.roleSlug || scope.role || "staff";
+  return {
+    id: scope.staffUserId || verified.authUserId || scope.label,
+    name: scope.actorName || scope.label,
+    role,
+    isSupervisor: scope.isSupervisor,
+  };
 }
 
 /** Who the server thinks is asking — used to show "your" pending edits. */
