@@ -86,6 +86,7 @@ import { logSystemAction } from "@/lib/system-audit";
 import { activeBranchId } from "@/lib/active-branch";
 import { cachedSuppliers, loadSuppliers, type Supplier } from "@/lib/suppliers";
 import type { Product } from "@/core/types/pos-types";
+import { recordActivity } from "@/lib/activity-events";
 
 export const Route = createFileRoute("/purchasing")({
   head: () => ({
@@ -155,6 +156,7 @@ function Purchasing() {
   const [masterView, setMasterView] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [entryOpen, setEntryOpen] = useState(false);
   const [editing, setEditing] = useState<ReceivingInvoice | null>(null);
   const [removedLineIds, setRemovedLineIds] = useState<string[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -450,6 +452,7 @@ function Purchasing() {
 
   /** Load a saved draft back into the form for more items or invoices. */
   function resumeDraft(inv: ReceivingInvoice) {
+    setEntryOpen(true);
     setOpenDraftId(inv.id);
     setReference(inv.reference);
     setDraftLineRemovals([]);
@@ -738,6 +741,23 @@ function Purchasing() {
         receivedInto: hub.name,
         stockMovements: movements,
       });
+      recordActivity({
+        type: "po_finalised",
+        title: `Goods received · ${grn}`,
+        message: `${invoice.supplier} · invoice ${ref} · ${totals.units} unit(s) received into ${hub.name}.`,
+        actorName: invoice.operator,
+        storeId,
+        entityType: "receiving_order",
+        entityId: invoice.id,
+        meta: {
+          route: "/purchasing",
+          audience: "receiving_branch",
+          audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
+          invoice_no: ref,
+          supplier: invoice.supplier,
+          reference: grn,
+        },
+      });
 
       toast.success(`Invoice ${ref} received into ${hub.name}`, {
         description: `${totals.units} units · ${money(totals.cost)}`,
@@ -758,6 +778,7 @@ function Purchasing() {
       const postedIds = lines.map((l) => l.productId);
       showAsPosted(invoice);
       clearForm();
+      setEntryOpen(false);
       void reconcileAfterPost(invoice, postedIds);
       scanRef.current?.focus();
     } catch (e) {
@@ -898,234 +919,264 @@ function Purchasing() {
   return (
     <AppShell>
       <div className="space-y-5 p-6">
-        <header>
-          <h1 className="text-2xl font-semibold">Receiving order &amp; stock entry</h1>
-          <p className="text-sm text-muted-foreground">
-            Receiving into {currentStore.name} · operator {user?.name}
-          </p>
+        <header className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold">Receiving order &amp; stock entry</h1>
+            <p className="text-sm text-muted-foreground">
+              Receiving into {currentStore.name} · operator {user?.name}
+            </p>
+          </div>
+          <Button
+            onClick={() => {
+              void (async () => {
+                if (lines.length && !(await persistDraft())) {
+                  toast.error("The current receiving draft could not be saved");
+                  return;
+                }
+                clearForm();
+                setEntryOpen(true);
+              })();
+            }}
+          >
+            <PackagePlus className="size-4" /> Add new stock
+          </Button>
         </header>
 
-        <section className="space-y-4 rounded-lg border border-border bg-card p-5">
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Invoice number *</Label>
-              <Input
-                value={invoiceNo}
-                onChange={(e) => setInvoiceNo(e.target.value)}
-                placeholder="e.g. INV-2026-0417"
-                className="numeric h-11"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Supplier name *</Label>
-              <div className="flex gap-2">
-                <select
-                  value={suppliers.some((s) => s.name === supplier) ? supplier : ""}
-                  onChange={(e) => setSupplier(e.target.value)}
-                  aria-label="Supplier"
-                  className="h-11 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm"
-                >
-                  <option value="">Pick a supplier…</option>
-                  {suppliers
-                    .filter((s) => s.active)
-                    .map((s) => (
-                      <option key={s.id} value={s.name}>
-                        {s.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
-              <Input
-                value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
-                placeholder="or type a supplier name"
-                className="h-9"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Invoice date</Label>
-              <Input
-                type="date"
-                value={invoiceDate}
-                onChange={(e) => setInvoiceDate(e.target.value)}
-                className="numeric h-11"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">
-                Entry date &amp; time (defaults to now)
-              </Label>
-              <Input
-                type="datetime-local"
-                value={entryDate}
-                onChange={(e) => setEntryDate(e.target.value)}
-                className="numeric h-11"
-              />
-            </div>
-          </div>
-
-          <Separator />
-
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Scan or search barcode</Label>
-            <div className="flex gap-2">
-              <Input
-                ref={scanRef}
-                value={scan}
-                onChange={(e) => setScan(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && submitScan()}
-                placeholder="Scan a barcode and press Enter"
-                className="numeric h-11 max-w-md"
-              />
-              <Button className="h-11" onClick={submitScan}>
-                <ScanBarcode className="size-4" /> Add to invoice
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-3">
-            <FileSpreadsheet className="size-4 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">
-              Received a supplier spreadsheet? Import the purchased products straight into this
-              invoice.
-            </span>
-            <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-              <FileSpreadsheet className="size-4" /> Import Excel / CSV
-            </Button>
-            <Button variant="ghost" size="sm" onClick={downloadTemplate}>
-              <Download className="size-4" /> Template
-            </Button>
-          </div>
-
-          <BulkImportDialog
-            open={importOpen}
-            onOpenChange={setImportOpen}
-            mode="receiving"
-            onReceivingRows={(imported) => {
-              for (const row of imported) {
-                addLine(
-                  {
-                    ...row.product,
-                    cost: row.cost || row.product.cost,
-                    price: row.price || row.product.price,
-                  },
-                  Math.max(1, row.quantity),
-                );
-              }
-              logger.log("inventory_edit", "Receiving lines imported from file", "purchasing", {
-                rows: imported.length,
-                created: imported.filter(
-                  (row) => !state.products.some((p) => p.id === row.product.id),
-                ).length,
-              });
-              toast.success(`${imported.length} validated lines added to this invoice`);
-            }}
-          />
-
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Barcode</TableHead>
-                <TableHead>Product</TableHead>
-                <TableHead className="w-32 text-right">Cost price</TableHead>
-                <TableHead className="text-right">Selling price</TableHead>
-                <TableHead className="w-28 text-right">Qty received</TableHead>
-                <TableHead className="text-right">Subtotal cost</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {lines.map((l) => (
-                <TableRow key={l.id}>
-                  <TableCell className="numeric">{l.barcode}</TableCell>
-                  <TableCell className="font-medium">{l.name}</TableCell>
-                  <TableCell className="text-right">
-                    <Input
-                      className="numeric h-9 text-right"
-                      value={l.cost}
-                      onChange={(e) => patch(l.id, { cost: Number(e.target.value) || 0 })}
-                    />
-                  </TableCell>
-                  <TableCell className="numeric text-right text-muted-foreground">
-                    {money(l.price)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Input
-                      className="numeric h-9 text-right"
-                      value={l.qty}
-                      onChange={(e) =>
-                        patch(l.id, { qty: Math.max(0, Number(e.target.value) || 0) })
-                      }
-                    />
-                  </TableCell>
-                  <TableCell className="numeric text-right font-medium">
-                    {money(l.cost * l.qty)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Remove line"
-                      onClick={() => {
-                        setLines((ls) => ls.filter((x) => x.id !== l.id));
-                        // Already autosaved into the draft? Delete that row too.
-                        if (openDraftId) setDraftLineRemovals((r) => [...r, l.id]);
-                      }}
+        <Dialog open={entryOpen} onOpenChange={setEntryOpen}>
+          <DialogContent className="max-h-[92vh] w-[min(96vw,1200px)] max-w-none overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{openDraftId ? "Resume receiving order" : "Add new stock"}</DialogTitle>
+              <DialogDescription>
+                Enter the supplier and invoice first, then scan or add the stock lines. Saving a
+                draft never changes stock; finalizing posts it once.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Invoice number *</Label>
+                  <Input
+                    value={invoiceNo}
+                    onChange={(e) => setInvoiceNo(e.target.value)}
+                    placeholder="e.g. INV-2026-0417"
+                    className="numeric h-11"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Supplier name *</Label>
+                  <div className="flex gap-2">
+                    <select
+                      value={suppliers.some((s) => s.name === supplier) ? supplier : ""}
+                      onChange={(e) => setSupplier(e.target.value)}
+                      aria-label="Supplier"
+                      className="h-11 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm"
                     >
-                      <Trash2 className="size-4 text-destructive" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {!lines.length && (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                    Scan a barcode to start this receiving invoice.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+                      <option value="">Pick a supplier…</option>
+                      {suppliers
+                        .filter((s) => s.active)
+                        .map((s) => (
+                          <option key={s.id} value={s.name}>
+                            {s.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <Input
+                    value={supplier}
+                    onChange={(e) => setSupplier(e.target.value)}
+                    placeholder="or type a supplier name"
+                    className="h-9"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Invoice date</Label>
+                  <Input
+                    type="date"
+                    value={invoiceDate}
+                    onChange={(e) => setInvoiceDate(e.target.value)}
+                    className="numeric h-11"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">
+                    Entry date &amp; time (defaults to now)
+                  </Label>
+                  <Input
+                    type="datetime-local"
+                    value={entryDate}
+                    onChange={(e) => setEntryDate(e.target.value)}
+                    className="numeric h-11"
+                  />
+                </div>
+              </div>
 
-          <Separator />
+              <Separator />
 
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="text-sm text-muted-foreground">
-              <span className="numeric font-semibold text-foreground">{lines.length}</span> unique
-              items · <span className="numeric font-semibold text-foreground">{totals.units}</span>{" "}
-              units · total cost{" "}
-              <span className="numeric font-semibold text-foreground">{money(totals.cost)}</span>
-              {draftSavedAt && (
-                <span className="ml-2 text-xs text-muted-foreground">
-                  · Draft saved {new Date(draftSavedAt).toLocaleTimeString()}
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Scan or search barcode</Label>
+                <div className="flex gap-2">
+                  <Input
+                    ref={scanRef}
+                    value={scan}
+                    onChange={(e) => setScan(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && submitScan()}
+                    placeholder="Scan a barcode and press Enter"
+                    className="numeric h-11 max-w-md"
+                  />
+                  <Button className="h-11" onClick={submitScan}>
+                    <ScanBarcode className="size-4" /> Add to invoice
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-3">
+                <FileSpreadsheet className="size-4 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">
+                  Received a supplier spreadsheet? Import the purchased products straight into this
+                  invoice.
                 </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                className="h-11"
-                disabled={savingDraft || !lines.length}
-                onClick={() => void saveDraftNow()}
-              >
-                <Save className="size-4" /> {savingDraft ? "Saving…" : "Save draft"}
-              </Button>
-              {openDraftId && (
-                <Button
-                  variant="outline"
-                  className="h-11"
-                  onClick={() => setDiscardId(openDraftId)}
-                >
-                  <Trash2 className="size-4" /> Discard draft
+                <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+                  <FileSpreadsheet className="size-4" /> Import Excel / CSV
                 </Button>
-              )}
-              <Button className="h-11" disabled={saving} onClick={() => void finalize()}>
-                <PackagePlus className="size-4" />{" "}
-                {saving ? "Saving invoice…" : "Finalize & receive stock"}
-              </Button>
+                <Button variant="ghost" size="sm" onClick={downloadTemplate}>
+                  <Download className="size-4" /> Template
+                </Button>
+              </div>
+
+              <BulkImportDialog
+                open={importOpen}
+                onOpenChange={setImportOpen}
+                mode="receiving"
+                onReceivingRows={(imported) => {
+                  for (const row of imported) {
+                    addLine(
+                      {
+                        ...row.product,
+                        cost: row.cost || row.product.cost,
+                        price: row.price || row.product.price,
+                      },
+                      Math.max(1, row.quantity),
+                    );
+                  }
+                  logger.log("inventory_edit", "Receiving lines imported from file", "purchasing", {
+                    rows: imported.length,
+                    created: imported.filter(
+                      (row) => !state.products.some((p) => p.id === row.product.id),
+                    ).length,
+                  });
+                  toast.success(`${imported.length} validated lines added to this invoice`);
+                }}
+              />
+
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Barcode</TableHead>
+                    <TableHead>Product</TableHead>
+                    <TableHead className="w-32 text-right">Cost price</TableHead>
+                    <TableHead className="text-right">Selling price</TableHead>
+                    <TableHead className="w-28 text-right">Qty received</TableHead>
+                    <TableHead className="text-right">Subtotal cost</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lines.map((l) => (
+                    <TableRow key={l.id}>
+                      <TableCell className="numeric">{l.barcode}</TableCell>
+                      <TableCell className="font-medium">{l.name}</TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          className="numeric h-9 text-right"
+                          value={l.cost}
+                          onChange={(e) => patch(l.id, { cost: Number(e.target.value) || 0 })}
+                        />
+                      </TableCell>
+                      <TableCell className="numeric text-right text-muted-foreground">
+                        {money(l.price)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          className="numeric h-9 text-right"
+                          value={l.qty}
+                          onChange={(e) =>
+                            patch(l.id, { qty: Math.max(0, Number(e.target.value) || 0) })
+                          }
+                        />
+                      </TableCell>
+                      <TableCell className="numeric text-right font-medium">
+                        {money(l.cost * l.qty)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Remove line"
+                          onClick={() => {
+                            setLines((ls) => ls.filter((x) => x.id !== l.id));
+                            // Already autosaved into the draft? Delete that row too.
+                            if (openDraftId) setDraftLineRemovals((r) => [...r, l.id]);
+                          }}
+                        >
+                          <Trash2 className="size-4 text-destructive" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {!lines.length && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                        Scan a barcode to start this receiving invoice.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+
+              <Separator />
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="text-sm text-muted-foreground">
+                  <span className="numeric font-semibold text-foreground">{lines.length}</span>{" "}
+                  unique items ·{" "}
+                  <span className="numeric font-semibold text-foreground">{totals.units}</span>{" "}
+                  units · total cost{" "}
+                  <span className="numeric font-semibold text-foreground">
+                    {money(totals.cost)}
+                  </span>
+                  {draftSavedAt && (
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      · Draft saved {new Date(draftSavedAt).toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    className="h-11"
+                    disabled={savingDraft || !lines.length}
+                    onClick={() => void saveDraftNow()}
+                  >
+                    <Save className="size-4" /> {savingDraft ? "Saving…" : "Save draft"}
+                  </Button>
+                  {openDraftId && (
+                    <Button
+                      variant="outline"
+                      className="h-11"
+                      onClick={() => setDiscardId(openDraftId)}
+                    >
+                      <Trash2 className="size-4" /> Discard draft
+                    </Button>
+                  )}
+                  <Button className="h-11" disabled={saving} onClick={() => void finalize()}>
+                    <PackagePlus className="size-4" />{" "}
+                    {saving ? "Saving invoice…" : "Finalize & receive stock"}
+                  </Button>
+                </div>
+              </div>
             </div>
-          </div>
-        </section>
+          </DialogContent>
+        </Dialog>
 
         {drafts.length > 0 && (
           <section className="rounded-lg border border-warning/40 bg-warning/5 p-5">
@@ -1336,7 +1387,7 @@ function Purchasing() {
                         >
                           <Pencil className="size-3.5" /> Resume
                         </Button>
-                      ) : h.status === "posted" ? (
+                      ) : h.status === "posted" && isAdmin ? (
                         h.pendingEditRequestId ? (
                           !!meId && (h.pendingEditBy ?? "").toLowerCase() === meId.toLowerCase() ? (
                             <>

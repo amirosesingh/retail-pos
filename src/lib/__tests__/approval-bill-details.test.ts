@@ -2,13 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { normalizeSnapshot, previewBillAfterDiscount } from "../ticket-snapshot";
-import { applyApprovedDiscount } from "../register/use-held-orders";
+import { applyApprovedDiscount, removeApprovedDiscount } from "../register/use-held-orders";
 import { cartTotals } from "../pos-store";
 
 const held = {
   id: "held-1",
   label: "Test bill",
   total: 100,
+  billNo: "B-1001",
   heldAt: "2026-10-01T02:00:00.000Z",
   lines: [
     {
@@ -80,6 +81,13 @@ describe("approval bill details", () => {
     expect(page).toContain("Total approval to grant");
     expect(page).toContain("Extra above cashier limit");
     expect(page).toContain("This request was created without a bill snapshot");
+    expect(page).toContain("Decided approvals");
+    expect(page).toContain("Include decided");
+    expect(page).toContain("Bill number");
+    expect(page).toContain("Purpose");
+    expect(page).toContain("After discount");
+    expect(page).toContain("Open ${row.status} approval details");
+    expect(page).toContain('if (unit === "currency") return `$${money(value)}`');
     expect(page).toContain("e.target.validity.badInput || value.length > 12");
     expect(page).not.toContain("e.target.value.slice(0, 12)");
   });
@@ -88,7 +96,11 @@ describe("approval bill details", () => {
     const applied = applyApprovedDiscount(held, {
       requestId: "request-1",
       actionKey: "discount_over_limit",
-      approvedPayload: { discount_scope: "bill", discount_type: "percent" },
+      approvedPayload: {
+        discount_scope: "bill",
+        discount_type: "percent",
+        bill_no: "B-1001",
+      },
       grantToken: "grant",
       approvedAmount: 22,
       requestedAmount: 22,
@@ -139,16 +151,18 @@ describe("approval bill details", () => {
         discount_scope: "item",
         discount_type: "amount",
         target_product_id: "product-1",
+        bill_no: "B-1001",
+        target_line_key: "B-1001|0|product-1|1|100",
       },
       grantToken: "grant",
-      approvedAmount: 20,
-      requestedAmount: 20,
+      approvedAmount: 2,
+      requestedAmount: 2,
       requesterDirectLimit: 10,
       valueUnit: "currency",
     });
-    expect(applied.lines[0]).toMatchObject({ discount: 20, discountType: "amount" });
+    expect(applied.lines[0]).toMatchObject({ discount: 2, discountType: "amount" });
     expect(cartTotals(applied.lines, applied.cartDiscount, applied.cartDiscountType).total).toBe(
-      80,
+      98,
     );
   });
 
@@ -164,6 +178,7 @@ describe("approval bill details", () => {
         discount_scope: "item",
         discount_type: "percent",
         target_product_id: "product-1",
+        bill_no: "B-1001",
       },
       grantToken: "grant",
       approvedAmount: 22,
@@ -181,6 +196,8 @@ describe("approval bill details", () => {
         discount_type: "percent",
         target_product_id: "product-1",
         target_index: 1,
+        bill_no: "B-1001",
+        target_line_key: "B-1001|1|product-1|2|100",
       },
       grantToken: "grant",
       approvedAmount: 22,
@@ -198,6 +215,148 @@ describe("approval bill details", () => {
     expect(server).toContain("&expires_at=gt.");
   });
 
+  it("removes the exact approved discount when its bill binding is invalidated", () => {
+    const bill = removeApprovedDiscount(
+      { lines: held.lines, cartDiscount: 22, cartDiscountType: "percent" },
+      { actionKey: "discount_over_limit", approvedPayload: { discount_scope: "bill" } },
+    );
+    expect(bill.cartDiscount).toBe(0);
+
+    const item = removeApprovedDiscount(
+      {
+        lines: [{ ...held.lines[0], discount: 2, discountType: "amount" }],
+        cartDiscount: 0,
+        cartDiscountType: "amount",
+      },
+      {
+        actionKey: "discount_over_limit",
+        approvedPayload: {
+          discount_scope: "item",
+          target_index: 0,
+          target_product_id: "product-1",
+        },
+      },
+    );
+    expect(item.lines[0]?.discount).toBe(0);
+  });
+
+  it("finds the approved line safely after an earlier line is removed", () => {
+    const item = removeApprovedDiscount(
+      {
+        lines: [{ ...held.lines[0], qty: 2, price: 80, discount: 15, discountType: "percent" }],
+        cartDiscount: 0,
+        cartDiscountType: "amount",
+      },
+      {
+        actionKey: "discount_over_limit",
+        approvedPayload: {
+          discount_scope: "item",
+          target_index: 1,
+          target_product_id: "product-1",
+          target_line_key: "B-1001|1|product-1|2|80",
+        },
+      },
+    );
+    expect(item.lines[0]?.discount).toBe(0);
+  });
+
+  it("refuses to redirect an approval to another bill or changed item", () => {
+    const wrongBill = applyApprovedDiscount(held, {
+      requestId: "request-wrong-bill",
+      actionKey: "discount_over_limit",
+      approvedPayload: {
+        discount_scope: "bill",
+        discount_type: "percent",
+        bill_no: "B-OTHER",
+      },
+      grantToken: "grant",
+      approvedAmount: 15,
+      requestedAmount: 15,
+      requesterDirectLimit: 10,
+      valueUnit: "percent",
+    });
+    expect(wrongBill.cartDiscount).toBe(0);
+
+    const changedItem = applyApprovedDiscount(held, {
+      requestId: "request-changed-item",
+      actionKey: "discount_over_limit",
+      approvedPayload: {
+        discount_scope: "item",
+        discount_type: "amount",
+        target_product_id: "product-1",
+        target_index: 0,
+        bill_no: "B-1001",
+        target_line_key: "B-1001|0|product-1|2|100",
+      },
+      grantToken: "grant",
+      approvedAmount: 15,
+      requestedAmount: 15,
+      requesterDirectLimit: 10,
+      valueUnit: "currency",
+    });
+    expect(changedItem.lines[0]?.discount).toBe(0);
+  });
+
+  it("rejects unbound discount requests at the trusted server boundary", () => {
+    const functions = readFileSync("src/lib/authorization.functions.ts", "utf8");
+    expect(functions).toContain("A discount approval must be tied to one reserved bill number");
+    expect(functions).toContain("An item approval must match one exact item on that bill");
+    expect(functions).toContain("snapshot?.ticketId !== billNo");
+    expect(functions).toContain('data.payload["target_line_key"] !== expectedLineKey');
+  });
+
+  it("voids bill-bound approvals when their held ticket or applied cart is discarded", () => {
+    const server = readFileSync("src/lib/authorization.server.ts", "utf8");
+    const functions = readFileSync("src/lib/authorization.functions.ts", "utf8");
+    const holds = readFileSync("src/routes/holds.tsx", "utf8");
+    const register = readFileSync("src/routes/index.tsx", "utf8");
+    const heldOrders = readFileSync("src/lib/register/use-held-orders.ts", "utf8");
+    const discardStart = holds.indexOf("async function discard");
+    const discard = holds.slice(discardStart, holds.indexOf("\n  return (", discardStart));
+
+    expect(server).toContain("status=in.(pending,approved)");
+    expect(functions).toContain('request.status !== "approved"');
+    expect(functions).toContain('error: "That approval is no longer valid"');
+    expect(discard.indexOf("cancelAuthorizationRequest")).toBeLessThan(
+      discard.indexOf("removeHeldOrder(order.id)"),
+    );
+    expect(register).toContain("Approved bill or item changed before completion");
+    expect(register).toContain("appliedSnapshotHash");
+    expect(register).toContain("revokeApprovalDiscountRef.current(approval)");
+    expect(register).toContain("resumedGrant.grantToken");
+    expect(register).toContain("revokeApprovalDiscountRef.current(resumedGrant)");
+    expect(register).toContain("activeApproval: appliedApproval");
+    expect(functions).toContain("!who.canDiscardHeldOrder");
+    expect(functions).toContain("cancelRequest(data.id, request.requestedBy");
+    expect(functions).toContain('status: "missing"');
+    expect(register).toContain("ticketId: reserved, billNo: reserved");
+    expect(register).toContain("resumedGrant?.requestedAmount");
+    expect(register).toContain("false,");
+    expect(register).toContain("setLines(");
+    expect(register).toContain("setCartDiscount((current)");
+    expect(heldOrders).toContain("calculateTotal");
+    expect(heldOrders).toContain("total: heldTotal");
+    expect(heldOrders).toContain("value: heldTotal");
+    expect(register).toContain("authorizationBinding(payload)");
+    expect(register).toContain("authorizationBinding(approvedPayloadForMatch)");
+    expect(register).toContain("requestedAmount <= resumedGrant.approvedAmount");
+    expect(register).toContain(
+      "resumedGrant?.grantToken && resumedGrant.actionKey === request.action",
+    );
+  });
+
+  it("returns and displays the durable approver identity and payable total", () => {
+    const functions = readFileSync("src/lib/authorization.functions.ts", "utf8");
+    const register = readFileSync("src/routes/index.tsx", "utf8");
+    const checkout = readFileSync("src/lib/register/use-checkout.ts", "utf8");
+    expect(functions).toContain("approvedByName: request.decidedByName");
+    expect(register).toContain("grant.approvedByName || grant.approvedBy");
+    expect(register).toContain("payable ${money(totals.total)}");
+    expect(register).toContain("appliedApprovalRef.current.approvedByName");
+    expect(checkout).toContain("authorizationRequestId: grant.requestId");
+    expect(checkout).toContain("authorizedBy: grant.approvedBy ?? null");
+  });
+
   it("allows a discount when the effective authorization rule is switched off", () => {
     const register = readFileSync("src/routes/index.tsx", "utf8");
     expect(register).toContain("if (grant === null) return;");
@@ -208,8 +367,9 @@ describe("approval bill details", () => {
     const register = readFileSync("src/routes/index.tsx", "utf8");
     const holds = readFileSync("src/routes/holds.tsx", "utf8");
     expect(held).toContain("resuming.current.has(id)");
-    expect(register).toContain("Approval applied · {appliedApprovalText}");
+    expect(register).toContain("Approval certificate · {appliedApprovalText}");
     expect(register).toContain("approvedAmount - appliedApproval.requesterDirectLimit");
+    expect(register).not.toContain("existing.grantToken");
     expect(holds).toContain("Approved — ready");
     expect(holds).toContain("Approval applied");
   });

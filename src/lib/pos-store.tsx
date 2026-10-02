@@ -78,6 +78,7 @@ import {
 import { isShiftOverdue, localTerminalId } from "./shift-hours";
 import { beginShiftSession, endShiftSessions } from "./shift-sessions";
 import { setPublicHosts } from "./coupon-hosts";
+import { branchDisplayName } from "./human-readable";
 import { activeLocations, archiveBlockers, canonicalLocations } from "./locations";
 import { branchPolicy } from "./branch-policy";
 import { setActiveBranchSyncPolicy } from "./sync-policy";
@@ -138,6 +139,7 @@ import {
   type ImportRow,
 } from "./product-import";
 import { productCodes } from "./product-lookup";
+import { applyZeroStockLifecycle, applyZeroStockLifecycleToProducts } from "./product-lifecycle";
 import { nextSku, readSkuSettings } from "./sku";
 
 const LEGACY_STATE_KEY = "pos-state-v2";
@@ -441,9 +443,16 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
   const cloudPromotions = cloud.promotions ?? [];
   const cloudStores = cloud.stores ?? [];
   const cloudSettings = cloud.settings ?? ({} as CloudSlice["settings"]);
+  const settings = mergeCloudSettings(cloudSettings);
   return {
     ...s,
-    products: cloudProducts,
+    // Older installations may not have the database lifecycle trigger yet.
+    // Keep stale zero-stock rows out of the active catalogue immediately; the
+    // trigger/backfill remains responsible for persisting the same state.
+    products: applyZeroStockLifecycleToProducts(
+      cloudProducts,
+      settings.integrations.autoArchiveZeroStock !== false,
+    ),
     members: cloudMembers,
     sales: (() => {
       if (!pendingSales?.size) return cloudSales;
@@ -470,7 +479,7 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
       if (!cloudStores.length) return s.currentStoreId;
       return cloudStores.find((x) => x.id === s.currentStoreId)?.id ?? cloudStores[0].id;
     })(),
-    settings: mergeCloudSettings(cloudSettings),
+    settings,
     // Keep the bill counter ahead of every receipt already in the cloud.
     counter: cloudSales.reduce(
       (max, sale) => Math.max(max, receiptSequence(sale.receiptNo)),
@@ -1238,19 +1247,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Signing in on a shift somebody else already opened is never interrupted by
   // the opening screen — say so once, then get out of the way.
   const announcedShiftRef = useRef<string | null>(null);
+  const activeShiftBranchName = activeShift
+    ? branchDisplayName(state.stores, activeShift.storeId, "")
+    : "";
+  const activeShiftAnnouncementBranch = signedIn ? activeShiftBranchName : "";
   useEffect(() => {
-    if (!activeShift || !signedIn) return;
+    if (!activeShift || !activeShiftAnnouncementBranch) return;
     if (announcedShiftRef.current === activeShift.id) return;
-    announcedShiftRef.current = activeShift.id;
     // The till that just opened the shift already saw its own confirmation.
     if (justOpenedRef.current?.shift.id === activeShift.id) return;
-    const branch =
-      stateRef.current.stores.find((s) => s.id === activeShift.storeId)?.name ??
-      activeShift.storeId;
-    toast.success(`Continuing active shift opened at ${branch}`, {
+    // Directory data can arrive just after the shift. Wait for it instead of
+    // briefly exposing the database identifier in a user-facing message.
+    announcedShiftRef.current = activeShift.id;
+    toast.success(`Continuing active shift opened at ${activeShiftAnnouncementBranch}`, {
       description: `Opened by ${activeShift.cashier} · float ${money(activeShift.openingFloat)}`,
     });
-  }, [activeShift, signedIn]);
+  }, [activeShift, activeShiftAnnouncementBranch]);
 
   const setCurrentStore = useCallback(
     (id: string) => setState((s) => ({ ...s, currentStoreId: id })),
@@ -1476,8 +1488,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // Day-end summary goes out on whatever channels this device enabled.
       void (async () => {
         const snapshot = stateRef.current;
-        const storeName =
-          snapshot.stores.find((s) => s.id === closed.storeId)?.name ?? closed.storeId;
+        const storeName = branchDisplayName(snapshot.stores, closed.storeId);
         const { buildShiftSummary, dispatchShiftSummary } = await import("./shift-alerts");
         await dispatchShiftSummary(buildShiftSummary(closed, snapshot.sales, storeName)).catch(
           () => null,
@@ -1533,12 +1544,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const touchedProducts = snapshot.products
         .filter((p) => input.lines.some((l) => l.productId === p.id))
         .map((p) => {
-          const line = input.lines.find((l) => l.productId === p.id)!;
+          const quantity = input.lines.reduce(
+            (total, line) => total + (line.productId === p.id ? line.qty : 0),
+            0,
+          );
           return bump(
             p,
             input.storeId,
-            -line.qty,
-            snapshot.settings.integrations.autoArchiveZeroStock === true,
+            -quantity,
+            snapshot.settings.integrations.autoArchiveZeroStock !== false,
           );
         });
       const member = snapshot.members.find((m) => m.id === input.memberId) ?? null;
@@ -1584,13 +1598,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
       pendingSalesRef.current.add(sale.id);
       setState((s) => {
         const products = s.products.map((p) => {
-          const line = input.lines.find((l) => l.productId === p.id);
-          return line
+          const quantity = input.lines.reduce(
+            (total, line) => total + (line.productId === p.id ? line.qty : 0),
+            0,
+          );
+          return quantity
             ? bump(
                 p,
                 input.storeId,
-                -line.qty,
-                s.settings.integrations.autoArchiveZeroStock === true,
+                -quantity,
+                s.settings.integrations.autoArchiveZeroStock !== false,
               )
             : p;
         });
@@ -2161,6 +2178,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           actionKey: "refund",
           storeId: sale.storeId,
           payload,
+          requestedAmount: Math.abs(sale.total),
           grantToken: grantToken ?? null,
         },
       });
@@ -2189,9 +2207,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const sale = s.sales.find((x) => x.id === saleId);
         if (!sale || sale.refunded) return s;
         const products = s.products.map((p) => {
-          const line = sale.lines.find((l) => l.productId === p.id);
-          return line
-            ? bump(p, sale.storeId, line.qty, s.settings.integrations.autoArchiveZeroStock === true)
+          const quantity = sale.lines.reduce(
+            (total, line) => total + (line.productId === p.id ? line.qty : 0),
+            0,
+          );
+          return quantity
+            ? bump(p, sale.storeId, quantity, s.settings.integrations.autoArchiveZeroStock !== false)
             : p;
         });
         return {
@@ -2235,7 +2256,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     for (const store of stateRef.current.stores) {
       if (stockByStore[store.id] === undefined) stockByStore[store.id] = 0;
     }
-    const record: Product = { ...product, stockByStore };
+    const record = applyZeroStockLifecycle(
+      { ...product, stockByStore },
+      stateRef.current.settings.integrations.autoArchiveZeroStock !== false,
+    );
     logger.log("inventory_edit", prev ? "Product updated" : "Product created", "inventory", {
       productId: record.id,
       name: record.name,
@@ -2342,6 +2366,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (!todo.length) return result;
 
       const privateCatalogue = branchPolicy(stateRef.current.settings, storeId).privateCatalogue;
+      const zeroStockLifecycle =
+        stateRef.current.settings.integrations.autoArchiveZeroStock !== false;
       const autoSku = readSkuSettings().mode === "auto";
       // One running list of codes, so the auto numbering never has to re-scan
       // the catalogue per row.
@@ -2387,7 +2413,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
             for (const id of storeIds) {
               if (record.stockByStore[id] === undefined) record.stockByStore[id] = 0;
             }
-            entries.push({ row, record, existing: true });
+            entries.push({
+              row,
+              record: applyZeroStockLifecycle(record, zeroStockLifecycle),
+              existing: true,
+            });
           } else {
             const sku = autoSku ? nextSku(skuPool) : row.barcode;
             skuPool.push(sku);
@@ -2413,7 +2443,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
               customPoints: row.customPoints,
               ...(privateCatalogue ? { ownerStoreId: storeId } : {}),
             };
-            entries.push({ row, record, existing: false });
+            entries.push({
+              row,
+              record: applyZeroStockLifecycle(record, zeroStockLifecycle),
+              existing: false,
+            });
           }
         }
 
@@ -2561,9 +2595,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
   /** Bulk field edit (category, tax, web visibility…) across a selection. */
   const patchProducts = useCallback(async (ids: string[], patch: Partial<Product>) => {
     const set = new Set(ids);
+    const zeroStockLifecycle = stateRef.current.settings.integrations.autoArchiveZeroStock !== false;
+    const explicitArchiveState = patch.archived !== undefined;
     const updated = stateRef.current.products
       .filter((p) => set.has(p.id))
-      .map((p) => ({ ...p, ...patch }));
+      .map((p) =>
+        explicitArchiveState
+          ? { ...p, ...patch }
+          : applyZeroStockLifecycle({ ...p, ...patch }, zeroStockLifecycle),
+      );
     logger.log("inventory_edit", "Products bulk edited", "inventory", {
       count: updated.length,
       changes: patch,
@@ -2572,7 +2612,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const target = await db.commitProducts(updated);
     setState((s) => ({
       ...s,
-      products: s.products.map((p) => (set.has(p.id) ? { ...p, ...patch } : p)),
+      products: s.products.map((p) =>
+        set.has(p.id)
+          ? explicitArchiveState
+            ? { ...p, ...patch }
+            : applyZeroStockLifecycle(
+                { ...p, ...patch },
+                s.settings.integrations.autoArchiveZeroStock !== false,
+              )
+          : p,
+      ),
     }));
     return target;
   }, []);
@@ -2654,7 +2703,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       before,
       target,
       delta,
-      stateRef.current.settings.integrations.autoArchiveZeroStock === true,
+      stateRef.current.settings.integrations.autoArchiveZeroStock !== false,
     );
     const committed = await db.commitStockAdjustments(
       [updated],
@@ -2680,7 +2729,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
               p,
               storeId ?? s.currentStoreId,
               delta,
-              s.settings.integrations.autoArchiveZeroStock === true,
+              s.settings.integrations.autoArchiveZeroStock !== false,
             )
           : p,
       ),
@@ -2940,17 +2989,24 @@ export function PosProvider({ children }: { children: ReactNode }) {
           }),
       );
     }
-    setState((s) => ({
-      ...s,
-      settings: {
+    setState((s) => {
+      const settings = {
         tax: { ...s.settings.tax, ...(patch.tax ?? {}) },
         receipt: { ...s.settings.receipt, ...(patch.receipt ?? {}) },
         payment: { ...s.settings.payment, ...(patch.payment ?? {}) },
         whatsapp: { ...s.settings.whatsapp, ...(patch.whatsapp ?? {}) },
         integrations: { ...s.settings.integrations, ...(patch.integrations ?? {}) },
         visibility: { ...s.settings.visibility, ...(patch.visibility ?? {}) },
-      },
-    }));
+      };
+      return {
+        ...s,
+        settings,
+        products: applyZeroStockLifecycleToProducts(
+          s.products,
+          settings.integrations.autoArchiveZeroStock !== false,
+        ),
+      };
+    });
   }, []);
 
   /**
@@ -3276,7 +3332,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           moving,
           before.fromStoreId,
           -1,
-          s.settings.integrations.autoArchiveZeroStock === true,
+          s.settings.integrations.autoArchiveZeroStock !== false,
         ),
         transfers: s.transfers.map((x) =>
           x.id === id
@@ -3401,6 +3457,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
       storeId: before.toStoreId,
       metadata: { ref: before.ref, fromStoreId: before.fromStoreId },
     });
+    const destination = s0.stores.find((store) => store.id === before.toStoreId)?.name;
+    recordActivity({
+      type: "transfer_received",
+      title: `Transfer ${before.ref} received`,
+      message: `${destination || "The receiving branch"} confirmed that the delivery arrived.`,
+      actorName: actorRef.current,
+      storeId: before.fromStoreId,
+      entityType: "stock_transfer",
+      entityId: before.id,
+      meta: {
+        route: `/transfers/${before.id}`,
+        audience: "sending_branch",
+        audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
+        receiving_store_id: before.toStoreId,
+      },
+    });
     return { success: true };
   }, []);
 
@@ -3439,7 +3511,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           arriving,
           before.toStoreId,
           1,
-          s.settings.integrations.autoArchiveZeroStock === true,
+          s.settings.integrations.autoArchiveZeroStock !== false,
         ),
         transfers: s.transfers.map((x) =>
           x.id === id
@@ -3511,7 +3583,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             returning,
             before.fromStoreId,
             1,
-            s.settings.integrations.autoArchiveZeroStock === true,
+            s.settings.integrations.autoArchiveZeroStock !== false,
           )
         : s.products,
       transfers: s.transfers.map((x) =>

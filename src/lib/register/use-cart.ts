@@ -14,7 +14,14 @@ import { clearCartDraft } from "@/lib/cart-draft";
 import { blocksOutOfStockSale } from "@/lib/register/stock-guard";
 import { logger } from "@/lib/audit-log";
 import { TICKET_ACTIONS, logTicketEvent } from "@/lib/ticket-audit";
-import type { Booking, CartLine, DiscountType, Product, Store } from "@/core/types/pos-types";
+import type {
+  BarcodeVariant,
+  Booking,
+  CartLine,
+  DiscountType,
+  Product,
+  Store,
+} from "@/core/types/pos-types";
 
 /** A coupon or voucher applied to the open ticket. */
 export type CartCoupon = {
@@ -44,7 +51,7 @@ type CartDeps = {
   getTotal: () => number;
   getMemberName: () => string | null;
   /** Fired when the ticket is emptied, so one-off unlocks do not linger. */
-  onReset?: () => void;
+  onReset?: (reason: "completed" | "voided" | "cleared" | "held") => void;
   /** The effective business tax rate, stored as a decimal on every new sale line. */
   taxRate: number;
   /**
@@ -65,7 +72,7 @@ export function useCart(deps: CartDeps) {
   const [billNo, setBillNo] = useState<string | null>(null);
   const [coupon, setCoupon] = useState<CartCoupon | null>(null);
 
-  function addLine(productId: string) {
+  function addLine(productId: string, variant?: BarcodeVariant) {
     if (!deps.hasShift) {
       toast.error("Open a shift before ringing up a sale");
       deps.onNeedShift();
@@ -86,17 +93,25 @@ export function useCart(deps: CartDeps) {
       toast.warning(`${message} — sold anyway`);
     }
     setLines((ls) => {
-      const found = ls.find((l) => l.productId === productId && !l.credit);
+      const variantCode = variant?.code;
+      const found = ls.find(
+        (l) => l.productId === productId && l.variantCode === variantCode && !l.credit,
+      );
       if (found)
         return ls.map((l) =>
-          l.productId === productId && !l.credit ? { ...l, qty: l.qty + 1 } : l,
+          l.productId === productId && l.variantCode === variantCode && !l.credit
+            ? { ...l, qty: l.qty + 1 }
+            : l,
         );
       return [
         ...ls,
         {
           productId,
-          name: product.name,
-          price: product.price,
+          name: variant?.label ? `${product.name} · ${variant.label}` : product.name,
+          variantCode,
+          variantLabel: variant?.label,
+          price: variant?.price ?? product.price,
+          cost: variant?.cost ?? product.cost,
           qty: 1,
           taxRate: deps.taxRate,
           discount: 0,
@@ -146,12 +161,12 @@ export function useCart(deps: CartDeps) {
     setLines((ls) => ls.map((l, i) => (i === index ? { ...l, ...patch } : l)));
   }
 
-  function resetCart() {
+  function resetCart(reason: "completed" | "voided" | "cleared" | "held" = "completed") {
     setLines([]);
     setCartDiscount(0);
     setCartDiscountType("percent");
     setExchangeRef(null);
-    deps.onReset?.();
+    deps.onReset?.(reason);
     setCoupon(null);
     setBillNo(null);
     clearCartDraft(deps.currentStore.id);
@@ -169,7 +184,7 @@ export function useCart(deps: CartDeps) {
         items: lines.map((l) => ({ name: l.name, qty: l.qty, price: l.price })),
       });
     }
-    resetCart();
+    resetCart(source === "void" ? "voided" : "cleared");
   }
 
   return {

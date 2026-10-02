@@ -122,7 +122,10 @@ const decideInput = caller.extend({
   approvedAmount: z.number().finite().nullish(),
 });
 
-const idInput = caller.extend({ id: z.string().uuid() });
+const idInput = caller.extend({
+  id: z.string().uuid(),
+  reason: z.string().max(400).default("Approval cancelled by requester"),
+});
 
 const claimInput = caller.extend({
   id: z.string().uuid(),
@@ -135,6 +138,7 @@ const mutationInput = caller.extend({
   storeId: z.string().max(64),
   payload: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
   snapshotHash: z.string().max(40).default(""),
+  requestedAmount: z.number().finite().nonnegative().nullish(),
   grantToken: z.string().max(4096).nullish(),
 });
 
@@ -146,6 +150,7 @@ type Caller = {
   storeId: string;
   canAccessAllBranches: boolean;
   canManageRules: boolean;
+  canDiscardHeldOrder: boolean;
 };
 
 /** Any signed-in till user: a staff account or a cashier PIN session. */
@@ -170,6 +175,7 @@ async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
     canAccessAllBranches: role === "admin",
     canManageRules:
       role === "admin" || role === "manager" || scope.permissions.can_access_pos_settings === true,
+    canDiscardHeldOrder: scope.isSupervisor || scope.permissions.can_discard_held_order === true,
   };
 }
 
@@ -203,6 +209,30 @@ export const verifyBusinessAuthorization = createServerFn({ method: "POST" })
       });
       if (!grant) {
         return { ok: false as const, error: "A valid authorization grant is required" };
+      }
+      if (
+        grant.approvedAmount !== undefined &&
+        grant.approvedAmount !== null &&
+        (data.requestedAmount === undefined ||
+          data.requestedAmount === null ||
+          data.requestedAmount > grant.approvedAmount)
+      ) {
+        return { ok: false as const, error: "The requested value exceeds the approved amount" };
+      }
+      // A queued approval can be invalidated after it was claimed (for
+      // example when its line or bill is voided). Signed tokens are therefore
+      // checked against the durable request status, not trusted in isolation.
+      if (grant.requestId) {
+        const { getRequest } = await import("./authorization.server");
+        const request = await getRequest(grant.requestId);
+        if (
+          !request ||
+          request.status !== "approved" ||
+          !request.consumedAt ||
+          request.requestedBy.toLowerCase() !== who.id.toLowerCase()
+        ) {
+          return { ok: false as const, error: "That approval is no longer valid" };
+        }
       }
       return { ok: true as const, required: true, grant };
     } catch (e) {
@@ -465,6 +495,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         role: person.role,
         storeId,
         binding: data.binding,
+        approvedAmount: data.requestedAmount ?? null,
       }),
     };
   });
@@ -503,6 +534,30 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       }
       const { normalizeSnapshot, snapshotFingerprint } = await import("./ticket-snapshot");
       const snapshot = data.snapshot ? normalizeSnapshot(data.snapshot) : null;
+      if (data.actionKey === "discount_over_limit") {
+        const billNo = snapshot?.billNo ?? "";
+        if (!billNo || snapshot?.ticketId !== billNo || data.payload["bill_no"] !== billNo) {
+          return {
+            ok: false as const,
+            error: "A discount approval must be tied to one reserved bill number",
+          };
+        }
+        if (data.payload["discount_scope"] === "item") {
+          const targetIndex = Number(data.payload["target_index"]);
+          const line = Number.isInteger(targetIndex) ? snapshot.lines[targetIndex] : undefined;
+          const expectedLineKey = line
+            ? [billNo, targetIndex, line.sku, line.qty, line.unitPrice].join("|")
+            : "";
+          if (!line || data.payload["target_line_key"] !== expectedLineKey) {
+            return {
+              ok: false as const,
+              error: "An item approval must match one exact item on that bill",
+            };
+          }
+        } else if (data.payload["discount_scope"] !== "bill") {
+          return { ok: false as const, error: "Choose a bill or item discount scope" };
+        }
+      }
       const branchPeople = await listAuthorizationPeopleRows(storeId);
       // Role authority is deliberately branch-bound. A specifically named
       // person on a global rule may be in another branch, so include only
@@ -682,7 +737,6 @@ async function notifyRequester(
       action_key: request.actionKey,
       audience: request.requestedBy,
       audience_user_ids: [request.requestedBy],
-      audience_terminal_id: request.terminalId || null,
     },
     client_event_id: `approval-decision-${request.id}`,
     created_at: new Date().toISOString(),
@@ -714,7 +768,6 @@ async function notifyRequesterExpired(
       action_key: request.actionKey,
       audience: request.requestedBy,
       audience_user_ids: [request.requestedBy],
-      audience_terminal_id: request.terminalId || null,
     },
     client_event_id: `approval-expired-${request.id}`,
     created_at: new Date().toISOString(),
@@ -1019,6 +1072,15 @@ export const claimAuthorizationRequest = createServerFn({ method: "POST" })
           error: "The ticket has changed since it was approved — send it again",
         };
       }
+      const grantToken = signOverrideGrant({
+        action: request.actionKey,
+        approvedBy: request.decidedBy ?? "approval",
+        role: "approval",
+        storeId: request.storeId,
+        binding: authorizationBinding(request.payload, request.snapshotHash),
+        requestId: request.id,
+        approvedAmount: request.approvedAmount ?? request.requestedAmount ?? null,
+      });
       const claimed = await consumeRequest(
         request.id,
         request.snapshotHash ? request.snapshotHash : undefined,
@@ -1035,21 +1097,19 @@ export const claimAuthorizationRequest = createServerFn({ method: "POST" })
         requesterDirectLimit: request.requesterDirectLimit,
         valueUnit: request.valueUnit,
         approvedPayload: request.approvedPayload,
-        grantToken: signOverrideGrant({
-          action: request.actionKey,
-          approvedBy: request.decidedBy ?? "approval",
-          role: "approval",
-          storeId: request.storeId,
-          binding: authorizationBinding(request.payload, request.snapshotHash),
-          requestId: request.id,
-        }),
+        approvedBy: request.decidedBy,
+        approvedByName: request.decidedByName,
+        grantToken,
       };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300) };
     }
   });
 
-/** The requester may take back a request nobody has decided yet. */
+/**
+ * The requester may void a pending or approved request. This is also the
+ * lifecycle hook used when its held bill or approved line is discarded.
+ */
 export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
   .validator((data: unknown) => idInput.parse(data))
   .handler(async ({ data }) => {
@@ -1057,12 +1117,24 @@ export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
       const who = await assertCaller(data);
       const { cancelRequest, getRequest, writeLog } = await import("./authorization.server");
       const request = await getRequest(data.id);
-      if (!request || request.requestedBy.toLowerCase() !== who.id.toLowerCase()) {
-        return { ok: false as const, error: "That request cannot be cancelled" };
+      // A request may already have expired or been removed. That is the same
+      // safe outcome the discard flow is trying to achieve.
+      if (!request) {
+        return { ok: true as const, changed: false, status: "missing" as const };
       }
       callerStore(who, request.storeId);
-      const done = await cancelRequest(data.id, who.id);
-      if (!done) return { ok: false as const, error: "That request can no longer be cancelled" };
+      const ownsRequest = request.requestedBy.toLowerCase() === who.id.toLowerCase();
+      if (!ownsRequest && !who.isSupervisor && !who.canDiscardHeldOrder) {
+        return { ok: false as const, error: "That request cannot be cancelled" };
+      }
+      if (request.status !== "pending" && request.status !== "approved") {
+        return { ok: true as const, changed: false, status: request.status };
+      }
+      // cancelRequest deliberately filters by the original owner. Passing the
+      // acting supervisor here would turn a valid cross-cashier discard into
+      // a silent no-op.
+      const done = await cancelRequest(data.id, request.requestedBy, data.reason);
+      if (!done) return { ok: false as const, error: "That request could not be cancelled" };
       const logged = await writeLog({
         actionKey: request.actionKey,
         modeUsed: "request",
@@ -1072,10 +1144,18 @@ export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
         storeId: request.storeId,
         terminalId: request.terminalId,
         outcome: "cancelled",
-        purpose: request.reason,
+        purpose: data.reason,
+        detail: {
+          previous_status: request.status,
+          consumed_at: request.consumedAt,
+          approved_by: request.decidedBy,
+          approved_by_name: request.decidedByName,
+          approved_amount: request.approvedAmount,
+          approved_payload: request.approvedPayload,
+        },
       });
       return logged.ok
-        ? { ok: true as const }
+        ? { ok: true as const, changed: true, status: "cancelled" as const }
         : { ok: false as const, error: "Request cancelled, but its audit entry failed" };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300) };

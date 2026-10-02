@@ -6,7 +6,7 @@
  * authenticated. Everything decided here is written to the authorisation log.
  */
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Clock3, Eye, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -73,8 +73,55 @@ const approvalValue = (value: number | null, unit: AuthorizationRequest["valueUn
   if (value === null || !Number.isFinite(value)) return "—";
   if (unit === "percent") return `${money(value)}%`;
   if (unit === "quantity") return `${value} item${value === 1 ? "" : "s"}`;
+  if (unit === "currency") return `$${money(value)}`;
   return money(value);
 };
+
+function requestBillNumber(row: AuthorizationRequest): string {
+  return (
+    row.snapshot?.billNo ||
+    String(row.approvedPayload["bill_no"] ?? row.payload["bill_no"] ?? "") ||
+    "Draft bill"
+  );
+}
+
+function approvalOutcome(row: AuthorizationRequest) {
+  const grant =
+    row.status === "approved"
+      ? (row.approvedAmount ?? row.requestedAmount)
+      : row.status === "pending"
+        ? row.requestedAmount
+        : null;
+  const type =
+    row.approvedPayload["discount_type"] === "percent" ||
+    row.payload["discount_type"] === "percent" ||
+    row.valueUnit === "percent"
+      ? "percent"
+      : "amount";
+  const scope = String(
+    row.approvedPayload["discount_scope"] ?? row.payload["discount_scope"] ?? "",
+  );
+  const snapshot = row.snapshot;
+  if (!snapshot || grant === null) return { grant, after: null as number | null };
+  if (scope === "bill") {
+    return { grant, after: previewBillAfterDiscount(snapshot, grant, type) };
+  }
+  const index = Number(row.approvedPayload["target_index"] ?? row.payload["target_index"]);
+  const line = Number.isInteger(index) ? snapshot.lines[index] : undefined;
+  if (!line) return { grant, after: null as number | null };
+  return {
+    grant,
+    after: r2(
+      Math.abs(line.unitPrice * line.qty) -
+        lineDiscountTotal({
+          price: line.unitPrice,
+          qty: line.qty,
+          discount: grant,
+          discountType: type,
+        }),
+    ),
+  };
+}
 
 const ago = (iso: string) => {
   const ms = Date.now() - Date.parse(iso || "");
@@ -101,6 +148,15 @@ function ApprovalsPage() {
   const [openRequestId, setOpenRequestId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const orderedRows = useMemo(
+    () =>
+      [...rows].sort((a, b) => {
+        const statusOrder = Number(a.status !== "pending") - Number(b.status !== "pending");
+        return statusOrder || b.createdAt.localeCompare(a.createdAt);
+      }),
+    [rows],
+  );
+  const firstDecided = orderedRows.findIndex((row) => row.status !== "pending");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -229,12 +285,6 @@ function ApprovalsPage() {
                 All branches
               </Label>
             </div>
-            <div className="flex items-center gap-2">
-              <Switch id="history" checked={history} onCheckedChange={setHistory} />
-              <Label htmlFor="history" className="text-xs">
-                Include decided
-              </Label>
-            </div>
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
               <RefreshCw className={`mr-1 size-4 ${loading ? "animate-spin" : ""}`} /> Refresh
             </Button>
@@ -260,15 +310,29 @@ function ApprovalsPage() {
           </Card>
         ) : null}
 
-        {rows.map((row) => {
+        {orderedRows.map((row, index) => {
           const mine = !!me && row.requestedBy.toLowerCase() === me.id.toLowerCase();
           const payload = Object.entries(row.payload ?? {});
+          const outcome = approvalOutcome(row);
           return (
-            <Dialog
-              key={row.id}
-              open={openRequestId === row.id}
-              onOpenChange={(open) => setOpenRequestId(open ? row.id : null)}
-            >
+            <Fragment key={row.id}>
+              {index === firstDecided ? (
+                <div className="mt-6 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 p-3">
+                  <div>
+                    <p className="text-sm font-semibold">Decided approvals</p>
+                    <p className="text-xs text-muted-foreground">
+                      Completed decisions are kept below as bill-linked approval certificates.
+                    </p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setHistory(false)}>
+                    Hide decided
+                  </Button>
+                </div>
+              ) : null}
+              <Dialog
+                open={openRequestId === row.id}
+                onOpenChange={(open) => setOpenRequestId(open ? row.id : null)}
+              >
               <Card>
                 <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
                   <div>
@@ -283,14 +347,48 @@ function ApprovalsPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge className={STATUS_TONE[row.status] ?? ""} variant="secondary">
-                      {row.status}
-                    </Badge>
+                    <button
+                      type="button"
+                      aria-label={`Open ${row.status} approval details`}
+                      onClick={() => setOpenRequestId(row.id)}
+                    >
+                      <Badge className={STATUS_TONE[row.status] ?? ""} variant="secondary">
+                        {row.status}
+                      </Badge>
+                    </button>
                     <Button variant="outline" size="sm" onClick={() => setOpenRequestId(row.id)}>
                       <Eye className="mr-1 size-4" /> View details
                     </Button>
                   </div>
                 </CardHeader>
+                <CardContent className="grid gap-2 pt-0 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <p className="text-muted-foreground">Bill number</p>
+                    <p className="font-semibold">{requestBillNumber(row)}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Purpose</p>
+                    <p className="font-semibold">{row.reason || "No reason provided"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">
+                      {row.status === "pending" ? "Requested" : "Decision"}
+                    </p>
+                    <p className="font-semibold text-primary">
+                      {row.status === "approved"
+                        ? `Approved ${approvalValue(outcome.grant, row.valueUnit)}`
+                        : row.status === "pending"
+                          ? approvalValue(row.requestedAmount, row.valueUnit)
+                          : row.status}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">After discount</p>
+                    <p className="font-semibold">
+                      {outcome.after === null ? "—" : `$${money(outcome.after)}`}
+                    </p>
+                  </div>
+                </CardContent>
               </Card>
               <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
                 <DialogHeader>
@@ -503,9 +601,26 @@ function ApprovalsPage() {
                   )}
                 </div>
               </DialogContent>
-            </Dialog>
+              </Dialog>
+            </Fragment>
           );
         })}
+
+        {firstDecided < 0 ? (
+          <div className="mt-6 flex items-center justify-between gap-3 rounded-md border border-dashed border-border p-3">
+            <div>
+              <p className="text-sm font-semibold">Decided approvals</p>
+              <p className="text-xs text-muted-foreground">
+                {history
+                  ? "No decided approvals were found for this branch."
+                  : "Open the completed decision history and its bill-linked details."}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setHistory((value) => !value)}>
+              {history ? "Hide decided" : "Include decided"}
+            </Button>
+          </div>
+        ) : null}
       </div>
     </AppShell>
   );

@@ -82,6 +82,16 @@ function createExternalClient() {
 let _client: ReturnType<typeof createExternalClient> | undefined;
 
 /**
+ * One concrete client for a complete authenticated operation. Holding this
+ * snapshot prevents a connection-profile refresh from swapping the proxy
+ * between an Auth proof and the protected Data API request it authorises.
+ */
+export function externalClientSnapshot(): ReturnType<typeof createExternalClient> {
+  if (!_client) _client = createExternalClient();
+  return _client;
+}
+
+/**
  * Rebuild the client against a different tenant — used the moment a terminal
  * is activated (or unpaired) so no restart is needed.
  */
@@ -133,7 +143,6 @@ export function createTenantClient(url: string, key: string) {
 
 export const supabaseExternal = new Proxy({} as ReturnType<typeof createExternalClient>, {
   get(_, prop, receiver) {
-    if (!_client) _client = createExternalClient();
-    return Reflect.get(_client, prop, receiver);
+    return Reflect.get(externalClientSnapshot(), prop, receiver);
   },
 });

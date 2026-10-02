@@ -290,7 +290,7 @@ function LiveBoard() {
                     )
                   }
                 >
-                  {s.name}
+                  {nameOf(s.id)}
                 </Button>
               ))}
             </div>

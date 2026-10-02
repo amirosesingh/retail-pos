@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CloudOff,
   Cloud,
@@ -16,6 +16,8 @@ import {
   Settings2,
   List,
   Rows3,
+  Wrench,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -61,6 +63,10 @@ import { usePos } from "@/lib/pos-store";
 import { describeLog } from "@/lib/audit-format";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { getPosCallerAuth } from "@/lib/pos-caller-auth";
+import { getRecentRecordEdits } from "@/lib/record-edits.functions";
+import type { RecordEditRow } from "@/lib/record-edits.server";
+import { branchDisplayName } from "@/lib/human-readable";
 
 export const Route = createFileRoute("/audit")({
   head: () => ({
@@ -83,10 +89,7 @@ export const Route = createFileRoute("/audit")({
 
 type RangeKey = "all" | "today" | "yesterday" | "custom";
 
-const categoryVisual: Record<
-  string,
-  { icon: typeof ShoppingCart; className: string }
-> = {
+const categoryVisual: Record<string, { icon: typeof ShoppingCart; className: string }> = {
   sale: { icon: ShoppingCart, className: "bg-emerald-500/15 text-emerald-500" },
   payment: { icon: ShoppingCart, className: "bg-teal-500/15 text-teal-500" },
   refund: { icon: RefreshCw, className: "bg-orange-500/15 text-orange-500" },
@@ -113,8 +116,32 @@ const categoryLabel = (c: string) => AUDIT_CATEGORY_LABELS[displayCategory(c)] ?
 
 const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
+const isMistakeOrCorrection = (row: AuditLog) =>
+  /error|fail|blocked|reject|mistake|correct|override|variance|void|refund|cancel|duplicate|unknown/i.test(
+    `${row.action} ${JSON.stringify(row.details)}`,
+  );
+
+const jsonObject = (value: string): Record<string, unknown> => {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+};
+
+const changedFields = (edit: RecordEditRow) => {
+  const before = jsonObject(edit.before_value);
+  const after = jsonObject(edit.after_value);
+  return Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).filter(
+    (key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]),
+  );
+};
+
 function AuditPage() {
-  const { can, staff } = useAuth();
+  const { can, staff, isAdmin } = useAuth();
   const { stores } = usePos();
   const logs = useAuditLogs();
   const sync = useSyncState();
@@ -126,9 +153,48 @@ function AuditPage() {
   const [module, setModule] = useState("all");
   const [showBrowse, setShowBrowse] = useState(false);
   const [riskOnly, setRiskOnly] = useState(false);
+  const [mistakesOnly, setMistakesOnly] = useState(false);
   const [q, setQ] = useState("");
   const [detail, setDetail] = useState<AuditLog | null>(null);
+  const [correctionDetail, setCorrectionDetail] = useState<RecordEditRow | null>(null);
+  const [correctionGuideOpen, setCorrectionGuideOpen] = useState(false);
+  const [corrections, setCorrections] = useState<RecordEditRow[]>([]);
+  const [correctionsLoading, setCorrectionsLoading] = useState(true);
   const [view, setView] = useState<"table" | "stream">("table");
+  const canViewAuditTrail = can("can_view_audit_trail");
+
+  useEffect(() => {
+    if (!canViewAuditTrail) {
+      setCorrectionsLoading(false);
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const auth = await getPosCallerAuth();
+        const result = await getRecentRecordEdits({ data: { ...auth, limit: 200 } });
+        if (!alive) return;
+        if (result.ok) {
+          setCorrections(result.edits);
+        } else {
+          toast.error("Could not load correction history", {
+            description: result.error || "Reconnect and try again.",
+          });
+        }
+      } catch (error) {
+        if (alive) {
+          toast.error("Could not load correction history", {
+            description: error instanceof Error ? error.message : "Reconnect and try again.",
+          });
+        }
+      } finally {
+        if (alive) setCorrectionsLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [canViewAuditTrail]);
 
   const modules = useMemo(
     () => Array.from(new Set(logs.map((l) => l.module).filter(Boolean))).sort(),
@@ -157,11 +223,12 @@ function AuditPage() {
       // Cashier trail: voids, price overrides and no-sale drawer opens only.
       if (
         riskOnly &&
-        !["item_void", "price_override", "no_sale"].some(
-          (a) => `${l.action} ${JSON.stringify(l.details)}`.includes(a),
+        !["item_void", "price_override", "no_sale"].some((a) =>
+          `${l.action} ${JSON.stringify(l.details)}`.includes(a),
         )
       )
         return false;
+      if (mistakesOnly && !isMistakeOrCorrection(l)) return false;
       if (
         text &&
         !`${describeLog(l)} ${l.action} ${l.module} ${l.staffName} ${l.staffId} ${l.route} ${JSON.stringify(
@@ -173,11 +240,11 @@ function AuditPage() {
         return false;
       return true;
     });
-  }, [logs, range, from, to, who, category, module, showBrowse, riskOnly, q]);
+  }, [logs, range, from, to, who, category, module, showBrowse, riskOnly, mistakesOnly, q]);
 
   const pager = usePagination(rows, 25);
 
-  if (!can("can_view_audit_trail")) {
+  if (!canViewAuditTrail) {
     return (
       <AppShell>
         <div className="flex min-h-screen items-center justify-center p-6">
@@ -220,6 +287,11 @@ function AuditPage() {
               {sync.online ? <Cloud className="size-3" /> : <CloudOff className="size-3" />}
               {sync.online ? "Online" : "Offline"} · {sync.pending} pending
             </Badge>
+            {isAdmin && (
+              <Button variant="outline" onClick={() => setCorrectionGuideOpen(true)}>
+                <Wrench className="size-4" /> Correct a record
+              </Button>
+            )}
             <Button variant="outline" onClick={exportCsv}>
               <Download className="size-4" /> Export logs
             </Button>
@@ -230,7 +302,9 @@ function AuditPage() {
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Date range</Label>
             <Select value={range} onValueChange={(v) => setRange(v as RangeKey)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All time</SelectItem>
                 <SelectItem value="today">Today</SelectItem>
@@ -242,7 +316,9 @@ function AuditPage() {
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Staff member</Label>
             <Select value={who} onValueChange={setWho}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All staff</SelectItem>
                 <SelectItem value="admin">Store Admin</SelectItem>
@@ -257,7 +333,9 @@ function AuditPage() {
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Category</Label>
             <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All categories</SelectItem>
                 {AUDIT_CATEGORIES.map((c) => (
@@ -279,7 +357,9 @@ function AuditPage() {
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Screen / module</Label>
             <Select value={module} onValueChange={setModule}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All screens</SelectItem>
                 {modules.map((m) => (
@@ -312,6 +392,18 @@ function AuditPage() {
             >
               <ShieldAlert className="size-4" />
               {riskOnly ? "Voids, overrides & no-sales" : "All actions"}
+            </Button>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Mistakes &amp; corrections</Label>
+            <Button
+              type="button"
+              variant={mistakesOnly ? "secondary" : "outline"}
+              className="w-full justify-start"
+              onClick={() => setMistakesOnly((value) => !value)}
+            >
+              <AlertTriangle className="size-4" />
+              {mistakesOnly ? "Only exceptions shown" : "Show all activity"}
             </Button>
           </div>
           {range === "custom" && (
@@ -352,7 +444,9 @@ function AuditPage() {
                 return (
                   <li key={l.id} className="relative flex gap-3 pb-5 last:pb-0">
                     <div className="flex flex-col items-center">
-                      <span className={`grid size-8 shrink-0 place-items-center rounded-full ${className}`}>
+                      <span
+                        className={`grid size-8 shrink-0 place-items-center rounded-full ${className}`}
+                      >
                         <Icon className="size-4" />
                       </span>
                       <span className="mt-1 w-px flex-1 bg-border" />
@@ -361,12 +455,22 @@ function AuditPage() {
                       <p className="text-sm">{describeLog(l)}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                         <span className="numeric">{new Date(l.at).toLocaleString()}</span>
-                        <Badge variant="outline" className="text-[10px]">{categoryLabel(l.category)}</Badge>
+                        <Badge variant="outline" className="text-[10px]">
+                          {categoryLabel(l.category)}
+                        </Badge>
                         <span className="capitalize">{l.module}</span>
-                        <Badge variant={l.synced_to_cloud ? "secondary" : "outline"} className="text-[10px]">
+                        <Badge
+                          variant={l.synced_to_cloud ? "secondary" : "outline"}
+                          className="text-[10px]"
+                        >
                           {l.synced_to_cloud ? "synced" : "pending"}
                         </Badge>
-                        <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => setDetail(l)}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2"
+                          onClick={() => setDetail(l)}
+                        >
                           <Eye className="size-3" /> Details
                         </Button>
                       </div>
@@ -393,68 +497,136 @@ function AuditPage() {
             />
           </section>
         ) : (
+          <section className="rounded-lg border border-border bg-card">
+            <Table clientDataControls={false}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date &amp; time</TableHead>
+                  <TableHead>Staff</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Action description</TableHead>
+                  <TableHead>Sync</TableHead>
+                  <TableHead className="text-right">Details</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pager.pageItems.map((l) => (
+                  <TableRow key={l.id}>
+                    <TableCell className="numeric whitespace-nowrap text-muted-foreground">
+                      {new Date(l.at).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {l.staffName}
+                      <span className="numeric block text-[11px] text-muted-foreground">
+                        {l.staffId}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{categoryLabel(l.category)}</Badge>
+                    </TableCell>
+                    <TableCell className="max-w-md">{describeLog(l)}</TableCell>
+                    <TableCell>
+                      <Badge variant={l.synced_to_cloud ? "secondary" : "outline"}>
+                        {l.synced_to_cloud ? "synced" : "pending"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="ghost" onClick={() => setDetail(l)}>
+                        <Eye className="size-4" /> View details
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!rows.length && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                      No activity matches these filters.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            <TablePagination
+              page={pager.page}
+              pageCount={pager.pageCount}
+              pageSize={pager.pageSize}
+              total={pager.total}
+              from={pager.from}
+              to={pager.to}
+              label="events"
+              onPage={pager.setPage}
+              onPageSize={pager.setPageSize}
+            />
+          </section>
+        )}
+
         <section className="rounded-lg border border-border bg-card">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+            <div>
+              <h2 className="text-sm font-semibold">Posted-record correction history</h2>
+              <p className="text-xs text-muted-foreground">
+                Original records stay traceable; every authorised correction stores the old and new
+                values.
+              </p>
+            </div>
+            <Badge variant="outline">
+              {correctionsLoading ? "Loading…" : `${corrections.length} corrections`}
+            </Badge>
+          </div>
+          <Separator />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Date &amp; time</TableHead>
-                <TableHead>Staff</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Action description</TableHead>
-                <TableHead>Sync</TableHead>
+                <TableHead>When</TableHead>
+                <TableHead>Record</TableHead>
+                <TableHead>Branch</TableHead>
+                <TableHead>Changed fields</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead>Edited / authorised by</TableHead>
                 <TableHead className="text-right">Details</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pager.pageItems.map((l) => (
-                <TableRow key={l.id}>
-                  <TableCell className="numeric whitespace-nowrap text-muted-foreground">
-                    {new Date(l.at).toLocaleString()}
+              {corrections.map((edit) => (
+                <TableRow key={edit.id}>
+                  <TableCell
+                    className="numeric whitespace-nowrap text-muted-foreground"
+                    data-sort-value={edit.created_at}
+                  >
+                    {new Date(edit.created_at).toLocaleString()}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    {l.staffName}
-                    <span className="numeric block text-[11px] text-muted-foreground">
-                      {l.staffId}
+                  <TableCell>
+                    <span className="capitalize">{edit.record_type.replaceAll("_", " ")}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {edit.reference || "Related record"}
                     </span>
                   </TableCell>
+                  <TableCell>{branchDisplayName(stores, edit.store_id)}</TableCell>
+                  <TableCell>{changedFields(edit).join(", ") || edit.action_key}</TableCell>
+                  <TableCell className="max-w-xs">{edit.note || "No reason recorded"}</TableCell>
                   <TableCell>
-                    <Badge variant="outline">{categoryLabel(l.category)}</Badge>
-                  </TableCell>
-                  <TableCell className="max-w-md">{describeLog(l)}</TableCell>
-                  <TableCell>
-                    <Badge variant={l.synced_to_cloud ? "secondary" : "outline"}>
-                      {l.synced_to_cloud ? "synced" : "pending"}
-                    </Badge>
+                    {edit.edited_by_name || edit.edited_by || "Unknown user"}
+                    <span className="block text-xs text-muted-foreground">
+                      Approved by {edit.authorized_by || "permission rule"}
+                    </span>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="ghost" onClick={() => setDetail(l)}>
-                      <Eye className="size-4" /> View details
+                    <Button size="sm" variant="ghost" onClick={() => setCorrectionDetail(edit)}>
+                      <Eye className="size-4" /> Compare
                     </Button>
                   </TableCell>
                 </TableRow>
               ))}
-              {!rows.length && (
+              {!correctionsLoading && !corrections.length && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
-                    No activity matches these filters.
+                  <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                    No posted-record corrections have been recorded yet.
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-          <TablePagination
-            page={pager.page}
-            pageCount={pager.pageCount}
-            pageSize={pager.pageSize}
-            total={pager.total}
-            from={pager.from}
-            to={pager.to}
-            label="events"
-            onPage={pager.setPage}
-            onPageSize={pager.setPageSize}
-          />
         </section>
-        )}
       </div>
 
       <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
@@ -478,7 +650,8 @@ function AuditPage() {
                   label="Store"
                   value={
                     detail.storeId
-                      ? (stores.find((store) => store.id === detail.storeId)?.name ?? "Unknown branch")
+                      ? (stores.find((store) => store.id === detail.storeId)?.name ??
+                        "Unknown branch")
                       : "All branches"
                   }
                 />
@@ -504,7 +677,106 @@ function AuditPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={correctionGuideOpen} onOpenChange={setCorrectionGuideOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Correct a business record safely</DialogTitle>
+            <DialogDescription>
+              Never repair financial data directly in Supabase. Use the matching workflow so totals,
+              stock and the immutable correction trail stay together.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <CorrectionLink href="/receipts" title="Sale or payment mistake">
+              Correct the tender as an administrator, or void/refund the wrong bill and issue the
+              replacement bill.
+            </CorrectionLink>
+            <CorrectionLink href="/shifts" title="Shift closing mistake">
+              Review the Z-report and record an administrator correction.
+            </CorrectionLink>
+            <CorrectionLink href="/stock-operations" title="Stock count mistake">
+              Reopen the posted count as an administrator; the stock delta and before/after values
+              are saved.
+            </CorrectionLink>
+            <CorrectionLink href="/purchasing" title="Receiving mistake">
+              Reopen the received purchase as an administrator and post only the required stock
+              difference.
+            </CorrectionLink>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!correctionDetail} onOpenChange={(open) => !open && setCorrectionDetail(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>
+              Correction · {correctionDetail?.reference || "Related record"}
+            </DialogTitle>
+            <DialogDescription>
+              {correctionDetail && new Date(correctionDetail.created_at).toLocaleString()} ·
+              original values remain in the audit history
+            </DialogDescription>
+          </DialogHeader>
+          {correctionDetail && (
+            <div className="space-y-4">
+              <dl className="grid gap-2 text-sm sm:grid-cols-3">
+                <Row label="Record" value={correctionDetail.record_type.replaceAll("_", " ")} />
+                <Row label="Reason" value={correctionDetail.note || "No reason recorded"} />
+                <Row label="Branch" value={branchDisplayName(stores, correctionDetail.store_id)} />
+                <Row
+                  label="Edited by"
+                  value={
+                    correctionDetail.edited_by_name || correctionDetail.edited_by || "Unknown user"
+                  }
+                />
+                <Row
+                  label="Authorised by"
+                  value={correctionDetail.authorized_by || "Permission rule"}
+                />
+                <Row label="Action" value={correctionDetail.action_key.replaceAll("_", " ")} />
+              </dl>
+              <div className="grid gap-3 md:grid-cols-2">
+                <ValuePanel title="Before" value={correctionDetail.before_value} />
+                <ValuePanel title="After" value={correctionDetail.after_value} />
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </AppShell>
+  );
+}
+
+function CorrectionLink({
+  href,
+  title,
+  children,
+}: {
+  href: string;
+  title: string;
+  children: string;
+}) {
+  return (
+    <a
+      href={href}
+      className="rounded-lg border border-border p-4 transition-colors hover:bg-muted/40"
+    >
+      <span className="font-medium">{title}</span>
+      <span className="mt-1 block text-sm text-muted-foreground">{children}</span>
+    </a>
+  );
+}
+
+function ValuePanel({ title, value }: { title: string; value: string }) {
+  const parsed = jsonObject(value);
+  return (
+    <div>
+      <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">{title}</p>
+      <pre className="numeric max-h-96 overflow-auto rounded-md border border-border bg-muted/40 p-3 text-xs">
+        {JSON.stringify(parsed, null, 2)}
+      </pre>
+    </div>
   );
 }
 

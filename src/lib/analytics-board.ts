@@ -47,14 +47,39 @@ export type BoardData = {
 
 /** Current branch names win; sale snapshots only retain names for deleted branches. */
 export function resolveStoreNames(
-  directory: { id: unknown; name: unknown }[],
+  directory: { id: unknown; name: unknown; code?: unknown }[],
   bills: { store_id: unknown; store_name_snapshot: unknown }[],
 ): Record<string, string> {
+  const live = directory.map((row) => ({
+    id: String(row.id),
+    name: String(row.name || "Unnamed shop").trim() || "Unnamed shop",
+    code: String(row.code ?? "").trim(),
+  }));
+  const liveIds = new Set(live.map((row) => row.id));
+  const snapshots = new Map<string, string>();
+  for (const row of bills) {
+    if (!row.store_id || !row.store_name_snapshot) continue;
+    const id = String(row.store_id);
+    if (!liveIds.has(id) && !snapshots.has(id)) {
+      snapshots.set(id, String(row.store_name_snapshot).trim() || "Unnamed shop");
+    }
+  }
+  const duplicateNames = new Map<string, number>();
+  for (const name of [...live.map((row) => row.name), ...snapshots.values()]) {
+    const key = name.toLowerCase();
+    duplicateNames.set(key, (duplicateNames.get(key) ?? 0) + 1);
+  }
   return Object.fromEntries([
-    ...bills
-      .filter((row) => row.store_id && row.store_name_snapshot)
-      .map((row) => [String(row.store_id), String(row.store_name_snapshot)]),
-    ...directory.map((row) => [String(row.id), String(row.name || "Unnamed shop")]),
+    ...[...snapshots].map(([id, name]) => [
+      id,
+      (duplicateNames.get(name.toLowerCase()) ?? 0) > 1 ? `${name} · ${id}` : name,
+    ]),
+    ...live.map((row) => {
+      const duplicated = (duplicateNames.get(row.name.toLowerCase()) ?? 0) > 1;
+      const identity =
+        row.code && row.code.toLowerCase() !== row.name.toLowerCase() ? row.code : row.id;
+      return [row.id, duplicated ? `${row.name} · ${identity}` : row.name];
+    }),
   ]);
 }
 
@@ -132,7 +157,7 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
       )
       .gte("created_at", from)
       .lte("created_at", endOfDay(to)),
-    supabase.from("stores").select("id, name"),
+    supabase.from("stores").select("id, name, code"),
   ]);
 
   const issues: BoardIssue[] = [];

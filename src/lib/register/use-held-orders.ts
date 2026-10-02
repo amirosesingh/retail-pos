@@ -43,7 +43,7 @@ type HeldOrdersDeps = {
   setMemberId: (id: string | null) => void;
   setCoupon: (c: CartCoupon | null) => void;
   setBillNo: (no: string | null) => void;
-  resetCart: () => void;
+  resetCart: (reason?: "completed" | "voided" | "cleared" | "held") => void;
   /**
    * A picture of the open ticket, used to prove to the server that a ticket
    * resumed after an approval is still the one the approver reviewed.
@@ -59,9 +59,18 @@ type HeldOrdersDeps = {
     requestedAmount: number | null;
     requesterDirectLimit: number | null;
     valueUnit: "percent" | "currency" | "quantity" | "number";
+    approvedBy: string | null;
+    approvedByName: string | null;
   }) => void;
   /** Clears approval UI/state before another parked ticket becomes active. */
   onApprovalCleared?: () => void;
+  activeApproval?: Pick<ClaimedGrant, "actionKey" | "approvedPayload"> | null;
+  /** Reprices a cleaned ticket with the register's tax/promotion rules. */
+  calculateTotal?: (
+    lines: CartLine[],
+    cartDiscount: number,
+    cartDiscountType: DiscountType,
+  ) => number;
 };
 
 export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
@@ -75,17 +84,31 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   function holdOrder(silent = false, requestedId?: string) {
     const { lines, total, storeId, memberId, memberName } = deps;
     if (!lines.length) return null;
-    const snapshot = lines;
+    const cleaned = deps.activeApproval
+      ? removeApprovedDiscount(
+          {
+            lines,
+            cartDiscount: deps.cartDiscount,
+            cartDiscountType: deps.cartDiscountType,
+          },
+          deps.activeApproval,
+        )
+      : { lines, cartDiscount: deps.cartDiscount, cartDiscountType: deps.cartDiscountType };
+    const snapshot = cleaned.lines;
+    const heldTotal = deps.activeApproval
+      ? (deps.calculateTotal?.(cleaned.lines, cleaned.cartDiscount, cleaned.cartDiscountType) ??
+        total)
+      : total;
     const id = requestedId ?? `H${Date.now()}`;
     const order: HeldOrder = {
       id,
       label: `${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${snapshot.length} item(s)`,
-      total,
+      total: heldTotal,
       lines: snapshot,
       heldAt: new Date().toISOString(),
       storeId,
       heldBy: deps.cashier,
-      cartDiscount: deps.cartDiscount,
+      cartDiscount: cleaned.cartDiscount,
       ...(deps.billNo ? { billNo: deps.billNo } : {}),
       cartDiscountType: deps.cartDiscountType,
       exchangeRef: deps.exchangeRef,
@@ -97,13 +120,13 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
     logTicketEvent(TICKET_ACTIONS.held, {
       holdRef: id,
       lines: snapshot.length,
-      value: total,
+      value: heldTotal,
       storeId,
       memberId,
       member: memberName,
       items: snapshot.map((l) => ({ name: l.name, qty: l.qty, price: l.price })),
     });
-    deps.resetCart();
+    deps.resetCart("held");
     if (!silent) toast.success("Order held — reopen it from Hold tickets");
     return order;
   }
@@ -154,6 +177,8 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
             requestedAmount: claimed.requestedAmount ?? null,
             requesterDirectLimit: claimed.requesterDirectLimit ?? null,
             valueUnit: claimed.valueUnit,
+            approvedBy: claimed.approvedBy ?? null,
+            approvedByName: claimed.approvedByName ?? null,
           };
         }
       }
@@ -196,7 +221,61 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   return { held, holdOrder, resumeHeld };
 }
 
-type ClaimedGrant = Parameters<NonNullable<HeldOrdersDeps["onApprovalClaimed"]>>[0];
+export type ClaimedGrant = Omit<
+  Parameters<NonNullable<HeldOrdersDeps["onApprovalClaimed"]>>[0],
+  "approvedBy" | "approvedByName"
+> & {
+  approvedBy?: string | null;
+  approvedByName?: string | null;
+};
+
+export type ApprovalDiscountState = {
+  lines: CartLine[];
+  cartDiscount: number;
+  cartDiscountType: DiscountType;
+};
+
+/** Remove only the economic effect that came from this approval. */
+export function removeApprovedDiscount(
+  state: ApprovalDiscountState,
+  grant: Pick<ClaimedGrant, "actionKey" | "approvedPayload">,
+): ApprovalDiscountState {
+  if (grant.actionKey !== "discount_over_limit") return state;
+  const payload = grant.approvedPayload;
+  if (payload["discount_scope"] === "bill") {
+    return { ...state, cartDiscount: 0 };
+  }
+
+  const productId = String(payload["target_product_id"] ?? "");
+  const requestedIndex = Number(payload["target_index"]);
+  const indexed = Number.isInteger(requestedIndex) ? state.lines[requestedIndex] : undefined;
+  const rawLineKey = String(payload["target_line_key"] ?? "");
+  const keyParts = rawLineKey.split("|");
+  const hasLineKey = rawLineKey.length > 0 && keyParts.length >= 5;
+  const expectedProductId = hasLineKey ? (keyParts.at(-3) ?? productId) : productId;
+  const expectedQty = hasLineKey ? Number(keyParts.at(-2)) : Number.NaN;
+  const expectedPrice = hasLineKey ? Number(keyParts.at(-1)) : Number.NaN;
+  const matches = state.lines.flatMap((line, index) =>
+    (!expectedProductId || line.productId === expectedProductId) &&
+    (!Number.isFinite(expectedQty) || line.qty === expectedQty) &&
+    (!Number.isFinite(expectedPrice) || line.price === expectedPrice)
+      ? [index]
+      : [],
+  );
+  const indexedMatches =
+    indexed &&
+    (!expectedProductId || indexed.productId === expectedProductId) &&
+    (!Number.isFinite(expectedQty) || indexed.qty === expectedQty) &&
+    (!Number.isFinite(expectedPrice) || indexed.price === expectedPrice);
+  const targetIndex = indexedMatches ? requestedIndex : matches.length === 1 ? matches[0] : -1;
+  if (targetIndex < 0) return state;
+  return {
+    ...state,
+    lines: state.lines.map((line, index) =>
+      index === targetIndex ? { ...line, discount: 0 } : line,
+    ),
+  };
+}
 
 /** Apply the value the manager actually granted to the exact bill/line target. */
 export function applyApprovedDiscount(order: HeldOrder, grant: ClaimedGrant) {
@@ -208,6 +287,8 @@ export function applyApprovedDiscount(order: HeldOrder, grant: ClaimedGrant) {
   if (grant.actionKey !== "discount_over_limit" || grant.approvedAmount === null) return fallback;
 
   const payload = grant.approvedPayload;
+  const approvedBillNo = String(payload["bill_no"] ?? "");
+  if (!order.billNo || approvedBillNo !== order.billNo) return fallback;
   const type: DiscountType =
     payload["discount_type"] === "percent" || grant.valueUnit === "percent" ? "percent" : "amount";
   const value = Math.max(0, Number(grant.approvedAmount) || 0);
@@ -228,6 +309,15 @@ export function applyApprovedDiscount(order: HeldOrder, grant: ClaimedGrant) {
         ? matchingIndexes[0]
         : -1;
   if (targetIndex < 0 || targetIndex >= order.lines.length) return fallback;
+  const targetLine = order.lines[targetIndex]!;
+  const expectedLineKey = [
+    order.billNo,
+    targetIndex,
+    targetLine.productId,
+    targetLine.qty,
+    targetLine.price,
+  ].join("|");
+  if (payload["target_line_key"] !== expectedLineKey) return fallback;
   return {
     ...fallback,
     lines: order.lines.map((line, index) =>

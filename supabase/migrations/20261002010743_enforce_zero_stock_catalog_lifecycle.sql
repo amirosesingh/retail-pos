@@ -1,3 +1,6 @@
+-- Upgrade installations that already recorded the original zero-stock
+-- lifecycle migration. Keep the earlier migration immutable so normal
+-- Supabase deployment history applies these definitions exactly once.
 CREATE OR REPLACE FUNCTION public.apply_zero_stock_catalog_lifecycle()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -9,7 +12,7 @@ DECLARE
   had_stock boolean := false;
   has_stock boolean := false;
 BEGIN
-  SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, false)
+  SELECT lower(COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')) = 'true'
     INTO enabled
     FROM public.pos_settings
    WHERE id = 1;
@@ -18,9 +21,15 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  -- Malformed legacy payloads are unknown rather than zero stock. Archiving
+  -- them automatically could hide a product whose inventory needs repair.
+  IF jsonb_typeof(NEW.stock_by_store) IS DISTINCT FROM 'object' THEN
+    RETURN NEW;
+  END IF;
+
   SELECT EXISTS (
     SELECT 1
-      FROM jsonb_each_text(COALESCE(NEW.stock_by_store, '{}'::jsonb))
+      FROM jsonb_each_text(NEW.stock_by_store)
      WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
        AND value::numeric > 0
   ) INTO has_stock;
@@ -29,16 +38,24 @@ BEGIN
     NEW.is_archived := true;
     NEW.archived_at := COALESCE(NEW.archived_at, now());
   ELSIF TG_OP = 'INSERT' AND has_stock THEN
-    NEW.is_archived := false;
-    NEW.archived_at := NULL;
+    NEW.is_archived := COALESCE(NEW.is_archived, false);
+    IF NEW.is_archived THEN
+      NEW.archived_at := COALESCE(NEW.archived_at, now());
+    ELSE
+      NEW.archived_at := NULL;
+    END IF;
   ELSE
-    SELECT EXISTS (
-      SELECT 1
-        FROM jsonb_each_text(COALESCE(OLD.stock_by_store, '{}'::jsonb))
-       WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
-         AND value::numeric > 0
-    ) INTO had_stock;
-    IF had_stock AND NOT has_stock THEN
+    IF jsonb_typeof(OLD.stock_by_store) = 'object' THEN
+      SELECT EXISTS (
+        SELECT 1
+          FROM jsonb_each_text(OLD.stock_by_store)
+         WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
+           AND value::numeric > 0
+      ) INTO had_stock;
+    ELSE
+      had_stock := true;
+    END IF;
+    IF NOT has_stock THEN
       NEW.is_archived := true;
       NEW.archived_at := COALESCE(NEW.archived_at, now());
     ELSIF NOT had_stock AND has_stock THEN
@@ -52,7 +69,7 @@ $$;
 
 DROP TRIGGER IF EXISTS products_zero_stock_catalog_lifecycle ON public.products;
 CREATE TRIGGER products_zero_stock_catalog_lifecycle
-BEFORE INSERT OR UPDATE OF stock_by_store ON public.products
+BEFORE INSERT OR UPDATE OF stock_by_store, is_archived ON public.products
 FOR EACH ROW EXECUTE FUNCTION public.apply_zero_stock_catalog_lifecycle();
 
 COMMENT ON FUNCTION public.apply_zero_stock_catalog_lifecycle() IS
@@ -67,18 +84,26 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  IF COALESCE((NEW.integration_settings ->> 'autoArchiveZeroStock')::boolean, false)
-     AND NOT COALESCE((OLD.integration_settings ->> 'autoArchiveZeroStock')::boolean, false) THEN
-    UPDATE public.products
+  IF lower(COALESCE(NEW.integration_settings ->> 'autoArchiveZeroStock', 'true')) = 'true'
+     AND lower(COALESCE(OLD.integration_settings ->> 'autoArchiveZeroStock', 'false')) <> 'true' THEN
+    WITH stock_state AS (
+      SELECT p.id,
+             EXISTS (
+               SELECT 1
+                 FROM jsonb_each_text(p.stock_by_store)
+                WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
+                  AND value::numeric > 0
+             ) AS has_stock
+        FROM public.products p
+       WHERE jsonb_typeof(p.stock_by_store) = 'object'
+    )
+    UPDATE public.products p
        SET is_archived = true,
-           archived_at = COALESCE(products.archived_at, now())
-     WHERE NOT EXISTS (
-             SELECT 1
-               FROM jsonb_each_text(COALESCE(products.stock_by_store, '{}'::jsonb))
-              WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
-                AND value::numeric > 0
-           )
-       AND (NOT COALESCE(products.is_archived, false) OR products.archived_at IS NULL);
+           archived_at = COALESCE(p.archived_at, now())
+      FROM stock_state
+     WHERE p.id = stock_state.id
+       AND NOT stock_state.has_stock
+       AND (NOT COALESCE(p.is_archived, false) OR p.archived_at IS NULL);
   END IF;
   RETURN NEW;
 END;
@@ -91,22 +116,22 @@ FOR EACH ROW EXECUTE FUNCTION public.backfill_zero_stock_catalog_lifecycle();
 
 REVOKE ALL ON FUNCTION public.backfill_zero_stock_catalog_lifecycle() FROM PUBLIC, anon, authenticated;
 
--- Reconcile products already present when this migration reaches an
--- installation whose lifecycle setting was enabled earlier. Future changes
--- are handled by the two triggers above.
+-- Reconcile products already present when this upgrade is installed. This is
+-- idempotent and skips malformed JSON shapes so no uncertain row is hidden.
 WITH lifecycle AS (
-  SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, false) AS enabled
+  SELECT lower(COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')) = 'true' AS enabled
     FROM public.pos_settings
    WHERE id = 1
 ), stock_state AS (
   SELECT p.id,
          EXISTS (
            SELECT 1
-             FROM jsonb_each_text(COALESCE(p.stock_by_store, '{}'::jsonb))
+             FROM jsonb_each_text(p.stock_by_store)
             WHERE value ~ '^-?[0-9]+([.][0-9]+)?$'
               AND value::numeric > 0
          ) AS has_stock
     FROM public.products p
+   WHERE jsonb_typeof(p.stock_by_store) = 'object'
 )
 UPDATE public.products p
    SET is_archived = true,

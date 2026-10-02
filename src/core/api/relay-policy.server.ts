@@ -316,6 +316,55 @@ async function parentStore(child: string, id: unknown): Promise<string | null | 
 const visibleStore = (scope: RelayScope, storeId: string | null | undefined) =>
   scope.isSupervisor || (!!storeId && storeId === scope.storeId);
 
+function canonicalJsonValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return canonicalJsonValue(JSON.parse(trimmed));
+      } catch {
+        // Ordinary tender labels remain strings.
+      }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalJsonValue(item)]),
+    );
+  }
+  return value ?? null;
+}
+
+const sameJsonValue = (left: unknown, right: unknown) =>
+  JSON.stringify(canonicalJsonValue(left)) === JSON.stringify(canonicalJsonValue(right));
+
+/** A cashier may create a sale with tenders, but cannot change tenders later. */
+async function upsertChangesExistingTender(rows: Record<string, unknown>[]): Promise<boolean> {
+  for (const row of rows) {
+    if (row["payment_type"] === undefined && row["payments"] === undefined) continue;
+    const id = String(row["id"] ?? "").trim();
+    if (!id) return true;
+    const response = await serviceRest(
+      `sales?id=eq.${encodeURIComponent(id)}&select=id,payment_type,payments&limit=1`,
+    );
+    if (!response.ok) return true;
+    const existing = ((await response.json()) as Record<string, unknown>[])[0];
+    if (!existing) continue;
+    if (
+      (row["payment_type"] !== undefined &&
+        !sameJsonValue(row["payment_type"], existing["payment_type"])) ||
+      (row["payments"] !== undefined && !sameJsonValue(row["payments"], existing["payments"]))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Apply the branch and permission rules to one queued operation, returning a
  * rewritten operation that is safe to run with service rights.
@@ -337,6 +386,21 @@ export async function authorizeRelayOp(
       "SCOPE_STALE",
       "Your account details could not be confirmed — sign in again to refresh them.",
     );
+
+  const isAdmin = scope.role === "admin" || scope.roleSlug === "admin";
+  let saleTenderCorrection = false;
+  if (op.table === "sales" && !isAdmin) {
+    saleTenderCorrection =
+      (op.kind === "update" &&
+        (op.values["payment_type"] !== undefined || op.values["payments"] !== undefined)) ||
+      (op.kind === "upsert" && (await upsertChangesExistingTender(op.rows)));
+    if (saleTenderCorrection) {
+      return deny("PERMISSION_DENIED", "Only an administrator can correct a completed payment.");
+    }
+  }
+  if (op.table === "record_edits" && !isAdmin) {
+    return deny("PERMISSION_DENIED", "Only an administrator can write correction history.");
+  }
 
   if (op.table === "authorization_requests" && !scope.isSupervisor) {
     if (op.kind !== "insert" && op.kind !== "upsert")
@@ -388,6 +452,14 @@ export async function authorizeRelayOp(
     for (const payload of payloads) {
       for (const column of Object.keys(payload)) {
         const flag = columnGate[column];
+        if (
+          op.table === "sales" &&
+          column === "payment_type" &&
+          (op.kind === "insert" || op.kind === "upsert") &&
+          !saleTenderCorrection
+        ) {
+          continue;
+        }
         if (flag && !allowed(scope, flag))
           return deny("PERMISSION_DENIED", `Your account cannot change "${column}".`);
       }

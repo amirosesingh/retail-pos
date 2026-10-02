@@ -33,6 +33,7 @@ import { StatusHistoryList } from "@/platforms/web/components/pos/StatusHistoryD
 import { usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import { TRANSFER_STATUS_LABELS } from "@/core/types/pos-types";
+import { branchDisplayName } from "@/lib/human-readable";
 import { exactCodeMatch } from "@/lib/product-search";
 
 export const Route = createFileRoute("/receiving/$id")({
@@ -126,7 +127,6 @@ function ReceivingWorkspace() {
       </AppShell>
     );
 
-  const source = stores.find((s) => s.id === transfer.fromStoreId);
   const mine = transfer.toStoreId === currentStore.id;
   const allowed = live && mine && can("can_receive_transfer");
   const arrived = transfer.status === "received";
@@ -178,7 +178,10 @@ function ReceivingWorkspace() {
           fulfilment={transfer.fulfilment}
           subtitle={
             <>
-              Sent from <span className="text-primary">{source?.name ?? transfer.fromStoreId}</span>{" "}
+              Sent from{" "}
+              <span className="text-primary">
+                {branchDisplayName(stores, transfer.fromStoreId)}
+              </span>{" "}
               · dispatched {when(transfer.dispatchedAt)}
             </>
           }

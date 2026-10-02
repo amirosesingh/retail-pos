@@ -6,13 +6,19 @@ const mocks = vi.hoisted(() => ({
   relay: vi.fn(),
   local: vi.fn(),
   from: vi.fn(),
+  upsert: vi.fn(),
   range: vi.fn(),
   checkpoint: vi.fn(),
   getUser: vi.fn(),
+  getSession: vi.fn(),
   expired: vi.fn(),
 }));
 vi.mock("@/integrations/supabase/external-client", () => ({
-  supabaseExternal: { from: mocks.from, auth: { getUser: mocks.getUser } },
+  supabaseExternal: { from: mocks.from, auth: { getUser: mocks.getUser, getSession: mocks.getSession } },
+  externalClientSnapshot: () => ({
+    from: mocks.from,
+    auth: { getUser: mocks.getUser, getSession: mocks.getSession },
+  }),
 }));
 vi.mock("@/core/api/sync-relay", () => ({
   hasStaffSession: mocks.staff,
@@ -51,8 +57,20 @@ beforeEach(() => {
   mocks.local.mockReturnValue(null);
   mocks.relayAllowed.mockReturnValue(true);
   mocks.relay.mockResolvedValue({ ok: true });
+  mocks.upsert.mockResolvedValue({ error: null });
   mocks.getUser.mockResolvedValue({ data: { user: { id: "staff-1" } }, error: null });
-  const query = { select: vi.fn(), gt: vi.fn(), lte: vi.fn(), order: vi.fn(), range: mocks.range };
+  mocks.getSession.mockResolvedValue({
+    data: { session: { access_token: "staff-jwt" } },
+    error: null,
+  });
+  const query = {
+    select: vi.fn(),
+    gt: vi.fn(),
+    lte: vi.fn(),
+    order: vi.fn(),
+    range: mocks.range,
+    upsert: mocks.upsert,
+  };
   for (const method of [query.select, query.gt, query.lte, query.order])
     method.mockReturnValue(query);
   mocks.from.mockReturnValue(query);
@@ -161,5 +179,27 @@ describe("PIN audit uploads", () => {
     await expect(db.pushAuditLogs(auditRows)).rejects.toThrow("Sign in");
     expect(mocks.from).not.toHaveBeenCalled();
     expect(mocks.relay).not.toHaveBeenCalled();
+  });
+});
+
+describe("signed-in audit uploads", () => {
+  it("preserves branch ownership on direct Supabase writes", async () => {
+    mocks.staff.mockReturnValue(true);
+
+    await expect(db.pushAuditLogs(auditRows)).resolves.toEqual(["entry-1"]);
+
+    expect(mocks.from).toHaveBeenCalledWith("audit_logs");
+    expect(mocks.upsert).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: "entry-1", store_id: "branch-1" })],
+      { onConflict: "id", ignoreDuplicates: true },
+    );
+    expect(mocks.relay).not.toHaveBeenCalled();
+  });
+
+  it("does not probe protected tables when Auth has no bearer session", async () => {
+    mocks.staff.mockReturnValue(true);
+    mocks.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    await expect(pullDelta()).resolves.toEqual({ merged: 0 });
+    expect(mocks.from).not.toHaveBeenCalled();
   });
 });

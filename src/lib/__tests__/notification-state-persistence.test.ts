@@ -236,6 +236,8 @@ describe("per-user notification state", () => {
     expect(bell).toContain("<AnimatedList");
     expect(bell).toContain("activity-notification-row");
     expect(bell).not.toContain('value="history"');
+    const root = readFileSync("src/routes/__root.tsx", "utf8");
+    expect(root).toContain('<Toaster position="top-right" closeButton />');
     expect(bell).toContain('value="attention"');
     expect(bell).toContain('value="warning"');
     expect(bell).toContain('value="ready"');

@@ -90,6 +90,10 @@ export type BarcodeVariant = {
   code: string;
   /** what makes this variant different, e.g. "Blue", "12 m pack" */
   label?: string;
+  /** optional unit cost used when this exact barcode is sold */
+  cost?: number;
+  /** optional selling price used when this exact barcode is sold */
+  price?: number;
 };
 
 /** Which of the three flat catalogue lists an entry belongs to. */
@@ -140,6 +144,9 @@ export type Member = {
 export type CartLine = {
   productId: string;
   name: string;
+  /** exact barcode variation scanned for this line, when applicable */
+  variantCode?: string;
+  variantLabel?: string;
   price: number;
   /** Catalogue price retained when an authorised override changes this sale line. */
   originalPrice?: number;

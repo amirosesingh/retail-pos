@@ -8,6 +8,17 @@ export type FriendlyReferences = {
   sales?: ReferencedSale[];
 };
 
+/** Resolve a branch identifier without ever exposing an internal UUID to users. */
+export function branchDisplayName(
+  stores: readonly NamedRecord[],
+  id: string | null | undefined,
+  fallback = "Unknown branch",
+): string {
+  if (!id) return fallback;
+  const branch = stores.find((row) => row.id === id);
+  return branch?.name?.trim() || fallback;
+}
+
 /** Replace identifiers already known to the client with the names users recognise. */
 export function humanizeText(value: string, refs: FriendlyReferences): string {
   let result = value;

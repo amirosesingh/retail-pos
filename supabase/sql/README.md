@@ -1,20 +1,30 @@
 # Central PostgreSQL / Supabase SQL
 
-## Existing production database — current release
+## Existing production database
 
-Run exactly one manual upgrade file:
+`../migrations/` is the authoritative incremental change set. Do not run an
+individual timestamped file by hand and do not use `../schema.sql` against an
+existing database.
 
-`production_upgrade_current.sql`
+Before deploying, compare the linked project's migration history with the
+repository. This project has previously applied migrations under version
+numbers that differ from some local filenames, so `supabase db push` must not
+be used until that history mismatch has been reviewed and repaired. Never
+"fix" the mismatch by replaying an already-applied migration.
 
-It is the scoped, transactional, re-runnable upgrade for the current approval-authority and Needs Attention release. Do not also run its represented timestamped migrations or either full canonical schema when using this manual path.
+Once the histories agree:
 
-## Automated deployments
+1. Take and verify a database backup.
+2. Run `supabase db push --dry-run` and review the ordered SQL.
+3. Preview the rows affected by any data-changing migration.
+4. Run the normal migration deployment once, then verify the recorded version.
 
-`../migrations/` remains the authoritative migration history for Supabase CLI and automated deployment. Do not run individual migration files by hand when using the consolidated manual upgrade.
+There is no consolidated `production_upgrade_current.sql` in this repository.
 
 ## Fresh installation
 
-Use the repository's single full canonical schema process with `../schema.sql`. It is a fresh-install reference, not this release's incremental production upgrade.
+Use the repository's single full canonical schema process with `../schema.sql`.
+It is a fresh-install reference, not an incremental production upgrade.
 
 ## Windows and Electron
 
@@ -22,4 +32,5 @@ Windows SQL Server uses the controlled schema manager in `electron/db/migrations
 
 ## Destructive maintenance
 
-`99_reset_data.sql` deliberately empties trading data and is unrelated to upgrades. Never run it for deployment.
+`../reset.sql` deliberately empties business data and is unrelated to upgrades.
+Never run it for deployment or against production.

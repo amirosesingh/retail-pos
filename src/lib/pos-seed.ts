@@ -84,6 +84,9 @@ export const defaultTradingHours: TradingHours = {
 /** Public domains and operational switches, editable in System & Integrations. */
 export const defaultIntegrations: AppSettings["integrations"] = {
   terminalPurpose: "retail",
+  // A missing legacy setting should follow the safe catalogue behaviour:
+  // company-wide zero stock is inactive until the item is replenished.
+  autoArchiveZeroStock: true,
   autoLockTimeoutSeconds: 90,
   memberDomain: "",
   redeemDomain: "",

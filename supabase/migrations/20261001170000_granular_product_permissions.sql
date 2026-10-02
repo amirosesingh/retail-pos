@@ -78,7 +78,7 @@ BEGIN
     END IF;
 
     IF NEW.is_archived IS DISTINCT FROM OLD.is_archived THEN
-      SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, false)
+      SELECT COALESCE((integration_settings ->> 'autoArchiveZeroStock')::boolean, true)
         INTO lifecycle_enabled
         FROM public.pos_settings
        WHERE id = 1;

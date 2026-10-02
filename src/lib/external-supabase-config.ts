@@ -18,13 +18,15 @@ type Source = { url: string; key: string };
  * or from Settings → Database & Cloud Connection on that device.
  */
 
-
 const clean = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
-function fromEnv(bag: Record<string, unknown> | undefined, urlName: string, keyNames: string[]): Source {
+function fromEnv(
+  bag: Record<string, unknown> | undefined,
+  urlName: string,
+  keyNames: string[],
+): Source {
   return { url: clean(bag?.[urlName]), key: firstOf(bag, keyNames) };
 }
-
 
 /**
  * Cloudflare hands the Worker its variables and secrets per request, not
@@ -80,19 +82,6 @@ function bags(): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   const injected = injectedBag();
   if (injected) out.push(injected);
-  // Vite only inlines STATIC `import.meta.env.VITE_*` reads. In a production
-  // build `import.meta.env` itself is a small object without the VITE_ names,
-  // so a dynamic lookup finds nothing — these static reads are the only way
-  // the browser bundle can carry build-time values. Only the POS-specific
-  // pair exists here: a hosting platform can inject its own SUPABASE_*
-  // values, and the shop's own project must win.
-  out.push({
-    VITE_POS_SUPABASE_URL: import.meta.env.VITE_POS_SUPABASE_URL,
-    VITE_POS_SUPABASE_ANON_KEY: import.meta.env.VITE_POS_SUPABASE_ANON_KEY,
-    VITE_POS_SUPABASE_PUBLISHABLE_KEY: import.meta.env.VITE_POS_SUPABASE_PUBLISHABLE_KEY,
-  });
-
-
   try {
     if (import.meta.env) out.push(import.meta.env as unknown as Record<string, unknown>);
   } catch {
@@ -101,7 +90,8 @@ function bags(): Record<string, unknown>[] {
   // Hosting runtime (Cloudflare vars/secrets) — the only source on a deployed
   // worker, where nothing was baked in at build time.
   if (runtimeEnv) out.push(runtimeEnv);
-  if (typeof process !== "undefined" && process.env) out.push(process.env as Record<string, unknown>);
+  if (typeof process !== "undefined" && process.env)
+    out.push(process.env as Record<string, unknown>);
   return out;
 }
 
@@ -112,10 +102,8 @@ function bags(): Record<string, unknown>[] {
  * accepted: the shop's own project is the only database this POS talks to.
  */
 const PAIRS: [string, string[]][] = [
-  // The shop's own project, named explicitly so a hosting platform's injected
-  // SUPABASE_* values can never take over during local development.
-  ["VITE_POS_SUPABASE_URL", ["VITE_POS_SUPABASE_ANON_KEY", "VITE_POS_SUPABASE_PUBLISHABLE_KEY"]],
-  // Canonical: Cloudflare variables, and what the server prints into the page.
+  // The sole web pair: hosting/runtime variables on the server, printed into
+  // the page as __POS_CONFIG__ for the browser. Device builds never read it.
   ["SUPABASE_URL", ["SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY"]],
 ];
 
@@ -128,15 +116,14 @@ function firstOf(bag: Record<string, unknown> | undefined, names: string[]): str
   return "";
 }
 
-
-
 export class SupabaseConfigError extends Error {
   constructor() {
     super(
       isTerminalApp()
         ? "Cloud sync is not set up on this device. Open Settings → Database & Cloud Connection " +
             "and enter the central database URL and API key. Local trading is unaffected."
-        : "Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in the " +
+        : "Supabase is not configured. Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY " +
+            "(or SUPABASE_ANON_KEY) in the " +
             "hosting variables (Cloudflare: Workers → Settings → Variables & Secrets) " +
             "to your own Supabase project before starting the app.",
     );

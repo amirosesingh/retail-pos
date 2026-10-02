@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { downloadCsv, type Campaign, type CouponEvent } from "@/lib/coupons";
+import { branchDisplayName } from "@/lib/human-readable";
 
 const tone: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   CLAIMED: "default",
@@ -50,8 +51,7 @@ export function CouponAuditLog({
   const [to, setTo] = useState("");
 
   const cashiers = useMemo(
-    () =>
-      Array.from(new Set(events.map((e) => e.staffName).filter(Boolean) as string[])).sort(),
+    () => Array.from(new Set(events.map((e) => e.staffName).filter(Boolean) as string[])).sort(),
     [events],
   );
 
@@ -70,12 +70,23 @@ export function CouponAuditLog({
     [events, campaignId, type, storeId, cashier, from, to],
   );
 
-  const storeName = (id: string | null) =>
-    stores.find((s) => s.id === id)?.name ?? id ?? "—";
+  const storeName = (id: string | null) => branchDisplayName(stores, id, "—");
 
   const exportCsv = () =>
     downloadCsv(`coupon-audit-${new Date().toISOString().slice(0, 10)}.csv`, [
-      ["When", "Event", "Campaign", "Voucher", "Member ID", "Phone", "Shop", "Cashier", "Role", "Bill", "Note"],
+      [
+        "When",
+        "Event",
+        "Campaign",
+        "Voucher",
+        "Member ID",
+        "Phone",
+        "Shop",
+        "Cashier",
+        "Role",
+        "Bill",
+        "Note",
+      ],
       ...rows.map((e) => [
         new Date(e.createdAt).toLocaleString(),
         label[e.type] ?? e.type,

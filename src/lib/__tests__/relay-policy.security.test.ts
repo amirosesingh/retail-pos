@@ -116,11 +116,77 @@ describe("relay authorisation", () => {
     expect(denied.ok).toBe(false);
     if (!denied.ok) expect(denied.code).toBe("PERMISSION_DENIED");
 
-    const allowed = await safeAuthorizeRelayOp(
+    const permissionAloneIsDenied = await safeAuthorizeRelayOp(
       { kind: "update", table: "sales", values: { payment_type: "cash" }, match: { id: "s1" } },
       { ...cashier, permissions: { ...cashier.permissions, can_edit_tenders: true } },
     );
+    expect(permissionAloneIsDenied.ok).toBe(false);
+
+    const allowed = await safeAuthorizeRelayOp(
+      { kind: "update", table: "sales", values: { payment_type: "cash" }, match: { id: "s1" } },
+      admin,
+    );
     expect(allowed.ok).toBe(true);
+  });
+
+  it("allows new and idempotent sale upserts but blocks tender changes", async () => {
+    const sale = {
+      id: "s-new",
+      store_id: "STORE-A",
+      payment_type: "cash",
+      payments: [{ method: "cash", amount: 10 }],
+    };
+    restMock.mockResolvedValueOnce({ ok: true, json: async () => [] });
+    expect(
+      (await safeAuthorizeRelayOp({ kind: "upsert", table: "sales", rows: [sale] }, cashier)).ok,
+    ).toBe(true);
+
+    restMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          id: "s-new",
+          payment_type: "cash",
+          payments: [{ amount: 10, method: "cash" }],
+        },
+      ],
+    });
+    expect(
+      (await safeAuthorizeRelayOp({ kind: "upsert", table: "sales", rows: [sale] }, cashier)).ok,
+    ).toBe(true);
+
+    restMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        { id: "s-new", payment_type: "cash", payments: [{ method: "cash", amount: 10 }] },
+      ],
+    });
+    expect(
+      (await safeAuthorizeRelayOp({ kind: "upsert", table: "sales", rows: [sale] }, cashier)).ok,
+    ).toBe(true);
+
+    restMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        { id: "s-new", payment_type: "card", payments: [{ method: "card", amount: 10 }] },
+      ],
+    });
+    const changed = await safeAuthorizeRelayOp(
+      { kind: "upsert", table: "sales", rows: [sale] },
+      cashier,
+    );
+    expect(changed.ok).toBe(false);
+    if (!changed.ok) expect(changed.code).toBe("PERMISSION_DENIED");
+  });
+
+  it("accepts correction history only from an administrator", async () => {
+    const op = {
+      kind: "insert" as const,
+      table: "record_edits",
+      rows: [{ record_type: "sale", record_id: "s1", store_id: "STORE-A" }],
+    };
+    expect((await safeAuthorizeRelayOp(op, cashier)).ok).toBe(false);
+    expect((await safeAuthorizeRelayOp(op, admin)).ok).toBe(true);
   });
 
   it("allows a supervisor across branches", async () => {

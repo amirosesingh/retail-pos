@@ -74,6 +74,13 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261001160000_auto_archive_zero_stock_products.sql",
       "supabase/migrations/20261001170000_granular_product_permissions.sql",
       "supabase/migrations/20261001180000_retire_parallel_settings_api.sql",
+      "supabase/migrations/20261002010743_enforce_zero_stock_catalog_lifecycle.sql",
+      "supabase/migrations/20261002023000_admin_only_posted_record_corrections.sql",
+      "supabase/migrations/20261002053711_close_review_integrity_gaps.sql",
+      "supabase/migrations/20261002061927_close_coderabbit_review_edges.sql",
+      "supabase/migrations/20261002062526_use_net_stock_for_catalog_lifecycle.sql",
+      "supabase/migrations/20261002063556_align_net_stock_backfill.sql",
+      "supabase/migrations/20261002064708_align_lifecycle_transition_default.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -107,17 +114,22 @@ describe("canonical Supabase SQL", () => {
 
   it("keeps the optional zero-stock catalogue lifecycle in the canonical schema", () => {
     const migration = read(
-      "supabase/migrations/20261001160000_auto_archive_zero_stock_products.sql",
+      "supabase/migrations/20261002010743_enforce_zero_stock_catalog_lifecycle.sql",
     );
     const schema = read("supabase/schema.sql");
     for (const sql of [migration, schema]) {
       expect(sql).toContain("FUNCTION public.apply_zero_stock_catalog_lifecycle()");
-      expect(sql).toContain("BEFORE INSERT OR UPDATE OF stock_by_store ON public.products");
+      expect(sql).toContain(
+        "BEFORE INSERT OR UPDATE OF stock_by_store, is_archived ON public.products",
+      );
       expect(sql).toContain("FUNCTION public.backfill_zero_stock_catalog_lifecycle()");
       expect(sql).toContain("AFTER UPDATE OF integration_settings ON public.pos_settings");
       expect(sql).toContain("integration_settings ->> 'autoArchiveZeroStock'");
+      expect(sql).toContain("COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')");
       expect(sql).toContain("Reconcile products already present");
-      expect(sql).toContain("p.is_archived IS DISTINCT FROM NOT stock_state.has_stock");
+      expect(sql).toContain("AND NOT stock_state.has_stock");
+      expect(sql).toContain("SET is_archived = true");
+      expect(sql).not.toContain("SET is_archived = NOT stock_state.has_stock");
       expect(sql).toContain(
         "REVOKE ALL ON FUNCTION public.apply_zero_stock_catalog_lifecycle() FROM PUBLIC, anon, authenticated",
       );
@@ -201,8 +213,22 @@ describe("canonical Supabase SQL", () => {
     const body = sql.slice(start, start + 1_800);
     expect(body).toContain("NEW.payment_type IS DISTINCT FROM OLD.payment_type");
     expect(body).toContain("NEW.payments IS DISTINCT FROM OLD.payments");
-    expect(body).toContain("public.has_perm('can_edit_tenders')");
-    expect(body).toContain("PERMISSION_DENIED_TENDER_EDIT");
+    expect(body).toContain("coalesce(v_role, '') <> 'admin'");
+    expect(body).toContain("ADMIN_REQUIRED_TENDER_EDIT");
+  });
+
+  it("keeps closed-shift corrections append-only and service-role only", () => {
+    const sql = read("supabase/migrations/20261002023000_admin_only_posted_record_corrections.sql");
+    expect(sql).toContain("FUNCTION public.pos_admin_correct_closed_shift");
+    expect(sql).toContain("'RECOUNT'");
+    expect(sql).toContain("INSERT INTO public.record_edits");
+    expect(sql).toContain("'SHIFT_CLOSE_CORRECTED'");
+    expect(sql).toContain("p_client_key");
+    expect(sql).toContain("TO service_role");
+    expect(sql).toContain("FROM PUBLIC, anon, authenticated");
+    expect(sql).toContain("ADMIN_REQUIRED_TENDER_EDIT");
+    expect(sql).toContain('POLICY "server-only deny client access" ON public.user_sessions');
+    expect(sql).not.toMatch(/\b(?:DELETE|TRUNCATE|DROP\s+TABLE)\b/i);
   });
 
   it("enforces and audits cross-user or cross-terminal shift closure in the database", () => {

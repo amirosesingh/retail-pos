@@ -250,8 +250,18 @@ export const productToRow = (p: Product): Row => {
     barcode_aliases: safeArray<string>(p.barcodes)
       .map((b) => String(b ?? "").trim())
       .filter(Boolean),
-    barcode_variants: safeArray<{ code?: string; label?: string }>(p.variants)
-      .map((v) => ({ code: String(v?.code ?? "").trim(), label: v?.label?.trim() || undefined }))
+    barcode_variants: safeArray<{
+      code?: string;
+      label?: string;
+      cost?: number;
+      price?: number;
+    }>(p.variants)
+      .map((v) => ({
+        code: String(v?.code ?? "").trim(),
+        label: v?.label?.trim() || undefined,
+        cost: safeNumOrNull(v?.cost) ?? undefined,
+        price: safeNumOrNull(v?.price) ?? undefined,
+      }))
       .filter((v) => v.code),
     cost_price: safeNum(p.cost),
     selling_price: safeNum(p.price),
@@ -579,7 +589,7 @@ const SALE_COLUMNS_BASE =
   "payments, points_earned, is_refunded, original_bill_number, exchanged_to_bill_number, " +
   "exchange_credit, coupon_code, coupon_promo_id, coupon_scope, coupon_discount, created_at, " +
   "store_name_snapshot, store_address_snapshot, " +
-  "sale_items(product_id, product_name, unit_price, quantity, tax_rate, discount_percent, " +
+  "sale_items(product_id, product_name, variant_code, unit_price, quantity, tax_rate, discount_percent, " +
   "discount_amount, is_return, is_foc, promo_id, coupon_code, coupon_discount, unit_cost)";
 
 /**
@@ -653,6 +663,7 @@ export const rowToSale = (r: Row): Sale => ({
   lines: ((r.sale_items ?? []) as Row[]).map((l) => ({
     productId: l.product_id ?? "",
     name: l.product_name,
+    variantCode: l.variant_code ?? undefined,
     price: num(l.unit_price),
     qty: Number(l.quantity),
     taxRate: num(l.tax_rate),
@@ -787,6 +798,7 @@ const saleItemRows = (s: Sale) =>
     branch_id: s.storeId,
     product_id: l.productId || null,
     product_name: l.name,
+    variant_code: l.variantCode ?? null,
     unit_price: l.price,
     unit_cost: l.cost ?? 0,
     quantity: l.qty,
@@ -1113,6 +1125,10 @@ async function loadCompleteProductCatalogue(): Promise<PagedRead<Row>> {
     if (total === null) total = typeof result.count === "number" ? result.count : null;
     const page = (result.data as Row[] | null) ?? [];
     rows.push(...page);
+    // A full final window is still complete when the exact count says we have
+    // reached the end (for example exactly 100,000 products).
+    if (total !== null && rows.length >= total)
+      return { data: rows.slice(0, total), error: null, total, capped: false };
     if (page.length < PAGE)
       return { data: rows, error: null, total: total ?? rows.length, capped: false };
     if (rows.length >= MAX_ROWS)
@@ -2207,6 +2223,7 @@ export const db = {
         action_name: r.action,
         target_module: r.module,
         details: r.details as never,
+        store_id: typeof r.details.storeId === "string" ? r.details.storeId : null,
         created_at: r.at,
       })) as never,
       { onConflict: "id", ignoreDuplicates: true },

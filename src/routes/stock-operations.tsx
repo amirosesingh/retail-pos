@@ -343,7 +343,7 @@ function StockOperationsPage() {
                                 Discard
                               </Button>
                             </>
-                          ) : r.status === "posted" ? (
+                          ) : r.status === "posted" && isAdmin ? (
                             r.pending_edit_request_id ? (
                               (r.pending_edit_by ?? "").toLowerCase() === meId.toLowerCase() &&
                               !!meId ? (

@@ -6,7 +6,7 @@
  * primary one. Scanning any of them — or the SKU — resolves to the same
  * product.
  */
-import type { Product } from "@/core/types/pos-types";
+import type { BarcodeVariant, Product } from "@/core/types/pos-types";
 import { dbProxy } from "@/core/api/db-router";
 
 export const normaliseCode = (code: string) => code.trim().toLowerCase();
@@ -21,6 +21,12 @@ export function resolveByBarcode(products: Product[], code: string): Product | u
   const needle = normaliseCode(code);
   if (!needle) return undefined;
   return products.find((p) => productCodes(p).includes(needle));
+}
+
+/** The variation represented by an exact scanned code, if this is not a base barcode. */
+export function variantForBarcode(product: Product, code: string): BarcodeVariant | undefined {
+  const needle = normaliseCode(code);
+  return (product.variants ?? []).find((variant) => normaliseCode(variant.code) === needle);
 }
 
 /** True when the code is already used by another product. */

@@ -7771,6 +7771,19 @@
           "uniqueGroup": null
         },
         {
+          "cloudColumn": "variant_code",
+          "sqlServerColumn": "variant_code",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
           "cloudColumn": "unit_price",
           "sqlServerColumn": "unit_price",
           "cloudType": "numeric",
