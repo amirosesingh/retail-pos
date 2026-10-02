@@ -3,6 +3,7 @@
  * reporting views so one page load never pulls every sale line into the till.
  */
 import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
+import { canonicalBranchId } from "./branch-id";
 
 export type StoreDayRow = {
   sale_day: string;
@@ -43,6 +44,8 @@ export type BoardData = {
   itemDays: ItemDayRow[];
   bills: BillRow[];
   storeNames: Record<string, string>;
+  /** Current directory rows; excludes names retained only as historical snapshots. */
+  liveStoreIds: string[];
 };
 
 /** Current branch names win; sale snapshots only retain names for deleted branches. */
@@ -51,7 +54,7 @@ export function resolveStoreNames(
   bills: { store_id: unknown; store_name_snapshot: unknown }[],
 ): Record<string, string> {
   const live = directory.map((row) => ({
-    id: String(row.id),
+    id: canonicalBranchId(row.id),
     name: String(row.name || "Unnamed shop").trim() || "Unnamed shop",
     code: String(row.code ?? "").trim(),
   }));
@@ -59,7 +62,7 @@ export function resolveStoreNames(
   const snapshots = new Map<string, string>();
   for (const row of bills) {
     if (!row.store_id || !row.store_name_snapshot) continue;
-    const id = String(row.store_id);
+    const id = canonicalBranchId(row.store_id);
     if (!liveIds.has(id) && !snapshots.has(id)) {
       snapshots.set(id, String(row.store_name_snapshot).trim() || "Unnamed shop");
     }
@@ -157,7 +160,7 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
       )
       .gte("created_at", from)
       .lte("created_at", endOfDay(to)),
-    supabase.from("stores").select("id, name, code"),
+    supabase.from("stores").select("id, name, code, is_active"),
   ]);
 
   const issues: BoardIssue[] = [];
@@ -174,7 +177,7 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
     storeDays: (storeRes.data ?? []).map((r) => ({
       sale_day: String(r.sale_day),
       sale_month: String(r.sale_month ?? String(r.sale_day).slice(0, 7)),
-      store_id: r.store_id,
+      store_id: r.store_id == null ? null : canonicalBranchId(r.store_id),
       bills: n(r.bills),
       revenue: n(r.revenue),
       cost: n(r.cost),
@@ -185,7 +188,7 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
     })),
     itemDays: (itemRes.data ?? []).map((r) => ({
       sale_day: String(r.sale_day),
-      store_id: r.store_id,
+      store_id: r.store_id == null ? null : canonicalBranchId(r.store_id),
       product_id: r.product_id,
       product_name: r.product_name,
       product_category: String(r.product_category || "Uncategorized"),
@@ -195,7 +198,7 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
       profit: n(r.profit),
     })),
     bills: (billRes.data ?? []).map((r) => ({
-      store_id: r.store_id,
+      store_id: r.store_id == null ? null : canonicalBranchId(r.store_id),
       store_name: r.store_name_snapshot,
       created_at: String(r.created_at),
       total: n(r.total_amount),
@@ -204,6 +207,10 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
     })),
     // Live directory names override historical sale snapshots.
     storeNames: resolveStoreNames(directoryRes.data ?? [], billRes.data ?? []),
+    liveStoreIds: (directoryRes.data ?? [])
+      .filter((row) => row.is_active !== false)
+      .map((row) => canonicalBranchId(row.id))
+      .filter(Boolean),
   };
 }
 
@@ -248,6 +255,13 @@ export function shopSlices(
     focValue: 0,
     givenAway: 0,
   });
+
+  // A live shop must remain visible even when it has no sales in the selected
+  // window. Otherwise the board misleadingly looks like the group has fewer
+  // branches and operators see only the shop that happened to trade.
+  for (const id of data.liveStoreIds) {
+    if (keep(id)) by.set(id, blank(id));
+  }
 
   for (const row of data.storeDays) {
     if (!keep(row.store_id)) continue;

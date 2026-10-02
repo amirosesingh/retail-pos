@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { resolveStoreNames, topCategories, type ItemDayRow } from "@/lib/analytics-board";
+import {
+  resolveStoreNames,
+  shopSlices,
+  topCategories,
+  type BoardData,
+  type ItemDayRow,
+} from "@/lib/analytics-board";
 
 const item = (overrides: Partial<ItemDayRow>): ItemDayRow => ({
   sale_day: "2026-09-27",
@@ -47,6 +53,32 @@ describe("business board category drilldown", () => {
       "branch-a": "Main Shop · A1",
       "branch-b": "Main Shop · B1",
     });
+  });
+  it("keeps every live branch visible when one has no sales", () => {
+    const data: BoardData = {
+      storeDays: [
+        {
+          sale_day: "2026-10-02",
+          sale_month: "2026-10",
+          store_id: "branch-a",
+          bills: 1,
+          revenue: 20,
+          cost: 10,
+          profit: 10,
+          discount: 0,
+          foc_value: 0,
+          units: 1,
+        },
+      ],
+      itemDays: [],
+      bills: [],
+      storeNames: { "branch-a": "Gardong-361", "branch-b": "Airport" },
+      liveStoreIds: ["branch-a", "branch-b"],
+    };
+    expect(shopSlices(data, (id) => data.storeNames[id] ?? "Unknown")).toMatchObject([
+      { storeId: "branch-a", name: "Gardong-361", revenue: 20 },
+      { storeId: "branch-b", name: "Airport", revenue: 0 },
+    ]);
   });
   it("aggregates categories before exposing individual items", () => {
     const result = topCategories(

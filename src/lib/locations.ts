@@ -1,4 +1,5 @@
 import type { LocationType, Product, Store } from "@/core/types/pos-types";
+import { canonicalBranchId, canonicalStockMap } from "./branch-id";
 
 /**
  * Location model helpers.
@@ -49,9 +50,13 @@ export const activeLocations = (stores: Store[]) => stores.filter(isActiveLocati
 export function canonicalLocations(stores: Store[]): Store[] {
   const byId = new Map<string, Store>();
   for (const store of stores) {
-    const id = store.id?.trim();
+    const id = canonicalBranchId(store.id);
     if (!id) continue;
-    byId.set(id, { ...store, id });
+    byId.set(id, {
+      ...store,
+      id,
+      parentId: store.parentId ? canonicalBranchId(store.parentId) : store.parentId,
+    });
   }
   return [...byId.values()];
 }
@@ -135,7 +140,8 @@ export function locationPath(stores: Store[], id: string): string {
   return parts.join(" › ");
 }
 
-export const stockAtLocation = (p: Product, id: string) => Number(p.stockByStore?.[id] ?? 0) || 0;
+export const stockAtLocation = (p: Product, id: string) =>
+  Number(canonicalStockMap(p.stockByStore)[canonicalBranchId(id)] ?? 0) || 0;
 
 /** Units sitting at a location and everything nested under it. */
 export const rolledUpStock = (products: Product[], stores: Store[], id: string) => {
@@ -218,7 +224,8 @@ export function planDeduction(
     const taken = Math.min(have, want);
     const self = stores.find((s) => s.id === warehouseId);
     return {
-      picks: taken > 0 ? [{ storeId: warehouseId, name: self?.name ?? "Location", qty: taken }] : [],
+      picks:
+        taken > 0 ? [{ storeId: warehouseId, name: self?.name ?? "Location", qty: taken }] : [],
       taken,
       shortBy: want - taken,
     };

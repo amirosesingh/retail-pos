@@ -26,6 +26,7 @@ import { hydrateTerminalConfig, readTerminalConfig } from "@/core/activation/ter
 import { isOperationalTable } from "@/lib/pos-auth-route";
 import { keyset, nextCursor, PAGE_SIZE, type Cursor, type Page } from "@/lib/keyset";
 import { MAX_ROWS, PAGE, readAllPages, type PagedRead, type PageResult } from "@/lib/paged-read";
+import { canonicalBranchId, canonicalStockMap } from "@/lib/branch-id";
 import { loadCashierToken, readCredentials } from "@/lib/pos-credentials";
 import { normalizeReceiptLogoLayout } from "@/lib/receipt-logo";
 import {
@@ -144,7 +145,7 @@ export const rowToProduct = (r: Row): Product => ({
   ecomPrice: r.ecom_price == null ? undefined : num(r.ecom_price),
   ecomVisible: r.ecom_visible ?? true,
   archived: r.is_archived === true,
-  stockByStore: jsonValue<Record<string, number>>(r.stock_by_store, {}),
+  stockByStore: canonicalStockMap(jsonValue<Record<string, number>>(r.stock_by_store, {})),
   reorderLevel: num(r.reorder_level),
   taxRate: num(r.tax_rate),
   customPoints: r.custom_points == null ? undefined : num(r.custom_points),
@@ -223,10 +224,9 @@ const safeNumOrNull = (value: unknown): number | null => {
 const safeArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
 const safeStockMap = (value: unknown): Record<string, number> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const canonical = canonicalStockMap(value);
   const out: Record<string, number> = {};
-  for (const [key, qty] of Object.entries(value as Record<string, unknown>)) {
-    if (!key) continue;
+  for (const [key, qty] of Object.entries(canonical)) {
     out[key] = safeInt(qty);
   }
   return out;
@@ -281,7 +281,7 @@ export const productToRow = (p: Product): Row => {
     reorder_level: safeInt(p.reorderLevel),
     tax_rate: safeNum(p.taxRate),
     custom_points: safeNumOrNull(p.customPoints),
-    owner_store_id: p.ownerStoreId || null,
+    owner_store_id: p.ownerStoreId ? canonicalBranchId(p.ownerStoreId) : null,
   };
 };
 

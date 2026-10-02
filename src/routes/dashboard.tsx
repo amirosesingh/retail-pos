@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   Bar,
   BarChart,
@@ -29,6 +29,11 @@ import { hourlyProfit, profitOf } from "@/core/pricing/profit";
 import { paymentsLabel } from "@/core/types/pos-types";
 import { formatTime, posDayKey, posHour } from "@/lib/time-zone";
 import { defaultReviewThresholds } from "@/lib/pos-seed";
+import { sameBranchId } from "@/lib/branch-id";
+import { inventoryMetrics } from "@/lib/inventory-metrics";
+import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
+import { useAuth } from "@/lib/pos-auth";
+import { useVisibility } from "@/lib/ui-visibility";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -53,12 +58,15 @@ export const Route = createFileRoute("/dashboard")({
 
 function Dashboard() {
   const { state, currentStore } = usePos();
+  const { can } = useAuth();
+  const { visible } = useVisibility();
+  const showStockValue = can("can_view_sales_reports") && visible("inventory.stockValue");
   const drawer = useDrawerEvents();
   const thresholds = defaultReviewThresholds;
 
   const today = posDayKey();
   const sales = useMemo(
-    () => state.sales.filter((s) => s.storeId === currentStore.id),
+    () => state.sales.filter((s) => sameBranchId(s.storeId, currentStore.id)),
     [state.sales, currentStore.id],
   );
   const todaySales = sales.filter((s) => posDayKey(s.createdAt) === today);
@@ -69,6 +77,10 @@ function Dashboard() {
   const profit = useMemo(() => profitOf(live, state.products), [live, state.products]);
   const margin = profit.marginPct;
   const refunds = todaySales.filter((s) => s.refunded);
+  const stock = useMemo(
+    () => inventoryMetrics(state.products, currentStore.id),
+    [state.products, currentStore.id],
+  );
 
   /** Revenue against gross profit, hour by hour. */
   const profitByHour = useMemo(
@@ -198,6 +210,33 @@ function Dashboard() {
           />
           <Kpi label="No-sale drawer opens" value={String(todayDrawer.length)} />
         </div>
+
+        <section className="rounded-lg border border-border bg-card p-4">
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold">Inventory position · {currentStore.name}</h2>
+            <p className="text-xs text-muted-foreground">
+              Current active catalogue and on-hand value at this branch.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+            <Kpi label="Products" value={<AnimatedMetric value={stock.products} />} />
+            <Kpi label="Categories" value={<AnimatedMetric value={stock.categories} />} />
+            <Kpi label="On-hand units" value={<AnimatedMetric value={stock.units} />} />
+            <Kpi label="Low stock" value={<AnimatedMetric value={stock.lowStock} />} />
+            <Kpi
+              label="Negative stock"
+              value={<AnimatedMetric value={stock.negativeStock} />}
+              danger={stock.negativeStock > 0}
+            />
+            {showStockValue && (
+              <>
+                <Kpi label="Cost value" value={money(stock.costValue)} />
+                <Kpi label="Retail value" value={money(stock.retailValue)} />
+                <Kpi label="Potential profit" value={money(stock.potentialProfit)} highlight />
+              </>
+            )}
+          </div>
+        </section>
 
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="rounded-lg border border-border bg-card p-4">
@@ -399,11 +438,25 @@ function Dashboard() {
   );
 }
 
-function Kpi({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+function Kpi({
+  label,
+  value,
+  highlight,
+  danger,
+}: {
+  label: string;
+  value: ReactNode;
+  highlight?: boolean;
+  danger?: boolean;
+}) {
   return (
     <div className="rounded-lg border border-border bg-card px-4 py-3">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`numeric text-xl font-semibold ${highlight ? "text-primary" : ""}`}>{value}</p>
+      <p
+        className={`numeric text-xl font-semibold ${highlight ? "text-primary" : ""} ${danger ? "text-destructive" : ""}`}
+      >
+        {value}
+      </p>
     </div>
   );
 }

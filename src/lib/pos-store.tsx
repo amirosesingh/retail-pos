@@ -141,15 +141,17 @@ import {
 import { productCodes } from "./product-lookup";
 import { applyZeroStockLifecycle, applyZeroStockLifecycleToProducts } from "./product-lifecycle";
 import { nextSku, readSkuSettings } from "./sku";
+import { canonicalBranchId, canonicalStockMap, sameBranchId } from "./branch-id";
 
 const LEGACY_STATE_KEY = "pos-state-v2";
 
-export const stockAt = (product: Product, storeId: string) => product.stockByStore?.[storeId] ?? 0;
+export const stockAt = (product: Product, storeId: string) =>
+  canonicalStockMap(product.stockByStore)[canonicalBranchId(storeId)] ?? 0;
 
 /** Units held back at a store by still-open bookings. */
 export const reservedAt = (bookings: Booking[], productId: string, storeId: string) =>
   bookings
-    .filter((b) => b.status === "active" && b.storeId === storeId)
+    .filter((b) => b.status === "active" && sameBranchId(b.storeId, storeId))
     .reduce(
       (a, b) =>
         a +
@@ -164,8 +166,10 @@ export const availableAt = (product: Product, storeId: string, bookings: Booking
   stockAt(product, storeId) - reservedAt(bookings, product.id, storeId);
 
 const bump = (p: Product, storeId: string, delta: number, lifecycle = false): Product => {
-  const hadStock = Object.values(p.stockByStore).some((qty) => qty > 0);
-  const stockByStore = { ...p.stockByStore, [storeId]: stockAt(p, storeId) + delta };
+  const canonicalId = canonicalBranchId(storeId);
+  const current = canonicalStockMap(p.stockByStore);
+  const hadStock = Object.values(current).some((qty) => qty > 0);
+  const stockByStore = { ...current, [canonicalId]: (current[canonicalId] ?? 0) + delta };
   if (!lifecycle) return { ...p, stockByStore };
   const hasStock = Object.values(stockByStore).some((qty) => qty > 0);
   return {

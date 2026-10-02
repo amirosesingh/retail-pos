@@ -34,6 +34,7 @@ import {
   trendSeries,
   type ItemDayRow,
 } from "@/lib/analytics-board";
+import { canonicalBranchId } from "@/lib/branch-id";
 
 export const Route = createFileRoute("/analytics")({
   head: () => ({
@@ -82,6 +83,9 @@ function LiveBoard() {
   const [preset, setPreset] = useState<"today" | "7" | "30" | "custom">("30");
   const [topBy, setTopBy] = useState<"revenue" | "units">("revenue");
   const [grain, setGrain] = useState<"daily" | "monthly">("daily");
+  const [financialView, setFinancialView] = useState<
+    "compare" | "revenue" | "cost" | "profit" | "marginPct"
+  >("compare");
   const [picked, setPicked] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
@@ -99,13 +103,20 @@ function LiveBoard() {
     staleTime: 30_000,
   });
 
-  const filter = useMemo(() => (picked.length ? new Set(picked) : undefined), [picked]);
+  const filter = useMemo(
+    () => (picked.length ? new Set(picked.map(canonicalBranchId)) : undefined),
+    [picked],
+  );
   const data = query.data;
   const nameOf = useCallback(
-    (id: string) =>
-      data?.storeNames[id] ??
-      allStores.find((s) => s.id === id || s.code === id)?.name ??
-      (id ? "Archived or unavailable shop" : "Unassigned shop"),
+    (id: string) => {
+      const canonicalId = canonicalBranchId(id);
+      return (
+        data?.storeNames[canonicalId] ??
+        allStores.find((s) => canonicalBranchId(s.id) === canonicalId || s.code === id)?.name ??
+        (id ? "Archived or unavailable shop" : "Unassigned shop")
+      );
+    },
     [allStores, data?.storeNames],
   );
 
@@ -396,14 +407,14 @@ function LiveBoard() {
 
               <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-5">
                 <h2 className="mb-3 text-sm font-semibold">Revenue share by shop</h2>
-                <ResponsiveContainer width="100%" height={320}>
+                <ResponsiveContainer width="100%" height={260}>
                   <PieChart>
                     <Pie
                       data={shops}
                       dataKey="revenue"
                       nameKey="name"
                       innerRadius={70}
-                      outerRadius={115}
+                      outerRadius={92}
                       paddingAngle={2}
                     >
                       {shops.map((s, i) => (
@@ -435,7 +446,7 @@ function LiveBoard() {
                 {categoryItems.length ? (
                   <ResponsiveContainer
                     width="100%"
-                    height={Math.max(240, categoryItems.length * 34)}
+                    height={Math.min(360, Math.max(220, categoryItems.length * 30))}
                   >
                     <BarChart
                       data={categoryItems}
@@ -517,68 +528,136 @@ function LiveBoard() {
 
             <div className="grid items-stretch gap-4 xl:grid-cols-12">
               <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
-                <h2 className="mb-3 text-sm font-semibold">Revenue, cost, profit and margin</h2>
-                <ResponsiveContainer width="100%" height={320}>
-                  <ComposedChart data={shops}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" fontSize={11} />
-                    <YAxis yAxisId="left" fontSize={11} />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      fontSize={11}
-                      unit="%"
-                      domain={[0, 100]}
-                    />
-                    <Tooltip
-                      formatter={(v, key) =>
-                        key === "marginPct"
-                          ? `${Number(v ?? 0).toFixed(1)}%`
-                          : money(Number(v ?? 0))
-                      }
-                    />
-                    <Legend />
-                    <Bar
-                      yAxisId="left"
-                      dataKey="revenue"
-                      name="Revenue"
-                      fill="var(--primary)"
-                      radius={[4, 4, 0, 0]}
-                    />
-                    <Bar
-                      yAxisId="left"
-                      dataKey="cost"
-                      name="Cost"
-                      fill="var(--muted-foreground)"
-                      radius={[4, 4, 0, 0]}
-                    />
-                    <Bar
-                      yAxisId="left"
-                      dataKey="profit"
-                      name="Profit"
-                      fill="var(--success)"
-                      radius={[4, 4, 0, 0]}
-                    />
-                    <Line
-                      yAxisId="right"
-                      type="monotone"
-                      dataKey="marginPct"
-                      name="Margin %"
-                      stroke="var(--warning)"
-                      strokeWidth={2}
-                      dot={false}
-                    />
-                  </ComposedChart>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-sm font-semibold">Financial performance by shop</h2>
+                    <p className="text-xs text-muted-foreground">
+                      Compare related measures or inspect one measure on its own scale.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {(
+                      [
+                        ["compare", "Compare"],
+                        ["revenue", "Revenue"],
+                        ["cost", "Cost"],
+                        ["profit", "Profit"],
+                        ["marginPct", "Margin %"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <Button
+                        key={value}
+                        size="sm"
+                        variant={financialView === value ? "default" : "outline"}
+                        onClick={() => setFinancialView(value)}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={270}>
+                  {financialView === "compare" ? (
+                    <ComposedChart data={shops} barCategoryGap="28%">
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="name" fontSize={11} interval={0} />
+                      <YAxis yAxisId="left" fontSize={11} width={70} />
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        fontSize={11}
+                        unit="%"
+                        domain={[0, 100]}
+                        width={44}
+                      />
+                      <Tooltip
+                        formatter={(v, key) =>
+                          key === "Margin %"
+                            ? `${Number(v ?? 0).toFixed(1)}%`
+                            : money(Number(v ?? 0))
+                        }
+                      />
+                      <Legend />
+                      <Bar
+                        yAxisId="left"
+                        dataKey="revenue"
+                        name="Revenue"
+                        fill="var(--primary)"
+                        maxBarSize={38}
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar
+                        yAxisId="left"
+                        dataKey="cost"
+                        name="Cost"
+                        fill="var(--muted-foreground)"
+                        maxBarSize={38}
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar
+                        yAxisId="left"
+                        dataKey="profit"
+                        name="Profit"
+                        fill="var(--success)"
+                        maxBarSize={38}
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Line
+                        yAxisId="right"
+                        type="monotone"
+                        dataKey="marginPct"
+                        name="Margin %"
+                        stroke="var(--warning)"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
+                    </ComposedChart>
+                  ) : financialView === "marginPct" ? (
+                    <LineChart data={shops} margin={{ left: 8, right: 18 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="name" fontSize={11} interval={0} />
+                      <YAxis domain={[0, 100]} unit="%" fontSize={11} width={48} />
+                      <Tooltip formatter={(value) => `${Number(value ?? 0).toFixed(1)}%`} />
+                      <Line
+                        type="monotone"
+                        dataKey="marginPct"
+                        name="Margin %"
+                        stroke="var(--warning)"
+                        strokeWidth={3}
+                        dot={{ r: 4 }}
+                      />
+                    </LineChart>
+                  ) : (
+                    <BarChart data={shops} barCategoryGap="38%" margin={{ left: 8, right: 18 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="name" fontSize={11} interval={0} />
+                      <YAxis fontSize={11} width={70} />
+                      <Tooltip formatter={(value) => money(Number(value ?? 0))} />
+                      <Bar
+                        dataKey={financialView}
+                        name={financialView[0].toUpperCase() + financialView.slice(1)}
+                        fill={
+                          financialView === "revenue"
+                            ? "var(--primary)"
+                            : financialView === "cost"
+                              ? "var(--muted-foreground)"
+                              : "var(--success)"
+                        }
+                        maxBarSize={56}
+                        radius={[5, 5, 0, 0]}
+                      />
+                    </BarChart>
+                  )}
                 </ResponsiveContainer>
               </section>
 
               <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-5">
                 <h2 className="mb-3 text-sm font-semibold">Where the money went</h2>
-                <ResponsiveContainer width="100%" height={320}>
-                  <BarChart data={shops}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" fontSize={11} />
-                    <YAxis fontSize={11} />
+                <ResponsiveContainer width="100%" height={270}>
+                  <BarChart data={shops} barCategoryGap="30%">
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="name" fontSize={11} interval={0} />
+                    <YAxis fontSize={11} width={64} />
                     <Tooltip formatter={(v) => money(Number(v ?? 0))} />
                     <Legend />
                     <Bar dataKey="profit" stackId="m" name="Kept as profit" fill="var(--success)" />
@@ -626,7 +705,7 @@ function LiveBoard() {
                   </Button>
                 </div>
               </div>
-              <ResponsiveContainer width="100%" height={300}>
+              <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={trend}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="label" fontSize={11} />

@@ -73,6 +73,8 @@ import { OtherSourcesPopover } from "@/platforms/web/components/pos/OtherSources
 import type { Product } from "@/core/types/pos-types";
 import { nextSku, peekSku, readSkuSettings } from "@/lib/sku";
 import { cn } from "@/lib/utils";
+import { inventoryMetrics } from "@/lib/inventory-metrics";
+import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
 
 export const Route = createFileRoute("/inventory")({
   head: () => ({
@@ -291,16 +293,17 @@ function Inventory() {
     navigate({ to: "/transfers", search: { items: selected.join(","), kind } });
   }
 
-  const { lowStock, stockValue } = useMemo(() => {
-    let value = 0;
-    const low: Product[] = [];
-    for (const p of state.products) {
-      const qty = stockAt(p, currentStore.id);
-      value += p.cost * qty;
-      if (qty <= p.reorderLevel) low.push(p);
-    }
-    return { lowStock: low, stockValue: value };
-  }, [state.products, currentStore.id]);
+  const catalogProducts = useMemo(
+    () =>
+      state.products.filter((product) =>
+        productVisibleAt(state.settings, product, state.currentStoreId),
+      ),
+    [state.products, state.settings, state.currentStoreId],
+  );
+  const metrics = useMemo(
+    () => inventoryMetrics(catalogProducts, currentStore.id),
+    [catalogProducts, currentStore.id],
+  );
 
   return (
     <AppShell>
@@ -309,13 +312,15 @@ function Inventory() {
           <div>
             <h1 className="text-2xl font-semibold">Inventory · {currentStore.name}</h1>
             <p className="text-sm text-muted-foreground">
-              {state.products.length} products ·{" "}
+              <AnimatedMetric value={metrics.products} /> active products ·{" "}
               {showStockValue && (
                 <>
-                  stock value <span className="numeric">{money(stockValue)}</span> ·{" "}
+                  cost value <span className="numeric">{money(metrics.costValue)}</span> ·{" "}
                 </>
               )}
-              <span className="text-warning">{lowStock.length} below reorder level</span>
+              <span className="text-warning">
+                <AnimatedMetric value={metrics.lowStock} /> below reorder level
+              </span>
             </p>
           </div>
           <div className="flex w-full flex-wrap gap-2 lg:w-auto lg:justify-end">
@@ -819,6 +824,21 @@ function Inventory() {
           </div>
         </header>
 
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+          <InventoryKpi label="Active products" value={metrics.products} />
+          <InventoryKpi label="Categories" value={metrics.categories} />
+          <InventoryKpi label="On-hand units" value={metrics.units} />
+          <InventoryKpi label="Low stock" value={metrics.lowStock} tone="warning" />
+          <InventoryKpi label="Out of stock" value={metrics.outOfStock} />
+          <InventoryKpi label="Negative stock" value={metrics.negativeStock} tone="danger" />
+          {showStockValue && (
+            <>
+              <InventoryKpi label="Cost value" value={metrics.costValue} moneyValue />
+              <InventoryKpi label="Retail value" value={metrics.retailValue} moneyValue />
+            </>
+          )}
+        </section>
+
         <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border p-3">
           <div className="space-y-1">
             <Label className="text-xs">View</Label>
@@ -1309,6 +1329,32 @@ function Field({
     <div className={`space-y-1 ${className}`}>
       <Label className="text-xs text-muted-foreground">{label}</Label>
       {children}
+    </div>
+  );
+}
+
+function InventoryKpi({
+  label,
+  value,
+  moneyValue = false,
+  tone,
+}: {
+  label: string;
+  value: number;
+  moneyValue?: boolean;
+  tone?: "warning" | "danger";
+}) {
+  const color =
+    tone === "danger" && value > 0 ? "text-destructive" : tone === "warning" ? "text-warning" : "";
+  return (
+    <div className="rounded-lg border border-border bg-card px-4 py-3">
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={`text-xl font-semibold ${color}`}>
+        <AnimatedMetric
+          value={value}
+          format={moneyValue ? (current) => money(current) : undefined}
+        />
+      </p>
     </div>
   );
 }

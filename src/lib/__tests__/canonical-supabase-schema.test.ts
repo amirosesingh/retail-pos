@@ -91,6 +91,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261002184500_detach_pos_customer_auth.sql",
       "supabase/migrations/20261002191500_remove_membership_event_outbox.sql",
       "supabase/migrations/20261002192000_restore_staff_operational_policies.sql",
+      "supabase/migrations/20261002200000_canonicalize_branch_identity.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
