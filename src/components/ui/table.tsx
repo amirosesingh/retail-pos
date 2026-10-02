@@ -275,11 +275,7 @@ function assignHeaderColumns(node: React.ReactNode): React.ReactNode {
       }
       return row;
     }
-    return React.cloneElement(
-      child,
-      undefined,
-      React.Children.map(child.props.children, visit),
-    );
+    return React.cloneElement(child, undefined, React.Children.map(child.props.children, visit));
   };
   return React.Children.map(node, visit);
 }
@@ -293,10 +289,27 @@ function isTableComponent(node: React.ReactNode, component: unknown, displayName
 }
 
 function hasInteractiveContent(node: React.ReactNode): boolean {
-  if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return false;
+  if (Array.isArray(node)) return node.some(hasInteractiveContent);
+  if (
+    !React.isValidElement<{
+      children?: React.ReactNode;
+      onClick?: unknown;
+      href?: unknown;
+      role?: unknown;
+      asChild?: unknown;
+    }>(node)
+  )
+    return false;
   if (
     typeof node.type === "string" &&
     ["button", "a", "input", "select", "textarea"].includes(node.type)
+  )
+    return true;
+  if (
+    node.props.onClick !== undefined ||
+    node.props.href !== undefined ||
+    node.props.role !== undefined ||
+    node.props.asChild !== undefined
   )
     return true;
   return React.Children.toArray(node.props.children).some(hasInteractiveContent);

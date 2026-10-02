@@ -52,10 +52,14 @@ describe("administrator corrections and shared table controls", () => {
     expect(source).toContain("sortTableBodies(child, sort)");
     expect(source).toContain("filterTableBodies(child, filters)");
     expect(source).toContain("clientDataControls");
+    expect(source).toContain("Array.isArray(node)");
+    expect(source).toContain("node.props.onClick !== undefined");
     expect(read("src/routes/audit.tsx")).toContain("<Table clientDataControls={false}>");
     expect(read("src/routes/audit.tsx")).toContain(
       'toast.error("Could not load correction history"',
     );
+    expect(read("src/routes/audit.tsx")).toContain("data-sort-value={edit.created_at}");
+    expect(read("src/routes/audit.tsx")).toContain("if (!canViewAuditTrail)");
   });
 
   it("deploys the post-review database integrity follow-up", () => {

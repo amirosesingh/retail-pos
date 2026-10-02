@@ -161,8 +161,13 @@ function AuditPage() {
   const [corrections, setCorrections] = useState<RecordEditRow[]>([]);
   const [correctionsLoading, setCorrectionsLoading] = useState(true);
   const [view, setView] = useState<"table" | "stream">("table");
+  const canViewAuditTrail = can("can_view_audit_trail");
 
   useEffect(() => {
+    if (!canViewAuditTrail) {
+      setCorrectionsLoading(false);
+      return;
+    }
     let alive = true;
     void (async () => {
       try {
@@ -189,7 +194,7 @@ function AuditPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [canViewAuditTrail]);
 
   const modules = useMemo(
     () => Array.from(new Set(logs.map((l) => l.module).filter(Boolean))).sort(),
@@ -239,7 +244,7 @@ function AuditPage() {
 
   const pager = usePagination(rows, 25);
 
-  if (!can("can_view_audit_trail")) {
+  if (!canViewAuditTrail) {
     return (
       <AppShell>
         <div className="flex min-h-screen items-center justify-center p-6">
@@ -584,7 +589,10 @@ function AuditPage() {
             <TableBody>
               {corrections.map((edit) => (
                 <TableRow key={edit.id}>
-                  <TableCell className="numeric whitespace-nowrap text-muted-foreground">
+                  <TableCell
+                    className="numeric whitespace-nowrap text-muted-foreground"
+                    data-sort-value={edit.created_at}
+                  >
                     {new Date(edit.created_at).toLocaleString()}
                   </TableCell>
                   <TableCell>

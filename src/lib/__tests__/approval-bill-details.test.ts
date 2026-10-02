@@ -340,6 +340,9 @@ describe("approval bill details", () => {
     expect(register).toContain("authorizationBinding(payload)");
     expect(register).toContain("authorizationBinding(approvedPayloadForMatch)");
     expect(register).toContain("requestedAmount <= resumedGrant.approvedAmount");
+    expect(register).toContain(
+      "resumedGrant?.grantToken && resumedGrant.actionKey === request.action",
+    );
   });
 
   it("returns and displays the durable approver identity and payable total", () => {

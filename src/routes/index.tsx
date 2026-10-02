@@ -327,7 +327,7 @@ function Register() {
       return grantToken ?? "";
     };
     const resumedGrant = appliedApprovalRef.current;
-    if (resumedGrant?.grantToken) {
+    if (resumedGrant?.grantToken && resumedGrant.actionKey === request.action) {
       const approvedPayloadForMatch = Object.fromEntries(
         Object.entries(resumedGrant.approvedPayload).filter(([key]) => key !== "approved_amount"),
       ) as AuthPayload;
@@ -338,7 +338,7 @@ function Register() {
       const amountMatches =
         resumedGrant.approvedAmount === null ||
         (requestedAmount !== null && requestedAmount <= resumedGrant.approvedAmount);
-      if (resumedGrant.actionKey === request.action && payloadMatches && amountMatches) {
+      if (payloadMatches && amountMatches) {
         const verified = await verifyGrant(resumedGrant.grantToken);
         if (verified === null) revokeApprovalDiscountRef.current(resumedGrant);
         clearAppliedApproval();
