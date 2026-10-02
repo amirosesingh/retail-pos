@@ -12,9 +12,20 @@ describe("hosted application security headers", () => {
     );
     expect(policy).not.toContain("'unsafe-eval'");
     expect(policy).toContain(
-      "connect-src 'self' https://cloudflareinsights.com https://project-ref.supabase.co wss://project-ref.supabase.co",
+      "connect-src 'self' https://cloudflareinsights.com https://member.luckycharmsdnbhd.com https://redeem.luckycharmsdnbhd.com https://project-ref.supabase.co wss://project-ref.supabase.co",
     );
     expect(policy).toContain("frame-ancestors 'none'");
+  });
+
+  it("allows the deployment-owned member and redeem health endpoints", () => {
+    const policy = contentSecurityPolicy();
+    expect(policy).toContain("https://member.luckycharmsdnbhd.com");
+    expect(policy).toContain("https://redeem.luckycharmsdnbhd.com");
+    const connectSources = policy
+      .split("; ")
+      .find((directive) => directive.startsWith("connect-src "))
+      ?.split(" ");
+    expect(connectSources).not.toContain("https:");
   });
 
   it("allows both isolated POS and membership Supabase projects", () => {
