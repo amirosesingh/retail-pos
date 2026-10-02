@@ -251,4 +251,11 @@ describe("per-user notification state", () => {
     expect(report).toContain("useAnimatedItems");
     expect(report).toContain("ui-animated-table-row");
   });
+
+  it("keeps the live notification feed to seven days without deleting audit history", () => {
+    const bell = readFileSync("src/platforms/web/components/pos/ActivityBell.tsx", "utf8");
+    expect(bell).toContain("NOTIFICATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000");
+    expect(bell).toContain("from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString()");
+    expect(bell).not.toContain("deleteActivityEvent");
+  });
 });

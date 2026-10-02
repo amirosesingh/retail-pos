@@ -45,6 +45,9 @@ import { attentionCounts } from "@/lib/needs-attention";
 import { humanizeText } from "@/lib/human-readable";
 
 const POLL_MS = 15_000;
+/** Notifications expire from the live delivery feed after one week. The
+ * underlying immutable activity/audit event remains available in Reports. */
+const NOTIFICATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
 const when = (iso: string) => {
   const d = new Date(iso);
@@ -151,7 +154,10 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const refresh = useCallback(async () => {
     if (!showActivity) return;
     void flushActivityQueue();
-    const list = await listActivityEvents({ limit: 40 });
+    const list = await listActivityEvents({
+      limit: 40,
+      from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString(),
+    });
     if (isActivityLogMissing()) {
       setMissing(true);
       return;

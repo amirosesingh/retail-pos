@@ -72,6 +72,7 @@ import { ItemActivityDrawer } from "@/platforms/web/components/pos/ItemActivityD
 import { OtherSourcesPopover } from "@/platforms/web/components/pos/OtherSourcesPopover";
 import type { Product } from "@/core/types/pos-types";
 import { nextSku, peekSku, readSkuSettings } from "@/lib/sku";
+import { localTerminalId } from "@/lib/shift-hours";
 import { cn } from "@/lib/utils";
 import { inventoryMetrics } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
@@ -790,10 +791,15 @@ function Inventory() {
                           });
                           return;
                         }
-                        const sku =
-                          draft.sku.trim() ||
-                          (autoSku ? nextSku(state.products.map((p) => p.sku)) : "");
                         try {
+                          const sku =
+                            draft.sku.trim() ||
+                            (autoSku
+                              ? await nextSku(state.products.map((p) => p.sku), {
+                                  storeId: currentStore.id,
+                                  terminalId: localTerminalId(),
+                                })
+                              : "");
                           // Saved only once the write is confirmed stored.
                           let target;
                           if (branchPriceOnly) {

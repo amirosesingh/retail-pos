@@ -1,6 +1,6 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { BadgeCheck, Gift, Loader2, MessageSquareText, PartyPopper } from "lucide-react";
+import { BadgeCheck, Gift, Loader2, Mail, PartyPopper } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,9 +38,10 @@ export const Route = createFileRoute("/join")({
 
 function JoinPage() {
   const { flags, ready } = usePublicFlags();
-  const channel = "phone" as const;
+  const channel = "email" as const;
   const [name, setName] = useState("");
   const [destination, setDestination] = useState("");
+  const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [countryCode, setCountryCode] = useState("BN");
@@ -54,7 +55,10 @@ function JoinPage() {
 
   const validationError = () => {
     if (name.trim().length < 2) return "Enter your full name.";
-    if (destination.replace(/\D/g, "").length < 6) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destination.trim())) {
+      return "Enter a valid email address.";
+    }
+    if (phone.replace(/\D/g, "").length < 6) {
       return "Enter a valid mobile number.";
     }
     if (dateOfBirth && new Date(dateOfBirth) > new Date()) return "Enter a valid date of birth.";
@@ -89,6 +93,7 @@ function JoinPage() {
       }
       const profile = await enrollMemberPortal({
         fullName: name,
+        phone: otpDestination("phone", countryCode, phone),
         address,
         dateOfBirth,
         countryCode,
@@ -128,13 +133,13 @@ function JoinPage() {
               <Gift className="mx-auto size-10 text-primary" aria-hidden />
               <h1 className="mt-4 text-2xl font-semibold">Become a Member</h1>
               <p className="mt-2 text-sm text-muted-foreground">
-                Enter your details and verify your mobile number by SMS. Your verified phone number
+                Enter your details and verify your email with a one-time code. Your phone number
                 will be your membership number.
               </p>
             </header>
 
             <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-muted p-3 text-sm font-medium">
-              <MessageSquareText className="size-4" /> SMS phone verification
+              <Mail className="size-4" /> Supabase email OTP verification
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -148,7 +153,20 @@ function JoinPage() {
                   onChange={(e) => setName(e.target.value)}
                 />
               </Field>
-              <Field label="Mobile number *" htmlFor="join-contact">
+              <Field label="Email address *" htmlFor="join-contact" wide>
+                <Input
+                  id="join-contact"
+                  type="email"
+                  inputMode="email"
+                  value={destination}
+                  maxLength={254}
+                  disabled={busy || step === "verify"}
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  onChange={(e) => setDestination(e.target.value)}
+                />
+              </Field>
+              <Field label="Mobile / membership number *" htmlFor="join-phone">
                 <div className="flex gap-2">
                   <CountrySelect
                     value={countryCode}
@@ -157,16 +175,16 @@ function JoinPage() {
                     compact
                   />
                   <Input
-                    id="join-contact"
+                    id="join-phone"
                     className="min-w-0 flex-1"
                     type="tel"
                     inputMode="tel"
-                    value={destination}
+                    value={phone}
                     maxLength={160}
                     disabled={busy || step === "verify"}
                     autoComplete="tel-national"
                     placeholder="8XX XXXX"
-                    onChange={(e) => setDestination(e.target.value)}
+                    onChange={(e) => setPhone(e.target.value)}
                   />
                 </div>
               </Field>
@@ -214,7 +232,7 @@ function JoinPage() {
                 <div>
                   <Label>Six-digit verification code</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Sent to {otpDestination(channel, countryCode, destination)}. Nothing is saved
+                    Sent to {destination.trim()}. Nothing is saved
                     until the code is verified.
                   </p>
                 </div>
@@ -271,7 +289,7 @@ function JoinPage() {
               </p>
             ) : null}
             <p className="mt-4 text-center text-xs text-muted-foreground">
-              We use your verified contact for secure membership access and loyalty communication.
+              Supabase Auth verifies your email. Your phone remains the unique membership number.
             </p>
             <p className="mt-2 text-center text-sm text-muted-foreground">
               Already a member?{" "}

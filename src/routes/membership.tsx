@@ -99,7 +99,9 @@ function MembershipPage() {
   useEffect(() => {
     let active = true;
     void memberPortalSession()
-      .then((current) => active && refresh(current))
+      .then((current) => {
+        if (active) return refresh(current);
+      })
       .catch((cause) => {
         if (active) {
           setError(cause instanceof Error ? cause.message : "Could not restore your login.");
@@ -178,7 +180,7 @@ function MembershipPage() {
 }
 
 function MemberLogin({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
-  const [channel, setChannel] = useState<"email" | "phone">("phone");
+  const [channel, setChannel] = useState<"email" | "phone">("email");
   const [destination, setDestination] = useState("");
   const [countryCode, setCountryCode] = useState("BN");
   const [code, setCode] = useState("");
@@ -230,18 +232,6 @@ function MemberLogin({ onSignedIn }: { onSignedIn: (session: Session) => void })
       <div className="mt-6 grid grid-cols-2 gap-2 rounded-lg bg-muted p-1">
         <Button
           type="button"
-          variant={channel === "phone" ? "secondary" : "ghost"}
-          onClick={() => {
-            setChannel("phone");
-            setSent(false);
-            setCode("");
-            setError("");
-          }}
-        >
-          <MessageSquareText className="size-4" /> SMS OTP
-        </Button>
-        <Button
-          type="button"
           variant={channel === "email" ? "secondary" : "ghost"}
           onClick={() => {
             setChannel("email");
@@ -252,11 +242,23 @@ function MemberLogin({ onSignedIn }: { onSignedIn: (session: Session) => void })
         >
           <Mail className="size-4" /> Email OTP
         </Button>
+        <Button
+          type="button"
+          variant={channel === "phone" ? "secondary" : "ghost"}
+          onClick={() => {
+            setChannel("phone");
+            setSent(false);
+            setCode("");
+            setError("");
+          }}
+        >
+          <MessageSquareText className="size-4" /> Existing SMS login
+        </Button>
       </div>
 
       <div className="mt-5 space-y-2">
         <Label htmlFor="member-destination">
-          {channel === "email" ? "Email address" : "Mobile number"}
+          {channel === "email" ? "Email address" : "Mobile / membership number"}
         </Label>
         <div className="flex gap-2">
           {channel === "phone" ? (
@@ -284,9 +286,9 @@ function MemberLogin({ onSignedIn }: { onSignedIn: (session: Session) => void })
           />
         </div>
         <p className="text-xs text-muted-foreground">
-          {channel === "phone"
-            ? "Choose the country code, then enter the mobile number."
-            : "Use the email saved on your membership."}
+          {channel === "email"
+            ? "Recommended: no separate SMS provider is required."
+            : "For existing phone-only accounts; SMS works only when the project has an SMS gateway."}
         </p>
       </div>
 
@@ -347,6 +349,7 @@ function MemberEnrollment({
   onSaved: (profile: MemberPortalProfile) => void;
 }) {
   const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [countryCode, setCountryCode] = useState("BN");
@@ -354,7 +357,10 @@ function MemberEnrollment({
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
   const contact = session.user.phone || session.user.email || "verified contact";
-  const verifiedPhone = session.user.phone?.trim() || "";
+  const membershipPhone = internationalPhone(
+    PHONE_COUNTRIES.find((item) => item.code === countryCode) ?? PHONE_COUNTRIES[0],
+    phone,
+  );
 
   return (
     <section className="mx-auto max-w-xl rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">
@@ -364,12 +370,6 @@ function MemberEnrollment({
         {contact} is verified. We could not find an existing membership for it, so complete your
         profile below.
       </p>
-      {!verifiedPhone ? (
-        <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-          A verified mobile number is required because your phone number is your membership number.
-          Sign out, choose SMS OTP, and verify your phone to continue.
-        </p>
-      ) : null}
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor="member-full-name">Full name</Label>
@@ -379,6 +379,24 @@ function MemberEnrollment({
             maxLength={120}
             onChange={(e) => setFullName(e.target.value)}
           />
+        </div>
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="member-phone">Mobile / membership number</Label>
+          <div className="flex gap-2">
+            <CountrySelect value={countryCode} disabled={busy} onChange={setCountryCode} compact />
+            <Input
+              id="member-phone"
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel-national"
+              value={phone}
+              maxLength={40}
+              onChange={(event) => setPhone(event.target.value)}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            This unique international phone number becomes your membership number.
+          </p>
         </div>
         <div className="space-y-1.5">
           <Label>Country</Label>
@@ -421,11 +439,18 @@ function MemberEnrollment({
       ) : null}
       <Button
         className="mt-5 w-full"
-        disabled={busy || !verifiedPhone || fullName.trim().length < 2}
+        disabled={busy || phone.replace(/\D/g, "").length < 6 || fullName.trim().length < 2}
         onClick={() => {
           setBusy(true);
           setFormError("");
-          void enrollMemberPortal({ fullName, address, dateOfBirth, countryCode, postalCode })
+          void enrollMemberPortal({
+            fullName,
+            phone: membershipPhone,
+            address,
+            dateOfBirth,
+            countryCode,
+            postalCode,
+          })
             .then(onSaved)
             .catch((cause) =>
               setFormError(
@@ -678,14 +703,14 @@ function MemberDashboard({
   );
 }
 
+function countryName(code: string) {
+  return PHONE_COUNTRIES.find((country) => country.code === code)?.name || "Not provided";
+}
+
 function memberOtpDestination(channel: "email" | "phone", countryCode: string, value: string) {
   if (channel === "email") return value.trim();
   const country = PHONE_COUNTRIES.find((item) => item.code === countryCode) ?? PHONE_COUNTRIES[0];
   return internationalPhone(country, value);
-}
-
-function countryName(code: string) {
-  return PHONE_COUNTRIES.find((country) => country.code === code)?.name || "Not provided";
 }
 
 function CountrySelect({

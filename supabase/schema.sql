@@ -16369,6 +16369,145 @@ REVOKE ALL ON FUNCTION public.membership_portal_enroll_details(jsonb) FROM PUBLI
 REVOKE ALL ON FUNCTION public.membership_portal_update_details(jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.membership_portal_sales(integer) FROM PUBLIC, anon;
 
+-- ---------------------------------------------------------------------------
+-- Global SKU allocation across clusters and offline terminals
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.sku_number_state (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  next_value bigint NOT NULL CHECK (next_value > 0),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.sku_number_state ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.sku_number_state FROM PUBLIC, anon, authenticated;
+GRANT ALL ON TABLE public.sku_number_state TO service_role;
+
+CREATE TABLE IF NOT EXISTS public.sku_number_leases (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  start_value bigint NOT NULL,
+  end_value bigint NOT NULL CHECK (end_value >= start_value),
+  store_id text,
+  terminal_id text,
+  prefix text NOT NULL DEFAULT 'SKU-',
+  padding smallint NOT NULL DEFAULT 6 CHECK (padding BETWEEN 1 AND 12),
+  reserved_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT sku_number_leases_range_unique UNIQUE (start_value, end_value)
+);
+CREATE INDEX IF NOT EXISTS sku_number_leases_store_created_idx
+  ON public.sku_number_leases (store_id, created_at DESC);
+ALTER TABLE public.sku_number_leases ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.sku_number_leases FROM PUBLIC, anon, authenticated;
+GRANT ALL ON TABLE public.sku_number_leases TO service_role;
+
+INSERT INTO public.sku_number_state (singleton, next_value)
+SELECT true, greatest(
+  1,
+  coalesce(max((substring(sku from '([0-9]+)$'))::bigint) + 1, 1)
+)
+FROM public.products
+WHERE coalesce(sku, '') ~ '[0-9]+$'
+ON CONFLICT (singleton) DO UPDATE
+SET next_value = greatest(public.sku_number_state.next_value, excluded.next_value),
+    updated_at = now();
+
+CREATE OR REPLACE FUNCTION public.reserve_product_skus(
+  p_count integer DEFAULT 250,
+  p_store_id text DEFAULT NULL,
+  p_terminal_id text DEFAULT NULL,
+  p_prefix text DEFAULT 'SKU-',
+  p_padding integer DEFAULT 6
+)
+RETURNS TABLE (
+  lease_id uuid,
+  start_value bigint,
+  end_value bigint,
+  prefix text,
+  padding integer,
+  reserved_at timestamptz
+)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $function$
+DECLARE
+  v_staff public.app_users%rowtype;
+  v_start bigint;
+  v_end bigint;
+  v_lease uuid := gen_random_uuid();
+  v_now timestamptz := now();
+  v_service boolean := coalesce(current_setting('request.jwt.claim.role', true), '') = 'service_role';
+BEGIN
+  IF p_count < 1 OR p_count > 5000 THEN RAISE EXCEPTION 'SKU_LEASE_SIZE_INVALID'; END IF;
+  IF p_padding < 1 OR p_padding > 12 THEN RAISE EXCEPTION 'SKU_PADDING_INVALID'; END IF;
+  IF length(coalesce(p_prefix, '')) > 32 THEN RAISE EXCEPTION 'SKU_PREFIX_INVALID'; END IF;
+
+  IF NOT v_service THEN
+    SELECT * INTO v_staff FROM public.app_users
+     WHERE auth_user_id = (SELECT auth.uid()) AND is_active LIMIT 1;
+    IF v_staff.id IS NULL THEN RAISE EXCEPTION 'STAFF_AUTH_REQUIRED'; END IF;
+    IF v_staff.role::text <> 'admin'
+       AND coalesce((v_staff.permissions ->> 'can_add_new_product')::boolean, false) IS NOT true THEN
+      RAISE EXCEPTION 'SKU_RESERVATION_FORBIDDEN';
+    END IF;
+    IF v_staff.role::text <> 'admin'
+       AND nullif(v_staff.store_id, '') IS DISTINCT FROM nullif(p_store_id, '') THEN
+      RAISE EXCEPTION 'SKU_STORE_SCOPE_FORBIDDEN';
+    END IF;
+  END IF;
+
+  INSERT INTO public.sku_number_state (singleton, next_value)
+  VALUES (true, 1) ON CONFLICT (singleton) DO NOTHING;
+  SELECT state.next_value INTO v_start FROM public.sku_number_state state
+   WHERE state.singleton = true FOR UPDATE;
+  v_end := v_start + p_count - 1;
+  UPDATE public.sku_number_state SET next_value = v_end + 1, updated_at = v_now
+   WHERE singleton = true;
+  INSERT INTO public.sku_number_leases (
+    id, start_value, end_value, store_id, terminal_id, prefix, padding, reserved_by, created_at
+  ) VALUES (
+    v_lease, v_start, v_end, nullif(trim(p_store_id), ''), nullif(trim(p_terminal_id), ''),
+    coalesce(p_prefix, ''), p_padding, (SELECT auth.uid()), v_now
+  );
+  RETURN QUERY SELECT v_lease, v_start, v_end, coalesce(p_prefix, ''), p_padding, v_now;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.reserve_product_skus(integer,text,text,text,integer)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reserve_product_skus(integer,text,text,text,integer)
+  TO authenticated, service_role;
+
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE OR REPLACE FUNCTION private.assign_product_sku()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $function$
+DECLARE
+  v_number bigint;
+  v_explicit_number bigint;
+BEGIN
+  IF nullif(trim(coalesce(new.sku, '')), '') IS NOT NULL THEN
+    v_explicit_number := nullif(substring(new.sku from '([0-9]+)$'), '')::bigint;
+    IF v_explicit_number IS NOT NULL THEN
+      INSERT INTO public.sku_number_state (singleton, next_value)
+      VALUES (true, v_explicit_number + 1)
+      ON CONFLICT (singleton) DO UPDATE
+        SET next_value = greatest(public.sku_number_state.next_value, excluded.next_value),
+            updated_at = now();
+    END IF;
+    RETURN new;
+  END IF;
+  INSERT INTO public.sku_number_state (singleton, next_value)
+  VALUES (true, 1) ON CONFLICT (singleton) DO NOTHING;
+  SELECT next_value INTO v_number FROM public.sku_number_state
+   WHERE singleton = true FOR UPDATE;
+  UPDATE public.sku_number_state SET next_value = v_number + 1, updated_at = now()
+   WHERE singleton = true;
+  new.sku := 'SKU-' || lpad(v_number::text, 6, '0');
+  RETURN new;
+END;
+$function$;
+REVOKE ALL ON FUNCTION private.assign_product_sku() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS products_aa_assign_global_sku ON public.products;
+CREATE TRIGGER products_aa_assign_global_sku
+BEFORE INSERT ON public.products
+FOR EACH ROW EXECUTE FUNCTION private.assign_product_sku();
+
 -- Final public-schema privilege hardening
 -- This must remain after every routine definition in this canonical installer.
 -- ===========================================================================

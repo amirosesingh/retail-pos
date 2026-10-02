@@ -2430,7 +2430,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
               existing: true,
             });
           } else {
-            const sku = autoSku ? nextSku(skuPool) : row.barcode;
+            let sku: string;
+            try {
+              sku = autoSku
+                ? await nextSku(skuPool, { storeId, terminalId: localTerminalId() })
+                : row.barcode;
+            } catch (error) {
+              result.failed.push({
+                line: row.line,
+                barcode: row.barcode,
+                name: row.name,
+                reason: error instanceof Error ? error.message : "Could not allocate an SKU",
+              });
+              done += 1;
+              options.onProgress?.(done, todo.length);
+              continue;
+            }
             skuPool.push(sku);
             const record: Product = {
               id: crypto.randomUUID(),

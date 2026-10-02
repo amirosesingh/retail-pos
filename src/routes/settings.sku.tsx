@@ -15,7 +15,7 @@ export const Route = createFileRoute("/settings/sku")({
       {
         name: "description",
         content:
-          "Choose automatic running-number SKUs or manual codes for new products, and set the prefix and next number.",
+          "Choose globally unique automatic SKUs or manual codes for new products.",
       },
       { property: "og:title", content: "SKU Numbering — Retail" },
       { property: "og:description", content: "Automatic or manual product code numbering." },
@@ -81,11 +81,11 @@ function SkuForm() {
           <Input value={cfg.prefix} onChange={(e) => save({ prefix: e.target.value })} />
         </div>
         <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Next number</Label>
+          <Label className="text-xs text-muted-foreground">Last local position</Label>
           <Input
             className="numeric"
             value={cfg.next}
-            onChange={(e) => save({ next: Math.max(1, Number(e.target.value) || 1) })}
+            readOnly
           />
         </div>
         <div className="space-y-1">
@@ -103,9 +103,10 @@ function SkuForm() {
       </div>
 
       <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        Next product will be created as{" "}
+        Next reserved product code is{" "}
         <span className="numeric font-medium text-foreground">{preview}</span>. Codes already used
-        in the catalog are always skipped, so two branches can add products at the same time.
+        in the catalog are skipped. Online terminals reserve non-overlapping ranges from one central
+        counter, then use those ranges safely while offline.
       </p>
     </div>
   );

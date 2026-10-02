@@ -72,6 +72,9 @@ describe("customer membership portal security", () => {
     const phoneNumberSql = read(
       "supabase/membership/migrations/20261002184200_phone_membership_number.sql",
     );
+    const emailOtpSql = read(
+      "supabase/membership/migrations/20261002201500_email_otp_phone_membership.sql",
+    );
     const service = read("src/lib/membership-service.server.ts");
     const client = read("src/lib/membership-service.functions.ts");
     const register = read("src/routes/index.tsx");
@@ -84,6 +87,10 @@ describe("customer membership portal security", () => {
     expect(consistencySql).toContain("round(coalesce((p_event->>'amount_delta')::numeric, 0), 2)");
     expect(phoneNumberSql).toContain("MEMBERSHIP_PHONE_VERIFICATION_REQUIRED");
     expect(phoneNumberSql).toContain("v_uid, v_phone, v_name");
+    expect(emailOtpSql).toContain("u.email_confirmed_at is not null");
+    expect(emailOtpSql).toContain("v_uid, v_phone, v_name, v_email, v_phone");
+    expect(emailOtpSql).toContain("true, now(), 'email'");
+    expect(emailOtpSql).not.toMatch(/(?:otp|token|verification)_?(?:code|hash)\s+(?:text|varchar)/i);
     expect(service).toContain("AbortSignal.timeout(8_000)");
     expect(service).toContain("phone: row.member_code");
     expect(service).toContain("await verifyRelayCaller(parsed.data)");

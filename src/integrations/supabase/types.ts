@@ -4953,6 +4953,23 @@ export type Database = {
       };
       store_group_of: { Args: { _store_id: string }; Returns: string };
       store_visible: { Args: { _store_id: string }; Returns: boolean };
+      reserve_product_skus: {
+        Args: {
+          p_count?: number;
+          p_padding?: number;
+          p_prefix?: string;
+          p_store_id?: string;
+          p_terminal_id?: string;
+        };
+        Returns: {
+          end_value: number;
+          lease_id: string;
+          padding: number;
+          prefix: string;
+          reserved_at: string;
+          start_value: number;
+        }[];
+      };
       terminal_staff_list: {
         Args: { p_store_id?: string };
         Returns: {

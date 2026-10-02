@@ -382,7 +382,8 @@ const shell = (title: string, body: string, autoPrint = true) => {
   table { width: 100%; border-collapse: collapse; }
   td { vertical-align: top; padding: 1px 0; }
   ${paper === "30mm" ? "td { display: block; width: 100%; overflow-wrap: anywhere; }" : ""}
-  .r { text-align: right; }
+  .r { text-align: right; white-space: nowrap; word-break: keep-all; overflow-wrap: normal; font-variant-numeric: tabular-nums; }
+  td.r { width: 1%; padding-left: 4px; }
   .b { font-weight: 700; }
   .big { font-size: 1.2em; }
   .tag { border: 1px solid #000; padding: 2px 4px; display: inline-block; margin-top: 4px; font-size: 0.8em; letter-spacing: 1px; }

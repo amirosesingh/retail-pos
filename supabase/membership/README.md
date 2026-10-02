@@ -10,7 +10,8 @@ directory against the POS project. POS lookup uses only the server-side
 membership project's publishable key.
 
 The POS SQL database remains the durable operational store. It caches the
-member UUID, verified phone membership number, name, tier and points, and each
-sale references that UUID. Email addresses, OTPs, sessions and authentication
-data remain only in the membership project. There is no separate membership
-outbox table.
+member UUID, phone membership number, name, tier and points, and each sale
+references that UUID. Supabase Auth verifies the email OTP; email addresses,
+OTPs, sessions and authentication data remain only in the membership project.
+Phone SMS delivery is not required. There is no separate membership outbox
+table.

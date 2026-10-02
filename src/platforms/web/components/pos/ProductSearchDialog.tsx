@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { money, stockAt } from "@/lib/pos-store";
+import { localTerminalId } from "@/lib/shift-hours";
 import { nextSku, readSkuSettings } from "@/lib/sku";
 import type { Product } from "@/core/types/pos-types";
 
@@ -131,17 +132,23 @@ export function ProductSearchDialog({
     setBusy(true);
     try {
       const skuCfg = readSkuSettings();
+      const generatedSku = async () =>
+        nextSku(products.map((product) => product.sku), {
+          storeId,
+          terminalId: localTerminalId(),
+        });
+      const sku =
+        skuCfg.mode === "auto" ? await generatedSku() : (unknownCode ?? (await generatedSku()));
       await onCreateProduct({
         name: trimmed,
         price: value,
         category: category.trim() || "General",
         barcode: unknownCode ?? "",
-        sku:
-          skuCfg.mode === "auto"
-            ? nextSku(products.map((p) => p.sku))
-            : (unknownCode ?? nextSku(products.map((p) => p.sku))),
+        sku,
       });
       onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not create this product");
     } finally {
       setBusy(false);
     }

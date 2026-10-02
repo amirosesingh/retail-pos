@@ -64,6 +64,9 @@ function message(error: { message?: string } | null, fallback: string): string {
   if (raw.includes("MEMBERSHIP_PHONE_VERIFICATION_REQUIRED")) {
     return "Verify your mobile number by SMS before creating a membership.";
   }
+  if (raw.includes("MEMBERSHIP_EMAIL_VERIFICATION_REQUIRED")) {
+    return "Verify your email with the one-time code before creating a membership.";
+  }
   if (raw.includes("MEMBERSHIP_PHONE_ALREADY_REGISTERED")) {
     return "This mobile number already belongs to a membership. Sign in with SMS OTP instead.";
   }
@@ -123,6 +126,7 @@ export async function loadMemberPortalProfile(): Promise<MemberPortalProfile | n
 
 export async function enrollMemberPortal(input: {
   fullName: string;
+  phone: string;
   address?: string;
   dateOfBirth?: string;
   countryCode?: string;
@@ -131,6 +135,7 @@ export async function enrollMemberPortal(input: {
   const result = await rpcClient().rpc("membership_portal_enroll_details", {
     p_profile: {
       full_name: input.fullName.trim(),
+      phone: input.phone.trim(),
       address: input.address?.trim() || null,
       date_of_birth: input.dateOfBirth || null,
       country_code: input.countryCode?.trim().toUpperCase() || null,
