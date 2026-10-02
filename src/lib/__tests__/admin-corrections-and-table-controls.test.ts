@@ -20,8 +20,19 @@ describe("administrator corrections and shared table controls", () => {
     expect(source).toContain("verifyRelayCaller");
     expect(source).toContain("resolveRelayScope");
     expect(source).toContain('scope.roleSlug === "admin" || scope.role === "admin"');
-    expect(source).toContain("scope.storeId && scope.storeId !== data.storeId");
+    expect(source).toContain("select=store_id&limit=1");
+    expect(source).toContain("scope.storeId && scope.storeId !== shiftStoreId");
     expect(source).toContain('serviceRest("rpc/pos_admin_correct_closed_shift"');
+    const route = read("src/routes/shifts.tsx");
+    expect(route).toContain("correctionClientKey.current = crypto.randomUUID()");
+    expect(route).toContain("clientKey: correctionClientKey.current");
+    const migration = read(
+      "supabase/migrations/20261002023000_admin_only_posted_record_corrections.sql",
+    );
+    expect(migration.indexOf("FOR UPDATE")).toBeLessThan(
+      migration.indexOf("WHERE client_key = p_client_key"),
+    );
+    expect(migration).toContain("pg_advisory_xact_lock");
   });
 
   it("provides sort, per-column filter and resize controls on shared table headers", () => {

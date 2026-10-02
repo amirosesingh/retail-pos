@@ -29,7 +29,19 @@ export const correctClosedShift = createServerFn({ method: "POST" })
       if (!isAdmin) {
         return { ok: false as const, error: "Only an administrator can correct a closed shift" };
       }
-      if (scope.storeId && scope.storeId !== data.storeId) {
+      const shiftResponse = await serviceRest(
+        `shifts?id=eq.${encodeURIComponent(data.shiftId)}&select=store_id&limit=1`,
+      );
+      if (!shiftResponse.ok) {
+        return { ok: false as const, error: "The shift branch could not be verified" };
+      }
+      const shift = ((await shiftResponse.json()) as { store_id?: string | null }[])[0];
+      if (!shift) return { ok: false as const, error: "That shift no longer exists" };
+      const shiftStoreId = shift.store_id ?? null;
+      if (shiftStoreId !== data.storeId) {
+        return { ok: false as const, error: "The selected shift branch does not match" };
+      }
+      if (scope.storeId && scope.storeId !== shiftStoreId) {
         return { ok: false as const, error: "The shift must belong to the administrator's branch" };
       }
       const response = await serviceRest("rpc/pos_admin_correct_closed_shift", {

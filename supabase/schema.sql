@@ -16004,14 +16004,19 @@ BEGIN
     RAISE EXCEPTION 'Counted tender amounts cannot be negative.';
   END IF;
 
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_client_key, 0));
+  SELECT * INTO v FROM public.shifts WHERE id = p_shift FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'That shift no longer exists.'; END IF;
+
   SELECT shift_id INTO v_count FROM public.shift_cash_counts
    WHERE client_key = p_client_key LIMIT 1;
   IF FOUND THEN
+    IF v_count <> p_shift THEN
+      RAISE EXCEPTION 'That correction key was already used for another shift.';
+    END IF;
     RETURN jsonb_build_object('ok', true, 'replayed', true, 'shift_id', v_count);
   END IF;
 
-  SELECT * INTO v FROM public.shifts WHERE id = p_shift FOR UPDATE;
-  IF NOT FOUND THEN RAISE EXCEPTION 'That shift no longer exists.'; END IF;
   IF v.status <> 'CLOSED' OR coalesce(v.state, 'CLOSED') <> 'CLOSED' THEN
     RAISE EXCEPTION 'Only a closed shift can be corrected.';
   END IF;

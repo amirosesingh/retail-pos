@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pencil, Printer, RotateCcw, Users, Vault } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -80,6 +80,7 @@ function Shifts() {
   const [correctDigital, setCorrectDigital] = useState("");
   const [correctReason, setCorrectReason] = useState("");
   const [correctBusy, setCorrectBusy] = useState(false);
+  const correctionClientKey = useRef<string | null>(null);
 
   // Local per-terminal log — read after mount so SSR and hydration match.
   useEffect(() => {
@@ -135,6 +136,7 @@ function Shifts() {
   const storeLabel = `Store ${storeIndex + 1}`;
 
   const openShiftCorrection = (shift: Shift) => {
+    correctionClientKey.current = crypto.randomUUID();
     setCorrecting(shift);
     setCorrectCash(String(shift.countedCash ?? shift.closingFloat ?? ""));
     setCorrectCard(shift.countedCard == null ? "" : String(shift.countedCard));
@@ -168,10 +170,11 @@ function Shifts() {
           digital,
           reason: correctReason.trim(),
           terminalId: correcting.terminalId ?? null,
-          clientKey: crypto.randomUUID(),
+          clientKey: correctionClientKey.current ?? (correctionClientKey.current = crypto.randomUUID()),
         },
       });
       if (!result.ok) throw new Error(result.error);
+      correctionClientKey.current = null;
       setCorrecting(null);
       toast.success("Shift correction saved with its original and corrected values.");
     } catch (error) {
@@ -727,7 +730,15 @@ function Shifts() {
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCorrecting(null)}>Cancel</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                correctionClientKey.current = null;
+                setCorrecting(null);
+              }}
+            >
+              Cancel
+            </Button>
             <Button disabled={correctBusy} onClick={() => void submitShiftCorrection()}>
               {correctBusy ? "Saving…" : "Save audited correction"}
             </Button>
