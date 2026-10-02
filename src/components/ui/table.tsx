@@ -16,7 +16,8 @@ type TableControls = {
   setActiveFilter: (column: number | null) => void;
   setFilter: (column: number, value: string) => void;
   widths: ColumnWidths;
-  startResize: (column: number, event: React.PointerEvent<HTMLSpanElement>) => void;
+  startResize: (column: number, event: React.PointerEvent<HTMLElement>) => void;
+  resizeBy: (column: number, delta: number, fallbackWidth: number) => void;
 };
 
 const TableControlsContext = React.createContext<TableControls | null>(null);
@@ -171,12 +172,19 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
                 )}
               </div>
             )}
-            <span
-              role="separator"
-              aria-orientation="vertical"
+            <button
+              type="button"
               aria-label={`Resize ${label} column`}
+              title="Drag to resize. Use Left and Right arrow keys for precise resizing."
               className="absolute -right-2 top-0 h-full w-2 cursor-col-resize touch-none select-none hover:bg-primary/50"
               onPointerDown={(event) => controls.startResize(column, event)}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                event.preventDefault();
+                const fallbackWidth =
+                  event.currentTarget.closest("th")?.getBoundingClientRect().width ?? 72;
+                controls.resizeBy(column, event.key === "ArrowLeft" ? -16 : 16, fallbackWidth);
+              }}
             />
           </div>
         ) : (
@@ -286,191 +294,6 @@ function hasInteractiveContent(node: React.ReactNode): boolean {
 
 function sortableHeaderLabel(label: string): boolean {
   return Boolean(label) && !/^(action|actions|menu|select)$/i.test(label.trim());
-}
-
-function decorateHeaderCells(
-  node: React.ReactNode,
-  sort: TableSortState,
-  toggleSort: (column: number) => void,
-  filters: TableFilters,
-  activeFilter: number | null,
-  setActiveFilter: (column: number | null) => void,
-  setFilter: (column: number, value: string) => void,
-  widths: ColumnWidths,
-  startResize: (column: number, event: React.PointerEvent<HTMLSpanElement>) => void,
-  cursor: { column: number },
-): React.ReactNode {
-  if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
-  if (isTableComponent(node, TableHead, "TableHead")) {
-    type SortableHeadProps = React.ThHTMLAttributes<HTMLTableCellElement> & {
-      "data-sortable"?: boolean | "true" | "false";
-    };
-    const head = node as React.ReactElement<SortableHeadProps>;
-    const column = cursor.column;
-    cursor.column += Number(head.props.colSpan ?? 1);
-    const label = plainText(head.props.children);
-    const explicitlyDisabled =
-      head.props["data-sortable"] === false || head.props["data-sortable"] === "false";
-    const canSort =
-      !explicitlyDisabled &&
-      sortableHeaderLabel(label) &&
-      !hasInteractiveContent(head.props.children) &&
-      Number(head.props.colSpan ?? 1) === 1;
-    if (!canSort) return head;
-
-    const active = sort?.column === column;
-    const direction = active ? sort.direction : null;
-    const Icon = direction === "asc" ? ArrowUp : direction === "desc" ? ArrowDown : ArrowUpDown;
-    const nextDirection = direction === "asc" ? "descending" : "ascending";
-    const rightAligned = String(head.props.className ?? "").includes("text-right");
-    return React.cloneElement(
-      head,
-      {
-        className: cn("relative", head.props.className),
-        style: { ...head.props.style, ...(widths[column] ? { width: widths[column] } : {}) },
-        "aria-sort":
-          direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none",
-      },
-      <div className="relative min-w-24">
-        <div className={cn("flex items-center", rightAligned && "justify-end")}>
-          <button
-            type="button"
-            className={cn(
-              "group inline-flex min-h-8 min-w-0 flex-1 items-center gap-1 rounded-sm px-1 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              rightAligned ? "justify-end" : "justify-start",
-            )}
-            aria-label={`${label}, ${direction ? `sorted ${direction === "asc" ? "ascending" : "descending"}` : "not sorted"}. Sort ${nextDirection}`}
-            onClick={() => toggleSort(column)}
-          >
-            <span className="truncate">{head.props.children}</span>
-            <Icon
-              aria-hidden="true"
-              className={cn(
-                "h-3.5 w-3.5 shrink-0",
-                active ? "text-foreground" : "text-muted-foreground/70 group-hover:text-foreground",
-              )}
-            />
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "grid size-7 shrink-0 place-items-center rounded-sm hover:bg-muted hover:text-foreground",
-              filters[column] && "text-primary",
-            )}
-            aria-label={`Filter ${label}`}
-            onClick={() => setActiveFilter(activeFilter === column ? null : column)}
-          >
-            <ListFilter className="size-3.5" />
-          </button>
-        </div>
-        {activeFilter === column && (
-          <div
-            className="flex items-center gap-1 pb-1"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <input
-              autoFocus
-              value={filters[column] ?? ""}
-              onChange={(event) => setFilter(column, event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setActiveFilter(null);
-              }}
-              placeholder={`Filter ${label}`}
-              aria-label={`Filter ${label} values`}
-              className="h-7 min-w-20 flex-1 rounded border border-input bg-background px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-            />
-            {filters[column] && (
-              <button
-                type="button"
-                className="grid size-7 place-items-center rounded hover:bg-muted"
-                aria-label={`Clear ${label} filter`}
-                onClick={() => setFilter(column, "")}
-              >
-                <X className="size-3.5" />
-              </button>
-            )}
-          </div>
-        )}
-        <span
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={`Resize ${label} column`}
-          className="absolute -right-2 top-0 h-full w-2 cursor-col-resize touch-none select-none hover:bg-primary/50"
-          onPointerDown={(event) => startResize(column, event)}
-        />
-      </div>,
-    );
-  }
-  return React.cloneElement(
-    node,
-    undefined,
-    React.Children.map(node.props.children, (child) =>
-      decorateHeaderCells(
-        child,
-        sort,
-        toggleSort,
-        filters,
-        activeFilter,
-        setActiveFilter,
-        setFilter,
-        widths,
-        startResize,
-        cursor,
-      ),
-    ),
-  );
-}
-
-function decorateTableHeaders(
-  node: React.ReactNode,
-  sort: TableSortState,
-  toggleSort: (column: number) => void,
-  filters: TableFilters,
-  activeFilter: number | null,
-  setActiveFilter: (column: number | null) => void,
-  setFilter: (column: number, value: string) => void,
-  widths: ColumnWidths,
-  startResize: (column: number, event: React.PointerEvent<HTMLSpanElement>) => void,
-): React.ReactNode {
-  if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
-  if (isTableComponent(node, TableHeader, "TableHeader")) {
-    const cursor = { column: 0 };
-    return React.cloneElement(
-      node,
-      undefined,
-      React.Children.map(node.props.children, (child) =>
-        decorateHeaderCells(
-          child,
-          sort,
-          toggleSort,
-          filters,
-          activeFilter,
-          setActiveFilter,
-          setFilter,
-          widths,
-          startResize,
-          cursor,
-        ),
-      ),
-    );
-  }
-  return React.cloneElement(
-    node,
-    undefined,
-    React.Children.map(node.props.children, (child) =>
-      decorateTableHeaders(
-        child,
-        sort,
-        toggleSort,
-        filters,
-        activeFilter,
-        setActiveFilter,
-        setFilter,
-        widths,
-        startResize,
-      ),
-    ),
-  );
 }
 
 function firstTableRow(
@@ -653,6 +476,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
     const [filters, setFilters] = React.useState<TableFilters>({});
     const [activeFilter, setActiveFilter] = React.useState<number | null>(null);
     const [widths, setWidths] = React.useState<ColumnWidths>({});
+    const resizeCleanupRef = React.useRef<(() => void) | null>(null);
     const toggleSort = React.useCallback((column: number) => {
       setSort((current) => ({
         column,
@@ -667,10 +491,17 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
         return next;
       });
     }, []);
+    const resizeBy = React.useCallback((column: number, delta: number, fallbackWidth: number) => {
+      setWidths((current) => ({
+        ...current,
+        [column]: Math.max(72, Math.round((current[column] ?? fallbackWidth) + delta)),
+      }));
+    }, []);
     const startResize = React.useCallback(
-      (column: number, event: React.PointerEvent<HTMLSpanElement>) => {
+      (column: number, event: React.PointerEvent<HTMLElement>) => {
         event.preventDefault();
         event.stopPropagation();
+        resizeCleanupRef.current?.();
         const header = event.currentTarget.closest("th");
         if (!header) return;
         const startX = event.clientX;
@@ -684,21 +515,37 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
         const stop = () => {
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", stop);
+          window.removeEventListener("pointercancel", stop);
           document.body.style.cursor = "";
           document.body.style.userSelect = "";
+          resizeCleanupRef.current = null;
         };
+        resizeCleanupRef.current = stop;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";
         window.addEventListener("pointermove", move);
         window.addEventListener("pointerup", stop);
+        window.addEventListener("pointercancel", stop);
       },
       [],
     );
+    React.useEffect(() => () => resizeCleanupRef.current?.(), []);
     let labels: string[] = [];
     for (const child of React.Children.toArray(children)) {
       labels = findHeaderLabels(child);
       if (labels.length) break;
     }
+    const labelSignature = labels.join("\u001f");
+    const previousLabelSignature = React.useRef(labelSignature);
+    React.useEffect(() => {
+      if (previousLabelSignature.current === labelSignature) return;
+      previousLabelSignature.current = labelSignature;
+      setSort(null);
+      setFilters({});
+      setActiveFilter(null);
+      setWidths({});
+      resizeCleanupRef.current?.();
+    }, [labelSignature]);
     const labelled = React.Children.map(children, (child) => labelTableBodies(child, labels));
     const sorted = React.Children.map(labelled, (child) => sortTableBodies(child, sort));
     const content = React.Children.map(sorted, (child) => filterTableBodies(child, filters));
@@ -712,8 +559,9 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
         setFilter,
         widths,
         startResize,
+        resizeBy,
       }),
-      [sort, toggleSort, filters, activeFilter, setFilter, widths, startResize],
+      [sort, toggleSort, filters, activeFilter, setFilter, widths, startResize, resizeBy],
     );
     return (
       <TableControlsContext.Provider value={controls}>

@@ -28,8 +28,11 @@ describe("administrator corrections and shared table controls", () => {
     expect(source).toContain("Sort ${direction === \"asc\" ? \"descending\" : \"ascending\"}");
     expect(source).toContain("Filter ${label} values");
     expect(source).toContain("Resize ${label} column");
-    expect(source).toContain('role="separator"');
+    expect(source).toContain('event.key !== "ArrowLeft" && event.key !== "ArrowRight"');
     expect(source).toContain('window.addEventListener("pointermove", move)');
+    expect(source).toContain('window.addEventListener("pointercancel", stop)');
+    expect(source).toContain("resizeCleanupRef.current?.()");
+    expect(source).not.toContain("function decorateTableHeaders(");
     expect(source).toContain("sortTableBodies(child, sort)");
     expect(source).toContain("filterTableBodies(child, filters)");
   });
