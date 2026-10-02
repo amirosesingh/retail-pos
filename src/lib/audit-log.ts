@@ -145,7 +145,7 @@ export function resolveCategory(raw: string, action: string, module = ""): Audit
 
 /** Old records still carry retired category names — map them for display. */
 export const displayCategory = (c: string): AuditCategory =>
-  (AUDIT_CATEGORY_LABELS[c] ? (c as AuditCategory) : (LEGACY[c] ?? "other"));
+  AUDIT_CATEGORY_LABELS[c] ? (c as AuditCategory) : (LEGACY[c] ?? "other");
 
 export type AuditLog = {
   id: string;
@@ -241,12 +241,7 @@ function emit() {
 
 /** Global logging utility — every write lands locally first, offline-safe. */
 export const logger = {
-  log(
-    category: string,
-    actionName: string,
-    module: string,
-    details: Record<string, unknown> = {},
-  ) {
+  log(category: string, actionName: string, module: string, details: Record<string, unknown> = {}) {
     if (typeof window === "undefined") return;
     load();
     const s = stamp(actor.storeId);
@@ -303,9 +298,14 @@ function scheduleFlush() {
   }, 3000);
 }
 
-export type SyncState = { online: boolean; pending: number; lastSyncAt: string | null };
+export type SyncState = {
+  online: boolean;
+  pending: number;
+  lastSyncAt: string | null;
+  lastError: string | null;
+};
 
-let syncState: SyncState = { online: true, pending: 0, lastSyncAt: null };
+let syncState: SyncState = { online: true, pending: 0, lastSyncAt: null, lastError: null };
 const syncListeners = new Set<() => void>();
 
 const setSync = (patch: Partial<SyncState>) => {
@@ -363,15 +363,23 @@ async function flushBatchOnce() {
     // them as delivered so the queue is not blocked behind them forever.
     const code = (e as { code?: string } | null)?.code;
     if (code !== "23505") {
-      if (import.meta.env.DEV) console.error("[audit] sync failed");
+      setSync({
+        lastError: e instanceof Error ? e.message : "Audit upload failed; retrying automatically.",
+      });
       return;
     }
     batch = slice.map((l) => l.id);
   }
   const at = new Date().toISOString();
-  logs = logs.map((l) => (batch.includes(l.id) ? { ...l, synced_to_cloud: true, syncedAt: at } : l));
+  logs = logs.map((l) =>
+    batch.includes(l.id) ? { ...l, synced_to_cloud: true, syncedAt: at } : l,
+  );
   emit();
-  setSync({ pending: logs.filter((l) => !l.synced_to_cloud).length, lastSyncAt: at });
+  setSync({
+    pending: logs.filter((l) => !l.synced_to_cloud).length,
+    lastSyncAt: at,
+    lastError: null,
+  });
 }
 
 /** Ping every 30s: push pending records when online, stay silent when offline. */

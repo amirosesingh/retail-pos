@@ -44,7 +44,7 @@ import { DesktopUpdateBanner } from "@/platforms/windows/components/DesktopUpdat
 import { AndroidUpdateBanner } from "@/platforms/mobile/components/AndroidUpdateBanner";
 import { usePublicHostLanding } from "../lib/coupon-hosts";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
-import { bypassPersistentAppShell } from "@/lib/app-shell-routes";
+import { bypassPersistentAppShell, isCustomerPublicRoute } from "@/lib/app-shell-routes";
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
 import { hydrateConnectionProfile } from "@/lib/connection-profile";
 import { TillLoader } from "@/components/shared/TillLoader";
@@ -235,6 +235,7 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
+  const pathname = useLocation({ select: (location) => location.pathname });
   usePublicHostLanding();
   useNativeBackNavigation(router);
 
@@ -290,34 +291,47 @@ function RootComponent() {
         <NativeBoot>
           <OfflineGate>
             <ConnectionProfileBoot>
-              {/* Single mount point for auth: no route or component may mount its own
-            AuthProvider — a second provider creates a second session tree. */}
-              <AuthProvider>
-                <PermissionsProvider>
-                  <PosProvider>
-                    <RulesBridge>
-                      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-                      <AuditTracker />
-                      <TelemetryAgent />
-                      <FirstRunSetup>
-                        <PrivilegeGate>
-                          <PersistentRouteOutlet />
-                        </PrivilegeGate>
-                      </FirstRunSetup>
-
-                      <AndroidUpdateBanner />
-                      <DesktopUpdateBanner />
-                      <Toaster position="top-right" closeButton />
-                      <ErrorNotifier />
-                    </RulesBridge>
-                  </PosProvider>
-                </PermissionsProvider>
-              </AuthProvider>
+              {isCustomerPublicRoute(pathname) ? (
+                <>
+                  <Outlet />
+                  <Toaster position="top-right" closeButton />
+                </>
+              ) : (
+                <TillRuntime />
+              )}
             </ConnectionProfileBoot>
           </OfflineGate>
         </NativeBoot>
       </ThemeProvider>
     </QueryClientProvider>
+  );
+}
+
+/** Till-only runtime. Never mount this on customer-facing URLs. */
+function TillRuntime() {
+  return (
+    // Single mount point for staff auth. Customer authentication has its own
+    // isolated client and storage key in external-client.ts.
+    <AuthProvider>
+      <PermissionsProvider>
+        <PosProvider>
+          <RulesBridge>
+            <AuditTracker />
+            <TelemetryAgent />
+            <FirstRunSetup>
+              <PrivilegeGate>
+                <PersistentRouteOutlet />
+              </PrivilegeGate>
+            </FirstRunSetup>
+
+            <AndroidUpdateBanner />
+            <DesktopUpdateBanner />
+            <Toaster position="top-right" closeButton />
+            <ErrorNotifier />
+          </RulesBridge>
+        </PosProvider>
+      </PermissionsProvider>
+    </AuthProvider>
   );
 }
 

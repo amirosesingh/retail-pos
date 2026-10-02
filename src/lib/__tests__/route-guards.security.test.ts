@@ -15,6 +15,7 @@ const routeFiles = readdirSync(ROUTES_DIR).filter((f) => f.endsWith(".tsx") && !
 const PUBLIC_ROUTES = new Set([
   "display.tsx",
   "join.tsx",
+  "membership.tsx",
   "claim.$campaignSlug.tsx",
   "c.$tokenSlug.tsx",
   // Emergency access: the connection-repair screen a till or phone opens when

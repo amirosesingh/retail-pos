@@ -378,11 +378,14 @@ CREATE TABLE IF NOT EXISTS public.member_verifications (
 
 CREATE TABLE IF NOT EXISTS public.members (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
+    auth_user_id uuid,
     member_code text NOT NULL,
     full_name text NOT NULL,
     phone text NOT NULL,
     email text,
     address text,
+    country_code text,
+    postal_code text,
     date_of_birth date,
     tier_id uuid,
     loyalty_points numeric DEFAULT 0 NOT NULL,
@@ -392,7 +395,9 @@ CREATE TABLE IF NOT EXISTS public.members (
     row_version integer DEFAULT 1 NOT NULL,
     is_verified boolean DEFAULT false NOT NULL,
     verified_at timestamp with time zone,
-    verified_channel text
+    verified_channel text,
+    CONSTRAINT members_country_code_check CHECK ((country_code IS NULL) OR (country_code ~ '^[A-Z]{2}$'::text)),
+    CONSTRAINT members_postal_code_check CHECK ((postal_code IS NULL) OR (char_length(postal_code) <= 32))
 );
 
 CREATE TABLE IF NOT EXISTS public.membership_tiers (
@@ -4867,14 +4872,15 @@ EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL;
 
 DO $do$ BEGIN
 ALTER TABLE ONLY public.members
-    ADD CONSTRAINT members_phone_key UNIQUE (phone);
+    ADD CONSTRAINT members_pkey PRIMARY KEY (id);
 EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL;
           WHEN duplicate_column THEN NULL; WHEN invalid_table_definition THEN NULL;
           WHEN unique_violation THEN NULL; END $do$;
 
 DO $do$ BEGIN
 ALTER TABLE ONLY public.members
-    ADD CONSTRAINT members_pkey PRIMARY KEY (id);
+    ADD CONSTRAINT members_auth_user_id_fkey FOREIGN KEY (auth_user_id)
+    REFERENCES auth.users(id) ON DELETE SET NULL;
 EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL;
           WHEN duplicate_column THEN NULL; WHEN invalid_table_definition THEN NULL;
           WHEN unique_violation THEN NULL; END $do$;
@@ -4983,6 +4989,10 @@ ALTER TABLE ONLY public.public_flags
 EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL;
           WHEN duplicate_column THEN NULL; WHEN invalid_table_definition THEN NULL;
           WHEN unique_violation THEN NULL; END $do$;
+
+INSERT INTO public.public_flags (key, enabled)
+VALUES ('member_domain_enabled', true)
+ON CONFLICT (key) DO NOTHING;
 
 DO $do$ BEGIN
 ALTER TABLE ONLY public.purchase_order_items
@@ -5307,7 +5317,16 @@ CREATE INDEX IF NOT EXISTS member_verifications_member_idx ON public.member_veri
 
 CREATE INDEX IF NOT EXISTS members_code_idx ON public.members USING btree (member_code);
 
+CREATE UNIQUE INDEX IF NOT EXISTS members_auth_user_id_uidx ON public.members USING btree (auth_user_id) WHERE (auth_user_id IS NOT NULL);
+
+CREATE INDEX IF NOT EXISTS members_email_normalized_idx ON public.members USING btree (lower(btrim(email))) WHERE (email IS NOT NULL AND btrim(email) <> '' AND deleted_at IS NULL);
+
+CREATE INDEX IF NOT EXISTS members_phone_normalized_idx ON public.members USING btree (public.normalize_phone(phone)) WHERE (btrim(phone) <> '' AND deleted_at IS NULL);
+
 CREATE INDEX IF NOT EXISTS members_phone_idx ON public.members USING btree (phone);
+
+CREATE UNIQUE INDEX IF NOT EXISTS members_phone_nonblank_uidx ON public.members USING btree (phone)
+WHERE (nullif(btrim(phone), '') IS NOT NULL);
 
 CREATE INDEX IF NOT EXISTS offline_sync_audit_created_idx ON public.offline_sync_audit_log USING btree (created_at DESC);
 
@@ -6540,15 +6559,15 @@ ALTER TABLE public.member_verifications ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS member_verifications_staff_read ON public.member_verifications;
 
-CREATE POLICY member_verifications_staff_read ON public.member_verifications FOR SELECT TO authenticated USING (true);
+CREATE POLICY member_verifications_staff_read ON public.member_verifications FOR SELECT TO authenticated USING ((SELECT public.is_staff_now()));
 
 DROP POLICY IF EXISTS member_verifications_staff_update ON public.member_verifications;
 
-CREATE POLICY member_verifications_staff_update ON public.member_verifications FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY member_verifications_staff_update ON public.member_verifications FOR UPDATE TO authenticated USING ((SELECT public.is_staff_now())) WITH CHECK ((SELECT public.is_staff_now()));
 
 DROP POLICY IF EXISTS member_verifications_staff_write ON public.member_verifications;
 
-CREATE POLICY member_verifications_staff_write ON public.member_verifications FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY member_verifications_staff_write ON public.member_verifications FOR INSERT TO authenticated WITH CHECK ((SELECT public.is_staff_now()));
 
 ALTER TABLE public.members ENABLE ROW LEVEL SECURITY;
 
@@ -6608,7 +6627,8 @@ CREATE POLICY product_barcodes_read ON public.product_barcodes FOR SELECT TO aut
 
 DROP POLICY IF EXISTS product_barcodes_write ON public.product_barcodes;
 
-CREATE POLICY product_barcodes_write ON public.product_barcodes TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY product_barcodes_write ON public.product_barcodes TO authenticated
+USING ((SELECT public.is_staff_now())) WITH CHECK ((SELECT public.is_staff_now()));
 
 ALTER TABLE public.product_categories ENABLE ROW LEVEL SECURITY;
 
@@ -16103,6 +16123,252 @@ GRANT EXECUTE ON FUNCTION public.pos_admin_correct_closed_shift(
   uuid, numeric, numeric, numeric, text, text, text, text, text
 ) TO service_role;
 
+-- Verified customer membership portal. Authentication is provided by
+-- Supabase Auth; every exposed routine derives membership ownership from
+-- auth.uid() and never accepts a member id from the browser.
+CREATE OR REPLACE FUNCTION public.membership_portal_profile_for(p_member_id uuid)
+RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT jsonb_build_object(
+    'id', m.id, 'member_code', m.member_code, 'full_name', m.full_name,
+    'phone', coalesce(m.phone, ''), 'email', coalesce(m.email, ''),
+    'address', coalesce(m.address, ''), 'country_code', coalesce(m.country_code, ''),
+    'postal_code', coalesce(m.postal_code, ''), 'date_of_birth', m.date_of_birth,
+    'joined_at', m.created_at, 'loyalty_points', m.loyalty_points,
+    'total_spent', m.total_spent, 'verified', m.is_verified,
+    'verified_at', m.verified_at, 'verified_channel', m.verified_channel,
+    'tier', jsonb_build_object(
+      'id', t.id, 'name', coalesce(t.name, 'Member'),
+      'discount_percentage', coalesce(t.discount_percentage, 0),
+      'points_multiplier', coalesce(t.points_multiplier, 1)
+    )
+  )
+  FROM public.members m
+  LEFT JOIN public.membership_tiers t ON t.id = m.tier_id AND t.deleted_at IS NULL
+  WHERE m.id = p_member_id AND m.deleted_at IS NULL;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.membership_portal_claim()
+RETURNS uuid
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_email text := lower(nullif(btrim(coalesce((SELECT auth.jwt())->>'email', '')), ''));
+  v_phone text := public.normalize_phone(coalesce((SELECT auth.jwt())->>'phone', ''));
+  v_member_id uuid;
+  v_claimed_by uuid;
+  v_matches integer;
+  v_channel text;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'MEMBERSHIP_AUTH_REQUIRED'; END IF;
+  SELECT id INTO v_member_id FROM public.members
+   WHERE auth_user_id = v_uid AND deleted_at IS NULL LIMIT 1;
+  IF v_member_id IS NOT NULL THEN RETURN v_member_id; END IF;
+  IF v_email IS NULL AND v_phone = '' THEN RETURN NULL; END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended(coalesce(v_email, '') || ':' || v_phone, 0));
+  SELECT count(*), (array_agg(id ORDER BY id))[1]
+    INTO v_matches, v_member_id
+    FROM public.members
+   WHERE deleted_at IS NULL
+     AND ((v_email IS NOT NULL AND lower(btrim(coalesce(email, ''))) = v_email)
+       OR (v_phone <> '' AND public.normalize_phone(phone) = v_phone));
+  IF v_matches = 0 THEN RETURN NULL; END IF;
+  IF v_matches > 1 THEN RAISE EXCEPTION 'MEMBERSHIP_CONTACT_AMBIGUOUS'; END IF;
+
+  SELECT auth_user_id INTO v_claimed_by FROM public.members
+   WHERE id = v_member_id FOR UPDATE;
+  IF v_claimed_by IS NOT NULL AND v_claimed_by <> v_uid THEN
+    RAISE EXCEPTION 'MEMBERSHIP_ALREADY_CLAIMED';
+  END IF;
+  v_channel := CASE WHEN v_phone <> '' THEN 'sms' ELSE 'email' END;
+  UPDATE public.members
+     SET auth_user_id = v_uid, is_verified = true,
+         verified_at = coalesce(verified_at, now()),
+         verified_channel = coalesce(verified_channel, v_channel), updated_at = now()
+   WHERE id = v_member_id;
+  RETURN v_member_id;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.membership_portal_profile()
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE v_member_id uuid;
+BEGIN
+  v_member_id := public.membership_portal_claim();
+  IF v_member_id IS NULL THEN RETURN NULL; END IF;
+  RETURN public.membership_portal_profile_for(v_member_id);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.membership_portal_enroll(
+  p_full_name text, p_address text DEFAULT NULL, p_date_of_birth date DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_email text := lower(nullif(btrim(coalesce((SELECT auth.jwt())->>'email', '')), ''));
+  v_phone text := public.normalize_phone(coalesce((SELECT auth.jwt())->>'phone', ''));
+  v_raw_phone text := nullif(btrim(coalesce((SELECT auth.jwt())->>'phone', '')), '');
+  v_member_id uuid;
+  v_name text := btrim(coalesce(p_full_name, ''));
+  v_code text;
+  v_channel text;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'MEMBERSHIP_AUTH_REQUIRED'; END IF;
+  IF char_length(v_name) < 2 OR char_length(v_name) > 120 THEN
+    RAISE EXCEPTION 'Enter a full name between 2 and 120 characters.';
+  END IF;
+  IF char_length(coalesce(p_address, '')) > 500 THEN RAISE EXCEPTION 'Address is too long.'; END IF;
+  IF p_date_of_birth > current_date OR p_date_of_birth < current_date - interval '120 years' THEN
+    RAISE EXCEPTION 'Enter a valid date of birth.';
+  END IF;
+  IF v_email IS NULL AND v_phone = '' THEN RAISE EXCEPTION 'MEMBERSHIP_AUTH_REQUIRED'; END IF;
+
+  v_member_id := public.membership_portal_claim();
+  IF v_member_id IS NOT NULL THEN RETURN public.membership_portal_profile_for(v_member_id); END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended(coalesce(v_email, '') || ':' || v_phone, 0));
+  v_member_id := public.membership_portal_claim();
+  IF v_member_id IS NOT NULL THEN RETURN public.membership_portal_profile_for(v_member_id); END IF;
+
+  v_code := 'M' || to_char(now(), 'YYMMDD') || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6));
+  v_channel := CASE WHEN v_phone <> '' THEN 'sms' ELSE 'email' END;
+  INSERT INTO public.members (
+    member_code, full_name, phone, email, address, date_of_birth,
+    loyalty_points, total_spent, auth_user_id, is_verified, verified_at, verified_channel
+  ) VALUES (
+    v_code, v_name, coalesce(v_raw_phone, ''), v_email,
+    nullif(btrim(coalesce(p_address, '')), ''), p_date_of_birth,
+    0, 0, v_uid, true, now(), v_channel
+  ) RETURNING id INTO v_member_id;
+  RETURN public.membership_portal_profile_for(v_member_id);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.membership_portal_update(
+  p_full_name text, p_address text DEFAULT NULL, p_date_of_birth date DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_member_id uuid;
+  v_name text := btrim(coalesce(p_full_name, ''));
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'MEMBERSHIP_AUTH_REQUIRED'; END IF;
+  IF char_length(v_name) < 2 OR char_length(v_name) > 120 THEN
+    RAISE EXCEPTION 'Enter a full name between 2 and 120 characters.';
+  END IF;
+  IF char_length(coalesce(p_address, '')) > 500 THEN RAISE EXCEPTION 'Address is too long.'; END IF;
+  IF p_date_of_birth > current_date OR p_date_of_birth < current_date - interval '120 years' THEN
+    RAISE EXCEPTION 'Enter a valid date of birth.';
+  END IF;
+  SELECT id INTO v_member_id FROM public.members
+   WHERE auth_user_id = v_uid AND deleted_at IS NULL FOR UPDATE;
+  IF v_member_id IS NULL THEN RAISE EXCEPTION 'MEMBERSHIP_NOT_FOUND'; END IF;
+  UPDATE public.members
+     SET full_name = v_name, address = nullif(btrim(coalesce(p_address, '')), ''),
+         date_of_birth = p_date_of_birth, updated_at = now()
+   WHERE id = v_member_id;
+  RETURN public.membership_portal_profile_for(v_member_id);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.membership_portal_enroll_details(p_profile jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_country text := upper(nullif(btrim(coalesce(p_profile->>'country_code', '')), ''));
+  v_postal text := nullif(btrim(coalesce(p_profile->>'postal_code', '')), '');
+  v_result jsonb;
+  v_member_id uuid;
+BEGIN
+  IF v_country IS NOT NULL AND v_country !~ '^[A-Z]{2}$' THEN RAISE EXCEPTION 'Select a valid country.'; END IF;
+  IF char_length(coalesce(v_postal, '')) > 32 THEN RAISE EXCEPTION 'Postal code is too long.'; END IF;
+  v_result := public.membership_portal_enroll(
+    p_profile->>'full_name', p_profile->>'address', nullif(p_profile->>'date_of_birth', '')::date
+  );
+  v_member_id := (v_result->>'id')::uuid;
+  UPDATE public.members SET country_code = v_country, postal_code = v_postal, updated_at = now()
+   WHERE id = v_member_id AND auth_user_id = (SELECT auth.uid());
+  RETURN public.membership_portal_profile_for(v_member_id);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.membership_portal_update_details(p_profile jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_country text := upper(nullif(btrim(coalesce(p_profile->>'country_code', '')), ''));
+  v_postal text := nullif(btrim(coalesce(p_profile->>'postal_code', '')), '');
+  v_result jsonb;
+  v_member_id uuid;
+BEGIN
+  IF v_country IS NOT NULL AND v_country !~ '^[A-Z]{2}$' THEN RAISE EXCEPTION 'Select a valid country.'; END IF;
+  IF char_length(coalesce(v_postal, '')) > 32 THEN RAISE EXCEPTION 'Postal code is too long.'; END IF;
+  v_result := public.membership_portal_update(
+    p_profile->>'full_name', p_profile->>'address', nullif(p_profile->>'date_of_birth', '')::date
+  );
+  v_member_id := (v_result->>'id')::uuid;
+  UPDATE public.members SET country_code = v_country, postal_code = v_postal, updated_at = now()
+   WHERE id = v_member_id AND auth_user_id = (SELECT auth.uid());
+  RETURN public.membership_portal_profile_for(v_member_id);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.membership_portal_sales(p_limit integer DEFAULT 25)
+RETURNS SETOF jsonb
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT jsonb_build_object(
+    'id', s.id, 'bill_number', s.bill_number,
+    'store_name', coalesce(s.store_name_snapshot, s.store_id, ''),
+    'total', s.total_amount,
+    'discount', s.discount_amount + coalesce(s.coupon_discount, 0),
+    'points_earned', s.points_earned, 'points_redeemed', s.points_redeemed,
+    'refunded', s.is_refunded, 'created_at', s.created_at,
+    'items', coalesce((
+      SELECT jsonb_agg(jsonb_build_object(
+        'name', i.product_name, 'quantity', i.quantity, 'unit_price', i.unit_price,
+        'discount', i.discount_amount + coalesce(i.coupon_discount, 0)
+      ) ORDER BY i.created_at, i.id)
+      FROM public.sale_items i WHERE i.sale_id = s.id
+    ), '[]'::jsonb)
+  )
+  FROM public.sales s
+  JOIN public.members m ON m.id = s.member_id
+  WHERE (SELECT auth.uid()) IS NOT NULL
+    AND m.auth_user_id = (SELECT auth.uid()) AND m.deleted_at IS NULL
+  ORDER BY s.created_at DESC, s.id DESC
+  LIMIT least(greatest(coalesce(p_limit, 25), 1), 100);
+$fn$;
+
+REVOKE ALL ON FUNCTION public.membership_portal_profile_for(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.membership_portal_claim() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.membership_portal_profile() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.membership_portal_enroll(text, text, date) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.membership_portal_update(text, text, date) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.membership_portal_enroll_details(jsonb) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.membership_portal_update_details(jsonb) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.membership_portal_sales(integer) FROM PUBLIC, anon;
+
 -- Final public-schema privilege hardening
 -- This must remain after every routine definition in this canonical installer.
 -- ===========================================================================
@@ -16135,6 +16401,13 @@ REVOKE EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb)
 GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.verify_terminal_pin(text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb) TO service_role;
+
+GRANT EXECUTE ON FUNCTION public.membership_portal_profile() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.membership_portal_enroll(text, text, date) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.membership_portal_update(text, text, date) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.membership_portal_enroll_details(jsonb) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.membership_portal_update_details(jsonb) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.membership_portal_sales(integer) TO authenticated, service_role;
 
 GRANT EXECUTE ON FUNCTION public.coupon_claim(text, text, text, text) TO anon;
 GRANT EXECUTE ON FUNCTION public.member_welcome_claim(text, text, text) TO anon;

@@ -44,26 +44,37 @@ function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string): typeof fetch {
 
 const STORAGE_KEY = "sb-external-auth-token";
 const PROJECT_MARK_KEY = "sb-external-auth-project";
+const MEMBER_STORAGE_KEY = "sb-member-portal-auth-token";
+const MEMBER_PROJECT_MARK_KEY = "sb-member-portal-auth-project";
 
 /**
  * A saved session only works against the project that issued it. If the app is
  * now pointed somewhere else, the old token makes every call fail with
  * "unrecognized JWT kid" — so drop it instead of carrying it over.
  */
-function dropForeignSession(url: string) {
+function dropForeignSession(
+  url: string,
+  storageKey = STORAGE_KEY,
+  projectMarkKey = PROJECT_MARK_KEY,
+) {
   if (typeof window === "undefined") return;
   try {
-    const previous = localStorage.getItem(PROJECT_MARK_KEY);
-    if (previous && previous !== url) localStorage.removeItem(STORAGE_KEY);
-    if (previous !== url) localStorage.setItem(PROJECT_MARK_KEY, url);
+    const previous = localStorage.getItem(projectMarkKey);
+    if (previous && previous !== url) localStorage.removeItem(storageKey);
+    if (previous !== url) localStorage.setItem(projectMarkKey, url);
   } catch {
     /* storage unavailable */
   }
 }
 
-function createExternalClient() {
+function createExternalClient(
+  storageKey = STORAGE_KEY,
+  projectMarkKey = PROJECT_MARK_KEY,
+  detectSessionInUrl = true,
+  persistSession = true,
+) {
   const { url, key } = supabaseConfig();
-  dropForeignSession(url);
+  dropForeignSession(url, storageKey, projectMarkKey);
   return createClient<Database>(url, key, {
     // Keep the key paired with the URL used to construct this client. A
     // periodic connection-profile refresh may replace the global resolver;
@@ -71,15 +82,17 @@ function createExternalClient() {
     // swaps the whole client atomically.
     global: { fetch: supabaseFetchFor(key) },
     auth: {
-      storage: typeof window !== "undefined" ? localStorage : undefined,
-      storageKey: STORAGE_KEY,
-      persistSession: true,
+      storage: persistSession && typeof window !== "undefined" ? localStorage : undefined,
+      storageKey,
+      persistSession,
       autoRefreshToken: true,
+      detectSessionInUrl,
     },
   });
 }
 
 let _client: ReturnType<typeof createExternalClient> | undefined;
+let _memberClient: ReturnType<typeof createExternalClient> | undefined;
 
 /**
  * One concrete client for a complete authenticated operation. Holding this
@@ -92,18 +105,37 @@ export function externalClientSnapshot(): ReturnType<typeof createExternalClient
 }
 
 /**
+ * Customer membership authentication is deliberately isolated from the staff
+ * session. A shopper signing in on a shared web register must never replace
+ * the cashier's RLS identity. Member login uses an entered OTP, so URL session
+ * detection remains off and cannot consume a staff or recovery callback.
+ */
+export function memberPortalClientSnapshot(): ReturnType<typeof createExternalClient> {
+  if (!_memberClient) {
+    _memberClient = createExternalClient(MEMBER_STORAGE_KEY, MEMBER_PROJECT_MARK_KEY, false, false);
+  }
+  return _memberClient;
+}
+
+/**
  * Rebuild the client against a different tenant — used the moment a terminal
  * is activated (or unpaired) so no restart is needed.
  */
 export function resetExternalClient(): void {
   const previous = _client;
+  const previousMember = _memberClient;
   _client = undefined;
+  _memberClient = undefined;
   if (previous) {
     // A config refresh must not leave the former Auth client refreshing the
     // same storage key in the background. That produced duplicate GoTrue
     // clients and races where one instance restored a stale bearer token.
     previous.auth.stopAutoRefresh();
     void previous.removeAllChannels();
+  }
+  if (previousMember) {
+    previousMember.auth.stopAutoRefresh();
+    void previousMember.removeAllChannels();
   }
 }
 

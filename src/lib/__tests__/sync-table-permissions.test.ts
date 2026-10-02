@@ -11,13 +11,18 @@ const mocks = vi.hoisted(() => ({
   checkpoint: vi.fn(),
   getUser: vi.fn(),
   getSession: vi.fn(),
+  rpc: vi.fn(),
   expired: vi.fn(),
 }));
 vi.mock("@/integrations/supabase/external-client", () => ({
-  supabaseExternal: { from: mocks.from, auth: { getUser: mocks.getUser, getSession: mocks.getSession } },
+  supabaseExternal: {
+    from: mocks.from,
+    auth: { getUser: mocks.getUser, getSession: mocks.getSession },
+  },
   externalClientSnapshot: () => ({
     from: mocks.from,
     auth: { getUser: mocks.getUser, getSession: mocks.getSession },
+    rpc: mocks.rpc,
   }),
 }));
 vi.mock("@/core/api/sync-relay", () => ({
@@ -63,6 +68,7 @@ beforeEach(() => {
     data: { session: { access_token: "staff-jwt" } },
     error: null,
   });
+  mocks.rpc.mockResolvedValue({ data: [{ is_active: true }], error: null });
   const query = {
     select: vi.fn(),
     gt: vi.fn(),
@@ -141,6 +147,14 @@ describe("protected background table access", () => {
       .mockResolvedValueOnce({ data: [], error: null });
     await pullDelta();
     expect(mocks.from).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not probe business tables for a valid non-staff Supabase user", async () => {
+    mocks.staff.mockReturnValue(true);
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
+    await expect(pullDelta()).resolves.toEqual({ merged: 0 });
+    expect(mocks.rpc).toHaveBeenCalledWith("current_app_user");
+    expect(mocks.from).not.toHaveBeenCalled();
   });
 });
 

@@ -1,7 +1,4 @@
-import {
-  externalClientSnapshot,
-  supabaseExternal,
-} from "@/integrations/supabase/external-client";
+import { externalClientSnapshot, supabaseExternal } from "@/integrations/supabase/external-client";
 import { logSync } from "./sync-log";
 import { hasRequiredPlatformConfig } from "./platform-config-ready";
 import { hasSignedInIdentity } from "./session-presence";
@@ -399,7 +396,14 @@ export async function pullDelta(): Promise<{ merged: number }> {
   let verified: Awaited<ReturnType<typeof client.auth.getUser>>;
   let session: Awaited<ReturnType<typeof client.auth.getSession>>;
   try {
-    [verified, session] = await Promise.all([client.auth.getUser(), client.auth.getSession()]);
+    // Capture one concrete access token, then prove that exact token. Running
+    // getUser/getSession in parallel can straddle a refresh-token rotation:
+    // getUser succeeds with the old token while the following table requests
+    // leave as anon, producing one 42501 error for every pull table.
+    session = await client.auth.getSession();
+    const accessToken = session.data.session?.access_token;
+    if (session.error || !accessToken) return { merged: 0 };
+    verified = await client.auth.getUser(accessToken);
   } catch {
     // A rejected promise is a connectivity failure, not proof that the token
     // is invalid. Keep the signed-in session and retry on the next sync pass.
@@ -421,6 +425,13 @@ export async function pullDelta(): Promise<{ merged: number }> {
     if (rejected) notifySessionExpired();
     return { merged: 0 };
   }
+  // Authentication alone is not POS authorization. A customer member also
+  // has a valid Supabase user, but may never probe staff-only business tables.
+  // Only ask for the staff profile after the JWT itself has been proven, so an
+  // expired token cannot create one extra rejected RPC in the database logs.
+  const staff = await client.rpc("current_app_user");
+  const staffProfile = (staff.data?.[0] ?? null) as { is_active?: boolean } | null;
+  if (staff.error || !staffProfile?.is_active) return { merged: 0 };
   // Keys rejected: stay parked until fresh ones are saved.
   if (syncState().credentialsInvalid) return { merged: 0 };
   pulling = true;
@@ -440,7 +451,7 @@ export async function pullDelta(): Promise<{ merged: number }> {
       let offset = 0;
       let tableError: { message: string; status?: number } | null = null;
       for (;;) {
-          const page = await readChangedPage(client, table, since, startedAt, offset);
+        const page = await readChangedPage(client, table, since, startedAt, offset);
         if (page.error) {
           tableError = page.error;
           break;

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { bypassPersistentAppShell } from "@/lib/app-shell-routes";
+import { bypassPersistentAppShell, isCustomerPublicRoute } from "@/lib/app-shell-routes";
 
 describe("persistent application shell", () => {
   it("keeps protected application routes in the shared shell", () => {
@@ -13,10 +13,24 @@ describe("persistent application shell", () => {
   it("leaves public, customer-display and recovery surfaces unwrapped", () => {
     expect(bypassPersistentAppShell("/display")).toBe(true);
     expect(bypassPersistentAppShell("/join")).toBe(true);
+    expect(bypassPersistentAppShell("/membership")).toBe(true);
     expect(bypassPersistentAppShell("/claim/summer-sale")).toBe(true);
     expect(bypassPersistentAppShell("/c/member-token")).toBe(true);
     expect(bypassPersistentAppShell("/recovery")).toBe(true);
     expect(bypassPersistentAppShell("/database-startup")).toBe(true);
+  });
+
+  it("keeps customer pages outside staff telemetry and shift state", () => {
+    expect(isCustomerPublicRoute("/join")).toBe(true);
+    expect(isCustomerPublicRoute("/membership")).toBe(true);
+    expect(isCustomerPublicRoute("/claim/summer-sale")).toBe(true);
+    expect(isCustomerPublicRoute("/c/member-token")).toBe(true);
+    expect(isCustomerPublicRoute("/display")).toBe(false);
+    expect(isCustomerPublicRoute("/recovery")).toBe(false);
+
+    const root = readFileSync("src/routes/__root.tsx", "utf8");
+    expect(root).toContain("isCustomerPublicRoute(pathname)");
+    expect(root).toContain("<TillRuntime />");
   });
 
   it("owns the shell above the route outlet", () => {
