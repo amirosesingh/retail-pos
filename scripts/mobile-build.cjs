@@ -20,13 +20,14 @@ const out = path.join(root, "capacitor-shell");
 const PORT = Number(process.env["MOBILE_RENDER_PORT"] || 43119);
 
 
-function run(cmd, args, env) {
-  const res = spawnSync(cmd, args, {
+function run(script, args, env) {
+  const res = spawnSync(process.execPath, [script, ...args], {
     cwd: root,
     stdio: "inherit",
-    shell: process.platform === "win32",
+    shell: false,
     env: { ...withoutWebEnv(), ...env },
   });
+  if (res.error) throw res.error;
   if (res.status !== 0) process.exit(res.status ?? 1);
 }
 
@@ -76,7 +77,9 @@ async function main() {
   console.log("› clearing stale build output");
   cleanOutputs();
   console.log("› building the phone bundle");
-  run("npx", ["vite", "build"], { MOBILE_BUILD: "1" });
+  run(path.join(root, "node_modules", "vite", "bin", "vite.js"), ["build"], {
+    MOBILE_BUILD: "1",
+  });
 
   const serverEntry = path.join(root, "dist", "server", "index.mjs");
   const clientDir = path.join(root, "dist", "client");

@@ -118,6 +118,7 @@ import { Route as ApiPublicSecurityAlertsRouteImport } from './routes/api/public
 import { Route as ApiPublicStaffIdleTimeoutRouteImport } from './routes/api/public/staff-idle-timeout'
 import { Route as ApiPublicSyncRouteImport } from './routes/api/public/sync'
 import { Route as ApiPublicSyncHealthRouteImport } from './routes/api/public/sync-health'
+import { Route as ApiPublicTerminalPairingRouteImport } from './routes/api/public/terminal-pairing'
 import { Route as ApiPublicTerminalStaffRouteImport } from './routes/api/public/terminal-staff'
 import { Route as ApiPublicPosRulesSaveRouteImport } from './routes/api/public/pos-rules.save'
 import { Route as ApiV1PosActivityPreferencesRouteImport } from './routes/api/v1/pos/activity-preferences'
@@ -673,6 +674,12 @@ const ApiPublicSyncHealthRoute = ApiPublicSyncHealthRouteImport.update({
   path: '/api/public/sync-health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicTerminalPairingRoute =
+  ApiPublicTerminalPairingRouteImport.update({
+    id: '/api/public/terminal-pairing',
+    path: '/api/public/terminal-pairing',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicTerminalStaffRoute = ApiPublicTerminalStaffRouteImport.update({
   id: '/api/public/terminal-staff',
   path: '/api/public/terminal-staff',
@@ -820,6 +827,7 @@ export interface FileRoutesByFullPath {
   '/api/public/staff-idle-timeout': typeof ApiPublicStaffIdleTimeoutRoute
   '/api/public/sync': typeof ApiPublicSyncRoute
   '/api/public/sync-health': typeof ApiPublicSyncHealthRoute
+  '/api/public/terminal-pairing': typeof ApiPublicTerminalPairingRoute
   '/api/public/terminal-staff': typeof ApiPublicTerminalStaffRoute
   '/api/public/pos-rules/save': typeof ApiPublicPosRulesSaveRoute
   '/api/v1/pos/activity-preferences': typeof ApiV1PosActivityPreferencesRoute
@@ -938,6 +946,7 @@ export interface FileRoutesByTo {
   '/api/public/staff-idle-timeout': typeof ApiPublicStaffIdleTimeoutRoute
   '/api/public/sync': typeof ApiPublicSyncRoute
   '/api/public/sync-health': typeof ApiPublicSyncHealthRoute
+  '/api/public/terminal-pairing': typeof ApiPublicTerminalPairingRoute
   '/api/public/terminal-staff': typeof ApiPublicTerminalStaffRoute
   '/api/public/pos-rules/save': typeof ApiPublicPosRulesSaveRoute
   '/api/v1/pos/activity-preferences': typeof ApiV1PosActivityPreferencesRoute
@@ -1057,6 +1066,7 @@ export interface FileRoutesById {
   '/api/public/staff-idle-timeout': typeof ApiPublicStaffIdleTimeoutRoute
   '/api/public/sync': typeof ApiPublicSyncRoute
   '/api/public/sync-health': typeof ApiPublicSyncHealthRoute
+  '/api/public/terminal-pairing': typeof ApiPublicTerminalPairingRoute
   '/api/public/terminal-staff': typeof ApiPublicTerminalStaffRoute
   '/api/public/pos-rules/save': typeof ApiPublicPosRulesSaveRoute
   '/api/v1/pos/activity-preferences': typeof ApiV1PosActivityPreferencesRoute
@@ -1177,6 +1187,7 @@ export interface FileRouteTypes {
     | '/api/public/staff-idle-timeout'
     | '/api/public/sync'
     | '/api/public/sync-health'
+    | '/api/public/terminal-pairing'
     | '/api/public/terminal-staff'
     | '/api/public/pos-rules/save'
     | '/api/v1/pos/activity-preferences'
@@ -1295,6 +1306,7 @@ export interface FileRouteTypes {
     | '/api/public/staff-idle-timeout'
     | '/api/public/sync'
     | '/api/public/sync-health'
+    | '/api/public/terminal-pairing'
     | '/api/public/terminal-staff'
     | '/api/public/pos-rules/save'
     | '/api/v1/pos/activity-preferences'
@@ -1413,6 +1425,7 @@ export interface FileRouteTypes {
     | '/api/public/staff-idle-timeout'
     | '/api/public/sync'
     | '/api/public/sync-health'
+    | '/api/public/terminal-pairing'
     | '/api/public/terminal-staff'
     | '/api/public/pos-rules/save'
     | '/api/v1/pos/activity-preferences'
@@ -1532,6 +1545,7 @@ export interface RootRouteChildren {
   ApiPublicStaffIdleTimeoutRoute: typeof ApiPublicStaffIdleTimeoutRoute
   ApiPublicSyncRoute: typeof ApiPublicSyncRoute
   ApiPublicSyncHealthRoute: typeof ApiPublicSyncHealthRoute
+  ApiPublicTerminalPairingRoute: typeof ApiPublicTerminalPairingRoute
   ApiPublicTerminalStaffRoute: typeof ApiPublicTerminalStaffRoute
   ApiV1PosActivityPreferencesRoute: typeof ApiV1PosActivityPreferencesRoute
   ApiV1PosAuthorizationRoute: typeof ApiV1PosAuthorizationRoute
@@ -2305,6 +2319,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicSyncHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/terminal-pairing': {
+      id: '/api/public/terminal-pairing'
+      path: '/api/public/terminal-pairing'
+      fullPath: '/api/public/terminal-pairing'
+      preLoaderRoute: typeof ApiPublicTerminalPairingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/terminal-staff': {
       id: '/api/public/terminal-staff'
       path: '/api/public/terminal-staff'
@@ -2478,6 +2499,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicStaffIdleTimeoutRoute: ApiPublicStaffIdleTimeoutRoute,
   ApiPublicSyncRoute: ApiPublicSyncRoute,
   ApiPublicSyncHealthRoute: ApiPublicSyncHealthRoute,
+  ApiPublicTerminalPairingRoute: ApiPublicTerminalPairingRoute,
   ApiPublicTerminalStaffRoute: ApiPublicTerminalStaffRoute,
   ApiV1PosActivityPreferencesRoute: ApiV1PosActivityPreferencesRoute,
   ApiV1PosAuthorizationRoute: ApiV1PosAuthorizationRoute,

@@ -1,6 +1,6 @@
 # Synchronization coverage and ownership matrix
 
-Generated from `database/sqlserver/schema-registry.json` (69 synchronized tables). Do not edit by hand; run `npm run audit:sync`.
+Generated from `database/sqlserver/schema-registry.json` (70 synchronized tables). Do not edit by hand; run `npm run audit:sync`.
 
 Electron operational reads and writes use local SQL Server. Supabase is the online synchronization peer. SQL Server Change Tracking detects ordinary row changes; `sync_change_journal` groups complete business transactions. No renderer/device outbox is used by Electron.
 
@@ -15,6 +15,7 @@ Electron operational reads and writes use local SQL Server. Supabase is the onli
 | authorization_requests | branch | Version policy | Bidirectional | SQL Change Tracking + cloud feed | tombstone | Role/permission gate | None | Read/write SQL Server; sync later |
 | branch_telemetry | branch | Version policy | Bidirectional | SQL Change Tracking + cloud feed | tombstone | Normal feature permission | None | Read/write SQL Server; sync later |
 | cashiers | branch | Supabase | Supabase -> SQL Server | SQL Change Tracking + cloud feed | tombstone | Role/permission gate | None | Read cached local copy; edit centrally |
+| change_history | branch | Version policy | Bidirectional | SQL Change Tracking + cloud feed | tombstone | Normal feature permission | None | Read/write SQL Server; sync later |
 | coupon_campaigns | organization | Version policy | Bidirectional | SQL Change Tracking + cloud feed | tombstone | Normal feature permission | None | Read/write SQL Server; sync later |
 | drawer_events | branch | Version policy | Bidirectional | SQL Change Tracking + cloud feed | tombstone | Normal feature permission | None | Read/write SQL Server; sync later |
 | entity_status_history | branch | Version policy | Bidirectional | SQL Change Tracking + cloud feed | tombstone | Normal feature permission | None | Read/write SQL Server; sync later |

@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
+const { excludedColumns } = require("./sqlserver-sync-policy.cjs");
 const schemaPath = path.join(root, "supabase", "schema.sql");
 const registry = JSON.parse(
   fs.readFileSync(path.join(root, "database", "sqlserver", "schema-registry.json"), "utf8"),
@@ -33,6 +34,11 @@ const keyMatch = (table, rowAlias, feedAlias = "f") =>
         `${rowAlias}.${q(column.cloudColumn)}=${keyValue(column, feedAlias)}`,
     )
     .join(" AND ");
+const rowJson = (table, alias) => {
+  const excluded = [...excludedColumns(table.cloudTable)];
+  if (!excluded.length) return `to_jsonb(${alias})`;
+  return `to_jsonb(${alias}) - ARRAY[${excluded.map((column) => `'${column}'`).join(",")}]::text[]`;
+};
 
 function scopedPredicate(table, alias, branchParameter = "p_branch_id", terminalParameter = "p_terminal_id") {
   const scope = table.cloudTable.startsWith("authorization_action") ? "scope_type" : "scope";
@@ -272,14 +278,40 @@ REVOKE ALL ON FUNCTION public.sync_delete_${table.cloudTable}(jsonb,text,text) F
     : "'default'";
   const version = names.has("row_version") ? "COALESCE(NEW.row_version,OLD.row_version,1)" : "1";
   const key = `CASE WHEN TG_OP='DELETE' THEN ${keyJson(table, "OLD")} ELSE ${keyJson(table, "NEW")} END`;
-  out.push(`CREATE OR REPLACE FUNCTION public.sync_feed_${table.cloudTable}() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $trg$
+  if (table.cloudTable === "audit_logs") {
+    out.push(`DROP TRIGGER IF EXISTS sync_feed_change ON public.audit_logs;
+DROP TRIGGER IF EXISTS sync_feed_insert ON public.audit_logs;
+DROP TRIGGER IF EXISTS sync_feed_update ON public.audit_logs;
+DROP TRIGGER IF EXISTS sync_feed_delete ON public.audit_logs;
+DROP FUNCTION IF EXISTS public.sync_feed_audit_logs();
+
+CREATE OR REPLACE FUNCTION public.sync_feed_audit_logs_insert() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',COALESCE(n.store_id,'global'),NULL,'audit_logs',jsonb_build_object('id',n.id)::text,'insert',1,false FROM new_audit_rows n; RETURN NULL; END $trg$;
+CREATE OR REPLACE FUNCTION public.sync_feed_audit_logs_update() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',COALESCE(n.store_id,'global'),NULL,'audit_logs',jsonb_build_object('id',n.id)::text,'update',1,false FROM new_audit_rows n; RETURN NULL; END $trg$;
+CREATE OR REPLACE FUNCTION public.sync_feed_audit_logs_delete() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',COALESCE(o.store_id,'global'),NULL,'audit_logs',jsonb_build_object('id',o.id)::text,'delete',1,true FROM old_audit_rows o; RETURN NULL; END $trg$;
+
+CREATE TRIGGER sync_feed_insert AFTER INSERT ON public.audit_logs REFERENCING NEW TABLE AS new_audit_rows FOR EACH STATEMENT EXECUTE FUNCTION public.sync_feed_audit_logs_insert();
+CREATE TRIGGER sync_feed_update AFTER UPDATE ON public.audit_logs REFERENCING NEW TABLE AS new_audit_rows FOR EACH STATEMENT EXECUTE FUNCTION public.sync_feed_audit_logs_update();
+CREATE TRIGGER sync_feed_delete AFTER DELETE ON public.audit_logs REFERENCING OLD TABLE AS old_audit_rows FOR EACH STATEMENT EXECUTE FUNCTION public.sync_feed_audit_logs_delete();
+
+REVOKE ALL ON FUNCTION public.sync_feed_audit_logs_insert() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sync_feed_audit_logs_update() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sync_feed_audit_logs_delete() FROM PUBLIC, anon, authenticated;`);
+  } else {
+    out.push(`CREATE OR REPLACE FUNCTION public.sync_feed_${table.cloudTable}() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $trg$
 BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
  SELECT ${organization},branches.branch_id,branches.terminal_id,'${table.cloudTable}',${key},lower(TG_OP),${version},TG_OP='DELETE' FROM (${feedBranches(table)}) branches; RETURN NULL; END $trg$;
 DROP TRIGGER IF EXISTS sync_feed_change ON public.${q(table.cloudTable)};
 CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public.${q(table.cloudTable)} FOR EACH ROW EXECUTE FUNCTION public.sync_feed_${table.cloudTable}();`);
-  out.push(
-    `REVOKE ALL ON FUNCTION public.sync_feed_${table.cloudTable}() FROM PUBLIC, anon, authenticated;`,
-  );
+    out.push(
+      `REVOKE ALL ON FUNCTION public.sync_feed_${table.cloudTable}() FROM PUBLIC, anon, authenticated;`,
+    );
+  }
 }
 
 const applyCases = (rowsExpression, changesExpression) =>
@@ -292,7 +324,7 @@ const applyCases = (rowsExpression, changesExpression) =>
 const rowCases = tables
   .map(
     (table) =>
-      `WHEN '${table.cloudTable}' THEN (SELECT to_jsonb(x) FROM public.${q(table.cloudTable)} x WHERE ${keyMatch(table, "x")} LIMIT 1)`,
+      `WHEN '${table.cloudTable}' THEN (SELECT ${rowJson(table, "x")} FROM public.${q(table.cloudTable)} x WHERE ${keyMatch(table, "x")} LIMIT 1)`,
   )
   .join("\n    ");
 
@@ -365,10 +397,10 @@ const bootstrapCases = tables
       table.retentionClass === "historical" && dateColumn(table)
         ? `AND (p_history_days>=7300 OR x.${q(dateColumn(table))}>=now()-make_interval(days=>GREATEST(p_history_days,30)))`
         : "";
-    return `WHEN '${table.cloudTable}' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT ${key} cursor,x row_data FROM public.${q(table.cloudTable)} x WHERE (${branchPredicate(table)}) ${history} AND (p_after_cursor IS NULL OR ${key}>p_after_cursor) ORDER BY ${key} LIMIT LEAST(GREATEST(p_limit,100),2000)) page;`;
+    return `WHEN '${table.cloudTable}' THEN SELECT COALESCE(jsonb_agg(${rowJson(table, "page.row_data")} ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT ${key} cursor,x row_data FROM public.${q(table.cloudTable)} x WHERE (${branchPredicate(table)}) ${history} AND (p_after_cursor IS NULL OR ${key}>p_after_cursor) ORDER BY ${key} LIMIT LEAST(GREATEST(p_limit,100),2000)) page;`;
   })
   .join("\n    ");
-out.push(`CREATE OR REPLACE FUNCTION public.pos_sync_bootstrap(p_organization_id text,p_branch_id text,p_terminal_id text,p_table text,p_after_cursor text DEFAULT NULL,p_history_days integer DEFAULT 90,p_limit integer DEFAULT 500)
+const bootstrapFunction = `CREATE OR REPLACE FUNCTION public.pos_sync_bootstrap(p_organization_id text,p_branch_id text,p_terminal_id text,p_table text,p_after_cursor text DEFAULT NULL,p_history_days integer DEFAULT 90,p_limit integer DEFAULT 500)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $fn$
 DECLARE v_rows jsonb:='[]'::jsonb; v_cursor text; v_me public.app_users%ROWTYPE;
 BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id); IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
@@ -376,7 +408,8 @@ BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_ter
  IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
  CASE p_table ${bootstrapCases} ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE;
  RETURN jsonb_build_object('rows',v_rows,'cursor',CASE WHEN jsonb_array_length(v_rows)>=LEAST(GREATEST(p_limit,100),2000) THEN v_cursor ELSE NULL END);
-END $fn$;`);
+END $fn$;`;
+out.push(bootstrapFunction);
 
 const countQueries = tables
   .map((table) => {
@@ -469,6 +502,47 @@ CREATE TRIGGER settings_scoped_bump_row_version BEFORE UPDATE ON public.settings
 `;
   fs.writeFileSync(migrationPath, preamble + schema.slice(hardeningStart, contractEnd));
   console.log(`Migration sync contract written to ${path.relative(root, migrationPath)}`);
+}
+
+const targetedMigrationIndex = process.argv.indexOf("--targeted-migration");
+if (targetedMigrationIndex >= 0) {
+  const requested = process.argv[targetedMigrationIndex + 1];
+  const migrationPath = requested ? path.resolve(root, requested) : "";
+  const migrationsDir = path.join(root, "supabase", "migrations") + path.sep;
+  if (!migrationPath.startsWith(migrationsDir) || !fs.existsSync(migrationPath))
+    throw new Error("--targeted-migration must name an existing file under supabase/migrations");
+  const functionSql = (name) => {
+    const marker = `CREATE OR REPLACE FUNCTION public.${name}`;
+    const functionStart = block.indexOf(marker);
+    const functionEnd = block.indexOf("$fn$;", functionStart) + "$fn$;".length;
+    if (functionStart < 0 || functionEnd < "$fn$;".length)
+      throw new Error(`Could not find generated function ${name}`);
+    return block.slice(functionStart, functionEnd);
+  };
+  const migration = `-- Update only contracts whose portable columns changed. Existing rows are not rewritten.
+ALTER TABLE public.members ADD COLUMN IF NOT EXISTS country_code text;
+ALTER TABLE public.members ADD COLUMN IF NOT EXISTS postal_code text;
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS variant_code text;
+
+${functionSql("sync_apply_members")}
+
+${functionSql("sync_apply_sale_items")}
+
+${pullFunction}
+
+${bootstrapFunction}
+
+REVOKE ALL ON FUNCTION public.sync_apply_members(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_apply_sale_items(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_bootstrap(text,text,text,text,text,integer,integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_bootstrap(text,text,text,text,text,integer,integer) TO service_role;
+
+NOTIFY pgrst, 'reload schema';
+`;
+  fs.writeFileSync(migrationPath, migration);
+  console.log(`Targeted sync repair written to ${path.relative(root, migrationPath)}`);
 }
 
 const pullMigrationIndex = process.argv.indexOf("--pull-migration");

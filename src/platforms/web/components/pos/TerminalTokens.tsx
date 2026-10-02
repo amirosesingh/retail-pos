@@ -31,6 +31,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -116,8 +124,16 @@ export function TerminalTokens({
   const [reissueCopied, setReissueCopied] = useState(false);
   const [pairScan, setPairScan] = useState(false);
   const [pairTokenId, setPairTokenId] = useState("");
+  const [pairProofHash, setPairProofHash] = useState("");
+  const [pairDialogOpen, setPairDialogOpen] = useState(false);
   /** This device's own token — never offer to revoke the terminal you are on. */
   const selfTokenId = useMemo(() => readTerminalConfig()?.tokenId ?? "", []);
+
+  const closePairDialog = () => {
+    setPairDialogOpen(false);
+    setPairTokenId("");
+    setPairProofHash("");
+  };
 
   const refresh = useCallback(async () => {
     if (refreshPendingRef.current) return;
@@ -221,6 +237,7 @@ export function TerminalTokens({
         deviceName: deviceName.trim(),
         platform: only ?? "pc",
         ...(pairTokenId ? { tokenId: pairTokenId } : {}),
+        ...(pairProofHash ? { claimProof: pairProofHash } : {}),
       });
       setCode(issued);
       setCodeTokenId(token.id);
@@ -229,6 +246,8 @@ export function TerminalTokens({
       setClaimed(false);
       setDeviceName("");
       setPairTokenId("");
+      setPairProofHash("");
+      setPairDialogOpen(false);
       logger.log("settings_change", "Terminal token issued", "terminals", {
         location: locationName,
         device: deviceName.trim(),
@@ -378,9 +397,11 @@ export function TerminalTokens({
                     return;
                   }
                   setPairTokenId(request.tokenId);
+                  setPairProofHash(request.proofHash);
                   setDeviceName((current) => current || request.deviceName);
                   setPairScan(false);
-                  toast.success("Pairing request captured — choose the location and approve");
+                  setPairDialogOpen(true);
+                  toast.success("Pairing request captured — review the terminal assignment");
                 }}
                 onClose={() => setPairScan(false)}
               />
@@ -451,6 +472,65 @@ export function TerminalTokens({
           </div>
         )}
       </section>
+
+      <Dialog
+        open={pairDialogOpen}
+        onOpenChange={(open) => {
+          if (open) setPairDialogOpen(true);
+          else closePairDialog();
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Approve terminal pairing</DialogTitle>
+            <DialogDescription>
+              Confirm the terminal name and the branch it belongs to. This approval is bound to
+              the device that displayed the scanned QR and cannot activate another device.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="rounded-md border bg-muted/40 p-3 text-xs">
+              <p className="font-medium">Scanned pairing request</p>
+              <p className="mt-1 break-all font-mono text-muted-foreground">{pairTokenId}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="paired-device-name">Terminal name</Label>
+              <Input
+                id="paired-device-name"
+                value={deviceName}
+                maxLength={120}
+                placeholder="Billing Counter 1"
+                onChange={(event) => setDeviceName(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Assigned branch</Label>
+              <ThemedSelect
+                ariaLabel="Assigned branch"
+                value={locationId}
+                onChange={setLocationId}
+                placeholder="Choose the branch"
+                options={stores.map((store) => ({
+                  value: store.id,
+                  label: `${store.name} — ${store.code}`,
+                }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={issuing} onClick={closePairDialog}>
+              Cancel
+            </Button>
+            <Button
+              disabled={issuing || !locationId || !deviceName.trim() || !pairProofHash}
+              onClick={() => void generate()}
+            >
+              {issuing ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+              Approve and assign terminal
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ------------------------------- tokens -------------------------- */}
       <section className="rounded-xl border border-border bg-card shadow-sm">

@@ -297,6 +297,7 @@ export const logger = {
 
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 const BATCH = 50;
+const CLOUD_FLUSH_LOCK = "pos-audit-cloud-flush";
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushInFlight: Promise<void> | null = null;
 
@@ -333,6 +334,18 @@ function flushBatch(): Promise<void> {
 }
 
 async function flushBatchOnce() {
+  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  if (!locks) return flushBatchUnderLock();
+  await locks.request(CLOUD_FLUSH_LOCK, { mode: "exclusive", ifAvailable: true }, async (lock) => {
+    if (!lock) return;
+    // Tabs share the same persisted journal. Reload it after acquiring the
+    // lock so this tab sees rows another tab has already marked as delivered.
+    loaded = false;
+    await flushBatchUnderLock();
+  });
+}
+
+async function flushBatchUnderLock() {
   load();
   const online = typeof navigator === "undefined" ? true : navigator.onLine;
   // Oldest first, in per-terminal sequence, so the cloud sees the same order

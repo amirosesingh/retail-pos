@@ -2,16 +2,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
+const { isLocalColumn, isServerOnlyTable } = require("./sqlserver-sync-policy.cjs");
 const schemaPath = path.join(root, "supabase", "schema.sql");
 const outputPath = path.join(root, "reports", "supabase-schema-registry-report.json");
 const sql = fs.readFileSync(schemaPath, "utf8");
 const tables = [];
-const CONTROL_TABLES = new Set([
-  "sync_idempotency_receipts",
-  "sync_change_feed",
-  // Server-managed authentication state must never be copied into a till database.
-  "user_sessions",
-]);
 
 // ALTER TABLE may add several columns in one statement. Split its clauses
 // without breaking numeric(18,4), array literals, or quoted JSON defaults.
@@ -48,7 +43,7 @@ function splitTopLevelCommas(value) {
 for (const match of sql.matchAll(
   /CREATE TABLE IF NOT EXISTS public\.([a-z0-9_]+)\s*\(([\s\S]*?)\n\);/gi,
 )) {
-  if (CONTROL_TABLES.has(match[1])) continue;
+  if (isServerOnlyTable(match[1])) continue;
   const columns = [];
   for (const raw of splitTopLevelCommas(match[2])) {
     const line = raw.trim();
@@ -156,6 +151,21 @@ for (const match of sql.matchAll(
     )
   )
     table.uniqueKeys.push(key);
+}
+
+// Keep the report as the authoritative *terminal sync* schema. Cloud-only
+// identity columns must not leak into a till database or its generated pull
+// payloads, constraints, or indexes.
+for (const table of tables) {
+  const allowed = new Set(
+    table.columns
+      .filter((column) => isLocalColumn(table.name, column.name))
+      .map((column) => column.name),
+  );
+  table.columns = table.columns.filter((column) => allowed.has(column.name));
+  table.primaryKey = table.primaryKey.filter((column) => allowed.has(column));
+  table.uniqueKeys = table.uniqueKeys.filter((key) => key.every((column) => allowed.has(column)));
+  table.foreignKeys = table.foreignKeys.filter((key) => allowed.has(key.column));
 }
 
 const report = {

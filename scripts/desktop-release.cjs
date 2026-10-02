@@ -26,10 +26,44 @@ if (!process.env.POS_UPDATE_URL) {
 
 const env = { ...withoutWebEnv(), POS_UPDATE_URL: url, DESKTOP_BUILD: "1" };
 
-const run = (cmd, args) => {
-  const r = spawnSync(cmd, args, { stdio: "inherit", shell: true, env });
+const run = (script, args) => {
+  const r = spawnSync(process.execPath, [script, ...args], {
+    cwd: root,
+    stdio: "inherit",
+    shell: false,
+    env,
+  });
+  if (r.error) throw r.error;
   if (r.status !== 0) process.exit(r.status ?? 1);
 };
+
+function prepareCachedElectronRuntime() {
+  if (process.platform !== "win32" || !process.env.LOCALAPPDATA) return null;
+  const electronVersion = require(path.join(root, "node_modules", "electron", "package.json")).version;
+  const archiveName = `electron-v${electronVersion}-win32-x64.zip`;
+  const cacheRoot = path.join(process.env.LOCALAPPDATA, "electron", "Cache");
+  if (!fs.existsSync(cacheRoot)) return null;
+  const archive = fs
+    .readdirSync(cacheRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(cacheRoot, entry.name, archiveName))
+    .find((candidate) => fs.existsSync(candidate));
+  if (!archive) return null;
+
+  const runtime = path.join(root, "release", "electron-runtime");
+  fs.mkdirSync(runtime, { recursive: true });
+  const extracted = spawnSync("tar.exe", ["-xf", archive, "-C", runtime], {
+    cwd: root,
+    stdio: "inherit",
+    shell: false,
+    env,
+  });
+  if (extracted.error) throw extracted.error;
+  if (extracted.status !== 0 || !fs.existsSync(path.join(runtime, "electron.exe"))) {
+    throw new Error("Could not prepare the cached Electron runtime");
+  }
+  return runtime;
+}
 
 
 // A stale bundle from an earlier (web-flavoured) build must never be packaged.
@@ -38,8 +72,8 @@ for (const dir of ["dist-desktop", "release"]) {
   fs.rmSync(path.join(root, dir), { recursive: true, force: true });
 }
 
-run("node", ["scripts/bump-version.cjs", "--write"]);
-run("vite", ["build"]);
+run(path.join(root, "scripts", "bump-version.cjs"), ["--write"]);
+run(path.join(root, "node_modules", "vite", "bin", "vite.js"), ["build"]);
 
 // Electron loads dist-desktop/server/index.mjs. Some toolchain versions ignore
 // the configured output directory and write to dist/, which would package an
@@ -55,6 +89,14 @@ if (!fs.existsSync(path.join(desktopOut, "server", "index.mjs"))) {
   process.exit(1);
 }
 
-run("electron-builder", ["--win", "nsis", "--publish", "never"]);
+const builderArgs = [
+  "--win",
+  "nsis",
+  "--publish",
+  "never",
+];
+const electronRuntime = prepareCachedElectronRuntime();
+if (electronRuntime) builderArgs.push(`--config.electronDist=${electronRuntime}`);
+run(path.join(root, "node_modules", "electron-builder", "cli.js"), builderArgs);
 
 console.log("✓ Windows installer ready in release/");

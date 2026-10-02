@@ -4,10 +4,19 @@
  * TanStack streams a small bootstrap script into the HTML response, so inline
  * scripts are currently required. External scripts stay restricted to this
  * origin, and browser connections are limited to the app and its configured
- * Supabase project.
+ * Supabase projects and the deployment-owned public membership sites.
  */
+const PUBLIC_APP_CONNECTION_ORIGINS = [
+  "https://member.luckycharmsdnbhd.com",
+  "https://redeem.luckycharmsdnbhd.com",
+];
+
 export function contentSecurityPolicy(supabaseUrls?: string | string[]): string {
-  const connections = new Set(["'self'", "https://cloudflareinsights.com"]);
+  const connections = new Set([
+    "'self'",
+    "https://cloudflareinsights.com",
+    ...PUBLIC_APP_CONNECTION_ORIGINS,
+  ]);
   for (const supabaseUrl of typeof supabaseUrls === "string"
     ? [supabaseUrls]
     : (supabaseUrls ?? [])) {

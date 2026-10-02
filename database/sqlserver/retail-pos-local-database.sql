@@ -2701,6 +2701,8 @@ IF OBJECT_ID(N'dbo.members', N'U') IS NULL BEGIN CREATE TABLE dbo.[members] (
   [phone] nvarchar(450) NOT NULL,
   [email] nvarchar(max) NULL,
   [address] nvarchar(max) NULL,
+  [country_code] nvarchar(max) NULL,
+  [postal_code] nvarchar(max) NULL,
   [date_of_birth] date NULL,
   [tier_id] uniqueidentifier NULL,
   [loyalty_points] decimal(38,12) NOT NULL CONSTRAINT [DF_members_loyalty_points] DEFAULT (0),
@@ -2746,6 +2748,10 @@ IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user
 IF COL_LENGTH(N'dbo.members', N'email') IS NULL ALTER TABLE dbo.[members] ADD [email] nvarchar(max) NULL;
 
 IF COL_LENGTH(N'dbo.members', N'address') IS NULL ALTER TABLE dbo.[members] ADD [address] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.members', N'country_code') IS NULL ALTER TABLE dbo.[members] ADD [country_code] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.members', N'postal_code') IS NULL ALTER TABLE dbo.[members] ADD [postal_code] nvarchar(max) NULL;
 
 IF COL_LENGTH(N'dbo.members', N'date_of_birth') IS NULL ALTER TABLE dbo.[members] ADD [date_of_birth] date NULL;
 
@@ -11595,6 +11601,8 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'members', N'phone'),
   (N'members', N'email'),
   (N'members', N'address'),
+  (N'members', N'country_code'),
+  (N'members', N'postal_code'),
   (N'members', N'date_of_birth'),
   (N'members', N'tier_id'),
   (N'members', N'loyalty_points'),
@@ -12248,10 +12256,10 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_action_history', N'changed_by'),
   (N'authorization_action_history', N'change_source'),
   (N'authorization_action_history', N'change_kind'),
-  (N'authorization_action_history', N'snapshot'),
-  (N'authorization_action_history', N'created_at'),
-  (N'authorization_requests', N'id');
+  (N'authorization_action_history', N'snapshot');
 INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N'authorization_action_history', N'created_at'),
+  (N'authorization_requests', N'id'),
   (N'authorization_requests', N'action_key'),
   (N'authorization_requests', N'requested_by'),
   (N'authorization_requests', N'requested_by_name'),

@@ -25,6 +25,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/membership/migrations/20261002184000_membership_event_consistency.sql",
       "supabase/membership/migrations/20261002184200_phone_membership_number.sql",
       "supabase/membership/migrations/20261002201500_email_otp_phone_membership.sql",
+      "supabase/membership/migrations/20261003004500_document_rpc_only_membership_tables.sql",
       "supabase/migrations/20260925102835_fix_payment_transaction_idempotency.sql",
       "supabase/migrations/20260925105427_fix_pos_sale_commit_stock_alias.sql",
       "supabase/migrations/20260925105919_persist_pos_sale_payment_idempotency.sql",
@@ -88,16 +89,68 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261002064708_align_lifecycle_transition_default.sql",
       "supabase/migrations/20261002093000_secure_member_portal.sql",
       "supabase/migrations/20261002114036_global_sku_allocator_and_notification_retention.sql",
+      "supabase/migrations/20261002141157_bind_phone_pairing_to_device_proof.sql",
+      "supabase/migrations/20261002144305_configure_public_membership_domains.sql",
+      "supabase/migrations/20261002152000_normalize_terminal_pairing_proof.sql",
       "supabase/migrations/20261002163000_member_profile_details.sql",
+      "supabase/migrations/20261002164036_optimize_rls_and_foreign_keys.sql",
       "supabase/migrations/20261002170000_harden_member_and_barcode_edges.sql",
       "supabase/migrations/20261002184500_detach_pos_customer_auth.sql",
       "supabase/migrations/20261002191500_remove_membership_event_outbox.sql",
       "supabase/migrations/20261002192000_restore_staff_operational_policies.sql",
       "supabase/migrations/20261002200000_canonicalize_branch_identity.sql",
+      "supabase/migrations/20261003002000_optimize_audit_ingestion.sql",
+      "supabase/migrations/20261003005000_build_fk_indexes_concurrently.sql",
+      "supabase/migrations/20261003010000_sync_member_profile_details.sql",
+      "supabase/migrations/20261003011000_remove_legacy_unscoped_sync_rpcs.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
     ]);
+  });
+
+  it("syncs offline member profile details without exposing the Auth identity", () => {
+    const migration = read(
+      "supabase/migrations/20261003010000_sync_member_profile_details.sql",
+    );
+    const memberApply = migration.match(
+      /CREATE OR REPLACE FUNCTION public\.sync_apply_members[\s\S]*?REVOKE ALL ON FUNCTION public\.sync_apply_members/,
+    )?.[0];
+
+    expect(memberApply).toContain('"country_code"');
+    expect(memberApply).toContain('"postal_code"');
+    expect(memberApply).not.toContain('"auth_user_id"');
+    expect(migration).toContain(
+      "WHEN 'members' THEN (SELECT to_jsonb(x) - ARRAY['auth_user_id']::text[]",
+    );
+    expect(migration).toContain(
+      "jsonb_agg(to_jsonb(page.row_data) - ARRAY['auth_user_id']::text[]",
+    );
+    expect(read("supabase/schema.sql")).toContain(
+      "FOR EACH STATEMENT EXECUTE FUNCTION public.sync_feed_audit_logs_insert()",
+    );
+  });
+
+  it("builds production foreign-key indexes without blocking writes", () => {
+    const migration = read(
+      "supabase/migrations/20261003005000_build_fk_indexes_concurrently.sql",
+    );
+
+    expect(migration.startsWith("-- pg-delta: transaction=false")).toBe(true);
+    expect(migration).toContain("not index_state.indisvalid");
+    expect(migration).toContain("set lock_timeout = '2s'");
+    expect(migration.match(/create index concurrently if not exists/gi)).toHaveLength(8);
+  });
+
+  it("adds the audit branch column before installing statement triggers", () => {
+    const migration = read(
+      "supabase/migrations/20261003002000_optimize_audit_ingestion.sql",
+    );
+    const addStoreId = migration.indexOf("add column if not exists store_id text");
+    const firstTriggerFunction = migration.indexOf("sync_feed_audit_logs_insert()");
+
+    expect(addStoreId).toBeGreaterThan(-1);
+    expect(addStoreId).toBeLessThan(firstTriggerFunction);
   });
 
   it("installs the complete shift-notification sync contract", () => {

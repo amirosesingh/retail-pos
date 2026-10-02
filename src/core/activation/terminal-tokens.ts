@@ -23,6 +23,7 @@ import { resetHealthCache } from "@/core/activation/connection-health";
 import { canRelay, relayOp } from "@/core/api/sync-relay";
 import { saveBackendUrl } from "@/lib/backend-config";
 import { serverOrigin } from "@/lib/server-origin";
+import { posFetch } from "@/lib/server-origin";
 import {
   canRuntimeClaimToken,
   terminalRuntimePlatform,
@@ -279,6 +280,8 @@ export async function issueTerminalToken(input: {
   platform?: TerminalPlatform;
   /** reserved id when approving a pairing request scanned off a PC screen */
   tokenId?: string;
+  /** sealed device proof captured from a phone-scanned pairing QR */
+  claimProof?: string;
 }): Promise<{ token: TerminalToken; code: string }> {
   // Self-healing: guarantee the referenced location row exists.
   await ensureLocations([input.location]);
@@ -294,6 +297,7 @@ export async function issueTerminalToken(input: {
     created_at: new Date(issuedAt).toISOString(),
     is_claimed: false,
     expires_at: new Date(issuedAt + ACTIVATION_TTL_MS).toISOString(),
+    ...(input.claimProof ? { claim_proof: input.claimProof } : {}),
   };
   await insertTokenRow(row);
 
@@ -686,6 +690,9 @@ function activationFailureMessage(e: unknown): string {
   if (/TERMINAL_DEVICE_PROOF_REQUIRED/.test(message)) {
     return "Secure device storage is unavailable. Enable local storage for this app, then try again.";
   }
+  if (/TERMINAL_DEVICE_PROOF_MISMATCH/.test(message)) {
+    return "This approval belongs to a different device. Scan the pairing QR currently shown on this terminal.";
+  }
   if (code === "PGRST203" || /could not choose the best candidate/i.test(message)) {
     return "This POS database has two versions of the terminal activation routine. Run supabase/schema33.sql on the POS database, then try again.";
   }
@@ -889,26 +896,39 @@ export type PairingRequest = {
   /** the token id the terminal reserved for itself */
   tokenId: string;
   deviceName: string;
+  /** SHA-256 proof derived from this device's sealed key. */
+  proofHash: string;
 };
 
 const PAIR_KEY = "pos.terminal.pairing";
 const PAIR_PREFIX = "POSPAIR1:";
 
+const validProofHash = (value: unknown): value is string =>
+  typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
+
 /** Stable pairing request for this machine — reused across reloads. */
-export function getPairingRequest(): PairingRequest {
+export async function getPairingRequest(): Promise<PairingRequest> {
   const suggested =
     typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent)
       ? "Windows till"
       : "POS terminal";
-  if (typeof window === "undefined") return { tokenId: crypto.randomUUID(), deviceName: suggested };
+  const proofHash = await deviceProofHash();
+  if (!proofHash) {
+    throw new ActivationError(
+      "Secure device storage is unavailable. Enable local storage for this app, then try again.",
+    );
+  }
+  if (typeof window === "undefined") {
+    return { tokenId: crypto.randomUUID(), deviceName: suggested, proofHash };
+  }
   try {
     const raw = window.localStorage.getItem(PAIR_KEY);
     const parsed = raw ? (JSON.parse(raw) as PairingRequest) : null;
-    if (parsed?.tokenId) return parsed;
+    if (parsed?.tokenId && parsed.proofHash === proofHash) return parsed;
   } catch {
     /* fall through and mint a new request */
   }
-  const request: PairingRequest = { tokenId: crypto.randomUUID(), deviceName: suggested };
+  const request: PairingRequest = { tokenId: crypto.randomUUID(), deviceName: suggested, proofHash };
   try {
     window.localStorage.setItem(PAIR_KEY, JSON.stringify(request));
   } catch {
@@ -935,7 +955,13 @@ export function decodePairingRequest(value: string): PairingRequest | null {
   const fromJson = (raw: string): PairingRequest | null => {
     try {
       const parsed = JSON.parse(raw) as PairingRequest;
-      return parsed?.tokenId ? { tokenId: parsed.tokenId, deviceName: parsed.deviceName ?? "" } : null;
+      return parsed?.tokenId && validProofHash(parsed.proofHash)
+        ? {
+            tokenId: parsed.tokenId,
+            deviceName: parsed.deviceName ?? "",
+            proofHash: parsed.proofHash.toLowerCase(),
+          }
+        : null;
     } catch {
       return null;
     }
@@ -950,64 +976,74 @@ export function decodePairingRequest(value: string): PairingRequest | null {
     } catch {
       /* fall through to the tolerant paths below */
     }
-    return uuid.test(body) ? { tokenId: body, deviceName: "" } : null;
+    return null;
   }
 
   // A phone camera sometimes hands back the raw JSON, a bare token id, or a
   // link that carries the token. Accept all of them rather than failing.
   const asJson = fromJson(trimmed);
   if (asJson) return asJson;
-  if (uuid.test(trimmed)) return { tokenId: trimmed, deviceName: "" };
-  try {
-    const url = new URL(trimmed);
-    const fromQuery = url.searchParams.get("pair") ?? url.searchParams.get("token");
-    if (fromQuery && uuid.test(fromQuery)) return { tokenId: fromQuery, deviceName: "" };
-  } catch {
-    /* not a URL */
-  }
-  const embedded = trimmed.match(
-    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
-  );
-  return embedded ? { tokenId: embedded[0], deviceName: "" } : null;
+  // Bare UUIDs and arbitrary URLs are deliberately rejected: they do not bind
+  // approval to the device that displayed the QR.
+  return null;
 }
 
 /**
  * Register this machine against a token id an administrator approved from the
  * phone. Same claim-once rules as pasting a code by hand.
  */
-export async function activateWithTokenId(tokenId: string): Promise<TerminalConfig | null> {
+type PairingApproval = {
+  approved: boolean;
+  status?: TokenStatus;
+  locationId?: string;
+  locationName?: string;
+  deviceName?: string;
+  expiresAt?: string | null;
+  supabaseUrl?: string;
+  supabaseKey?: string;
+  backendUrl?: string;
+};
+
+async function fetchPairingApproval(request: PairingRequest): Promise<PairingApproval> {
+  const response = await posFetch("/api/public/terminal-pairing", {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tokenId: request.tokenId, proofHash: request.proofHash }),
+  });
+  const body = (await response.json().catch(() => ({}))) as PairingApproval & { error?: string };
+  if (!response.ok) throw new Error(body.error || `Pairing check failed (${response.status})`);
+  return body;
+}
+
+export async function activateWithTokenId(request: PairingRequest): Promise<TerminalConfig | null> {
   const shell = terminalRuntimePlatform();
-  const remote = await withActivationRetry(() => fetchTokenStatus(tokenId)).catch((e: unknown) => {
+  const approval = await withActivationRetry(() => fetchPairingApproval(request)).catch((e: unknown) => {
     throw new ActivationError(activationFailureMessage(e));
   });
-  if (!remote) return null; // not approved yet
-  if (remote.status === "revoked") {
+  if (!approval.approved) return null;
+  if (approval.status === "revoked") {
     throw new ActivationError(
       "This terminal has been revoked by management.",
     );
   }
-  if (!remote.locationId) {
+  if (!approval.locationId || !approval.supabaseUrl || !approval.supabaseKey) {
     throw new ActivationError(
-      "This POS database is missing the pairing helper. Run supabase/schema23.sql on the POS database, then try again.",
+      "The POS server returned an incomplete pairing approval. Ask an administrator to check the hosted database settings.",
     );
   }
-  const proofHash = await deviceProofHash();
-  if (!proofHash) {
-    throw new ActivationError(
-      "Secure device storage is unavailable. Enable local storage for this app, then try again.",
-    );
-  }
-  if (!remote.isClaimed && remote.expiresAt && new Date(remote.expiresAt).getTime() < Date.now()) {
+  if (approval.expiresAt && new Date(approval.expiresAt).getTime() < Date.now()) {
     throw new ActivationError("This pairing request has expired. Ask an administrator to approve it again.");
   }
+  const tenant = createTenantClient(approval.supabaseUrl, approval.supabaseKey);
   const deviceName = typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 120) : null;
   let claimed: unknown;
   try {
     const result = await withActivationRetry(async () => {
-      const response = await rpc("terminal_token_claim", {
-        p_token_id: tokenId,
+      const response = await rpcOn(tenant, "terminal_token_claim", {
+        p_token_id: request.tokenId,
         p_device: deviceName,
-        p_proof_hash: proofHash,
+        p_proof_hash: request.proofHash,
         p_platform: shell,
         p_os: claimOs(),
       });
@@ -1022,22 +1058,33 @@ export async function activateWithTokenId(tokenId: string): Promise<TerminalConf
     throw new ActivationError("This pairing request was already used on another terminal.");
   }
   const config: TerminalConfig = {
-    tokenId,
-    deviceName: getPairingRequest().deviceName,
+    tokenId: request.tokenId,
+    deviceName: approval.deviceName || request.deviceName,
     deviceType: tokenPlatformForRuntime(shell) ?? "pc",
-    locationId: remote.locationId,
-    locationName: remote.locationName,
-    supabaseUrl: supabaseConfig().url,
-    supabaseKey: supabaseConfig().key,
+    locationId: approval.locationId,
+    locationName: approval.locationName || "",
+    supabaseUrl: approval.supabaseUrl,
+    supabaseKey: approval.supabaseKey,
+    backendUrl: approval.backendUrl,
     activatedAt: new Date().toISOString(),
   };
+  if (config.backendUrl) {
+    const saved = await saveBackendUrl(config.backendUrl);
+    if (!saved.ok) {
+      throw new ActivationError(
+        saved.error || "Could not securely save the POS server address on this terminal.",
+      );
+    }
+  }
   writeTerminalConfig(config);
   clearPairingRequest();
-  await rpc("terminal_token_heartbeat", {
-    p_token_id: tokenId,
+  await rpcOn(tenant, "terminal_token_heartbeat", {
+    p_token_id: request.tokenId,
     p_activate: true,
-    p_proof_hash: proofHash,
+    p_proof_hash: request.proofHash,
   });
-  void import("@/lib/terminal-session").then((m) => m.provisionTerminalAccount(tokenId)).catch(() => null);
+  void import("@/lib/terminal-session")
+    .then((m) => m.provisionTerminalAccount(request.tokenId))
+    .catch(() => null);
   return config;
 }

@@ -26,6 +26,7 @@ import {
   clearPairingRequest,
   encodePairingRequest,
   getPairingRequest,
+  type PairingRequest,
   type TerminalConfig,
 } from "@/core/activation/terminal-tokens";
 import { clearRevocation } from "@/lib/use-revocation-check";
@@ -87,8 +88,23 @@ export function TerminalActivation({
   const [pairingStopped, setPairingStopped] = useState(false);
   // Minted after mount: the id is random, so generating it during SSR would
   // hydrate a different QR than the server drew and blow up the page.
-  const [pairing, setPairing] = useState<ReturnType<typeof getPairingRequest> | null>(null);
-  useEffect(() => setPairing(getPairingRequest()), []);
+  const [pairing, setPairing] = useState<PairingRequest | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void getPairingRequest()
+      .then((request) => {
+        if (!cancelled) setPairing(request);
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setPairingStopped(true);
+          setError(cause instanceof Error ? cause.message : "Could not prepare secure pairing.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const pairQr = useMemo(
     () => (pairing ? qrDataUrl(encodePairingRequest(pairing)) : ""),
     [pairing],
@@ -128,7 +144,7 @@ export function TerminalActivation({
       if (pending) return;
       pending = true;
       try {
-        const config = await activateWithTokenId(pairing.tokenId);
+        const config = await activateWithTokenId(pairing);
         if (config && !stopped) {
           clearRevocation();
           await writeActivationRecord({ tokenId: config.tokenId }).catch(() => {});
@@ -323,7 +339,7 @@ export function TerminalActivation({
                 </p>
                 <p className="mt-2 flex items-center gap-1">
                   {pairingStopped ? (
-                    <>Approval expired or belongs to another device.</>
+                    <>{error ? "Pairing preparation stopped." : "Approval expired or belongs to another device."}</>
                   ) : online ? (
                     <>
                       <Loader2 className="size-3 animate-spin" /> Waiting for approval…
@@ -339,7 +355,15 @@ export function TerminalActivation({
                     className="mt-2 border-slate-700 bg-slate-900"
                     onClick={() => {
                       clearPairingRequest();
-                      setPairing(getPairingRequest());
+                      setPairing(null);
+                      void getPairingRequest()
+                        .then(setPairing)
+                        .catch((cause: unknown) => {
+                          setPairingStopped(true);
+                          setError(
+                            cause instanceof Error ? cause.message : "Could not prepare secure pairing.",
+                          );
+                        });
                       setPairingStopped(false);
                       setError("");
                     }}
