@@ -25,6 +25,7 @@ describe("zero-stock catalogue lifecycle", () => {
     expect(hasCompanyStock(product({ a: 0, b: 2 }))).toBe(true);
     expect(hasCompanyStock(product({ a: 0, b: 0 }))).toBe(false);
     expect(hasCompanyStock(product({ a: -2, b: 0 }))).toBe(false);
+    expect(hasCompanyStock(product({ a: 5, b: -5 }))).toBe(false);
   });
 
   it("deactivates zero-stock products when the lifecycle is enabled", () => {

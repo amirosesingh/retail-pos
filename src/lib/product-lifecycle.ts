@@ -2,8 +2,11 @@ import type { Product } from "@/core/types/pos-types";
 
 /** Company-wide stock, rather than the quantity at only the current branch. */
 export function hasCompanyStock(product: Pick<Product, "stockByStore">): boolean {
-  return Object.values(product.stockByStore ?? {}).some(
-    (quantity) => Number.isFinite(quantity) && quantity > 0,
+  return (
+    Object.values(product.stockByStore ?? {}).reduce(
+      (total, quantity) => total + (Number.isFinite(quantity) ? quantity : 0),
+      0,
+    ) > 0
   );
 }
 

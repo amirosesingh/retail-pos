@@ -1,5 +1,6 @@
--- Keep the setting-toggle backfill consistent with the row-level lifecycle:
--- stock means positive net company quantity, not one positive JSON entry.
+-- A missing setting already means enabled everywhere else. Treat the OLD row
+-- the same way so the backfill runs only after an explicit false -> true
+-- transition, not after an unrelated settings edit.
 CREATE OR REPLACE FUNCTION public.backfill_zero_stock_catalog_lifecycle()
 RETURNS trigger
 LANGUAGE plpgsql

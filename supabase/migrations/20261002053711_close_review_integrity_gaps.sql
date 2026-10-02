@@ -9,7 +9,7 @@ SET search_path = public
 AS $$
 BEGIN
   IF lower(COALESCE(NEW.integration_settings ->> 'autoArchiveZeroStock', 'true')) = 'true'
-     AND lower(COALESCE(OLD.integration_settings ->> 'autoArchiveZeroStock', 'false')) <> 'true' THEN
+     AND lower(COALESCE(OLD.integration_settings ->> 'autoArchiveZeroStock', 'true')) <> 'true' THEN
     WITH stock_state AS (
       SELECT p.id,
              COALESCE(sum(e.value::numeric) FILTER (

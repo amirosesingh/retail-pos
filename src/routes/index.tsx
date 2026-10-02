@@ -104,7 +104,7 @@ import { NO_SALE_REASON_MAX, NO_SALE_REASON_MIN, recordNoSale } from "@/lib/draw
 import { logger } from "@/lib/audit-log";
 import { DiscountPad } from "@/platforms/web/components/pos/DiscountPad";
 import { useManagerGate, type GateRequest } from "@/lib/manager-gate";
-import type { AuthPayload } from "@/lib/authorization";
+import { authorizationBinding, type AuthPayload } from "@/lib/authorization";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { parsePositiveAmount } from "@/core/pricing/amount";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
@@ -327,11 +327,25 @@ function Register() {
       return grantToken ?? "";
     };
     const resumedGrant = appliedApprovalRef.current;
-    if (resumedGrant?.grantToken && resumedGrant.actionKey === request.action) {
-      const verified = await verifyGrant(resumedGrant.grantToken);
-      if (verified === null) revokeApprovalDiscountRef.current(resumedGrant);
+    if (resumedGrant?.grantToken) {
+      const approvedPayloadForMatch = Object.fromEntries(
+        Object.entries(resumedGrant.approvedPayload).filter(([key]) => key !== "approved_amount"),
+      ) as AuthPayload;
+      const requestedAmount =
+        request.requestedAmount ?? snapshot?.requestedValue ?? resumedGrant.requestedAmount ?? null;
+      const payloadMatches =
+        authorizationBinding(payload) === authorizationBinding(approvedPayloadForMatch);
+      const amountMatches =
+        resumedGrant.approvedAmount === null ||
+        (requestedAmount !== null && requestedAmount <= resumedGrant.approvedAmount);
+      if (resumedGrant.actionKey === request.action && payloadMatches && amountMatches) {
+        const verified = await verifyGrant(resumedGrant.grantToken);
+        if (verified === null) revokeApprovalDiscountRef.current(resumedGrant);
+        clearAppliedApproval();
+        return verified;
+      }
+      revokeApprovalDiscountRef.current(resumedGrant);
       clearAppliedApproval();
-      return verified;
     }
     const heldOrderId = snapshot
       ? `H${Date.now()}-${Math.random().toString(36).slice(2, 8)}`

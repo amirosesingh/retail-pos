@@ -89,4 +89,14 @@ describe("administrator corrections and shared table controls", () => {
     expect(migration).toContain("COALESCE(sum(e.value::numeric) FILTER");
     expect(migration).toContain(") > 0 AS has_stock");
   });
+
+  it("treats a missing old lifecycle setting as already enabled", () => {
+    const migration = read(
+      "supabase/migrations/20261002064708_align_lifecycle_transition_default.sql",
+    );
+    expect(migration).toContain(
+      "COALESCE(OLD.integration_settings ->> 'autoArchiveZeroStock', 'true')",
+    );
+    expect(migration).toContain("COALESCE(sum(e.value::numeric) FILTER");
+  });
 });
