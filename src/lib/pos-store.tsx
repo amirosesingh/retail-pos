@@ -78,6 +78,7 @@ import {
 import { isShiftOverdue, localTerminalId } from "./shift-hours";
 import { beginShiftSession, endShiftSessions } from "./shift-sessions";
 import { setPublicHosts } from "./coupon-hosts";
+import { branchDisplayName } from "./human-readable";
 import { activeLocations, archiveBlockers, canonicalLocations } from "./locations";
 import { branchPolicy } from "./branch-policy";
 import { setActiveBranchSyncPolicy } from "./sync-policy";
@@ -138,10 +139,7 @@ import {
   type ImportRow,
 } from "./product-import";
 import { productCodes } from "./product-lookup";
-import {
-  applyZeroStockLifecycle,
-  applyZeroStockLifecycleToProducts,
-} from "./product-lifecycle";
+import { applyZeroStockLifecycle, applyZeroStockLifecycleToProducts } from "./product-lifecycle";
 import { nextSku, readSkuSettings } from "./sku";
 
 const LEGACY_STATE_KEY = "pos-state-v2";
@@ -1249,19 +1247,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Signing in on a shift somebody else already opened is never interrupted by
   // the opening screen — say so once, then get out of the way.
   const announcedShiftRef = useRef<string | null>(null);
+  const activeShiftBranchName = activeShift
+    ? branchDisplayName(state.stores, activeShift.storeId, "")
+    : "";
+  const activeShiftAnnouncementBranch = signedIn ? activeShiftBranchName : "";
   useEffect(() => {
-    if (!activeShift || !signedIn) return;
+    if (!activeShift || !activeShiftAnnouncementBranch) return;
     if (announcedShiftRef.current === activeShift.id) return;
-    announcedShiftRef.current = activeShift.id;
     // The till that just opened the shift already saw its own confirmation.
     if (justOpenedRef.current?.shift.id === activeShift.id) return;
-    const branch =
-      stateRef.current.stores.find((s) => s.id === activeShift.storeId)?.name ??
-      activeShift.storeId;
-    toast.success(`Continuing active shift opened at ${branch}`, {
+    // Directory data can arrive just after the shift. Wait for it instead of
+    // briefly exposing the database identifier in a user-facing message.
+    announcedShiftRef.current = activeShift.id;
+    toast.success(`Continuing active shift opened at ${activeShiftAnnouncementBranch}`, {
       description: `Opened by ${activeShift.cashier} · float ${money(activeShift.openingFloat)}`,
     });
-  }, [activeShift, signedIn]);
+  }, [activeShift, activeShiftAnnouncementBranch]);
 
   const setCurrentStore = useCallback(
     (id: string) => setState((s) => ({ ...s, currentStoreId: id })),
@@ -1487,8 +1488,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // Day-end summary goes out on whatever channels this device enabled.
       void (async () => {
         const snapshot = stateRef.current;
-        const storeName =
-          snapshot.stores.find((s) => s.id === closed.storeId)?.name ?? closed.storeId;
+        const storeName = branchDisplayName(snapshot.stores, closed.storeId);
         const { buildShiftSummary, dispatchShiftSummary } = await import("./shift-alerts");
         await dispatchShiftSummary(buildShiftSummary(closed, snapshot.sales, storeName)).catch(
           () => null,
@@ -2585,8 +2585,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   /** Bulk field edit (category, tax, web visibility…) across a selection. */
   const patchProducts = useCallback(async (ids: string[], patch: Partial<Product>) => {
     const set = new Set(ids);
-    const zeroStockLifecycle =
-      stateRef.current.settings.integrations.autoArchiveZeroStock === true;
+    const zeroStockLifecycle = stateRef.current.settings.integrations.autoArchiveZeroStock === true;
     const updated = stateRef.current.products
       .filter((p) => set.has(p.id))
       .map((p) => applyZeroStockLifecycle({ ...p, ...patch }, zeroStockLifecycle));
@@ -3440,6 +3439,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
       actorName: actorRef.current,
       storeId: before.toStoreId,
       metadata: { ref: before.ref, fromStoreId: before.fromStoreId },
+    });
+    const destination = s0.stores.find((store) => store.id === before.toStoreId)?.name;
+    recordActivity({
+      type: "transfer_received",
+      title: `Transfer ${before.ref} received`,
+      message: `${destination || "The receiving branch"} confirmed that the delivery arrived.`,
+      actorName: actorRef.current,
+      storeId: before.fromStoreId,
+      entityType: "stock_transfer",
+      entityId: before.id,
+      meta: {
+        route: `/transfers/${before.id}`,
+        audience: "sending_branch",
+        audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
+        receiving_store_id: before.toStoreId,
+      },
     });
     return { success: true };
   }, []);

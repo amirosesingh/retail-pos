@@ -15,7 +15,7 @@ import { useCheckout } from "@/lib/register/use-checkout";
 import { applyRounding, roundingOf, showsRoundingLine } from "@/core/pricing/rounding";
 import { usePromotions } from "@/lib/register/use-promotions";
 import { useExchange } from "@/lib/register/use-exchange";
-import { useRegisterHeldOrders } from "@/lib/register/use-held-orders";
+import { removeApprovedDiscount, useRegisterHeldOrders } from "@/lib/register/use-held-orders";
 import { TICKET_ACTIONS, logTicketEvent } from "@/lib/ticket-audit";
 import {
   BadgeCheck,
@@ -80,7 +80,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { availableAt, cartTotals, money, stockAt, usePos } from "@/lib/pos-store";
-import { resolveByBarcode } from "@/lib/product-lookup";
+import { resolveByBarcode, variantForBarcode } from "@/lib/product-lookup";
 import { reserveBillNumber } from "@/lib/bill-number";
 import { useAuth } from "@/lib/pos-auth";
 import { productVisibleAt } from "@/lib/branch-policy";
@@ -174,6 +174,9 @@ function RegisterEntry() {
 
 type AppliedApproval = {
   requestId: string;
+  actionKey: string;
+  approvedPayload: AuthPayload;
+  grantToken: string;
   approvedAmount: number | null;
   requestedAmount: number | null;
   requesterDirectLimit: number | null;
@@ -215,6 +218,7 @@ function Register() {
   /** Parks the open ticket; filled in once the held-orders hook exists. */
   const parkTicket = useRef<((id?: string) => { id: string } | null) | null>(null);
   const appliedApprovalRef = useRef<AppliedApproval | null>(null);
+  const revokeApprovalDiscountRef = useRef<(approval: AppliedApproval) => void>(() => undefined);
   const [appliedApproval, setAppliedApproval] = useState<AppliedApproval | null>(null);
   const clearAppliedApproval = useCallback(() => {
     appliedApprovalRef.current = null;
@@ -224,6 +228,7 @@ function Register() {
     async (reason: string) => {
       const approval = appliedApprovalRef.current;
       if (!approval) return true;
+      revokeApprovalDiscountRef.current(approval);
       clearAppliedApproval();
       const cancelled = await cancelAuthorizationRequest({
         data: {
@@ -300,6 +305,12 @@ function Register() {
       }
       return grantToken ?? "";
     };
+    const resumedGrant = appliedApprovalRef.current;
+    if (resumedGrant?.grantToken && resumedGrant.actionKey === request.action) {
+      const verified = await verifyGrant(resumedGrant.grantToken);
+      clearAppliedApproval();
+      return verified;
+    }
     const heldOrderId = snapshot
       ? `H${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       : undefined;
@@ -427,6 +438,14 @@ function Register() {
     // The register settings decide whether an out-of-stock item can be sold.
     preventNegativeStock: rules.prevent_negative_stock_sale,
   });
+  revokeApprovalDiscountRef.current = (approval) => {
+    const next = removeApprovedDiscount({ lines, cartDiscount, cartDiscountType }, approval);
+    if (next.lines !== lines) setLines(next.lines);
+    if (next.cartDiscount !== cartDiscount) setCartDiscount(next.cartDiscount);
+    if (next.cartDiscountType !== cartDiscountType) {
+      setCartDiscountType(next.cartDiscountType);
+    }
+  };
   /** Cashier-adjustable column widths, remembered on this device. */
 
   const [lookupWidth, setLookupWidth] = usePanelWidth("pos.register.lookupWidth", 360);
@@ -862,6 +881,9 @@ function Register() {
     onApprovalClaimed: (grant) => {
       const applied: AppliedApproval = {
         requestId: grant.requestId,
+        actionKey: grant.actionKey,
+        approvedPayload: grant.approvedPayload,
+        grantToken: grant.grantToken,
         approvedAmount: grant.approvedAmount,
         requestedAmount: grant.requestedAmount,
         requesterDirectLimit: grant.requesterDirectLimit,
@@ -983,7 +1005,7 @@ function Register() {
       setCatalogOpen(true);
       return;
     }
-    addLine(hit.id);
+    addLine(hit.id, variantForBarcode(hit, code));
   }
 
   /** Attaches a member to the ticket and surfaces any vouchers they hold. */

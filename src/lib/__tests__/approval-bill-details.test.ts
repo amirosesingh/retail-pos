@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { normalizeSnapshot, previewBillAfterDiscount } from "../ticket-snapshot";
-import { applyApprovedDiscount } from "../register/use-held-orders";
+import { applyApprovedDiscount, removeApprovedDiscount } from "../register/use-held-orders";
 import { cartTotals } from "../pos-store";
 
 const held = {
@@ -215,6 +215,31 @@ describe("approval bill details", () => {
     expect(server).toContain("&expires_at=gt.");
   });
 
+  it("removes the exact approved discount when its bill binding is invalidated", () => {
+    const bill = removeApprovedDiscount(
+      { lines: held.lines, cartDiscount: 22, cartDiscountType: "percent" },
+      { actionKey: "discount_over_limit", approvedPayload: { discount_scope: "bill" } },
+    );
+    expect(bill.cartDiscount).toBe(0);
+
+    const item = removeApprovedDiscount(
+      {
+        lines: [{ ...held.lines[0], discount: 2, discountType: "amount" }],
+        cartDiscount: 0,
+        cartDiscountType: "amount",
+      },
+      {
+        actionKey: "discount_over_limit",
+        approvedPayload: {
+          discount_scope: "item",
+          target_index: 0,
+          target_product_id: "product-1",
+        },
+      },
+    );
+    expect(item.lines[0]?.discount).toBe(0);
+  });
+
   it("refuses to redirect an approval to another bill or changed item", () => {
     const wrongBill = applyApprovedDiscount(held, {
       requestId: "request-wrong-bill",
@@ -256,7 +281,7 @@ describe("approval bill details", () => {
     const functions = readFileSync("src/lib/authorization.functions.ts", "utf8");
     expect(functions).toContain("A discount approval must be tied to one reserved bill number");
     expect(functions).toContain("An item approval must match one exact item on that bill");
-    expect(functions).toContain('snapshot?.ticketId !== billNo');
+    expect(functions).toContain("snapshot?.ticketId !== billNo");
     expect(functions).toContain('data.payload["target_line_key"] !== expectedLineKey');
   });
 
@@ -276,6 +301,8 @@ describe("approval bill details", () => {
     );
     expect(register).toContain("Approved bill or item changed before completion");
     expect(register).toContain("appliedSnapshotHash");
+    expect(register).toContain("revokeApprovalDiscountRef.current(approval)");
+    expect(register).toContain("resumedGrant.grantToken");
   });
 
   it("returns and displays the durable approver identity and payable total", () => {

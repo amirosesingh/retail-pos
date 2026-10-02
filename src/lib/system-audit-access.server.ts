@@ -3,6 +3,7 @@
  * user's role is re-checked on the server for every request.
  */
 import { serviceRest } from "@/core/api/pos-relay.server";
+import { supabaseConfig } from "@/lib/external-supabase-config";
 
 const SUPERVISOR_ROLES = new Set(["admin", "owner", "manager", "supervisor"]);
 
@@ -10,9 +11,7 @@ const SUPERVISOR_ROLES = new Set(["admin", "owner", "manager", "supervisor"]);
 export async function describeAccessToken(
   accessToken: string,
 ): Promise<{ id: string | null; name: string | null; role: string | null }> {
-  const url = process.env["SUPABASE_URL"];
-  const key = process.env["SUPABASE_ANON_KEY"];
-  if (!url || !key) return { id: null, name: null, role: null };
+  const { url, key } = supabaseConfig();
   const res = await fetch(`${url}/auth/v1/user`, {
     headers: { apikey: key, Authorization: `Bearer ${accessToken}` },
   });
@@ -39,9 +38,7 @@ export async function describeAccessToken(
 }
 
 export async function verifySupervisorToken(accessToken: string): Promise<boolean> {
-  const url = process.env["SUPABASE_URL"];
-  const key = process.env["SUPABASE_ANON_KEY"];
-  if (!url || !key) return false;
+  const { url, key } = supabaseConfig();
   const res = await fetch(`${url}/auth/v1/user`, {
     headers: { apikey: key, Authorization: `Bearer ${accessToken}` },
   });
@@ -67,9 +64,7 @@ export async function verifySupervisorToken(accessToken: string): Promise<boolea
 
 /** Destructive operational cleanup is reserved for an active administrator. */
 export async function verifyAdminToken(accessToken: string): Promise<boolean> {
-  const url = process.env["SUPABASE_URL"];
-  const key = process.env["SUPABASE_ANON_KEY"];
-  if (!url || !key) return false;
+  const { url, key } = supabaseConfig();
   const res = await fetch(`${url}/auth/v1/user`, {
     headers: { apikey: key, Authorization: `Bearer ${accessToken}` },
   });

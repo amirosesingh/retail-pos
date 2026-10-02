@@ -29,7 +29,13 @@ import { money, usePos } from "@/lib/pos-store";
 import { savingsOf, soldLines, sumLines } from "@/lib/sales-analytics";
 import { useReportSales } from "@/lib/use-report-sales";
 import { saleNetRevenue } from "@/core/pricing/profit";
-import { ReportHeader, StatCard, defaultRange, inRange } from "@/platforms/web/components/pos/report-kit";
+import {
+  ReportHeader,
+  StatCard,
+  defaultRange,
+  inRange,
+} from "@/platforms/web/components/pos/report-kit";
+import { branchDisplayName } from "@/lib/human-readable";
 
 export const Route = createFileRoute("/reports/analytics")({
   head: () => ({
@@ -73,7 +79,12 @@ function AnalyticsBoard() {
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
   const [topBy, setTopBy] = useState<"revenue" | "units">("revenue");
-  const history = useReportSales(state.sales, stores.map((store) => store.id), from, to);
+  const history = useReportSales(
+    state.sales,
+    stores.map((store) => store.id),
+    from,
+    to,
+  );
   const [trend, setTrend] = useState<"daily" | "monthly">("daily");
 
   const bills = useMemo(
@@ -84,7 +95,7 @@ function AnalyticsBoard() {
   const totals = sumLines(lines);
   const savings = savingsOf(bills, lines);
   const storeName = useCallback(
-    (id: string) => stores.find((s) => s.id === id)?.name ?? (id || "Unassigned"),
+    (id: string) => branchDisplayName(stores, id, "Unassigned branch"),
     [stores],
   );
 
@@ -151,15 +162,33 @@ function AnalyticsBoard() {
           onTo={setTo}
         />
 
-        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.loading ? (
+          <p className="text-sm text-muted-foreground">Loading complete SQL history…</p>
+        ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <StatCard label="Revenue" value={money(revenue)} hint={`${bills.length} bills`} />
-          <StatCard label="Avg / day" value={money(revenue / dayCount)} hint={`${dayCount} trading days`} />
-          <StatCard label="Avg / month" value={money(revenue / monthCount)} hint={`${monthCount} months`} />
-          <StatCard label="Gross profit" value={money(totals.profit)} hint={`${totals.marginPct.toFixed(1)}% margin`} />
-          <StatCard label="Given away" value={money(savings.total)} hint="Discounts, coupons and free items" />
+          <StatCard
+            label="Avg / day"
+            value={money(revenue / dayCount)}
+            hint={`${dayCount} trading days`}
+          />
+          <StatCard
+            label="Avg / month"
+            value={money(revenue / monthCount)}
+            hint={`${monthCount} months`}
+          />
+          <StatCard
+            label="Gross profit"
+            value={money(totals.profit)}
+            hint={`${totals.marginPct.toFixed(1)}% margin`}
+          />
+          <StatCard
+            label="Given away"
+            value={money(savings.total)}
+            hint="Discounts, coupons and free items"
+          />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -189,7 +218,9 @@ function AnalyticsBoard() {
                 <XAxis type="number" fontSize={11} />
                 <YAxis type="category" dataKey="name" width={130} fontSize={11} />
                 <Tooltip
-                  formatter={(v) => (topBy === "revenue" ? money(Number(v ?? 0)) : `${Number(v ?? 0)} units`)}
+                  formatter={(v) =>
+                    topBy === "revenue" ? money(Number(v ?? 0)) : `${Number(v ?? 0)} units`
+                  }
                 />
                 <Bar dataKey={topBy} fill="var(--primary)" radius={[0, 4, 4, 0]} />
               </BarChart>
@@ -323,7 +354,10 @@ function AnalyticsBoard() {
                 ))}
                 {!byStore.length && (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell
+                      colSpan={6}
+                      className="py-8 text-center text-sm text-muted-foreground"
+                    >
                       No sales in this window.
                     </TableCell>
                   </TableRow>

@@ -72,6 +72,7 @@ import { ItemActivityDrawer } from "@/platforms/web/components/pos/ItemActivityD
 import { OtherSourcesPopover } from "@/platforms/web/components/pos/OtherSourcesPopover";
 import type { Product } from "@/core/types/pos-types";
 import { nextSku, peekSku, readSkuSettings } from "@/lib/sku";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/inventory")({
   head: () => ({
@@ -152,6 +153,8 @@ function Inventory() {
   const [draft, setDraft] = useState<Product | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
   const [variantLabel, setVariantLabel] = useState("");
+  const [variantCost, setVariantCost] = useState("");
+  const [variantPrice, setVariantPrice] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -373,7 +376,7 @@ function Inventory() {
                     </Button>
                   </DialogTrigger>
                 )}
-                <DialogContent>
+                <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">
                   <DialogHeader>
                     <DialogTitle>{draft?.name ? "Edit product" : "New product"}</DialogTitle>
                   </DialogHeader>
@@ -455,33 +458,111 @@ function Inventory() {
                         />
                       </Field>
                       <Field label="Barcode variants" className="sm:col-span-2">
-                        <div className="flex flex-wrap gap-1">
-                          {(draft.variants ?? []).map((v) => (
-                            <Badge
-                              key={v.code}
-                              variant="outline"
-                              className="numeric gap-1 text-[11px]"
+                        {!!(draft.variants ?? []).length && (
+                          <div className="mb-2 overflow-x-auto rounded-md border">
+                            <div
+                              className={cn(
+                                "grid min-w-[680px] items-center gap-2 border-b bg-muted/40 px-2 py-1.5 text-xs font-medium text-muted-foreground",
+                                showMoney
+                                  ? "grid-cols-[minmax(10rem,1.4fr)_minmax(9rem,1fr)_7rem_7rem_2rem]"
+                                  : "grid-cols-[minmax(10rem,1.4fr)_minmax(9rem,1fr)_7rem_2rem]",
+                              )}
                             >
-                              {v.code}
-                              {v.label ? ` · ${v.label}` : ""}
-                              <button
-                                type="button"
-                                className="text-destructive"
-                                aria-label={`Remove variant ${v.code}`}
-                                disabled={!canLinkBarcode}
-                                onClick={() =>
-                                  setDraft({
-                                    ...draft,
-                                    variants: (draft.variants ?? []).filter(
-                                      (x) => x.code !== v.code,
-                                    ),
-                                  })
-                                }
+                              <span>Barcode</span>
+                              <span>Label / variation</span>
+                              {showMoney && <span>Cost</span>}
+                              <span>Selling price</span>
+                              <span className="sr-only">Remove</span>
+                            </div>
+                            {(draft.variants ?? []).map((variant) => (
+                              <div
+                                key={variant.code}
+                                className={cn(
+                                  "grid min-w-[680px] items-center gap-2 border-b px-2 py-2 last:border-b-0",
+                                  showMoney
+                                    ? "grid-cols-[minmax(10rem,1.4fr)_minmax(9rem,1fr)_7rem_7rem_2rem]"
+                                    : "grid-cols-[minmax(10rem,1.4fr)_minmax(9rem,1fr)_7rem_2rem]",
+                                )}
                               >
-                                ×
-                              </button>
-                            </Badge>
-                          ))}
+                                <span className="numeric truncate text-sm" title={variant.code}>
+                                  {variant.code}
+                                </span>
+                                <Input
+                                  disabled={!canLinkBarcode}
+                                  value={variant.label ?? ""}
+                                  aria-label={`Label for ${variant.code}`}
+                                  onChange={(event) =>
+                                    setDraft({
+                                      ...draft,
+                                      variants: (draft.variants ?? []).map((entry) =>
+                                        entry.code === variant.code
+                                          ? { ...entry, label: event.target.value || undefined }
+                                          : entry,
+                                      ),
+                                    })
+                                  }
+                                />
+                                {showMoney && (
+                                  <Input
+                                    disabled={!canPrice}
+                                    className="numeric"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={variant.cost ?? draft.cost}
+                                    aria-label={`Cost for ${variant.code}`}
+                                    onChange={(event) =>
+                                      setDraft({
+                                        ...draft,
+                                        variants: (draft.variants ?? []).map((entry) =>
+                                          entry.code === variant.code
+                                            ? { ...entry, cost: Number(event.target.value) || 0 }
+                                            : entry,
+                                        ),
+                                      })
+                                    }
+                                  />
+                                )}
+                                <Input
+                                  disabled={!canPrice}
+                                  className="numeric"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={variant.price ?? draft.price}
+                                  aria-label={`Selling price for ${variant.code}`}
+                                  onChange={(event) =>
+                                    setDraft({
+                                      ...draft,
+                                      variants: (draft.variants ?? []).map((entry) =>
+                                        entry.code === variant.code
+                                          ? { ...entry, price: Number(event.target.value) || 0 }
+                                          : entry,
+                                      ),
+                                    })
+                                  }
+                                />
+                                <button
+                                  type="button"
+                                  className="text-lg text-destructive"
+                                  aria-label={`Remove variant ${variant.code}`}
+                                  disabled={!canLinkBarcode}
+                                  onClick={() =>
+                                    setDraft({
+                                      ...draft,
+                                      variants: (draft.variants ?? []).filter(
+                                        (entry) => entry.code !== variant.code,
+                                      ),
+                                    })
+                                  }
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap gap-1">
                           {(draft.barcodes ?? []).map((code) => (
                             <Badge
                               key={code}
@@ -506,7 +587,14 @@ function Inventory() {
                             </Badge>
                           ))}
                         </div>
-                        <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                        <div
+                          className={cn(
+                            "mt-1 grid grid-cols-1 gap-2",
+                            showMoney
+                              ? "sm:grid-cols-[minmax(12rem,1.5fr)_minmax(9rem,1fr)_7rem_7rem]"
+                              : "sm:grid-cols-[minmax(12rem,1.5fr)_minmax(9rem,1fr)_7rem]",
+                          )}
+                        >
                           <Input
                             disabled={!canLinkBarcode}
                             value={aliasDraft}
@@ -526,19 +614,51 @@ function Inventory() {
                                 ...draft,
                                 variants: [
                                   ...(draft.variants ?? []).filter((v) => v.code !== code),
-                                  { code, label: variantLabel.trim() || undefined },
+                                  {
+                                    code,
+                                    label: variantLabel.trim() || undefined,
+                                    cost: showMoney
+                                      ? Number(variantCost || draft.cost) || 0
+                                      : undefined,
+                                    price: Number(variantPrice || draft.price) || 0,
+                                  },
                                 ],
                               });
                               setAliasDraft("");
                               setVariantLabel("");
+                              setVariantCost("");
+                              setVariantPrice("");
                             }}
                           />
                           <Input
                             disabled={!canLinkBarcode}
                             value={variantLabel}
                             placeholder="Label (colour, size, pack)"
-                            className="w-full sm:w-56"
                             onChange={(e) => setVariantLabel(e.target.value)}
+                          />
+                          {showMoney && (
+                            <Input
+                              disabled={!canPrice}
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={variantCost}
+                              placeholder={`Cost (${draft.cost})`}
+                              aria-label="Variation cost"
+                              className="numeric"
+                              onChange={(event) => setVariantCost(event.target.value)}
+                            />
+                          )}
+                          <Input
+                            disabled={!canPrice}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={variantPrice}
+                            placeholder={`Selling (${draft.price})`}
+                            aria-label="Variation selling price"
+                            className="numeric"
+                            onChange={(event) => setVariantPrice(event.target.value)}
                           />
                         </div>
                         <p className="mt-1 text-[11px] text-muted-foreground">
@@ -918,15 +1038,15 @@ function Inventory() {
                     aria-label="Select all products"
                   />
                 </TableHead>
-                <ResizableHead>Product</ResizableHead>
-                <ResizableHead>Category</ResizableHead>
-                <ResizableHead>Sub-category</ResizableHead>
-                {showMoney && <ResizableHead className="text-right">Cost</ResizableHead>}
-                <ResizableHead className="text-right">Price</ResizableHead>
-                {showMoney && <ResizableHead className="text-right">Margin</ResizableHead>}
-                {canEcom && <ResizableHead className="text-center">On web</ResizableHead>}
-                <ResizableHead className="text-center">Stock · {currentStore.code}</ResizableHead>
-                <ResizableHead className="text-center">Other stores</ResizableHead>
+                <TableHead className="min-w-24">Product</TableHead>
+                <TableHead className="min-w-24">Category</TableHead>
+                <TableHead className="min-w-24">Sub-category</TableHead>
+                {showMoney && <TableHead className="min-w-24 text-right">Cost</TableHead>}
+                <TableHead className="min-w-24 text-right">Price</TableHead>
+                {showMoney && <TableHead className="min-w-24 text-right">Margin</TableHead>}
+                {canEcom && <TableHead className="min-w-24 text-center">On web</TableHead>}
+                <TableHead className="min-w-24 text-center">Stock · {currentStore.code}</TableHead>
+                <TableHead className="min-w-24 text-center">Other stores</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -1157,14 +1277,6 @@ function Inventory() {
         </DialogContent>
       </Dialog>
     </AppShell>
-  );
-}
-
-function ResizableHead({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return (
-    <TableHead className={`min-w-24 ${className}`}>
-      <div className="min-w-full resize-x overflow-hidden pr-3">{children}</div>
-    </TableHead>
   );
 }
 

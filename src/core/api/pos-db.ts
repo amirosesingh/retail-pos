@@ -250,8 +250,18 @@ export const productToRow = (p: Product): Row => {
     barcode_aliases: safeArray<string>(p.barcodes)
       .map((b) => String(b ?? "").trim())
       .filter(Boolean),
-    barcode_variants: safeArray<{ code?: string; label?: string }>(p.variants)
-      .map((v) => ({ code: String(v?.code ?? "").trim(), label: v?.label?.trim() || undefined }))
+    barcode_variants: safeArray<{
+      code?: string;
+      label?: string;
+      cost?: number;
+      price?: number;
+    }>(p.variants)
+      .map((v) => ({
+        code: String(v?.code ?? "").trim(),
+        label: v?.label?.trim() || undefined,
+        cost: v?.cost == null ? undefined : safeNum(v.cost),
+        price: v?.price == null ? undefined : safeNum(v.price),
+      }))
       .filter((v) => v.code),
     cost_price: safeNum(p.cost),
     selling_price: safeNum(p.price),
@@ -1113,6 +1123,10 @@ async function loadCompleteProductCatalogue(): Promise<PagedRead<Row>> {
     if (total === null) total = typeof result.count === "number" ? result.count : null;
     const page = (result.data as Row[] | null) ?? [];
     rows.push(...page);
+    // A full final window is still complete when the exact count says we have
+    // reached the end (for example exactly 100,000 products).
+    if (total !== null && rows.length >= total)
+      return { data: rows.slice(0, total), error: null, total, capped: false };
     if (page.length < PAGE)
       return { data: rows, error: null, total: total ?? rows.length, capped: false };
     if (rows.length >= MAX_ROWS)

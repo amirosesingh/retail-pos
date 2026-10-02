@@ -7,7 +7,13 @@
  */
 import { describe, expect, it } from "vitest";
 import { productVisibleAt } from "@/lib/branch-policy";
-import { applyScopedProductPrices, productToRow, rowToProduct, rowToStore, storeToRow } from "@/core/api/pos-db";
+import {
+  applyScopedProductPrices,
+  productToRow,
+  rowToProduct,
+  rowToStore,
+  storeToRow,
+} from "@/core/api/pos-db";
 import { defaultSettings } from "@/lib/pos-seed";
 import type { AppSettings, Product, Store } from "@/core/types/pos-types";
 
@@ -90,6 +96,18 @@ describe("the owner survives a round trip through the database", () => {
     expect(rowToProduct({ id: "p1", name: "x" }).ownerStoreId).toBeNull();
   });
 
+  it("persists barcode variation cost and selling price inside the product JSON", () => {
+    const row = productToRow(
+      product({ variants: [{ code: "BLUE-1", label: "Blue", cost: 7.5, price: 12.9 }] }),
+    );
+    expect(row.barcode_variants).toEqual([
+      { code: "BLUE-1", label: "Blue", cost: 7.5, price: 12.9 },
+    ]);
+    expect(rowToProduct({ ...row, selling_price: 10, cost_price: 5 }).variants).toEqual([
+      { code: "BLUE-1", label: "Blue", cost: 7.5, price: 12.9 },
+    ]);
+  });
+
   it("carries the branch privacy switch on the branch record", () => {
     const branch: Store = {
       id: "branch-a",
@@ -109,12 +127,31 @@ describe("the owner survives a round trip through the database", () => {
 describe("scoped product prices", () => {
   it("uses the most specific applicable price without changing the global product", () => {
     const base = product({ price: 100, ecomPrice: 105 });
-    const priced = applyScopedProductPrices([base], [
-      { scope: "GLOBAL", scope_id: "", key: "product_price:p1", value: { selling_price: 99 } },
-      { scope: "BRANCH", scope_id: "branch-a", key: "product_price:p1", value: { selling_price: 95 } },
-      { scope: "TERMINAL", scope_id: "terminal-a", key: "product_price:p1", value: { selling_price: 92 } },
-      { scope: "BRANCH", scope_id: "branch-b", key: "product_price:p1", value: { selling_price: 1 } },
-    ], { branchId: "branch-a", terminalId: "terminal-a" });
+    const priced = applyScopedProductPrices(
+      [base],
+      [
+        { scope: "GLOBAL", scope_id: "", key: "product_price:p1", value: { selling_price: 99 } },
+        {
+          scope: "BRANCH",
+          scope_id: "branch-a",
+          key: "product_price:p1",
+          value: { selling_price: 95 },
+        },
+        {
+          scope: "TERMINAL",
+          scope_id: "terminal-a",
+          key: "product_price:p1",
+          value: { selling_price: 92 },
+        },
+        {
+          scope: "BRANCH",
+          scope_id: "branch-b",
+          key: "product_price:p1",
+          value: { selling_price: 1 },
+        },
+      ],
+      { branchId: "branch-a", terminalId: "terminal-a" },
+    );
     expect(priced[0].price).toBe(92);
     expect(base.price).toBe(100);
   });

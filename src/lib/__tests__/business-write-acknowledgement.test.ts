@@ -35,6 +35,9 @@ describe("business UI persistence acknowledgements", () => {
     expect(dialog).toContain("await db.saveStockCountDraft");
     expect(dialog).toContain("await persistDraft()");
     expect(dialog).toContain("await applyStockCount(");
+    expect(dialog).toContain("if (postingRef.current) return");
+    expect(dialog).toContain("postingRef.current = true");
+    expect(dialog).toContain("postingRef.current = false");
     expect(store).toContain(".commitStockAdjustments(");
     expect(store).toContain("draftId ? { id: draftId, by: postedBy }");
   });
@@ -62,6 +65,18 @@ describe("business UI persistence acknowledgements", () => {
     expect(store).toContain("await saveTransfer({");
     expect(store).not.toContain("void dispatchTransferInDb");
     expect(store).not.toContain("void receiveTransferInDb");
+    expect(store).toContain('type: "stock_request_received"');
+    expect(store).toContain('type: "transfer_sent"');
+    expect(store).toContain('type: "transfer_received"');
+  });
+
+  it("keeps receiving records visible and opens stock entry in one Add New dialog", () => {
+    const purchasing = source("src/routes/purchasing.tsx");
+    expect(purchasing).toContain("<PackagePlus");
+    expect(purchasing).toContain("Add new stock");
+    expect(purchasing).toContain("open={entryOpen}");
+    expect(purchasing).toContain('type: "po_finalised"');
+    expect(purchasing).toContain('<h2 className="text-sm font-semibold">Receiving records</h2>');
   });
 
   it("retains only explicitly soft or post-commit asynchronous work", () => {
@@ -87,8 +102,6 @@ describe("business UI persistence acknowledgements", () => {
     expect(lookup).toContain('"shift_list_secure"');
     expect(lookup).toContain(': "unknown"');
     expect(lookup).not.toContain('.from("shifts"');
-    expect(source("src/lib/pos-store.tsx")).toContain(
-      "db.shiftExists(shift.id, shift.storeId)",
-    );
+    expect(source("src/lib/pos-store.tsx")).toContain("db.shiftExists(shift.id, shift.storeId)");
   });
 });

@@ -47,14 +47,29 @@ export type BoardData = {
 
 /** Current branch names win; sale snapshots only retain names for deleted branches. */
 export function resolveStoreNames(
-  directory: { id: unknown; name: unknown }[],
+  directory: { id: unknown; name: unknown; code?: unknown }[],
   bills: { store_id: unknown; store_name_snapshot: unknown }[],
 ): Record<string, string> {
+  const live = directory.map((row) => ({
+    id: String(row.id),
+    name: String(row.name || "Unnamed shop").trim() || "Unnamed shop",
+    code: String(row.code ?? "").trim(),
+  }));
+  const duplicateNames = new Map<string, number>();
+  for (const row of live) {
+    const key = row.name.toLowerCase();
+    duplicateNames.set(key, (duplicateNames.get(key) ?? 0) + 1);
+  }
   return Object.fromEntries([
     ...bills
       .filter((row) => row.store_id && row.store_name_snapshot)
       .map((row) => [String(row.store_id), String(row.store_name_snapshot)]),
-    ...directory.map((row) => [String(row.id), String(row.name || "Unnamed shop")]),
+    ...live.map((row) => {
+      const duplicated = (duplicateNames.get(row.name.toLowerCase()) ?? 0) > 1;
+      const identity =
+        row.code && row.code.toLowerCase() !== row.name.toLowerCase() ? row.code : row.id;
+      return [row.id, duplicated ? `${row.name} · ${identity}` : row.name];
+    }),
   ]);
 }
 
@@ -132,7 +147,7 @@ export async function fetchBoard(from: string, to: string): Promise<BoardData> {
       )
       .gte("created_at", from)
       .lte("created_at", endOfDay(to)),
-    supabase.from("stores").select("id, name"),
+    supabase.from("stores").select("id, name, code"),
   ]);
 
   const issues: BoardIssue[] = [];

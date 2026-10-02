@@ -200,13 +200,45 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   return { held, holdOrder, resumeHeld };
 }
 
-type ClaimedGrant = Omit<
+export type ClaimedGrant = Omit<
   Parameters<NonNullable<HeldOrdersDeps["onApprovalClaimed"]>>[0],
   "approvedBy" | "approvedByName"
 > & {
   approvedBy?: string | null;
   approvedByName?: string | null;
 };
+
+export type ApprovalDiscountState = {
+  lines: CartLine[];
+  cartDiscount: number;
+  cartDiscountType: DiscountType;
+};
+
+/** Remove only the economic effect that came from this approval. */
+export function removeApprovedDiscount(
+  state: ApprovalDiscountState,
+  grant: Pick<ClaimedGrant, "actionKey" | "approvedPayload">,
+): ApprovalDiscountState {
+  if (grant.actionKey !== "discount_over_limit") return state;
+  const payload = grant.approvedPayload;
+  if (payload["discount_scope"] === "bill") {
+    return { ...state, cartDiscount: 0 };
+  }
+
+  const productId = String(payload["target_product_id"] ?? "");
+  const targetIndex = Number(payload["target_index"]);
+  if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= state.lines.length) {
+    return state;
+  }
+  const target = state.lines[targetIndex];
+  if (!target || (productId && target.productId !== productId)) return state;
+  return {
+    ...state,
+    lines: state.lines.map((line, index) =>
+      index === targetIndex ? { ...line, discount: 0 } : line,
+    ),
+  };
+}
 
 /** Apply the value the manager actually granted to the exact bill/line target. */
 export function applyApprovedDiscount(order: HeldOrder, grant: ClaimedGrant) {

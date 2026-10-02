@@ -38,10 +38,11 @@ export function activityVisibleTo(
   if (audience && audience !== "configured_approvers") exactUsers.push(audience);
   const exactUser = exactUsers.some((value) => ids.has(value));
   const roleMatch = strings(meta["audience_roles"]).includes((identity.role ?? "").toLowerCase());
+  const terminalTarget = String(meta["audience_terminal_id"] ?? "").toLowerCase();
   const terminalMatch =
+    Boolean(terminalTarget) &&
     Boolean(identity.terminalId) &&
-    String(meta["audience_terminal_id"] ?? row.terminal_id ?? "").toLowerCase() ===
-      identity.terminalId!.toLowerCase();
+    terminalTarget === identity.terminalId!.toLowerCase();
   const rowStore = String(row.store_id ?? "");
   const sameBranch = !rowStore || !identity.storeId || rowStore === identity.storeId;
   return sameBranch && (exactUser || roleMatch || terminalMatch);

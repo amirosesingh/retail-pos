@@ -10,17 +10,30 @@ const cashier = {
 };
 
 describe("targeted activity notifications", () => {
-  it("shows an approval result only to its requester or originating terminal", () => {
+  it("shows an approval result only to its requester", () => {
     const row = {
       store_id: "branch-a",
       terminal_id: "terminal-a",
-      meta: { audience_user_ids: ["cashier-1"], audience_terminal_id: "terminal-a" },
+      meta: { audience_user_ids: ["cashier-1"] },
     };
     expect(activityVisibleTo(row, cashier)).toBe(true);
     expect(
       activityVisibleTo(row, { ...cashier, userIds: ["cashier-2"], terminalId: "terminal-b" }),
     ).toBe(false);
     expect(activityVisibleTo(row, { ...cashier, storeId: "branch-b" })).toBe(false);
+    expect(
+      activityVisibleTo(row, { ...cashier, userIds: ["cashier-2"], terminalId: "terminal-a" }),
+    ).toBe(false);
+  });
+
+  it("honours an explicit terminal-only audience for non-user alerts", () => {
+    const row = {
+      store_id: "branch-a",
+      terminal_id: "source-terminal",
+      meta: { audience_terminal_id: "terminal-a" },
+    };
+    expect(activityVisibleTo(row, cashier)).toBe(true);
+    expect(activityVisibleTo(row, { ...cashier, terminalId: "terminal-b" })).toBe(false);
   });
 
   it("routes requests only to configured approver roles in the same branch", () => {

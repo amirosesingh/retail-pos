@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Product } from "@/core/types/pos-types";
-import { findDuplicateProductCodes, productCodeProblems } from "@/lib/product-lookup";
+import {
+  findDuplicateProductCodes,
+  productCodeProblems,
+  variantForBarcode,
+} from "@/lib/product-lookup";
 
 const product = (
   id: string,
@@ -57,5 +61,18 @@ describe("catalogue code duplicate audit", () => {
       variants: [{ code: undefined as unknown as string }],
     });
     expect(productCodeProblems([], draft)).toEqual([]);
+  });
+
+  it("resolves the exact barcode variation with its own cost and selling price", () => {
+    const row = product("a", "SKU-1", "BAR-1", {
+      variants: [{ code: "BLUE-1", label: "Blue", cost: 7.5, price: 12.9 }],
+    });
+    expect(variantForBarcode(row, " blue-1 ")).toEqual({
+      code: "BLUE-1",
+      label: "Blue",
+      cost: 7.5,
+      price: 12.9,
+    });
+    expect(variantForBarcode(row, "BAR-1")).toBeUndefined();
   });
 });

@@ -25,6 +25,7 @@ import {
   inRange,
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
+import { branchDisplayName } from "@/lib/human-readable";
 
 export const Route = createFileRoute("/reports/items")({
   head: () => ({
@@ -86,7 +87,7 @@ function ItemSalesReport() {
 
   const totals = sumLines(rows);
   const pager = usePagination(rows);
-  const storeName = (id: string) => stores.find((s) => s.id === id)?.name ?? id;
+  const storeName = (id: string) => branchDisplayName(stores, id);
 
   return (
     <AppShell>
@@ -176,7 +177,9 @@ function ItemSalesReport() {
           </div>
         </ReportHeader>
 
-        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.loading ? (
+          <p className="text-sm text-muted-foreground">Loading complete SQL history…</p>
+        ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
@@ -234,7 +237,9 @@ function ItemSalesReport() {
                   </TableCell>
                   <TableCell className="numeric text-right">
                     {money(l.cost)}
-                    {l.estimatedCost && <span className="ml-1 text-[10px] text-muted-foreground">est.</span>}
+                    {l.estimatedCost && (
+                      <span className="ml-1 text-[10px] text-muted-foreground">est.</span>
+                    )}
                   </TableCell>
                   <TableCell
                     className={`numeric text-right ${l.profit < 0 ? "text-destructive" : ""}`}
@@ -246,7 +251,10 @@ function ItemSalesReport() {
               ))}
               {!rows.length && (
                 <TableRow>
-                  <TableCell colSpan={12} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={12}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     No items sold in this window.
                   </TableCell>
                 </TableRow>

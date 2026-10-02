@@ -213,6 +213,7 @@ export function StockCountDialog({
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [posting, setPosting] = useState(false);
+  const postingRef = useRef(false);
   const codeRef = useRef<HTMLInputElement>(null);
   const countRef = useRef<HTMLInputElement>(null);
   const draftCreatedAt = useRef<string | null>(null);
@@ -380,7 +381,7 @@ export function StockCountDialog({
   };
 
   const post = async () => {
-    if (posting) return;
+    if (postingRef.current) return;
     if (!reason) {
       toast.warning("Choose a reason before posting this count.");
       return;
@@ -392,6 +393,7 @@ export function StockCountDialog({
       toast.warning("Nothing to post — every counted quantity matches the system.");
       return;
     }
+    postingRef.current = true;
     setPosting(true);
     try {
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -452,6 +454,7 @@ export function StockCountDialog({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Stock count could not be posted.");
     } finally {
+      postingRef.current = false;
       setPosting(false);
     }
   };

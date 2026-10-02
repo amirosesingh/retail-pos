@@ -307,7 +307,7 @@ function RootComponent() {
 
                       <AndroidUpdateBanner />
                       <DesktopUpdateBanner />
-                      <Toaster position="top-center" />
+                      <Toaster position="top-right" closeButton />
                       <ErrorNotifier />
                     </RulesBridge>
                   </PosProvider>

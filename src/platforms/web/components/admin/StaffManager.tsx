@@ -17,6 +17,7 @@ import {
   UserX,
 } from "lucide-react";
 import { toast } from "sonner";
+import { branchDisplayName } from "@/lib/human-readable";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -254,9 +255,7 @@ export function StaffManager() {
   // The branch must be an explicit decision: a real branch, or "all".
   const branchValid = form.branchId === "all" || stores.some((store) => store.id === form.branchId);
   const branchId = form.branchId === "all" ? null : form.branchId;
-  const branchLabel = branchId
-    ? (stores.find((store) => store.id === branchId)?.name ?? branchId)
-    : "All branches";
+  const branchLabel = branchId ? branchDisplayName(stores, branchId) : "All branches";
   const canSave = nameValid && identifierValid && credentialValid && branchValid && !!selectedRole;
 
   const save = async () => {

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -88,6 +89,196 @@ function plainText(node: React.ReactNode): string {
   return React.Children.toArray(node.props.children).map(plainText).join(" ").trim();
 }
 
+type TableSortDirection = "asc" | "desc";
+type TableSortState = { column: number; direction: TableSortDirection } | null;
+
+function hasInteractiveContent(node: React.ReactNode): boolean {
+  if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return false;
+  if (
+    typeof node.type === "string" &&
+    ["button", "a", "input", "select", "textarea"].includes(node.type)
+  )
+    return true;
+  return React.Children.toArray(node.props.children).some(hasInteractiveContent);
+}
+
+function sortableHeaderLabel(label: string): boolean {
+  return Boolean(label) && !/^(action|actions|menu|select)$/i.test(label.trim());
+}
+
+function decorateHeaderCells(
+  node: React.ReactNode,
+  sort: TableSortState,
+  toggleSort: (column: number) => void,
+  cursor: { column: number },
+): React.ReactNode {
+  if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
+  if (node.type === TableHead) {
+    type SortableHeadProps = React.ThHTMLAttributes<HTMLTableCellElement> & {
+      "data-sortable"?: boolean | "true" | "false";
+    };
+    const head = node as React.ReactElement<SortableHeadProps>;
+    const column = cursor.column;
+    cursor.column += Number(head.props.colSpan ?? 1);
+    const label = plainText(head.props.children);
+    const explicitlyDisabled =
+      head.props["data-sortable"] === false || head.props["data-sortable"] === "false";
+    const canSort =
+      !explicitlyDisabled &&
+      sortableHeaderLabel(label) &&
+      !hasInteractiveContent(head.props.children) &&
+      Number(head.props.colSpan ?? 1) === 1;
+    if (!canSort) return head;
+
+    const active = sort?.column === column;
+    const direction = active ? sort.direction : null;
+    const Icon = direction === "asc" ? ArrowUp : direction === "desc" ? ArrowDown : ArrowUpDown;
+    const nextDirection = direction === "asc" ? "descending" : "ascending";
+    const rightAligned = String(head.props.className ?? "").includes("text-right");
+    return React.cloneElement(
+      head,
+      {
+        "aria-sort":
+          direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none",
+      },
+      <button
+        type="button"
+        className={cn(
+          "group inline-flex min-h-8 w-full items-center gap-1 rounded-sm px-1 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          rightAligned ? "justify-end" : "justify-start",
+        )}
+        aria-label={`${label}, ${direction ? `sorted ${direction === "asc" ? "ascending" : "descending"}` : "not sorted"}. Sort ${nextDirection}`}
+        onClick={() => toggleSort(column)}
+      >
+        <span>{head.props.children}</span>
+        <Icon
+          aria-hidden="true"
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            active ? "text-foreground" : "text-muted-foreground/70 group-hover:text-foreground",
+          )}
+        />
+      </button>,
+    );
+  }
+  return React.cloneElement(
+    node,
+    undefined,
+    React.Children.map(node.props.children, (child) =>
+      decorateHeaderCells(child, sort, toggleSort, cursor),
+    ),
+  );
+}
+
+function decorateTableHeaders(
+  node: React.ReactNode,
+  sort: TableSortState,
+  toggleSort: (column: number) => void,
+): React.ReactNode {
+  if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
+  if (node.type === TableHeader) {
+    const cursor = { column: 0 };
+    return React.cloneElement(
+      node,
+      undefined,
+      React.Children.map(node.props.children, (child) =>
+        decorateHeaderCells(child, sort, toggleSort, cursor),
+      ),
+    );
+  }
+  return React.cloneElement(
+    node,
+    undefined,
+    React.Children.map(node.props.children, (child) =>
+      decorateTableHeaders(child, sort, toggleSort),
+    ),
+  );
+}
+
+function firstTableRow(
+  node: React.ReactNode,
+): React.ReactElement<{ children?: React.ReactNode }> | null {
+  if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return null;
+  if (node.type === TableRow) return node;
+  for (const child of React.Children.toArray(node.props.children)) {
+    const row = firstTableRow(child);
+    if (row) return row;
+  }
+  return null;
+}
+
+function tableCellText(rowGroup: React.ReactNode, targetColumn: number): string | null {
+  const row = firstTableRow(rowGroup);
+  if (!row) return null;
+  let column = 0;
+  for (const cell of React.Children.toArray(row.props.children)) {
+    type SortableCellProps = React.TdHTMLAttributes<HTMLTableCellElement> & {
+      "data-sort-value"?: string | number;
+    };
+    if (!React.isValidElement<SortableCellProps>(cell) || cell.type !== TableCell) continue;
+    const span = Number(cell.props.colSpan ?? 1);
+    if (targetColumn >= column && targetColumn < column + span) {
+      if (span !== 1) return null;
+      return String(cell.props["data-sort-value"] ?? plainText(cell.props.children)).trim();
+    }
+    column += span;
+  }
+  return null;
+}
+
+function numericTableValue(value: string): number | null {
+  const compact = value.trim().replace(/\s+/g, " ");
+  if (!compact) return null;
+  const negative = /^\(.*\)$/.test(compact);
+  const stripped = compact
+    .replace(/[,$£€¥%]/g, "")
+    .replace(/^\((.*)\)$/, "$1")
+    .trim();
+  if (!/^[+-]?\d+(?:\.\d+)?$/.test(stripped)) return null;
+  const parsed = Number(stripped);
+  return Number.isFinite(parsed) ? (negative ? -parsed : parsed) : null;
+}
+
+function compareTableText(left: string, right: string): number {
+  if (!left && !right) return 0;
+  if (!left) return 1;
+  if (!right) return -1;
+  const leftNumber = numericTableValue(left);
+  const rightNumber = numericTableValue(right);
+  if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
+  return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function sortTableBodies(node: React.ReactNode, sort: TableSortState): React.ReactNode {
+  if (!sort || !React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
+  if (node.type === TableBody) {
+    const groups = React.Children.toArray(node.props.children).map((child, index) => ({
+      child,
+      index,
+      value: tableCellText(child, sort.column),
+    }));
+    const sortable = groups.filter((group) => group.value !== null).length > 1;
+    if (!sortable) return node;
+    const direction = sort.direction === "asc" ? 1 : -1;
+    groups.sort((left, right) => {
+      if (left.value === null && right.value === null) return left.index - right.index;
+      if (left.value === null) return 1;
+      if (right.value === null) return -1;
+      return compareTableText(left.value, right.value) * direction || left.index - right.index;
+    });
+    return React.cloneElement(
+      node,
+      undefined,
+      groups.map((group) => group.child),
+    );
+  }
+  return React.cloneElement(
+    node,
+    undefined,
+    React.Children.map(node.props.children, (child) => sortTableBodies(child, sort)),
+  );
+}
+
 function findHeaderLabels(node: React.ReactNode): string[] {
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return [];
   if (node.type === TableHeader) {
@@ -149,12 +340,23 @@ type TableProps = React.HTMLAttributes<HTMLTableElement> & {
 
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
   ({ className, children, mobileCards = true, ...props }, ref) => {
+    const [sort, setSort] = React.useState<TableSortState>(null);
+    const toggleSort = React.useCallback((column: number) => {
+      setSort((current) => ({
+        column,
+        direction: current?.column === column && current.direction === "asc" ? "desc" : "asc",
+      }));
+    }, []);
     let labels: string[] = [];
     for (const child of React.Children.toArray(children)) {
       labels = findHeaderLabels(child);
       if (labels.length) break;
     }
-    const content = React.Children.map(children, (child) => labelTableBodies(child, labels));
+    const sorted = React.Children.map(children, (child) => sortTableBodies(child, sort));
+    const labelled = React.Children.map(sorted, (child) => labelTableBodies(child, labels));
+    const content = React.Children.map(labelled, (child) =>
+      decorateTableHeaders(child, sort, toggleSort),
+    );
     return (
       <div className="responsive-table-region relative w-full max-w-full overflow-x-auto overscroll-x-contain">
         <table

@@ -74,6 +74,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261001160000_auto_archive_zero_stock_products.sql",
       "supabase/migrations/20261001170000_granular_product_permissions.sql",
       "supabase/migrations/20261001180000_retire_parallel_settings_api.sql",
+      "supabase/migrations/20261002010743_enforce_zero_stock_catalog_lifecycle.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -107,7 +108,7 @@ describe("canonical Supabase SQL", () => {
 
   it("keeps the optional zero-stock catalogue lifecycle in the canonical schema", () => {
     const migration = read(
-      "supabase/migrations/20261001160000_auto_archive_zero_stock_products.sql",
+      "supabase/migrations/20261002010743_enforce_zero_stock_catalog_lifecycle.sql",
     );
     const schema = read("supabase/schema.sql");
     for (const sql of [migration, schema]) {
@@ -118,9 +119,7 @@ describe("canonical Supabase SQL", () => {
       expect(sql).toContain("FUNCTION public.backfill_zero_stock_catalog_lifecycle()");
       expect(sql).toContain("AFTER UPDATE OF integration_settings ON public.pos_settings");
       expect(sql).toContain("integration_settings ->> 'autoArchiveZeroStock'");
-      expect(sql).toContain(
-        "COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')",
-      );
+      expect(sql).toContain("COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')");
       expect(sql).toContain("Reconcile products already present");
       expect(sql).toContain("p.is_archived IS DISTINCT FROM NOT stock_state.has_stock");
       expect(sql).toContain(

@@ -12,8 +12,12 @@
 /** Rows per request — the server-side cap. */
 export const PAGE = 1000;
 
-/** Hard ceiling so a runaway loop can never hang the till. */
-export const MAX_ROWS = 100_000;
+/**
+ * Hard ceiling so a runaway loop can never hang the till. The catalogue UI
+ * renders only its current page, so this protects genuinely exceptional data
+ * while allowing the hundreds-of-thousands scale expected by large shops.
+ */
+export const MAX_ROWS = 500_000;
 
 /** How many windows may be in the air at once. */
 const CONCURRENCY = 3;
@@ -52,7 +56,8 @@ export async function readAllPages<T>(
 
   const rows = [...(first.data ?? [])];
   const total = typeof first.count === "number" ? first.count : null;
-  if (rows.length < size) return { data: rows, error: null, total: total ?? rows.length, capped: false };
+  if (rows.length < size)
+    return { data: rows, error: null, total: total ?? rows.length, capped: false };
 
   // The database told us how many rows there are: fetch the remaining windows
   // together instead of discovering the end one round trip at a time.

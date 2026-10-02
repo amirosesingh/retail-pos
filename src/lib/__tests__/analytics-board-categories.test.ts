@@ -34,6 +34,20 @@ describe("business board category drilldown", () => {
       deleted: "Closed kiosk",
     });
   });
+  it("disambiguates live branches that currently share the same name", () => {
+    expect(
+      resolveStoreNames(
+        [
+          { id: "branch-a", code: "A1", name: "Main Shop" },
+          { id: "branch-b", code: "B1", name: "Main Shop" },
+        ],
+        [],
+      ),
+    ).toEqual({
+      "branch-a": "Main Shop · A1",
+      "branch-b": "Main Shop · B1",
+    });
+  });
   it("aggregates categories before exposing individual items", () => {
     const result = topCategories(
       [
