@@ -129,6 +129,42 @@ describe("relay authorisation", () => {
     expect(allowed.ok).toBe(true);
   });
 
+  it("allows new and idempotent sale upserts but blocks tender changes", async () => {
+    const sale = {
+      id: "s-new",
+      store_id: "STORE-A",
+      payment_type: "cash",
+      payments: [{ method: "cash", amount: 10 }],
+    };
+    restMock.mockResolvedValueOnce({ ok: true, json: async () => [] });
+    expect(
+      (await safeAuthorizeRelayOp({ kind: "upsert", table: "sales", rows: [sale] }, cashier)).ok,
+    ).toBe(true);
+
+    restMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        { id: "s-new", payment_type: "cash", payments: [{ method: "cash", amount: 10 }] },
+      ],
+    });
+    expect(
+      (await safeAuthorizeRelayOp({ kind: "upsert", table: "sales", rows: [sale] }, cashier)).ok,
+    ).toBe(true);
+
+    restMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        { id: "s-new", payment_type: "card", payments: [{ method: "card", amount: 10 }] },
+      ],
+    });
+    const changed = await safeAuthorizeRelayOp(
+      { kind: "upsert", table: "sales", rows: [sale] },
+      cashier,
+    );
+    expect(changed.ok).toBe(false);
+    if (!changed.ok) expect(changed.code).toBe("PERMISSION_DENIED");
+  });
+
   it("accepts correction history only from an administrator", async () => {
     const op = {
       kind: "insert" as const,

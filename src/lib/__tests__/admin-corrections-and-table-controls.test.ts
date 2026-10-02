@@ -10,6 +10,7 @@ describe("administrator corrections and shared table controls", () => {
     const flow = read("src/lib/record-edit-flow.ts");
     expect(server).toContain('who.role.trim().toLowerCase() !== "admin"');
     expect(server.match(/requireAdmin\(who\)/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(server).toContain('error: "A branch scope is required"');
     expect(flow).toContain('identity.role.trim().toLowerCase() !== "admin"');
     expect(flow).not.toContain("Sent for approval");
   });

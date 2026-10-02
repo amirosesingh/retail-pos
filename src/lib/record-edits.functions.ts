@@ -263,6 +263,9 @@ export const getRecentRecordEdits = createServerFn({ method: "POST" })
         return { ok: false as const, error: "Audit-trail permission is required", edits: [] };
       }
       const allBranches = scope.roleSlug === "admin" || scope.role === "admin";
+      if (!allBranches && !scope.storeId) {
+        return { ok: false as const, error: "A branch scope is required", edits: [] };
+      }
       const storeId = allBranches ? (data.storeId ?? null) : scope.storeId || null;
       if (!allBranches && data.storeId && data.storeId !== storeId) {
         return { ok: false as const, error: "Cross-branch access is not allowed", edits: [] };
