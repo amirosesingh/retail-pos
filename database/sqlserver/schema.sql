@@ -2679,6 +2679,8 @@ IF OBJECT_ID(N'dbo.members', N'U') IS NULL BEGIN CREATE TABLE dbo.[members] (
   [phone] nvarchar(450) NOT NULL,
   [email] nvarchar(max) NULL,
   [address] nvarchar(max) NULL,
+  [country_code] nvarchar(max) NULL,
+  [postal_code] nvarchar(max) NULL,
   [date_of_birth] date NULL,
   [tier_id] uniqueidentifier NULL,
   [loyalty_points] decimal(38,12) NOT NULL CONSTRAINT [DF_members_loyalty_points] DEFAULT (0),
@@ -2724,6 +2726,10 @@ IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user
 IF COL_LENGTH(N'dbo.members', N'email') IS NULL ALTER TABLE dbo.[members] ADD [email] nvarchar(max) NULL;
 
 IF COL_LENGTH(N'dbo.members', N'address') IS NULL ALTER TABLE dbo.[members] ADD [address] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.members', N'country_code') IS NULL ALTER TABLE dbo.[members] ADD [country_code] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.members', N'postal_code') IS NULL ALTER TABLE dbo.[members] ADD [postal_code] nvarchar(max) NULL;
 
 IF COL_LENGTH(N'dbo.members', N'date_of_birth') IS NULL ALTER TABLE dbo.[members] ADD [date_of_birth] date NULL;
 

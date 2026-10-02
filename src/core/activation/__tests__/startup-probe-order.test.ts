@@ -6,13 +6,14 @@
  * check must wait for the device's saved connection, and a single slow answer
  * must not be recorded as "cannot be reached".
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hydrateProfile = vi.fn(async () => {
   order.push("profile");
 });
 const order: string[] = [];
 let queryImpl: () => Promise<{ error: { message: string } | null }>;
+let stopMonitor: (() => void) | undefined;
 
 vi.mock("@/lib/connection-profile", () => ({
   awaitProfileHydrated: () => hydrateProfile(),
@@ -27,6 +28,10 @@ vi.mock("@/core/activation/terminal-tokens", () => ({
 
 vi.mock("@/lib/external-supabase-config", () => ({
   hasSupabaseConfig: () => true,
+}));
+
+vi.mock("@/lib/session-expiry", () => ({
+  clearConnectivityIssue: vi.fn(),
 }));
 
 vi.mock("@/integrations/supabase/external-client", () => ({
@@ -48,6 +53,13 @@ describe("start-up connection check", () => {
     order.length = 0;
     hydrateProfile.mockClear();
     queryImpl = async () => ({ error: null });
+    stopMonitor = undefined;
+  });
+
+  afterEach(() => {
+    stopMonitor?.();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("waits for the device's saved connection before probing", async () => {
@@ -78,6 +90,64 @@ describe("start-up connection check", () => {
     health.resetHealthCache();
     await health.checkHealth(true);
     expect(health.cloudVerdict()).toBe("rejected");
+  });
+
+  it("does not let an expired probe overwrite a newer successful retry", async () => {
+    vi.useFakeTimers();
+    let finishExpired!: (value: { error: { message: string } }) => void;
+    let calls = 0;
+    queryImpl = () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise((resolve) => {
+          finishExpired = resolve;
+        });
+      }
+      return Promise.resolve({ error: null });
+    };
+    const health = await import("@/core/activation/connection-health");
+    health.resetHealthCache();
+    const reportPromise = health.checkHealth(true);
+    await vi.advanceTimersByTimeAsync(15_000);
+    const report = await reportPromise;
+    expect(report.cloud).toBe(true);
+    expect(health.cloudVerdict()).toBe("verified");
+
+    finishExpired({ error: { message: "Invalid API key" } });
+    await Promise.resolve();
+    expect(health.cloudVerdict()).toBe("verified");
+  });
+
+  it("does not grace a definitive credential rejection after being online", async () => {
+    vi.useFakeTimers();
+    const browserWindow = new EventTarget();
+    const browserDocument = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    vi.stubGlobal("window", browserWindow);
+    vi.stubGlobal("document", browserDocument);
+    if (typeof CustomEvent === "undefined") {
+      vi.stubGlobal(
+        "CustomEvent",
+        class<T = unknown> extends Event {
+          detail: T | undefined;
+          constructor(name: string, init?: CustomEventInit<T>) {
+            super(name);
+            this.detail = init?.detail;
+          }
+        },
+      );
+    }
+    const health = await import("@/core/activation/connection-health");
+    health.resetHealthCache();
+    health.resetConnectivity();
+    stopMonitor = health.startConnectivityMonitor();
+    await health.heartbeat();
+    await vi.advanceTimersByTimeAsync(health.MIN_CONNECTING_MS);
+    expect(health.connectivity()).toBe("online");
+
+    queryImpl = async () => ({ error: { message: "Invalid API key" } });
+    await health.heartbeat();
+    expect(health.cloudVerdict()).toBe("rejected");
+    expect(health.connectivity()).toBe("offline");
   });
 
   it("only reports the first probe as done once it has settled", async () => {

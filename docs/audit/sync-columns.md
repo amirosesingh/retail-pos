@@ -1,6 +1,6 @@
 # Synchronization column matrix
 
-Generated from the packaged registry: 69 tables and 1175 synchronized columns.
+Generated from the packaged registry: 70 tables and 1184 synchronized columns.
 
 Columns listed here are synchronized unless the table is listed as local-only or cloud-only in the coverage matrix.
 
@@ -61,7 +61,7 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | audit_logs | entity | entity | text | nvarchar(max) | yes | — | no | — | no |
 | audit_logs | before_state | before_state | jsonb | nvarchar(max) | yes | — | no | — | no |
 | audit_logs | after_state | after_state | jsonb | nvarchar(max) | yes | — | no | — | no |
-| audit_logs | store_id | store_id | TEXT | nvarchar(450) | yes | — | no | — | no |
+| audit_logs | store_id | store_id | text | nvarchar(450) | yes | — | no | — | no |
 | authorization_action_history | id | id | uuid | uniqueidentifier | no | — | yes | — | no |
 | authorization_action_history | action_id | action_id | uuid | uniqueidentifier | no | — | no | — | no |
 | authorization_action_history | action_key | action_key | text | nvarchar(max) | no | — | no | — | no |
@@ -180,6 +180,21 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | cashiers | updated_at | updated_at | timestamp with time zone | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | cashiers | role_slug | role_slug | text | nvarchar(max) | yes | — | no | — | no |
 | cashiers | idle_timeout_minutes | idle_timeout_minutes | integer | int | yes | — | no | — | no |
+| change_history | id | id | uuid | uniqueidentifier | no | NEWID() | yes | — | no |
+| change_history | organization_id | organization_id | text | nvarchar(450) | no | 'default' | no | — | no |
+| change_history | entity_type | entity_type | text | nvarchar(max) | no | — | no | — | no |
+| change_history | entity_id | entity_id | text | nvarchar(max) | no | — | no | — | no |
+| change_history | action | action | text | nvarchar(max) | no | — | no | — | no |
+| change_history | old_value | old_value | jsonb | nvarchar(max) | yes | — | no | — | no |
+| change_history | new_value | new_value | jsonb | nvarchar(max) | yes | — | no | — | no |
+| change_history | revision | revision | bigint | bigint | no | — | no | — | no |
+| change_history | scope_type | scope_type | text | nvarchar(max) | no | 'GLOBAL' | no | — | no |
+| change_history | scope_id | scope_id | text | nvarchar(max) | yes | — | no | — | no |
+| change_history | changed_by | changed_by | text | nvarchar(max) | yes | — | no | — | no |
+| change_history | source_application | source_application | text | nvarchar(max) | no | 'web' | no | — | no |
+| change_history | device_id | device_id | text | nvarchar(max) | yes | — | no | — | no |
+| change_history | terminal_id | terminal_id | text | nvarchar(max) | yes | — | no | — | no |
+| change_history | server_timestamp | server_timestamp | timestamptz | datetimeoffset(7) | no | SYSDATETIMEOFFSET() | no | — | no |
 | coupon_campaigns | id | id | uuid | uniqueidentifier | no | NEWID() | yes | — | no |
 | coupon_campaigns | name | name | text | nvarchar(max) | no | — | no | — | no |
 | coupon_campaigns | slug | slug | text | nvarchar(450) | no | — | no | — | yes |
@@ -324,15 +339,6 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | pos_settings | fonts | fonts | jsonb | nvarchar(max) | no | N'{}' | no | — | no |
 | pos_settings | custom_lines | custom_lines | jsonb | nvarchar(max) | no | N'[]' | no | — | no |
 | pos_settings | qr | qr | jsonb | nvarchar(max) | no | N'{}' | no | — | no |
-| pos_settings | review_max_voids | review_max_voids | integer | int | no | 5 | no | — | no |
-| pos_settings | review_max_refunds | review_max_refunds | integer | int | no | 3 | no | — | no |
-| pos_settings | review_max_refund_value | review_max_refund_value | numeric | decimal(38,12) | no | 200 | no | — | no |
-| pos_settings | review_max_nosale | review_max_nosale | integer | int | no | 5 | no | — | no |
-| pos_settings | review_max_discount_pct | review_max_discount_pct | numeric | decimal(38,12) | no | 15 | no | — | no |
-| pos_settings | day_start_time | day_start_time | text | nvarchar(max) | no | '09:00' | no | — | no |
-| pos_settings | day_end_time | day_end_time | text | nvarchar(max) | no | '22:00' | no | — | no |
-| pos_settings | max_shift_hours | max_shift_hours | numeric | decimal(38,12) | no | 12 | no | — | no |
-| pos_settings | shift_reminder_minutes | shift_reminder_minutes | integer | int | no | 30 | no | — | no |
 | pos_settings | ui_visibility | ui_visibility | jsonb | nvarchar(max) | no | N'{"hidden": {}}' | no | — | no |
 | pos_settings | integration_settings | integration_settings | jsonb | nvarchar(max) | no | N'{}' | no | — | no |
 | pos_settings | region_country | region_country | text | nvarchar(max) | no | '' | no | — | no |
@@ -701,6 +707,8 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | members | phone | phone | text | nvarchar(450) | no | — | no | — | yes |
 | members | email | email | text | nvarchar(max) | yes | — | no | — | no |
 | members | address | address | text | nvarchar(max) | yes | — | no | — | no |
+| members | country_code | country_code | text | nvarchar(max) | yes | — | no | — | no |
+| members | postal_code | postal_code | text | nvarchar(max) | yes | — | no | — | no |
 | members | date_of_birth | date_of_birth | date | date | yes | — | no | — | no |
 | members | tier_id | tier_id | uuid | uniqueidentifier | yes | — | no | membership_tiers.id | no |
 | members | loyalty_points | loyalty_points | numeric | decimal(38,12) | no | 0 | no | — | no |
@@ -1117,6 +1125,7 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | sale_items | sale_id | sale_id | uuid | uniqueidentifier | no | — | no | sales.id | no |
 | sale_items | product_id | product_id | uuid | uniqueidentifier | yes | — | no | products.id | no |
 | sale_items | product_name | product_name | text | nvarchar(max) | no | — | no | — | no |
+| sale_items | variant_code | variant_code | text | nvarchar(max) | yes | — | no | — | no |
 | sale_items | unit_price | unit_price | numeric | decimal(38,12) | no | 0 | no | — | no |
 | sale_items | quantity | quantity | integer | int | no | 1 | no | — | no |
 | sale_items | discount_percent | discount_percent | numeric | decimal(38,12) | no | 0 | no | — | no |

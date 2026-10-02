@@ -93,7 +93,16 @@ describe("SQL Server checkpoints 13 through 15", () => {
     const registry = JSON.parse(readFileSync("database/sqlserver/schema-registry.json", "utf8"));
     expect(
       schema.match(/CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE/g),
-    ).toHaveLength(registry.tables.length);
+    ).toHaveLength(registry.tables.length - 1);
+    expect(schema).toContain(
+      "CREATE TRIGGER sync_feed_insert AFTER INSERT ON public.audit_logs",
+    );
+    expect(schema).toContain(
+      "CREATE TRIGGER sync_feed_update AFTER UPDATE ON public.audit_logs",
+    );
+    expect(schema).toContain(
+      "CREATE TRIGGER sync_feed_delete AFTER DELETE ON public.audit_logs",
+    );
     expect(schema).toContain("candidate.branch_id IN (p_branch_id,'global')");
     expect(schema).toContain(
       "candidate.terminal_id IS NULL OR candidate.terminal_id=p_terminal_id",

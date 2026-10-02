@@ -14,6 +14,7 @@ import { hydrateTerminalConfig } from "@/core/activation/terminal-tokens";
 import { hasSupabaseConfig } from "@/lib/external-supabase-config";
 import { awaitProfileHydrated } from "@/lib/connection-profile";
 import { clearConnectivityIssue } from "@/lib/session-expiry";
+import { isMobileShell } from "@/platform-config/features";
 
 /**
  * Why the central database is or is not usable right now.
@@ -55,8 +56,9 @@ export type HealthReport = {
 // is what sent a correctly configured terminal back to the setup screen, so
 // the first probe of a launch is given a realistic budget and later probes,
 // which reuse a warm connection, stay quick.
-const CLOUD_TIMEOUT_FIRST = 8000;
-const CLOUD_TIMEOUT = 2500;
+const CLOUD_TIMEOUT_FIRST = 15_000;
+const CLOUD_TIMEOUT_DESKTOP = 5_000;
+const CLOUD_TIMEOUT_MOBILE = 8_000;
 const LOCAL_TIMEOUT = 800;
 const CACHE_MS = 2000;
 
@@ -100,8 +102,11 @@ let diagnosis: CloudDiagnosis = { issue: "transport" };
 export const cloudVerdict = (): CloudVerdict => verdict;
 export const cloudDiagnosis = (): CloudDiagnosis => diagnosis;
 
-async function probeCloudVerdict(): Promise<CloudVerdict> {
+const cloudTimeout = () => (isMobileShell() ? CLOUD_TIMEOUT_MOBILE : CLOUD_TIMEOUT_DESKTOP);
+
+async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
   await hydrateTerminalConfig();
+  if (signal?.aborted) return "unreachable";
   // The device's own saved connection is the authority and is restored
   // asynchronously. Probing before it lands tests either nothing at all or the
   // pair carried by an older activation record — both of which come back as
@@ -111,16 +116,26 @@ async function probeCloudVerdict(): Promise<CloudVerdict> {
   } catch {
     /* the restore is best-effort; the checks below still hold */
   }
+  if (signal?.aborted) return "unreachable";
   if (!hasSupabaseConfig()) {
+    if (signal?.aborted) return "unreachable";
     diagnosis = { issue: "configuration" };
     return "unconfigured";
   }
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    if (signal?.aborted) return "unreachable";
     diagnosis = { issue: "device-offline" };
     return "unreachable";
   }
   try {
-    const { error } = await supabaseExternal.from("public_flags").select("key").limit(1);
+    const limited = supabaseExternal.from("public_flags").select("key").limit(1);
+    const request =
+      signal && typeof limited.abortSignal === "function" ? limited.abortSignal(signal) : limited;
+    const { error } = await request;
+    // Some query-builder versions cannot cancel the underlying fetch. In that
+    // case the promise may settle after our timeout; never let that expired
+    // result overwrite the newer timeout/recovery verdict.
+    if (signal?.aborted) return "unreachable";
     if (!error) {
       diagnosis = { issue: "none" };
       return "verified";
@@ -151,14 +166,27 @@ async function probeCloudVerdict(): Promise<CloudVerdict> {
     else diagnosis = { issue: "transport", status };
     return "unreachable";
   } catch {
+    if (signal?.aborted) return "unreachable";
     diagnosis = { issue: "transport" };
     return "unreachable";
   }
 }
 
-async function probeCloud(): Promise<boolean> {
-  verdict = await probeCloudVerdict();
-  return verdict === "verified";
+async function probeCloud(signal?: AbortSignal): Promise<boolean> {
+  const next = await probeCloudVerdict(signal);
+  if (signal?.aborted) return false;
+  verdict = next;
+  return next === "verified";
+}
+
+/** Abort the underlying request as well as releasing the caller on timeout. */
+function probeCloudWithin(ms: number): Promise<boolean> {
+  const controller = new AbortController();
+  return withTimeout(probeCloud(controller.signal), ms, () => {
+    diagnosis = { issue: "timeout" };
+    verdict = "unreachable";
+    controller.abort();
+  });
 }
 
 /** A probe that timed out never leaves a stale "verified" behind. */
@@ -197,22 +225,16 @@ export function checkHealth(force = false): Promise<HealthReport> {
   if (!force && fresh(cached)) return Promise.resolve(cached);
   if (inflight) return inflight;
   inflight = (async () => {
-    const budget = probedOnce ? CLOUD_TIMEOUT : CLOUD_TIMEOUT_FIRST;
+    const budget = probedOnce ? cloudTimeout() : CLOUD_TIMEOUT_FIRST;
     const [firstCloud, local] = await Promise.all([
-      withTimeout(probeCloud(), budget, () => {
-        diagnosis = { issue: "timeout" };
-        verdict = "unreachable";
-      }),
+      probeCloudWithin(budget),
       withTimeout(probeLocal(), LOCAL_TIMEOUT),
     ]);
     // A single slow answer must not be recorded as "cannot be reached": that
     // verdict sends a configured terminal back to the connection screen.
     let cloud = firstCloud;
     if (!cloud && verdict === "unreachable")
-      cloud = await withTimeout(probeCloud(), budget, () => {
-        diagnosis = { issue: "timeout" };
-        verdict = "unreachable";
-      });
+      cloud = await probeCloudWithin(budget);
     probedOnce = true;
     settleVerdict(cloud);
     const report: HealthReport = { cloud, local, anyOnline: cloud || local, at: Date.now() };
@@ -271,6 +293,7 @@ let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
 let minTimer: ReturnType<typeof setTimeout> | undefined;
 let heartbeatInflight: Promise<Connectivity> | null = null;
+let consecutiveCloudFailures = 0;
 
 /** Shared lifecycle events consumed by auth, queries and non-query stores. */
 export const APP_RESUME_EVENT = "pos:app-resume";
@@ -326,11 +349,12 @@ function startMinTimer() {
 
 /**
  * The first probe never races a stopwatch: it waits for the request to give a
- * real answer instead of assuming offline after a second.
+ * real answer within the cold-connection budget instead of assuming offline
+ * after a second.
  */
 async function probeDefinitive(): Promise<boolean> {
   try {
-    return await probeCloud();
+    return await probeCloudWithin(CLOUD_TIMEOUT_FIRST);
   } catch {
     return false;
   }
@@ -341,17 +365,26 @@ export async function heartbeat(): Promise<Connectivity> {
   if (heartbeatInflight) return heartbeatInflight;
   heartbeatInflight = (async () => {
     const cloud = resolvedOnce
-      ? await withTimeout(probeCloud(), CLOUD_TIMEOUT, () => {
-          diagnosis = { issue: "timeout" };
-          verdict = "unreachable";
-        })
+      ? await probeCloudWithin(cloudTimeout())
       : await probeDefinitive();
     settleVerdict(cloud);
+    consecutiveCloudFailures = cloud ? 0 : consecutiveCloudFailures + 1;
     const local = await withTimeout(probeLocal(), LOCAL_TIMEOUT);
     cached = { cloud, local, anyOnline: cloud || local, at: Date.now() };
     for (const l of listeners) l(cached);
     if (cloud) clearConnectivityIssue();
-    settle(cloud ? "online" : "offline");
+    // A single slow mobile request must not cover the app with an offline
+    // gate. Keep the last proven-online state while the next heartbeat checks
+    // again; two consecutive failures still fail closed.
+    const definitiveConfigurationFailure = verdict === "rejected" || verdict === "unconfigured";
+    const next =
+      cloud ||
+      (!definitiveConfigurationFailure &&
+        connectivityState === "online" &&
+        consecutiveCloudFailures < 2)
+        ? "online"
+        : "offline";
+    settle(next);
     return connectivityState;
   })().finally(() => {
     heartbeatInflight = null;
@@ -426,6 +459,7 @@ export function resetConnectivity() {
   minElapsed = false;
   pendingResolved = null;
   heartbeatInflight = null;
+  consecutiveCloudFailures = 0;
   monitoring = false;
   if (minTimer) clearTimeout(minTimer);
   minTimer = undefined;

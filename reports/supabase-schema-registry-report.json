@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-01T05:14:28.872Z",
+  "generatedAt": "2026-10-02T23:01:58.591Z",
   "tableCount": 70,
-  "columnCount": 1181,
+  "columnCount": 1184,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -845,7 +845,7 @@
         },
         {
           "name": "store_id",
-          "declaration": "TEXT",
+          "declaration": "text",
           "nullable": true,
           "hasDefault": false
         }
@@ -2305,6 +2305,18 @@
         },
         {
           "name": "address",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "country_code",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "postal_code",
           "declaration": "text",
           "nullable": true,
           "hasDefault": false
@@ -3813,6 +3825,12 @@
           "name": "product_name",
           "declaration": "text NOT NULL",
           "nullable": false,
+          "hasDefault": false
+        },
+        {
+          "name": "variant_code",
+          "declaration": "text",
+          "nullable": true,
           "hasDefault": false
         },
         {

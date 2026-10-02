@@ -166,8 +166,11 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
     action text,
     entity text,
     before_state jsonb,
-    after_state jsonb
+    after_state jsonb,
+    store_id text
 );
+
+ALTER TABLE public.audit_logs ADD COLUMN IF NOT EXISTS store_id text;
 
 CREATE TABLE IF NOT EXISTS public.booking_payments (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -9166,6 +9169,251 @@ ALTER TABLE public.shift_notifications ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.shift_notifications FROM anon;
 GRANT SELECT, INSERT ON public.shift_notifications TO authenticated;
 GRANT ALL ON public.shift_notifications TO service_role;
+-- Non-destructive performance/security cleanup for the production POS API.
+-- No business rows are updated or deleted.
+
+-- Foreign-key indexes keep deletes, joins and reconciliation checks bounded.
+create index if not exists bookings_grip_product_id_idx
+  on public.bookings(grip_product_id);
+create index if not exists bookings_string_source_product_id_idx
+  on public.bookings(string_source_product_id);
+create index if not exists coupon_events_member_id_idx
+  on public.coupon_events(member_id);
+create index if not exists members_tier_id_idx
+  on public.members(tier_id);
+create index if not exists product_categories_parent_id_idx
+  on public.product_categories(parent_id);
+create index if not exists products_owner_store_id_idx
+  on public.products(owner_store_id);
+create index if not exists shift_reconciliations_count_id_idx
+  on public.shift_reconciliations(count_id);
+create index if not exists shift_variance_alerts_shift_id_idx
+  on public.shift_variance_alerts(shift_id);
+
+-- These state tables are RPC-owned. Make the deny-by-default boundary
+-- explicit and remove a stale direct-write grant on reconciliation rows.
+revoke all on public.shift_reconciliations from anon, authenticated;
+revoke all on public.sku_number_leases from anon, authenticated;
+revoke all on public.sku_number_state from anon, authenticated;
+drop policy if exists shift_reconciliations_no_direct_access on public.shift_reconciliations;
+create policy shift_reconciliations_no_direct_access on public.shift_reconciliations
+  for all to anon, authenticated using (false) with check (false);
+drop policy if exists sku_number_leases_no_direct_access on public.sku_number_leases;
+create policy sku_number_leases_no_direct_access on public.sku_number_leases
+  for all to anon, authenticated using (false) with check (false);
+drop policy if exists sku_number_state_no_direct_access on public.sku_number_state;
+create policy sku_number_state_no_direct_access on public.sku_number_state
+  for all to anon, authenticated using (false) with check (false);
+
+-- Remove permissive duplicates that widened branch-scoped operational data.
+drop policy if exists item_activity_staff_write on public.item_activity_logs;
+drop policy if exists item_activity_staff_read on public.item_activity_logs;
+drop policy if exists item_activity_staff_update on public.item_activity_logs;
+drop policy if exists item_activity_logs_insert on public.item_activity_logs;
+drop policy if exists item_activity_logs_read on public.item_activity_logs;
+drop policy if exists item_activity_logs_update on public.item_activity_logs;
+create policy item_activity_logs_insert on public.item_activity_logs
+  for insert to authenticated
+  with check ((select public.is_staff_now()) and (store_id is null or public.store_visible(store_id)));
+create policy item_activity_logs_read on public.item_activity_logs
+  for select to authenticated
+  using ((select public.is_staff_now()) and (store_id is null or public.store_visible(store_id)));
+create policy item_activity_logs_update on public.item_activity_logs
+  for update to authenticated
+  using ((select public.is_staff_now()) and (store_id is null or public.store_visible(store_id)))
+  with check ((select public.is_staff_now()) and (store_id is null or public.store_visible(store_id)));
+
+drop policy if exists payments_staff_write on public.payment_transactions;
+drop policy if exists payments_staff_read on public.payment_transactions;
+drop policy if exists payments_staff_update on public.payment_transactions;
+
+-- Split ALL policies so their SELECT arm cannot overlap the dedicated read
+-- policy. The predicates and effective access remain unchanged.
+drop policy if exists "campaigns managed by staff" on public.coupon_campaigns;
+drop policy if exists "campaigns readable by staff" on public.coupon_campaigns;
+drop policy if exists campaigns_staff_insert on public.coupon_campaigns;
+drop policy if exists campaigns_staff_update on public.coupon_campaigns;
+drop policy if exists campaigns_staff_delete on public.coupon_campaigns;
+create policy "campaigns readable by staff" on public.coupon_campaigns
+  for select to authenticated using ((select public.is_staff_now()));
+create policy campaigns_staff_insert on public.coupon_campaigns
+  for insert to authenticated with check ((select public.is_staff_now()));
+create policy campaigns_staff_update on public.coupon_campaigns
+  for update to authenticated using ((select public.is_staff_now())) with check ((select public.is_staff_now()));
+create policy campaigns_staff_delete on public.coupon_campaigns
+  for delete to authenticated using ((select public.is_staff_now()));
+
+drop policy if exists "vouchers managed by staff" on public.issued_vouchers;
+drop policy if exists "vouchers readable by staff" on public.issued_vouchers;
+drop policy if exists vouchers_staff_insert on public.issued_vouchers;
+drop policy if exists vouchers_staff_update on public.issued_vouchers;
+drop policy if exists vouchers_staff_delete on public.issued_vouchers;
+create policy "vouchers readable by staff" on public.issued_vouchers
+  for select to authenticated using ((select public.is_staff_now()));
+create policy vouchers_staff_insert on public.issued_vouchers
+  for insert to authenticated with check ((select public.is_staff_now()));
+create policy vouchers_staff_update on public.issued_vouchers
+  for update to authenticated using ((select public.is_staff_now())) with check ((select public.is_staff_now()));
+create policy vouchers_staff_delete on public.issued_vouchers
+  for delete to authenticated using ((select public.is_staff_now()));
+
+drop policy if exists payment_types_write on public.payment_types;
+drop policy if exists payment_types_read on public.payment_types;
+drop policy if exists payment_types_insert on public.payment_types;
+drop policy if exists payment_types_update on public.payment_types;
+drop policy if exists payment_types_delete on public.payment_types;
+create policy payment_types_read on public.payment_types
+  for select to authenticated using ((select public.is_staff_now()));
+create policy payment_types_insert on public.payment_types
+  for insert to authenticated with check ((select public.is_supervisor_now()));
+create policy payment_types_update on public.payment_types
+  for update to authenticated using ((select public.is_supervisor_now())) with check ((select public.is_supervisor_now()));
+create policy payment_types_delete on public.payment_types
+  for delete to authenticated using ((select public.is_supervisor_now()));
+
+drop policy if exists "Staff can manage product categories" on public.product_categories;
+drop policy if exists "Staff can read product categories" on public.product_categories;
+drop policy if exists product_categories_staff_insert on public.product_categories;
+drop policy if exists product_categories_staff_update on public.product_categories;
+drop policy if exists product_categories_staff_delete on public.product_categories;
+create policy "Staff can read product categories" on public.product_categories
+  for select to authenticated using ((select public.is_staff_now()));
+create policy product_categories_staff_insert on public.product_categories
+  for insert to authenticated with check ((select public.is_staff_now()));
+create policy product_categories_staff_update on public.product_categories
+  for update to authenticated using ((select public.is_staff_now())) with check ((select public.is_staff_now()));
+create policy product_categories_staff_delete on public.product_categories
+  for delete to authenticated using ((select public.is_staff_now()));
+
+drop policy if exists "Staff can manage suppliers" on public.suppliers;
+drop policy if exists "Staff can read suppliers" on public.suppliers;
+drop policy if exists suppliers_staff_insert on public.suppliers;
+drop policy if exists suppliers_staff_update on public.suppliers;
+drop policy if exists suppliers_staff_delete on public.suppliers;
+create policy "Staff can read suppliers" on public.suppliers
+  for select to authenticated using ((select public.is_staff_now()));
+create policy suppliers_staff_insert on public.suppliers
+  for insert to authenticated with check ((select public.is_staff_now()));
+create policy suppliers_staff_update on public.suppliers
+  for update to authenticated using ((select public.is_staff_now())) with check ((select public.is_staff_now()));
+create policy suppliers_staff_delete on public.suppliers
+  for delete to authenticated using ((select public.is_staff_now()));
+
+drop policy if exists "Staff can manage units" on public.uom_units;
+drop policy if exists "Staff can read units" on public.uom_units;
+drop policy if exists uom_units_staff_insert on public.uom_units;
+drop policy if exists uom_units_staff_update on public.uom_units;
+drop policy if exists uom_units_staff_delete on public.uom_units;
+create policy "Staff can read units" on public.uom_units
+  for select to authenticated using ((select public.is_staff_now()));
+create policy uom_units_staff_insert on public.uom_units
+  for insert to authenticated with check ((select public.is_staff_now()));
+create policy uom_units_staff_update on public.uom_units
+  for update to authenticated using ((select public.is_staff_now())) with check ((select public.is_staff_now()));
+create policy uom_units_staff_delete on public.uom_units
+  for delete to authenticated using ((select public.is_staff_now()));
+
+drop policy if exists settings_locks_write on public.settings_locks;
+drop policy if exists settings_locks_insert on public.settings_locks;
+drop policy if exists settings_locks_update on public.settings_locks;
+drop policy if exists settings_locks_delete on public.settings_locks;
+create policy settings_locks_insert on public.settings_locks
+  for insert to authenticated with check ((select public.is_supervisor_now()));
+create policy settings_locks_update on public.settings_locks
+  for update to authenticated using ((select public.is_supervisor_now())) with check ((select public.is_supervisor_now()));
+create policy settings_locks_delete on public.settings_locks
+  for delete to authenticated using ((select public.is_supervisor_now()));
+
+drop policy if exists settings_overrides_write on public.settings_overrides;
+drop policy if exists settings_overrides_insert on public.settings_overrides;
+drop policy if exists settings_overrides_update on public.settings_overrides;
+drop policy if exists settings_overrides_delete on public.settings_overrides;
+create policy settings_overrides_insert on public.settings_overrides
+  for insert to authenticated with check (public.settings_scope_manageable(scope, scope_id));
+create policy settings_overrides_update on public.settings_overrides
+  for update to authenticated using (public.settings_scope_manageable(scope, scope_id))
+  with check (public.settings_scope_manageable(scope, scope_id));
+create policy settings_overrides_delete on public.settings_overrides
+  for delete to authenticated using (public.settings_scope_manageable(scope, scope_id));
+
+-- A permissive ALL policy cannot be used as a deny guard: it ORs with other
+-- policies. Fold terminal activity into the actual SKU audit permissions.
+drop policy if exists sku_audit_revoked_terminal_block on public.sku_audit;
+drop policy if exists "Staff can add sku audit" on public.sku_audit;
+drop policy if exists "Staff can add to the SKU trail" on public.sku_audit;
+drop policy if exists "Staff can read sku audit" on public.sku_audit;
+drop policy if exists "Staff can read the SKU trail" on public.sku_audit;
+drop policy if exists sku_audit_staff_insert on public.sku_audit;
+drop policy if exists sku_audit_staff_read on public.sku_audit;
+create policy sku_audit_staff_insert on public.sku_audit
+  for insert to authenticated
+  with check ((select public.is_terminal_active()) and (select public.is_staff_now()));
+create policy sku_audit_staff_read on public.sku_audit
+  for select to authenticated
+  using ((select public.is_terminal_active()) and (select public.is_staff_now()));
+
+drop policy if exists "Admins manage roles" on public.user_roles;
+drop policy if exists "Users can read their own roles" on public.user_roles;
+drop policy if exists user_roles_read on public.user_roles;
+drop policy if exists user_roles_admin_insert on public.user_roles;
+drop policy if exists user_roles_admin_update on public.user_roles;
+drop policy if exists user_roles_admin_delete on public.user_roles;
+create policy user_roles_read on public.user_roles
+  for select to authenticated
+  using (user_id = (select auth.uid()) or public.has_role((select auth.uid()), 'admin'::public.app_role));
+create policy user_roles_admin_insert on public.user_roles
+  for insert to authenticated with check (public.has_role((select auth.uid()), 'admin'::public.app_role));
+create policy user_roles_admin_update on public.user_roles
+  for update to authenticated
+  using (public.has_role((select auth.uid()), 'admin'::public.app_role))
+  with check (public.has_role((select auth.uid()), 'admin'::public.app_role));
+create policy user_roles_admin_delete on public.user_roles
+  for delete to authenticated using (public.has_role((select auth.uid()), 'admin'::public.app_role));
+
+-- Cache auth.uid() once per statement in the remaining hot RLS policies.
+drop policy if exists nav_pins_delete_own on public.nav_pins;
+create policy nav_pins_delete_own on public.nav_pins for delete to authenticated
+  using (owner_id = (select auth.uid()) or (owner_id is null and public.has_role((select auth.uid()), 'admin'::public.app_role)));
+drop policy if exists nav_pins_insert_own on public.nav_pins;
+create policy nav_pins_insert_own on public.nav_pins for insert to authenticated
+  with check (owner_id = (select auth.uid()) or (owner_id is null and public.has_role((select auth.uid()), 'admin'::public.app_role)));
+drop policy if exists nav_pins_read_own_and_company on public.nav_pins;
+create policy nav_pins_read_own_and_company on public.nav_pins for select to authenticated
+  using (owner_id = (select auth.uid()) or owner_id is null);
+drop policy if exists nav_pins_update_own on public.nav_pins;
+create policy nav_pins_update_own on public.nav_pins for update to authenticated
+  using (owner_id = (select auth.uid()) or (owner_id is null and public.has_role((select auth.uid()), 'admin'::public.app_role)))
+  with check (owner_id = (select auth.uid()) or (owner_id is null and public.has_role((select auth.uid()), 'admin'::public.app_role)));
+
+drop policy if exists "Staff can read store groups" on public.store_groups;
+create policy "Staff can read store groups" on public.store_groups
+  for select to authenticated using (public.is_staff((select auth.uid())));
+
+drop policy if exists "Staff can insert" on public.purchase_orders;
+create policy "Staff can insert" on public.purchase_orders for insert to authenticated
+  with check (public.is_staff((select auth.uid())) and (store_id is null or public.is_app_supervisor() or public.store_visible(store_id)));
+drop policy if exists "Staff can read purchase orders" on public.purchase_orders;
+create policy "Staff can read purchase orders" on public.purchase_orders for select to authenticated
+  using (public.is_staff((select auth.uid())) and (store_id is null or public.is_app_supervisor() or public.store_visible(store_id)));
+drop policy if exists "Staff can update" on public.purchase_orders;
+create policy "Staff can update" on public.purchase_orders for update to authenticated
+  using (public.is_staff((select auth.uid())) and (store_id is null or public.is_app_supervisor() or public.store_visible(store_id)))
+  with check (public.is_staff((select auth.uid())) and (store_id is null or public.is_app_supervisor() or public.store_visible(store_id)));
+
+drop policy if exists "Staff can insert" on public.purchase_order_items;
+create policy "Staff can insert" on public.purchase_order_items for insert to authenticated
+  with check (public.is_staff((select auth.uid())) and exists (
+    select 1 from public.purchase_orders po where po.id=po_id
+      and (po.store_id is null or public.is_app_supervisor() or public.store_visible(po.store_id))));
+drop policy if exists "Staff can read purchase order items" on public.purchase_order_items;
+create policy "Staff can read purchase order items" on public.purchase_order_items for select to authenticated
+  using (public.is_staff((select auth.uid())) and exists (
+    select 1 from public.purchase_orders po where po.id=po_id
+      and (po.store_id is null or public.is_app_supervisor() or public.store_visible(po.store_id))));
+
+notify pgrst, 'reload schema';
+
+
 
 -- Deployment-owned public routes. Preserve values already saved by an admin.
 UPDATE public.pos_settings
@@ -13087,6 +13335,17 @@ CREATE POLICY terminal_commands_branch_update ON public.terminal_commands FOR UP
 CREATE POLICY terminal_commands_branch_insert ON public.terminal_commands FOR INSERT TO authenticated
   WITH CHECK (public.is_supervisor_now() AND public.store_visible(store_id));
 
+-- One staff-gated read/insert policy per audit operation. Earlier migrations
+-- used two names for the same checks, which doubled RLS work on every batch.
+DROP POLICY IF EXISTS "Staff can append audit logs" ON public.audit_logs;
+DROP POLICY IF EXISTS "Staff can read audit logs" ON public.audit_logs;
+DROP POLICY IF EXISTS audit_logs_staff_insert ON public.audit_logs;
+DROP POLICY IF EXISTS audit_logs_staff_read ON public.audit_logs;
+CREATE POLICY audit_logs_staff_insert ON public.audit_logs FOR INSERT TO authenticated
+ WITH CHECK ((SELECT public.is_staff_now()));
+CREATE POLICY audit_logs_staff_read ON public.audit_logs FOR SELECT TO authenticated
+ USING ((SELECT public.is_staff_now()));
+
 -- SQLSERVER_SYNC_CONTRACT_BEGIN
 
 CREATE TABLE IF NOT EXISTS public.sync_idempotency_receipts (
@@ -13294,13 +13553,29 @@ BEGIN DELETE FROM public."audit_logs" x USING jsonb_array_elements(COALESCE(p_ch
 REVOKE ALL ON FUNCTION public.sync_apply_audit_logs(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.sync_delete_audit_logs(jsonb,text,text) FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION public.sync_feed_audit_logs() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
-BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
- SELECT 'default',branches.branch_id,branches.terminal_id,'audit_logs',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD."id")::text ELSE jsonb_build_object('id',NEW."id")::text END,lower(TG_OP),1,TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END $trg$;
-DROP TRIGGER IF EXISTS sync_feed_change ON public."audit_logs";
-CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."audit_logs" FOR EACH ROW EXECUTE FUNCTION public.sync_feed_audit_logs();
+DROP TRIGGER IF EXISTS sync_feed_change ON public.audit_logs;
+DROP TRIGGER IF EXISTS sync_feed_insert ON public.audit_logs;
+DROP TRIGGER IF EXISTS sync_feed_update ON public.audit_logs;
+DROP TRIGGER IF EXISTS sync_feed_delete ON public.audit_logs;
+DROP FUNCTION IF EXISTS public.sync_feed_audit_logs();
 
-REVOKE ALL ON FUNCTION public.sync_feed_audit_logs() FROM PUBLIC, anon, authenticated;
+CREATE OR REPLACE FUNCTION public.sync_feed_audit_logs_insert() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',COALESCE(n.store_id,'global'),NULL,'audit_logs',jsonb_build_object('id',n.id)::text,'insert',1,false FROM new_audit_rows n; RETURN NULL; END $trg$;
+CREATE OR REPLACE FUNCTION public.sync_feed_audit_logs_update() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',COALESCE(n.store_id,'global'),NULL,'audit_logs',jsonb_build_object('id',n.id)::text,'update',1,false FROM new_audit_rows n; RETURN NULL; END $trg$;
+CREATE OR REPLACE FUNCTION public.sync_feed_audit_logs_delete() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
+BEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+ SELECT 'default',COALESCE(o.store_id,'global'),NULL,'audit_logs',jsonb_build_object('id',o.id)::text,'delete',1,true FROM old_audit_rows o; RETURN NULL; END $trg$;
+
+CREATE TRIGGER sync_feed_insert AFTER INSERT ON public.audit_logs REFERENCING NEW TABLE AS new_audit_rows FOR EACH STATEMENT EXECUTE FUNCTION public.sync_feed_audit_logs_insert();
+CREATE TRIGGER sync_feed_update AFTER UPDATE ON public.audit_logs REFERENCING NEW TABLE AS new_audit_rows FOR EACH STATEMENT EXECUTE FUNCTION public.sync_feed_audit_logs_update();
+CREATE TRIGGER sync_feed_delete AFTER DELETE ON public.audit_logs REFERENCING OLD TABLE AS old_audit_rows FOR EACH STATEMENT EXECUTE FUNCTION public.sync_feed_audit_logs_delete();
+
+REVOKE ALL ON FUNCTION public.sync_feed_audit_logs_insert() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sync_feed_audit_logs_update() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sync_feed_audit_logs_delete() FROM PUBLIC, anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.sync_apply_booking_payments(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer; v_row jsonb;
@@ -13621,9 +13896,9 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."members" ("id","member_code","full_name","phone","email","address","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","is_verified","verified_at","verified_channel","deleted_at")
-  SELECT "id","member_code","full_name","phone","email","address","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","is_verified","verified_at","verified_channel","deleted_at" FROM jsonb_populate_recordset(NULL::public."members", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "member_code"=EXCLUDED."member_code","full_name"=EXCLUDED."full_name","phone"=EXCLUDED."phone","email"=EXCLUDED."email","address"=EXCLUDED."address","date_of_birth"=EXCLUDED."date_of_birth","tier_id"=EXCLUDED."tier_id","loyalty_points"=EXCLUDED."loyalty_points","total_spent"=EXCLUDED."total_spent","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","row_version"=EXCLUDED."row_version","is_verified"=EXCLUDED."is_verified","verified_at"=EXCLUDED."verified_at","verified_channel"=EXCLUDED."verified_channel","deleted_at"=EXCLUDED."deleted_at" WHERE EXCLUDED."row_version">public."members"."row_version";
+  INSERT INTO public."members" ("id","member_code","full_name","phone","email","address","country_code","postal_code","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","is_verified","verified_at","verified_channel","deleted_at")
+  SELECT "id","member_code","full_name","phone","email","address","country_code","postal_code","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","is_verified","verified_at","verified_channel","deleted_at" FROM jsonb_populate_recordset(NULL::public."members", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO UPDATE SET "member_code"=EXCLUDED."member_code","full_name"=EXCLUDED."full_name","phone"=EXCLUDED."phone","email"=EXCLUDED."email","address"=EXCLUDED."address","country_code"=EXCLUDED."country_code","postal_code"=EXCLUDED."postal_code","date_of_birth"=EXCLUDED."date_of_birth","tier_id"=EXCLUDED."tier_id","loyalty_points"=EXCLUDED."loyalty_points","total_spent"=EXCLUDED."total_spent","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","row_version"=EXCLUDED."row_version","is_verified"=EXCLUDED."is_verified","verified_at"=EXCLUDED."verified_at","verified_channel"=EXCLUDED."verified_channel","deleted_at"=EXCLUDED."deleted_at" WHERE EXCLUDED."row_version">public."members"."row_version";
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 
@@ -14055,8 +14330,8 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
   PERFORM set_config('pos.refunding','on',true);
 
-  INSERT INTO public."sale_items" ("id","sale_id","product_id","product_name","unit_price","quantity","discount_percent","discount_amount","is_return","created_at","tax_rate","is_foc","promo_id","coupon_code","coupon_discount","unit_cost","row_version","refunded_qty","branch_id")
-  SELECT "id","sale_id","product_id","product_name","unit_price","quantity","discount_percent","discount_amount","is_return","created_at","tax_rate","is_foc","promo_id","coupon_code","coupon_discount","unit_cost","row_version","refunded_qty","branch_id" FROM jsonb_populate_recordset(NULL::public."sale_items", COALESCE(p_rows,'[]'::jsonb))
+  INSERT INTO public."sale_items" ("id","sale_id","product_id","product_name","variant_code","unit_price","quantity","discount_percent","discount_amount","is_return","created_at","tax_rate","is_foc","promo_id","coupon_code","coupon_discount","unit_cost","row_version","refunded_qty","branch_id")
+  SELECT "id","sale_id","product_id","product_name","variant_code","unit_price","quantity","discount_percent","discount_amount","is_return","created_at","tax_rate","is_foc","promo_id","coupon_code","coupon_discount","unit_cost","row_version","refunded_qty","branch_id" FROM jsonb_populate_recordset(NULL::public."sale_items", COALESCE(p_rows,'[]'::jsonb))
   ON CONFLICT ("id") DO UPDATE SET "refunded_qty"=GREATEST(public."sale_items"."refunded_qty",EXCLUDED."refunded_qty"),"row_version"=GREATEST(public."sale_items"."row_version",EXCLUDED."row_version");
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
@@ -15462,7 +15737,7 @@ BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_ter
     WHEN 'integration_settings' THEN (SELECT to_jsonb(x) FROM public."integration_settings" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
     WHEN 'item_activity_logs' THEN (SELECT to_jsonb(x) FROM public."item_activity_logs" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
     WHEN 'member_verifications' THEN (SELECT to_jsonb(x) FROM public."member_verifications" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
-    WHEN 'members' THEN (SELECT to_jsonb(x) FROM public."members" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'members' THEN (SELECT to_jsonb(x) - ARRAY['auth_user_id']::text[] FROM public."members" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
     WHEN 'membership_tiers' THEN (SELECT to_jsonb(x) FROM public."membership_tiers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
     WHEN 'offline_sync_audit_log' THEN (SELECT to_jsonb(x) FROM public."offline_sync_audit_log" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
     WHEN 'payment_transactions' THEN (SELECT to_jsonb(x) FROM public."payment_transactions" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
@@ -15541,7 +15816,7 @@ BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_ter
     WHEN 'integration_settings' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."integration_settings" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'item_activity_logs' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."item_activity_logs" x WHERE (x.store_id::text=p_branch_id) AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'member_verifications' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."member_verifications" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
-    WHEN 'members' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."members" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
+    WHEN 'members' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) - ARRAY['auth_user_id']::text[] ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."members" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'membership_tiers' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."membership_tiers" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'offline_sync_audit_log' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."offline_sync_audit_log" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'payment_transactions' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."payment_transactions" x WHERE (x.store_id::text=p_branch_id) AND (p_history_days>=7300 OR x."created_at">=now()-make_interval(days=>GREATEST(p_history_days,30))) AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;

@@ -13,6 +13,7 @@ Generated from the packaged synchronization registry. Financial records are corr
 | authorization_requests | idempotent_upsert | versioned | tombstone | highest_version |
 | branch_telemetry | idempotent_upsert | versioned | tombstone | highest_version |
 | cashiers | idempotent_upsert | versioned | tombstone | highest_version |
+| change_history | idempotent_upsert | versioned | tombstone | highest_version |
 | coupon_campaigns | idempotent_upsert | versioned | tombstone | highest_version |
 | drawer_events | idempotent_upsert | versioned | tombstone | highest_version |
 | entity_status_history | idempotent_upsert | versioned | tombstone | highest_version |
