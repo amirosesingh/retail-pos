@@ -32,7 +32,10 @@ import {
 } from "@/core/activation/terminal-platform";
 
 import {
+  clearTerminalMembershipSupabaseOverride,
   clearTerminalSupabaseOverride,
+  publicSupabaseConfig,
+  setTerminalMembershipSupabaseOverride,
   setTerminalSupabaseOverride,
   supabaseConfig,
 } from "@/lib/external-supabase-config";
@@ -123,11 +126,20 @@ const rpcOn = (client: unknown, fn: string, args: Record<string, unknown>) =>
  * packaged terminal needs no environment variables of its own.
  */
 function applyTenantOverride(config: TerminalConfig | null): void {
-  let changed: boolean;
+  let changed = false;
   if (config?.supabaseUrl && config?.supabaseKey) {
-    changed = setTerminalSupabaseOverride(config.supabaseUrl, config.supabaseKey);
+    changed = setTerminalSupabaseOverride(config.supabaseUrl, config.supabaseKey) || changed;
   } else {
-    changed = clearTerminalSupabaseOverride();
+    changed = clearTerminalSupabaseOverride() || changed;
+  }
+  if (config?.membershipSupabaseUrl && config?.membershipSupabaseKey) {
+    changed =
+      setTerminalMembershipSupabaseOverride(
+        config.membershipSupabaseUrl,
+        config.membershipSupabaseKey,
+      ) || changed;
+  } else {
+    changed = clearTerminalMembershipSupabaseOverride() || changed;
   }
   if (changed) resetExternalClient();
   // A probe made for the previous tenant must never make the newly activated
@@ -300,12 +312,15 @@ export async function issueTerminalToken(input: {
     ...(input.claimProof ? { claim_proof: input.claimProof } : {}),
   };
   await insertTokenRow(row);
+  const membership = publicSupabaseConfig("membership");
 
   return {
     token: rowToToken(row),
     code: await encryptActivationV1({
       supabaseUrl: supabaseConfig().url,
       supabaseAnonKey: supabaseConfig().key,
+      membershipSupabaseUrl: membership?.url,
+      membershipSupabaseKey: membership?.key,
       backendUrl: activationBackendUrl(),
       pairToken: id,
       ts: issuedAt,
@@ -351,12 +366,15 @@ export async function reissueTerminalToken(
     .update({ status: "revoked", revoked_at: now, replaced_by: id })
     .eq("id", token.id);
   if (retireError) throw retireError;
+  const membership = publicSupabaseConfig("membership");
 
   return {
     token: rowToToken(row),
     code: await encryptActivationV1({
       supabaseUrl: supabaseConfig().url,
       supabaseAnonKey: supabaseConfig().key,
+      membershipSupabaseUrl: membership?.url,
+      membershipSupabaseKey: membership?.key,
       backendUrl: activationBackendUrl(),
       pairToken: id,
       ts: issuedAt,
@@ -378,6 +396,8 @@ export type TerminalConfig = {
   locationName: string;
   supabaseUrl: string;
   supabaseKey: string;
+  membershipSupabaseUrl?: string;
+  membershipSupabaseKey?: string;
   backendUrl?: string;
   activatedAt: string;
 };
@@ -730,6 +750,8 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     location_name: string;
     supabase_url: string;
     supabase_key: string;
+    membership_supabase_url?: string;
+    membership_supabase_key?: string;
     backend_url?: string;
     device_name?: string;
     platform?: TerminalPlatform;
@@ -743,6 +765,8 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
         location_name: "",
         supabase_url: v1.supabaseUrl,
         supabase_key: v1.supabaseAnonKey,
+        membership_supabase_url: v1.membershipSupabaseUrl,
+        membership_supabase_key: v1.membershipSupabaseKey,
         backend_url: v1.backendUrl,
         device_name: v1.deviceName,
         platform: v1.platform,
@@ -866,6 +890,8 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     locationName: remote.locationName || payload.location_name,
     supabaseUrl: payload.supabase_url,
     supabaseKey: payload.supabase_key,
+    membershipSupabaseUrl: payload.membership_supabase_url,
+    membershipSupabaseKey: payload.membership_supabase_key,
     backendUrl: payload.backend_url,
     activatedAt: new Date().toISOString(),
   };
@@ -1003,6 +1029,8 @@ type PairingApproval = {
   expiresAt?: string | null;
   supabaseUrl?: string;
   supabaseKey?: string;
+  membershipSupabaseUrl?: string;
+  membershipSupabaseKey?: string;
   backendUrl?: string;
 };
 
@@ -1067,6 +1095,8 @@ export async function activateWithTokenId(request: PairingRequest): Promise<Term
     locationName: approval.locationName || "",
     supabaseUrl: approval.supabaseUrl,
     supabaseKey: approval.supabaseKey,
+    membershipSupabaseUrl: approval.membershipSupabaseUrl,
+    membershipSupabaseKey: approval.membershipSupabaseKey,
     backendUrl: approval.backendUrl,
     activatedAt: new Date().toISOString(),
   };

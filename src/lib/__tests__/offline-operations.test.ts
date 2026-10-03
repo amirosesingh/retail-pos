@@ -3,18 +3,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { createLocalStaffStore } = require("../../../electron/local-staff-store.cjs");
 const { listSyncedStaff, verifySyncedStaffPin } = require("../../../electron/synced-staff-login.cjs");
 const bcrypt = require("bcryptjs");
-
-function fixture() {
-  const values = new Map<string, unknown>();
-  const config = {
-    get: (key: string) => values.get(key) ?? null,
-    set: (key: string, value: unknown) => { values.set(key, value); return { ok: true }; },
-  };
-  return { values, store: createLocalStaffStore(config) };
-}
 
 describe("offline terminal operations", () => {
   it("connects a configured local database before loading the terminal route", () => {
@@ -31,27 +21,6 @@ describe("offline terminal operations", () => {
     expect(main).toContain("prepareLocalData({ force: true })");
     const health = readFileSync("src/core/activation/connection-health.ts", "utf8");
     expect(health).toContain("bridge.database?.getState");
-  });
-
-  it("stores only a salted verifier and verifies a cached manager PIN", () => {
-    const { values, store } = fixture();
-    expect(store.cache([{ id: "m1", user_id: "manager", full_name: "Manager", role_slug: "manager", store_id: "s1", is_active: true }])).toMatchObject({ ok: true });
-    expect(store.remember("manager", "2468")).toMatchObject({ ok: true });
-    const serialized = JSON.stringify(values.get("offlineStaffCredentials"));
-    expect(serialized).not.toContain("2468");
-    expect(serialized).toContain("scrypt:");
-    expect(store.verify("manager", "2468")).toMatchObject({
-      ok: true,
-      staff: { id: "m1", role_slug: "manager", store_id: "s1" },
-    });
-  });
-
-  it("locks repeated wrong offline PIN attempts", () => {
-    const { store } = fixture();
-    store.cache([{ id: "a1", user_id: "admin", role_slug: "admin", is_active: true }]);
-    store.remember("admin", "1357");
-    for (let attempt = 0; attempt < 5; attempt += 1) store.verify("admin", "0000");
-    expect(store.verify("admin", "1357")).toMatchObject({ ok: false, reason: "locked" });
   });
 
   it("accepts the same PIN for a user synchronized into local SQL", async () => {
@@ -114,29 +83,26 @@ describe("offline terminal operations", () => {
     expect(main).toContain("await listSyncedStaff(databaseManager.pool,branchId)");
   });
 
-  it("bounds the sealed fallback cache instead of duplicating the full staff roster", () => {
-    const { values, store } = fixture();
-    store.cache(Array.from({ length: 40 }, (_, index) => ({
-      id: `u${index}`,
-      user_id: `user${index}`,
-      full_name: `User ${index}`,
-      role_slug: "staff",
-      store_id: "s1",
-      is_active: true,
-    })));
-    expect(Object.keys(values.get("offlineStaffCredentials") as object)).toHaveLength(12);
-  });
-
-  it("checks the synchronized SQL PIN before accepting a device-cached verifier", () => {
+  it("uses synchronized SQL as the only Electron staff credential source", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
     const handler = main.slice(
       main.indexOf('ipcMain.handle("staff:verify-pin"'),
       main.indexOf('ipcMain.handle("app:ready"'),
     );
-    expect(handler.indexOf("verifySyncedStaffPin")).toBeLessThan(
-      handler.indexOf('if (cached.reason === "locked")'),
-    );
-    expect(handler).toContain('["inactive", "invalid", "missing"].includes(synced.reason)');
+    expect(handler).toContain("verifySyncedStaffPin(databaseManager.pool");
+    expect(main).not.toContain("localStaffStore");
+    expect(main).not.toContain("offlineStaffCredentials");
+    expect(main).toContain('source:"sql-sync"');
+  });
+
+  it("keeps PIN throttling in local SQL instead of a renderer credential cache", () => {
+    const login = readFileSync("electron/synced-staff-login.cjs", "utf8");
+    expect(login).toContain("FROM dbo.pin_attempts");
+    expect(login).toContain("MERGE dbo.pin_attempts WITH (HOLDLOCK)");
+    expect(login).toContain("MAX_PIN_ATTEMPTS = 5");
+    expect(login).toContain("await bcrypt.compare(secret, hash)");
+    expect(login).toContain("WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544)");
+    expect(login).not.toContain("offlineStaffCredentials");
   });
 
   it("does not serialize the complete POS state into encrypted device configuration", () => {

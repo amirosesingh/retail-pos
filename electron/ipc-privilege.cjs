@@ -236,8 +236,11 @@ const CHANNEL_LEVELS = {
 
 /**
  * Channels the first-run screen needs before anybody can possibly sign in.
- * They are open only while the till has no connection and no activation; the
- * moment either exists, the normal level applies again.
+ * They are open only while the till has no activation identity. Cloud and
+ * local-database setup may legitimately happen before pairing; treating an
+ * already sealed cloud profile as the end of first-run deadlocks the terminal
+ * because nobody can sign in until activation finishes. The moment a terminal
+ * identity exists, the normal level applies again.
  */
 const FIRST_RUN_CHANNELS = new Set([
   "pos:connect",

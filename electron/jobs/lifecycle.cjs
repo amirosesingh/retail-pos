@@ -39,7 +39,8 @@ class LocalDataLifecycle {
     return{ok:true,branchId,historyDays,differences:[]};
   }
   async reconcile(branchId,historyDays=90){
-    const [local,cloudRows]=await Promise.all([localTableCounts(this.connectionManager,this.registry,branchId,historyDays),this.cloud.counts({branchId,historyDays})]);
+    const terminalId=this.cloud.terminalId?.()??"";
+    const [local,cloudRows]=await Promise.all([localTableCounts(this.connectionManager,this.registry,branchId,historyDays,terminalId),this.cloud.counts({branchId,historyDays})]);
     const cloud=Object.fromEntries((Array.isArray(cloudRows)?cloudRows:[]).map(row=>[row.table_name,String(row.row_count??"0")]));
     const verifiedAt=new Date().toISOString();
     const tables=this.registry.tables.filter(table=>cloud[table.cloudTable]!==undefined).map(table=>({

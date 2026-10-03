@@ -2691,6 +2691,9 @@ IF OBJECT_ID(N'dbo.members', N'U') IS NULL BEGIN CREATE TABLE dbo.[members] (
   [is_verified] bit NOT NULL CONSTRAINT [DF_members_is_verified] DEFAULT (0),
   [verified_at] datetimeoffset(7) NULL,
   [verified_channel] nvarchar(max) NULL,
+  [membership_member_id] uniqueidentifier NULL,
+  [membership_revision] bigint NOT NULL CONSTRAINT [DF_members_membership_revision] DEFAULT (0),
+  [membership_status] nvarchar(max) NOT NULL CONSTRAINT [DF_members_membership_status] DEFAULT ('active'),
   [deleted_at] nvarchar(max) NULL,
   CONSTRAINT [PK_members] PRIMARY KEY ([id])
 
@@ -2820,6 +2823,34 @@ END;
 IF COL_LENGTH(N'dbo.members', N'verified_at') IS NULL ALTER TABLE dbo.[members] ADD [verified_at] datetimeoffset(7) NULL;
 
 IF COL_LENGTH(N'dbo.members', N'verified_channel') IS NULL ALTER TABLE dbo.[members] ADD [verified_channel] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.members', N'membership_member_id') IS NULL ALTER TABLE dbo.[members] ADD [membership_member_id] uniqueidentifier NULL;
+
+IF COL_LENGTH(N'dbo.members', N'membership_revision') IS NULL ALTER TABLE dbo.[members] ADD [membership_revision] bigint NULL;
+
+IF OBJECT_ID(N'dbo.members', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.members', N'membership_revision') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.members') AND c.name=N'membership_revision'
+) ALTER TABLE dbo.[members] ADD CONSTRAINT [DF_members_membership_revision] DEFAULT (0) FOR [membership_revision];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.members') AND name=N'membership_revision' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[members] SET [membership_revision]=0 WHERE [membership_revision] IS NULL;';
+  ALTER TABLE dbo.[members] ALTER COLUMN [membership_revision] bigint NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.members', N'membership_status') IS NULL ALTER TABLE dbo.[members] ADD [membership_status] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.members', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.members', N'membership_status') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.members') AND c.name=N'membership_status'
+) ALTER TABLE dbo.[members] ADD CONSTRAINT [DF_members_membership_status] DEFAULT ('active') FOR [membership_status];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.members') AND name=N'membership_status' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[members] SET [membership_status]=''active'' WHERE [membership_status] IS NULL;';
+  ALTER TABLE dbo.[members] ALTER COLUMN [membership_status] nvarchar(max) NOT NULL;
+END;
 
 IF COL_LENGTH(N'dbo.members', N'deleted_at') IS NULL ALTER TABLE dbo.[members] ADD [deleted_at] nvarchar(max) NULL;
 

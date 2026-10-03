@@ -16,7 +16,6 @@ import { posFetch } from "./server-origin";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { platformName } from "@/platform-config/platform";
 import { localDb } from "@/core/local-db/local-db";
-import { commitOps } from "@/core/api/pos-db";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { activeBranchId } from "./active-branch";
 import { activityAudienceIdentity, activityVisibleTo } from "./activity-audience";
@@ -56,7 +55,7 @@ export type ActivityEvent = {
   meta: Record<string, unknown>;
   whatsappStatus: string;
   createdAt: string;
-  /** Staff identifiers that cleared this entry on another signed-in device. */
+  /** Legacy server markers retained for report compatibility; live dismissal is local. */
   clearedBy: string[];
 };
 
@@ -649,7 +648,7 @@ type ClearedMap = Record<string, string[]>;
 function readClearedMap(): ClearedMap {
   if (!isBrowser()) return {};
   try {
-    const raw = readBusinessValue(CLEARED_KEY);
+    const raw = window.localStorage.getItem(CLEARED_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     return parsed && typeof parsed === "object" ? (parsed as ClearedMap) : {};
   } catch {
@@ -660,7 +659,7 @@ function readClearedMap(): ClearedMap {
 function writeClearedMap(map: ClearedMap) {
   if (!isBrowser()) return;
   try {
-    writeBusinessValue(CLEARED_KEY, JSON.stringify(map));
+    window.localStorage.setItem(CLEARED_KEY, JSON.stringify(map));
   } catch {
     /* storage blocked — clearing is only a view preference */
   }
@@ -670,132 +669,12 @@ function writeClearedMap(map: ClearedMap) {
 export const clearedIds = (userId: string): string[] => readClearedMap()[who(userId)] ?? [];
 
 /**
- * Merge server-side clear markers into the durable device cache. This makes a
- * dismissal follow a person to their other tills while retaining offline use.
+ * Dismissal is intentionally local to this browser profile. Approval records
+ * and audit events remain durable, while another till keeps its own view.
  */
-export function mergeRemoteActivityPreferences(userId: string, rows: ActivityEvent[]) {
-  const key = who(userId);
-  const fetched = new Set(rows.map((row) => row.id));
-  const remote = rows
-    .filter((row) => row.clearedBy.some((id) => who(id) === key))
-    .map((row) => row.id);
-  const map = readClearedMap();
-  map[key] = [...new Set([...(map[key] ?? []).filter((id) => !fetched.has(id)), ...remote])].slice(
-    -500,
-  );
-  writeClearedMap(map);
-}
-
-async function syncClearedEntry(id: string, cleared: boolean): Promise<boolean> {
-  try {
-    const credentials = await readCredentials();
-    if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
-      return false;
-    if (platformName() === "electron") {
-      if (credentials.accessToken) {
-        try {
-          const { error } = await supabaseExternal.rpc("set_activity_event_cleared", {
-            p_event_id: id,
-            p_cleared: cleared,
-          });
-          if (!error) return true;
-        } catch {
-          // Fall through to the authenticated POS endpoint.
-        }
-      }
-      // PIN and hosted POS sessions deliberately have no Supabase Auth JWT.
-      // Fall through to the authenticated POS endpoint instead of making the
-      // Clear button permanently fail on those valid Electron sessions.
-    }
-    const response = await posFetch("/api/v1/pos/activity-preferences", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "clear", eventId: id, cleared, ...credentials }),
-    });
-    const result = (await response.json()) as { ok?: boolean };
-    return response.ok && result.ok === true;
-  } catch {
-    return false;
-  }
-}
-
-async function syncClearAllEntries(): Promise<boolean> {
-  try {
-    const credentials = await readCredentials();
-    if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
-      return false;
-    if (platformName() === "electron") {
-      if (credentials.accessToken) {
-        try {
-          const { error } = await supabaseExternal.rpc("set_all_activity_events_cleared");
-          if (!error) return true;
-        } catch {
-          // Fall through to the authenticated POS endpoint.
-        }
-      }
-      // Use the hosted proof path for PIN/session-token users and as a safe
-      // fallback if a stale Auth JWT is rejected.
-    }
-    const response = await posFetch("/api/v1/pos/activity-preferences", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "clear_all", ...credentials }),
-    });
-    const result = (await response.json()) as { ok?: boolean };
-    return response.ok && result.ok === true;
-  } catch {
-    return false;
-  }
-}
-
-async function storeLocalClearedEntries(
-  userId: string,
-  ids: string[],
-  cleared: boolean,
-): Promise<boolean> {
-  const bridge = localDb();
-  if (!bridge?.query || !ids.length) return false;
-  try {
-    const result = await bridge.query("activity_events", {
-      columns: "id,store_id,cleared_by",
-      in: { column: "id", values: ids },
-      limit: Math.min(ids.length, 2000),
-    });
-    if (!result.ok) return false;
-    const key = who(userId);
-    const operations = (result.rows ?? [])
-      .map((row) => {
-        const current = map(row as Row).clearedBy;
-        const next = cleared
-          ? [...new Set([...current, userId])]
-          : current.filter((value) => who(value) !== key);
-        return {
-          kind: "update" as const,
-          table: "activity_events",
-          values: { cleared_by: next },
-          // The aggregate writer validates branch ownership inside the same
-          // SQL transaction. Carry the row's branch in the match so this
-          // preference update is not rolled back as an unscoped write.
-          match: {
-            id: String(row.id ?? ""),
-            store_id: String(row.store_id ?? ""),
-          },
-        };
-      })
-      .filter((operation) => operation.match.id && operation.match.store_id);
-    if (!operations.length) return false;
-    await commitOps("Saving notification preference", operations);
-    return true;
-  } catch {
-    return false;
-  }
-}
+export function mergeRemoteActivityPreferences(_userId: string, _rows: ActivityEvent[]) {}
 
 export async function clearActivityEntry(userId: string, id: string): Promise<boolean> {
-  const saved = localDb()?.query
-    ? (await storeLocalClearedEntries(userId, [id], true)) || (await syncClearedEntry(id, true))
-    : (await syncClearedEntry(id, true)) || (await storeLocalClearedEntries(userId, [id], true));
-  if (!saved) return false;
   const map = readClearedMap();
   const key = who(userId);
   const list = map[key] ?? [];
@@ -805,10 +684,6 @@ export async function clearActivityEntry(userId: string, id: string): Promise<bo
 }
 
 export async function reopenActivityEntry(userId: string, id: string): Promise<boolean> {
-  const saved = localDb()?.query
-    ? (await storeLocalClearedEntries(userId, [id], false)) || (await syncClearedEntry(id, false))
-    : (await syncClearedEntry(id, false)) || (await storeLocalClearedEntries(userId, [id], false));
-  if (!saved) return false;
   const map = readClearedMap();
   const key = who(userId);
   map[key] = (map[key] ?? []).filter((x) => x !== id);
@@ -821,10 +696,6 @@ export async function clearAllActivityEntries(
   userId: string,
   visibleIds: string[],
 ): Promise<boolean> {
-  const saved = localDb()?.query
-    ? (await storeLocalClearedEntries(userId, visibleIds, true)) || (await syncClearAllEntries())
-    : (await syncClearAllEntries()) || (await storeLocalClearedEntries(userId, visibleIds, true));
-  if (!saved) return false;
   const map = readClearedMap();
   const key = who(userId);
   map[key] = [...new Set([...(map[key] ?? []), ...visibleIds])].slice(-500);

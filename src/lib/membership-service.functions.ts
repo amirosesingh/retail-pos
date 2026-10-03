@@ -27,9 +27,10 @@ const input = caller.extend({
 
 /**
  * Membership lookup always goes through the configured company HTTPS domain.
- * A packaged Electron build never receives the membership project address or
- * its service credential; it presents its existing till/person proof to the
- * hosted POS, which performs the cross-project lookup server-side.
+ * A packaged Electron build may retain the membership project's public pair
+ * as part of its sealed company profile, but never receives its service
+ * credential. It presents its existing till/person proof to the hosted POS,
+ * which performs the privileged cross-project lookup server-side.
  */
 export async function searchMembershipForPos({ data }: { data: z.input<typeof input> }) {
   const payload = input.parse(data);

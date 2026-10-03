@@ -10,6 +10,7 @@ import { authHeaders, cashierTokenSync, readCredentials } from "@/lib/pos-creden
 import { serverOrigin, serverUnreachableOnDevice, serverUrl } from "@/lib/server-origin";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import type { SyncOp } from "@/lib/sync-outbox";
+import { hasCentralAuthSession } from "@/lib/session-presence";
 
 const credentials = readCredentials;
 
@@ -97,6 +98,9 @@ async function inspectRelay(res: Response, body: { code?: string } | null): Prom
 /** True when a staff account is signed in to the central database in this browser. */
 export function hasStaffSession(): boolean {
   if (typeof window === "undefined") return false;
+  // A token in localStorage is only a cache. AuthProvider must first prove the
+  // server-side session still exists before any protected table is queried.
+  if (!hasCentralAuthSession()) return false;
   try {
     const raw = window.localStorage.getItem("sb-external-auth-token");
     if (!raw) return false;

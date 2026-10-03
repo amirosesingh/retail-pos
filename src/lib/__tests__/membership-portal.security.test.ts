@@ -76,8 +76,16 @@ describe("customer membership portal security", () => {
       "supabase/membership/migrations/20261002201500_email_otp_phone_membership.sql",
     );
     const service = read("src/lib/membership-service.server.ts");
+    const mirrorIdentitySql = read(
+      "supabase/migrations/20261003183000_harden_membership_directory_identity.sql",
+    );
+    const commitOrderedSql = read(
+      "supabase/membership/migrations/20261003200000_commit_ordered_member_directory.sql",
+    );
+    const posDb = read("src/core/api/pos-db.ts");
     const client = read("src/lib/membership-service.functions.ts");
     const register = read("src/routes/index.tsx");
+    const memberEditor = read("src/routes/members.tsx");
     const checkout = read("src/lib/register/use-checkout.ts");
 
     expect(membershipSql).toContain("event_id text primary key");
@@ -93,12 +101,39 @@ describe("customer membership portal security", () => {
     expect(emailOtpSql).not.toMatch(/(?:otp|token|verification)_?(?:code|hash)\s+(?:text|varchar)/i);
     expect(service).toContain("AbortSignal.timeout(8_000)");
     expect(service).toContain("phone: row.member_code");
-    expect(service).toContain("await verifyRelayCaller(parsed.data)");
+    expect(service).toContain("await verifyCaller(parsed.data)");
+    expect(service).toContain('serviceRpc("membership_directory_delta"');
+    expect(service).toContain('serviceRest("rpc/membership_directory_apply"');
     expect(client).toContain('posFetch("/api/v1/pos/sync?operation=membership_lookup"');
     expect(client).not.toContain("MEMBERSHIP_SUPABASE_SERVICE_ROLE_KEY");
     expect(register).toContain("void upsertMember(cached)");
+    expect(memberEditor).toContain("Email and date of birth are verified profile details");
+    expect(memberEditor.match(/aria-readonly="true"/g)).toHaveLength(2);
     expect(checkout).not.toContain("postMembershipSale");
     expect(service).not.toContain("membership_event_outbox");
+    expect(mirrorIdentitySql).toContain("member.membership_member_id = source.id");
+    expect(mirrorIdentitySql).toContain("member.phone = source.phone");
+    expect(mirrorIdentitySql).toContain("and member.membership_member_id is null");
+    expect(mirrorIdentitySql).toContain("when member.membership_member_id = source.id then 0");
+    expect(mirrorIdentitySql).toMatch(
+      /get diagnostics v_affected = row_count;\s+if v_affected > 0 then\s+update public\.members\s+set membership_member_id = null/,
+    );
+    expect(mirrorIdentitySql).toContain("pg_advisory_xact_lock");
+    expect(mirrorIdentitySql).not.toMatch(/delete\s+from\s+public\.members/i);
+    expect(commitOrderedSql).toContain("lock table public.members in access exclusive mode");
+    expect(commitOrderedSql).toContain("pg_advisory_xact_lock");
+    expect(commitOrderedSql).toContain(
+      "m.directory_revision > greatest(coalesce(p_after_revision, 0), 0)",
+    );
+    expect(commitOrderedSql).not.toContain("overlap");
+    expect(service).toContain("rows.length === pageSize && nextRevision > cursorRevision");
+    const memberWriter = posDb.slice(
+      posDb.indexOf("const memberToRow"),
+      posDb.indexOf("const rowToPromotion"),
+    );
+    expect(memberWriter).not.toContain("membership_revision:");
+    expect(memberWriter).not.toContain("membership_member_id:");
+    expect(memberWriter).not.toContain("membership_status:");
   });
 
   it("embeds the configured company gateway in phone-issued terminal QR codes", () => {
@@ -106,5 +141,16 @@ describe("customer membership portal security", () => {
     expect(activation).toContain("const configured = serverOrigin()");
     expect(activation).toContain("backendUrl: activationBackendUrl()");
     expect(activation).not.toContain("backendUrl: typeof window !==");
+  });
+
+  it("delivers both public project profiles only after proof-bound pairing", () => {
+    const endpoint = read("src/routes/api/public/terminal-pairing.ts");
+    const activation = read("src/core/activation/terminal-tokens.ts");
+    expect(endpoint).toContain('publicSupabaseConfig("membership")');
+    expect(endpoint).toContain("membershipSupabaseUrl: membership?.url");
+    expect(endpoint).toContain("membershipSupabaseKey: membership?.key");
+    expect(activation).toContain("membershipSupabaseUrl: approval.membershipSupabaseUrl");
+    expect(activation).toContain("membershipSupabaseKey: approval.membershipSupabaseKey");
+    expect(activation).not.toContain("MEMBERSHIP_SUPABASE_SERVICE_ROLE_KEY");
   });
 });

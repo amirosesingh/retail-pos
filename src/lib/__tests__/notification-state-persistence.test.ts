@@ -30,7 +30,7 @@ describe("per-user notification state", () => {
     localBridge.current = null;
     commitOps.mockClear();
     Object.assign(globalThis, {
-      window: { localStorage, dispatchEvent: vi.fn() },
+      window: { localStorage, sessionStorage: localStorage, dispatchEvent: vi.fn() },
       localStorage,
       CustomEvent: class {
         constructor(public type: string) {}
@@ -38,49 +38,41 @@ describe("per-user notification state", () => {
     });
   });
 
-  it("survives refresh and remains isolated between users", async () => {
+  it("keeps dismissal local to this device profile and isolated between users", async () => {
     const activity = await import("../activity-events");
     expect(await activity.clearActivityEntry("manager-1", "event-1")).toBe(true);
     expect(activity.isCleared("manager-1", "event-1")).toBe(true);
     expect(activity.isCleared("manager-2", "event-1")).toBe(false);
-    expect(posFetch).toHaveBeenCalledWith(
-      "/api/v1/pos/activity-preferences",
-      expect.objectContaining({
-        body: expect.stringContaining('"eventId":"event-1"'),
-      }),
-    );
+    expect(posFetch).not.toHaveBeenCalled();
+    expect(values.has("pos.activity.cleared")).toBe(true);
   });
 
-  it("merges a dismissal made on another device", async () => {
+  it("does not import a dismissal made on another device", async () => {
     const activity = await import("../activity-events");
     const row = {
       id: "event-remote",
       clearedBy: ["MANAGER-1"],
     } as Parameters<typeof activity.mergeRemoteActivityPreferences>[1][number];
     activity.mergeRemoteActivityPreferences("manager-1", [row]);
-    expect(activity.clearedIds("manager-1")).toContain("event-remote");
+    expect(activity.clearedIds("manager-1")).not.toContain("event-remote");
   });
 
-  it("clears every active notification through one synchronized server action", async () => {
+  it("clears every active notification without a database write", async () => {
     const activity = await import("../activity-events");
     expect(await activity.clearAllActivityEntries("manager-1", ["event-1", "event-2"])).toBe(true);
     expect(activity.clearedIds("manager-1")).toEqual(
       expect.arrayContaining(["event-1", "event-2"]),
     );
-    expect(posFetch).toHaveBeenCalledWith(
-      "/api/v1/pos/activity-preferences",
-      expect.objectContaining({ body: expect.stringContaining('"action":"clear_all"') }),
-    );
+    expect(posFetch).not.toHaveBeenCalled();
   });
 
-  it("keeps a notification visible when the server cannot save the clear", async () => {
-    posFetch.mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false }) });
+  it("does not require the server to dismiss a notification", async () => {
     const activity = await import("../activity-events");
-    expect(await activity.clearActivityEntry("manager-1", "event-2")).toBe(false);
-    expect(activity.isCleared("manager-1", "event-2")).toBe(false);
+    expect(await activity.clearActivityEntry("manager-1", "event-2")).toBe(true);
+    expect(activity.isCleared("manager-1", "event-2")).toBe(true);
   });
 
-  it("commits Electron clears to branch-scoped local SQL before the hosted endpoint", async () => {
+  it("does not commit an Electron dismissal to local SQL", async () => {
     Object.assign((globalThis as { window: object }).window, { pos: {} });
     localBridge.current = {
       query: vi.fn(async () => ({
@@ -90,14 +82,7 @@ describe("per-user notification state", () => {
     };
     const activity = await import("../activity-events");
     expect(await activity.clearActivityEntry("manager-1", "event-local")).toBe(true);
-    expect(commitOps).toHaveBeenCalledWith("Saving notification preference", [
-      expect.objectContaining({
-        kind: "update",
-        table: "activity_events",
-        values: { cleared_by: ["manager-1"] },
-        match: { id: "event-local", store_id: "branch-1" },
-      }),
-    ]);
+    expect(commitOps).not.toHaveBeenCalled();
     expect(posFetch).not.toHaveBeenCalled();
   });
 

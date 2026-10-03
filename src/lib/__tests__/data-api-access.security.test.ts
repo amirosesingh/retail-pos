@@ -54,5 +54,6 @@ describe("anonymous Data API access", () => {
     expect(dbHealth).toContain("if (session)");
     expect(featureSchema).toContain("if (!directAccess)");
     expect(posDb).toContain("if (localDb() && !hasStaffSession())");
+    expect(posDb).toContain('throw new Error("No verified cloud staff session is active.")');
   });
 });

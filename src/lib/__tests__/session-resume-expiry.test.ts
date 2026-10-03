@@ -94,6 +94,12 @@ describe("logout scope", () => {
     expect(activation).not.toContain(".auth.signOut();");
     expect(auth).toContain('.auth.signOut({ scope: "local" })');
     expect(activation).toContain('.auth.signOut({ scope: "local" })');
+    expect(auth).toContain('reason === "expired"');
+    expect(auth).toContain("await discardRejectedExternalAuthSession()");
+    expect(auth).toContain('centralSessionVerifiedRef.current = checked.state === "verified"');
+    const client = readFileSync("src/integrations/supabase/external-client.ts", "utf8");
+    expect(client).toContain('new URL(requestUrl).pathname.endsWith("/auth/v1/logout")');
+    expect(client).toContain('await client.auth.signOut({ scope: "local" })');
   });
 
   it("validates restored browser sessions behind the app server boundary", () => {
@@ -101,5 +107,7 @@ describe("logout scope", () => {
     expect(auth).toContain('import("@/lib/session-verify.functions")');
     expect(auth).toContain("data: { accessToken: current.access_token }");
     expect(auth).toContain("validateCentralAuthSession(");
+    expect(auth).toContain('if (authCheck.state === "verified")');
+    expect(auth).toContain('authCheck.state === "rejected" || !authCheck.session');
   });
 });

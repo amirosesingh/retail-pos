@@ -302,6 +302,10 @@ const rowToMember = (r: Row, tierName: (id: string | null) => MemberTier): Membe
   verified: r.is_verified === true,
   verifiedAt: r.verified_at ?? undefined,
   verifiedChannel: r.verified_channel ?? undefined,
+  directoryRevision: num(r.membership_revision),
+  membershipId: r.membership_member_id ?? undefined,
+  membershipStatus: r.membership_status ?? "active",
+  updatedAt: r.updated_at ?? undefined,
 });
 
 const memberToRow = (m: Member, tierId: (name: MemberTier) => string | null): Row => ({
@@ -309,12 +313,12 @@ const memberToRow = (m: Member, tierId: (name: MemberTier) => string | null): Ro
   member_code: m.code,
   full_name: m.name,
   phone: m.phone,
-  email: m.email || null,
-  address: m.homeStoreId ?? null,
-  date_of_birth: m.birthday || null,
   tier_id: tierId(m.tier),
   loyalty_points: m.points ?? 0,
   total_spent: m.totalSpend ?? 0,
+  // Membership identity, lifecycle and revision belong to the protected
+  // membership gateway. A till may read them but must never echo a stale
+  // directory snapshot back into the POS mirror.
 });
 
 const rowToPromotion = (r: Row): Promotion => ({
@@ -1114,6 +1118,14 @@ async function loadCompleteProductCatalogue(): Promise<PagedRead<Row>> {
   let afterId = "";
   let total: number | null = null;
   for (;;) {
+    if (!hasStaffSession()) {
+      return {
+        data: null,
+        error: { message: "The verified staff session ended while loading the catalogue." },
+        total,
+        capped: false,
+      };
+    }
     const baseQuery = supabase
       .from("products")
       .select("*", total === null ? { count: "exact" } : {})
@@ -1161,6 +1173,12 @@ export async function loadCloudState(
   // normal fallback runs.
   if (localDb() && !hasStaffSession())
     return loadLocalState(new Error("No direct cloud staff session is active."));
+  // Browsers and mobile shells have no local snapshot to fall back to. Do not
+  // start a burst of protected table reads from a merely persisted, unverified
+  // token while AuthProvider is expiring it.
+  if (!hasStaffSession()) {
+    throw new Error("No verified cloud staff session is active.");
+  }
   // These reads are independent. Start membership tiers alongside the other
   // slices so a full network round trip is not added to every sign-in.
   const [tiers, products, priceOverrides, members, sales, promotions, settings, stores, shifts] =

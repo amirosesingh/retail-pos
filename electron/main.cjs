@@ -43,7 +43,6 @@ const { applyMigrations, migrationBundleSql } = require("./db/migrations.cjs");
 const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
-const { createLocalStaffStore } = require("./local-staff-store.cjs");
 const { listSyncedStaff, verifySyncedStaffPin } = require("./synced-staff-login.cjs");
 
 const databaseConfig = createSecureConfig({ app, safeStorage, configStore });
@@ -75,7 +74,6 @@ const operationsRepository = new OperationsRepository(databaseManager, syncRegis
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
 const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
-const localStaffStore = createLocalStaffStore(configStore);
 
 function publishBusinessChange(change){
   for(const win of BrowserWindow.getAllWindows()){
@@ -1189,7 +1187,7 @@ function authorizationServerUrl() {
 
 function registerIpc() {
   ipcPrivilege.install(ipcMain, {
-    isFirstRun: () => !terminalStore.read() && !cloudCredentials.status().configured,
+    isFirstRun: () => !terminalStore.read(),
   });
   ipcMain.handle("admin:status", () => adminSession.status());
   ipcMain.handle("admin:lock", () => { adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
@@ -1341,11 +1339,22 @@ function registerIpc() {
     return { ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) };
   }));
   ipcMain.handle("business:query", (_e, table, options) => guard.guarded(async () => {
-    const safeTable = guard.text(table, { name: "business table", max: 80 });
-    const result = await operationsRepository.query(localBranchId(), safeTable, guard.queryOptions(options));
-    return safeTable === "shifts"
-      ? { ...result, rows: (result.rows ?? []).map(redactShiftRow) }
-      : result;
+    try {
+      const safeTable = guard.text(table, { name: "business table", max: 80 });
+      const result = await operationsRepository.query(localBranchId(), safeTable, guard.queryOptions(options));
+      return safeTable === "shifts"
+        ? { ...result, rows: (result.rows ?? []).map(redactShiftRow) }
+        : result;
+    } catch (error) {
+      // A fresh, revoked, or not-yet-paired terminal has no trusted branch.
+      // Reads can race terminal restoration during startup; return a normal
+      // not-ready result instead of rejecting the IPC promise and flooding the
+      // Electron/Chromium console with an uncaught handler error.
+      if (error?.code === "EBRANCH") {
+        return { ok: false, code: "EBRANCH", rows: [], error: error.message };
+      }
+      throw error;
+    }
   }));
   ipcMain.handle("business:shift-expected", (_e, shiftId) => guard.guarded(() =>
     operationsRepository.shiftExpectedTotals(localBranchId(), guard.uuid(shiftId, { name: "shift id" })),
@@ -1402,44 +1411,21 @@ function registerIpc() {
   ipcMain.handle("staff:roster", async (_e, storeId) => {
     const branchId=localBranchId()??String(storeId??"").trim();
     try {
-      const synced=await listSyncedStaff(databaseManager.pool,branchId);
-      if(synced.ok)return synced;
-    } catch {
-      // A temporarily unavailable SQL connection may still use the small,
-      // DPAPI-sealed recent-user fallback below.
+      return await listSyncedStaff(databaseManager.pool,branchId);
+    } catch (error) {
+      return {ok:false,reason:"unavailable",rows:[],error:String(error?.message??error)};
     }
-    return localStaffStore.roster(branchId);
   });
-  ipcMain.handle("staff:cache-roster", (_e, rows) => localStaffStore.cache(rows));
-  ipcMain.handle("staff:enroll", async (_e, username, pin) => {
-    const authorizationUrl=authorizationServerUrl();
-    if(!authorizationUrl)return{ok:false,error:"The hosted POS backend is not configured."};
-    const terminal=terminalStore.read()??{};
-    const response=await fetch(`${authorizationUrl}/api/public/cashier-login`,{
-      method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({username:String(username??""),pin:String(pin??""),platform:"windows-offline-enrollment",terminalId:terminal.tokenId??null,branchId:localBranchId()}),
-    });
-    const result=await response.json().catch(()=>({ok:false,error:"Credential verification failed."}));
-    if(!response.ok||!result.ok||!result.cashier)return{ok:false,error:result.error??"Credential verification failed."};
-    return localStaffStore.enroll(result.cashier,String(pin??""));
-  });
+  // Compatibility IPCs remain while older renderer bundles are upgraded.
+  // Staff rows and PIN verifiers are written only by the cloud-to-SQL sync.
+  ipcMain.handle("staff:cache-roster", () => ({ok:true,written:0,source:"sql-sync"}));
+  ipcMain.handle("staff:enroll", () => ({ok:true,written:0,source:"sql-sync"}));
   ipcMain.handle("staff:verify-pin", async (_e, username, pin) => {
-    const cached = localStaffStore.verify(username, pin);
-    // SQL Server carries the cloud-synchronized bcrypt hash. Check it before
-    // the device verifier so a PIN change or account deactivation received by
-    // sync invalidates the old cached PIN immediately on every terminal.
     try {
-      const synced = await verifySyncedStaffPin(databaseManager.pool, username, pin, localBranchId());
-      if (synced.ok) {
-        const enrolled = localStaffStore.enroll(synced.staff, String(pin ?? ""));
-        return enrolled?.ok === false ? enrolled : localStaffStore.verify(username, pin);
-      }
-      if (["inactive", "invalid", "missing"].includes(synced.reason)) return synced;
-    } catch {
-      /* A missing local SQL connection falls back to the enrolled verifier. */
+      return await verifySyncedStaffPin(databaseManager.pool, username, pin, localBranchId());
+    } catch (error) {
+      return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
-    if (cached.reason === "locked") return cached;
-    return cached;
   });
   ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
     const input = guard.options(value, { name: "cashier sign in", max: 2 });

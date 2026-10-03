@@ -4,12 +4,18 @@ const { toLocalValue } = require("./row-codec.cjs");
 // A cloud row is authoritative when its version matches a cached terminal
 // row. A genuinely pending terminal edit has already advanced its version and
 // therefore remains untouched until its upload is accepted or rejected.
-const CLOUD_AUTHORITATIVE_ON_EQUAL = new Set([
-  "pos_store_settings",
-  "settings_overrides",
-  "settings_scoped",
-  "authorization_actions",
-]);
+const DEVICE_COLUMN_ALLOWLIST = {
+  app_users: new Set([
+    "id", "user_id", "full_name", "store_id", "role", "role_slug", "permissions",
+    "is_active", "pin_hash", "pin_length", "pin_set_at", "pin_updated_by", "row_version",
+    "created_at", "updated_at", "deleted_at",
+  ]),
+  members: new Set([
+    "id", "member_code", "full_name", "phone", "tier_id", "loyalty_points", "total_spent",
+    "is_verified", "created_at", "updated_at", "deleted_at", "row_version",
+    "membership_revision", "membership_status", "membership_member_id",
+  ]),
+};
 
 class CloudClient {
   constructor({ configStore, terminalStore, connectionManager = null }) {
@@ -30,7 +36,7 @@ class CloudClient {
   terminalId() {
     return String(this.terminalStore.read()?.tokenId ?? "").trim();
   }
-  async request(payload) {
+  async request(payload, operation = "") {
     const terminal = this.terminalStore.read() ?? {};
     // An empty config-store value must not mask the HTTPS recovery copy sealed
     // with the terminal activation (nullish coalescing treats "" as present).
@@ -72,7 +78,8 @@ class CloudClient {
         governanceTables.has(operation.table),
       );
     const personProof = governance ? (this.authorizationProof ?? {}) : {};
-    const response = await fetch(`${base}/api/v1/pos/sync`, {
+    const suffix = operation ? `?operation=${encodeURIComponent(operation)}` : "";
+    const response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...payload, ...personProof, terminalToken }),
@@ -143,6 +150,9 @@ class CloudClient {
   counts({ organizationId = "default", branchId, historyDays = 90 }) {
     return this.request({ sqlServerCounts: { organizationId, branchId, historyDays } });
   }
+  membershipDirectory({ afterRevision = 0, limit = 500 } = {}) {
+    return this.request({ afterRevision:Number(afterRevision)||0, limit }, "membership_directory");
+  }
   oldReceipt(lookup, branchId, proof = {}) {
     return this.request({ ...proof, oldReceipt: { lookup, branchId } });
   }
@@ -178,8 +188,9 @@ class CloudClient {
         );
         continue;
       }
+      const deviceColumns = DEVICE_COLUMN_ALLOWLIST[table.cloudTable];
       const entries = Object.entries(row)
-        .filter(([name]) => allowed.has(name))
+        .filter(([name]) => allowed.has(name) && (!deviceColumns || deviceColumns.has(name)))
         .map(([name, value]) => {
           const column = allowed.get(name);
           return [column.sqlServerColumn, toLocalValue(column, value)];
@@ -213,8 +224,9 @@ class CloudClient {
             ? "target.[refunded_qty]=CASE WHEN source.[refunded_qty]>target.[refunded_qty] THEN source.[refunded_qty] ELSE target.[refunded_qty] END,target.[row_version]=CASE WHEN source.[row_version]>target.[row_version] THEN source.[row_version] ELSE target.[row_version] END"
             : null;
       const mayUpdate = conflictPolicy !== "immutable_reversal" && updates.length;
+      const cloudWinsEqual = conflictPolicy === "highest_version" || conflictPolicy === "scoped_version";
       const authorizationOrder = versioned
-        ? ` AND source.[row_version]${CLOUD_AUTHORITATIVE_ON_EQUAL.has(table.cloudTable) ? ">=" : ">"}target.[row_version]`
+        ? ` AND source.[row_version]${cloudWinsEqual ? ">=" : ">"}target.[row_version]`
         : "";
       const matched = correction
         ? `WHEN MATCHED THEN UPDATE SET ${correction}`
