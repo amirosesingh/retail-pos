@@ -221,7 +221,14 @@ function RootShell({ children }: { children: ReactNode }) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: staleAssetRecoveryScript }} />
         <HeadContent />
-        <script dangerouslySetInnerHTML={{ __html: publicConfigScript() }} />
+        {/* The server owns this payload. In browsers and device renderers the
+            same call intentionally resolves to an empty string after the
+            server-emitted script has already populated window.__POS_CONFIG__.
+            Suppress only this expected text difference during hydration. */}
+        <script
+          suppressHydrationWarning
+          dangerouslySetInnerHTML={{ __html: publicConfigScript() }}
+        />
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
       <body>

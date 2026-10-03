@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-02T23:01:58.591Z",
+  "generatedAt": "2026-10-03T09:40:32.547Z",
   "tables": [
     {
       "cloudTable": "coupon_campaigns",
@@ -4905,6 +4905,45 @@
           "sqlServerType": "nvarchar(max)",
           "nullable": true,
           "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "membership_member_id",
+          "sqlServerColumn": "membership_member_id",
+          "cloudType": "uuid",
+          "sqlServerType": "uniqueidentifier",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "membership_revision",
+          "sqlServerColumn": "membership_revision",
+          "cloudType": "bigint",
+          "sqlServerType": "bigint",
+          "nullable": false,
+          "defaultRule": "0",
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "membership_status",
+          "sqlServerColumn": "membership_status",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": false,
+          "defaultRule": "'active'",
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,

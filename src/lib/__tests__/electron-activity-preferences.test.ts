@@ -4,23 +4,15 @@ import { describe, expect, it } from "vitest";
 const source = (file: string) => readFileSync(file, "utf8");
 
 describe("Electron activity preferences", () => {
-  it("uses direct Supabase auth when available and the hosted proof for PIN sessions", () => {
+  it("keeps notification dismissal local to the current window", () => {
     const activity = source("src/lib/activity-events.ts");
-    const electronBranch = activity.slice(
-      activity.indexOf("async function syncClearedEntry"),
-      activity.indexOf("export async function clearActivityEntry"),
-    );
 
     expect(activity).toContain("listActivityEventPageDirect");
     expect(activity).toContain('supabaseExternal.from("activity_events")');
-    expect(electronBranch).toContain('if (platformName() === "electron")');
-    expect(electronBranch).toContain('supabaseExternal.rpc("set_activity_event_cleared"');
-    expect(electronBranch).toContain('supabaseExternal.rpc("set_all_activity_events_cleared"');
-    expect(electronBranch).toContain('posFetch("/api/v1/pos/activity-preferences"');
-    expect(electronBranch).not.toContain("if (!credentials.accessToken) return false");
-    expect(electronBranch.match(/Fall through to the authenticated POS endpoint\./g)).toHaveLength(
-      2,
-    );
+    expect(activity).toContain("window.sessionStorage.setItem(CLEARED_KEY");
+    expect(activity).not.toContain("async function syncClearedEntry");
+    expect(activity).not.toContain('supabaseExternal.rpc("set_activity_event_cleared"');
+    expect(activity).not.toContain("Saving notification preference");
   });
 
   it("keeps bulk clear authenticated, self-scoped, and branch-scoped", () => {

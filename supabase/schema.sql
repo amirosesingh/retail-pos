@@ -399,6 +399,9 @@ CREATE TABLE IF NOT EXISTS public.members (
     is_verified boolean DEFAULT false NOT NULL,
     verified_at timestamp with time zone,
     verified_channel text,
+    membership_member_id uuid,
+    membership_revision bigint DEFAULT 0 NOT NULL,
+    membership_status text DEFAULT 'active'::text NOT NULL,
     CONSTRAINT members_country_code_check CHECK ((country_code IS NULL) OR (country_code ~ '^[A-Z]{2}$'::text)),
     CONSTRAINT members_postal_code_check CHECK ((postal_code IS NULL) OR (char_length(postal_code) <= 32))
 );

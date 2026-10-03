@@ -33,6 +33,10 @@ dist-ssr
 *dist-desktop
 *release-desktop
 *release
+# Generated Capacitor application and bundled web shell. CI recreates both
+# from the reviewed source before producing the signed Android artifact.
+android/
+capacitor-shell/
 # Local env overrides (never commit real values)
 .env.local
 .env.*.local

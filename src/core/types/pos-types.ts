@@ -139,6 +139,12 @@ export type Member = {
   verified?: boolean;
   verifiedAt?: string;
   verifiedChannel?: string;
+  /** Monotonic revision from the isolated membership directory. */
+  directoryRevision?: number;
+  membershipId?: string;
+  /** Directory lifecycle state; inactive members cannot be newly attached. */
+  membershipStatus?: string;
+  updatedAt?: string;
 };
 
 export type CartLine = {

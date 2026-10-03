@@ -2714,6 +2714,9 @@ IF OBJECT_ID(N'dbo.members', N'U') IS NULL BEGIN CREATE TABLE dbo.[members] (
   [is_verified] bit NOT NULL CONSTRAINT [DF_members_is_verified] DEFAULT (0),
   [verified_at] datetimeoffset(7) NULL,
   [verified_channel] nvarchar(max) NULL,
+  [membership_member_id] uniqueidentifier NULL,
+  [membership_revision] bigint NOT NULL CONSTRAINT [DF_members_membership_revision] DEFAULT (0),
+  [membership_status] nvarchar(max) NOT NULL CONSTRAINT [DF_members_membership_status] DEFAULT ('active'),
   [deleted_at] nvarchar(max) NULL,
   CONSTRAINT [PK_members] PRIMARY KEY ([id])
 
@@ -2843,6 +2846,34 @@ END;
 IF COL_LENGTH(N'dbo.members', N'verified_at') IS NULL ALTER TABLE dbo.[members] ADD [verified_at] datetimeoffset(7) NULL;
 
 IF COL_LENGTH(N'dbo.members', N'verified_channel') IS NULL ALTER TABLE dbo.[members] ADD [verified_channel] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.members', N'membership_member_id') IS NULL ALTER TABLE dbo.[members] ADD [membership_member_id] uniqueidentifier NULL;
+
+IF COL_LENGTH(N'dbo.members', N'membership_revision') IS NULL ALTER TABLE dbo.[members] ADD [membership_revision] bigint NULL;
+
+IF OBJECT_ID(N'dbo.members', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.members', N'membership_revision') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.members') AND c.name=N'membership_revision'
+) ALTER TABLE dbo.[members] ADD CONSTRAINT [DF_members_membership_revision] DEFAULT (0) FOR [membership_revision];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.members') AND name=N'membership_revision' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[members] SET [membership_revision]=0 WHERE [membership_revision] IS NULL;';
+  ALTER TABLE dbo.[members] ALTER COLUMN [membership_revision] bigint NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.members', N'membership_status') IS NULL ALTER TABLE dbo.[members] ADD [membership_status] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.members', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.members', N'membership_status') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.members') AND c.name=N'membership_status'
+) ALTER TABLE dbo.[members] ADD CONSTRAINT [DF_members_membership_status] DEFAULT ('active') FOR [membership_status];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.members') AND name=N'membership_status' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[members] SET [membership_status]=''active'' WHERE [membership_status] IS NULL;';
+  ALTER TABLE dbo.[members] ALTER COLUMN [membership_status] nvarchar(max) NOT NULL;
+END;
 
 IF COL_LENGTH(N'dbo.members', N'deleted_at') IS NULL ALTER TABLE dbo.[members] ADD [deleted_at] nvarchar(max) NULL;
 
@@ -11157,6 +11188,109 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4)
   VALUES (4, N'repair_terminal_platform_default');
 GO
 
+SET ANSI_NULLS ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
+SET XACT_ABORT ON;
+
+IF COL_LENGTH(N'dbo.members', N'membership_revision') IS NULL
+  ALTER TABLE dbo.members ADD membership_revision bigint NOT NULL
+    CONSTRAINT DF_members_membership_revision DEFAULT (0);
+
+IF COL_LENGTH(N'dbo.members', N'membership_status') IS NULL
+  ALTER TABLE dbo.members ADD membership_status nvarchar(max) NOT NULL
+    CONSTRAINT DF_members_membership_status DEFAULT (N'active');
+
+IF EXISTS (
+  SELECT 1
+  FROM sys.columns
+  WHERE object_id = OBJECT_ID(N'dbo.members')
+    AND name = N'membership_status'
+    AND max_length <> -1
+)
+BEGIN
+  DECLARE @membership_status_default sysname;
+  SELECT @membership_status_default = dc.name
+  FROM sys.default_constraints dc
+  INNER JOIN sys.columns c
+    ON c.object_id = dc.parent_object_id
+   AND c.column_id = dc.parent_column_id
+  WHERE dc.parent_object_id = OBJECT_ID(N'dbo.members')
+    AND c.name = N'membership_status';
+
+  IF @membership_status_default IS NOT NULL
+  BEGIN
+    DECLARE @drop_membership_status_default nvarchar(max) =
+      N'ALTER TABLE dbo.members DROP CONSTRAINT ' + QUOTENAME(@membership_status_default) + N';';
+    EXEC sys.sp_executesql @drop_membership_status_default;
+  END;
+
+  EXEC(N'ALTER TABLE dbo.members ALTER COLUMN membership_status nvarchar(max) NOT NULL;');
+  ALTER TABLE dbo.members ADD CONSTRAINT DF_members_membership_status
+    DEFAULT (N'active') FOR membership_status;
+END;
+
+IF COL_LENGTH(N'dbo.members', N'membership_member_id') IS NULL
+  ALTER TABLE dbo.members ADD membership_member_id uniqueidentifier NULL;
+
+-- Older releases could copy private membership profile fields to a till.
+-- Offline lookup requires only the minimal directory; clear those local-only
+-- copies without changing the central POS or membership databases.
+UPDATE dbo.members
+SET email = NULL, address = NULL, country_code = NULL, postal_code = NULL, date_of_birth = NULL
+WHERE email IS NOT NULL OR address IS NOT NULL OR country_code IS NOT NULL
+   OR postal_code IS NOT NULL OR date_of_birth IS NOT NULL;
+
+-- Supabase Auth identity/password material is never part of the till roster.
+-- Preserve any email already held by an earlier installation, but new
+-- offline-directory rows get a blank local placeholder because the device
+-- pull allowlist deliberately does not copy cloud email. Offline
+-- authentication uses only username plus bcrypt pin_hash.
+UPDATE dbo.app_users
+SET auth_user_id = NULL, auth_secret = N''
+WHERE auth_user_id IS NOT NULL OR auth_secret <> N'';
+
+IF NOT EXISTS (
+  SELECT 1
+  FROM sys.default_constraints dc
+  INNER JOIN sys.columns c
+    ON c.object_id = dc.parent_object_id
+   AND c.column_id = dc.parent_column_id
+  WHERE dc.parent_object_id = OBJECT_ID(N'dbo.app_users')
+    AND c.name = N'email'
+)
+  ALTER TABLE dbo.app_users ADD CONSTRAINT DF_app_users_email
+    DEFAULT (N'') FOR email;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE object_id = OBJECT_ID(N'dbo.members') AND name = N'IX_members_membership_revision'
+)
+  EXEC(N'CREATE INDEX IX_members_membership_revision ON dbo.members(membership_revision);');
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE object_id = OBJECT_ID(N'dbo.members') AND name = N'UX_members_membership_member_id'
+)
+  EXEC(N'CREATE UNIQUE INDEX UX_members_membership_member_id
+    ON dbo.members(membership_member_id)
+    WHERE membership_member_id IS NOT NULL;');
+
+IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
+  CREATE TABLE dbo.pos_schema_migrations (
+    version int NOT NULL PRIMARY KEY,
+    name nvarchar(200) NOT NULL,
+    applied_at datetimeoffset(7) NOT NULL DEFAULT SYSDATETIMEOFFSET()
+  );
+
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5)
+  INSERT dbo.pos_schema_migrations(version, name)
+  VALUES (5, N'staff_sql_and_member_directory');
+
 DECLARE @RequiredTables TABLE ([name] sysname NOT NULL PRIMARY KEY);
 INSERT INTO @RequiredTables ([name]) VALUES
   (N'coupon_campaigns'),
@@ -11240,7 +11374,7 @@ DECLARE @Missing int = @Required - @Present;
 
 SELECT
   DB_NAME() AS database_name,
-  N'1.4.3' AS application_version,
+  N'1.4.4' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -11616,6 +11750,9 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'members', N'is_verified'),
   (N'members', N'verified_at'),
   (N'members', N'verified_channel'),
+  (N'members', N'membership_member_id'),
+  (N'members', N'membership_revision'),
+  (N'members', N'membership_status'),
   (N'members', N'deleted_at'),
   (N'membership_tiers', N'id'),
   (N'membership_tiers', N'name'),
@@ -12256,11 +12393,11 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_action_history', N'scope_type'),
   (N'authorization_action_history', N'scope_id'),
   (N'authorization_action_history', N'row_version'),
-  (N'authorization_action_history', N'changed_by'),
+  (N'authorization_action_history', N'changed_by');
+INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_action_history', N'change_source'),
   (N'authorization_action_history', N'change_kind'),
-  (N'authorization_action_history', N'snapshot');
-INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N'authorization_action_history', N'snapshot'),
   (N'authorization_action_history', N'created_at'),
   (N'authorization_requests', N'id'),
   (N'authorization_requests', N'action_key'),
@@ -12471,7 +12608,7 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
   THROW 51002, 'Retail POS local database migration history table is missing.', 1;
 
-EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4)
+EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5)
   THROW 51002, ''Retail POS local database migration history is incomplete.'', 1;');
 
 EXEC(N'SELECT version, name, applied_at

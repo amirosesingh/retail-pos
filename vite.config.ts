@@ -78,7 +78,23 @@ const blankWebEnv = Object.fromEntries(
 );
 
 export default defineConfig({
-  server: { host: "::", port: 8080 },
+  server: {
+    host: "::",
+    port: 8080,
+    // Release/package jobs may run beside the development server. Their
+    // generated Electron DLLs and Android outputs are not source inputs;
+    // watching them can crash Windows with EBUSY while a packager signs or
+    // replaces a file.
+    watch: {
+      ignored: [
+        "**/release/**",
+        "**/dist/**",
+        "**/dist-desktop/**",
+        "**/capacitor-shell/**",
+        "**/android/app/build/**",
+      ],
+    },
+  },
   css: { transformer: "lightningcss" },
   resolve: {
     tsconfigPaths: true,

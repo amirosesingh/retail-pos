@@ -104,6 +104,82 @@ describe("SQL Server checkpoints 7 through 12", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("advances past cloud-applied SQL changes without echoing them back to Supabase", async () => {
+    const remoteChange = {
+      version: 12,
+      operation: "U",
+      remote: true,
+      key: { id: "P1" },
+      entityId: '{"id":"P1"}',
+    };
+    const reader = {
+      pendingAggregates: vi.fn().mockResolvedValue([]),
+      changedIds: vi.fn().mockResolvedValueOnce([remoteChange]).mockResolvedValueOnce([]),
+      rows: vi.fn(),
+    };
+    const cloud = { pushBatch: vi.fn(), terminalId: vi.fn().mockReturnValue("T1") };
+    const checkpoints = {
+      get: vi.fn().mockResolvedValue({ change_tracking_version: 11 }),
+      save: vi.fn(),
+    };
+    const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
+    const worker = new PushWorker({
+      reader,
+      cloud,
+      checkpoints,
+      registry: {
+        tables: [
+          {
+            cloudTable: "products",
+            sqlServerTable: "products",
+            dependencyOrder: 0,
+            direction: "bidirectional",
+            columns: [{ primaryKey: true }],
+          },
+        ],
+      },
+    });
+    await expect(worker.run({ branchId: "B1" })).resolves.toEqual({ pushed: 0 });
+    expect(reader.rows).not.toHaveBeenCalled();
+    expect(cloud.pushBatch).not.toHaveBeenCalled();
+    expect(checkpoints.save).toHaveBeenCalledWith("B1", "products", "push", {
+      change_tracking_version: 12,
+    });
+  });
+
+  it("defers a membership page that claims more data without advancing its cursor", async () => {
+    const checkpoints = {
+      get: vi.fn(async (_branch: string, table: string) =>
+        table === "__membership_directory__" ? { committed_cursor: 8 } : null,
+      ),
+      save: vi.fn(),
+    };
+    const cloud = {
+      membershipDirectory: vi.fn().mockResolvedValue({
+        ok: true,
+        mirrored: 0,
+        nextRevision: 8,
+        hasMore: true,
+      }),
+      pullBatch: vi.fn().mockResolvedValue({ count: 0, rows: [], tombstones: [] }),
+    };
+    const { PullWorker } = await import("../../../electron/sync/pull-worker.cjs");
+    const worker = new PullWorker({
+      connectionManager: {},
+      cloud,
+      checkpoints,
+      registry: { tables: [] },
+      reader: {},
+      conflicts: {},
+    });
+    await expect(worker.run({ branchId: "B1" })).resolves.toMatchObject({
+      membershipMirrored: 0,
+      membershipDeferred: true,
+    });
+    expect(cloud.membershipDirectory).toHaveBeenCalledOnce();
+    expect(cloud.pullBatch).toHaveBeenCalledOnce();
+  });
+
   it("selects complete journal aggregates rather than cutting one at the row limit", () => {
     const reader = readFileSync("electron/sync/change-reader.cjs", "utf8");
     expect(reader).toMatch(/SELECT TOP \(@limit\) aggregate_id,MIN\(change_id\)/);

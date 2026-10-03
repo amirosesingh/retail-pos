@@ -5,7 +5,8 @@
  * decisions that have come back, approvers see what is waiting for them, and
  * supervisors keep the branch activity feed they already had. Clearing an
  * entry only hides it for the person who cleared it — the request, the
- * decision and the audit trail are never touched.
+ * decision and the audit trail are never touched. Dismissal is local to the
+ * current window and is not synchronized to another terminal.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -97,9 +98,8 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
           toast.error(failure);
         } else {
           toast.dismiss(`activity-${id}`);
-          // Electron keeps business preferences in SQL Server, not
-          // localStorage. Reflect the committed row immediately so removal
-          // and history insertion animate without waiting for the next poll.
+          // Reflect the local dismissal immediately. The underlying business
+          // event remains immutable and other terminals keep their own view.
           setRows((current) =>
             current.map((row) => {
               if (row.id !== id) return row;
@@ -164,12 +164,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     }
     setRows(list);
     mergeRemoteActivityPreferences(meKey, list);
-    const hidden = new Set([
-      ...clearedIds(meKey),
-      ...list
-        .filter((row) => row.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase()))
-        .map((row) => row.id),
-    ]);
+    const hidden = new Set(clearedIds(meKey));
     const fresh = unseenEvents(list, meKey).filter((row) => !hidden.has(row.id));
     setUnread(fresh.length);
     const newlyArrived = activityInitializedRef.current
@@ -233,12 +228,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     };
   }, [showActivity, refresh]);
 
-  const hidden = new Set([
-    ...clearedIds(meKey),
-    ...rows
-      .filter((row) => row.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase()))
-      .map((row) => row.id),
-  ]);
+  const hidden = new Set(clearedIds(meKey));
   const visibleRows = rows.filter((r) => !hidden.has(r.id));
   // Unresolved business records never consult notification clear/read preferences.
   const toDecide = centre?.toDecide ?? [];

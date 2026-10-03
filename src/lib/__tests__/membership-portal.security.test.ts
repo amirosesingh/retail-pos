@@ -76,8 +76,16 @@ describe("customer membership portal security", () => {
       "supabase/membership/migrations/20261002201500_email_otp_phone_membership.sql",
     );
     const service = read("src/lib/membership-service.server.ts");
+    const mirrorIdentitySql = read(
+      "supabase/migrations/20261003183000_harden_membership_directory_identity.sql",
+    );
+    const revisionOverlapSql = read(
+      "supabase/membership/migrations/20261003190000_member_directory_revision_overlap.sql",
+    );
+    const posDb = read("src/core/api/pos-db.ts");
     const client = read("src/lib/membership-service.functions.ts");
     const register = read("src/routes/index.tsx");
+    const memberEditor = read("src/routes/members.tsx");
     const checkout = read("src/lib/register/use-checkout.ts");
 
     expect(membershipSql).toContain("event_id text primary key");
@@ -93,12 +101,30 @@ describe("customer membership portal security", () => {
     expect(emailOtpSql).not.toMatch(/(?:otp|token|verification)_?(?:code|hash)\s+(?:text|varchar)/i);
     expect(service).toContain("AbortSignal.timeout(8_000)");
     expect(service).toContain("phone: row.member_code");
-    expect(service).toContain("await verifyRelayCaller(parsed.data)");
+    expect(service).toContain("await verifyCaller(parsed.data)");
+    expect(service).toContain('serviceRpc("membership_directory_delta"');
+    expect(service).toContain('serviceRest("rpc/membership_directory_apply"');
     expect(client).toContain('posFetch("/api/v1/pos/sync?operation=membership_lookup"');
     expect(client).not.toContain("MEMBERSHIP_SUPABASE_SERVICE_ROLE_KEY");
     expect(register).toContain("void upsertMember(cached)");
+    expect(memberEditor).toContain("Email and date of birth are verified profile details");
+    expect(memberEditor.match(/aria-readonly="true"/g)).toHaveLength(2);
     expect(checkout).not.toContain("postMembershipSale");
     expect(service).not.toContain("membership_event_outbox");
+    expect(mirrorIdentitySql).toContain("member.membership_member_id = source.id");
+    expect(mirrorIdentitySql).toContain("member.phone = source.phone");
+    expect(mirrorIdentitySql).toContain("pg_advisory_xact_lock");
+    expect(mirrorIdentitySql).not.toMatch(/delete\s+from\s+public\.members/i);
+    expect(revisionOverlapSql).toContain("m.directory_revision <= b.cursor_revision");
+    expect(revisionOverlapSql).toContain("b.cursor_revision - b.overlap");
+    expect(service).toContain("forwardRows === pageSize");
+    const memberWriter = posDb.slice(
+      posDb.indexOf("const memberToRow"),
+      posDb.indexOf("const rowToPromotion"),
+    );
+    expect(memberWriter).not.toContain("membership_revision:");
+    expect(memberWriter).not.toContain("membership_member_id:");
+    expect(memberWriter).not.toContain("membership_status:");
   });
 
   it("embeds the configured company gateway in phone-issued terminal QR codes", () => {

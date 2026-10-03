@@ -36,6 +36,11 @@ export const Route = createFileRoute("/api/v1/pos/sync")({
             await import("@/lib/membership-service.server");
           return withCors(await handleMembershipLookupRequest(request), request);
         }
+        if (new URL(request.url).searchParams.get("operation") === "membership_directory") {
+          const { handleMembershipDirectoryRequest } =
+            await import("@/lib/membership-service.server");
+          return withCors(await handleMembershipDirectoryRequest(request), request);
+        }
         const { handleSyncRequest } = await import("@/lib/sync-endpoint.server");
         return withCors(await handleSyncRequest(request), request);
       },

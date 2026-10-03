@@ -35,13 +35,39 @@ function dateColumn(table) {
   return ["created_at", "paid_at", "occurred_at", "updated_at"].find((name) => names.has(name)) ?? null;
 }
 
-function scopedWhere(registry, table, { historyDays = 90, alias = "source" } = {}) {
+function settingsScopePredicate(table, alias = "source") {
+  if (!["settings_overrides", "settings_scoped"].includes(table?.cloudTable)) return null;
+  return `(lower(${alias}.[scope])='global' OR (lower(${alias}.[scope])='branch' AND ${alias}.[scope_id]=@branch) OR (lower(${alias}.[scope])='cluster' AND EXISTS (SELECT 1 FROM dbo.[stores] scoped_store WHERE scoped_store.[id]=@branch AND COALESCE(NULLIF(scoped_store.[group_id],''),'default')=${alias}.[scope_id])) OR (lower(${alias}.[scope])='terminal' AND ${alias}.[scope_id]=@terminal))`;
+}
+
+function governanceScopePredicate(table, alias = "source") {
+  if (!["authorization_actions", "authorization_action_history"].includes(table?.cloudTable))
+    return null;
+  return `(lower(${alias}.[scope_type])='global' OR (lower(${alias}.[scope_type])='branch' AND ${alias}.[scope_id]=@branch) OR (lower(${alias}.[scope_type])='cluster' AND EXISTS (SELECT 1 FROM dbo.[stores] scoped_store WHERE scoped_store.[id]=@branch AND COALESCE(NULLIF(scoped_store.[group_id],''),'default')=${alias}.[scope_id])))`;
+}
+
+function scopedWhere(
+  registry,
+  table,
+  { historyDays = 90, alias = "source" } = {},
+) {
   const clauses = [];
-  const branch = branchPredicate(registry, table, alias);
-  if (branch) clauses.push(branch);
+  const explicitScope =
+    settingsScopePredicate(table, alias) ?? governanceScopePredicate(table, alias);
+  if (explicitScope) clauses.push(explicitScope);
+  else {
+    const branch = branchPredicate(registry, table, alias);
+    if (branch) clauses.push(branch);
+  }
   const date = table?.retentionClass === "historical" ? dateColumn(table) : null;
   if (date && Number(historyDays) < 7300) clauses.push(`${alias}.[${date}]>=@cutoff`);
   return clauses.length ? clauses.join(" AND ") : "1=1";
 }
 
-module.exports = { branchPredicate, dateColumn, scopedWhere };
+module.exports = {
+  branchPredicate,
+  dateColumn,
+  governanceScopePredicate,
+  scopedWhere,
+  settingsScopePredicate,
+};

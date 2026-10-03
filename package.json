@@ -30,6 +30,7 @@
     "verify:sync-registry": "node scripts/verify-sync-registry.cjs",
     "audit:sync": "node scripts/generate-sync-audit.cjs",
     "smoke:windows": "node scripts/windows-package-smoke.cjs",
+    "smoke:electron-runtime": "node scripts/electron-runtime-smoke.cjs",
     "verify:merge": "node scripts/merge-readiness.cjs",
     "test": "vitest run",
     "test:e2e": "playwright test",
@@ -40,8 +41,8 @@
     "desktop:installer": "node scripts/desktop-release.cjs",
     "desktop:release": "node scripts/desktop-release.cjs",
     "mobile:build": "node scripts/mobile-build.cjs",
-    "mobile:sync": "node scripts/mobile-build.cjs && npx cap sync android && node scripts/android-permissions.cjs",
-    "mobile:release": "node scripts/mobile-build.cjs && npx cap sync android && node scripts/android-permissions.cjs"
+    "mobile:sync": "node scripts/mobile-build.cjs && node --require ./scripts/node-user-info-fallback.cjs ./node_modules/@capacitor/cli/bin/capacitor sync android && node scripts/android-permissions.cjs",
+    "mobile:release": "node scripts/mobile-build.cjs && node --require ./scripts/node-user-info-fallback.cjs ./node_modules/@capacitor/cli/bin/capacitor sync android && node scripts/android-permissions.cjs"
   },
   "dependencies": {
     "@capacitor-community/file-opener": "^8.0.1",

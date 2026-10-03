@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-02T23:01:58.591Z",
+  "generatedAt": "2026-10-03T09:40:32.547Z",
   "tableCount": 70,
-  "columnCount": 1184,
+  "columnCount": 1187,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -2380,6 +2380,24 @@
           "declaration": "text",
           "nullable": true,
           "hasDefault": false
+        },
+        {
+          "name": "membership_member_id",
+          "declaration": "uuid",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "membership_revision",
+          "declaration": "bigint DEFAULT 0 NOT NULL",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "membership_status",
+          "declaration": "text DEFAULT 'active'::text NOT NULL",
+          "nullable": false,
+          "hasDefault": true
         },
         {
           "name": "deleted_at",

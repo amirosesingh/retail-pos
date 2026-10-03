@@ -26,7 +26,37 @@ class PullWorker {
   async run({ branchId, batchSize = 500 }) {
     if (!branchId) throw new Error("A branch is required for synchronization.");
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
-    let merged = 0; let conflictCount = 0;
+    let merged = 0; let conflictCount = 0; let membershipMirrored = 0; let membershipDeferred = false;
+    let membershipCheckpoint = await this.checkpoints.get(branchId, "__membership_directory__", "pull");
+    try {
+      while (true) {
+        const directory = await this.cloud.membershipDirectory({
+          afterRevision: membershipCheckpoint?.committed_cursor ?? 0,
+          limit: batchSize,
+        });
+        if (!directory?.ok) {
+          membershipDeferred = true;
+          break;
+        }
+        membershipMirrored += Number(directory.mirrored ?? 0);
+        const priorRevision = Number(membershipCheckpoint?.committed_cursor ?? 0);
+        const nextRevision = Number(directory.nextRevision ?? priorRevision);
+        await this.checkpoints.save(branchId, "__membership_directory__", "pull", { committed_cursor: nextRevision });
+        membershipCheckpoint = { ...(membershipCheckpoint ?? {}), committed_cursor: nextRevision };
+        if (!directory.hasMore) break;
+        // A malformed or stale service page must not keep the POS pull worker
+        // in an infinite loop. Preserve the last checkpoint and retry the
+        // isolated membership service during the next normal sync cycle.
+        if (!Number.isFinite(nextRevision) || nextRevision <= priorRevision) {
+          membershipDeferred = true;
+          break;
+        }
+      }
+    } catch {
+      // Membership is a separate service. Its outage must never block sales,
+      // approvals, staff changes, or the main POS synchronization feed.
+      membershipDeferred = true;
+    }
     let checkpoint = await this.checkpoints.get(branchId, "__feed__", "pull");
     while (true) {
       const batch = await this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit: batchSize });
@@ -54,7 +84,7 @@ class PullWorker {
       batch.rows.length = 0; batch.tombstones.length = 0;
       if (batch.count < batchSize) break;
     }
-    return { merged, conflicts: conflictCount };
+    return { merged, conflicts: conflictCount, membershipMirrored, membershipDeferred };
   }
 }
 module.exports = { PullWorker };

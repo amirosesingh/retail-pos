@@ -10,16 +10,21 @@ async function reconcile({ registry, localCounts, cloudCounts, branchId }) {
   }
   return { ok: differences.length === 0, differences };
 }
-async function localTableCounts(connectionManager,registry,branchId,historyDays=90){
+async function localTableCounts(connectionManager,registry,branchId,historyDays=90,terminalId=""){
   if(!branchId)throw Object.assign(new Error("A branch is required for verification."),{code:"EBRANCH"});
-  const output={};
   const cutoff=new Date(Date.now()-Math.max(30,Number(historyDays)||90)*86400000);
-  for(const table of registry.tables){
-    const request=connectionManager.pool.request().input("branch",String(branchId)).input("cutoff",cutoff);
+  const request=connectionManager.pool.request().input("branch",String(branchId)).input("terminal",String(terminalId??"")).input("cutoff",cutoff);
+  // Reconciliation used to make one SQL Server round trip per table. Apart
+  // from being slow on a busy till, a renderer waiting for all of those calls
+  // could look like a central-server timeout. The registry is a trusted build
+  // artifact, so combine the exact counts into one parameterised request.
+  const statements=registry.tables.map((table)=>{
     const where=scopedWhere(registry,table,{historyDays,alias:"source"});
-    const result=await request.query(`SELECT CONVERT(varchar(40),COUNT_BIG(*)) count FROM dbo.[${table.sqlServerTable}] source WHERE ${where};`);
-    output[table.cloudTable]=exactCount(result.recordset?.[0]?.count);
-  }
-  return output;
+    const name=String(table.cloudTable).replaceAll("'","''");
+    return `SELECT '${name}' table_name,CONVERT(varchar(40),COUNT_BIG(*)) row_count FROM dbo.[${table.sqlServerTable}] source WHERE ${where}`;
+  });
+  if(!statements.length)return{};
+  const result=await request.query(statements.join(" UNION ALL "));
+  return Object.fromEntries((result.recordset??[]).map((row)=>[String(row.table_name),exactCount(row.row_count)]));
 }
 module.exports = { reconcile, localTableCounts, exactCount };

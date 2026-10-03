@@ -222,7 +222,10 @@ function Members() {
                 <Label className="text-xs text-muted-foreground">Email</Label>
                 <Input
                   value={draft.email}
-                  onChange={(e) => setDraft({ ...draft, email: e.target.value })}
+                  readOnly
+                  aria-readonly="true"
+                  placeholder="Managed in the member portal"
+                  className="bg-muted/40"
                 />
               </div>
               <div className="space-y-1">
@@ -251,9 +254,15 @@ function Members() {
                 <Input
                   type="date"
                   value={draft.birthday ?? ""}
-                  onChange={(e) => setDraft({ ...draft, birthday: e.target.value })}
+                  readOnly
+                  aria-readonly="true"
+                  className="bg-muted/40"
                 />
               </div>
+              <p className="col-span-2 text-xs text-muted-foreground">
+                Email and date of birth are verified profile details. Members manage them securely
+                through the membership portal.
+              </p>
             </div>
           )}
           <DialogFooter>
