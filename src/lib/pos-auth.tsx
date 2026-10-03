@@ -1174,7 +1174,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // resume; a definite token refusal expires the login, while a network
         // or server failure leaves the user's work and session untouched.
         const authCheck = await validateCentralAuthSession(true);
-        centralSessionVerifiedRef.current = authCheck.state === "verified";
+        if (authCheck.state === "verified") {
+          centralSessionVerifiedRef.current = true;
+        } else if (authCheck.state === "rejected" || !authCheck.session) {
+          // A definite refusal (or an absent local session) invalidates the
+          // previous proof. An unavailable server with the same stored
+          // session does not: connectivity loss must not sign out a till.
+          centralSessionVerifiedRef.current = false;
+        }
         setCentralAuthSessionPresent(centralSessionVerifiedRef.current);
         const creds = await readCredentials();
         const hasIndependentPosProof = Boolean(
