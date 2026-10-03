@@ -10,7 +10,10 @@ import {
   type ReactNode,
 } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
+import {
+  discardRejectedExternalAuthSession,
+  supabaseExternal as supabase,
+} from "@/integrations/supabase/external-client";
 import { type MetaRole } from "@/lib/pos-users";
 import { clearStoredCredentials, readCredentials, saveCashierToken } from "@/lib/pos-credentials";
 import { issueCashierSession } from "@/lib/pos-session.functions";
@@ -260,6 +263,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [appUser, setAppUser] = useState<AppUserProfile | null>(null);
   const [sessionState, setSessionState] = useState<SessionState>("signed-out");
   const centralIdentityRef = useRef<string | null>(null);
+  const centralSessionVerifiedRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -340,7 +344,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Supabase may repeat SIGNED_IN when a window regains focus. The
         // identity did not change, so retain the already-proven role/profile
         // instead of replacing the whole POS with its startup loader.
-        setCentralAuthSessionPresent(true);
+        // TOKEN_REFRESHED/SIGNED_IN can also be emitted for a restored local
+        // session. Preserve a previous server proof; never create one merely
+        // because the client replayed or refreshed its cached token.
+        setCentralAuthSessionPresent(centralSessionVerifiedRef.current);
+        if (!centralSessionVerifiedRef.current && event === "TOKEN_REFRESHED") return;
         setSession(next);
         return;
       }
@@ -348,7 +356,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // a genuine sign-in starts a new generation.
       if (next && event !== "TOKEN_REFRESHED") bumpSessionEpoch();
       centralIdentityRef.current = nextIdentity;
-      setCentralAuthSessionPresent(Boolean(next));
+      centralSessionVerifiedRef.current = Boolean(next && event === "SIGNED_IN");
+      setCentralAuthSessionPresent(centralSessionVerifiedRef.current);
       setSession(next);
       if (!next) {
         setRoles([]);
@@ -368,7 +377,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       bootstrapped = true;
       const next = checked.session;
       centralIdentityRef.current = next?.user?.id ?? null;
-      setCentralAuthSessionPresent(Boolean(next));
+      centralSessionVerifiedRef.current = checked.state === "verified";
+      setCentralAuthSessionPresent(centralSessionVerifiedRef.current);
       setSession(next);
       if (!next) {
         setRoles([]);
@@ -507,6 +517,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // account and is mapped onto its hidden internal address; anything with
     // an "@" is used exactly as typed.
     const address = toLoginAddress(email);
+    // Make a same-account interactive sign-in distinguishable from a replayed
+    // SIGNED_IN event for an unverified restored token.
+    centralIdentityRef.current = null;
+    centralSessionVerifiedRef.current = false;
+    setCentralAuthSessionPresent(false);
     const { data, error } = await supabase.auth.signInWithPassword({
       email: address,
       password,
@@ -911,6 +926,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Stamp the sign-out time on this user's open shift sessions first.
       endShiftSessions({});
       setSessionState(reason === "locked" ? "locked" : reason);
+      centralSessionVerifiedRef.current = false;
       setCentralAuthSessionPresent(false);
       setSession(null);
       setRoles([]);
@@ -930,7 +946,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         /* offline — the local purge below still applies */
       }
       if (!isCurrentEpoch(startedAt)) return;
-      await supabase.auth.signOut({ scope: "local" });
+      if (reason === "expired") {
+        // This JWT was already rejected. Calling /logout with it only creates
+        // another expected 401/403 and cannot revoke anything further.
+        await discardRejectedExternalAuthSession();
+      } else {
+        await supabase.auth.signOut({ scope: "local" });
+      }
       // Signing out fires an auth change; anything newer than this teardown
       // wins and the rest is skipped.
       if (!isCurrentEpoch(startedAt)) return;
@@ -1087,7 +1109,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             description: "Your session or branch is no longer active. Please sign in again.",
           }),
         );
-      })();
+      })().catch(() => {
+        // Best-effort teardown must not become an unhandled browser promise.
+      });
     });
   }, [endSession]);
 
@@ -1150,7 +1174,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // resume; a definite token refusal expires the login, while a network
         // or server failure leaves the user's work and session untouched.
         const authCheck = await validateCentralAuthSession(true);
-        setCentralAuthSessionPresent(Boolean(authCheck.session));
+        centralSessionVerifiedRef.current = authCheck.state === "verified";
+        setCentralAuthSessionPresent(centralSessionVerifiedRef.current);
         const creds = await readCredentials();
         const hasIndependentPosProof = Boolean(
           creds.sessionToken || creds.cashierToken || creds.terminalToken,

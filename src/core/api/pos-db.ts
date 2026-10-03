@@ -1114,6 +1114,14 @@ async function loadCompleteProductCatalogue(): Promise<PagedRead<Row>> {
   let afterId = "";
   let total: number | null = null;
   for (;;) {
+    if (!hasStaffSession()) {
+      return {
+        data: null,
+        error: { message: "The verified staff session ended while loading the catalogue." },
+        total,
+        capped: false,
+      };
+    }
     const baseQuery = supabase
       .from("products")
       .select("*", total === null ? { count: "exact" } : {})
@@ -1161,6 +1169,12 @@ export async function loadCloudState(
   // normal fallback runs.
   if (localDb() && !hasStaffSession())
     return loadLocalState(new Error("No direct cloud staff session is active."));
+  // Browsers and mobile shells have no local snapshot to fall back to. Do not
+  // start a burst of protected table reads from a merely persisted, unverified
+  // token while AuthProvider is expiring it.
+  if (!hasStaffSession()) {
+    throw new Error("No verified cloud staff session is active.");
+  }
   // These reads are independent. Start membership tiers alongside the other
   // slices so a full network round trip is not added to every sign-in.
   const [tiers, products, priceOverrides, members, sales, promotions, settings, stores, shifts] =

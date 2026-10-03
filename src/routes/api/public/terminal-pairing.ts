@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { serviceRest } from "@/core/api/pos-relay.server";
-import { supabaseConfig } from "@/lib/external-supabase-config";
+import { publicSupabaseConfig, supabaseConfig } from "@/lib/external-supabase-config";
 import { corsPreflight, withCors } from "@/lib/public-cors";
 
 const body = z.object({
@@ -65,6 +65,7 @@ async function handlePost(request: Request): Promise<Response> {
   }
 
   const { url, key } = supabaseConfig();
+  const membership = publicSupabaseConfig("membership");
   return Response.json(
     {
       approved: true,
@@ -75,6 +76,8 @@ async function handlePost(request: Request): Promise<Response> {
       expiresAt: row.expires_at,
       supabaseUrl: url,
       supabaseKey: key,
+      membershipSupabaseUrl: membership?.url,
+      membershipSupabaseKey: membership?.key,
       backendUrl: new URL(request.url).origin,
     },
     { headers: { "Cache-Control": "no-store" } },

@@ -107,4 +107,15 @@ describe("customer membership portal security", () => {
     expect(activation).toContain("backendUrl: activationBackendUrl()");
     expect(activation).not.toContain("backendUrl: typeof window !==");
   });
+
+  it("delivers both public project profiles only after proof-bound pairing", () => {
+    const endpoint = read("src/routes/api/public/terminal-pairing.ts");
+    const activation = read("src/core/activation/terminal-tokens.ts");
+    expect(endpoint).toContain('publicSupabaseConfig("membership")');
+    expect(endpoint).toContain("membershipSupabaseUrl: membership?.url");
+    expect(endpoint).toContain("membershipSupabaseKey: membership?.key");
+    expect(activation).toContain("membershipSupabaseUrl: approval.membershipSupabaseUrl");
+    expect(activation).toContain("membershipSupabaseKey: approval.membershipSupabaseKey");
+    expect(activation).not.toContain("MEMBERSHIP_SUPABASE_SERVICE_ROLE_KEY");
+  });
 });

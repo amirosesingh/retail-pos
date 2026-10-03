@@ -12,6 +12,17 @@ function isNewSupabaseApiKey(value: string): boolean {
 // New-format keys are opaque strings, not bearer JWTs — send them as `apikey` only.
 function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string): typeof fetch {
   return async (input, init) => {
+    const requestUrl =
+      typeof Request !== "undefined" && input instanceof Request ? input.url : String(input);
+    if (discardRejectedLogout) {
+      try {
+        if (new URL(requestUrl).pathname.endsWith("/auth/v1/logout")) {
+          return new Response(null, { status: 204 });
+        }
+      } catch {
+        /* malformed URLs continue through the normal fetch path */
+      }
+    }
     const requestHeaders =
       typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined;
     const headers = new Headers(requestHeaders);
@@ -46,6 +57,36 @@ const STORAGE_KEY = "sb-external-auth-token";
 const PROJECT_MARK_KEY = "sb-external-auth-project";
 const MEMBER_STORAGE_KEY = "sb-member-portal-auth-token";
 const MEMBER_PROJECT_MARK_KEY = "sb-member-portal-auth-project";
+let discardRejectedLogout = false;
+
+/**
+ * Forget a server-rejected staff session without calling GoTrue /logout with
+ * the already-invalid JWT. AuthProvider clears its React state before this
+ * runs; removing the durable token also prevents refresh/catalogue workers
+ * from reviving or reusing it.
+ */
+export async function discardRejectedExternalAuthSession(): Promise<void> {
+  if (typeof window === "undefined") return;
+  const client = _client;
+  if (client) {
+    // Let GoTrue own the teardown so its refresh lock, in-memory session and
+    // subscribers are updated atomically. The server has already rejected the
+    // JWT, so the fetch wrapper acknowledges this one local logout without
+    // sending another guaranteed-to-fail request to /auth/v1/logout.
+    discardRejectedLogout = true;
+    try {
+      await client.auth.signOut({ scope: "local" });
+    } finally {
+      discardRejectedLogout = false;
+    }
+  }
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+    window.localStorage.removeItem(`${STORAGE_KEY}-code-verifier`);
+  } catch {
+    /* storage unavailable; the in-memory UI session is still cleared */
+  }
+}
 
 /**
  * A saved session only works against the project that issued it. If the app is

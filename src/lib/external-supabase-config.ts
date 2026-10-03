@@ -47,6 +47,7 @@ export function setRuntimeEnv(env: unknown): void {
  * machine needs no environment variables at all. This override always wins.
  */
 let terminalOverride: Source | undefined;
+let terminalMembershipOverride: Source | undefined;
 
 export function setTerminalSupabaseOverride(url: string, key: string): boolean {
   const next = { url: clean(url), key: clean(key) };
@@ -61,6 +62,27 @@ export function clearTerminalSupabaseOverride(): boolean {
   if (!terminalOverride) return false;
   terminalOverride = undefined;
   cachedPos = undefined;
+  return true;
+}
+
+/** Apply the separately isolated membership project's public connection pair. */
+export function setTerminalMembershipSupabaseOverride(url: string, key: string): boolean {
+  const next = { url: clean(url), key: clean(key) };
+  if (!next.url || !next.key) return false;
+  if (
+    terminalMembershipOverride?.url === next.url &&
+    terminalMembershipOverride?.key === next.key
+  )
+    return false;
+  terminalMembershipOverride = next;
+  cachedMembership = undefined;
+  return true;
+}
+
+export function clearTerminalMembershipSupabaseOverride(): boolean {
+  if (!terminalMembershipOverride) return false;
+  terminalMembershipOverride = undefined;
+  cachedMembership = undefined;
   return true;
 }
 
@@ -152,6 +174,10 @@ export function supabaseConfig(scope: SupabaseScope = "pos"): Source {
   if (scope === "pos" && terminalOverride) {
     cachedPos = terminalOverride;
     return cachedPos;
+  }
+  if (scope === "membership" && terminalMembershipOverride) {
+    cachedMembership = terminalMembershipOverride;
+    return cachedMembership;
   }
   // On a till or phone the tenant comes only from the sealed per-device store
   // (applied above as the terminal override). Bundle-baked and environment

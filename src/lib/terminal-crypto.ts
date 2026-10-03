@@ -20,6 +20,8 @@ export type ActivationPayload = {
   location_name: string;
   supabase_url: string;
   supabase_key: string;
+  membership_supabase_url?: string;
+  membership_supabase_key?: string;
 };
 
 /**
@@ -30,6 +32,9 @@ export type ActivationPayload = {
 export type ActivationPayloadV1 = {
   supabaseUrl: string;
   supabaseAnonKey: string;
+  /** Public connection pair for the isolated customer-auth project. */
+  membershipSupabaseUrl?: string;
+  membershipSupabaseKey?: string;
   /** Hosted POS origin that serves privileged sync and sign-in routes. */
   backendUrl?: string;
   /** one-time claim id (the terminal_tokens row id) */
