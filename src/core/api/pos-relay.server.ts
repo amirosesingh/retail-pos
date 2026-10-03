@@ -75,6 +75,7 @@ export const RELAY_TABLES = new Set([
   "pos_store_settings",
   "pos_settings",
   "settings_scoped",
+  "public_flags",
   "promotions",
   "suppliers",
   "authorization_actions",
@@ -96,6 +97,7 @@ const RELAY_CONFLICT_KEYS: Readonly<Record<string, string>> = {
   stock_count_drafts: "id",
   pos_store_settings: "store_id",
   settings_scoped: "scope,scope_id,key",
+  public_flags: "key",
   shift_notifications: "shift_id",
 };
 
