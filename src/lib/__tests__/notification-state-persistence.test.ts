@@ -38,12 +38,13 @@ describe("per-user notification state", () => {
     });
   });
 
-  it("keeps dismissal local to this window and isolated between users", async () => {
+  it("keeps dismissal local to this device profile and isolated between users", async () => {
     const activity = await import("../activity-events");
     expect(await activity.clearActivityEntry("manager-1", "event-1")).toBe(true);
     expect(activity.isCleared("manager-1", "event-1")).toBe(true);
     expect(activity.isCleared("manager-2", "event-1")).toBe(false);
     expect(posFetch).not.toHaveBeenCalled();
+    expect(values.has("pos.activity.cleared")).toBe(true);
   });
 
   it("does not import a dismissal made on another device", async () => {

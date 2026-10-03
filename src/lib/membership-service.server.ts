@@ -93,11 +93,11 @@ export async function syncMembershipDirectory(afterRevision: number, limit: numb
     (maximum, row) => Math.max(maximum, Number(row.directory_revision) || 0),
     cursorRevision,
   );
-  const forwardRows = rows.reduce(
-    (count, row) => count + (Number(row.directory_revision) > cursorRevision ? 1 : 0),
-    0,
-  );
-  return { mirrored: rows.length, nextRevision, hasMore: forwardRows === pageSize };
+  return {
+    mirrored: rows.length,
+    nextRevision,
+    hasMore: rows.length === pageSize && nextRevision > cursorRevision,
+  };
 }
 
 const lookupRequest = z.object({

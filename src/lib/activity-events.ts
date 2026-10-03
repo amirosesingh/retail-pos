@@ -648,7 +648,7 @@ type ClearedMap = Record<string, string[]>;
 function readClearedMap(): ClearedMap {
   if (!isBrowser()) return {};
   try {
-    const raw = window.sessionStorage.getItem(CLEARED_KEY);
+    const raw = window.localStorage.getItem(CLEARED_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     return parsed && typeof parsed === "object" ? (parsed as ClearedMap) : {};
   } catch {
@@ -659,7 +659,7 @@ function readClearedMap(): ClearedMap {
 function writeClearedMap(map: ClearedMap) {
   if (!isBrowser()) return;
   try {
-    window.sessionStorage.setItem(CLEARED_KEY, JSON.stringify(map));
+    window.localStorage.setItem(CLEARED_KEY, JSON.stringify(map));
   } catch {
     /* storage blocked — clearing is only a view preference */
   }
@@ -669,7 +669,7 @@ function writeClearedMap(map: ClearedMap) {
 export const clearedIds = (userId: string): string[] => readClearedMap()[who(userId)] ?? [];
 
 /**
- * Dismissal is intentionally local to this browser window. Approval records
+ * Dismissal is intentionally local to this browser profile. Approval records
  * and audit events remain durable, while another till keeps its own view.
  */
 export function mergeRemoteActivityPreferences(_userId: string, _rows: ActivityEvent[]) {}

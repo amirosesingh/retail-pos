@@ -117,7 +117,7 @@ describe("customer membership portal security", () => {
     expect(mirrorIdentitySql).not.toMatch(/delete\s+from\s+public\.members/i);
     expect(revisionOverlapSql).toContain("m.directory_revision <= b.cursor_revision");
     expect(revisionOverlapSql).toContain("b.cursor_revision - b.overlap");
-    expect(service).toContain("forwardRows === pageSize");
+    expect(service).toContain("rows.length === pageSize && nextRevision > cursorRevision");
     const memberWriter = posDb.slice(
       posDb.indexOf("const memberToRow"),
       posDb.indexOf("const rowToPromotion"),

@@ -11237,13 +11237,23 @@ END;
 IF COL_LENGTH(N'dbo.members', N'membership_member_id') IS NULL
   ALTER TABLE dbo.members ADD membership_member_id uniqueidentifier NULL;
 
+IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
+  CREATE TABLE dbo.pos_schema_migrations (
+    version int NOT NULL PRIMARY KEY,
+    name nvarchar(200) NOT NULL,
+    applied_at datetimeoffset(7) NOT NULL DEFAULT SYSDATETIMEOFFSET()
+  );
+
 -- Older releases could copy private membership profile fields to a till.
 -- Offline lookup requires only the minimal directory; clear those local-only
 -- copies without changing the central POS or membership databases.
-UPDATE dbo.members
-SET email = NULL, address = NULL, country_code = NULL, postal_code = NULL, date_of_birth = NULL
-WHERE email IS NOT NULL OR address IS NOT NULL OR country_code IS NOT NULL
-   OR postal_code IS NOT NULL OR date_of_birth IS NOT NULL;
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5)
+BEGIN
+  UPDATE dbo.members
+  SET email = NULL, address = NULL, country_code = NULL, postal_code = NULL, date_of_birth = NULL
+  WHERE email IS NOT NULL OR address IS NOT NULL OR country_code IS NOT NULL
+     OR postal_code IS NOT NULL OR date_of_birth IS NOT NULL;
+END;
 
 -- Supabase Auth identity/password material is never part of the till roster.
 -- Preserve any email already held by an earlier installation, but new

@@ -180,6 +180,18 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(cloud.pullBatch).toHaveBeenCalledOnce();
   });
 
+  it("runs the private member-profile cleanup only before migration 5 is recorded", () => {
+    const installer = readFileSync("database/sqlserver/retail-pos-local-database.sql", "utf8");
+    const migration = readFileSync(
+      "database/sqlserver/migrations/005_staff_sql_and_member_directory.sql",
+      "utf8",
+    );
+    const guardedCleanup =
+      /IF NOT EXISTS \(SELECT 1 FROM dbo\.pos_schema_migrations WHERE version = 5\)\s+BEGIN\s+UPDATE dbo\.members\s+SET email = NULL/;
+    expect(installer).toMatch(guardedCleanup);
+    expect(migration).toMatch(guardedCleanup);
+  });
+
   it("selects complete journal aggregates rather than cutting one at the row limit", () => {
     const reader = readFileSync("electron/sync/change-reader.cjs", "utf8");
     expect(reader).toMatch(/SELECT TOP \(@limit\) aggregate_id,MIN\(change_id\)/);
