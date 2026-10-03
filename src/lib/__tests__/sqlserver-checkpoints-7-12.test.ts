@@ -178,7 +178,44 @@ describe("SQL Server checkpoints 7 through 12", () => {
     });
     expect(cloud.membershipDirectory).toHaveBeenCalledOnce();
     expect(cloud.pullBatch).toHaveBeenCalledOnce();
+    expect(checkpoints.save).not.toHaveBeenCalled();
   });
+
+  it.each([Number.NaN, 7])(
+    "does not save an invalid or regressing membership cursor (%s)",
+    async (nextRevision) => {
+      const checkpoints = {
+        get: vi.fn(async (_branch: string, table: string) =>
+          table === "__membership_directory__" ? { committed_cursor: 8 } : null,
+        ),
+        save: vi.fn(),
+      };
+      const cloud = {
+        membershipDirectory: vi.fn().mockResolvedValue({
+          ok: true,
+          mirrored: 0,
+          nextRevision,
+          hasMore: false,
+        }),
+        pullBatch: vi.fn().mockResolvedValue({ count: 0, rows: [], tombstones: [] }),
+      };
+      const { PullWorker } = await import("../../../electron/sync/pull-worker.cjs");
+      const worker = new PullWorker({
+        connectionManager: {},
+        cloud,
+        checkpoints,
+        registry: { tables: [] },
+        reader: {},
+        conflicts: {},
+      });
+
+      await expect(worker.run({ branchId: "B1" })).resolves.toMatchObject({
+        membershipDeferred: true,
+      });
+      expect(checkpoints.save).not.toHaveBeenCalled();
+      expect(cloud.pullBatch).toHaveBeenCalledOnce();
+    },
+  );
 
   it("runs the private member-profile cleanup only before migration 5 is recorded", () => {
     const installer = readFileSync("database/sqlserver/retail-pos-local-database.sql", "utf8");

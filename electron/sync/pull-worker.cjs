@@ -41,16 +41,20 @@ class PullWorker {
         membershipMirrored += Number(directory.mirrored ?? 0);
         const priorRevision = Number(membershipCheckpoint?.committed_cursor ?? 0);
         const nextRevision = Number(directory.nextRevision ?? priorRevision);
-        await this.checkpoints.save(branchId, "__membership_directory__", "pull", { committed_cursor: nextRevision });
-        membershipCheckpoint = { ...(membershipCheckpoint ?? {}), committed_cursor: nextRevision };
-        if (!directory.hasMore) break;
-        // A malformed or stale service page must not keep the POS pull worker
-        // in an infinite loop. Preserve the last checkpoint and retry the
-        // isolated membership service during the next normal sync cycle.
-        if (!Number.isFinite(nextRevision) || nextRevision <= priorRevision) {
+        // Never persist an invalid or regressing service cursor. An unchanged
+        // final page is complete, while an unchanged page claiming more data
+        // must defer instead of looping indefinitely.
+        if (!Number.isFinite(nextRevision) || nextRevision < priorRevision) {
           membershipDeferred = true;
           break;
         }
+        if (nextRevision === priorRevision) {
+          membershipDeferred = Boolean(directory.hasMore);
+          break;
+        }
+        await this.checkpoints.save(branchId, "__membership_directory__", "pull", { committed_cursor: nextRevision });
+        membershipCheckpoint = { ...(membershipCheckpoint ?? {}), committed_cursor: nextRevision };
+        if (!directory.hasMore) break;
       }
     } catch {
       // Membership is a separate service. Its outage must never block sales,
