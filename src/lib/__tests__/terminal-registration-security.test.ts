@@ -86,6 +86,8 @@ describe("terminal registration trust boundary", () => {
     const desktop = source("electron/main.cjs");
     expect(shell).toContain("<TerminalRevokedScreen reason={terminal.reason} />");
     expect(screen).not.toContain("onReactivate");
+    expect(screen).toContain('label="Administrator recovery"');
+    expect(screen).toContain("<EmergencyAccessLink");
     expect(revocation).toContain("REVOCATION_CHECK_MS = 10 * 1000");
     expect(revocation).toContain('window.addEventListener("pos:app-resume", checkNow)');
     expect(desktop).toContain("terminalIdentityPausedSync=true");

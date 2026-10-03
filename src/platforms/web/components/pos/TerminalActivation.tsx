@@ -442,6 +442,12 @@ export function TerminalRevokedScreen({
           This lock cannot be dismissed on the terminal. An administrator must register the
           device again through the controlled recovery process.
         </p>
+        <div className="mt-4 flex justify-center">
+          <EmergencyAccessLink
+            label="Administrator recovery"
+            className="border-red-500/40 bg-red-500/10 text-red-100 hover:bg-red-500/20"
+          />
+        </div>
       </div>
     </Frame>
   );
