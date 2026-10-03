@@ -2,6 +2,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
+const applicationVersion = JSON.parse(
+  fs.readFileSync(path.join(root, "package.json"), "utf8"),
+).version;
 const report = JSON.parse(
   fs.readFileSync(path.join(root, "reports", "supabase-schema-registry-report.json"), "utf8"),
 );
@@ -398,7 +401,8 @@ const installerHeader = `/*
   Retail POS local Microsoft SQL Server schema
   Generated from the migrations loaded by the POS application.
 
-  Database name: POS_Local
+  Application version: ${applicationVersion}
+  Target database: POS_Local
 
   Run this file while connected to the local Microsoft SQL Server instance.
   It creates POS_Local when needed, selects it, and installs or updates the
@@ -440,6 +444,8 @@ DECLARE @Present int = (
 DECLARE @Missing int = @Required - @Present;
 
 SELECT
+  DB_NAME() AS database_name,
+  N'${applicationVersion}' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -491,6 +497,8 @@ EXEC(N'IF ${missingMigrationPredicate}
 EXEC(N'SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;');
+
+PRINT N'Retail POS ${applicationVersion}: POS_Local installation and validation completed successfully.';
 GO`;
 const installer = [
   installerHeader,

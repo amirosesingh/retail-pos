@@ -203,7 +203,8 @@ describe("offline terminal operations", () => {
     const privilege = readFileSync("electron/ipc-privilege.cjs", "utf8");
     expect(main).toContain("const trustedAggregate={...aggregate,operations,branchId}");
     expect(main).toContain('branchStampedTables=new Set(["audit_logs","activity_events"');
-    expect(main).toContain("String(row?.store_id??\"\").trim()?row:{...row,store_id:branchId}");
+    expect(main).toContain('operation.table==="audit_logs"');
+    expect(main).toContain('!String(row?.store_id??"").trim()');
     expect(main).toContain("adminSession.branchId()");
     expect(main).toContain('code:"SYNC_BRANCH_FORBIDDEN"');
     expect(aggregates).toContain("async assertBranch(transaction, table, record, match, branchId)");

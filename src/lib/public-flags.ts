@@ -7,6 +7,8 @@
 import { useEffect, useState } from "react";
 import { routedQuery } from "@/core/api/db-query";
 import { commitOps } from "@/core/api/pos-db";
+import { relayOp } from "@/core/api/sync-relay";
+import { platformName } from "@/platform-config/platform";
 
 export const MEMBER_FLAG = "member_domain_enabled";
 export const REDEEM_FLAG = "redeem_domain_enabled";
@@ -46,7 +48,23 @@ export async function loadPublicFlags(force = false): Promise<PublicFlags> {
 
 /** Staff-only write; the database rejects anyone else. */
 export async function setPublicFlag(key: string, enabled: boolean) {
-  await commitOps("Saving public flag", [{ kind: "upsert", table: "public_flags", rows: [{ key, enabled }] }]);
+  if (platformName() === "electron") {
+    // Public availability flags are central control-plane state. They must not
+    // enter the local SQL business journal, whose pull-only guard correctly
+    // rejects them. The authenticated relay applies the same POS-settings
+    // permission check for password, PIN and terminal-backed sessions.
+    const result = await relayOp({
+      kind: "upsert",
+      table: "public_flags",
+      rows: [{ key, enabled }],
+      onConflict: "key",
+    });
+    if (!result.ok) throw new Error(result.error ?? "The public page switch could not be saved.");
+  } else {
+    await commitOps("Saving public flag", [
+      { kind: "upsert", table: "public_flags", rows: [{ key, enabled }] },
+    ]);
+  }
   cache = {
     member: key === MEMBER_FLAG ? enabled : cache.member,
     redeem: key === REDEEM_FLAG ? enabled : cache.redeem,

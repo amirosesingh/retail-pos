@@ -417,10 +417,8 @@ export function TerminalActivation({
 
 /** Shown the moment the heartbeat confirms the token was revoked. */
 export function TerminalRevokedScreen({
-  onReactivate,
   reason = "revoked",
 }: {
-  onReactivate: () => void;
   reason?: "revoked" | "missing";
 }) {
   const missing = reason === "missing";
@@ -440,13 +438,16 @@ export function TerminalRevokedScreen({
             ? "Its registration record was removed, so the register is locked and cloud sync is blocked. Ask an administrator for a new activation code."
             : "Cloud sync is blocked and the register is locked. Contact head office for a new activation code."}
         </p>
-        <Button
-          variant="outline"
-          className="mt-5 w-full border-slate-700 bg-slate-800/60 text-slate-100 hover:bg-slate-800"
-          onClick={onReactivate}
-        >
-          Enter a new activation code
-        </Button>
+        <p className="mt-5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+          This lock cannot be dismissed on the terminal. An administrator must register the
+          device again through the controlled recovery process.
+        </p>
+        <div className="mt-4 flex justify-center">
+          <EmergencyAccessLink
+            label="Administrator recovery"
+            className="border-red-500/40 bg-red-500/10 text-red-100 hover:bg-red-500/20"
+          />
+        </div>
       </div>
     </Frame>
   );

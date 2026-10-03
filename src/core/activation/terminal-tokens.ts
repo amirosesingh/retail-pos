@@ -902,6 +902,7 @@ export type PairingRequest = {
 
 const PAIR_KEY = "pos.terminal.pairing";
 const PAIR_PREFIX = "POSPAIR1:";
+const TERMINAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const validProofHash = (value: unknown): value is string =>
   typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
@@ -924,7 +925,10 @@ export async function getPairingRequest(): Promise<PairingRequest> {
   try {
     const raw = window.localStorage.getItem(PAIR_KEY);
     const parsed = raw ? (JSON.parse(raw) as PairingRequest) : null;
-    if (parsed?.tokenId && parsed.proofHash === proofHash) return parsed;
+    // Old builds could persist an opaque id which the UUID-only hosted
+    // verifier must reject. Replace it with a fresh proof-bound request.
+    if (parsed?.tokenId && TERMINAL_UUID.test(parsed.tokenId) && parsed.proofHash === proofHash)
+      return parsed;
   } catch {
     /* fall through and mint a new request */
   }
@@ -950,12 +954,10 @@ export function encodePairingRequest(request: PairingRequest): string {
 export function decodePairingRequest(value: string): PairingRequest | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
   const fromJson = (raw: string): PairingRequest | null => {
     try {
       const parsed = JSON.parse(raw) as PairingRequest;
-      return parsed?.tokenId && validProofHash(parsed.proofHash)
+      return TERMINAL_UUID.test(parsed?.tokenId ?? "") && validProofHash(parsed.proofHash)
         ? {
             tokenId: parsed.tokenId,
             deviceName: parsed.deviceName ?? "",
