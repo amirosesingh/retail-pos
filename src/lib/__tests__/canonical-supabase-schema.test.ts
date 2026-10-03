@@ -28,6 +28,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/membership/migrations/20261003004500_document_rpc_only_membership_tables.sql",
       "supabase/membership/migrations/20261003093000_member_directory_delta.sql",
       "supabase/membership/migrations/20261003190000_member_directory_revision_overlap.sql",
+      "supabase/membership/migrations/20261003200000_commit_ordered_member_directory.sql",
       "supabase/migrations/20260925102835_fix_payment_transaction_idempotency.sql",
       "supabase/migrations/20260925105427_fix_pos_sale_commit_stock_alias.sql",
       "supabase/migrations/20260925105919_persist_pos_sale_payment_idempotency.sql",

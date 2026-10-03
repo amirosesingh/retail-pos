@@ -1,27 +1,12 @@
--- Minimal, service-role-only member directory for POS offline synchronization.
--- Authentication data and private profile fields never leave this project.
+-- Serialize member-directory revision allocation through transaction commit.
+-- Taking the table lock first drains writers that used the earlier trigger, so
+-- no lower pre-migration revision can become visible after the new cursor.
 
-create sequence if not exists public.member_directory_revision_seq;
-
-alter table public.members
-  add column if not exists directory_revision bigint;
-
-update public.members
-set directory_revision = nextval('public.member_directory_revision_seq')
-where directory_revision is null;
-
-alter table public.members
-  alter column directory_revision set default nextval('public.member_directory_revision_seq'),
-  alter column directory_revision set not null;
-
-create index if not exists members_directory_revision_idx
-  on public.members (directory_revision);
+lock table public.members in access exclusive mode;
 
 create or replace function public.bump_member_directory_revision()
 returns trigger language plpgsql security definer set search_path = '' as $fn$
 begin
-  -- Serialize allocation until transaction end. Revisions therefore become
-  -- visible in commit order and a POS cursor can never skip an older commit.
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended('member-directory-revision', 0)
   );

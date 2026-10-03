@@ -79,8 +79,8 @@ describe("customer membership portal security", () => {
     const mirrorIdentitySql = read(
       "supabase/migrations/20261003183000_harden_membership_directory_identity.sql",
     );
-    const revisionOverlapSql = read(
-      "supabase/membership/migrations/20261003190000_member_directory_revision_overlap.sql",
+    const commitOrderedSql = read(
+      "supabase/membership/migrations/20261003200000_commit_ordered_member_directory.sql",
     );
     const posDb = read("src/core/api/pos-db.ts");
     const client = read("src/lib/membership-service.functions.ts");
@@ -120,8 +120,12 @@ describe("customer membership portal security", () => {
     );
     expect(mirrorIdentitySql).toContain("pg_advisory_xact_lock");
     expect(mirrorIdentitySql).not.toMatch(/delete\s+from\s+public\.members/i);
-    expect(revisionOverlapSql).toContain("m.directory_revision <= b.cursor_revision");
-    expect(revisionOverlapSql).toContain("b.cursor_revision - b.overlap");
+    expect(commitOrderedSql).toContain("lock table public.members in access exclusive mode");
+    expect(commitOrderedSql).toContain("pg_advisory_xact_lock");
+    expect(commitOrderedSql).toContain(
+      "m.directory_revision > greatest(coalesce(p_after_revision, 0), 0)",
+    );
+    expect(commitOrderedSql).not.toContain("overlap");
     expect(service).toContain("rows.length === pageSize && nextRevision > cursorRevision");
     const memberWriter = posDb.slice(
       posDb.indexOf("const memberToRow"),
