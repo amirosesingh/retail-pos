@@ -79,30 +79,50 @@ function logConnection(event, detail = {}) {
  * even when the database that normally stores jobs cannot be opened.
  */
 function databaseErrors(limit = 100) {
-  const rows = [];
-  for (const line of tail("connection.log", Math.max(100, Math.min(Number(limit) * 8, 1600))).reverse()) {
+  const source = tail("connection.log", Math.max(200, Math.min(Number(limit) * 16, 3200)));
+  const lastStart = source.map((line) => /\sapplication\.started\s/.test(line)).lastIndexOf(true);
+  const active = new Map();
+  for (const line of source.slice(lastStart < 0 ? 0 : lastStart + 1)) {
     const match = String(line).match(/^(\S+)\s+(\S+)\s+(\{.*\})$/);
     if (!match) continue;
     let detail;
     try { detail = JSON.parse(match[3]); } catch { continue; }
     const event = match[2];
     const text = `${event} ${detail?.state ?? ""} ${detail?.code ?? ""} ${detail?.message ?? ""}`;
+    const category = detail?.category ?? (/sync/i.test(text) ? "synchronization" : /migrat/i.test(text) ? "migration" : /validat|schema/i.test(text) ? "validation" : "connection");
+    if (/\.succeeded$/i.test(event)) {
+      for (const [key, row] of active) if (row.category === category) active.delete(key);
+      continue;
+    }
+    if (event === "database.state" && detail?.state === "enabled_ready" && !detail?.code && !detail?.message) {
+      // A healthy local SQL connection resolves local setup failures, but it
+      // does not prove that a later cloud synchronization attempt succeeded.
+      for (const [key, row] of active) {
+        if (["connection", "validation", "migration"].includes(row.category)) active.delete(key);
+      }
+      continue;
+    }
     const normalUnconfiguredState = String(detail?.state ?? "").toLowerCase() === "enabled_unconfigured";
     const isFailure = (!normalUnconfiguredState && detail?.connected === false) || Boolean(detail?.code) || Boolean(detail?.message) || /(?:error|failed|failure|timeout|migration_required)/i.test(text);
     if (!isFailure || /(?:validating|connecting|disconnect(?:ed)?|disabled)$/i.test(String(detail?.state ?? ""))) continue;
-    rows.push({
-      id: `${match[1]}:${event}:${rows.length}`,
+    const stage = detail?.stage ?? null;
+    const signature = [category, stage ?? event, detail?.code ?? "", detail?.message ?? ""].join("|");
+    const previous = active.get(signature);
+    active.set(signature, {
+      id: `${match[1]}:${event}:${signature}`,
       occurred_at: match[1],
       event,
-      category: detail?.category ?? (/sync/i.test(text) ? "synchronization" : /migrat/i.test(text) ? "migration" : /validat|schema/i.test(text) ? "validation" : "connection"),
-      stage: detail?.stage ?? null,
+      category,
+      stage,
       state: detail?.state ?? null,
       code: detail?.code ?? null,
       message: detail?.message ?? "The database operation did not complete.",
+      occurrences: Number(previous?.occurrences ?? 0) + 1,
     });
-    if (rows.length >= Math.max(1, Math.min(Number(limit) || 100, 500))) break;
   }
-  return rows;
+  return [...active.values()]
+    .sort((left, right) => String(right.occurred_at).localeCompare(String(left.occurred_at)))
+    .slice(0, Math.max(1, Math.min(Number(limit) || 100, 500)));
 }
 
 /**

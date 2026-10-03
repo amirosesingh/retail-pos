@@ -2188,7 +2188,10 @@ export const db = {
             action_name: r.action,
             target_module: r.module,
             details: r.details,
-            store_id: typeof r.details.storeId === "string" ? r.details.storeId : null,
+            // Main process owns the paired terminal identity and stamps the
+            // verified branch. Renderer audit context can contain a stale
+            // alias after branch canonicalisation and must not override it.
+            store_id: null,
             created_at: r.at,
           })),
         },

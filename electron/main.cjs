@@ -158,6 +158,7 @@ async function runAutomaticSync() {
       result = { ok: false, error: String(error?.message ?? error) };
     }
   }
+  if (result.ok) diagnostics.logConnection("synchronization.automatic.succeeded", { category:"synchronization", stage:"automatic", state:"ready" });
   if (result.ok && Date.now() - lastAutomaticVerification >= AUTO_VERIFY_MS) {
     lastAutomaticVerification = Date.now();
     void localDataLifecycle.reconcile(localBranchId(), Number(databaseConfig.profile()?.retentionDays)||90)
@@ -198,6 +199,7 @@ const DEBUG = process.env.POS_DEBUG === "1";
 // or a driver leaves nothing behind to look at.
 diagnostics.startCrashReporter();
 diagnostics.watchApp(app);
+diagnostics.logConnection("application.started", { state: "starting" });
 
 /* ---------------------------------------------------------------------------
    Safety net.
@@ -1304,12 +1306,14 @@ function registerIpc() {
         throw Object.assign(new Error("The signed-in account is not authorized for this terminal branch."),{code:"SYNC_BRANCH_FORBIDDEN"});
       // Early-startup governance events may be emitted before the renderer has
       // learned its branch. Main already owns the verified terminal branch, so
-      // fill only a missing value here. A supplied mismatch remains untouched
-      // and is rejected by AggregateRepository.assertBranch below.
+      // fill only a missing value here. Audit rows are the exception: renderer
+      // context may contain a pre-canonical branch alias, while Main owns the
+      // paired terminal identity, so audit rows always receive that verified
+      // branch. Other supplied mismatches remain rejected below.
       const branchStampedTables=new Set(["audit_logs","activity_events","authorization_requests","authorization_log","record_edits","member_verifications","entity_status_history"]);
       const operations=aggregate.operations.map((operation)=>{
         if(!branchStampedTables.has(operation.table)||!(operation.kind==="insert"||operation.kind==="upsert"))return operation;
-        return{...operation,rows:operation.rows.map((row)=>String(row?.store_id??"").trim()?row:{...row,store_id:branchId})};
+        return{...operation,rows:operation.rows.map((row)=>operation.table==="audit_logs"||!String(row?.store_id??"").trim()?{...row,store_id:branchId}:row)};
       });
       const trustedAggregate={...aggregate,operations,branchId};
       const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);

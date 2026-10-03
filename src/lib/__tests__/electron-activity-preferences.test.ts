@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 const source = (file: string) => readFileSync(file, "utf8");
 
 describe("Electron activity preferences", () => {
-  it("uses the configured Supabase project directly instead of the hosted API", () => {
+  it("uses direct Supabase auth when available and the hosted proof for PIN sessions", () => {
     const activity = source("src/lib/activity-events.ts");
     const electronBranch = activity.slice(
       activity.indexOf("async function syncClearedEntry"),
@@ -16,6 +16,8 @@ describe("Electron activity preferences", () => {
     expect(electronBranch).toContain('if (platformName() === "electron")');
     expect(electronBranch).toContain('supabaseExternal.rpc("set_activity_event_cleared"');
     expect(electronBranch).toContain('supabaseExternal.rpc("set_all_activity_events_cleared"');
+    expect(electronBranch).toContain('posFetch("/api/v1/pos/activity-preferences"');
+    expect(electronBranch).not.toContain("if (!credentials.accessToken) return false");
   });
 
   it("keeps bulk clear authenticated, self-scoped, and branch-scoped", () => {

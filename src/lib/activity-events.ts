@@ -692,12 +692,16 @@ async function syncClearedEntry(id: string, cleared: boolean): Promise<boolean> 
     if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
       return false;
     if (platformName() === "electron") {
-      if (!credentials.accessToken) return false;
-      const { error } = await supabaseExternal.rpc("set_activity_event_cleared", {
-        p_event_id: id,
-        p_cleared: cleared,
-      });
-      return !error;
+      if (credentials.accessToken) {
+        const { error } = await supabaseExternal.rpc("set_activity_event_cleared", {
+          p_event_id: id,
+          p_cleared: cleared,
+        });
+        if (!error) return true;
+      }
+      // PIN and hosted POS sessions deliberately have no Supabase Auth JWT.
+      // Fall through to the authenticated POS endpoint instead of making the
+      // Clear button permanently fail on those valid Electron sessions.
     }
     const response = await posFetch("/api/v1/pos/activity-preferences", {
       method: "POST",
@@ -717,9 +721,12 @@ async function syncClearAllEntries(): Promise<boolean> {
     if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
       return false;
     if (platformName() === "electron") {
-      if (!credentials.accessToken) return false;
-      const { error } = await supabaseExternal.rpc("set_all_activity_events_cleared");
-      return !error;
+      if (credentials.accessToken) {
+        const { error } = await supabaseExternal.rpc("set_all_activity_events_cleared");
+        if (!error) return true;
+      }
+      // Use the hosted proof path for PIN/session-token users and as a safe
+      // fallback if a stale Auth JWT is rejected.
     }
     const response = await posFetch("/api/v1/pos/activity-preferences", {
       method: "POST",

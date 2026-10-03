@@ -129,6 +129,21 @@ describe("relay authorisation", () => {
     expect(allowed.ok).toBe(true);
   });
 
+  it("keeps public availability flags central and POS-settings gated", async () => {
+    const denied = await safeAuthorizeRelayOp(
+      { kind: "upsert", table: "public_flags", rows: [{ key: "member_domain_enabled", enabled: true }] },
+      cashier,
+    );
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) expect(denied.code).toBe("PERMISSION_DENIED");
+
+    const allowed = await safeAuthorizeRelayOp(
+      { kind: "upsert", table: "public_flags", rows: [{ key: "member_domain_enabled", enabled: true }] },
+      { ...cashier, permissions: { ...cashier.permissions, can_access_pos_settings: true } },
+    );
+    expect(allowed.ok).toBe(true);
+  });
+
   it("allows new and idempotent sale upserts but blocks tender changes", async () => {
     const sale = {
       id: "s-new",

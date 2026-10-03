@@ -7,6 +7,7 @@ const packagedRegistry = require("../../../electron/db/schema-registry.cjs");
 
 describe("SQL Server schema registry", () => {
   const registry = JSON.parse(readFileSync("database/sqlserver/schema-registry.json", "utf8"));
+  const applicationVersion = JSON.parse(readFileSync("package.json", "utf8")).version;
   const sql = readFileSync("database/sqlserver/schema.sql", "utf8");
   const completeSql = readFileSync("database/sqlserver/retail-pos-local-database.sql", "utf8");
 
@@ -241,6 +242,9 @@ describe("SQL Server schema registry", () => {
     expect(completeSql).toContain("IF DB_ID(N'POS_Local') IS NULL");
     expect(completeSql).toContain("EXEC(N'CREATE DATABASE [POS_Local]')");
     expect(completeSql).toContain("USE [POS_Local]");
+    expect(completeSql).toContain(`Application version: ${applicationVersion}`);
+    expect(completeSql).toContain("DB_NAME() AS database_name");
+    expect(completeSql).toContain("POS_Local installation and validation completed successfully");
     expect(completeSql).toContain("@Required AS required_tables");
     expect(completeSql).toContain("@RequiredColumnCount AS required_columns");
     expect(completeSql).toContain("@MissingColumnCount AS missing_columns");
