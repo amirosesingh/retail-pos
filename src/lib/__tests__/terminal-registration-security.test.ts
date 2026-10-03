@@ -66,6 +66,31 @@ describe("terminal registration trust boundary", () => {
     expect(
       decodePairingRequest(`POSPAIR1:${btoa(JSON.stringify({ ...request, proofHash: "short" }))}`),
     ).toBeNull();
+    expect(
+      decodePairingRequest(
+        `POSPAIR1:${btoa(JSON.stringify({ ...request, tokenId: "legacy-terminal-id" }))}`,
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects stale non-UUID pairing ids before the hosted verifier sees them", () => {
+    const activation = source("src/core/activation/terminal-tokens.ts");
+    expect(activation).toContain("TERMINAL_UUID.test(parsed.tokenId)");
+    expect(activation).toContain("crypto.randomUUID()");
+  });
+
+  it("keeps a remotely revoked terminal locked instead of exposing activation", () => {
+    const shell = source("src/platforms/web/components/pos/AppShell.tsx");
+    const screen = source("src/platforms/web/components/pos/TerminalActivation.tsx");
+    const revocation = source("src/lib/use-revocation-check.ts");
+    const desktop = source("electron/main.cjs");
+    expect(shell).toContain("<TerminalRevokedScreen reason={terminal.reason} />");
+    expect(screen).not.toContain("onReactivate");
+    expect(revocation).toContain("REVOCATION_CHECK_MS = 10 * 1000");
+    expect(revocation).toContain('window.addEventListener("pos:app-resume", checkNow)');
+    expect(desktop).toContain("terminalIdentityPausedSync=true");
+    expect(desktop).toContain("stopAutomaticSync()");
+    expect(desktop).toContain("syncCoordinator.pause()");
   });
 
   it("keeps pairing credentials behind the hosted proof-check endpoint", () => {

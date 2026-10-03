@@ -10,8 +10,11 @@ describe("Electron database error recovery", () => {
 
     expect(main).toContain('diagnostics.logConnection("application.started"');
     expect(main).toContain('diagnostics.logConnection("synchronization.automatic.succeeded"');
+    expect(main).toContain('diagnostics.logConnection("synchronization.bootstrap.succeeded"');
+    expect(main).toContain("diagnostics.logConnection(`${category}.${stage}.succeeded`");
     expect(diagnostics).toContain("const lastStart");
     expect(diagnostics).toContain("const active = new Map()");
+    expect(diagnostics).toContain("row.stage !== detail.stage");
     expect(diagnostics).toContain("occurrences:");
   });
 
@@ -22,6 +25,7 @@ describe("Electron database error recovery", () => {
     expect(main).toContain('operation.table==="audit_logs"');
     expect(database).toContain("store_id: null");
     expect(main).toContain("Other supplied mismatches remain rejected");
+    expect(main.match(/stampVerifiedBranchOperations/g)).toHaveLength(3);
   });
 
   it("routes public flags through the central authenticated relay on Electron", () => {

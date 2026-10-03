@@ -91,7 +91,11 @@ function databaseErrors(limit = 100) {
     const text = `${event} ${detail?.state ?? ""} ${detail?.code ?? ""} ${detail?.message ?? ""}`;
     const category = detail?.category ?? (/sync/i.test(text) ? "synchronization" : /migrat/i.test(text) ? "migration" : /validat|schema/i.test(text) ? "validation" : "connection");
     if (/\.succeeded$/i.test(event)) {
-      for (const [key, row] of active) if (row.category === category) active.delete(key);
+      for (const [key, row] of active) {
+        if (row.category !== category) continue;
+        if (detail?.stage && row.stage !== detail.stage) continue;
+        active.delete(key);
+      }
       continue;
     }
     if (event === "database.state" && detail?.state === "enabled_ready" && !detail?.code && !detail?.message) {

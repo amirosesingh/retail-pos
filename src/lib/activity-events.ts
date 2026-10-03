@@ -693,11 +693,15 @@ async function syncClearedEntry(id: string, cleared: boolean): Promise<boolean> 
       return false;
     if (platformName() === "electron") {
       if (credentials.accessToken) {
-        const { error } = await supabaseExternal.rpc("set_activity_event_cleared", {
-          p_event_id: id,
-          p_cleared: cleared,
-        });
-        if (!error) return true;
+        try {
+          const { error } = await supabaseExternal.rpc("set_activity_event_cleared", {
+            p_event_id: id,
+            p_cleared: cleared,
+          });
+          if (!error) return true;
+        } catch {
+          // Fall through to the authenticated POS endpoint.
+        }
       }
       // PIN and hosted POS sessions deliberately have no Supabase Auth JWT.
       // Fall through to the authenticated POS endpoint instead of making the
@@ -722,8 +726,12 @@ async function syncClearAllEntries(): Promise<boolean> {
       return false;
     if (platformName() === "electron") {
       if (credentials.accessToken) {
-        const { error } = await supabaseExternal.rpc("set_all_activity_events_cleared");
-        if (!error) return true;
+        try {
+          const { error } = await supabaseExternal.rpc("set_all_activity_events_cleared");
+          if (!error) return true;
+        } catch {
+          // Fall through to the authenticated POS endpoint.
+        }
       }
       // Use the hosted proof path for PIN/session-token users and as a safe
       // fallback if a stale Auth JWT is rejected.

@@ -18,6 +18,9 @@ describe("Electron activity preferences", () => {
     expect(electronBranch).toContain('supabaseExternal.rpc("set_all_activity_events_cleared"');
     expect(electronBranch).toContain('posFetch("/api/v1/pos/activity-preferences"');
     expect(electronBranch).not.toContain("if (!credentials.accessToken) return false");
+    expect(electronBranch.match(/Fall through to the authenticated POS endpoint\./g)).toHaveLength(
+      2,
+    );
   });
 
   it("keeps bulk clear authenticated, self-scoped, and branch-scoped", () => {

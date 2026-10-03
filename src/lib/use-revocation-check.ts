@@ -1,9 +1,10 @@
 /**
  * Online kill-switch.
  *
- * While the till has a connection it re-checks its activation token every five
- * minutes (and immediately when the link returns). If management revoked the
- * token the machine wipes its saved credentials and locks.
+ * While the till has a connection it re-checks its activation token every ten
+ * seconds (and immediately when the app resumes, regains focus or reconnects).
+ * If management revoked the token the machine wipes its saved credentials and
+ * locks on a persistent revocation screen.
  *
  * With no connection nothing happens at all — offline selling must never be
  * interrupted by a check that cannot run.
@@ -22,7 +23,8 @@ import {
 } from "@/core/activation/terminal-tokens";
 import { clearActivationRecord, writeActivationRecord } from "@/core/activation/activation-record";
 
-const CHECK_MS = 5 * 60 * 1000;
+/** A revoked till stays usable for at most this long while it remains online. */
+export const REVOCATION_CHECK_MS = 10 * 1000;
 /** Gap before a single empty lookup is confirmed as a deleted record. */
 export const MISSING_CONFIRM_MS = 8 * 1000;
 const BLOCK_KEY = "pos.terminal.revoked";
@@ -177,37 +179,54 @@ export function useRevocationCheck(): RevocationState {
   useEffect(() => {
     if (!config) return;
     let cancelled = false;
+    let checking = false;
 
     const check = async () => {
-      const verdict = await terminalVerdict(config.tokenId);
-      if (cancelled) return;
-      setVerified(true);
-      if (verdict.outcome === "unknown") return;
-      setLastCheckedAt(new Date().toISOString());
-      if (verdict.outcome === "revoked" || verdict.outcome === "missing") {
-        setBlocked(true, verdict.outcome);
-        clearTerminalConfig();
-        // A confirmed revocation or deletion also drops the "registered" record.
-        clearActivationRecord();
-        return;
+      if (checking) return;
+      checking = true;
+      try {
+        const verdict = await terminalVerdict(config.tokenId);
+        if (cancelled) return;
+        setVerified(true);
+        if (verdict.outcome === "unknown") return;
+        setLastCheckedAt(new Date().toISOString());
+        if (verdict.outcome === "revoked" || verdict.outcome === "missing") {
+          // Persist the lock before clearing identity so the shell never falls
+          // through to sign-in or activation during the state transition.
+          setBlocked(true, verdict.outcome);
+          clearTerminalConfig();
+          clearActivationRecord();
+          return;
+        }
+        setBlocked(false);
+        void stampHeartbeat(config.tokenId);
+        void writeActivationRecord({ tokenId: config.tokenId, stamp: verdict.stamp ?? null }).catch(
+          () => {},
+        );
+      } finally {
+        checking = false;
       }
-      setBlocked(false);
-      void stampHeartbeat(config.tokenId);
-      // Refresh the sealed registration proof after a verified status.
-      void writeActivationRecord({
-        tokenId: config.tokenId,
-        stamp: verdict.stamp ?? null,
-      }).catch(() => {});
     };
 
     void check();
-    const timer = window.setInterval(() => void check(), CHECK_MS);
-    const onOnline = () => void check();
-    window.addEventListener("online", onOnline);
+    const timer = window.setInterval(() => void check(), REVOCATION_CHECK_MS);
+    const checkNow = () => void check();
+    const onVisible = () => {
+      if (document.visibilityState !== "hidden") void check();
+    };
+    window.addEventListener("online", checkNow);
+    window.addEventListener("focus", checkNow);
+    window.addEventListener("pageshow", checkNow);
+    window.addEventListener("pos:app-resume", checkNow);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
-      window.removeEventListener("online", onOnline);
+      window.removeEventListener("online", checkNow);
+      window.removeEventListener("focus", checkNow);
+      window.removeEventListener("pageshow", checkNow);
+      window.removeEventListener("pos:app-resume", checkNow);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [config]);
 

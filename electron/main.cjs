@@ -94,12 +94,20 @@ function rememberVerifiedBranch(branchId){
   const terminal=terminalStore.read();
   if(terminal?.tokenId&&!terminal.locationId&&!terminal.storeId&&!terminal.branchId)terminalStore.write({...terminal,branchId});
 }
+function stampVerifiedBranchOperations(operations,branchId){
+  const branchStampedTables=new Set(["audit_logs","activity_events","authorization_requests","authorization_log","record_edits","member_verifications","entity_status_history"]);
+  return operations.map((operation)=>{
+    if(!branchStampedTables.has(operation.table)||!(operation.kind==="insert"||operation.kind==="upsert"))return operation;
+    return{...operation,rows:operation.rows.map((row)=>operation.table==="audit_logs"||!String(row?.store_id??"").trim()?{...row,store_id:branchId}:row)};
+  });
+}
 async function observedDatabaseOperation(category, stage, work) {
   try {
     const result = await work();
     if (result?.ok === false) diagnostics.logConnection(`${category}.${stage}.failed`, {
       category, stage, code: result.code ?? "EDATABASE", message: result.error ?? result.message ?? "The database operation did not complete.",
     });
+    else diagnostics.logConnection(`${category}.${stage}.succeeded`, { category, stage });
     return result;
   } catch (error) {
     diagnostics.logConnection(`${category}.${stage}.failed`, {
@@ -110,7 +118,11 @@ async function observedDatabaseOperation(category, stage, work) {
 }
 async function prepareLocalData({force=false}={}){
   const profile=databaseConfig.profile()??{};
-  try{return await localDataLifecycle.ensure({branchId:localBranchId(),historyDays:Number(profile.retentionDays)||90,force});}
+  try{
+    const result=await localDataLifecycle.ensure({branchId:localBranchId(),historyDays:Number(profile.retentionDays)||90,force});
+    diagnostics.logConnection("synchronization.bootstrap.succeeded", { category:"synchronization", stage:"bootstrap", state:"ready" });
+    return result;
+  }
   catch(error){
     // Reaching this function means SQL Server already passed validation and is
     // connected. A cloud, activation or reconciliation problem belongs to the
@@ -129,6 +141,7 @@ const SHUTDOWN_SYNC_TIMEOUT_MS = 8_000;
 let automaticSyncTimer = null;
 let automaticSyncQueued = false;
 let lastAutomaticVerification = 0;
+let terminalIdentityPausedSync = false;
 function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
   if (quitting) return;
   if (syncCoordinator.running && delay <= 250) automaticSyncQueued = true;
@@ -138,7 +151,9 @@ function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
 }
 async function runAutomaticSync() {
   automaticSyncTimer = null;
-  if (!databaseManager.isConnected() || !localBranchId() || jobManager.running || syncCoordinator.paused) {
+  // A cached administrator branch is never a substitute for a registered
+  // terminal identity. Revocation clears the vault before this can run again.
+  if (!terminalStore.read()?.tokenId || !databaseManager.isConnected() || !localBranchId() || jobManager.running || syncCoordinator.paused) {
     scheduleAutomaticSync();
     return;
   }
@@ -1276,7 +1291,7 @@ function registerIpc() {
   ipcMain.handle("database:schema-status", () => databaseService.schemaStatus());
   ipcMain.handle("database:backup", (_e, file) => guard.guarded(() => backupService.backup(guard.filePath(file,{name:"backup file",extension:"bak"}))));
   ipcMain.handle("database:restore", (_e, file) => guard.guarded(async () => { const result=await backupService.restore(guard.filePath(file,{name:"backup file",extension:"bak"})); if(result.ok)await databaseService.restore(); return result; }));
-  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}), guard.writeOps(ops,{max:200}),{branchId:localBranchId(),terminalId:terminal.tokenId??terminal.terminalId});scheduleAutomaticSync(250);return result;}));
+  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const branchId=localBranchId();const operations=stampVerifiedBranchOperations(guard.writeOps(ops,{max:200}),branchId);const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}),operations,{branchId,terminalId:terminal.tokenId??terminal.terminalId});scheduleAutomaticSync(250);return result;}));
   ipcMain.handle("business:save-authorization-rule", (_e, value) => guard.guarded(async () => {
     const identity = adminSession.identity();
     if (!identity || !adminSession.hasPosAuthority() || !adminSession.hasPermission("can_access_pos_settings"))
@@ -1310,11 +1325,7 @@ function registerIpc() {
       // context may contain a pre-canonical branch alias, while Main owns the
       // paired terminal identity, so audit rows always receive that verified
       // branch. Other supplied mismatches remain rejected below.
-      const branchStampedTables=new Set(["audit_logs","activity_events","authorization_requests","authorization_log","record_edits","member_verifications","entity_status_history"]);
-      const operations=aggregate.operations.map((operation)=>{
-        if(!branchStampedTables.has(operation.table)||!(operation.kind==="insert"||operation.kind==="upsert"))return operation;
-        return{...operation,rows:operation.rows.map((row)=>operation.table==="audit_logs"||!String(row?.store_id??"").trim()?{...row,store_id:branchId}:row)};
-      });
+      const operations=stampVerifiedBranchOperations(aggregate.operations,branchId);
       const trustedAggregate={...aggregate,operations,branchId};
       const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null});
@@ -1576,11 +1587,20 @@ function registerIpc() {
       // http origin; neither may erase a proven HTTPS deployment address.
       const backend=/^https:\/\/.+/i.test(savedBackend)?savedBackend:/^https:\/\/.+/i.test(activationBackend)?activationBackend:"";
       if(backend)configStore.set("backendUrl",backend);
-      return terminalStore.write(config?{...config,...(backend?{backendUrl:backend}:{})}:config);
+      const saved=terminalStore.write(config?{...config,...(backend?{backendUrl:backend}:{})}:config);
+      if(saved?.ok&&config&&terminalIdentityPausedSync){terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
+      return saved;
     }
     catch (err) { return guard.refuse(err.message); }
   });
-  ipcMain.handle("terminal:clear", () => terminalStore.write(null));
+  ipcMain.handle("terminal:clear", () => {
+    // Revocation and explicit unpairing stop cloud movement before erasing the
+    // identity, even when an old administrator session still caches a branch.
+    terminalIdentityPausedSync=true;
+    stopAutomaticSync();
+    syncCoordinator.pause();
+    return terminalStore.write(null);
+  });
 
   ipcMain.handle("config:read", () => ({ ok: true, config: configStore.readAll(), path: configStore.filePath(), sealed: configStore.encryptionAvailable() }));
   ipcMain.handle("config:write", (_e, patch) => guard.guarded(() => configStore.merge(guard.plainObject(patch, { name: "settings" }))));
