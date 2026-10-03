@@ -113,6 +113,11 @@ describe("customer membership portal security", () => {
     expect(service).not.toContain("membership_event_outbox");
     expect(mirrorIdentitySql).toContain("member.membership_member_id = source.id");
     expect(mirrorIdentitySql).toContain("member.phone = source.phone");
+    expect(mirrorIdentitySql).toContain("and member.membership_member_id is null");
+    expect(mirrorIdentitySql).toContain("when member.membership_member_id = source.id then 0");
+    expect(mirrorIdentitySql).toMatch(
+      /get diagnostics v_affected = row_count;\s+if v_affected > 0 then\s+update public\.members\s+set membership_member_id = null/,
+    );
     expect(mirrorIdentitySql).toContain("pg_advisory_xact_lock");
     expect(mirrorIdentitySql).not.toMatch(/delete\s+from\s+public\.members/i);
     expect(revisionOverlapSql).toContain("m.directory_revision <= b.cursor_revision");

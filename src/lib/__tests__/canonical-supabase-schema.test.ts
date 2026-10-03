@@ -107,6 +107,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261003011000_remove_legacy_unscoped_sync_rpcs.sql",
       "supabase/migrations/20261003093500_membership_directory_mirror.sql",
       "supabase/migrations/20261003183000_harden_membership_directory_identity.sql",
+      "supabase/migrations/20261003190000_protect_membership_directory_mapping.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

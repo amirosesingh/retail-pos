@@ -40,11 +40,13 @@ begin
     where member.membership_member_id = source.id
        or member.id = source.id
        or member.member_code = source.member_code
-       or (nullif(btrim(source.phone), '') is not null and member.phone = source.phone)
+       or (nullif(btrim(source.phone), '') is not null
+           and member.membership_member_id is null
+           and member.phone = source.phone)
     order by case
-      when nullif(btrim(source.phone), '') is not null and member.phone = source.phone then 0
-      when member.membership_member_id = source.id then 1
-      when member.id = source.id then 2
+      when member.membership_member_id = source.id then 0
+      when member.id = source.id then 1
+      when member.member_code = source.member_code then 2
       else 3 end,
       member.id
     limit 1
@@ -64,13 +66,6 @@ begin
       );
       get diagnostics v_affected = row_count;
     else
-      -- If legacy POS data split the same customer over different identifiers,
-      -- attach the external UUID to the phone-owned row without deleting or
-      -- rewriting historical sale references.
-      update public.members
-      set membership_member_id = null
-      where membership_member_id = source.id and id <> v_target_id;
-
       update public.members target set
         membership_member_id = source.id,
         member_code = case when not exists (
@@ -93,6 +88,13 @@ begin
       where target.id = v_target_id
         and source.directory_revision > target.membership_revision;
       get diagnostics v_affected = row_count;
+      if v_affected > 0 then
+        -- Detach a stale duplicate mapping only after the guarded target write
+        -- succeeds. A stale directory page must never remove the current UUID.
+        update public.members
+        set membership_member_id = null
+        where membership_member_id = source.id and id <> v_target_id;
+      end if;
     end if;
     v_count := v_count + v_affected;
   end loop;

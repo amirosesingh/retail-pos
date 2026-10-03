@@ -1,6 +1,5 @@
--- Reconcile the isolated membership directory by external UUID and the
--- phone-number membership identity. This replaces the earlier member-code-only
--- conflict target without deleting legacy POS members or sale references.
+-- Preserve the stable membership UUID when a phone number is reused or an
+-- older overlapping directory page arrives after a newer one.
 
 create or replace function public.membership_directory_apply(p_rows jsonb)
 returns integer language plpgsql security definer set search_path = '' as $fn$
@@ -19,9 +18,13 @@ begin
       created_at timestamptz, updated_at timestamptz, directory_revision bigint
     )
   loop
-    perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('member-id:' || source.id::text, 0));
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('member-id:' || source.id::text, 0)
+    );
     if nullif(btrim(source.phone), '') is not null then
-      perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('member-phone:' || source.phone, 0));
+      perform pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended('member-phone:' || source.phone, 0)
+      );
     end if;
 
     select member.id into v_target_id
@@ -48,7 +51,8 @@ begin
         deleted_at, membership_revision, membership_status
       ) values (
         source.id, source.id, source.member_code, source.full_name, source.phone,
-        (select tier.id from public.membership_tiers tier where lower(tier.name) = lower(source.tier_name) limit 1),
+        (select tier.id from public.membership_tiers tier
+          where lower(tier.name) = lower(source.tier_name) limit 1),
         source.loyalty_points, source.total_spent, source.created_at, source.updated_at,
         source.is_verified, case when source.status = 'active' then null else source.updated_at end,
         source.directory_revision, source.status
@@ -66,7 +70,8 @@ begin
           select 1 from public.members other
           where other.id <> target.id and other.phone = source.phone
         ) then source.phone else target.phone end,
-        tier_id = (select tier.id from public.membership_tiers tier where lower(tier.name) = lower(source.tier_name) limit 1),
+        tier_id = (select tier.id from public.membership_tiers tier
+          where lower(tier.name) = lower(source.tier_name) limit 1),
         loyalty_points = source.loyalty_points,
         total_spent = source.total_spent,
         updated_at = source.updated_at,
@@ -77,6 +82,7 @@ begin
       where target.id = v_target_id
         and source.directory_revision > target.membership_revision;
       get diagnostics v_affected = row_count;
+
       if v_affected > 0 then
         update public.members
         set membership_member_id = null
