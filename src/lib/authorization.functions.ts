@@ -41,6 +41,7 @@ const saveRuleInput = caller.extend({
 const pinInput = caller.extend({
   actionKey: z.string().min(1).max(64),
   authorizerId: z.string().min(1).max(64),
+  selfAuthorization: z.boolean().default(false),
   pin: z.string().regex(/^\d{4,8}$/),
   storeId: z.string().max(64).optional(),
   terminalId: z.string().max(64).optional(),
@@ -49,6 +50,9 @@ const pinInput = caller.extend({
   requesterDirectLimit: z.number().finite().nonnegative().nullish(),
   valueUnit: z.enum(["percent", "currency", "quantity", "number"]).default("number"),
   binding: z.string().min(1).max(80),
+  auditContext: z
+    .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+    .default({}),
 });
 
 const snapshotLine = z.object({
@@ -354,6 +358,11 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
       await import("./authorization");
     const { throttleStatus, throttleFail, throttleReset, minutesLeft } =
       await import("./pin-throttle.server");
+    const auditContext = Object.fromEntries(
+      Object.entries(data.auditContext).filter(
+        ([key]) => !["reason", "requested_amount", "self_authorization"].includes(key),
+      ),
+    );
     let who: Caller;
     try {
       who = await assertCaller(data);
@@ -363,7 +372,8 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
 
     // Guessing is stopped on the server, keyed on the authoriser, so trying
     // from a second till does not reset the count.
-    const key = `authz:${data.authorizerId.toLowerCase()}`;
+    const authorizerId = data.selfAuthorization ? who.id : data.authorizerId;
+    const key = `authz:${authorizerId.toLowerCase()}`;
     const state = await throttleStatus(key);
     if (state.locked) {
       return {
@@ -380,19 +390,27 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     }
     const rows = await loadRuleRows(storeId);
     const rule = resolveRules(rows, storeId)[data.actionKey];
-    if (!rule || !rule.isEnabled || (rule.mode !== "pin" && rule.mode !== "either")) {
+    if (
+      !rule ||
+      !rule.isEnabled ||
+      rule.mode === "none" ||
+      (!data.selfAuthorization && rule.mode !== "pin" && rule.mode !== "either")
+    ) {
       await writeLog({
         actionKey: data.actionKey,
         modeUsed: "pin",
         requestedBy: who.id,
         requestedByName: who.name,
-        authorizedBy: data.authorizerId,
-        authorizedByName: data.authorizerId,
+        authorizedBy: authorizerId,
+        authorizedByName: authorizerId,
         storeId,
         terminalId: data.terminalId ?? "",
         outcome: "denied",
         purpose: data.reason ?? "",
-        detail: { reason: "PIN is not the configured authorisation method" },
+        detail: {
+          reason: "PIN is not the configured authorisation method",
+          ...auditContext,
+        },
       });
       return {
         ok: false as const,
@@ -405,7 +423,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     const roles = rule?.allowedRoles ?? ["admin", "manager"];
     const users = rule?.allowedUserIds ?? [];
 
-    const person = await verifyAuthorizationPin(data.authorizerId, data.pin, roles, users);
+    const person = await verifyAuthorizationPin(authorizerId, data.pin, roles, users);
     if (!person) {
       const after = await throttleFail(key);
       await writeLog({
@@ -413,13 +431,13 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         modeUsed: "pin",
         requestedBy: who.id,
         requestedByName: who.name,
-        authorizedBy: data.authorizerId,
-        authorizedByName: data.authorizerId,
+        authorizedBy: authorizerId,
+        authorizedByName: authorizerId,
         storeId,
         terminalId: data.terminalId ?? "",
         outcome: "failed_pin",
         purpose: data.reason ?? "",
-        detail: { reason: data.reason ?? "" },
+        detail: { reason: data.reason ?? "", ...auditContext },
       });
       return {
         ok: false as const,
@@ -460,6 +478,8 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         detail: {
           reason: "approval authority exceeded",
           requested_amount: data.requestedAmount,
+          self_authorization: data.selfAuthorization,
+          ...auditContext,
           ...authority,
         },
       });
@@ -481,7 +501,12 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
       terminalId: data.terminalId ?? "",
       outcome: "approved",
       purpose: data.reason ?? "",
-      detail: { reason: data.reason ?? "", requested_amount: data.requestedAmount ?? null },
+      detail: {
+        reason: data.reason ?? "",
+        requested_amount: data.requestedAmount ?? null,
+        self_authorization: data.selfAuthorization,
+        ...auditContext,
+      },
     });
     if (!logged.ok) {
       return { ok: false as const, error: "Approval audit could not be recorded" };
@@ -492,7 +517,9 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
       grantToken: signOverrideGrant({
         action: data.actionKey,
         approvedBy: person.userId,
+        approvedByName: person.name,
         role: person.role,
+        modeUsed: data.selfAuthorization ? "self_pin" : "pin",
         storeId,
         binding: data.binding,
         approvedAmount: data.requestedAmount ?? null,

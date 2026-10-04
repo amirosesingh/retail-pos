@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 const { serviceRest, verifyRelayCaller, resolveRelayScope } = vi.hoisted(() => ({
   serviceRest: vi.fn(),
@@ -69,6 +70,11 @@ function storedRow() {
 }
 
 describe("client audit report trust boundary", () => {
+  it("neutralizes spreadsheet formulas in CSV exports", () => {
+    const reportKit = readFileSync("src/platforms/web/components/pos/report-kit.tsx", "utf8");
+    expect(reportKit).toContain('/^[\\t\\r\\n ]*[=+\\-@]/');
+    expect(reportKit).toContain("? `'${raw}` : raw");
+  });
   it.each([false, true])("stores only unverified claims (supervisor: %s)", async (isSupervisor) => {
     resolveRelayScope.mockResolvedValue({
       staffUserId: "reporter-id", actorName: "Reporter", role: "staff",
@@ -97,7 +103,8 @@ describe("client audit report trust boundary", () => {
     expect(auditReportFields({ ...row, new_value: JSON.stringify(row.new_value) })).toEqual({
       requestedBy: "", approvedBy: "Reporter (reporter)",
       action: "Client report: staff.account_deleted", outcome: "Unverified",
-      purpose: "Claimed deletion", reference: "victim",
+      purpose: "Claimed deletion", reference: "victim", location: "app_users",
+      method: "Unverified", requestedAmount: "",
     });
   });
 

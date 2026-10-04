@@ -136,7 +136,8 @@ describe("local SQL Server discovery privilege", () => {
     expect(adoptRoute).toContain("sessionToken:");
     expect(adoptRoute).toContain("cashierToken:");
     expect(adoptRoute).not.toMatch(/role\s*:\s*input/);
-    expect(adoptRoute).not.toContain("can_manage_sync_backup === true");
+    expect(adoptRoute).not.toMatch(/authority\?\.permissions\.can_manage_sync_backup/);
+    expect(adoptRoute).not.toMatch(/authority\.permissions\.can_manage_sync_backup/);
     expect(main).toContain('adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId)');
     expect(main).toContain("const mirrored=terminalStore.write(terminal)");
     expect(main).toContain("terminal.locationId,terminal.storeId,terminal.branchId,adminSession.branchId()");

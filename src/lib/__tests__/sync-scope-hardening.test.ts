@@ -10,6 +10,10 @@ const require = createRequire(import.meta.url);
 describe("scoped SQL Server synchronization", () => {
   it("uses revisions so a stale desktop setting cannot overwrite a newer server row", () => {
     const schema = read("supabase/schema.sql");
+    const migration = read(
+      "supabase/migrations/20261004093000_settings_last_writer_wins.sql",
+    );
+    const cloudClient = read("electron/sync/cloud-client.cjs");
     expect(schema).toMatch(/settings_overrides[\s\S]*row_version integer DEFAULT 1 NOT NULL/);
     expect(schema).toMatch(/settings_scoped[\s\S]*row_version integer NOT NULL DEFAULT 1/);
     expect(schema).toContain("NEW.row_version := GREATEST");
@@ -19,6 +23,25 @@ describe("scoped SQL Server synchronization", () => {
     expect(schema).toMatch(
       /sync_apply_settings_scoped[\s\S]*WHERE EXCLUDED\."row_version">public\."settings_scoped"\."row_version"/,
     );
+    for (const table of [
+      "integration_settings",
+      "pos_settings",
+      "pos_store_settings",
+      "settings_overrides",
+      "settings_scoped",
+    ]) {
+      expect(cloudClient).toContain(`"${table}"`);
+    }
+    expect(cloudClient).toContain(
+      "source.[updated_at]>target.[updated_at]",
+    );
+    expect(cloudClient).toContain(
+      "source.[updated_at]=target.[updated_at] AND source.[row_version]>=target.[row_version]",
+    );
+    expect(migration).toContain("NEW.updated_at > current_updated_at");
+    expect(migration).toContain("NEW.updated_at < current_updated_at");
+    expect(migration).toContain("NEW.row_version := current_version");
+    expect(migration).toContain("integration_settings_insert_freshness");
   });
 
   it("routes mixed settings and authorization scopes without organization-wide operational downloads", () => {

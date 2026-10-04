@@ -22,11 +22,33 @@ describe("manager override audit history", () => {
     }
   });
 
-  it("records PIN approvals without an automatic administrator bypass", () => {
+  it("records own-PIN approvals without bypassing the immutable audit", () => {
     const schema = read("supabase/schema.sql");
     const gate = read("src/lib/manager-gate.tsx");
+    const functions = read("src/lib/authorization.functions.ts");
+    const report = read("src/routes/reports.history.tsx");
     expect(schema).toContain("'approved_by_name', u.full_name");
     expect(gate).not.toContain("authorizeAsAdmin");
-    expect(gate).toContain("Every person, including an administrator");
+    expect(gate).toContain("selfAuthorizer");
+    expect(functions).toContain("selfAuthorization: z.boolean().default(false)");
+    expect(functions).toContain("self_authorization: data.selfAuthorization");
+    expect(functions).toContain('["reason", "requested_amount", "self_authorization"]');
+    expect(report).toContain("Where / reference");
+    expect(report).toContain("display.method");
+  });
+
+  it("requires an authorization PIN when every new staff account is created", () => {
+    const admin = read("src/lib/staff-admin.functions.ts");
+    const server = read("src/lib/staff-admin.server.ts");
+    const screen = read("src/platforms/web/components/admin/StaffManager.tsx");
+    expect(admin).toContain("authorizationPin: z.string().regex");
+    expect(server).toContain("p_pin: authorizationPin");
+    expect(screen).toContain("Generate 6-digit PIN");
+    expect(screen).toContain("Show generated PIN");
+    expect(screen.match(/setShowPinValue\(false\)/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(server).toContain('serviceRpc("staff_account_set_terminal_pin"');
+    expect(server).toContain('p_pin: ""');
+    expect(read("supabase/migrations/20261004225000_separate_terminal_approval_pins.sql"))
+      .toContain("terminal.pin_hash <> extensions.crypt");
   });
 });

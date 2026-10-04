@@ -41,7 +41,7 @@ let state = {
 };
 let timer = null;
 let paused = false;
-let fallbackRunning = false;
+let fallbackPromise = null;
 
 
 function broadcast() {
@@ -103,8 +103,11 @@ function load() {
     autoUpdater = null;
     return null;
   }
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // Checking, downloading and installing are separate operator decisions.
+  // This prevents a background check from consuming bandwidth or staging an
+  // installer when the terminal is in the middle of trading.
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
   // Partial ("delta") downloads make many small ranged requests and are the
   // most fragile link in the chain on tills behind security software. One
   // plain file download is slower but far more likely to complete.
@@ -122,7 +125,7 @@ function load() {
   );
   autoUpdater.on("update-not-available", () => set({ status: "current", percent: 0, error: null }));
   autoUpdater.on("update-available", (info) =>
-    set({ status: "downloading", percent: 0, available: info?.version ?? null }),
+    set({ status: "available", percent: 0, available: info?.version ?? null }),
   );
   autoUpdater.on("download-progress", (p) => set({ status: "downloading", percent: Math.round(p.percent || 0) }));
   autoUpdater.on("update-downloaded", (info) =>
@@ -171,6 +174,33 @@ async function check() {
   return state;
 }
 
+/** Download and verify the update, but never restart the till. */
+async function downloadUpdate() {
+  const updater = load();
+  if (!updater) return state;
+  if (paused) return state;
+  if (state.status !== "available" && state.status !== "error") return state;
+  try {
+    set({ status: "downloading", percent: 0, error: null, stage: "download" });
+    await updater.downloadUpdate();
+  } catch (err) {
+    const raw = String(err?.message || err);
+    const { code, friendly } = netHttp.explainNetworkError(raw);
+    set({ status: "error", stage: "download", code, detail: raw, error: friendly });
+    await fallbackDownload();
+  }
+  return state;
+}
+
+/** Explicit operator choice: finish the verified download, then install. */
+async function downloadAndInstall() {
+  const downloaded = await downloadUpdate();
+  if (downloaded.status !== "ready") {
+    return { ok: false, error: downloaded.error || "The update did not finish downloading." };
+  }
+  return install();
+}
+
 /** The address the check reads, used in error reports and the test button. */
 function manifestish() {
   const target = feed();
@@ -190,13 +220,12 @@ function installerUrl(version) {
  * with resume and retries, prove it came from us, and keep it for restart.
  */
 async function fallbackDownload() {
-  if (fallbackRunning) return state;
+  if (fallbackPromise) return fallbackPromise;
   const version = state.available;
   const url = installerUrl(version);
   if (!version || !url) return state;
-  fallbackRunning = true;
-  const file = path.join(os.tmpdir(), `pos-update-${version}.exe`);
-  try {
+  fallbackPromise = (async () => {
+    const file = path.join(os.tmpdir(), `pos-update-${version}.exe`);
     for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
       set({
         status: "downloading",
@@ -213,37 +242,14 @@ async function fallbackDownload() {
         });
         const verified = await verifyInstaller(file, version);
         if (!verified.ok) {
-          // Never keep or resume a file that failed integrity verification.
-          // Retry from byte zero because the transfer may have ended cleanly
-          // at HTTP level while still being truncated or transformed.
-          try {
-            fs.rmSync(file, { force: true });
-          } catch {
-            /* the next download still opens with flags=w when no partial remains */
-          }
-          set({
-            status: "error",
-            stage: "verify",
-            error: verified.error,
-            detail: `${verified.error} (attempt ${attempt} of ${ATTEMPTS})`,
-            url,
-          });
-          if (attempt < ATTEMPTS) {
-            await wait(attempt * 3000);
-            continue;
-          }
+          try { fs.rmSync(file, { force: true }); } catch { /* retry opens a fresh file */ }
+          set({ status: "error", stage: "verify", error: verified.error,
+            detail: `${verified.error} (attempt ${attempt} of ${ATTEMPTS})`, url });
+          if (attempt < ATTEMPTS) { await wait(attempt * 3000); continue; }
           return state;
         }
-        set({
-          status: "ready",
-          percent: 100,
-          error: null,
-          stage: null,
-          detail: null,
-          code: null,
-          installerFile: file,
-          available: version,
-        });
+        set({ status: "ready", percent: 100, error: null, stage: null, detail: null,
+          code: null, installerFile: file, available: version });
         return state;
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err);
@@ -253,8 +259,11 @@ async function fallbackDownload() {
       }
     }
     return state;
+  })();
+  try {
+    return await fallbackPromise;
   } finally {
-    fallbackRunning = false;
+    fallbackPromise = null;
   }
 }
 
@@ -559,6 +568,8 @@ module.exports = {
   resume,
   isPaused,
   check,
+  downloadUpdate,
+  downloadAndInstall,
   install,
   rollback,
   diagnose,

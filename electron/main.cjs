@@ -43,7 +43,7 @@ const { applyMigrations, migrationBundleSql } = require("./db/migrations.cjs");
 const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
-const { listSyncedStaff, verifySyncedStaffPin } = require("./synced-staff-login.cjs");
+const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = require("./synced-staff-login.cjs");
 
 const databaseConfig = createSecureConfig({ app, safeStorage, configStore });
 const databaseManager = new ConnectionManager();
@@ -90,13 +90,44 @@ function localBranchId(){
 function rememberVerifiedBranch(branchId){
   if(!branchId)return;
   const terminal=terminalStore.read();
-  if(terminal?.tokenId&&!terminal.locationId&&!terminal.storeId&&!terminal.branchId)terminalStore.write({...terminal,branchId});
+  if(terminal?.tokenId&&!terminal.locationId&&!terminal.storeId&&!terminal.branchId){
+    terminalStore.write({...terminal,branchId});
+    // The renderer may already have loaded its first local snapshot while the
+    // sealed activation still lacked its branch mirror. Wake it immediately;
+    // otherwise SQL contains the catalogue but the till remains empty until a
+    // full application restart.
+    publishBusinessChange({kind:"branch",branchId:String(branchId)});
+  }
 }
-function stampVerifiedBranchOperations(operations,branchId){
-  const branchStampedTables=new Set(["audit_logs","activity_events","authorization_requests","authorization_log","record_edits","member_verifications","entity_status_history"]);
+function stampVerifiedBranchOperations(operations,branchId,aggregateKind=null){
+  const branchStampedTables=new Set(["audit_logs","shift_sessions","activity_events","authorization_requests","authorization_log","record_edits","member_verifications","entity_status_history"]);
+  // Audit rows and staff shift sessions describe work performed on this
+  // physical till. Renderer/session state can contain an older branch alias,
+  // so Main replaces it with the branch verified from the sealed terminal.
+  const verifiedBranchTables=new Set(["audit_logs","shift_sessions"]);
+  // A sale performed on this physical till can only belong to the paired
+  // terminal branch.  Stamp every financial child consistently so stale UI
+  // branch state cannot either block checkout or redirect a sale elsewhere.
+  const saleBranchFields=new Map([
+    ["sales",["store_id","branch_id"]],
+    ["sale_items",["branch_id"]],
+    ["payment_transactions",["store_id"]],
+    ["item_activity_logs",["store_id"]],
+  ]);
   return operations.map((operation)=>{
-    if(!branchStampedTables.has(operation.table)||!(operation.kind==="insert"||operation.kind==="upsert"))return operation;
-    return{...operation,rows:operation.rows.map((row)=>operation.table==="audit_logs"||!String(row?.store_id??"").trim()?{...row,store_id:branchId}:row)};
+    const saleFields=aggregateKind==="sale"?saleBranchFields.get(operation.table):null;
+    const verified=verifiedBranchTables.has(operation.table);
+    const fillMissing=branchStampedTables.has(operation.table);
+    if(operation.kind==="insert"||operation.kind==="upsert"){
+      if(!saleFields&&!verified&&!fillMissing)return operation;
+      return{...operation,rows:operation.rows.map((row)=>{
+        if(saleFields)return saleFields.reduce((next,field)=>({...next,[field]:branchId}),{...row});
+        return verified||!String(row?.store_id??"").trim()?{...row,store_id:branchId}:row;
+      })};
+    }
+    if(operation.kind==="update"&&verified)
+      return{...operation,values:{...operation.values,store_id:branchId}};
+    return operation;
   });
 }
 async function observedDatabaseOperation(category, stage, work) {
@@ -1323,8 +1354,14 @@ function registerIpc() {
       // context may contain a pre-canonical branch alias, while Main owns the
       // paired terminal identity, so audit rows always receive that verified
       // branch. Other supplied mismatches remain rejected below.
-      const operations=stampVerifiedBranchOperations(aggregate.operations,branchId);
-      const trustedAggregate={...aggregate,operations,branchId};
+      const operations=stampVerifiedBranchOperations(aggregate.operations,branchId,aggregate.kind);
+      const terminal=terminalStore.read()??{};
+      const trustedAggregate={
+        ...aggregate,
+        operations,
+        branchId,
+        terminalId:terminal.tokenId??terminal.terminalId??null,
+      };
       const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null});
       scheduleAutomaticSync(250);
@@ -1427,6 +1464,13 @@ function registerIpc() {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
   });
+  ipcMain.handle("staff:verify-approval-pin", async (_e, username, pin) => {
+    try {
+      return await verifySyncedApprovalPin(databaseManager.pool, username, pin, localBranchId());
+    } catch (error) {
+      return {ok:false,reason:"unavailable",error:String(error?.message??error)};
+    }
+  });
   ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
     const input = guard.options(value, { name: "cashier sign in", max: 2 });
     const username = guard.text(input.username, { name: "username", max: 120 });
@@ -1453,6 +1497,24 @@ function registerIpc() {
       ok: false,
       error: "The sign-in service returned an invalid response.",
     }));
+    // The hosted endpoint has verified the PIN and re-read this account's
+    // current permission matrix. Adopt that proof in the desktop process now,
+    // before the renderer can submit its first sale. Requiring the separate
+    // database-maintenance permission here made ordinary cashier checkouts
+    // fail with EPRIVILEGE even though can_process_sale was granted.
+    if (response.ok && result?.ok && result.cashier) {
+      const cashier = result.cashier;
+      const role = String(cashier.role ?? cashier.role_slug ?? "staff").toLowerCase();
+      const level = role === "admin" ? "admin" : role === "manager" || role === "supervisor" ? "supervisor" : "staff";
+      const branchId = cashier.store_id ?? localBranchId();
+      adminSession.grant(level, cashier.username ?? username, cashier.permissions ?? {}, "pos", branchId);
+      const proof = {
+        ...(typeof result.sessionToken === "string" ? { sessionToken: result.sessionToken } : {}),
+        ...(typeof result.cashierToken === "string" ? { cashierToken: result.cashierToken } : {}),
+      };
+      syncCloud.setAuthorizationProof(proof);
+      rememberVerifiedBranch(branchId);
+    }
     return { ...result, status: response.status };
   }));
   ipcMain.handle("app:ready", () => {
@@ -1554,7 +1616,23 @@ function registerIpc() {
 
   ipcMain.handle("update:status", () => updater.status());
   ipcMain.handle("update:check", () => updater.check());
-  ipcMain.handle("update:install", () => updater.install());
+  ipcMain.handle("update:download", () => updater.downloadUpdate());
+  const installUpdateWhenShiftClosed = async (downloadFirst) => {
+    const shifts = await operationsRepository.query(localBranchId(), "shifts", { limit: 500 });
+    // CASH_COUNT_REQUIRED is still an open financial shift. Never let either
+    // install path quit the till until every shift has a durable closed_at.
+    const active = (shifts.rows ?? []).some((shift) => !shift.closed_at);
+    if (active) {
+      return {
+        ok: false,
+        code: "EACTIVE_SHIFT",
+        error: "Close the active shift before installing an update.",
+      };
+    }
+    return downloadFirst ? updater.downloadAndInstall() : updater.install();
+  };
+  ipcMain.handle("update:download-install", () => installUpdateWhenShiftClosed(true));
+  ipcMain.handle("update:install", () => installUpdateWhenShiftClosed(false));
   ipcMain.handle("update:diagnose", () => updater.diagnose());
   ipcMain.handle("update:download-page", () => updater.downloadPage());
   ipcMain.handle("app:version", () => app.getVersion());

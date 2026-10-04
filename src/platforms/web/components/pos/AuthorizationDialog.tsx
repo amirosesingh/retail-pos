@@ -33,7 +33,7 @@ import {
   approvalReference,
   canAuthorizeAmount,
 } from "@/lib/authorization";
-import { verifyLocalPin } from "@/core/local-db/local-staff";
+import { verifyLocalApprovalPin } from "@/core/local-db/local-staff";
 import { normalizeSnapshot, snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
 import { syncNow } from "@/lib/sync-engine";
 
@@ -67,10 +67,18 @@ export type AuthorizationPrompt = {
   absoluteCeilings?: Record<string, number>;
   approvalTimeoutMinutes?: number;
   binding: string;
+  /** Signed-in person who may approve this action with their own PIN. */
+  selfAuthorizer?: { id: string; name: string; role: string };
 };
 
 export type PromptOutcome =
-  | { kind: "approved"; grantToken: string; by: string }
+  | {
+      kind: "approved";
+      grantToken: string;
+      by: string;
+      authorizer: { id: string; name: string; role: string };
+      offline?: boolean;
+    }
   | { kind: "submitted"; requestId: string }
   | { kind: "cancelled" };
 
@@ -91,9 +99,17 @@ export function AuthorizationDialog({
 
   async function authorizeLocalPin() {
     if (!prompt) return false;
-    const result = await verifyLocalPin(authorizerId.trim(), pin);
+    const expectedId = prompt.selfAuthorizer?.id ?? authorizerId.trim();
+    const result = await verifyLocalApprovalPin(expectedId, pin);
     if (!result.ok) {
       toast.error(result.error);
+      return false;
+    }
+    if (
+      prompt.selfAuthorizer &&
+      result.staff.username.toLowerCase() !== prompt.selfAuthorizer.id.toLowerCase()
+    ) {
+      toast.error("Enter the PIN for the signed-in account.");
       return false;
     }
     const rule: AuthorizationRule = {
@@ -143,7 +159,11 @@ export function AuthorizationDialog({
       detail: {
         reason: note.trim(),
         offline: true,
+        self_authorization: !!prompt.selfAuthorizer,
         requested_amount: prompt.requestedAmount ?? null,
+        approval_location: prompt.payload?.["approval_location"] ?? null,
+        reference: prompt.payload?.["bill_no"] ?? prompt.payload?.["transaction"] ?? null,
+        context: prompt.payload ?? {},
       },
     });
     if (!parked.parked) {
@@ -155,6 +175,12 @@ export function AuthorizationDialog({
       kind: "approved",
       grantToken: "",
       by: result.staff.full_name || result.staff.username,
+      authorizer: {
+        id: result.staff.id,
+        name: result.staff.full_name || result.staff.username,
+        role: result.staff.roleSlug,
+      },
+      offline: true,
     });
     return true;
   }
@@ -205,7 +231,7 @@ export function AuthorizationDialog({
   useEffect(() => {
     if (!prompt) return;
     setTab(prompt.mode === "request" ? "request" : "pin");
-    setAuthorizerId("");
+    setAuthorizerId(prompt.selfAuthorizer?.id ?? "");
     setPin("");
     setNote("");
   }, [prompt]);
@@ -223,9 +249,11 @@ export function AuthorizationDialog({
         data: {
           ...auth,
           actionKey: prompt.actionKey,
-          authorizerId: authorizerId.trim(),
+          authorizerId: prompt.selfAuthorizer?.id ?? authorizerId.trim(),
+          selfAuthorization: !!prompt.selfAuthorizer,
           pin,
           binding: prompt.binding,
+          auditContext: prompt.payload ?? {},
           ...(prompt.storeId ? { storeId: prompt.storeId } : {}),
           ...(prompt.terminalId ? { terminalId: prompt.terminalId } : {}),
           ...(note.trim() ? { reason: note.trim() } : {}),
@@ -241,7 +269,12 @@ export function AuthorizationDialog({
         return;
       }
       toast.success(`Approved by ${res.authorizer.name}`);
-      onFinish({ kind: "approved", grantToken: res.grantToken, by: res.authorizer.name });
+      onFinish({
+        kind: "approved",
+        grantToken: res.grantToken,
+        by: res.authorizer.name,
+        authorizer: res.authorizer,
+      });
     } catch (e) {
       if (looksOffline(e)) await authorizeLocalPin();
       else notifyError(e, "Authorisation failed");
@@ -304,17 +337,26 @@ export function AuthorizationDialog({
 
   const pinPane = (
     <div className="space-y-3">
-      <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">Authoriser ID</Label>
-        <Input
-          name="authorizer-id"
-          autoComplete="off"
-          autoFocus
-          value={authorizerId}
-          onChange={(e) => setAuthorizerId(e.target.value)}
-          placeholder="e.g. manager1"
-        />
-      </div>
+      {prompt?.selfAuthorizer ? (
+        <div className="rounded-md border border-border/60 bg-muted/30 p-3 text-sm">
+          <div className="font-medium">Confirm as {prompt.selfAuthorizer.name}</div>
+          <div className="text-xs text-muted-foreground">
+            Enter your own PIN. This approval will be recorded under your account.
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Authoriser ID</Label>
+          <Input
+            name="authorizer-id"
+            autoComplete="off"
+            autoFocus
+            value={authorizerId}
+            onChange={(e) => setAuthorizerId(e.target.value)}
+            placeholder="e.g. manager1"
+          />
+        </div>
+      )}
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">PIN</Label>
         <Input

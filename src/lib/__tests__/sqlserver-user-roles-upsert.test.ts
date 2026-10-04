@@ -2,6 +2,32 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("SQL Server user role synchronization", () => {
+  it("materializes staff without copying their real email to a till", async () => {
+    const inputs = new Map<string, unknown>();
+    class Request {
+      input(name: string, value: unknown) {
+        inputs.set(name, value);
+        return this;
+      }
+      async query() { return { rowsAffected: [1] }; }
+    }
+    const { CloudClient } = await import("../../../electron/sync/cloud-client.cjs");
+    const client = new CloudClient({
+      configStore: { get: () => "" }, terminalStore: { read: () => ({}) },
+      connectionManager: { sql: () => ({ Request }) },
+    });
+    await client.applyLocalBatch({}, {
+      cloudTable: "app_users", sqlServerTable: "app_users", conflictRule: "highest_version",
+      columns: [
+        { cloudColumn: "id", sqlServerColumn: "id", primaryKey: true },
+        { cloudColumn: "user_id", sqlServerColumn: "user_id" },
+        { cloudColumn: "email", sqlServerColumn: "email" },
+      ],
+    }, { rows: [{ row_data: { id: "staff-id", user_id: "Cashier One", email: "private@example.com" } }], tombstones: [] });
+    expect([...inputs.values()]).toContain("Cashier_One@terminal.invalid");
+    expect([...inputs.values()]).not.toContain("private@example.com");
+  });
+
   it("merges a replay by the composite unique assignment instead of generated id", () => {
     const source = readFileSync("electron/sync/cloud-client.cjs", "utf8");
     expect(source).toContain('table.cloudTable === "user_roles" ? ["user_id", "role"] : primary');
@@ -54,5 +80,56 @@ describe("SQL Server user role synchronization", () => {
       "ON target.[user_id]=source.[user_id] AND target.[role]=source.[role]",
     );
     expect(query).toContain("target.[id]=source.[id]");
+  });
+});
+
+describe("SQL Server configuration synchronization", () => {
+  const captureMerge = async (cloudTable: string, versioned: boolean) => {
+    let query = "";
+    class Request {
+      input() { return this; }
+      async query(sql: string) {
+        query = sql;
+        return { rowsAffected: [1] };
+      }
+    }
+    const { CloudClient } = await import("../../../electron/sync/cloud-client.cjs");
+    const client = new CloudClient({
+      configStore: { get: () => "" },
+      terminalStore: { read: () => ({}) },
+      connectionManager: { sql: () => ({ Request }) },
+    });
+    const columns = [
+      { cloudColumn: "id", sqlServerColumn: "id", primaryKey: true },
+      { cloudColumn: "updated_at", sqlServerColumn: "updated_at" },
+      { cloudColumn: "value", sqlServerColumn: "value" },
+      ...(versioned
+        ? [{ cloudColumn: "row_version", sqlServerColumn: "row_version" }]
+        : []),
+    ];
+    await client.applyLocalBatch({}, {
+      cloudTable,
+      sqlServerTable: cloudTable,
+      conflictRule: "highest_version",
+      columns,
+    }, {
+      rows: [{ row_data: { id: "1", value: "new", updated_at: "2026-10-04T09:00:00Z", ...(versioned ? { row_version: 4 } : {}) } }],
+      tombstones: [],
+    });
+    return query;
+  };
+
+  it("lets the newest timestamp win when Web and Electron row versions diverge", async () => {
+    const query = await captureMerge("pos_settings", true);
+    expect(query).toContain("source.[updated_at]>target.[updated_at]");
+    expect(query).toContain(
+      "source.[updated_at]=target.[updated_at] AND source.[row_version]>=target.[row_version]",
+    );
+  });
+
+  it("uses timestamp freshness for unversioned integration configuration", async () => {
+    const query = await captureMerge("integration_settings", false);
+    expect(query).toContain("source.[updated_at]>=target.[updated_at]");
+    expect(query).not.toContain("source.[row_version]");
   });
 });

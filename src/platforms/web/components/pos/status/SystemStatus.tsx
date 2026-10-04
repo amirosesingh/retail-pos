@@ -35,12 +35,7 @@ export function CloudStateIcon({ tone, className }: { tone: StatusTone; classNam
   return (
     <Icon
       aria-hidden
-      className={cn(
-        "size-4",
-        TONE_TEXT[tone],
-        tone === "connecting" && "animate-pulse",
-        className,
-      )}
+      className={cn("size-4", TONE_TEXT[tone], tone === "connecting" && "animate-pulse", className)}
     />
   );
 }
@@ -112,7 +107,12 @@ export function SystemStatusBadge({
           {status.local.connected && (
             <div className="flex justify-between gap-3">
               <dt className="text-muted-foreground">Central Supabase</dt>
-              <dd className={cn("font-medium", status.connectivity === "online" ? "text-success" : "text-destructive")}>
+              <dd
+                className={cn(
+                  "font-medium",
+                  status.connectivity === "online" ? "text-success" : "text-destructive",
+                )}
+              >
                 {status.connectivity === "online" ? "Connected" : "Unavailable"}
               </dd>
             </div>
@@ -129,11 +129,37 @@ export function SystemStatusBadge({
             <>
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Offline database</dt>
-                <dd className="truncate font-medium text-success">Connected · {status.local.database ?? "SQL Server"}</dd>
+                <dd className="truncate font-medium text-success">
+                  Connected · {status.local.database ?? "SQL Server"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">SQL Server activity</dt>
+                <dd className="font-medium">
+                  {status.syncing
+                    ? status.syncPhase.replaceAll("_", " ")
+                    : status.pending
+                      ? `${status.pending} waiting`
+                      : "Idle · ready"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">SQL health checked</dt>
+                <dd className="font-medium">{time(status.local.lastCheckedAt)}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Sync queue</dt>
+                <dd
+                  className={cn("font-medium", status.failed ? "text-destructive" : "text-success")}
+                >
+                  {status.pending} waiting · {status.failed} errors
+                </dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Automatic synchronization</dt>
-                <dd className="font-medium">{status.syncing ? "Running now" : status.lastError ? "Retry scheduled" : "Active"}</dd>
+                <dd className="font-medium">
+                  {status.syncing ? "Running now" : status.lastError ? "Retry scheduled" : "Active"}
+                </dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Last cloud synchronization</dt>

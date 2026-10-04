@@ -1,6 +1,6 @@
 # Synchronization column matrix
 
-Generated from the packaged registry: 70 tables and 1184 synchronized columns.
+Generated from the packaged registry: 70 tables and 1187 synchronized columns.
 
 Columns listed here are synchronized unless the table is listed as local-only or cloud-only in the coverage matrix.
 
@@ -719,6 +719,9 @@ Columns listed here are synchronized unless the table is listed as local-only or
 | members | is_verified | is_verified | boolean | bit | no | 0 | no | — | no |
 | members | verified_at | verified_at | timestamp with time zone | datetimeoffset(7) | yes | — | no | — | no |
 | members | verified_channel | verified_channel | text | nvarchar(max) | yes | — | no | — | no |
+| members | membership_member_id | membership_member_id | uuid | uniqueidentifier | yes | — | no | — | no |
+| members | membership_revision | membership_revision | bigint | bigint | no | 0 | no | — | no |
+| members | membership_status | membership_status | text | nvarchar(max) | no | 'active' | no | — | no |
 | members | deleted_at | deleted_at | text | nvarchar(max) | yes | — | no | — | no |
 | purchase_orders | id | id | uuid | uniqueidentifier | no | NEWID() | yes | — | no |
 | purchase_orders | po_number | po_number | text | nvarchar(450) | no | — | no | — | yes |

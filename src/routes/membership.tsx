@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link, Navigate, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
@@ -9,11 +9,9 @@ import {
   Gift,
   Loader2,
   LogOut,
-  Mail,
-  MessageSquareText,
   Pencil,
   ReceiptText,
-  ShieldCheck,
+  ShieldAlert,
   Star,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -21,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import {
   Select,
   SelectContent,
@@ -31,17 +28,14 @@ import {
 } from "@/components/ui/select";
 import { money } from "@/lib/pos-store";
 import { isTerminalApp } from "@/platform-config/platform";
-import { internationalPhone, PHONE_COUNTRIES } from "@/lib/phone-countries";
+import { PHONE_COUNTRIES } from "@/lib/phone-countries";
 import {
-  enrollMemberPortal,
   loadMemberPortalProfile,
   loadMemberPortalSales,
   memberPortalSession,
   onMemberPortalAuthChange,
-  sendMemberOtp,
   signOutMemberPortal,
   updateMemberPortal,
-  verifyMemberOtp,
   type MemberPortalProfile,
   type MemberPortalSale,
 } from "@/lib/member-portal";
@@ -68,10 +62,13 @@ function MembershipPage() {
   const [sales, setSales] = useState<MemberPortalSale[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sessionRestoreFailed, setSessionRestoreFailed] = useState(false);
   const refreshSequence = useRef(0);
+  const currentUserId = useRef<string | null>(null);
 
   const refresh = useCallback(async (activeSession: Session | null) => {
     const sequence = ++refreshSequence.current;
+    currentUserId.current = activeSession?.user.id ?? null;
     setSession(activeSession);
     if (!activeSession) {
       setProfile(null);
@@ -96,20 +93,46 @@ function MembershipPage() {
     }
   }, []);
 
+  const retrySessionRestore = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    setSessionRestoreFailed(false);
+    try {
+      await refresh(await memberPortalSession());
+    } catch (cause) {
+      setSessionRestoreFailed(true);
+      setError(cause instanceof Error ? cause.message : "Could not restore your login.");
+      setLoading(false);
+    }
+  }, [refresh]);
+
   useEffect(() => {
     let active = true;
+    let authEventSeen = false;
     void memberPortalSession()
       .then((current) => {
-        if (active) return refresh(current);
+        if (active && !authEventSeen) {
+          setSessionRestoreFailed(false);
+          return refresh(current);
+        }
       })
       .catch((cause) => {
-        if (active) {
+        if (active && !authEventSeen) {
+          setSessionRestoreFailed(true);
           setError(cause instanceof Error ? cause.message : "Could not restore your login.");
           setLoading(false);
         }
       });
     const unsubscribe = onMemberPortalAuthChange((current) => {
-      if (active) void refresh(current);
+      if (!active) return;
+      authEventSeen = true;
+      setSessionRestoreFailed(false);
+      const nextUserId = current?.user.id ?? null;
+      if (nextUserId === currentUserId.current) {
+        setSession(current);
+        return;
+      }
+      void refresh(current);
     });
     return () => {
       active = false;
@@ -136,7 +159,9 @@ function MembershipPage() {
               onClick={() =>
                 void signOutMemberPortal()
                   .then(() => toast.success("Signed out"))
-                  .catch((cause) => toast.error(String(cause)))
+                  .catch((cause) =>
+                    toast.error(cause instanceof Error ? cause.message : "Could not sign out."),
+                  )
               }
             >
               <LogOut className="size-4" /> Sign out
@@ -152,318 +177,41 @@ function MembershipPage() {
           <div className="flex min-h-64 items-center justify-center rounded-2xl border bg-card">
             <Loader2 className="size-7 animate-spin text-primary" aria-label="Loading" />
           </div>
+        ) : !session && sessionRestoreFailed ? (
+          <section className="mx-auto max-w-lg rounded-2xl border bg-card p-6 text-center shadow-sm">
+            <h2 className="text-lg font-semibold">Could not restore your member session</h2>
+            <p className="mt-2 text-sm text-destructive" role="alert">
+              {error}
+            </p>
+            <Button className="mt-5" onClick={() => void retrySessionRestore()}>
+              Retry member session
+            </Button>
+          </section>
         ) : !session ? (
-          <MemberLogin onSignedIn={(next) => void refresh(next)} />
+          <Navigate to="/join" replace />
+        ) : !profile && error ? (
+          <section className="mx-auto max-w-lg rounded-2xl border bg-card p-6 text-center shadow-sm">
+            <h2 className="text-lg font-semibold">Could not load your membership</h2>
+            <p className="mt-2 text-sm text-destructive" role="alert">
+              {error}
+            </p>
+            <Button className="mt-5" onClick={() => void refresh(session)}>
+              Try again
+            </Button>
+          </section>
         ) : !profile ? (
-          <MemberEnrollment
-            session={session}
-            error={error}
-            onSaved={(next) => {
-              setProfile(next);
-              void loadMemberPortalSales()
-                .then(setSales)
-                .catch((cause) =>
-                  setError(
-                    cause instanceof Error
-                      ? cause.message
-                      : "Your membership was saved, but purchase history could not be loaded.",
-                  ),
-                );
-            }}
-          />
+          <Navigate to="/join" replace />
         ) : (
-          <MemberDashboard profile={profile} sales={sales} error={error} onProfile={setProfile} />
+          <MemberDashboard
+            profile={profile}
+            sales={sales}
+            error={error}
+            onProfile={setProfile}
+            onRetry={() => void refresh(session)}
+          />
         )}
       </div>
     </main>
-  );
-}
-
-function MemberLogin({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
-  const [channel, setChannel] = useState<"email" | "phone">("email");
-  const [destination, setDestination] = useState("");
-  const [countryCode, setCountryCode] = useState("BN");
-  const [code, setCode] = useState("");
-  const [sent, setSent] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const send = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      await sendMemberOtp(channel, memberOtpDestination(channel, countryCode, destination));
-      setSent(true);
-      toast.success(channel === "email" ? "Code sent to your email" : "Code sent by SMS");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not send the code.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const verify = async () => {
-    if (code.length !== 6) return;
-    setBusy(true);
-    setError("");
-    try {
-      onSignedIn(
-        await verifyMemberOtp(
-          channel,
-          memberOtpDestination(channel, countryCode, destination),
-          code,
-        ),
-      );
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "That code is invalid or expired.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="mx-auto max-w-md rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">
-      <ShieldCheck className="mx-auto size-10 text-primary" aria-hidden />
-      <h2 className="mt-3 text-center text-xl font-semibold">Secure member sign-in</h2>
-      <p className="mt-1 text-center text-sm text-muted-foreground">
-        We will send a one-time six-digit code. No password is stored.
-      </p>
-
-      <div className="mt-6 grid grid-cols-2 gap-2 rounded-lg bg-muted p-1">
-        <Button
-          type="button"
-          variant={channel === "email" ? "secondary" : "ghost"}
-          onClick={() => {
-            setChannel("email");
-            setSent(false);
-            setCode("");
-            setError("");
-          }}
-        >
-          <Mail className="size-4" /> Email OTP
-        </Button>
-        <Button
-          type="button"
-          variant={channel === "phone" ? "secondary" : "ghost"}
-          onClick={() => {
-            setChannel("phone");
-            setSent(false);
-            setCode("");
-            setError("");
-          }}
-        >
-          <MessageSquareText className="size-4" /> Existing SMS login
-        </Button>
-      </div>
-
-      <div className="mt-5 space-y-2">
-        <Label htmlFor="member-destination">
-          {channel === "email" ? "Email address" : "Mobile / membership number"}
-        </Label>
-        <div className="flex gap-2">
-          {channel === "phone" ? (
-            <CountrySelect
-              value={countryCode}
-              disabled={busy || sent}
-              onChange={setCountryCode}
-              compact
-            />
-          ) : null}
-          <Input
-            id="member-destination"
-            className="min-w-0 flex-1"
-            type={channel === "email" ? "email" : "tel"}
-            inputMode={channel === "email" ? "email" : "tel"}
-            autoComplete={channel === "email" ? "email" : "tel-national"}
-            placeholder={channel === "email" ? "you@example.com" : "8XX XXXX"}
-            value={destination}
-            disabled={busy}
-            onChange={(event) => {
-              setDestination(event.target.value);
-              setSent(false);
-              setCode("");
-            }}
-          />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {channel === "email"
-            ? "Recommended: no separate SMS provider is required."
-            : "For existing phone-only accounts; SMS works only when the project has an SMS gateway."}
-        </p>
-      </div>
-
-      {sent ? (
-        <div className="mt-5 space-y-3">
-          <Label>Six-digit verification code</Label>
-          <InputOTP
-            maxLength={6}
-            value={code}
-            onChange={setCode}
-            disabled={busy}
-            containerClassName="justify-center"
-          >
-            <InputOTPGroup>
-              {Array.from({ length: 6 }, (_, index) => (
-                <InputOTPSlot key={index} index={index} className="h-11 w-11" />
-              ))}
-            </InputOTPGroup>
-          </InputOTP>
-          <Button
-            className="w-full"
-            disabled={busy || code.length !== 6}
-            onClick={() => void verify()}
-          >
-            {busy ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
-            Verify and sign in
-          </Button>
-          <Button className="w-full" variant="ghost" disabled={busy} onClick={() => void send()}>
-            Send a new code
-          </Button>
-        </div>
-      ) : (
-        <Button
-          className="mt-5 w-full"
-          disabled={busy || !destination.trim()}
-          onClick={() => void send()}
-        >
-          {busy ? <Loader2 className="size-4 animate-spin" /> : null}
-          Send verification code
-        </Button>
-      )}
-      {error ? (
-        <p className="mt-3 text-sm text-destructive" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </section>
-  );
-}
-
-function MemberEnrollment({
-  session,
-  error,
-  onSaved,
-}: {
-  session: Session;
-  error: string;
-  onSaved: (profile: MemberPortalProfile) => void;
-}) {
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
-  const [dateOfBirth, setDateOfBirth] = useState("");
-  const [countryCode, setCountryCode] = useState("BN");
-  const [postalCode, setPostalCode] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [formError, setFormError] = useState("");
-  const contact = session.user.phone || session.user.email || "verified contact";
-  const membershipPhone = internationalPhone(
-    PHONE_COUNTRIES.find((item) => item.code === countryCode) ?? PHONE_COUNTRIES[0],
-    phone,
-  );
-
-  return (
-    <section className="mx-auto max-w-xl rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">
-      <BadgeCheck className="size-9 text-primary" aria-hidden />
-      <h2 className="mt-3 text-xl font-semibold">Complete your membership</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {contact} is verified. We could not find an existing membership for it, so complete your
-        profile below.
-      </p>
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label htmlFor="member-full-name">Full name</Label>
-          <Input
-            id="member-full-name"
-            value={fullName}
-            maxLength={120}
-            onChange={(e) => setFullName(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label htmlFor="member-phone">Mobile / membership number</Label>
-          <div className="flex gap-2">
-            <CountrySelect value={countryCode} disabled={busy} onChange={setCountryCode} compact />
-            <Input
-              id="member-phone"
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel-national"
-              value={phone}
-              maxLength={40}
-              onChange={(event) => setPhone(event.target.value)}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground">
-            This unique international phone number becomes your membership number.
-          </p>
-        </div>
-        <div className="space-y-1.5">
-          <Label>Country</Label>
-          <CountrySelect value={countryCode} disabled={busy} onChange={setCountryCode} />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="member-postal">Postal code (optional)</Label>
-          <Input
-            id="member-postal"
-            value={postalCode}
-            maxLength={32}
-            autoComplete="postal-code"
-            onChange={(e) => setPostalCode(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="member-dob">Date of birth</Label>
-          <Input
-            id="member-dob"
-            type="date"
-            value={dateOfBirth}
-            max={new Date().toISOString().slice(0, 10)}
-            onChange={(e) => setDateOfBirth(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label htmlFor="member-address">Address (optional)</Label>
-          <Input
-            id="member-address"
-            value={address}
-            maxLength={500}
-            onChange={(e) => setAddress(e.target.value)}
-          />
-        </div>
-      </div>
-      {formError || error ? (
-        <p className="mt-3 text-sm text-destructive" role="alert">
-          {formError || error}
-        </p>
-      ) : null}
-      <Button
-        className="mt-5 w-full"
-        disabled={busy || phone.replace(/\D/g, "").length < 6 || fullName.trim().length < 2}
-        onClick={() => {
-          setBusy(true);
-          setFormError("");
-          void enrollMemberPortal({
-            fullName,
-            phone: membershipPhone,
-            address,
-            dateOfBirth,
-            countryCode,
-            postalCode,
-          })
-            .then(onSaved)
-            .catch((cause) =>
-              setFormError(
-                cause instanceof Error ? cause.message : "Could not save your membership.",
-              ),
-            )
-            .finally(() => setBusy(false));
-        }}
-      >
-        {busy ? <Loader2 className="size-4 animate-spin" /> : <Gift className="size-4" />}
-        Become a Member
-      </Button>
-    </section>
   );
 }
 
@@ -472,17 +220,19 @@ function MemberDashboard({
   sales,
   error,
   onProfile,
+  onRetry,
 }: {
   profile: MemberPortalProfile;
   sales: MemberPortalSale[];
   error: string;
   onProfile: (profile: MemberPortalProfile) => void;
+  onRetry: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [fullName, setFullName] = useState(profile.fullName);
   const [address, setAddress] = useState(profile.address);
   const [dateOfBirth, setDateOfBirth] = useState(profile.dateOfBirth ?? "");
-  const [countryCode, setCountryCode] = useState(profile.countryCode || "BN");
+  const [countryCode, setCountryCode] = useState(profile.countryCode);
   const [postalCode, setPostalCode] = useState(profile.postalCode);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -491,7 +241,7 @@ function MemberDashboard({
     setFullName(profile.fullName);
     setAddress(profile.address);
     setDateOfBirth(profile.dateOfBirth ?? "");
-    setCountryCode(profile.countryCode || "BN");
+    setCountryCode(profile.countryCode);
     setPostalCode(profile.postalCode);
   };
 
@@ -502,7 +252,12 @@ function MemberDashboard({
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2 text-sm opacity-90">
-                <BadgeCheck className="size-4" /> Verified membership
+                {profile.verified ? (
+                  <BadgeCheck className="size-4" />
+                ) : (
+                  <ShieldAlert className="size-4" />
+                )}
+                {profile.verified ? "Verified membership" : "Membership verification pending"}
               </div>
               <h2 className="mt-2 text-2xl font-semibold">{profile.fullName}</h2>
               <p className="mt-1 font-mono text-sm tracking-wide">{profile.memberCode}</p>
@@ -542,7 +297,7 @@ function MemberDashboard({
               size="sm"
               variant="outline"
               onClick={() => {
-                if (editing) resetDraft();
+                if (!editing) resetDraft();
                 setEditing((value) => !value);
               }}
             >
@@ -551,15 +306,17 @@ function MemberDashboard({
           </div>
           {editing ? (
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <Field label="Full name">
+              <Field label="Full name" htmlFor="member-profile-name">
                 <Input
+                  id="member-profile-name"
                   value={fullName}
                   maxLength={120}
                   onChange={(e) => setFullName(e.target.value)}
                 />
               </Field>
-              <Field label="Date of birth">
+              <Field label="Date of birth" htmlFor="member-profile-dob">
                 <Input
+                  id="member-profile-dob"
                   type="date"
                   value={dateOfBirth}
                   max={new Date().toISOString().slice(0, 10)}
@@ -567,19 +324,26 @@ function MemberDashboard({
                 />
               </Field>
               <div className="sm:col-span-2">
-                <Field label="Address">
+                <Field label="Address" htmlFor="member-profile-address">
                   <Input
+                    id="member-profile-address"
                     value={address}
                     maxLength={500}
                     onChange={(e) => setAddress(e.target.value)}
                   />
                 </Field>
               </div>
-              <Field label="Country">
-                <CountrySelect value={countryCode} disabled={busy} onChange={setCountryCode} />
+              <Field label="Country" htmlFor="member-profile-country">
+                <CountrySelect
+                  id="member-profile-country"
+                  value={countryCode}
+                  disabled={busy}
+                  onChange={setCountryCode}
+                />
               </Field>
-              <Field label="Postal code">
+              <Field label="Postal code" htmlFor="member-profile-postal">
                 <Input
+                  id="member-profile-postal"
                   value={postalCode}
                   maxLength={32}
                   autoComplete="postal-code"
@@ -636,8 +400,16 @@ function MemberDashboard({
         <p className="mt-1 text-sm text-muted-foreground">
           Your latest {Math.min(sales.length, 25)} member purchases
         </p>
-        {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
-        {sales.length === 0 ? (
+        {error && sales.length === 0 ? (
+          <div className="mt-5 rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center">
+            <p className="text-sm text-destructive" role="alert">
+              {error}
+            </p>
+            <Button className="mt-4" variant="outline" onClick={onRetry}>
+              Retry purchase history
+            </Button>
+          </div>
+        ) : sales.length === 0 ? (
           <div className="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
             No member purchases yet.
           </div>
@@ -707,18 +479,14 @@ function countryName(code: string) {
   return PHONE_COUNTRIES.find((country) => country.code === code)?.name || "Not provided";
 }
 
-function memberOtpDestination(channel: "email" | "phone", countryCode: string, value: string) {
-  if (channel === "email") return value.trim();
-  const country = PHONE_COUNTRIES.find((item) => item.code === countryCode) ?? PHONE_COUNTRIES[0];
-  return internationalPhone(country, value);
-}
-
 function CountrySelect({
+  id,
   value,
   disabled,
   onChange,
   compact = false,
 }: {
+  id?: string;
   value: string;
   disabled: boolean;
   onChange: (value: string) => void;
@@ -727,6 +495,7 @@ function CountrySelect({
   return (
     <Select value={value} disabled={disabled} onValueChange={onChange}>
       <SelectTrigger
+        id={id}
         className={compact ? "w-[118px] shrink-0" : "w-full"}
         aria-label={compact ? "Phone country code" : "Country"}
       >
@@ -762,10 +531,18 @@ function PortalStat({
     </div>
   );
 }
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="space-y-1.5">
-      <Label>{label}</Label>
+      <Label htmlFor={htmlFor}>{label}</Label>
       {children}
     </div>
   );
@@ -779,10 +556,14 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 function formatDate(value: string) {
-  const date = new Date(value);
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const date = new Date(dateOnly ? `${value}T00:00:00Z` : value);
   return Number.isNaN(date.getTime())
     ? value
-    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
+    : new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        ...(dateOnly ? { timeZone: "UTC" } : {}),
+      }).format(date);
 }
 function formatDateTime(value: string) {
   const date = new Date(value);

@@ -19,6 +19,13 @@ import { localDb } from "@/core/local-db/local-db";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { activeBranchId } from "./active-branch";
 import { activityAudienceIdentity, activityVisibleTo } from "./activity-audience";
+import {
+  ACTIVITY_SOURCE_BATCH_SIZE,
+  ACTIVITY_WINDOW_ERROR,
+  MAX_ACTIVITY_OFFSET,
+  MAX_ACTIVITY_SOURCE_BATCHES,
+  activityScanBudgetExhausted,
+} from "./activity-pagination";
 
 export type EventSeverity = "info" | "warning" | "critical";
 
@@ -350,20 +357,24 @@ async function listActivityEventPageDirect(
       .order("id", { ascending: true });
   };
 
-  const offset = filter.offset ?? 0;
+  const offset = Math.max(0, filter.offset ?? 0);
+  if (offset > MAX_ACTIVITY_OFFSET)
+    throw Object.assign(new Error(ACTIVITY_WINDOW_ERROR), { code: "ACTIVITY_WINDOW_EXCEEDED" });
   const limit = filter.limit ?? 200;
-  const target = offset + limit + 1;
+  const target = offset + limit;
   const identity = activityAudienceIdentity();
   const visibleRows: ActivityEvent[] = [];
-  const batchSize = 1000;
+  const batchSize = ACTIVITY_SOURCE_BATCH_SIZE;
   let sourceOffset = 0;
   let exhausted = false;
+  let batchesRead = 0;
   // Advance the source cursor until this visible page is filled. Each database
   // read stays bounded while sparse private audiences can still page beyond
   // the first 10,000 source rows.
-  while (visibleRows.length < target) {
+  while (visibleRows.length < target && batchesRead < MAX_ACTIVITY_SOURCE_BATCHES) {
     const result = await buildQuery().range(sourceOffset, sourceOffset + batchSize - 1);
     if (result.error) throw result.error;
+    batchesRead += 1;
     const batch = (result.data ?? []).map((row) => map(row as Row));
     visibleRows.push(
       ...(identity
@@ -381,6 +392,15 @@ async function listActivityEventPageDirect(
     }
     sourceOffset += batch.length;
   }
+  let sourceRowRemains = false;
+  if (!exhausted && batchesRead >= MAX_ACTIVITY_SOURCE_BATCHES && visibleRows.length < target) {
+    const probe = await buildQuery().range(sourceOffset, sourceOffset);
+    if (probe.error) throw probe.error;
+    sourceRowRemains = (probe.data?.length ?? 0) > 0;
+    exhausted = !sourceRowRemains;
+  }
+  if (activityScanBudgetExhausted({ batchesRead, exhausted, sourceRowRemains, visibleCount: visibleRows.length, target }))
+    throw Object.assign(new Error(ACTIVITY_WINDOW_ERROR), { code: "ACTIVITY_WINDOW_EXCEEDED" });
   return {
     rows: visibleRows.slice(offset, offset + limit),
     total: visibleRows.length,

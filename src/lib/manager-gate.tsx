@@ -3,7 +3,8 @@
  *
  * 1. The branch rule says how the action must be authorised — not at all, by
  *    PIN, by an approval request, or either.
- * 2. Every person, including an administrator, follows the configured method.
+ * 2. An already-authorised person confirms with their own PIN; other staff
+ *    follow the configured request path.
  * 3. The answer comes from the server and yields a signed, action-bound grant.
  */
 import {
@@ -24,6 +25,7 @@ import {
   type PromptOutcome,
 } from "@/platforms/web/components/pos/AuthorizationDialog";
 import { usePosRules } from "@/lib/pos-rules.tsx";
+import { useAuthOptional } from "@/lib/pos-auth";
 import { GATE_RULE_KEY, offlineApprovalMode, type GateAction } from "@/lib/pos-rules";
 import { isOnline } from "@/lib/sync-outbox";
 import { getAuthorizationRules } from "@/lib/authorization-client";
@@ -32,6 +34,7 @@ import { hasSignedInIdentity } from "@/lib/session-presence";
 import {
   AUTH_ACTION_LABEL,
   authorizationBinding,
+  canAuthorizeAmount,
   resolveRules,
   rulesFromLegacy,
   type AuthActionKey,
@@ -67,6 +70,8 @@ export type GateResult = {
   grantToken: string | null;
   /** Set when the action was queued instead of run. */
   pendingRequestId?: string;
+  /** Locally verified identity when the terminal is offline. */
+  offlineApproval?: { id: string; name: string; role: string };
 };
 
 type Ctx = { authorize: (request: GateRequest) => Promise<GateResult>; rules: RuleMap };
@@ -81,6 +86,7 @@ export function ManagerGateProvider({
   children: ReactNode;
 }) {
   const { rules: legacyRules } = usePosRules();
+  const session = useAuthOptional();
   const [pending, setPending] = useState<AuthorizationPrompt | null>(null);
   const resolver = useRef<((outcome: PromptOutcome) => void) | null>(null);
 
@@ -167,6 +173,31 @@ export function ManagerGateProvider({
       //     approved here, and how.
       const offline = !isOnline();
       let promptMode = mode;
+      const signedInRole = session?.user
+        ? session.user.roles.includes("admin")
+          ? "admin"
+          : session.user.roles.includes("manager")
+            ? "manager"
+            : session.user.metaRole ?? session.user.role
+        : null;
+      const signedInApprover =
+        rule && session?.user && signedInRole &&
+        canAuthorizeAmount(
+          rule,
+          { userId: session.user.staffId, role: signedInRole },
+          request.requestedAmount,
+          request.requesterDirectLimit,
+        )
+          ? {
+              id: session.user.staffId,
+              name: session.user.name,
+              role: signedInRole,
+            }
+          : null;
+      // Eligible staff confirm with their own PIN instead of sending an
+      // approval request to themselves. The server repeats this authority
+      // check before it signs a grant.
+      if (signedInApprover) promptMode = "pin";
       const gateAction = (
         request.action in GATE_RULE_KEY ? request.action : null
       ) as GateAction | null;
@@ -215,16 +246,23 @@ export function ManagerGateProvider({
           extraAuthority: rule?.extraAuthority ?? {},
           absoluteCeilings: rule?.absoluteCeilings ?? {},
           approvalTimeoutMinutes: rule?.approvalTimeoutMinutes ?? 15,
+          ...(signedInApprover ? { selfAuthorizer: signedInApprover } : {}),
         });
       });
 
-      if (outcome.kind === "approved") return { ok: true, grantToken: outcome.grantToken };
+      if (outcome.kind === "approved") {
+        return {
+          ok: true,
+          grantToken: outcome.grantToken,
+          ...(outcome.offline ? { offlineApproval: outcome.authorizer } : {}),
+        };
+      }
       if (outcome.kind === "submitted") {
         return { ok: false, grantToken: null, pendingRequestId: outcome.requestId };
       }
       return { ok: false, grantToken: null };
     },
-    [rules, legacyRules, query, storeId],
+    [rules, legacyRules, query, session?.user, storeId],
   );
 
   const value = useMemo<Ctx>(() => ({ authorize, rules }), [authorize, rules]);

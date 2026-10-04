@@ -112,8 +112,10 @@ function JoinPage() {
   if (!flags.member) return <PublicPageClosed what="Member signup" />;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
-      <section className="w-full max-w-xl rounded-2xl border bg-card p-6 shadow-lg sm:p-8">
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-50 px-4 py-10 text-slate-950">
+      <div className="pointer-events-none absolute -left-24 -top-24 size-72 rounded-full bg-primary/10 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-28 -right-20 size-80 rounded-full bg-amber-200/40 blur-3xl" />
+      <section className="relative w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/70 sm:p-8">
         {step === "done" ? (
           <div className="text-center">
             <PartyPopper className="mx-auto size-11 text-primary" aria-hidden />
@@ -123,8 +125,19 @@ function JoinPage() {
             <p className="mt-2 text-sm text-muted-foreground">
               Your contact is verified and membership {member?.memberCode} is active.
             </p>
+            <dl className="mt-6 grid gap-3 rounded-2xl bg-slate-50 p-4 text-left text-sm sm:grid-cols-2">
+              <MemberDetail label="Member name" value={member?.fullName} />
+              <MemberDetail label="Membership number" value={member?.memberCode} />
+              <MemberDetail label="Mobile" value={member?.phone} />
+              <MemberDetail label="Email" value={member?.email} />
+              <MemberDetail label="Tier" value={member?.tier.name} />
+              <MemberDetail label="Points" value={member?.loyaltyPoints.toLocaleString() ?? "0"} />
+            </dl>
+            <p className="mt-5 text-xs text-muted-foreground">
+              Keep your mobile number handy—it is also your membership number at checkout.
+            </p>
             <Button asChild className="mt-6">
-              <Link to="/membership">View my membership</Link>
+              <Link to="/membership">View membership and purchases</Link>
             </Button>
           </div>
         ) : (
@@ -208,14 +221,7 @@ function JoinPage() {
                   onChange={(e) => setAddress(e.target.value)}
                 />
               </Field>
-              <Field label="Country" htmlFor="join-country">
-                <CountrySelect
-                  value={countryCode}
-                  disabled={busy || step === "verify"}
-                  onChange={setCountryCode}
-                />
-              </Field>
-              <Field label="Postal code (optional)" htmlFor="join-postal">
+              <Field label="Postal code (optional)" htmlFor="join-postal" wide>
                 <Input
                   id="join-postal"
                   value={postalCode}
@@ -232,8 +238,7 @@ function JoinPage() {
                 <div>
                   <Label>Six-digit verification code</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Sent to {destination.trim()}. Nothing is saved
-                    until the code is verified.
+                    Sent to {destination.trim()}. Nothing is saved until the code is verified.
                   </p>
                 </div>
                 <InputOTP
@@ -290,12 +295,6 @@ function JoinPage() {
             ) : null}
             <p className="mt-4 text-center text-xs text-muted-foreground">
               Supabase Auth verifies your email. Your phone remains the unique membership number.
-            </p>
-            <p className="mt-2 text-center text-sm text-muted-foreground">
-              Already a member?{" "}
-              <Link to="/membership" className="font-medium text-primary hover:underline">
-                Sign in with OTP
-              </Link>
             </p>
           </>
         )}
@@ -356,6 +355,15 @@ function Field({
     <div className={`space-y-1.5 ${wide ? "sm:col-span-2" : ""}`}>
       <Label htmlFor={htmlFor}>{label}</Label>
       {children}
+    </div>
+  );
+}
+
+function MemberDetail({ label, value }: { label: string; value?: string }) {
+  return (
+    <div>
+      <dt className="text-xs text-slate-500">{label}</dt>
+      <dd className="mt-1 break-words font-medium text-slate-900">{value || "—"}</dd>
     </div>
   );
 }

@@ -56,6 +56,12 @@ import {
   type CloudProbe,
 } from "@/lib/secure-cloud-config";
 import { type BackendTestResult } from "@/lib/backend-config";
+import { publicSupabaseConfig } from "@/lib/external-supabase-config";
+
+function keyHint(value: string): string {
+  if (!value) return "";
+  return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : "configured";
+}
 
 export function CloudConnectionPanel({
   onConnected,
@@ -155,6 +161,7 @@ export function CloudConnectionPanel({
   // Web build: the deployment carries its own publishable config, so the
   // values are shown for confirmation but cannot be typed over here.
   if (!terminal) {
+    const membership = publicSupabaseConfig("membership");
     const content = (
       <section
         className={
@@ -188,6 +195,36 @@ export function CloudConnectionPanel({
           backend, so there is nothing to enter here. On a Windows till or an Android terminal this
           same screen is where all three connection settings are typed in once.
         </p>
+        <div className="space-y-3 border-t border-border pt-4">
+          <div>
+            <h3 className="text-sm font-semibold">Public membership project</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Add these values in Cloudflare Workers → Settings → Variables &amp; Secrets. They are
+              deployment settings, not member-login details and not fields on the public join page.
+            </p>
+          </div>
+          <dl className="grid gap-2 text-xs sm:grid-cols-2">
+            <div className="rounded-md border border-border p-3">
+              <dt className="font-medium">Project URL</dt>
+              <dd className="mt-1 break-all text-muted-foreground">
+                {membership?.url ?? "Missing — MEMBERSHIP_SUPABASE_URL"}
+              </dd>
+            </div>
+            <div className="rounded-md border border-border p-3">
+              <dt className="font-medium">Publishable key</dt>
+              <dd className="mt-1 break-all text-muted-foreground">
+                {membership?.key
+                  ? `Configured (${keyHint(membership.key)})`
+                  : "Missing — MEMBERSHIP_SUPABASE_PUBLISHABLE_KEY"}
+              </dd>
+            </div>
+          </dl>
+          <p className="text-xs text-muted-foreground">
+            The membership backend&apos;s private credential belongs only in encrypted hosting
+            secrets. It is intentionally never shown, stored, or accepted in the browser, Windows
+            app, Android app, or public membership form.
+          </p>
+        </div>
       </section>
     );
     return present(

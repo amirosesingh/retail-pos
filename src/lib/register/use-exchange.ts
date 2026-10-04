@@ -18,10 +18,33 @@ type ExchangeDeps = {
   hasShift: () => boolean;
   setLines: (fn: (ls: CartLine[]) => CartLine[]) => void;
   setExchangeRef: (ref: string | null) => void;
+  requirePermission: (permission: "can_process_exchange") => Promise<boolean>;
 };
 
+export const exchangeLineEligible = (line: CartLine) => line.qty > 0 && !line.credit;
+
+export function exchangeBlockReason(sale: Sale): string | null {
+  if (sale.refunded) return "This bill was refunded and cannot be exchanged.";
+  if (sale.exchangedToReceiptNo)
+    return `This bill was already exchanged to ${sale.exchangedToReceiptNo}.`;
+  if (!sale.lines.some(exchangeLineEligible)) return "This bill has no exchangeable sold items.";
+  return null;
+}
+
+export function findExchangeSale(sales: Sale[], query: string) {
+  const ref = query.trim().toLowerCase();
+  if (!ref) return { sale: null, error: "Enter the original bill number." };
+  const exact = sales.find((sale) => sale.receiptNo.toLowerCase() === ref);
+  if (exact) return { sale: exact, error: null };
+  const partial = sales.filter((sale) => sale.receiptNo.toLowerCase().includes(ref));
+  if (partial.length === 1) return { sale: partial[0]!, error: null };
+  if (partial.length > 1)
+    return { sale: null, error: "More than one bill matches. Enter or scan the complete bill number." };
+  return { sale: null, error: `No bill found for “${query}”` };
+}
+
 export function useExchange(deps: ExchangeDeps) {
-  const { sales, hasShift, setLines, setExchangeRef } = deps;
+  const { sales, hasShift, setLines, setExchangeRef, requirePermission } = deps;
 
   const [exchangeOpen, setExchangeOpen] = useState(false);
   const [billQuery, setBillQuery] = useState("");
@@ -29,15 +52,22 @@ export function useExchange(deps: ExchangeDeps) {
   /** Line index on the found bill → quantity coming back. */
   const [picks, setPicks] = useState<Record<number, number>>({});
 
-  function lookupBill() {
-    const ref = billQuery.trim().toLowerCase();
-    const hit =
-      sales.find((s) => s.receiptNo.toLowerCase() === ref) ??
-      sales.find((s) => s.receiptNo.toLowerCase().includes(ref) && !!ref) ??
-      null;
-    setBillHit(hit);
+  async function beginExchange() {
+    if (!hasShift()) {
+      toast.error("Open a shift before processing an exchange");
+      return;
+    }
+    if (!(await requirePermission("can_process_exchange"))) return;
+    setBillHit(null);
     setPicks({});
-    if (!hit) toast.error(`No bill found for “${billQuery}”`);
+    setExchangeOpen(true);
+  }
+
+  function lookupBill() {
+    const result = findExchangeSale(sales, billQuery);
+    setBillHit(result.sale);
+    setPicks({});
+    if (result.error) toast.error(result.error);
   }
 
   function addExchangeCredits() {
@@ -46,11 +76,17 @@ export function useExchange(deps: ExchangeDeps) {
       toast.error("Open a shift before processing an exchange");
       return;
     }
+    const blocked = exchangeBlockReason(billHit);
+    if (blocked) {
+      toast.error(blocked);
+      return;
+    }
     const credits: CartLine[] = Object.entries(picks)
       .filter(([, qty]) => qty > 0)
-      .map(([idx, qty]) => {
+      .flatMap(([idx, qty]) => {
         const src = billHit.lines[Number(idx)]!;
-        return {
+        if (!exchangeLineEligible(src)) return [];
+        return [{
           productId: src.productId,
           name: src.name,
           price: r2(src.price - lineUnitDiscount(src)),
@@ -59,7 +95,7 @@ export function useExchange(deps: ExchangeDeps) {
           discount: 0,
           discountType: "amount" as DiscountType,
           credit: true,
-        };
+        }];
       });
     if (!credits.length) {
       toast.error("Select at least one item to exchange");
@@ -77,6 +113,7 @@ export function useExchange(deps: ExchangeDeps) {
   return {
     exchangeOpen,
     setExchangeOpen,
+    beginExchange,
     billQuery,
     setBillQuery,
     billHit,
@@ -85,5 +122,6 @@ export function useExchange(deps: ExchangeDeps) {
     setPicks,
     lookupBill,
     addExchangeCredits,
+    billBlockReason: billHit ? exchangeBlockReason(billHit) : null,
   };
 }

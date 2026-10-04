@@ -48,9 +48,8 @@ describe("online approval primary database", () => {
     expect(fn).toContain('rule.mode !== "pin" && rule.mode !== "either"');
     expect(fn).toContain("rule.approvalTimeoutMinutes / 60");
     expect(gate).not.toContain("authorizeAsAdmin");
-    expect(gate).toContain(
-      "Every person, including an administrator, follows the configured method",
-    );
+    expect(gate).toContain("An already-authorised person confirms with their own PIN");
+    expect(gate).toContain("selfAuthorizer");
     expect(register).toContain("...(heldOrderId ? { heldOrderId } : {})");
     expect(register).toContain("snapshotFingerprint(snapshot)");
     expect(register).toContain("authorizationRules[action]?.mode");

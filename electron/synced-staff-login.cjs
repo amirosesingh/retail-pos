@@ -38,12 +38,12 @@ async function listSyncedStaff(pool, branchId) {
 }
 
 /** Verify the same bcrypt PIN hash Supabase synchronized into local SQL Server. */
-async function verifySyncedStaffPin(pool, username, pin, branchId) {
+async function verifySyncedPin(pool, username, pin, branchId, purpose) {
   if (!pool || !branchId) return { ok: false, reason: "unavailable" };
   const name = String(username ?? "").trim().toLowerCase();
   const secret = String(pin ?? "");
   if (!name || secret.length < 4 || secret.length > 32) return { ok: false, reason: "invalid" };
-  const throttleKey = `electron:${String(branchId).toLowerCase()}:${name}`;
+  const throttleKey = `electron:${purpose}:${String(branchId).toLowerCase()}:${name}`;
   const throttle = await pool.request().input("key", throttleKey).query(
     "SELECT TOP (1) attempts,window_started_at,locked_until FROM dbo.pin_attempts WHERE [key]=@key;",
   );
@@ -51,14 +51,26 @@ async function verifySyncedStaffPin(pool, username, pin, branchId) {
   if (lockUntil && new Date(lockUntil).getTime() > Date.now()) {
     return { ok: false, reason: "locked", lockedUntil: new Date(lockUntil).toISOString() };
   }
+  // app_users owns the manager-approval PIN; cashiers owns the independent
+  // terminal sign-in PIN. Never swap these or one credential can authorize
+  // the other operation again.
+  const hashColumn = purpose === "approval" ? "a.pin_hash" : "c.pin_hash";
   const result = await pool.request()
     .input("username", name)
     .input("branch", String(branchId))
     .query(`SELECT TOP (1)
-      CONVERT(nvarchar(128),id) id,user_id username,full_name,store_id,
-      role,role_slug,permissions,is_active,pin_hash
-      FROM dbo.app_users
-      WHERE LOWER(user_id)=@username AND (store_id IS NULL OR store_id=@branch);`);
+      CONVERT(nvarchar(128),a.id) id,a.user_id username,a.full_name,a.store_id,
+      a.role,a.role_slug,a.permissions,a.is_active,${hashColumn} pin_hash
+      FROM dbo.app_users a
+      OUTER APPLY (
+        SELECT TOP (1) candidate.pin_hash
+        FROM dbo.cashiers candidate
+        WHERE LOWER(candidate.username)=LOWER(a.user_id) AND candidate.is_active=1
+        ORDER BY candidate.updated_at DESC,candidate.id DESC
+      ) c
+      WHERE (LOWER(a.user_id)=@username OR LOWER(CONVERT(nvarchar(128),a.id))=@username)
+        AND (a.store_id IS NULL OR a.store_id=@branch)
+      ORDER BY CASE WHEN a.store_id=@branch THEN 0 ELSE 1 END,a.updated_at DESC,a.id DESC;`);
   const row = result.recordset?.[0];
   if (!row) return { ok: false, reason: "missing" };
   if (!row.is_active) return { ok: false, reason: "inactive", error: "Account deactivated" };
@@ -101,4 +113,9 @@ async function verifySyncedStaffPin(pool, username, pin, branchId) {
   };
 }
 
-module.exports = { listSyncedStaff, verifySyncedStaffPin };
+const verifySyncedStaffPin = (pool, username, pin, branchId) =>
+  verifySyncedPin(pool, username, pin, branchId, "terminal");
+const verifySyncedApprovalPin = (pool, username, pin, branchId) =>
+  verifySyncedPin(pool, username, pin, branchId, "approval");
+
+module.exports = { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin };

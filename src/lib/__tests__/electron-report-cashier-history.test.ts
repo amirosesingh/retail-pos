@@ -123,6 +123,9 @@ describe("approval report attribution", () => {
       action: "sale.price_override",
       outcome: "approved",
       reference: "request-1",
+      location: "POS",
+      method: "—",
+      requestedAmount: "",
     });
   });
 

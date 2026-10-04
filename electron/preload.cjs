@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld("pos", {
   cacheStaffRoster: (rows) => invoke("staff:cache-roster", rows),
   rememberStaffPin: (username, pin) => invoke("staff:enroll", username, pin),
   verifyStaffPin: (username, pin) => invoke("staff:verify-pin", username, pin),
+  verifyApprovalPin: (username, pin) => invoke("staff:verify-approval-pin", username, pin),
   cashierLogin: (username, pin) => invoke("auth:cashier-login", { username, pin }),
   telemetry: {
     presence: (value) => invoke("telemetry:presence", value),
@@ -91,6 +92,8 @@ contextBridge.exposeInMainWorld("pos", {
   netGetBinary: (url) => invoke("net:get-binary", url),
   updateStatus: () => invoke("update:status"),
   checkForUpdates: () => invoke("update:check"),
+  downloadUpdate: () => invoke("update:download"),
+  downloadAndInstallUpdate: () => invoke("update:download-install"),
   installUpdate: () => invoke("update:install"),
   diagnoseUpdates: () => invoke("update:diagnose"),
   updateDownloadPage: () => invoke("update:download-page"),

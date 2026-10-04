@@ -37,8 +37,15 @@ export function auditReportFields(row: AuditDisplayRow) {
       action: `Client report: ${text(claims.actionType) || "Unknown action"}`,
       outcome: "Unverified",
       reference: text(claims.entityId) || text(claims.entityAffected) || "—",
+      location: text(claims.entityAffected) || "Client report",
+      method: "Unverified",
+      requestedAmount: "",
     };
   }
+  const rawAmount = detail.requested_amount;
+  const requestedAmount =
+    typeof rawAmount === "number" && Number.isFinite(rawAmount) ? String(rawAmount) : "";
+  const mode = text(detail.mode_used);
   return {
     requestedBy: text(detail.requested_by_name) || text(detail.requested_by),
     approvedBy:
@@ -54,6 +61,26 @@ export function auditReportFields(row: AuditDisplayRow) {
     action: text(detail.action_key) || text(detail.rule_key) || row.action_type || "Recorded action",
     outcome: text(detail.outcome),
     reference:
-      text(detail.request_id) || row.entity_id || row.entity_affected || "—",
+      text(detail.bill_no) ||
+      text(detail.transaction) ||
+      text(detail.reference) ||
+      text(detail.request_id) ||
+      row.entity_id ||
+      row.entity_affected ||
+      "—",
+    location: text(detail.approval_location) || text(detail.target_module) || "POS",
+    method:
+      detail.self_authorization === true
+        ? mode === "offline_pin"
+          ? "Own PIN (offline)"
+          : "Own PIN"
+        : mode === "offline_pin"
+          ? "Manager PIN (offline)"
+          : mode === "pin"
+            ? "Manager PIN"
+            : mode === "request"
+              ? "Approval request"
+              : mode || "—",
+    requestedAmount,
   };
 }

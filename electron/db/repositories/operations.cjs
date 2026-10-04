@@ -46,6 +46,8 @@ class OperationsRepository {
       const table = this.tables.get(op?.table);
       if (!table) throw new Error("Unsupported business table.");
       if (!["insert", "upsert", "update", "delete"].includes(op.kind)) throw new Error("Unsupported business operation.");
+      if (op.requireMatch !== undefined && typeof op.requireMatch !== "boolean")
+        throw new Error("The required-match flag must be a boolean.");
       if (table.updateRule === "append_only" && ["update", "delete"].includes(op.kind))
         throw new Error(`${op.table} is append-only and cannot be changed after insertion.`);
       const allowed = new Set(table.columns.map((column) => column.sqlServerColumn));
@@ -322,6 +324,16 @@ class OperationsRepository {
     if (this.tables.has("pos_settings")) {
       const result = await this.pool().request().query("SELECT TOP (1) * FROM dbo.pos_settings ORDER BY id;");
       output.settings = result.recordset?.[0] ?? null;
+    }
+    if (this.tables.has("settings_scoped")) {
+      const result = await this.pool().request().query("SELECT TOP (200) * FROM dbo.settings_scoped WHERE [key] LIKE N'pos_field:%' ORDER BY [key];");
+      output.settingFields = (result.recordset ?? []).map((row) => {
+        try {
+          return { ...row, value: typeof row.value === "string" ? JSON.parse(row.value) : row.value };
+        } catch {
+          return row;
+        }
+      });
     }
     if (this.tables.has("shifts")) {
       const result = branchId

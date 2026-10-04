@@ -139,7 +139,7 @@ The same React bundle runs everywhere; behaviour forks on two predicates:
 | Raw ESC/POS printing + drawer kick | via network/OS printer where available     | native IPC `print:raw`                          | not supported                   |
 | Customer display second screen     | `/display` route in a browser window       | second `BrowserWindow` auto-detected            | no                              |
 | SSMS-style SQL explorer            | no                                         | yes (`sqladmin:*` IPC)                          | no                              |
-| Auto-update                        | web bundle refresh                         | `electron-updater` from R2                      | APK feed + FileProvider install |
+| Auto-update                        | deployment refresh                         | `electron-updater` from R2                      | signed APK feed + FileProvider install; unsigned web-code OTA disabled |
 
 CONFIRMED in `src/lib/native.ts`, `src/lib/live-mode.ts`, `src/lib/local-db.ts`,
 `electron/preload.cjs`, `src/components/mobile/OfflineGate.tsx`.

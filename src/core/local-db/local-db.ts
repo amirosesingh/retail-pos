@@ -412,7 +412,7 @@ export type PosBridge = {
   writeBatch?: (context: string, ops: SyncOp[]) => Promise<{ ok: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null }>;
   /** Commit a complete workflow and its metadata exactly once. */
   commitAggregate?: (aggregate: {
-    kind: "sale" | "payment" | "refund" | "shift" | "receiving" | "stock" | "transfer" | "booking" | "held_order" | "general";
+    kind: "sale" | "payment" | "refund" | "shift" | "receiving" | "stock" | "transfer" | "booking" | "held_order" | "general" | "branch";
     operationId?: string;
     branchId?: string;
     operations: SyncOp[];
@@ -562,6 +562,7 @@ export type PosBridge = {
     promotions?: LocalSaleRow[];
     tiers?: LocalSaleRow[];
     settings?: LocalSaleRow | null;
+    settingFields?: LocalSaleRow[];
   }>;
   /** Branch-scoped, read-only query against this Electron terminal's SQL Server. */
   query?: (
@@ -627,7 +628,7 @@ export type PosBridge = {
   /** Main-process notification emitted after a durable local aggregate commit. */
   onBusinessChanged?: (
     cb: (change: {
-      kind: "sale" | "payment" | "refund" | "shift" | "receiving" | "stock" | "transfer" | "booking" | "held_order" | "general";
+      kind: "sale" | "payment" | "refund" | "shift" | "receiving" | "stock" | "transfer" | "booking" | "held_order" | "general" | "branch";
       branchId?: string | null;
       operationId?: string | null;
     }) => void,
@@ -658,6 +659,7 @@ export type PosBridge = {
       role_slug?: string;
     };
   }>;
+  verifyApprovalPin?: PosBridge["verifyStaffPin"];
   rememberStaffPin?: (username: string, pin: string) => Promise<{ ok: boolean }>;
   forgetStaffPin?: (username: string) => Promise<{ ok: boolean }>;
   /** Hosted PIN verification performed by Electron main, outside Chromium. */

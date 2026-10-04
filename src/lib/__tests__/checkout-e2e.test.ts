@@ -161,6 +161,32 @@ describe("checkout commit", () => {
     expect(saleArgs()?.["_exchange_bill"]).toBe("B101-PC01-20260810-0007");
   });
 
+  it("atomically claims the original bill in Electron local SQL", async () => {
+    platform.offlineFirst = true;
+    await db.commitSale(
+      sale({
+        exchangeOfReceiptNo: "B101-PC01-20260810-0007",
+        exchangeOfSaleId: "77777777-7777-4777-8777-777777777777",
+      } as never),
+      [],
+      null,
+    );
+    const aggregate = localAggregate.mock.calls[0][0] as {
+      operations: Array<Record<string, unknown>>;
+    };
+    expect(aggregate.operations.at(-1)).toMatchObject({
+      kind: "update",
+      table: "sales",
+      match: {
+        id: "77777777-7777-4777-8777-777777777777",
+        bill_number: "B101-PC01-20260810-0007",
+        exchanged_to_bill_number: null,
+        is_refunded: false,
+      },
+      requireMatch: true,
+    });
+  });
+
   it("commits cash, card, member and loyalty rows to Electron SQL Server before sync", async () => {
     platform.offlineFirst = true;
     const member: Member = {

@@ -235,20 +235,45 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(reader).toMatch(/JOIN selected ON selected\.aggregate_id=journal\.aggregate_id/);
   });
 
-  it("reports a concurrent sync as busy and reads live journal counters", async () => {
+  it("shares one concurrent sync and reads live journal counters", async () => {
     const pendingSummary = vi.fn().mockResolvedValue({ pending: 7, failed: 2 });
+    let releasePush!: () => void;
+    const pushDone = new Promise<void>((resolve) => { releasePush = resolve; });
+    const push = vi.fn(async () => { await pushDone; return { pushed: 1 }; });
+    const pull = vi.fn().mockResolvedValue({ pulled: 1, conflicts: 0 });
     const { SyncCoordinator } = await import("../../../electron/sync/coordinator.cjs");
     const coordinator = new SyncCoordinator({
-      pushWorker: { reader: { connectionManager: { pool: {} }, pendingSummary }, run: vi.fn() },
-      pullWorker: { run: vi.fn() },
+      pushWorker: { reader: { connectionManager: { pool: {} }, pendingSummary }, run: push },
+      pullWorker: { run: pull },
     });
     await expect(coordinator.refresh("B1")).resolves.toMatchObject({ pending: 7, failed: 2 });
-    coordinator.running = true;
-    await expect(coordinator.runNow({ branchId: "B1" })).resolves.toMatchObject({
-      ok: false,
-      busy: true,
-      code: "ESYNC_BUSY",
+    const first = coordinator.runNow({ branchId: "B1" });
+    const second = coordinator.runNow({ branchId: "B1" });
+    releasePush();
+    await expect(first).resolves.toMatchObject({ ok: true, pushed: 1, pulled: 1 });
+    await expect(second).resolves.toMatchObject({ ok: true, pushed: 1, pulled: 1 });
+    expect(push).toHaveBeenCalledOnce();
+    expect(pull).toHaveBeenCalledOnce();
+  });
+
+  it("queues a sync request when its branch differs from the active run", async () => {
+    let releasePush!: () => void;
+    const firstPush = new Promise<void>((resolve) => { releasePush = resolve; });
+    const push = vi.fn()
+      .mockImplementationOnce(async () => { await firstPush; return { pushed: 1 }; })
+      .mockResolvedValue({ pushed: 1 });
+    const pull = vi.fn().mockResolvedValue({ pulled: 1, conflicts: 0 });
+    const { SyncCoordinator } = await import("../../../electron/sync/coordinator.cjs");
+    const coordinator = new SyncCoordinator({
+      pushWorker: { reader: {}, run: push },
+      pullWorker: { run: pull },
     });
+    const first = coordinator.runNow({ branchId: "B1" });
+    const second = coordinator.runNow({ branchId: "B2" });
+    releasePush();
+    await Promise.all([first, second]);
+    expect(push).toHaveBeenNthCalledWith(1, { branchId: "B1" });
+    expect(push).toHaveBeenNthCalledWith(2, { branchId: "B2" });
   });
 
   it("keeps an unacknowledged local row and records the cloud conflict", async () => {

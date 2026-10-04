@@ -93,7 +93,7 @@ describe("branch-scoped synchronization reconciliation", () => {
   it("counts all registry tables in one SQL Server round trip", async () => {
     const request = {
       input: vi.fn(() => request),
-      query: vi.fn(async () => ({
+      query: vi.fn(async (_sql: string) => ({
         recordset: [
           { table_name: "stores", row_count: "2" },
           { table_name: "products", row_count: "1300" },

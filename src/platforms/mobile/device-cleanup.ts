@@ -17,6 +17,9 @@ import { isPersistentKey } from "@/lib/live-mode";
 import { APP_VERSION } from "@/version";
 
 const VERSION_KEY = "pos.shell.version";
+// Owned by web-bundle-updates.ts: it must survive a transient filesystem
+// failure so the legacy directory can be retried on the next launch.
+const LEGACY_BUNDLE_KEY = "pos.ui.webBundle";
 
 /**
  * Keys to remove on this launch. Pure so the upgrade case is testable without
@@ -26,6 +29,7 @@ const VERSION_KEY = "pos.shell.version";
 export function staleKeys(keys: string[], upgraded: boolean): string[] {
   return keys.filter((key) => {
     if (key === VERSION_KEY) return false;
+    if (key === LEGACY_BUNDLE_KEY) return false;
     if (isPersistentKey(key)) return false;
     return upgraded || key.startsWith("pos.");
   });

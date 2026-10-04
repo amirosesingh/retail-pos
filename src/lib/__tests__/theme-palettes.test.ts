@@ -9,7 +9,7 @@ import {
   persistThemePalette,
   readStoredPalette,
   THEME_PALETTE_STORAGE_KEY,
-} from "@/lib/theme";
+} from "@/lib/theme-storage";
 
 afterEach(() => vi.unstubAllGlobals());
 

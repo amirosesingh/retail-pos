@@ -356,6 +356,8 @@ export type Sale = {
   refunded?: boolean;
   /** original bill this sale exchanges against */
   exchangeOfReceiptNo?: string;
+  /** Stable local key of the original bill; used to claim it atomically in SQL Server. */
+  exchangeOfSaleId?: string;
   /** new bill that exchanged this one */
   exchangedToReceiptNo?: string;
   /** credit value carried over from the original bill */

@@ -22,6 +22,7 @@ const managedStaffRow = z.object({
   is_active: z.boolean(),
   permissions: z.record(z.string(), z.boolean()).nullable(),
   pin_length: z.number().nullable(),
+  pin_set_at: z.string().nullable(),
   last_login_at: z.string().nullable(),
   created_at: z.string(),
 });
@@ -39,7 +40,7 @@ export const listManagedStaffAccounts = createServerFn({ method: "POST" })
       await requireStaffManager(data);
       const { serviceRest } = await import("@/core/api/pos-relay.server");
       const response = await serviceRest(
-        "app_users?select=id,auth_user_id,user_id,full_name,email,role,role_slug,store_id,is_active,permissions,pin_length,last_login_at,created_at&order=full_name.asc",
+        "app_users?select=id,auth_user_id,user_id,full_name,email,role,role_slug,store_id,is_active,permissions,pin_length,pin_set_at,last_login_at,created_at&order=full_name.asc",
       );
       if (!response.ok) throw new Error("Staff accounts could not be loaded.");
       return { ok: true as const, rows: z.array(managedStaffRow).parse(await response.json()) };
@@ -119,6 +120,7 @@ export const saveStaffAccount = createServerFn({ method: "POST" })
         username: z.string().min(2).max(160),
         pin: z.string().min(4).max(32).optional(),
         password: z.string().min(8).max(200).optional(),
+        authorizationPin: z.string().regex(/^\d{4,6}$/),
         branchId: z.string().max(60).nullable().optional(),
         roleSlug: z.string().min(2).max(60),
         baseRole: z.enum(["admin", "manager", "staff"]),
@@ -135,6 +137,7 @@ export const saveStaffAccount = createServerFn({ method: "POST" })
         username: data.username,
         pin: data.pin ?? "",
         password: data.password ?? "",
+        authorizationPin: data.authorizationPin,
         branchId: data.branchId ?? null,
         roleSlug: data.roleSlug,
         baseRole: data.baseRole,

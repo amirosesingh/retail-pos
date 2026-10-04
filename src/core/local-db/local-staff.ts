@@ -83,3 +83,29 @@ export async function verifyLocalPin(username: string, pin: string): Promise<Loc
     return { ok: false, reason: "error", error: (error as Error).message };
   }
 }
+
+/** Check the independent manager-approval PIN against the local mirror. */
+export async function verifyLocalApprovalPin(username: string, pin: string): Promise<LocalPinResult> {
+  const bridge = localDb();
+  if (!bridge?.verifyApprovalPin)
+    return { ok: false, reason: "unavailable", error: "No local approval verifier on this device" };
+  try {
+    const res = await bridge.verifyApprovalPin(username, pin);
+    if (res?.ok && res.staff) {
+      return {
+        ok: true,
+        staff: {
+          id: res.staff.id,
+          username: res.staff.username,
+          full_name: res.staff.full_name,
+          store_id: res.staff.store_id,
+          permissions: res.staff.permissions ?? {},
+          roleSlug: res.staff.role_slug ?? "staff",
+        },
+      };
+    }
+    return { ok: false, reason: res?.reason ?? "unknown", error: res?.error ?? "Invalid approval PIN" };
+  } catch (error) {
+    return { ok: false, reason: "error", error: (error as Error).message };
+  }
+}

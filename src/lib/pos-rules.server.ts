@@ -22,7 +22,9 @@ function secret(): Buffer {
 export type OverrideGrant = {
   action: string;
   approvedBy: string;
+  approvedByName?: string;
   role: string;
+  modeUsed?: "pin" | "self_pin" | "request" | "admin_auto" | "offline_pin" | "offline_self_pin";
   storeId: string;
   binding: string;
   requestId?: string;

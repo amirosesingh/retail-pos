@@ -3,7 +3,7 @@ const { branchPredicate } = require("../branch-scope.cjs");
 
 const AGGREGATE_KINDS = new Set([
   "sale", "payment", "refund", "shift", "receiving", "stock",
-  "transfer", "booking", "held_order", "general",
+  "transfer", "booking", "held_order", "general", "branch",
 ]);
 
 function canonical(value) {
@@ -101,7 +101,21 @@ class AggregateRepository {
         if (operation.kind === "delete") {
           for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId);
         }
-        affected += await this.operationsRepository.applyOperation(transaction, operation);
+        // OperationsRepository applies the branch predicate inside every SQL
+        // MERGE/UPDATE.  Omitting this scope bound @branch to the string
+        // "undefined", silently filtered out otherwise valid insert sources,
+        // and made the post-write ownership check report a false branch
+        // violation for sales, shift sessions, and other aggregates.
+        const operationAffected = await this.operationsRepository.applyOperation(transaction, operation, {
+          branchId: aggregate.branchId,
+          terminalId: aggregate.terminalId,
+        });
+        if (operation.requireMatch && operationAffected !== 1)
+          throw Object.assign(
+            new Error("The original bill is missing, refunded, or has already been exchanged."),
+            { code: "EEXCHANGE_STATE" },
+          );
+        affected += operationAffected;
         if (operation.kind !== "delete") {
           for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId);
         }
@@ -129,7 +143,7 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
-      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN"].includes(error?.code))
+      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const sqlNumber = Number.isFinite(Number(error?.number)) ? Number(error.number) : null;

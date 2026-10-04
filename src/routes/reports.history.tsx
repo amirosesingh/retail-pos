@@ -122,13 +122,14 @@ function EditHistoryReport() {
 
   const exportCsv = () => {
     downloadCsv("edit-history", [
-      ["When", "Requested by", "Approved / acted by", "Role", "Action", "Outcome", "Purpose", "Reference", "Before", "After", "Terminal"],
+      ["When", "Requested by", "Approved / acted by", "Role", "Action", "Outcome", "Method", "Where", "Requested value", "Purpose", "Reference", "Before", "After", "Terminal"],
       ...filtered.map((r) => {
         const display = auditReportFields(r);
         return [
           stamp(r.created_at), display.requestedBy, display.approvedBy,
-          r.actor_role ?? "", display.action, display.outcome, display.purpose,
-          display.reference, r.old_value ?? "", r.new_value ?? "", r.terminal_id ?? "",
+          r.actor_role ?? "", display.action, display.outcome, display.method, display.location,
+          display.requestedAmount, display.purpose, display.reference, r.old_value ?? "",
+          r.new_value ?? "", r.terminal_id ?? "",
         ];
       }),
     ]);
@@ -185,6 +186,8 @@ function EditHistoryReport() {
                     <TableHead>Requested by</TableHead>
                     <TableHead>Approved / acted by</TableHead>
                     <TableHead>Action</TableHead>
+                    <TableHead>Method</TableHead>
+                    <TableHead>Where / reference</TableHead>
                     <TableHead>Purpose / details</TableHead>
                     <TableHead>Terminal</TableHead>
                   </TableRow>
@@ -211,9 +214,18 @@ function EditHistoryReport() {
                         <div>{display.action}</div>
                         {display.outcome ? <Badge variant="outline" className="mt-1">{display.outcome}</Badge> : null}
                       </TableCell>
+                      <TableCell className="text-xs">
+                        {display.method}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        <div>{display.location}</div>
+                        <div className="text-muted-foreground">{display.reference}</div>
+                        {display.requestedAmount ? (
+                          <div className="text-muted-foreground">Value: {display.requestedAmount}</div>
+                        ) : null}
+                      </TableCell>
                       <TableCell className="max-w-[26rem] text-xs text-muted-foreground">
                         <div className="text-foreground">{display.purpose}</div>
-                        <div className="truncate">Reference: {display.reference}</div>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {r.terminal_id ? r.terminal_id.slice(0, 8) : "—"}

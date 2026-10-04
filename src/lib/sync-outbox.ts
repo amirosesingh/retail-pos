@@ -8,7 +8,14 @@ export type Row = Record<string, unknown>;
 export type SyncOp =
   | { kind: "insert"; table: string; rows: Row[] }
   | { kind: "upsert"; table: string; rows: Row[]; onConflict?: string }
-  | { kind: "update"; table: string; values: Row; match: Record<string, unknown> }
+  | {
+      kind: "update";
+      table: string;
+      values: Row;
+      match: Record<string, unknown>;
+      /** Abort the surrounding local aggregate unless exactly one row matched. */
+      requireMatch?: boolean;
+    }
   | { kind: "delete"; table: string; match: Record<string, unknown> }
   | { kind: "rpc"; table: string; fn: string; args: Row };
 

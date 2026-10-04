@@ -848,7 +848,7 @@ CREATE TABLE IF NOT EXISTS public.stock_transfers (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     row_version integer DEFAULT 1 NOT NULL,
     CONSTRAINT stock_transfers_kind_check CHECK ((kind = ANY (ARRAY['transfer'::text, 'request'::text]))),
-    CONSTRAINT stock_transfers_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'pending'::text, 'approved'::text, 'in_transit'::text, 'received'::text, 'rejected'::text, 'cancelled'::text]))),
+    CONSTRAINT stock_transfers_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'pending'::text, 'awaiting_approval'::text, 'approved'::text, 'in_transit'::text, 'dispatched'::text, 'received'::text, 'verified'::text, 'completed'::text, 'completed_with_discrepancy'::text, 'rejected'::text, 'cancelled'::text]))),
     CONSTRAINT stock_transfers_transfer_scope_check CHECK ((transfer_scope = ANY (ARRAY['INTRA_GROUP'::text, 'INTER_GROUP'::text])))
 );
 
@@ -4121,6 +4121,32 @@ BEGIN
 END
 $$;
 
+CREATE OR REPLACE FUNCTION public.staff_account_set_terminal_pin(p_user_id text, p_pin text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'extensions', 'pg_temp'
+    AS $$
+DECLARE account public.app_users%rowtype; v_pin_hash text;
+BEGIN
+  IF auth.uid() IS NOT NULL AND NOT public.has_perm('can_manage_staff') THEN
+    RAISE EXCEPTION 'Staff management permission is required';
+  END IF;
+  IF length(COALESCE(p_pin, '')) < 4 OR length(p_pin) > 32 THEN RAISE EXCEPTION 'TERMINAL_PIN_INVALID'; END IF;
+  SELECT * INTO account FROM public.app_users WHERE lower(user_id)=lower(trim(p_user_id)) FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'STAFF_NOT_FOUND'; END IF;
+  IF account.email NOT LIKE '%@pos-internal.local' THEN RAISE EXCEPTION 'TERMINAL_PIN_ACCOUNT_REQUIRED'; END IF;
+  PERFORM pg_advisory_xact_lock(hashtext(lower(account.user_id)));
+  v_pin_hash := extensions.crypt(p_pin, extensions.gen_salt('bf', 10));
+  UPDATE public.cashiers SET full_name=account.full_name, pin_hash=v_pin_hash,
+    store_id=account.store_id, permissions=COALESCE(account.permissions, '{}'::jsonb),
+    is_active=account.is_active, role_slug=account.role_slug, updated_at=now()
+  WHERE lower(username)=lower(account.user_id);
+  IF NOT FOUND THEN
+    INSERT INTO public.cashiers (id,username,full_name,pin_hash,store_id,permissions,is_active,role_slug)
+    VALUES (gen_random_uuid(),account.user_id,account.full_name,v_pin_hash,account.store_id,
+      COALESCE(account.permissions,'{}'::jsonb),account.is_active,account.role_slug);
+  END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION public.staff_role_delete(_slug text) RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
@@ -4639,13 +4665,17 @@ CREATE OR REPLACE FUNCTION public.verify_terminal_pin(p_user_id text, p_pin text
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'extensions', 'pg_temp'
     AS $$
-DECLARE u public.app_users%rowtype;
+DECLARE u public.app_users%rowtype; terminal public.cashiers%rowtype;
 BEGIN
   SELECT * INTO u FROM public.app_users a
    WHERE lower(a.user_id) = lower(trim(p_user_id)) AND a.is_active;
   IF NOT FOUND THEN RETURN; END IF;
-  IF u.pin_hash = '' OR u.pin_hash <> extensions.crypt(p_pin::text, u.pin_hash::text) THEN RETURN; END IF;
+  SELECT * INTO terminal FROM public.cashiers c
+   WHERE lower(c.username)=lower(u.user_id) AND c.is_active LIMIT 1;
+  IF NOT FOUND OR COALESCE(terminal.pin_hash, '') = ''
+     OR terminal.pin_hash <> extensions.crypt(p_pin::text, terminal.pin_hash::text) THEN RETURN; END IF;
   UPDATE public.app_users SET last_login_at = now() WHERE id = u.id;
+  UPDATE public.cashiers SET last_login_at = now() WHERE id = terminal.id;
   RETURN QUERY SELECT u.user_id::text, u.full_name::text, u.role, u.store_id::text, u.email::text;
 END $$;
 
@@ -5628,6 +5658,7 @@ CREATE TRIGGER pos_settings_aa_stale_guard BEFORE UPDATE ON public.pos_settings 
 DROP TRIGGER IF EXISTS pos_settings_bump_row_version ON public.pos_settings;
 
 CREATE TRIGGER pos_settings_bump_row_version BEFORE UPDATE ON public.pos_settings FOR EACH ROW EXECUTE FUNCTION public.bump_row_version();
+
 
 DROP TRIGGER IF EXISTS product_barcodes_aa_stale_guard ON public.product_barcodes;
 
@@ -7224,6 +7255,7 @@ GRANT ALL ON TABLE public.pos_settings TO authenticated;
 
 GRANT ALL ON TABLE public.pos_settings TO service_role;
 
+
 DO $sbx$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sandbox_exec') THEN
   EXECUTE 'GRANT SELECT,INSERT ON TABLE public.pos_settings TO sandbox_exec';
 END IF; END $sbx$;
@@ -8319,6 +8351,77 @@ CREATE TRIGGER settings_overrides_bump_row_version BEFORE UPDATE ON public.setti
 DROP TRIGGER IF EXISTS settings_scoped_bump_row_version ON public.settings_scoped;
 CREATE TRIGGER settings_scoped_bump_row_version BEFORE UPDATE ON public.settings_scoped
   FOR EACH ROW EXECUTE FUNCTION public.preserve_or_bump_row_version();
+
+-- Shared configuration can be saved by hosted Web or any activated till.
+-- Normalize an upsert revision from its timestamp before the generated sync
+-- function compares row_version, so a stale replica cannot replace a newer
+-- configuration merely because its local revision counter is higher.
+CREATE OR REPLACE FUNCTION public.normalize_configuration_insert_version() RETURNS trigger
+LANGUAGE plpgsql SET search_path TO 'public', 'pg_temp' AS $$
+DECLARE
+  current_version integer;
+  current_updated_at timestamptz;
+BEGIN
+  CASE TG_TABLE_NAME
+    WHEN 'pos_settings' THEN
+      SELECT row_version, updated_at INTO current_version, current_updated_at
+        FROM public.pos_settings WHERE id = NEW.id;
+    WHEN 'pos_store_settings' THEN
+      SELECT row_version, updated_at INTO current_version, current_updated_at
+        FROM public.pos_store_settings WHERE store_id = NEW.store_id;
+    WHEN 'settings_overrides' THEN
+      SELECT row_version, updated_at INTO current_version, current_updated_at
+        FROM public.settings_overrides
+       WHERE scope = NEW.scope AND scope_id = NEW.scope_id AND section = NEW.section;
+    WHEN 'settings_scoped' THEN
+      SELECT row_version, updated_at INTO current_version, current_updated_at
+        FROM public.settings_scoped
+       WHERE scope = NEW.scope AND scope_id = NEW.scope_id AND key = NEW.key;
+    ELSE RETURN NEW;
+  END CASE;
+  IF NOT FOUND THEN RETURN NEW; END IF;
+  IF NEW.updated_at > current_updated_at
+     AND COALESCE(NEW.row_version, 0) <= COALESCE(current_version, 0) THEN
+    NEW.row_version := COALESCE(current_version, 0) + 1;
+  ELSIF NEW.updated_at < current_updated_at
+        AND COALESCE(NEW.row_version, 0) > COALESCE(current_version, 0) THEN
+    NEW.row_version := current_version;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.reject_stale_integration_settings_insert() RETURNS trigger
+LANGUAGE plpgsql SET search_path TO 'public', 'pg_temp' AS $$
+DECLARE current_updated_at timestamptz;
+BEGIN
+  SELECT updated_at INTO current_updated_at
+    FROM public.integration_settings WHERE id = NEW.id;
+  IF FOUND AND NEW.updated_at < current_updated_at THEN RETURN NULL; END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS configuration_insert_version ON public.pos_settings;
+CREATE TRIGGER configuration_insert_version BEFORE INSERT ON public.pos_settings
+  FOR EACH ROW EXECUTE FUNCTION public.normalize_configuration_insert_version();
+DROP TRIGGER IF EXISTS configuration_insert_version ON public.pos_store_settings;
+CREATE TRIGGER configuration_insert_version BEFORE INSERT ON public.pos_store_settings
+  FOR EACH ROW EXECUTE FUNCTION public.normalize_configuration_insert_version();
+DROP TRIGGER IF EXISTS configuration_insert_version ON public.settings_overrides;
+CREATE TRIGGER configuration_insert_version BEFORE INSERT ON public.settings_overrides
+  FOR EACH ROW EXECUTE FUNCTION public.normalize_configuration_insert_version();
+DROP TRIGGER IF EXISTS configuration_insert_version ON public.settings_scoped;
+CREATE TRIGGER configuration_insert_version BEFORE INSERT ON public.settings_scoped
+  FOR EACH ROW EXECUTE FUNCTION public.normalize_configuration_insert_version();
+DROP TRIGGER IF EXISTS integration_settings_insert_freshness ON public.integration_settings;
+CREATE TRIGGER integration_settings_insert_freshness BEFORE INSERT ON public.integration_settings
+  FOR EACH ROW EXECUTE FUNCTION public.reject_stale_integration_settings_insert();
+
+REVOKE ALL ON FUNCTION public.normalize_configuration_insert_version() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.reject_stale_integration_settings_insert() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.normalize_configuration_insert_version() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.reject_stale_integration_settings_insert() TO authenticated, service_role;
 
 GRANT SELECT ON public.settings_scoped TO authenticated;
 GRANT ALL ON public.settings_scoped TO service_role;
@@ -13309,6 +13412,30 @@ DROP POLICY IF EXISTS "Staff read scoped settings" ON public.settings_scoped;
 CREATE POLICY settings_scoped_read ON public.settings_scoped FOR SELECT TO authenticated
   USING (public.settings_scope_visible(scope,scope_id));
 
+DROP POLICY IF EXISTS settings_scoped_pos_fields_write ON public.settings_scoped;
+DROP POLICY IF EXISTS settings_scoped_pos_fields_insert ON public.settings_scoped;
+DROP POLICY IF EXISTS settings_scoped_pos_fields_update ON public.settings_scoped;
+DROP POLICY IF EXISTS settings_scoped_pos_fields_delete ON public.settings_scoped;
+CREATE POLICY settings_scoped_pos_fields_insert ON public.settings_scoped FOR INSERT TO authenticated
+  WITH CHECK (
+    scope = 'GLOBAL' AND scope_id = '' AND key LIKE 'pos_field:%'
+    AND public.has_perm('can_access_pos_settings')
+  );
+CREATE POLICY settings_scoped_pos_fields_update ON public.settings_scoped FOR UPDATE TO authenticated
+  USING (
+    scope = 'GLOBAL' AND scope_id = '' AND key LIKE 'pos_field:%'
+    AND public.has_perm('can_access_pos_settings')
+  )
+  WITH CHECK (
+    scope = 'GLOBAL' AND scope_id = '' AND key LIKE 'pos_field:%'
+    AND public.has_perm('can_access_pos_settings')
+  );
+CREATE POLICY settings_scoped_pos_fields_delete ON public.settings_scoped FOR DELETE TO authenticated
+  USING (
+    scope = 'GLOBAL' AND scope_id = '' AND key LIKE 'pos_field:%'
+    AND public.has_perm('can_access_pos_settings')
+  );
+
 DROP POLICY IF EXISTS "Staff read pos rules" ON public.pos_store_settings;
 DROP POLICY IF EXISTS "Supervisors update rules" ON public.pos_store_settings;
 DROP POLICY IF EXISTS "Supervisors write rules" ON public.pos_store_settings;
@@ -13379,7 +13506,7 @@ REVOKE ALL ON FUNCTION public.pos_sync_validate_scope(text,text,text) FROM PUBLI
 GRANT EXECUTE ON FUNCTION public.pos_sync_validate_scope(text,text,text) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.sync_apply_coupon_campaigns(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
-DECLARE v_count integer; v_row jsonb;
+DECLARE v_count integer; v_link_count integer; v_row jsonb;
 BEGIN
 
 
@@ -13899,9 +14026,9 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."members" ("id","member_code","full_name","phone","email","address","country_code","postal_code","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","is_verified","verified_at","verified_channel","deleted_at")
-  SELECT "id","member_code","full_name","phone","email","address","country_code","postal_code","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","is_verified","verified_at","verified_channel","deleted_at" FROM jsonb_populate_recordset(NULL::public."members", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "member_code"=EXCLUDED."member_code","full_name"=EXCLUDED."full_name","phone"=EXCLUDED."phone","email"=EXCLUDED."email","address"=EXCLUDED."address","country_code"=EXCLUDED."country_code","postal_code"=EXCLUDED."postal_code","date_of_birth"=EXCLUDED."date_of_birth","tier_id"=EXCLUDED."tier_id","loyalty_points"=EXCLUDED."loyalty_points","total_spent"=EXCLUDED."total_spent","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","row_version"=EXCLUDED."row_version","is_verified"=EXCLUDED."is_verified","verified_at"=EXCLUDED."verified_at","verified_channel"=EXCLUDED."verified_channel","deleted_at"=EXCLUDED."deleted_at" WHERE EXCLUDED."row_version">public."members"."row_version";
+  INSERT INTO public."members" ("id","member_code","full_name","phone","email","address","country_code","postal_code","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","is_verified","verified_at","verified_channel","membership_member_id","membership_revision","membership_status","deleted_at")
+  SELECT "id","member_code","full_name","phone","email","address","country_code","postal_code","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","is_verified","verified_at","verified_channel","membership_member_id","membership_revision","membership_status","deleted_at" FROM jsonb_populate_recordset(NULL::public."members", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO UPDATE SET "member_code"=EXCLUDED."member_code","full_name"=EXCLUDED."full_name","phone"=EXCLUDED."phone","email"=EXCLUDED."email","address"=EXCLUDED."address","country_code"=EXCLUDED."country_code","postal_code"=EXCLUDED."postal_code","date_of_birth"=EXCLUDED."date_of_birth","tier_id"=EXCLUDED."tier_id","loyalty_points"=EXCLUDED."loyalty_points","total_spent"=EXCLUDED."total_spent","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","row_version"=EXCLUDED."row_version","is_verified"=EXCLUDED."is_verified","verified_at"=EXCLUDED."verified_at","verified_channel"=EXCLUDED."verified_channel","membership_member_id"=EXCLUDED."membership_member_id","membership_revision"=EXCLUDED."membership_revision","membership_status"=EXCLUDED."membership_status","deleted_at"=EXCLUDED."deleted_at" WHERE EXCLUDED."row_version">public."members"."row_version";
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 
@@ -14365,13 +14492,13 @@ BEGIN
   PERFORM set_config('pos.refunding','on',true);
 
   INSERT INTO public."sales" ("id","bill_number","member_id","store_id","cashier_name","subtotal_amount","total_amount","discount_amount","tax_amount","payment_type","points_earned","points_redeemed","is_exchange","original_bill_number","is_refunded","created_at","shift_id","paid_amount","change_amount","exchange_credit","exchanged_to_bill_number","coupon_code","coupon_promo_id","coupon_scope","coupon_discount","payments","client_transaction_id","cashier_id","created_by","updated_by","row_version","store_name_snapshot","store_address_snapshot","authorization_request_id","authorized_by","authorized_at","rounding_adjustment","rounding_label","branch_id")
-  SELECT "id","bill_number","member_id","store_id","cashier_name","subtotal_amount","total_amount","discount_amount","tax_amount","payment_type","points_earned","points_redeemed","is_exchange","original_bill_number","is_refunded","created_at","shift_id","paid_amount","change_amount","exchange_credit","exchanged_to_bill_number","coupon_code","coupon_promo_id","coupon_scope","coupon_discount","payments","client_transaction_id","cashier_id","created_by","updated_by","row_version","store_name_snapshot","store_address_snapshot","authorization_request_id","authorized_by","authorized_at","rounding_adjustment","rounding_label","branch_id" FROM jsonb_populate_recordset(NULL::public."sales", COALESCE(p_rows,'[]'::jsonb))
+  SELECT "id","bill_number","member_id","store_id","cashier_name","subtotal_amount","total_amount","discount_amount","tax_amount","payment_type","points_earned","points_redeemed","is_exchange","original_bill_number","is_refunded","created_at","shift_id","paid_amount","change_amount","exchange_credit",NULL::text,"coupon_code","coupon_promo_id","coupon_scope","coupon_discount","payments","client_transaction_id","cashier_id","created_by","updated_by","row_version","store_name_snapshot","store_address_snapshot","authorization_request_id","authorized_by","authorized_at","rounding_adjustment","rounding_label","branch_id" FROM jsonb_populate_recordset(NULL::public."sales", COALESCE(p_rows,'[]'::jsonb)) ORDER BY COALESCE("is_exchange", false), "created_at", "id"
   ON CONFLICT ("id") DO UPDATE SET "is_refunded"=(public."sales"."is_refunded" OR EXCLUDED."is_refunded"),"row_version"=GREATEST(public."sales"."row_version",EXCLUDED."row_version");
   GET DIAGNOSTICS v_count=ROW_COUNT;
-
-
+  UPDATE public."sales" AS target SET "exchanged_to_bill_number"=incoming."exchanged_to_bill_number" FROM jsonb_populate_recordset(NULL::public."sales", COALESCE(p_rows,'[]'::jsonb)) AS incoming WHERE target."id"=incoming."id" AND incoming."exchanged_to_bill_number" IS NOT NULL AND target."exchanged_to_bill_number" IS NULL;
+  GET DIAGNOSTICS v_link_count=ROW_COUNT;
   PERFORM set_config('pos.refunding','off',true);
-  RETURN v_count;
+  RETURN v_count + v_link_count;
 END $fn$;
 
 CREATE OR REPLACE FUNCTION public.sync_delete_sales(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
@@ -16820,6 +16947,81 @@ CREATE TRIGGER products_aa_assign_global_sku
 BEFORE INSERT ON public.products
 FOR EACH ROW EXECUTE FUNCTION private.assign_product_sku();
 
+-- Exchange lineage is defined before the final routine hardening pass.
+CREATE OR REPLACE FUNCTION public.enforce_sale_exchange_integrity()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  original_refunded boolean;
+  linked_bill text;
+BEGIN
+  IF COALESCE(NEW.is_exchange, false) THEN
+    IF NULLIF(btrim(COALESCE(NEW.original_bill_number, '')), '') IS NULL THEN
+      RAISE EXCEPTION 'EXCHANGE_ORIGINAL_REQUIRED: an exchange must name its original bill'
+        USING ERRCODE = '23514';
+    END IF;
+    IF NEW.original_bill_number = NEW.bill_number THEN
+      RAISE EXCEPTION 'EXCHANGE_SELF_REFERENCE: a bill cannot exchange itself'
+        USING ERRCODE = '23514';
+    END IF;
+
+    SELECT COALESCE(source.is_refunded, false), source.exchanged_to_bill_number
+      INTO original_refunded, linked_bill
+      FROM public.sales AS source
+     WHERE source.bill_number = NEW.original_bill_number
+       AND COALESCE(source.store_id, '') = COALESCE(NEW.store_id, '')
+     FOR UPDATE;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'EXCHANGE_ORIGINAL_MISSING: original bill was not found in this branch'
+        USING ERRCODE = '23514';
+    END IF;
+    IF original_refunded THEN
+      RAISE EXCEPTION 'EXCHANGE_ORIGINAL_REFUNDED: refunded bills cannot be exchanged'
+        USING ERRCODE = '23514';
+    END IF;
+    IF linked_bill IS NOT NULL AND linked_bill <> NEW.bill_number THEN
+      RAISE EXCEPTION 'EXCHANGE_ALREADY_USED: original bill was already exchanged to %', linked_bill
+        USING ERRCODE = '23514';
+    END IF;
+  ELSIF NULLIF(btrim(COALESCE(NEW.original_bill_number, '')), '') IS NOT NULL THEN
+    RAISE EXCEPTION 'EXCHANGE_FLAG_REQUIRED: original bill lineage requires is_exchange'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF TG_OP = 'UPDATE' AND NEW.exchanged_to_bill_number IS DISTINCT FROM OLD.exchanged_to_bill_number THEN
+    IF OLD.exchanged_to_bill_number IS NOT NULL THEN
+      RAISE EXCEPTION 'EXCHANGE_LINK_IMMUTABLE: an exchange link cannot be replaced'
+        USING ERRCODE = '23514';
+    END IF;
+    IF NEW.exchanged_to_bill_number IS NOT NULL THEN
+      PERFORM 1
+        FROM public.sales AS destination
+       WHERE destination.bill_number = NEW.exchanged_to_bill_number
+         AND COALESCE(destination.store_id, '') = COALESCE(NEW.store_id, '')
+         AND COALESCE(destination.is_exchange, false)
+         AND destination.original_bill_number = NEW.bill_number;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'EXCHANGE_DESTINATION_INVALID: linked exchange bill does not match the original'
+          USING ERRCODE = '23514';
+      END IF;
+    END IF;
+  END IF;
+
+  IF TG_OP = 'UPDATE'
+     AND NOT COALESCE(OLD.is_refunded, false)
+     AND COALESCE(NEW.is_refunded, false)
+     AND OLD.exchanged_to_bill_number IS NOT NULL THEN
+    RAISE EXCEPTION 'EXCHANGE_ORIGINAL_ALREADY_USED: an exchanged bill cannot be refunded separately'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
 -- Final public-schema privilege hardening
 -- This must remain after every routine definition in this canonical installer.
 -- ===========================================================================
@@ -16847,10 +17049,13 @@ REVOKE EXECUTE ON FUNCTION public.verify_cashier_pin(text, text)
   FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.verify_terminal_pin(text, text)
   FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.staff_account_set_terminal_pin(text, text)
+  FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.verify_terminal_pin(text, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.staff_account_set_terminal_pin(text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb) TO service_role;
 
 GRANT EXECUTE ON FUNCTION public.membership_portal_profile() TO authenticated, service_role;
@@ -16913,3 +17118,19 @@ GRANT ALL ON public.branch_telemetry TO service_role;
 REVOKE ALL ON public.shift_notifications FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT ON public.shift_notifications TO authenticated;
 GRANT ALL ON public.shift_notifications TO service_role;
+-- Serialize and enforce exchange lineage independently of the UI or client.
+-- One original bill can fund exactly one exchange bill. Retries of that same
+-- exchange remain valid, while refunded/missing/already-consumed originals fail.
+CREATE UNIQUE INDEX IF NOT EXISTS sales_one_exchange_per_original_idx
+  ON public.sales ((COALESCE(store_id, '')), original_bill_number)
+  WHERE COALESCE(is_exchange, false) AND original_bill_number IS NOT NULL;
+
+DROP TRIGGER IF EXISTS sales_exchange_integrity_trigger ON public.sales;
+CREATE TRIGGER sales_exchange_integrity_trigger
+BEFORE INSERT OR UPDATE OF is_exchange, original_bill_number, exchanged_to_bill_number, is_refunded, store_id, bill_number
+ON public.sales
+FOR EACH ROW
+EXECUTE FUNCTION public.enforce_sale_exchange_integrity();
+
+REVOKE ALL ON FUNCTION public.enforce_sale_exchange_integrity() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.enforce_sale_exchange_integrity() TO authenticated, service_role;

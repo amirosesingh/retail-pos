@@ -8,7 +8,7 @@ const DEVICE_COLUMN_ALLOWLIST = {
   app_users: new Set([
     "id", "user_id", "full_name", "store_id", "role", "role_slug", "permissions",
     "is_active", "pin_hash", "pin_length", "pin_set_at", "pin_updated_by", "row_version",
-    "created_at", "updated_at", "deleted_at",
+    "email", "created_at", "updated_at", "deleted_at",
   ]),
   members: new Set([
     "id", "member_code", "full_name", "phone", "tier_id", "loyalty_points", "total_spent",
@@ -16,6 +16,18 @@ const DEVICE_COLUMN_ALLOWLIST = {
     "membership_revision", "membership_status", "membership_member_id",
   ]),
 };
+
+// Configuration is edited from both hosted Web and offline-capable tills.
+// Row versions can diverge when two writers start from the same snapshot, so
+// they are only a deterministic tie-breaker. The actual last-write-wins clock
+// is updated_at, matching the renderer's settings merge contract.
+const CONFIGURATION_LWW_TABLES = new Set([
+  "integration_settings",
+  "pos_settings",
+  "pos_store_settings",
+  "settings_overrides",
+  "settings_scoped",
+]);
 
 class CloudClient {
   constructor({ configStore, terminalStore, connectionManager = null }) {
@@ -189,7 +201,16 @@ class CloudClient {
         continue;
       }
       const deviceColumns = DEVICE_COLUMN_ALLOWLIST[table.cloudTable];
-      const entries = Object.entries(row)
+      const deviceRow = table.cloudTable === "app_users"
+        ? {
+            ...row,
+            // Staff email is not needed by the till, but the compatibility
+            // SQL schema requires a non-null value. Keep PII out of the device
+            // while allowing a fresh bootstrap to complete reliably.
+            email: `${String(row.user_id ?? row.id ?? "staff").replace(/[^a-z0-9._-]/gi, "_")}@terminal.invalid`,
+          }
+        : row;
+      const entries = Object.entries(deviceRow)
         .filter(([name]) => allowed.has(name) && (!deviceColumns || deviceColumns.has(name)))
         .map(([name, value]) => {
           const column = allowed.get(name);
@@ -216,6 +237,9 @@ class CloudClient {
         .filter(([name]) => !mergeKey.includes(name))
         .map(([name]) => `target.[${name}]=source.[${name}]`);
       const versioned = names.some(([name]) => name === "row_version");
+      const timestampedConfiguration =
+        CONFIGURATION_LWW_TABLES.has(table.cloudTable) &&
+        names.some(([name]) => name === "updated_at");
       const conflictPolicy = table.conflictRule ?? policy(table.cloudTable);
       const correction =
         table.cloudTable === "sales" && names.some(([name]) => name === "is_refunded")
@@ -225,9 +249,13 @@ class CloudClient {
             : null;
       const mayUpdate = conflictPolicy !== "immutable_reversal" && updates.length;
       const cloudWinsEqual = conflictPolicy === "highest_version" || conflictPolicy === "scoped_version";
-      const authorizationOrder = versioned
-        ? ` AND source.[row_version]${cloudWinsEqual ? ">=" : ">"}target.[row_version]`
-        : "";
+      const authorizationOrder = timestampedConfiguration
+        ? versioned
+          ? " AND (target.[updated_at] IS NULL OR source.[updated_at]>target.[updated_at] OR (source.[updated_at]=target.[updated_at] AND source.[row_version]>=target.[row_version]))"
+          : " AND (target.[updated_at] IS NULL OR source.[updated_at]>=target.[updated_at])"
+        : versioned
+          ? ` AND source.[row_version]${cloudWinsEqual ? ">=" : ">"}target.[row_version]`
+          : "";
       const matched = correction
         ? `WHEN MATCHED THEN UPDATE SET ${correction}`
         : mayUpdate

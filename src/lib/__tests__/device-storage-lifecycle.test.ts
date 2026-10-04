@@ -78,12 +78,13 @@ describe("phone storage hygiene", () => {
     expect(removed).not.toContain("pos.accent-color");
     expect(removed).not.toContain("pos.cart.draft.1");
     expect(removed).not.toContain("pos.shell.version");
+    expect(removed).not.toContain("pos.ui.webBundle");
   });
 
   it("drops derived caches on an upgrade", () => {
-    expect(staleKeys(keys, true)).toEqual(
-      expect.arrayContaining(["pos.ui.webBundle", "pos.report.cache"]),
-    );
+    expect(staleKeys(keys, true)).toContain("pos.report.cache");
+    // The updater owns this pointer and clears it only after directory removal.
+    expect(staleKeys(keys, true)).not.toContain("pos.ui.webBundle");
   });
 
   it("detects the first launch after a version change", () => {

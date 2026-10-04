@@ -18,14 +18,27 @@ describe("Electron database error recovery", () => {
     expect(diagnostics).toContain("occurrences:");
   });
 
-  it("lets Main replace stale renderer branch aliases only for audit rows", () => {
+  it("lets Main replace stale renderer branch aliases for till-owned audit and shift sessions", () => {
     const main = source("electron/main.cjs");
     const database = source("src/core/api/pos-db.ts");
+    const aggregateRepository = source("electron/db/repositories/aggregates.cjs");
 
-    expect(main).toContain('operation.table==="audit_logs"');
+    expect(main).toContain('const verifiedBranchTables=new Set(["audit_logs","shift_sessions"])');
+    expect(main).toContain("verifiedBranchTables.has(operation.table)");
     expect(database).toContain("store_id: null");
     expect(main).toContain("Other supplied mismatches remain rejected");
+    expect(main).toContain('const saleBranchFields=new Map([');
+    expect(main).toContain('["sales",["store_id","branch_id"]]');
+    expect(main).toContain('["sale_items",["branch_id"]]');
+    expect(main).toContain('["payment_transactions",["store_id"]]');
+    expect(main).toContain('stampVerifiedBranchOperations(aggregate.operations,branchId,aggregate.kind)');
+    expect(main).toContain('terminalId:terminal.tokenId??terminal.terminalId??null');
     expect(main.match(/stampVerifiedBranchOperations/g)).toHaveLength(3);
+    expect(aggregateRepository).toContain(
+      "this.operationsRepository.applyOperation(transaction, operation, {",
+    );
+    expect(aggregateRepository).toContain("branchId: aggregate.branchId");
+    expect(aggregateRepository).toContain("terminalId: aggregate.terminalId");
   });
 
   it("routes public flags through the central authenticated relay on Electron", () => {
@@ -35,5 +48,22 @@ describe("Electron database error recovery", () => {
     expect(flags).toContain('platformName() === "electron"');
     expect(flags).toContain("await relayOp");
     expect(policy).toContain('public_flags: { write: "can_access_pos_settings"');
+  });
+
+  it("hides failed bootstrap jobs after a later successful recovery", () => {
+    const repository = source("electron/jobs/repository.cjs");
+    expect(repository).toContain("recovered.status='completed'");
+    expect(repository).toContain("recovered.updated_at>failed.updated_at");
+    expect(repository).toContain("recovered.job_type=failed.job_type");
+    expect(repository).toContain("recovered.organization_id=failed.organization_id");
+    expect(repository).toContain("recovered.terminal_id=failed.terminal_id");
+  });
+
+  it("persists a safe checkout failure reference for support", () => {
+    const checkout = source("src/lib/register/use-checkout.ts");
+    const diagnostics = source("electron/diagnostics.cjs");
+    expect(checkout).toContain('logConnection?.("checkout.commit.failed"');
+    expect(checkout).toContain("sqlNumber: failure.sqlNumber");
+    expect(diagnostics).toContain('"table", "sqlNumber"');
   });
 });

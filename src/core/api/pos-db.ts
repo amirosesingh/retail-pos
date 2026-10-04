@@ -497,6 +497,63 @@ const settingsToRow = (s: AppSettings): Row => {
   return row;
 };
 
+const SETTINGS_SECTION_COLUMNS: Record<keyof AppSettings, string[]> = {
+  tax: ["tax_percentage", "enable_tax", "tax_mode"],
+  receipt: [
+    "paper_size", "company_name", "tax_number", "reg_number", "phone", "website",
+    "fonts", "custom_lines", "qr", "receipt_css", "booking_slip", "header_text",
+    "footer_text", "show_logo", "logo_data_url", "receipt_design", "show_points",
+    "show_barcode", "show_tax_details",
+  ],
+  payment: ["payment_details"],
+  whatsapp: ["whatsapp_settings"],
+  visibility: ["ui_visibility"],
+  integrations: ["integration_settings"],
+};
+
+/** Physical database fields affected by this UI patch. */
+const settingsPatchRow = (s: AppSettings, patch: Partial<AppSettings>): Row => {
+  const full = buildSettingsRow(s);
+  const keys = new Set(
+    Object.keys(patch).flatMap(
+      (section) => SETTINGS_SECTION_COLUMNS[section as keyof AppSettings] ?? [],
+    ),
+  );
+  const row = Object.fromEntries(
+    Object.entries(full).filter(([key]) => key === "id" || key === "updated_at" || keys.has(key)),
+  );
+  return row;
+};
+
+const settingsFieldRows = (row: Row): Row[] => {
+  const updatedAt = String(row.updated_at ?? new Date().toISOString());
+  const writerId = readTerminalConfig()?.tokenId ?? "web";
+  return Object.entries(row)
+    .filter(([key]) => !["id", "updated_at", "row_version"].includes(key))
+    .map(([fieldKey, value]) => ({
+      scope: "GLOBAL",
+      scope_id: "",
+      key: `pos_field:${fieldKey}`,
+      value,
+      is_overridden: true,
+      updated_at: updatedAt,
+      updated_by: writerId,
+    }));
+};
+
+/** Overlay independently versioned fields onto the legacy settings snapshot. */
+const applySettingsFields = (base: Row | null, fields: Row[] | null | undefined): Row | null => {
+  if (!base && !fields?.length) return null;
+  const merged: Row = { ...(base ?? { id: 1 }) };
+  for (const field of fields ?? []) {
+    const rawKey = String(field.key ?? "");
+    if (!rawKey.startsWith("pos_field:")) continue;
+    const key = rawKey.slice("pos_field:".length);
+    if (key && key !== "id") merged[key] = field.value;
+  }
+  return merged;
+};
+
 const rowToShift = (r: Row): Shift => ({
   id: r.id,
   storeId: r.store_id ?? "",
@@ -1181,7 +1238,7 @@ export async function loadCloudState(
   }
   // These reads are independent. Start membership tiers alongside the other
   // slices so a full network round trip is not added to every sign-in.
-  const [tiers, products, priceOverrides, members, sales, promotions, settings, stores, shifts] =
+  const [tiers, products, priceOverrides, members, sales, promotions, settings, settingFields, stores, shifts] =
     await Promise.all([
       supabase.from("membership_tiers").select("id, name").is("deleted_at", null),
       loadCompleteProductCatalogue(),
@@ -1220,6 +1277,17 @@ export async function loadCloudState(
         .limit(1000),
 
       supabase.from("pos_settings").select("*").eq("id", 1).maybeSingle(),
+      (async () => {
+        try {
+          const rows = await routedQuery("settings_scoped", { limit: 5000 });
+          return {
+            data: (rows as Row[]).filter((row) => String(row.key ?? "").startsWith("pos_field:")),
+            error: null,
+          };
+        } catch (error) {
+          return { data: [] as Row[], error };
+        }
+      })(),
       locationTask ?? loadLocationDirectory(),
       (async (): Promise<{ data: Row[] | null }> => {
         try {
@@ -1247,6 +1315,7 @@ export async function loadCloudState(
     sales.error ||
     promotions.error ||
     settings.error ||
+    settingFields.error ||
     // Location discovery is critical. `null` means the query did not answer;
     // `[]` is a valid authoritative answer and must be allowed through so stale
     // cached branches are removed instead of being restored.
@@ -1273,7 +1342,7 @@ export async function loadCloudState(
     members: (members.data ?? []).map((m) => rowToMember(m, tierName)),
     sales: (sales.data ?? []).map(rowToSale),
     promotions: (promotions.data ?? []).map(rowToPromotion),
-    settings: rowToSettings(settings.data as Row | null),
+    settings: rowToSettings(applySettingsFields(settings.data as Row | null, settingFields.data)),
     stores: stores.ok ? stores.stores : [],
     shifts: ((shifts.data as Row[] | null) ?? []).map(rowToShift),
   };
@@ -1310,8 +1379,15 @@ export async function loadPrimaryState(
 
 /** Refresh a settings notification without downloading the whole POS state. */
 export async function loadCloudSettings(): Promise<AppSettings> {
-  const rows = await routedQuery("pos_settings", { match: { id: 1 }, limit: 1 });
-  return rowToSettings((rows[0] as Row | undefined) ?? null);
+  const [rows, fields] = await Promise.all([
+    routedQuery("pos_settings", { match: { id: 1 }, limit: 1 }),
+    routedQuery("settings_scoped", { limit: 5000 }).then((rows) =>
+      (rows as Row[]).filter((row) => String(row.key ?? "").startsWith("pos_field:")),
+    ),
+  ]);
+  return rowToSettings(
+    applySettingsFields((rows[0] as Row | undefined) ?? null, fields as Row[]),
+  );
 }
 
 /** Fetch one changed catalogue row after a Realtime invalidation. */
@@ -1379,7 +1455,12 @@ async function loadLocalState(cause: unknown): Promise<CloudSlice> {
     members: (result.members ?? []).map((row) => rowToMember(row, tierName)),
     sales: (result.sales ?? []).map(rowToSale),
     promotions: (result.promotions ?? []).map(rowToPromotion),
-    settings: rowToSettings((result.settings as Row | null) ?? null),
+    settings: rowToSettings(
+      applySettingsFields(
+        (result.settings as Row | null) ?? null,
+        (result.settingFields as Row[] | undefined) ?? [],
+      ),
+    ),
     stores: (result.stores ?? []).map(rowToStore),
     shifts: (result.shifts ?? []).map(rowToShift),
   };
@@ -2104,25 +2185,37 @@ export const db = {
    * Explicit "Save settings" from a settings page: writes the whole record and
    * waits for confirmation, so the page can say whether it really landed.
    */
-  async saveSettingsNow(s: AppSettings): Promise<void> {
+  async saveSettingsNow(s: AppSettings, patch?: Partial<AppSettings>): Promise<void> {
+    const fieldSourceRow = patch ? settingsPatchRow(s, patch) : buildSettingsRow(s);
+    const snapshotRow = { ...fieldSourceRow };
+    missingSettingsColumns.forEach((column) => delete snapshotRow[column]);
+    const fieldRows = settingsFieldRows(fieldSourceRow);
     const op: SyncOp = {
       kind: "upsert",
       table: "pos_settings",
-      rows: [settingsToRow(s)],
+      rows: [snapshotRow],
+    };
+    const fieldOp: SyncOp = {
+      kind: "upsert",
+      table: "settings_scoped",
+      rows: fieldRows,
+      onConflict: "scope,scope_id,key",
     };
     const bridge = localDb();
     if (bridge) {
-      await commitOps("Saving settings", [op]);
+      await commitOps("Saving settings", [fieldOp, op]);
       return;
     }
     const op2: SyncOp = op;
     let res: { error: { message: string } | null };
     try {
-      res = await supabase.from("pos_settings").upsert(settingsToRow(s) as never);
+      const fields = await supabase.from("settings_scoped").upsert(fieldRows as never);
+      if (fields.error) throw new Error(fields.error.message);
+      res = await supabase.from("pos_settings").upsert(snapshotRow as never);
     } catch (e) {
       // The line is down: park the change so it lands when it is back.
       if (!isConnectionError(e)) throw e;
-      await commitOps("Saving settings", [op2]);
+      await commitOps("Saving settings", [fieldOp, op2]);
       return;
     }
     if (!res.error) {
@@ -2130,7 +2223,7 @@ export const db = {
       return;
     }
     if (isConnectionError(new Error(res.error.message))) {
-      await commitOps("Saving settings", [op2]);
+      await commitOps("Saving settings", [fieldOp, op2]);
       return;
     }
     // The database is missing a newer column: drop it and save the rest, so a
@@ -2138,7 +2231,9 @@ export const db = {
     const col = unknownSettingsColumn(res.error.message);
     if (!col) throw new Error(res.error.message);
     missingSettingsColumns.add(col);
-    const retry = await supabase.from("pos_settings").upsert(settingsToRow(s) as never);
+    const compatibleRow = { ...snapshotRow };
+    delete compatibleRow[col];
+    const retry = await supabase.from("pos_settings").upsert(compatibleRow as never);
     if (retry.error) throw new Error(retry.error.message);
     await broadcastSettingsChange("pos_settings");
     if (import.meta.env.DEV) console.warn(`[settings] compatibility column unavailable: ${col}`);
@@ -2400,13 +2495,28 @@ export const db = {
     const movements = saleActivityRows(sale);
     if (movements.length)
       ops.push({ kind: "upsert", table: "item_activity_logs", rows: movements, onConflict: "id" });
-    if (sale.exchangeOfReceiptNo)
+    if (sale.exchangeOfReceiptNo) {
+      if (!onlineOnly && !sale.exchangeOfSaleId)
+        throw Object.assign(
+          new Error("The original exchange bill is missing its stable local identifier."),
+          { code: "EEXCHANGE_STATE" },
+        );
       ops.push({
         kind: "update",
         table: "sales",
         values: { exchanged_to_bill_number: sale.receiptNo },
-        match: { bill_number: sale.exchangeOfReceiptNo },
+        match: {
+          id: sale.exchangeOfSaleId,
+          bill_number: sale.exchangeOfReceiptNo,
+          exchanged_to_bill_number: null,
+          is_refunded: false,
+        },
+        // The exchange link is part of the financial aggregate. If the
+        // original bill is missing, refunded, or already consumed by another
+        // exchange, the new bill and every stock/payment row must roll back.
+        requireMatch: true,
       });
+    }
     if (onlineOnly) {
       // One central transaction owns the immutable financial graph, member
       // effect and stock deltas. Product rows remain a separate projection,

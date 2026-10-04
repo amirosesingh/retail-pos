@@ -174,7 +174,7 @@ function RegisterEntry() {
 }
 
 type AppliedApproval = {
-  requestId: string;
+  requestId: string | null;
   actionKey: string;
   approvedPayload: AuthPayload;
   grantToken: string;
@@ -232,6 +232,9 @@ function Register() {
       if (!approval) return true;
       if (revokeDiscount) revokeApprovalDiscountRef.current(approval);
       clearAppliedApproval();
+      // A direct/self-PIN approval has no queue request to cancel. Its
+      // immutable approval log remains as the truthful historical record.
+      if (!approval.requestId) return true;
       const cancelled = await cancelAuthorizationRequest({
         data: {
           ...(await getPosCallerAuth()),
@@ -285,6 +288,7 @@ function Register() {
         : undefined;
     const payload: AuthPayload = {
       ...(request.payload ?? {}),
+      approval_location: "pos_register",
       ...(snapshot?.billNo
         ? {
             bill_no: snapshot.billNo,
@@ -325,6 +329,26 @@ function Register() {
       if (!result.ok) {
         toast.error(result.error);
         return null;
+      }
+      if (result.required && !result.grant.requestId && request.action === "discount_over_limit") {
+        const applied: AppliedApproval = {
+          requestId: null,
+          actionKey: request.action,
+          approvedPayload: {
+            ...payload,
+            approved_amount: result.grant.approvedAmount ?? requestedAmount,
+          },
+          grantToken: grantToken ?? "",
+          approvedAmount: result.grant.approvedAmount ?? requestedAmount,
+          requestedAmount,
+          requesterDirectLimit: request.requesterDirectLimit ?? null,
+          valueUnit: request.valueUnit ?? "number",
+          approvedBy: result.grant.approvedBy ?? null,
+          approvedByName: result.grant.approvedByName ?? null,
+          appliedSnapshotHash: null,
+        };
+        appliedApprovalRef.current = applied;
+        setAppliedApproval(applied);
       }
       return grantToken ?? "";
     };
@@ -375,6 +399,27 @@ function Register() {
           description: "Pick it up from Hold tickets once the decision arrives.",
         });
       }
+    }
+    if (res.ok && res.offlineApproval) {
+      if (request.action === "discount_over_limit") {
+        const requestedAmount = request.requestedAmount ?? snapshot?.requestedValue ?? null;
+        const applied: AppliedApproval = {
+          requestId: null,
+          actionKey: request.action,
+          approvedPayload: { ...payload, approved_amount: requestedAmount },
+          grantToken: "",
+          approvedAmount: requestedAmount,
+          requestedAmount,
+          requesterDirectLimit: request.requesterDirectLimit ?? null,
+          valueUnit: request.valueUnit ?? "number",
+          approvedBy: res.offlineApproval.id,
+          approvedByName: res.offlineApproval.name,
+          appliedSnapshotHash: null,
+        };
+        appliedApprovalRef.current = applied;
+        setAppliedApproval(applied);
+      }
+      return `offline-pin:${res.offlineApproval.id}`;
     }
     // A gate that is switched off returns ok with no token — still a "go".
     return res.ok ? verifyGrant(res.grantToken) : null;
@@ -829,7 +874,10 @@ function Register() {
             ? ` · ${formatValue(Math.max(0, appliedApproval.approvedAmount - appliedApproval.requesterDirectLimit))} extra`
             : "";
         const approver = appliedApproval.approvedByName || appliedApproval.approvedBy;
-        return `#${appliedApproval.requestId.slice(-8).toUpperCase()}${approver ? ` · by ${approver}` : ""}${approved}${extra} · payable ${money(totals.total)}`;
+        const reference = appliedApproval.requestId
+          ? `#${appliedApproval.requestId.slice(-8).toUpperCase()}`
+          : "DIRECT PIN";
+        return `${reference}${approver ? ` · by ${approver}` : ""}${approved}${extra} · payable ${money(totals.total)}`;
       })()
     : "";
   const pointsEarned = member ? Math.max(0, Math.round(totals.total * promo.pointsRate)) : 0;
@@ -894,6 +942,7 @@ function Register() {
   const {
     exchangeOpen,
     setExchangeOpen,
+    beginExchange,
     billQuery,
     setBillQuery,
     billHit,
@@ -902,11 +951,13 @@ function Register() {
     setPicks,
     lookupBill,
     addExchangeCredits,
+    billBlockReason,
   } = useExchange({
     sales: state.sales,
     hasShift: () => !!activeShift,
     setLines,
     setExchangeRef,
+    requirePermission,
   });
 
   const { held, holdOrder, resumeHeld } = useRegisterHeldOrders({
@@ -1711,9 +1762,7 @@ function Register() {
         className="h-full"
         label="Exchange"
         icon={<Repeat className="size-4" />}
-        onClick={async () => {
-          if (await requirePermission("can_process_exchange")) setExchangeOpen(true);
-        }}
+        onClick={() => void beginExchange()}
       />
     </div>
   ) : null;
@@ -1761,9 +1810,7 @@ function Register() {
           <Button
             variant="outline"
             size="sm"
-            onClick={async () => {
-              if (await requirePermission("can_process_exchange")) setExchangeOpen(true);
-            }}
+            onClick={() => void beginExchange()}
           >
             <Repeat className="size-4" /> Exchange
           </Button>
@@ -2622,7 +2669,7 @@ function Register() {
     "drawer.open": () => setNoSaleOpen(true),
     "member.add": () => setQuickMemberOpen(true),
     "product.search": () => setCatalogOpen(true),
-    "exchange.open": () => setExchangeOpen(true),
+    "exchange.open": () => void beginExchange(),
     ...(lastSale
       ? {
           "receipt.reprint": () =>
@@ -3318,9 +3365,14 @@ function Register() {
                   ? ` · already exchanged to ${billHit.exchangedToReceiptNo}`
                   : ""}
               </p>
+              {billBlockReason && (
+                <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  {billBlockReason}
+                </p>
+              )}
               <Separator />
               <div className="max-h-64 space-y-1 overflow-y-auto">
-                {billHit.lines.map((l, idx) => {
+                {billHit.lines.map((l, idx) => ({ l, idx })).filter(({ l }) => l.qty > 0 && !l.credit).map(({ l, idx }) => {
                   const picked = picks[idx] ?? 0;
                   const unit = r2(l.price - lineUnitDiscount(l));
                   return (
@@ -3369,7 +3421,7 @@ function Register() {
             <Button variant="outline" onClick={() => setExchangeOpen(false)}>
               Cancel
             </Button>
-            <Button disabled={!billHit} onClick={addExchangeCredits}>
+            <Button disabled={!billHit || !!billBlockReason} onClick={addExchangeCredits}>
               Add credit to cart
             </Button>
           </DialogFooter>

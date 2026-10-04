@@ -99,6 +99,7 @@ export type StaffPayload = {
   pin?: string;
   /** password — required for real-email accounts */
   password?: string;
+  authorizationPin: string;
   branchId?: string | null;
   roleSlug: string;
   baseRole: "admin" | "manager" | "staff";
@@ -127,6 +128,10 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
   const emailMode = isRealEmail(typed);
   const pin = (payload.pin ?? "").trim();
   const password = payload.password ?? "";
+  const authorizationPin = payload.authorizationPin.trim();
+  if (!/^\d{4,6}$/.test(authorizationPin)) {
+    throw new Error("Set a 4 to 6 digit authorisation PIN");
+  }
 
   let username: string;
   let email: string;
@@ -195,11 +200,17 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
     p_role_slug: payload.roleSlug,
     p_store_id: payload.branchId ?? null,
     p_is_active: payload.active,
-    p_pin: emailMode ? "" : pin,
-    p_pin_length: emailMode ? 0 : pin.length,
+    p_pin: authorizationPin,
+    p_pin_length: authorizationPin.length,
     p_auth_user_id: userId,
     p_permissions: null,
   });
+  if (!emailMode) {
+    await serviceRpc("staff_account_set_terminal_pin", {
+      p_user_id: username,
+      p_pin: pin,
+    });
+  }
 
   await serviceRest("user_roles?on_conflict=user_id,role", {
     method: "POST",
@@ -302,13 +313,17 @@ export async function updateStaffProfile(input: {
     p_role_slug: input.roleSlug,
     p_store_id: input.branchId,
     p_is_active: input.active,
-    p_pin: terminalAccount && credential ? credential : "",
-    p_pin_length: terminalAccount
-      ? (credential ? credential.length : profile.pin_length)
-      : 0,
+    p_pin: "",
+    p_pin_length: profile.pin_length,
     p_auth_user_id: profile.auth_user_id,
     p_permissions: null,
   });
+  if (terminalAccount && credential) {
+    await serviceRpc("staff_account_set_terminal_pin", {
+      p_user_id: profile.user_id,
+      p_pin: credential,
+    });
+  }
   await serviceRest("user_roles?user_id=eq." + encodeURIComponent(profile.auth_user_id), { method: "DELETE" });
   const roleResult = await serviceRest("user_roles", {
     method: "POST",
@@ -470,6 +485,7 @@ export async function ensurePinAccount(
     displayName: verified.fullName,
     username: verified.username,
     pin,
+    authorizationPin: pin,
     branchId: verified.storeId,
     roleSlug: "cashier",
     baseRole: "staff",
