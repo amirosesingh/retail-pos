@@ -20,6 +20,7 @@ import { isoDaysFromNow } from "@/lib/register/use-booking-intake";
 import type { useBookingIntake } from "@/lib/register/use-booking-intake";
 import { cartTotals, money, usePos } from "@/lib/pos-store";
 import { db } from "@/core/api/pos-db";
+import { localDb } from "@/core/local-db/local-db";
 import { defaultTradingHours } from "@/lib/pos-seed";
 
 import { applyRounding, roundingOf } from "@/core/pricing/rounding";
@@ -50,7 +51,7 @@ export type CheckoutDeps = {
    * The approval a manager granted for this ticket, if any. Stamped on the
    * bill so a decision and the bill it allowed are always read together.
    */
-  getAuthorization?: () => { requestId: string; approvedBy?: string | null } | null;
+  getAuthorization?: () => { requestId: string | null; approvedBy?: string | null } | null;
 
   // Cart / ticket
   getLines: () => CartLine[];
@@ -422,6 +423,10 @@ export function useCheckout(deps: CheckoutDeps) {
     }
     const isRefund = totals.total < 0;
     if (!(await deps.requirePermission("can_process_sale"))) return;
+    // Permission is rechecked at the irreversible boundary. A held ticket,
+    // restored draft, command shortcut or role change must not carry an old
+    // exchange reference around the manager gate.
+    if (exchangeRef && !(await deps.requirePermission("can_process_exchange"))) return;
     if (isRefund && !(await deps.requirePermission("can_process_refund"))) return;
     const splitting = tenders.length > 0;
     /**
@@ -531,7 +536,7 @@ export function useCheckout(deps: CheckoutDeps) {
             const grant = deps.getAuthorization?.();
             return grant
               ? {
-                  authorizationRequestId: grant.requestId,
+                  ...(grant.requestId ? { authorizationRequestId: grant.requestId } : {}),
                   authorizedBy: grant.approvedBy ?? null,
                   authorizedAt: new Date().toISOString(),
                 }
@@ -551,6 +556,21 @@ export function useCheckout(deps: CheckoutDeps) {
         member,
       );
     } catch (e) {
+      const failure = e as {
+        code?: string;
+        message?: string;
+        stage?: string | null;
+        table?: string | null;
+        sqlNumber?: number | null;
+      };
+      void localDb()?.logConnection?.("checkout.commit.failed", {
+        category: "database",
+        stage: failure.stage ?? "sale",
+        code: failure.code ?? "ECHECKOUT",
+        message: failure.message ?? "The checkout transaction failed.",
+        table: failure.table ?? undefined,
+        sqlNumber: failure.sqlNumber ?? undefined,
+      });
       // The sale header may already be committed even though a later step
       // failed. Never tell the cashier "nothing was stored" in that case —
       // it invites a second collection of the same payment.

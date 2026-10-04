@@ -123,6 +123,28 @@ jobs:
         run: |
           ./gradlew assembleRelease --stacktrace
 
+      - name: Verify APK signature and release certificate
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_FILE: ${{ github.workspace }}/android/release.keystore
+        run: |
+          set -euo pipefail
+          apk=$(find android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n1)
+          apksigner=$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -n1)
+          if [ -z "$apk" ] || [ -z "$apksigner" ]; then
+            echo "Release APK or apksigner was not found."; exit 1
+          fi
+          "$apksigner" verify --verbose --print-certs "$apk" | tee /tmp/apk-signature.txt
+          keytool -exportcert -keystore "$ANDROID_KEYSTORE_FILE" -alias "$ANDROID_KEY_ALIAS" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" -file /tmp/release-cert.der
+          expected=$(sha256sum /tmp/release-cert.der | awk '{print tolower($1)}')
+          actual=$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}' /tmp/apk-signature.txt)
+          if [ -z "$actual" ] || [ "$actual" != "$expected" ]; then
+            echo "APK signer does not match the configured release keystore alias."; exit 1
+          fi
+          echo "APK signature and signer certificate verified."
+
 
 
 
@@ -134,7 +156,7 @@ jobs:
           rid="${{ steps.meta.outputs.release_id }}"
           released=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           epoch=$(node -e "const m=/BUNDLE_EPOCH\s*=\s*(\d+)/.exec(require('fs').readFileSync('src/lib/bundle-epoch.ts','utf8'));if(!m){process.exit(1)}console.log(m[1])")
-          mkdir -p versioned/android/web latest/android latest/android/web release-assets
+          mkdir -p versioned/android latest/android release-assets
           src=$(ls android/app/build/outputs/apk/release/*.apk | head -n1)
           aapt=$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name aapt | sort -V | tail -n1)
           if [ -z "$aapt" ]; then echo "Android build tools are missing aapt"; exit 1; fi
@@ -154,18 +176,9 @@ jobs:
           # Unified cross-platform manifest read by Android, Windows and web.
           base="https://updatecms.luckycharmsdnbhd.com/pos-app"
           build="${{ steps.meta.outputs.build_number }}"
-          printf '{"version":"%s","buildNumber":%s,"releaseNotes":"%s","apkUrl":"%s/latest/android/Retail-%s.apk","bundleUrl":"%s/latest/android/web/web-%s.zip","bundleEpoch":%s,"windowsUrl":"%s/latest/Retail%%20Setup%%20%s.exe"}\n' \
-            "$v" "$build" "Release $v" "$base" "$v" "$base" "$v" "$epoch" "$base" "$v" > release-assets/manifest.json
+          printf '{"version":"%s","buildNumber":%s,"releaseNotes":"%s","apkUrl":"%s/latest/android/Retail-%s.apk","bundleEpoch":%s,"windowsUrl":"%s/latest/Retail%%20Setup%%20%s.exe"}\n' \
+            "$v" "$build" "Release $v" "$base" "$v" "$epoch" "$base" "$v" > release-assets/manifest.json
           cp release-assets/manifest.json latest/manifest.json 2>/dev/null || { mkdir -p latest && cp release-assets/manifest.json latest/manifest.json; }
-          if [ -z "${{ inputs.app_url }}" ]; then
-            (cd capacitor-shell && zip -qr "$GITHUB_WORKSPACE/versioned/android/web/web-$v.zip" .)
-            cp "versioned/android/web/web-$v.zip" "latest/android/web/web-$v.zip"
-            cp "versioned/android/web/web-$v.zip" "latest/android/web/web-latest.zip"
-            web=$(printf '{"version":"%s","file":"web-%s.zip","bundleEpoch":%s,"tag":"%s","commit":"%s","released":"%s"}\n' \
-              "$v" "$v" "$epoch" "${{ steps.meta.outputs.tag }}" "${{ steps.meta.outputs.commit }}" "$released")
-            echo "$web" > latest/android/web/latest.json
-            echo "$web" > versioned/android/web/latest.json
-          fi
 
 
 

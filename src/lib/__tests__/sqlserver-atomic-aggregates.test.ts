@@ -137,6 +137,62 @@ describe("SQL Server aggregate repository", () => {
     ).rejects.toThrow("Unsupported");
   });
 
+  it("rolls back an exchange when the original bill cannot be claimed", async () => {
+    const rollback = vi.fn();
+    const commit = vi.fn();
+    class Transaction {
+      begin = vi.fn();
+      rollback = rollback;
+      commit = commit;
+    }
+    class Request {
+      input() {
+        return this;
+      }
+      query() {
+        return { recordset: [] };
+      }
+    }
+    const sql = {
+      Transaction,
+      Request,
+      UniqueIdentifier: "uuid",
+      ISOLATION_LEVEL: { SERIALIZABLE: 4 },
+    };
+    const operations = {
+      pool: () => ({}),
+      tables: new Map([
+        [
+          "sales",
+          { sqlServerTable: "sales", columns: [{ sqlServerColumn: "id", primaryKey: true }] },
+        ],
+      ]),
+      validate: (value: unknown) => value,
+      applyOperation: vi.fn().mockResolvedValue(0),
+    };
+    const { AggregateRepository } =
+      await import("../../../electron/db/repositories/aggregates.cjs");
+    const repository = new AggregateRepository({ sql: () => sql }, operations);
+
+    await expect(
+      repository.commit("sale", {
+        operationId: "11111111-1111-4111-8111-111111111111",
+        branchId: "B1",
+        operations: [
+          {
+            kind: "update",
+            table: "sales",
+            values: { exchanged_to_bill_number: "NEW-1" },
+            match: { id: "22222222-2222-4222-8222-222222222222" },
+            requireMatch: true,
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "EEXCHANGE_STATE" });
+    expect(rollback).toHaveBeenCalledOnce();
+    expect(commit).not.toHaveBeenCalled();
+  });
+
   it("replays the same aggregate without applying business statements twice", async () => {
     let receipt: string | null = null;
     class Transaction {

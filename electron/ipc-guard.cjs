@@ -120,6 +120,8 @@ function writeOp(value, { name = "write" } = {}) {
   if (!OP_KINDS.has(kind)) throw new BadArg(`The ${name} kind is not recognised.`);
   key(op.table, { name: "table name" });
   if (op.rows !== undefined) list(op.rows, { name: "rows", max: 5000 });
+  if (op.requireMatch !== undefined && typeof op.requireMatch !== "boolean")
+    throw new BadArg(`The ${name} required-match flag must be true or false.`);
   return op;
 }
 

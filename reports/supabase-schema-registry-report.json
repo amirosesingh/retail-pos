@@ -1,6 +1,6 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-03T09:40:32.547Z",
+  "generatedAt": "2026-10-04T14:15:49.345Z",
   "tableCount": 70,
   "columnCount": 1187,
   "tables": [

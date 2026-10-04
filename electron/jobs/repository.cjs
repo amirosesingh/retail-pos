@@ -36,7 +36,17 @@ class JobRepository {
   }
   async failures(limit = 100) {
     const result = await this.pool().request().input("limit", Math.max(1, Math.min(200, limit)))
-      .query("SELECT TOP (@limit) * FROM dbo.pos_jobs WHERE status='failed' ORDER BY updated_at DESC;");
+      .query(`SELECT TOP (@limit) failed.* FROM dbo.pos_jobs failed
+        WHERE failed.status='failed' AND NOT EXISTS (
+          SELECT 1 FROM dbo.pos_jobs recovered
+          WHERE recovered.job_type=failed.job_type
+            AND (recovered.branch_id=failed.branch_id OR (recovered.branch_id IS NULL AND failed.branch_id IS NULL))
+            AND (recovered.organization_id=failed.organization_id OR (recovered.organization_id IS NULL AND failed.organization_id IS NULL))
+            AND (recovered.terminal_id=failed.terminal_id OR (recovered.terminal_id IS NULL AND failed.terminal_id IS NULL))
+            AND recovered.status='completed'
+            AND recovered.updated_at>failed.updated_at
+        )
+        ORDER BY failed.updated_at DESC;`);
     return result.recordset ?? [];
   }
 }

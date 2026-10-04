@@ -97,7 +97,8 @@ describe("client audit report trust boundary", () => {
     expect(auditReportFields({ ...row, new_value: JSON.stringify(row.new_value) })).toEqual({
       requestedBy: "", approvedBy: "Reporter (reporter)",
       action: "Client report: staff.account_deleted", outcome: "Unverified",
-      purpose: "Claimed deletion", reference: "victim",
+      purpose: "Claimed deletion", reference: "victim", location: "app_users",
+      method: "Unverified", requestedAmount: "",
     });
   });
 

@@ -1,9 +1,17 @@
 const { _electron: electron } = require("@playwright/test");
+const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const devServerUrl = process.argv[2] || process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:8080";
-const smokeUserData = path.join(os.tmpdir(), "retail-pos-electron-runtime-smoke");
+const target = process.argv[2];
+const targetPath = target ? path.resolve(target) : null;
+const packagedExecutable = targetPath && fs.existsSync(targetPath)
+  ? fs.statSync(targetPath).isDirectory()
+    ? path.join(targetPath, "Retail.exe")
+    : targetPath
+  : null;
+const devServerUrl = packagedExecutable ? null : target || process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:8080";
+const smokeUserData = path.join(os.tmpdir(), `retail-pos-electron-runtime-smoke-${process.pid}`);
 
 async function main() {
   const consoleErrors = [];
@@ -20,13 +28,17 @@ async function main() {
     process.exitCode = 1;
   }, 90_000);
   app = await electron.launch({
-    executablePath: require("electron"),
+    executablePath: packagedExecutable || require("electron"),
     // Codex's managed Windows session cannot launch Chromium's child-process
     // sandbox (renderer exit 49). This flag is confined to the isolated smoke
     // profile; packaged Electron continues to use its normal sandbox.
-    args: [".", `--user-data-dir=${smokeUserData}`, "--disable-gpu", "--no-sandbox"],
-    cwd: process.cwd(),
-    env: { ...process.env, VITE_DEV_SERVER_URL: devServerUrl },
+    args: packagedExecutable
+      ? [`--user-data-dir=${smokeUserData}`, "--disable-gpu", "--no-sandbox"]
+      : [".", `--user-data-dir=${smokeUserData}`, "--disable-gpu", "--no-sandbox"],
+    cwd: packagedExecutable ? path.dirname(packagedExecutable) : process.cwd(),
+    env: devServerUrl
+      ? { ...process.env, VITE_DEV_SERVER_URL: devServerUrl }
+      : { ...process.env, VITE_DEV_SERVER_URL: "" },
   });
   try {
     phase = "first-window";

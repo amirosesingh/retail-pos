@@ -90,13 +90,44 @@ function localBranchId(){
 function rememberVerifiedBranch(branchId){
   if(!branchId)return;
   const terminal=terminalStore.read();
-  if(terminal?.tokenId&&!terminal.locationId&&!terminal.storeId&&!terminal.branchId)terminalStore.write({...terminal,branchId});
+  if(terminal?.tokenId&&!terminal.locationId&&!terminal.storeId&&!terminal.branchId){
+    terminalStore.write({...terminal,branchId});
+    // The renderer may already have loaded its first local snapshot while the
+    // sealed activation still lacked its branch mirror. Wake it immediately;
+    // otherwise SQL contains the catalogue but the till remains empty until a
+    // full application restart.
+    publishBusinessChange({kind:"branch",branchId:String(branchId)});
+  }
 }
-function stampVerifiedBranchOperations(operations,branchId){
-  const branchStampedTables=new Set(["audit_logs","activity_events","authorization_requests","authorization_log","record_edits","member_verifications","entity_status_history"]);
+function stampVerifiedBranchOperations(operations,branchId,aggregateKind=null){
+  const branchStampedTables=new Set(["audit_logs","shift_sessions","activity_events","authorization_requests","authorization_log","record_edits","member_verifications","entity_status_history"]);
+  // Audit rows and staff shift sessions describe work performed on this
+  // physical till. Renderer/session state can contain an older branch alias,
+  // so Main replaces it with the branch verified from the sealed terminal.
+  const verifiedBranchTables=new Set(["audit_logs","shift_sessions"]);
+  // A sale performed on this physical till can only belong to the paired
+  // terminal branch.  Stamp every financial child consistently so stale UI
+  // branch state cannot either block checkout or redirect a sale elsewhere.
+  const saleBranchFields=new Map([
+    ["sales",["store_id","branch_id"]],
+    ["sale_items",["branch_id"]],
+    ["payment_transactions",["store_id"]],
+    ["item_activity_logs",["store_id"]],
+  ]);
   return operations.map((operation)=>{
-    if(!branchStampedTables.has(operation.table)||!(operation.kind==="insert"||operation.kind==="upsert"))return operation;
-    return{...operation,rows:operation.rows.map((row)=>operation.table==="audit_logs"||!String(row?.store_id??"").trim()?{...row,store_id:branchId}:row)};
+    const saleFields=aggregateKind==="sale"?saleBranchFields.get(operation.table):null;
+    const verified=verifiedBranchTables.has(operation.table);
+    const fillMissing=branchStampedTables.has(operation.table);
+    if(operation.kind==="insert"||operation.kind==="upsert"){
+      if(!saleFields&&!verified&&!fillMissing)return operation;
+      return{...operation,rows:operation.rows.map((row)=>{
+        if(saleFields)return saleFields.reduce((next,field)=>({...next,[field]:branchId}),{...row});
+        return verified||!String(row?.store_id??"").trim()?{...row,store_id:branchId}:row;
+      })};
+    }
+    if(operation.kind==="update"&&verified)
+      return{...operation,values:{...operation.values,store_id:branchId}};
+    return operation;
   });
 }
 async function observedDatabaseOperation(category, stage, work) {
@@ -1323,8 +1354,14 @@ function registerIpc() {
       // context may contain a pre-canonical branch alias, while Main owns the
       // paired terminal identity, so audit rows always receive that verified
       // branch. Other supplied mismatches remain rejected below.
-      const operations=stampVerifiedBranchOperations(aggregate.operations,branchId);
-      const trustedAggregate={...aggregate,operations,branchId};
+      const operations=stampVerifiedBranchOperations(aggregate.operations,branchId,aggregate.kind);
+      const terminal=terminalStore.read()??{};
+      const trustedAggregate={
+        ...aggregate,
+        operations,
+        branchId,
+        terminalId:terminal.tokenId??terminal.terminalId??null,
+      };
       const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null});
       scheduleAutomaticSync(250);
@@ -1453,6 +1490,24 @@ function registerIpc() {
       ok: false,
       error: "The sign-in service returned an invalid response.",
     }));
+    // The hosted endpoint has verified the PIN and re-read this account's
+    // current permission matrix. Adopt that proof in the desktop process now,
+    // before the renderer can submit its first sale. Requiring the separate
+    // database-maintenance permission here made ordinary cashier checkouts
+    // fail with EPRIVILEGE even though can_process_sale was granted.
+    if (response.ok && result?.ok && result.cashier) {
+      const cashier = result.cashier;
+      const role = String(cashier.role ?? cashier.role_slug ?? "staff").toLowerCase();
+      const level = role === "admin" ? "admin" : role === "manager" || role === "supervisor" ? "supervisor" : "staff";
+      const branchId = cashier.store_id ?? localBranchId();
+      adminSession.grant(level, cashier.username ?? username, cashier.permissions ?? {}, "pos", branchId);
+      const proof = {
+        ...(typeof result.sessionToken === "string" ? { sessionToken: result.sessionToken } : {}),
+        ...(typeof result.cashierToken === "string" ? { cashierToken: result.cashierToken } : {}),
+      };
+      syncCloud.setAuthorizationProof(proof);
+      rememberVerifiedBranch(branchId);
+    }
     return { ...result, status: response.status };
   }));
   ipcMain.handle("app:ready", () => {
@@ -1554,6 +1609,8 @@ function registerIpc() {
 
   ipcMain.handle("update:status", () => updater.status());
   ipcMain.handle("update:check", () => updater.check());
+  ipcMain.handle("update:download", () => updater.downloadUpdate());
+  ipcMain.handle("update:download-install", () => updater.downloadAndInstall());
   ipcMain.handle("update:install", () => updater.install());
   ipcMain.handle("update:diagnose", () => updater.diagnose());
   ipcMain.handle("update:download-page", () => updater.downloadPage());

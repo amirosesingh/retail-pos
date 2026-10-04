@@ -1128,6 +1128,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
       }
     };
     const unsubscribe = bridge.onBusinessChanged((change) => {
+      if (change.kind === "branch") {
+        // First verified login can repair an older activation that stored only
+        // the token. Re-run the complete local snapshot now that Main can
+        // enforce the correct branch predicate.
+        setReloadTick((tick) => tick + 1);
+        return;
+      }
       const active =
         activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
       if (change.kind !== "sale") return;
@@ -1519,6 +1526,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const branchId = requireBranchId(input.storeId || snapshot.currentStoreId);
       input = { ...input, storeId: branchId };
       const store = snapshot.stores.find((x) => x.id === branchId);
+      const exchangeSource = input.exchangeOfReceiptNo
+        ? snapshot.sales.find(
+            (candidate) =>
+              candidate.receiptNo === input.exchangeOfReceiptNo && candidate.storeId === branchId,
+          )
+        : null;
+      if (input.exchangeOfReceiptNo && !exchangeSource)
+        throw Object.assign(
+          new Error("The original exchange bill is no longer available in this branch."),
+          { code: "EEXCHANGE_STATE" },
+        );
       // Branch + platform + terminal + day + sequence, so two registers can
       // never mint the same bill number, online or off. A number reserved when
       // the ticket started wins, so the header, the held record and the printed
@@ -1537,6 +1555,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const clientTxnId = input.clientTxnId ?? crypto.randomUUID();
       let sale: Sale = {
         ...input,
+        ...(exchangeSource ? { exchangeOfSaleId: exchangeSource.id } : {}),
         // Freeze how this branch reads right now, so a later rename never
         // rewrites a printed bill or a historical report.
         storeName: input.storeName ?? store?.name ?? "",
@@ -3017,7 +3036,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             whatsapp: { ...prev.whatsapp, ...(patch.whatsapp ?? {}) },
             integrations: { ...prev.integrations, ...(patch.integrations ?? {}) },
             visibility: { ...prev.visibility, ...(patch.visibility ?? {}) },
-          })
+          }, patch)
           .catch((error) => {
             dbError("Saving display settings", error);
             throw error;

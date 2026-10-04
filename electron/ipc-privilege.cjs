@@ -182,6 +182,8 @@ const CHANNEL_LEVELS = {
   "db:set-branch": SUPERVISOR,
   "branding:write": SUPERVISOR,
   "update:install": SUPERVISOR,
+  "update:download": SUPERVISOR,
+  "update:download-install": SUPERVISOR,
   "health:resume-updates": SUPERVISOR,
 
   /* --- admin: backend, company, database, identity, credentials, audit --- */

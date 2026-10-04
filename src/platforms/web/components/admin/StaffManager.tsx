@@ -81,6 +81,7 @@ type Row = {
   is_active: boolean;
   permissions: StaffPermissions;
   pin_length: number;
+  pin_set_at: string | null;
   last_login_at: string | null;
 };
 
@@ -88,6 +89,7 @@ type Form = {
   displayName: string;
   username: string;
   credential: string;
+  authorizationPin: string;
   roleSlug: string;
   branchId: string;
   active: boolean;
@@ -97,6 +99,7 @@ const EMPTY: Form = {
   displayName: "",
   username: "",
   credential: "",
+  authorizationPin: "",
   roleSlug: "cashier",
   // Empty until the administrator makes an explicit branch choice.
   branchId: "",
@@ -117,6 +120,20 @@ const friendlyError = (error: unknown): string => {
   if (raw.includes("STAFF_ROLE_REQUIRED")) return "Choose a valid role.";
   return raw;
 };
+
+/** Generate a PIN with the browser CSPRNG. Rejection avoids modulo bias. */
+function generateAuthorizationPin(length = 6): string {
+  const digits: number[] = [];
+  while (digits.length < length) {
+    const bytes = new Uint8Array(length * 2);
+    crypto.getRandomValues(bytes);
+    for (const value of bytes) {
+      if (value < 250) digits.push(value % 10);
+      if (digits.length === length) break;
+    }
+  }
+  return digits.join("");
+}
 
 export function StaffManager() {
   const { stores } = usePos();
@@ -190,6 +207,7 @@ export function StaffManager() {
               role,
             ),
             pin_length: Number(r["pin_length"] ?? 0),
+            pin_set_at: (r["pin_set_at"] as string | null) ?? null,
             last_login_at: (r["last_login_at"] as string | null) ?? null,
           };
         }),
@@ -233,6 +251,7 @@ export function StaffManager() {
       displayName: row.full_name,
       username: row.user_id,
       credential: "",
+      authorizationPin: "",
       roleSlug: row.role_slug,
       branchId: row.store_id ?? "all",
       active: row.is_active,
@@ -256,7 +275,14 @@ export function StaffManager() {
   const branchValid = form.branchId === "all" || stores.some((store) => store.id === form.branchId);
   const branchId = form.branchId === "all" ? null : form.branchId;
   const branchLabel = branchId ? branchDisplayName(stores, branchId) : "All branches";
-  const canSave = nameValid && identifierValid && credentialValid && branchValid && !!selectedRole;
+  const authorizationPinValid = editing ? true : /^\d{4,6}$/.test(form.authorizationPin);
+  const canSave =
+    nameValid &&
+    identifierValid &&
+    credentialValid &&
+    authorizationPinValid &&
+    branchValid &&
+    !!selectedRole;
 
   const save = async () => {
     if (!canSave || !selectedRole) return;
@@ -289,6 +315,7 @@ export function StaffManager() {
           displayName: form.displayName.trim(),
           username: form.username.trim().toLowerCase(),
           ...(emailMode ? { password: form.credential } : { pin: form.credential }),
+          authorizationPin: form.authorizationPin,
           branchId,
           roleSlug: selectedRole.slug,
           baseRole: selectedRole.baseLevel,
@@ -432,8 +459,13 @@ export function StaffManager() {
                   </td>
                   <td className="pr-3">
                     <Badge variant="outline">
-                      {terminal ? `PIN · ${row.pin_length || 4} characters` : "Email & password"}
+                      {terminal ? "Terminal PIN sign-in" : "Email & password"}
                     </Badge>
+                    <p className={row.pin_set_at ? "mt-1 text-xs text-muted-foreground" : "mt-1 text-xs text-destructive"}>
+                      {row.pin_set_at
+                        ? `Approval PIN · ${row.pin_length || 6} digits`
+                        : "Approval PIN not set"}
+                    </p>
                   </td>
                   <td className="pr-3">
                     {roles.find((role) => role.slug === row.role_slug)?.name ?? row.role_slug}
@@ -548,15 +580,20 @@ export function StaffManager() {
               It does not change how they sign in, and it is never shown again.
             </DialogDescription>
           </DialogHeader>
-          <Input
-            autoFocus
-            inputMode="numeric"
-            type="password"
-            maxLength={6}
-            value={pinValue}
-            onChange={(e) => setPinValue(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            aria-label="New authorisation PIN"
-          />
+          <div className="flex gap-2">
+            <Input
+              autoFocus
+              inputMode="numeric"
+              type="password"
+              maxLength={6}
+              value={pinValue}
+              onChange={(e) => setPinValue(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              aria-label="New authorisation PIN"
+            />
+            <Button type="button" variant="outline" onClick={() => setPinValue(generateAuthorizationPin(6))}>
+              Generate
+            </Button>
+          </div>
           <DialogFooter>
             <Button
               variant="outline"
@@ -660,6 +697,43 @@ export function StaffManager() {
                 </SelectContent>
               </Select>
             </div>
+            {!editing ? (
+              <div className="space-y-1 sm:col-span-2">
+                <Label htmlFor="staff-authorization-pin">Authorisation PIN *</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="staff-authorization-pin"
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    autoComplete="new-password"
+                    value={form.authorizationPin}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        authorizationPin: e.target.value.replace(/\D/g, "").slice(0, 6),
+                      })
+                    }
+                    aria-invalid={!authorizationPinValid}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      setForm({ ...form, authorizationPin: generateAuthorizationPin(6) })
+                    }
+                  >
+                    Generate 6-digit PIN
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Used only to approve governed actions. It is hashed and will not be shown again.
+                </p>
+                {!authorizationPinValid ? (
+                  <p className="text-xs text-destructive">Use a 4 to 6 digit PIN.</p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="space-y-1">
               <Label>Branch *</Label>
               <Select

@@ -118,7 +118,7 @@ async function signInAsAdmin(page: Page) {
   await page.getByLabel("Email or username").fill(adminEmail);
   await page.getByLabel("Password").fill(adminPassword);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("button", { name: /Lock/ }).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: /Open profile for/ }).first()).toBeVisible({ timeout: 30_000 });
 }
 
 async function signIn(page: Page, username: string | undefined, password: string | undefined) {
@@ -127,7 +127,7 @@ async function signIn(page: Page, username: string | undefined, password: string
   await page.getByLabel("Email or username").fill(username);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("button", { name: /Lock/ }).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: /Open profile for/ }).first()).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe("deployed read-only smoke", () => {
@@ -188,12 +188,9 @@ test.describe("deployed read-only smoke", () => {
     await signIn(page, branchUsername, branchPassword);
     await expect(page.locator("body")).not.toContainText("This page didn't load");
 
-    // This test account has an explicit can_manage_locations override, so the
-    // location screen is expected to open even though its base role is cashier.
-    await page.goto("/stores", { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "Manage locations" })).toBeVisible();
-
-    for (const path of ["/staff", "/settings/database"] as const) {
+    // The deployed cashier account currently has no privileged administration
+    // overrides. Confirm each sensitive screen enforces that live role state.
+    for (const path of ["/stores", "/staff", "/settings/database"] as const) {
       await page.goto(path, { waitUntil: "domcontentloaded" });
       await expect(page.getByRole("heading", { name: /Permission required|Hidden for your role/ })).toBeVisible();
       await expect(page.getByRole("link", { name: "Back to the register" })).toBeVisible();

@@ -98,7 +98,9 @@ describe("customer membership portal security", () => {
     expect(emailOtpSql).toContain("u.email_confirmed_at is not null");
     expect(emailOtpSql).toContain("v_uid, v_phone, v_name, v_email, v_phone");
     expect(emailOtpSql).toContain("true, now(), 'email'");
-    expect(emailOtpSql).not.toMatch(/(?:otp|token|verification)_?(?:code|hash)\s+(?:text|varchar)/i);
+    expect(emailOtpSql).not.toMatch(
+      /(?:otp|token|verification)_?(?:code|hash)\s+(?:text|varchar)/i,
+    );
     expect(service).toContain("AbortSignal.timeout(8_000)");
     expect(service).toContain("phone: row.member_code");
     expect(service).toContain("await verifyCaller(parsed.data)");
@@ -152,5 +154,37 @@ describe("customer membership portal security", () => {
     expect(activation).toContain("membershipSupabaseUrl: approval.membershipSupabaseUrl");
     expect(activation).toContain("membershipSupabaseKey: approval.membershipSupabaseKey");
     expect(activation).not.toContain("MEMBERSHIP_SUPABASE_SERVICE_ROLE_KEY");
+  });
+
+  it("documents membership hosting configuration without accepting a service key in the client", () => {
+    const panel = read("src/platforms/web/components/pos/settings/panels/CloudConnectionPanel.tsx");
+    const join = read("src/routes/join.tsx");
+    const membership = read("src/routes/membership.tsx");
+
+    expect(panel).toContain('publicSupabaseConfig("membership")');
+    expect(panel).toContain("MEMBERSHIP_SUPABASE_URL");
+    expect(panel).toContain("MEMBERSHIP_SUPABASE_PUBLISHABLE_KEY");
+    expect(panel).not.toContain("MEMBERSHIP_SUPABASE_SERVICE_ROLE_KEY");
+    expect(panel).toContain("encrypted hosting");
+    expect(panel).not.toMatch(/setMembership|membershipServiceKey|membership-service-key/i);
+    expect(panel).not.toContain("Membership user");
+    expect(panel).not.toContain("Project ID");
+    expect(join).not.toContain("Already a member?");
+    expect(join).not.toContain("Sign in with OTP");
+    expect(join).not.toContain('label="Country"');
+    expect(membership).toContain('redirect({ to: "/join", replace: true })');
+    expect(membership).not.toContain("MemberLogin");
+  });
+
+  it("persists the submitted phone when email OTP claims an existing member", () => {
+    const completion = read(
+      "supabase/membership/migrations/20261004223000_complete_claimed_member_enrollment.sql",
+    );
+
+    expect(completion).toContain("v_member_id := public.membership_claim()");
+    expect(completion).toContain("member_code = v_phone");
+    expect(completion).toContain("phone = v_phone");
+    expect(completion).toContain("where id = v_member_id and auth_user_id = v_uid");
+    expect(completion).toContain("MEMBERSHIP_PHONE_ALREADY_REGISTERED");
   });
 });

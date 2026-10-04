@@ -18,6 +18,7 @@ export type UpdateStatus =
   | "idle"
   | "checking"
   | "current"
+  | "available"
   | "downloading"
   | "ready"
   | "error"
@@ -59,6 +60,8 @@ type UpdateBridge = {
   appVersion: () => Promise<string>;
   updateStatus: () => Promise<UpdateState>;
   checkForUpdates: () => Promise<UpdateState>;
+  downloadUpdate: () => Promise<UpdateState>;
+  downloadAndInstallUpdate: () => Promise<{ ok: boolean; error?: string }>;
   installUpdate: () => Promise<{ ok: boolean; error?: string }>;
   diagnoseUpdates?: () => Promise<UpdateDiagnosis>;
   updateDownloadPage?: () => Promise<string | null>;
@@ -116,6 +119,16 @@ export function useAppUpdates() {
     await updateBridge()?.installUpdate();
   }, []);
 
+  const download = useCallback(async () => {
+    const next = await updateBridge()?.downloadUpdate();
+    if (next) setState(next);
+    return next;
+  }, []);
+
+  const downloadAndInstall = useCallback(async () => {
+    return updateBridge()?.downloadAndInstallUpdate();
+  }, []);
+
   const [diagnosis, setDiagnosis] = useState<UpdateDiagnosis | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
 
@@ -161,6 +174,8 @@ export function useAppUpdates() {
     supported,
     check,
     install,
+    download,
+    downloadAndInstall,
     diagnose,
     diagnosing,
     diagnosis,

@@ -56,7 +56,8 @@ describe("offline terminal operations", () => {
     const auth = readFileSync("src/lib/pos-auth.tsx", "utf8");
     expect(auth).toContain("role: offlineAppRole(local.staff.roleSlug)");
     expect(auth).toContain("roleSlug: local.staff.roleSlug");
-    expect(dialog).toContain("await verifyLocalPin(authorizerId.trim(), pin)");
+    expect(dialog).toContain("await verifyLocalPin(expectedId, pin)");
+    expect(dialog).toContain("self_authorization: !!prompt.selfAuthorizer");
     expect(dialog).toContain('mode_used: "offline_pin"');
   });
 
@@ -167,13 +168,17 @@ describe("offline terminal operations", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
     const aggregates = readFileSync("electron/db/repositories/aggregates.cjs", "utf8");
     const privilege = readFileSync("electron/ipc-privilege.cjs", "utf8");
-    expect(main).toContain("const trustedAggregate={...aggregate,operations,branchId}");
-    expect(main).toContain('branchStampedTables=new Set(["audit_logs","activity_events"');
-    expect(main).toContain('operation.table==="audit_logs"');
+    expect(main).toContain("const trustedAggregate={");
+    expect(main).toContain("branchId,");
+    expect(main).toContain("terminalId:terminal.tokenId??terminal.terminalId??null");
+    expect(main).toContain('branchStampedTables=new Set(["audit_logs","shift_sessions","activity_events"');
+    expect(main).toContain('verifiedBranchTables=new Set(["audit_logs","shift_sessions"]');
     expect(main).toContain('!String(row?.store_id??"").trim()');
     expect(main).toContain("adminSession.branchId()");
     expect(main).toContain('code:"SYNC_BRANCH_FORBIDDEN"');
     expect(aggregates).toContain("async assertBranch(transaction, table, record, match, branchId)");
+    expect(aggregates).toContain("branchId: aggregate.branchId");
+    expect(aggregates).toContain("terminalId: aggregate.terminalId");
     expect(aggregates).toContain('code: "SYNC_BRANCH_FORBIDDEN"');
     expect(privilege).toContain('"business:write-batch": SUPERVISOR');
     expect(privilege).toContain('channel === "business:commit-aggregate"');

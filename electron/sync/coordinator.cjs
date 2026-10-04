@@ -1,5 +1,5 @@
 class SyncCoordinator {
-  constructor({ pushWorker, pullWorker, publish = () => {} }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.running=false; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], credentialsInvalid:false }; }
+  constructor({ pushWorker, pullWorker, publish = () => {} }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.running=false; this.activeRun=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], credentialsInvalid:false }; }
   snapshot() { return { ...this.status, running:this.running, paused:this.paused }; }
   async refresh(branchId) {
     try {
@@ -11,8 +11,15 @@ class SyncCoordinator {
     return this.snapshot();
   }
   async runNow(options = {}) {
-    if (this.running) return { ok:false, ...this.snapshot(), busy:true, code:"ESYNC_BUSY", error:"Synchronization is already running." };
+    // Startup restore, the periodic timer and a manual click can converge on
+    // the same tick. Share the active result instead of reporting a false
+    // synchronization failure to two of those callers.
+    if (this.activeRun) return this.activeRun;
     if (this.paused) return { ok:false, ...this.snapshot(), paused:true, code:"ESYNC_PAUSED", error:"Synchronization is paused." };
+    this.activeRun=this.runOnce(options);
+    try{return await this.activeRun;}finally{this.activeRun=null;}
+  }
+  async runOnce(options = {}) {
     this.running=true;
     let result;
     try {

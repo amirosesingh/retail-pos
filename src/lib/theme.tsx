@@ -9,33 +9,19 @@ import {
 } from "react";
 import {
   DEFAULT_THEME_PALETTE,
-  isThemePalette,
   type ThemePalette,
 } from "./theme-palettes";
+import {
+  THEME_PALETTE_STORAGE_KEY,
+  persistThemePalette,
+  readStoredPalette,
+} from "./theme-storage";
 
 export type ThemeChoice = "system" | "light" | "dark";
 
 const KEY = "pos.theme";
-export const THEME_PALETTE_STORAGE_KEY = "pos.color-theme";
 /** Older builds wrote the same preference here; read once, then forget it. */
 const LEGACY_KEY = "pos.ui.theme";
-
-export function readStoredPalette(): ThemePalette {
-  try {
-    const stored = localStorage.getItem(THEME_PALETTE_STORAGE_KEY);
-    return isThemePalette(stored) ? stored : DEFAULT_THEME_PALETTE;
-  } catch {
-    return DEFAULT_THEME_PALETTE;
-  }
-}
-
-export function persistThemePalette(palette: ThemePalette) {
-  try {
-    localStorage.setItem(THEME_PALETTE_STORAGE_KEY, palette);
-  } catch {
-    /* private mode */
-  }
-}
 
 /** Reads the choice from the current key, adopting an older device's value. */
 const readStoredTheme = (): ThemeChoice | null => {

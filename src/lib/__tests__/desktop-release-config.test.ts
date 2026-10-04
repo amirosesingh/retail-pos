@@ -48,20 +48,32 @@ describe("desktop release configuration", () => {
     expect(android).not.toContain("ANDROID_VERSION_CODE: ${{ github.run_number }}");
   });
 
-  it("publishes the same complete cross-platform manifest from either release job", () => {
+  it("publishes the same signed-package manifest from either release job", () => {
     for (const path of [
       ".github/workflows/desktop-release.yml",
       ".github/workflows/android-apk.yml",
     ]) {
       const workflow = read(path);
       expect(workflow).toContain("apkUrl");
-      expect(workflow).toContain("bundleUrl");
+      expect(workflow).not.toContain("bundleUrl");
       expect(workflow).toContain("windowsUrl");
       expect(workflow).toContain("s3://updatelccms/pos-app/manifest.json");
     }
+    expect(read(".github/workflows/android-apk.yml")).not.toContain("web-latest.zip");
   });
 
   it("can verify the normal installer from latest.yml", () => {
     expect(read("electron/updater.cjs")).toContain('["latest.yml", `${encodeURIComponent(version)}.yml`]');
+  });
+
+  it("refuses unsigned Windows releases and verifies the Android signer", () => {
+    const desktop = read(".github/workflows/desktop-release.yml");
+    const android = read(".github/workflows/android-apk.yml");
+    expect(desktop).toContain("WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}");
+    expect(desktop).toContain("WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}");
+    expect(desktop).toContain("Get-AuthenticodeSignature");
+    expect(desktop).toContain('$signature.Status -ne "Valid"');
+    expect(android).toContain("apksigner\" verify --verbose --print-certs");
+    expect(android).toContain("APK signer does not match the configured release keystore alias");
   });
 });

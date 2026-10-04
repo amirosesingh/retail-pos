@@ -14,8 +14,19 @@ describe("Electron cashier sign in", () => {
     expect(main).toContain('ipcMain.handle("auth:cashier-login"');
     expect(main).toContain("/api/public/cashier-login`");
     expect(main).toContain("signal: abort.signal");
+    expect(main).toContain(
+      'adminSession.grant(level, cashier.username ?? username, cashier.permissions ?? {}, "pos", branchId)',
+    );
+    expect(main).toContain("syncCloud.setAuthorizationProof(proof)");
+    expect(main).toContain('publishBusinessChange({kind:"branch",branchId:String(branchId)})');
     expect(auth).toContain("window.pos?.cashierLogin");
     expect(privilege).toContain('"auth:cashier-login": OPEN');
+  });
+
+  it("reloads the local snapshot when sign-in repairs a token-only branch mirror", () => {
+    const store = read("src/lib/pos-store.tsx");
+    expect(store).toContain('if (change.kind === "branch")');
+    expect(store).toContain("setReloadTick((tick) => tick + 1)");
   });
 
   it("locks the keypad submit path synchronously against duplicate requests", () => {

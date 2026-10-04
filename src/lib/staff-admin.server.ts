@@ -99,6 +99,7 @@ export type StaffPayload = {
   pin?: string;
   /** password — required for real-email accounts */
   password?: string;
+  authorizationPin: string;
   branchId?: string | null;
   roleSlug: string;
   baseRole: "admin" | "manager" | "staff";
@@ -127,6 +128,10 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
   const emailMode = isRealEmail(typed);
   const pin = (payload.pin ?? "").trim();
   const password = payload.password ?? "";
+  const authorizationPin = payload.authorizationPin.trim();
+  if (!/^\d{4,6}$/.test(authorizationPin)) {
+    throw new Error("Set a 4 to 6 digit authorisation PIN");
+  }
 
   let username: string;
   let email: string;
@@ -195,8 +200,8 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
     p_role_slug: payload.roleSlug,
     p_store_id: payload.branchId ?? null,
     p_is_active: payload.active,
-    p_pin: emailMode ? "" : pin,
-    p_pin_length: emailMode ? 0 : pin.length,
+    p_pin: authorizationPin,
+    p_pin_length: authorizationPin.length,
     p_auth_user_id: userId,
     p_permissions: null,
   });
@@ -470,6 +475,7 @@ export async function ensurePinAccount(
     displayName: verified.fullName,
     username: verified.username,
     pin,
+    authorizationPin: pin,
     branchId: verified.storeId,
     roleSlug: "cashier",
     baseRole: "staff",

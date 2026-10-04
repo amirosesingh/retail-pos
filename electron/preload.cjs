@@ -91,6 +91,8 @@ contextBridge.exposeInMainWorld("pos", {
   netGetBinary: (url) => invoke("net:get-binary", url),
   updateStatus: () => invoke("update:status"),
   checkForUpdates: () => invoke("update:check"),
+  downloadUpdate: () => invoke("update:download"),
+  downloadAndInstallUpdate: () => invoke("update:download-install"),
   installUpdate: () => invoke("update:install"),
   diagnoseUpdates: () => invoke("update:diagnose"),
   updateDownloadPage: () => invoke("update:download-page"),

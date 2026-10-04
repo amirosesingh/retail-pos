@@ -38,9 +38,15 @@ export const Route = createFileRoute("/api/v1/pos/ipc-adopt")({
             authUserId: caller.authUserId,
             email: caller.email,
           });
-          if (!authority?.permissions.can_manage_sync_backup) {
+          // Session adoption establishes the signed-in person's complete,
+          // server-verified POS permission set.  It must not require the
+          // unrelated database-maintenance permission: an ordinary cashier
+          // still needs the desktop process to authorize sale aggregates.
+          // Database and sync channels independently require
+          // can_manage_sync_backup in electron/ipc-privilege.cjs.
+          if (!authority) {
             return Response.json(
-              { ok: false, error: "This account lacks Manage database connection permission." },
+              { ok: false, error: "This staff account is not active." },
               { status: 403 },
             );
           }

@@ -9,15 +9,15 @@
  * the folder locally and the router takes over from there, so the till boots
  * and sells with no internet at all.
  */
-const { spawnSync, spawn } = require("node:child_process");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const { withoutWebEnv, scrubWebEnv } = require("./web-only-env.cjs");
 
 const root = path.resolve(__dirname, "..");
 const out = path.join(root, "capacitor-shell");
-const PORT = Number(process.env["MOBILE_RENDER_PORT"] || 43119);
 
 
 function run(script, args, env) {
@@ -31,19 +31,6 @@ function run(script, args, env) {
   if (res.status !== 0) process.exit(res.status ?? 1);
 }
 
-
-async function waitForServer(url, attempts = 60) {
-  for (let i = 0; i < attempts; i += 1) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return await res.text();
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error(`The build server never answered on ${url}`);
-}
 
 function copyDir(from, to) {
   fs.mkdirSync(to, { recursive: true });
@@ -97,28 +84,14 @@ async function main() {
   }
 
   console.log("› rendering the app shell");
-  const server = spawn(process.execPath, [serverEntry], {
-    cwd: root,
-    env: {
-      ...withoutWebEnv(),
-      PORT: String(PORT),
-      HOST: "127.0.0.1",
-      NITRO_PORT: String(PORT),
-    },
-    stdio: ["ignore", "inherit", "inherit"],
-  });
-
-
-  server.on("error", (error) => {
-    console.error(`Could not start the phone render server: ${error.message}`);
-  });
-
-  let html;
-  try {
-    html = await waitForServer(`http://127.0.0.1:${PORT}/`);
-  } finally {
-    server.kill("SIGKILL");
-  }
+  // Render through Nitro's standards-based fetch entry directly. Starting an
+  // HTTP listener only to call it once introduced a port race and, on newer
+  // Node runtimes, could hand H3 a relative request URL that it rejects.
+  const ssrEntry = path.join(root, "dist", "server", "_ssr", "ssr.mjs");
+  const ssr = await import(pathToFileURL(ssrEntry).href);
+  const response = await ssr.default.fetch(new Request("http://android.local/"), {}, {});
+  if (!response.ok) throw new Error(`The phone shell renderer returned HTTP ${response.status}.`);
+  let html = await response.text();
 
   // The APK must carry no tenant identity. The render server may have had a
   // project address and key in its own environment; strip anything it printed

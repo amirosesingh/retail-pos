@@ -109,8 +109,10 @@ export function describeError(error: unknown, action = "That action"): string {
 
   if (code === "ESQLSERVER_WRITE") {
     const table = (error as Failure | null)?.table;
+    const sqlNumber = (error as Failure | null)?.sqlNumber;
     const target = table ? ` while writing ${table}` : "";
-    return `${action} could not be saved to local SQL Server${target}. The transaction was rolled back; check Database & Cloud Connection and retry.`;
+    const reference = sqlNumber ? ` (SQL Server ${sqlNumber})` : "";
+    return `${action} could not be saved to local SQL Server${target}${reference}. The transaction was rolled back; check Database & Cloud Connection and retry.`;
   }
 
   if (code === "23503" || /foreign key constraint/i.test(raw))

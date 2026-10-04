@@ -15,8 +15,8 @@ import { Progress } from "@/components/ui/progress";
 import { APP_VERSION, useAppUpdates } from "@/lib/app-updates";
 import { useAndroidUpdates } from "@/platforms/mobile/android-updates";
 import { isAndroid, isNative } from "@/platform-config/platform";
-import { checkWebBundle } from "@/platforms/mobile/web-bundle-updates";
 import { MANIFEST_URL } from "@/lib/update-manifest";
+import { usePos } from "@/lib/pos-store";
 
 /* ── One UI style tiles ──────────────────────────────────────────────── */
 
@@ -68,6 +68,7 @@ export function TileRow({
 const LABELS: Record<string, string> = {
   idle: "Not checked yet",
   checking: "Checking for updates…",
+  available: "A newer version is available",
   current: "You are on the latest version",
   downloading: "Downloading update…",
   ready: "Update ready — restart to install",
@@ -103,6 +104,8 @@ function DesktopUpdateCard() {
     state,
     supported,
     check,
+    download,
+    downloadAndInstall,
     install,
     lastChecked,
     manifestChecking,
@@ -115,6 +118,7 @@ function DesktopUpdateCard() {
     diagnosis,
     failureReport,
   } = useAppUpdates();
+  const { activeShift } = usePos();
   const [copied, setCopied] = useState(false);
 
   const version = state.version || APP_VERSION;
@@ -229,6 +233,25 @@ function DesktopUpdateCard() {
             Restart and install
           </Button>
         )}
+        {supported && state.status === "available" && (
+          <>
+            <Button
+              variant="outline"
+              className="touch-target"
+              onClick={() => void download()}
+            >
+              Download only
+            </Button>
+            <Button
+              className="touch-target"
+              disabled={!!activeShift}
+              title={activeShift ? "Close the active shift before installing an update" : undefined}
+              onClick={() => void downloadAndInstall()}
+            >
+              Download and install
+            </Button>
+          </>
+        )}
         {supported && (
           <Button
             variant="outline"
@@ -270,17 +293,18 @@ function DesktopUpdateCard() {
 
       <p className="px-1 text-xs text-muted-foreground">
         {supported
-          ? "Updates download quietly in the background and install when you restart — a shift is never interrupted. Your terminal registration is kept."
+          ? activeShift
+            ? "Download-only is available now. Installation stays blocked until the active shift is closed, so trading is not interrupted."
+            : "Choose download-only to stage the verified installer, or download and install to restart now. Terminal registration and the local database are kept."
           : "The browser build always serves the newest files. Downloads here are for the Windows till installer."}
       </p>
     </div>
   );
 }
 
-/** Android till: APK manifest plus the live web bundle, no store involved. */
+/** Android till: signed APK updates from the configured server, no store involved. */
 function AndroidUpdateCard() {
   const { state, available, check, install, installDownloaded } = useAndroidUpdates();
-  const [bundle, setBundle] = useState<string | null>(null);
 
   const status = state.checking
     ? "Checking for updates…"
@@ -340,12 +364,6 @@ function AndroidUpdateCard() {
           </div>
         )}
         {state.notes && <TileRow label="Release notes" hint={state.notes} />}
-        {bundle && (
-          <TileRow
-            label="Interface update"
-            hint={`v${bundle} downloaded — it applies the next time the app starts.`}
-          />
-        )}
         {state.error && (
           <TileRow label="Last error" hint={<span className="text-destructive">{state.error}</span>} />
         )}
@@ -356,10 +374,7 @@ function AndroidUpdateCard() {
           variant="outline"
           className="touch-target"
           disabled={state.checking || state.downloading}
-          onClick={() => {
-            void check();
-            void checkWebBundle().then(setBundle);
-          }}
+          onClick={() => void check()}
         >
           {state.checking ? (
             <Loader2 className="size-4 animate-spin" />
@@ -381,8 +396,8 @@ function AndroidUpdateCard() {
       </div>
 
       <p className="px-1 text-xs text-muted-foreground">
-        Interface fixes arrive automatically on the next launch. A full release downloads the app
-        file from your own server and opens Android&rsquo;s installer — no app store needed.
+        Updates are delivered as Android-signed APK files. The app downloads the APK from your own
+        server and opens Android&rsquo;s installer — no app store needed.
       </p>
     </div>
   );

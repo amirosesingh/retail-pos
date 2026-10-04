@@ -59,7 +59,7 @@ const logServer = (line) => append("server.log", line);
 /** Durable, credential-free evidence for local SQL/cloud routing failures. */
 function logConnection(event, detail = {}) {
   const safe = {};
-  const allowed = ["state", "connected", "scope", "code", "stage", "category", "message", "latencyMs"];
+  const allowed = ["state", "connected", "scope", "code", "stage", "category", "message", "latencyMs", "table", "sqlNumber"];
   for (const key of allowed) {
     const value = detail?.[key];
     if (value == null) continue;

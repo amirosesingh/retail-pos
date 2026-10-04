@@ -1,6 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { corsPreflight, withCors } from "@/lib/public-cors";
+import {
+  ACTIVITY_SOURCE_BATCH_SIZE,
+  ACTIVITY_WINDOW_ERROR,
+  MAX_ACTIVITY_OFFSET,
+  MAX_ACTIVITY_SOURCE_BATCHES,
+  activityScanBudgetExhausted,
+} from "@/lib/activity-pagination";
 
 const bodySchema = z.object({
   action: z.enum(["list", "clear", "clear_all"]),
@@ -11,7 +18,7 @@ const bodySchema = z.object({
   eventId: z.string().uuid().optional(),
   cleared: z.boolean().optional(),
   limit: z.number().int().min(1).max(500).optional(),
-  offset: z.number().int().min(0).max(1_000_000).optional(),
+  offset: z.number().int().min(0).max(MAX_ACTIVITY_OFFSET).optional(),
   query: z.string().trim().max(160).optional(),
   sortBy: z.enum(["created_at", "severity", "event_type", "store_id", "title"]).optional(),
   sortDirection: z.enum(["asc", "desc"]).optional(),
@@ -139,20 +146,22 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         const { activityVisibleTo } = await import("@/lib/activity-audience");
         const offset = input.offset ?? 0;
         const limit = input.limit ?? 200;
-        const target = offset + limit + 1;
+        const target = offset + limit;
         const visibleRows: Record<string, unknown>[] = [];
-        const batchSize = 1000;
+        const batchSize = ACTIVITY_SOURCE_BATCH_SIZE;
         let sourceOffset = 0;
         let exhausted = false;
+        let batchesRead = 0;
         // Continue from the last bounded source batch until the requested
         // audience-filtered page is full; large valid offsets remain reachable.
-        while (visibleRows.length < target) {
+        while (visibleRows.length < target && batchesRead < MAX_ACTIVITY_SOURCE_BATCHES) {
           const page = new URLSearchParams(params);
           page.set("limit", String(batchSize));
           page.set("offset", String(sourceOffset));
           const response = await serviceRest(`activity_events?${page}`);
           if (!response.ok) return reply({ ok: false, error: "Could not load activity" }, 503);
           const rows = (await response.json()) as Record<string, unknown>[];
+          batchesRead += 1;
           visibleRows.push(...rows.filter((row) => activityVisibleTo(row, audienceIdentity)));
           if (rows.length < batchSize) {
             exhausted = true;
@@ -160,6 +169,8 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
           }
           sourceOffset += rows.length;
         }
+        if (activityScanBudgetExhausted({ batchesRead, exhausted, visibleCount: visibleRows.length, target }))
+          return reply({ ok: false, code: "ACTIVITY_WINDOW_EXCEEDED", error: ACTIVITY_WINDOW_ERROR }, 422);
         return reply({
           ok: true,
           rows: visibleRows.slice(offset, offset + limit),

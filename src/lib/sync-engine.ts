@@ -663,6 +663,7 @@ const settingsListeners = new Set<(change: LiveChange) => void>();
 const salesListeners = new Set<(change: LiveChange) => void>();
 const dataListeners = new Set<(change: LiveChange) => void>();
 let settingsLiveChannel: ReturnType<typeof supabaseExternal.channel> | null = null;
+const SETTINGS_BROADCAST_TIMEOUT_MS = 1_500;
 
 /**
  * Wake connected tills after a browser has committed a settings change.
@@ -678,18 +679,25 @@ export async function broadcastSettingsChange(table: string): Promise<boolean> {
   if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return false;
   const channel = settingsLiveChannel;
   if (!channel) return false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    return (
-      (await channel.send({
+    const outcome = await Promise.race([
+      channel.send({
         type: "broadcast",
         event: "settings_changed",
         payload: { table },
-      })) === "ok"
-    );
+      }),
+      new Promise<"timed_out">((resolve) => {
+        timeout = setTimeout(() => resolve("timed_out"), SETTINGS_BROADCAST_TIMEOUT_MS);
+      }),
+    ]);
+    return outcome === "ok";
   } catch {
     // Realtime is an acceleration path. The normal sync poll remains the
     // durable fallback when the socket is reconnecting.
     return false;
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
