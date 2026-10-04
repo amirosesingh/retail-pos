@@ -34,6 +34,7 @@ BEGIN
     "store_name_snapshot","store_address_snapshot","authorization_request_id",
     "authorized_by","authorized_at","rounding_adjustment","rounding_label","branch_id"
   FROM jsonb_populate_recordset(NULL::public."sales", COALESCE(p_rows,'[]'::jsonb))
+  ORDER BY COALESCE("is_exchange", false), "created_at", "id"
   ON CONFLICT ("id") DO UPDATE SET
     "is_refunded"=(public."sales"."is_refunded" OR EXCLUDED."is_refunded"),
     "row_version"=GREATEST(public."sales"."row_version",EXCLUDED."row_version");

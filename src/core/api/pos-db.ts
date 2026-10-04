@@ -522,7 +522,6 @@ const settingsPatchRow = (s: AppSettings, patch: Partial<AppSettings>): Row => {
   const row = Object.fromEntries(
     Object.entries(full).filter(([key]) => key === "id" || key === "updated_at" || keys.has(key)),
   );
-  missingSettingsColumns.forEach((column) => delete row[column]);
   return row;
 };
 
@@ -2187,8 +2186,10 @@ export const db = {
    * waits for confirmation, so the page can say whether it really landed.
    */
   async saveSettingsNow(s: AppSettings, patch?: Partial<AppSettings>): Promise<void> {
-    const snapshotRow = patch ? settingsPatchRow(s, patch) : settingsToRow(s);
-    const fieldRows = settingsFieldRows(snapshotRow);
+    const fieldSourceRow = patch ? settingsPatchRow(s, patch) : buildSettingsRow(s);
+    const snapshotRow = { ...fieldSourceRow };
+    missingSettingsColumns.forEach((column) => delete snapshotRow[column]);
+    const fieldRows = settingsFieldRows(fieldSourceRow);
     const op: SyncOp = {
       kind: "upsert",
       table: "pos_settings",

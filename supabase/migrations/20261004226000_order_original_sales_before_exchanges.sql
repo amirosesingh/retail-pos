@@ -1,5 +1,6 @@
--- Apply exchange aggregates in two phases. Change tracking does not promise
--- that the replacement bill precedes the original bill whose link it fills.
+-- An offline terminal can create an original sale and exchange it before its
+-- first cloud push. Insert non-exchange rows first, then exchange rows, then
+-- fill original-to-destination links after every bill exists.
 CREATE OR REPLACE FUNCTION public.sync_apply_sales(p_rows jsonb)
 RETURNS integer
 LANGUAGE plpgsql

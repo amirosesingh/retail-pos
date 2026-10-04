@@ -119,6 +119,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261004221000_validate_stock_transfer_statuses.sql",
       "supabase/migrations/20261004224000_order_exchange_sync_rows.sql",
       "supabase/migrations/20261004225000_separate_terminal_approval_pins.sql",
+      "supabase/migrations/20261004226000_order_original_sales_before_exchanges.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
