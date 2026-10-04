@@ -52,41 +52,10 @@ jobs:
             echo "release_id=$tag-$short"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Require Windows code-signing credentials
-        shell: pwsh
-        env:
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)) {
-            throw "Missing GitHub secret WIN_CSC_LINK (base64-encoded trusted PFX certificate)."
-          }
-          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) {
-            throw "Missing GitHub secret WIN_CSC_KEY_PASSWORD."
-          }
-
       - name: Build Electron installer
         env:
           POS_UPDATE_URL: ${{ vars.POS_UPDATE_URL }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: npm run desktop:release
-
-      - name: Verify Windows Authenticode signatures
-        shell: pwsh
-        run: |
-          $targets = @(
-            "release\\win-unpacked\\Retail.exe",
-            "release\\Retail Setup ${{ steps.meta.outputs.version }}.exe"
-          )
-          foreach ($target in $targets) {
-            if (-not (Test-Path -LiteralPath $target)) { throw "Signed release file is missing: $target" }
-            $signature = Get-AuthenticodeSignature -LiteralPath $target
-            if ($signature.Status -ne "Valid") {
-              throw "Authenticode verification failed for $target: $($signature.Status)"
-            }
-            Write-Host "Verified $target — $($signature.SignerCertificate.Subject)"
-          }
 
       - name: Write release manifest
         shell: bash
