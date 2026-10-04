@@ -1619,10 +1619,9 @@ function registerIpc() {
   ipcMain.handle("update:download", () => updater.downloadUpdate());
   const installUpdateWhenShiftClosed = async (downloadFirst) => {
     const shifts = await operationsRepository.query(localBranchId(), "shifts", { limit: 500 });
-    const active = (shifts.rows ?? []).some((shift) => {
-      const state = String(shift.state ?? shift.status ?? "").toUpperCase();
-      return !shift.closed_at && ["", "ACTIVE", "OPEN"].includes(state);
-    });
+    // CASH_COUNT_REQUIRED is still an open financial shift. Never let either
+    // install path quit the till until every shift has a durable closed_at.
+    const active = (shifts.rows ?? []).some((shift) => !shift.closed_at);
     if (active) {
       return {
         ok: false,

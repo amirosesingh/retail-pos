@@ -2199,6 +2199,7 @@ export const db = {
       kind: "upsert",
       table: "settings_scoped",
       rows: fieldRows,
+      onConflict: "scope,scope_id,key",
     };
     const bridge = localDb();
     if (bridge) {

@@ -66,7 +66,10 @@ describe("desktop release configuration", () => {
     const updater = read("electron/updater.cjs");
     expect(updater).toContain('["latest.yml", `${encodeURIComponent(version)}.yml`]');
     expect(updater).toContain("if (fallbackPromise) return fallbackPromise");
-    expect(read("electron/main.cjs")).toContain('code: "EACTIVE_SHIFT"');
+    const main = read("electron/main.cjs");
+    expect(main).toContain('code: "EACTIVE_SHIFT"');
+    expect(main).toContain('(shift) => !shift.closed_at');
+    expect(main).not.toContain('["", "ACTIVE", "OPEN"].includes(state)');
   });
 
   it("refuses unsigned Windows releases and verifies the Android signer", () => {

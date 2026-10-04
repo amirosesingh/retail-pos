@@ -62,9 +62,15 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose) {
       CONVERT(nvarchar(128),a.id) id,a.user_id username,a.full_name,a.store_id,
       a.role,a.role_slug,a.permissions,a.is_active,${hashColumn} pin_hash
       FROM dbo.app_users a
-      LEFT JOIN dbo.cashiers c ON LOWER(c.username)=LOWER(a.user_id) AND c.is_active=1
+      OUTER APPLY (
+        SELECT TOP (1) candidate.pin_hash
+        FROM dbo.cashiers candidate
+        WHERE LOWER(candidate.username)=LOWER(a.user_id) AND candidate.is_active=1
+        ORDER BY candidate.updated_at DESC,candidate.id DESC
+      ) c
       WHERE (LOWER(a.user_id)=@username OR LOWER(CONVERT(nvarchar(128),a.id))=@username)
-        AND (a.store_id IS NULL OR a.store_id=@branch);`);
+        AND (a.store_id IS NULL OR a.store_id=@branch)
+      ORDER BY CASE WHEN a.store_id=@branch THEN 0 ELSE 1 END,a.updated_at DESC,a.id DESC;`);
   const row = result.recordset?.[0];
   if (!row) return { ok: false, reason: "missing" };
   if (!row.is_active) return { ok: false, reason: "inactive", error: "Account deactivated" };

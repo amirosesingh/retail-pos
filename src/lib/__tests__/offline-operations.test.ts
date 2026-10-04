@@ -105,6 +105,8 @@ describe("offline terminal operations", () => {
     expect(login).toContain("MAX_PIN_ATTEMPTS = 5");
     expect(login).toContain("await bcrypt.compare(secret, hash)");
     expect(login).toContain("WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544)");
+    expect(login).toContain("OUTER APPLY (");
+    expect(login).toContain("ORDER BY candidate.updated_at DESC,candidate.id DESC");
     expect(login).not.toContain("offlineStaffCredentials");
   });
 
@@ -182,6 +184,8 @@ describe("offline terminal operations", () => {
     expect(aggregates).toContain("branchId: aggregate.branchId");
     expect(aggregates).toContain("terminalId: aggregate.terminalId");
     expect(aggregates).toContain('code: "SYNC_BRANCH_FORBIDDEN"');
+    expect(aggregates).toContain('"held_order", "general", "branch"');
+    expect(readFileSync("electron/ipc-guard.cjs", "utf8")).toContain('"branch",');
     expect(privilege).toContain('"business:write-batch": SUPERVISOR');
     expect(privilege).toContain('channel === "business:commit-aggregate"');
   });

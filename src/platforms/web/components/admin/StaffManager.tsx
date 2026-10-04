@@ -517,6 +517,7 @@ export function StaffManager() {
                         onClick={() => {
                           setPinFor(row);
                           setPinValue("");
+                          setShowPinValue(false);
                         }}
                       >
                         <ShieldCheck className="size-4" />
@@ -616,6 +617,7 @@ export function StaffManager() {
               onClick={() => {
                 setPinFor(null);
                 setPinValue("");
+                setShowPinValue(false);
               }}
             >
               Cancel

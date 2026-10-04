@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { BadgeCheck, Gift, Loader2, Mail, PartyPopper } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -136,6 +136,9 @@ function JoinPage() {
             <p className="mt-5 text-xs text-muted-foreground">
               Keep your mobile number handy—it is also your membership number at checkout.
             </p>
+            <Button asChild className="mt-6">
+              <Link to="/membership">View membership and purchases</Link>
+            </Button>
           </div>
         ) : (
           <>

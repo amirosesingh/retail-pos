@@ -153,6 +153,7 @@ function aggregate(value) {
       "booking",
       "held_order",
       "general",
+      "branch",
     ].includes(kind)
   )
     throw new BadArg("Unsupported aggregate kind.");

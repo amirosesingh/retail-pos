@@ -14,6 +14,7 @@ describe("source-neutral settings field merge", () => {
     expect(db).toContain("delete compatibleRow[col]");
     expect(db).toContain("const fieldSourceRow = patch ? settingsPatchRow(s, patch) : buildSettingsRow(s)");
     expect(db).toContain("settingsFieldRows(fieldSourceRow)");
+    expect(db).toContain('onConflict: "scope,scope_id,key"');
     expect(db).toContain("applySettingsFields");
   });
 

@@ -45,6 +45,7 @@ describe("manager override audit history", () => {
     expect(server).toContain("p_pin: authorizationPin");
     expect(screen).toContain("Generate 6-digit PIN");
     expect(screen).toContain("Show generated PIN");
+    expect(screen.match(/setShowPinValue\(false\)/g)?.length).toBeGreaterThanOrEqual(3);
     expect(server).toContain('serviceRpc("staff_account_set_terminal_pin"');
     expect(server).toContain('p_pin: ""');
     expect(read("supabase/migrations/20261004225000_separate_terminal_approval_pins.sql"))

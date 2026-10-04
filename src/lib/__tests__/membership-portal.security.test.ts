@@ -172,8 +172,25 @@ describe("customer membership portal security", () => {
     expect(join).not.toContain("Already a member?");
     expect(join).not.toContain("Sign in with OTP");
     expect(join).not.toContain('label="Country"');
-    expect(membership).toContain('redirect({ to: "/join", replace: true })');
+    expect(join).toContain("View membership and purchases");
+    expect(membership).toContain('<Navigate to="/join" replace />');
     expect(membership).not.toContain("MemberLogin");
+    expect(membership).toContain("loadMemberPortalSales");
+    expect(membership).toContain("MemberDashboard");
+    expect(membership).toContain("nextUserId === currentUserId.current");
+    expect(membership).toContain("Could not load your membership");
+    expect(membership).toContain("void refresh(session)");
+    expect(membership).toContain("active && !authEventSeen");
+    expect(membership).toContain("profile.countryCode);");
+    expect(membership).toContain('timeZone: "UTC"');
+    expect(membership).toContain('profile.verified ? "Verified membership"');
+    expect(membership).toContain("Retry purchase history");
+    expect(membership).toContain('htmlFor="member-profile-name"');
+    expect(membership).toContain('htmlFor="member-profile-postal"');
+    expect(membership).toContain("sessionRestoreFailed");
+    expect(membership).toContain("Retry member session");
+    expect(membership).toContain('cause instanceof Error ? cause.message : "Could not sign out."');
+    expect(membership).toContain("if (!editing) resetDraft()");
   });
 
   it("persists the submitted phone when email OTP claims an existing member", () => {
