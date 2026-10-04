@@ -1,7 +1,5 @@
--- Sales are immutable after checkout except for the two monotonic lifecycle
--- fields below. Electron exchange checkout updates the original bill and
--- inserts the replacement bill in one local aggregate; preserve that link
--- when the aggregate is replayed in the cloud.
+-- Apply exchange aggregates in two phases. Change tracking does not promise
+-- that the replacement bill precedes the original bill whose link it fills.
 CREATE OR REPLACE FUNCTION public.sync_apply_sales(p_rows jsonb)
 RETURNS integer
 LANGUAGE plpgsql
@@ -40,9 +38,6 @@ BEGIN
 
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
-  -- The replacement bill must exist before the original bill can point to it.
-  -- SQL Server change rows have no guaranteed order, so link them in a second
-  -- phase after every destination from this aggregate has been inserted.
   UPDATE public."sales" AS target
      SET "exchanged_to_bill_number"=incoming."exchanged_to_bill_number"
     FROM jsonb_populate_recordset(NULL::public."sales", COALESCE(p_rows,'[]'::jsonb)) AS incoming

@@ -519,9 +519,11 @@ const settingsPatchRow = (s: AppSettings, patch: Partial<AppSettings>): Row => {
       (section) => SETTINGS_SECTION_COLUMNS[section as keyof AppSettings] ?? [],
     ),
   );
-  return Object.fromEntries(
+  const row = Object.fromEntries(
     Object.entries(full).filter(([key]) => key === "id" || key === "updated_at" || keys.has(key)),
   );
+  missingSettingsColumns.forEach((column) => delete row[column]);
+  return row;
 };
 
 const settingsFieldRows = (row: Row): Row[] => {
@@ -2211,7 +2213,7 @@ export const db = {
     } catch (e) {
       // The line is down: park the change so it lands when it is back.
       if (!isConnectionError(e)) throw e;
-      await commitOps("Saving settings", [op2]);
+      await commitOps("Saving settings", [fieldOp, op2]);
       return;
     }
     if (!res.error) {
@@ -2219,7 +2221,7 @@ export const db = {
       return;
     }
     if (isConnectionError(new Error(res.error.message))) {
-      await commitOps("Saving settings", [op2]);
+      await commitOps("Saving settings", [fieldOp, op2]);
       return;
     }
     // The database is missing a newer column: drop it and save the rest, so a
@@ -2227,7 +2229,9 @@ export const db = {
     const col = unknownSettingsColumn(res.error.message);
     if (!col) throw new Error(res.error.message);
     missingSettingsColumns.add(col);
-    const retry = await supabase.from("pos_settings").upsert(snapshotRow as never);
+    const compatibleRow = { ...snapshotRow };
+    delete compatibleRow[col];
+    const retry = await supabase.from("pos_settings").upsert(compatibleRow as never);
     if (retry.error) throw new Error(retry.error.message);
     await broadcastSettingsChange("pos_settings");
     if (import.meta.env.DEV) console.warn(`[settings] compatibility column unavailable: ${col}`);

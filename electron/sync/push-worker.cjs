@@ -46,11 +46,13 @@ function changeKey(change) {
 }
 
 /**
- * Global and cluster settings are read-only cache entries on a terminal. Old
- * databases can expose rows downloaded before the CLOUD change-tracking
- * context was introduced as local changes. Do not upload those rows or cached
- * rows belonging to a previous branch/terminal. Unknown scope types remain in
- * the batch so the server rejects malformed writes.
+ * Global and cluster settings are normally read-only cache entries on a
+ * terminal. The one exception is a pos_field:* settings_scoped row: explicit
+ * settings saves use those rows for source-neutral, field-level conflict
+ * resolution. Old databases can expose other rows downloaded before the CLOUD
+ * change-tracking context was introduced as local changes; do not upload them
+ * or cached rows belonging to a previous branch/terminal. Unknown scope types
+ * remain in the batch so the server rejects malformed writes.
  */
 function terminalWritableChanges(tableName, changes, { branchId = "", terminalId = "" } = {}) {
   if (!["settings_overrides", "settings_scoped"].includes(tableName)) return changes;
@@ -60,7 +62,11 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
       .trim()
       .toLowerCase();
     const scopeId = String(key.scope_id ?? "").trim();
-    if (["global", "cluster"].includes(scope)) return false;
+    const fieldWrite =
+      tableName === "settings_scoped" &&
+      scope === "global" &&
+      String(key.key ?? "").startsWith("pos_field:");
+    if (["global", "cluster"].includes(scope) && !fieldWrite) return false;
     if (scope === "branch" && branchId && scopeId !== branchId) return false;
     if (scope === "terminal" && terminalId && scopeId !== terminalId) return false;
     return true;

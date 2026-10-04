@@ -131,7 +131,7 @@ The header status popover now reports SQL Server activity, the most recent SQL h
 
 | Observation | Cause | Fix | Verification |
 | --- | --- | --- | --- |
-| A previously activated till could authenticate while showing an empty register catalogue until restart. | Main-process login repaired the terminal branch, but the renderer had already loaded its unscoped local snapshot and did not know the branch changed. | Persisting a verified branch now publishes a `branch` business-change event; the renderer treats it as a full local snapshot reload trigger. | Focused cashier-login, checkout and reconciliation tests passed; the full suite is 1,242/1,242. |
+| A previously activated till could authenticate while showing an empty register catalogue until restart. | Main-process login repaired the terminal branch, but the renderer had already loaded its unscoped local snapshot and did not know the branch changed. | Persisting a verified branch now publishes a `branch` business-change event; the renderer treats it as a full local snapshot reload trigger. | Focused cashier-login, checkout and reconciliation tests passed; the full suite is 1,243/1,243. |
 
 ## Feature validation boundary
 

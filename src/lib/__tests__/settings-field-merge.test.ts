@@ -10,6 +10,8 @@ describe("source-neutral settings field merge", () => {
     expect(db).toContain('table: "settings_scoped"');
     expect(db).toContain('table: "pos_settings"');
     expect(db).toContain('[fieldOp, op]');
+    expect(db).toContain('[fieldOp, op2]');
+    expect(db).toContain("delete compatibleRow[col]");
     expect(db).toContain("applySettingsFields");
   });
 
@@ -27,5 +29,12 @@ describe("source-neutral settings field merge", () => {
     const operations = read("electron/db/repositories/operations.cjs");
     expect(operations).toContain("WHERE [key] LIKE N'pos_field:%'");
     expect(operations).toContain("output.settingFields");
+  });
+
+  it("uploads only explicit global field rows from an Electron till", () => {
+    const { terminalWritableChanges } = require("../../../electron/sync/push-worker.cjs");
+    const field = { key: { scope: "GLOBAL", scope_id: "", key: "pos_field:show_logo" } };
+    const cached = { key: { scope: "GLOBAL", scope_id: "", key: "other" } };
+    expect(terminalWritableChanges("settings_scoped", [field, cached])).toEqual([field]);
   });
 });

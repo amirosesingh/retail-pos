@@ -93,11 +93,12 @@ describe("exchange workflow safeguards", () => {
 
   it("replays the original bill exchange link during Electron cloud sync", () => {
     const migration = readFileSync(
-      "supabase/migrations/20261004210000_sync_exchange_link.sql",
+      "supabase/migrations/20261004224000_order_exchange_sync_rows.sql",
       "utf8",
     );
-    expect(migration).toContain('"exchanged_to_bill_number"=COALESCE');
-    expect(migration).toContain('public."sales"."exchanged_to_bill_number"');
-    expect(migration).toContain('EXCLUDED."exchanged_to_bill_number"');
+    expect(migration).toContain('"exchange_credit",NULL::text');
+    expect(migration).toContain('UPDATE public."sales" AS target');
+    expect(migration).toContain('FROM jsonb_populate_recordset');
+    expect(migration).toContain('target."exchanged_to_bill_number" IS NULL');
   });
 });
