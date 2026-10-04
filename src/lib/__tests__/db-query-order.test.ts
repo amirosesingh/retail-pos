@@ -62,6 +62,13 @@ describe("routed query ordering", () => {
     expect(orders).toEqual(["id"]);
   });
 
+  it("uses the complete primary key when a cloud table has no id column", async () => {
+    await routedQuery("settings_scoped", { limit: 5000 });
+
+    expect(orders).toEqual(["scope", "scope_id", "key"]);
+    expect(ranges).toEqual([[0, 4999]]);
+  });
+
   it("honours bounded offsets for large paged reads", async () => {
     await routedQuery("stock_transfer_items", { offset: 2000, limit: 1000 });
     expect(ranges).toEqual([[2000, 2999]]);

@@ -139,7 +139,7 @@ jobs:
           keytool -exportcert -keystore "$ANDROID_KEYSTORE_FILE" -alias "$ANDROID_KEY_ALIAS" \
             -storepass "$ANDROID_KEYSTORE_PASSWORD" -file /tmp/release-cert.der
           expected=$(sha256sum /tmp/release-cert.der | awk '{print tolower($1)}')
-          actual=$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}' /tmp/apk-signature.txt)
+          actual=$(sed -n 's/^.*certificate SHA-256 digest: //p' /tmp/apk-signature.txt | head -n1 | tr '[:upper:]' '[:lower:]')
           if [ -z "$actual" ] || [ "$actual" != "$expected" ]; then
             echo "APK signer does not match the configured release keystore alias."; exit 1
           fi

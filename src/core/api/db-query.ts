@@ -37,6 +37,27 @@ type LooseFilter = PromiseLike<{
 const from = (table: string) =>
   (supabaseExternal as unknown as { from: (t: string) => LooseSelect }).from(table);
 
+/**
+ * Cloud tables whose stable key is not the conventional `id` column.
+ *
+ * The local SQL repository already derives ordering from its schema registry.
+ * PostgREST queries are built here, so they need the equivalent key knowledge
+ * or a bounded read will fail before it can fall back to the local snapshot.
+ */
+const CLOUD_PRIMARY_ORDER: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  branch_telemetry: ["terminal_id"],
+  pin_attempts: ["key"],
+  pos_store_settings: ["store_id"],
+  public_flags: ["key"],
+  secure_settings: ["key"],
+  settings_locks: ["section"],
+  settings_overrides: ["scope", "scope_id", "section"],
+  settings_scoped: ["scope", "scope_id", "key"],
+  staff_roles: ["slug"],
+  stock_delta_applied: ["movement_id"],
+  terminal_recovery_secrets: ["terminal_token_id"],
+});
+
 export type QueryOptions = {
   columns?: string;
   match?: Record<string, unknown>;
@@ -85,10 +106,13 @@ async function runQuery(
     }
     if (options.orderBy)
       q = q.order(options.orderBy.column, { ascending: options.orderBy.ascending ?? true });
-    // Most business tables use `id`, but scoped/configuration tables often
-    // have a composite primary key and no id column. An explicit order is
-    // therefore also the caller's deterministic pagination key.
-    if (!options.orderBy) q = q.order("id", { ascending: true });
+    // Most business tables use `id`; configuration and telemetry tables use
+    // natural/composite keys. Apply every primary-key component so offset
+    // pagination is deterministic even when the result crosses API pages.
+    if (!options.orderBy) {
+      for (const column of CLOUD_PRIMARY_ORDER[table] ?? ["id"])
+        q = q.order(column, { ascending: true });
+    }
     return q.range(start, end) as PromiseLike<{
       data: Row[] | null;
       error: { message: string } | null;
