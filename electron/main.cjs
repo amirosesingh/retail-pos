@@ -43,7 +43,7 @@ const { applyMigrations, migrationBundleSql } = require("./db/migrations.cjs");
 const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
-const { listSyncedStaff, verifySyncedStaffPin } = require("./synced-staff-login.cjs");
+const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = require("./synced-staff-login.cjs");
 
 const databaseConfig = createSecureConfig({ app, safeStorage, configStore });
 const databaseManager = new ConnectionManager();
@@ -1464,6 +1464,13 @@ function registerIpc() {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
   });
+  ipcMain.handle("staff:verify-approval-pin", async (_e, username, pin) => {
+    try {
+      return await verifySyncedApprovalPin(databaseManager.pool, username, pin, localBranchId());
+    } catch (error) {
+      return {ok:false,reason:"unavailable",error:String(error?.message??error)};
+    }
+  });
   ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
     const input = guard.options(value, { name: "cashier sign in", max: 2 });
     const username = guard.text(input.username, { name: "username", max: 120 });
@@ -1610,8 +1617,23 @@ function registerIpc() {
   ipcMain.handle("update:status", () => updater.status());
   ipcMain.handle("update:check", () => updater.check());
   ipcMain.handle("update:download", () => updater.downloadUpdate());
-  ipcMain.handle("update:download-install", () => updater.downloadAndInstall());
-  ipcMain.handle("update:install", () => updater.install());
+  const installUpdateWhenShiftClosed = async (downloadFirst) => {
+    const shifts = await operationsRepository.query(localBranchId(), "shifts", { limit: 500 });
+    const active = (shifts.rows ?? []).some((shift) => {
+      const state = String(shift.state ?? shift.status ?? "").toUpperCase();
+      return !shift.closed_at && ["", "ACTIVE", "OPEN"].includes(state);
+    });
+    if (active) {
+      return {
+        ok: false,
+        code: "EACTIVE_SHIFT",
+        error: "Close the active shift before installing an update.",
+      };
+    }
+    return downloadFirst ? updater.downloadAndInstall() : updater.install();
+  };
+  ipcMain.handle("update:download-install", () => installUpdateWhenShiftClosed(true));
+  ipcMain.handle("update:install", () => installUpdateWhenShiftClosed(false));
   ipcMain.handle("update:diagnose", () => updater.diagnose());
   ipcMain.handle("update:download-page", () => updater.downloadPage());
   ipcMain.handle("app:version", () => app.getVersion());

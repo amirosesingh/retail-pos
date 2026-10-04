@@ -33,7 +33,7 @@ import {
   approvalReference,
   canAuthorizeAmount,
 } from "@/lib/authorization";
-import { verifyLocalPin } from "@/core/local-db/local-staff";
+import { verifyLocalApprovalPin } from "@/core/local-db/local-staff";
 import { normalizeSnapshot, snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
 import { syncNow } from "@/lib/sync-engine";
 
@@ -100,14 +100,14 @@ export function AuthorizationDialog({
   async function authorizeLocalPin() {
     if (!prompt) return false;
     const expectedId = prompt.selfAuthorizer?.id ?? authorizerId.trim();
-    const result = await verifyLocalPin(expectedId, pin);
+    const result = await verifyLocalApprovalPin(expectedId, pin);
     if (!result.ok) {
       toast.error(result.error);
       return false;
     }
     if (
       prompt.selfAuthorizer &&
-      result.staff.id.toLowerCase() !== prompt.selfAuthorizer.id.toLowerCase()
+      result.staff.username.toLowerCase() !== prompt.selfAuthorizer.id.toLowerCase()
     ) {
       toast.error("Enter the PIN for the signed-in account.");
       return false;

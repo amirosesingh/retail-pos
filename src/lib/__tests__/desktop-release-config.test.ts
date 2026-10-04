@@ -63,7 +63,10 @@ describe("desktop release configuration", () => {
   });
 
   it("can verify the normal installer from latest.yml", () => {
-    expect(read("electron/updater.cjs")).toContain('["latest.yml", `${encodeURIComponent(version)}.yml`]');
+    const updater = read("electron/updater.cjs");
+    expect(updater).toContain('["latest.yml", `${encodeURIComponent(version)}.yml`]');
+    expect(updater).toContain("if (fallbackPromise) return fallbackPromise");
+    expect(read("electron/main.cjs")).toContain('code: "EACTIVE_SHIFT"');
   });
 
   it("refuses unsigned Windows releases and verifies the Android signer", () => {

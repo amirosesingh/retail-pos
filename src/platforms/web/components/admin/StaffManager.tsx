@@ -4,6 +4,8 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Eye,
+  EyeOff,
   KeyRound,
   Loader2,
   Maximize2,
@@ -156,6 +158,8 @@ export function StaffManager() {
   // gated action, so administrators and supervisors need one too.
   const [pinFor, setPinFor] = useState<Row | null>(null);
   const [pinValue, setPinValue] = useState("");
+  const [showPinValue, setShowPinValue] = useState(false);
+  const [showAuthorizationPin, setShowAuthorizationPin] = useState(false);
   const [idleFor, setIdleFor] = useState<Row | null>(null);
 
   async function saveAuthPin() {
@@ -171,6 +175,7 @@ export function StaffManager() {
         toast.success(`Authorisation PIN set for ${pinFor.full_name}`);
         setPinFor(null);
         setPinValue("");
+        setShowPinValue(false);
       }
     } catch (e) {
       notifyError(e, "Could not save the PIN");
@@ -242,6 +247,7 @@ export function StaffManager() {
   const openCreate = () => {
     setEditing(null);
     setForm({ ...EMPTY });
+    setShowAuthorizationPin(false);
     setFormOpen(true);
   };
 
@@ -569,6 +575,7 @@ export function StaffManager() {
           if (!open) {
             setPinFor(null);
             setPinValue("");
+            setShowPinValue(false);
           }
         }}
       >
@@ -584,12 +591,21 @@ export function StaffManager() {
             <Input
               autoFocus
               inputMode="numeric"
-              type="password"
+              type={showPinValue ? "text" : "password"}
               maxLength={6}
               value={pinValue}
               onChange={(e) => setPinValue(e.target.value.replace(/\D/g, "").slice(0, 6))}
               aria-label="New authorisation PIN"
             />
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              aria-label={showPinValue ? "Hide authorisation PIN" : "Show authorisation PIN"}
+              onClick={() => setShowPinValue((value) => !value)}
+            >
+              {showPinValue ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </Button>
             <Button type="button" variant="outline" onClick={() => setPinValue(generateAuthorizationPin(6))}>
               Generate
             </Button>
@@ -703,7 +719,7 @@ export function StaffManager() {
                 <div className="flex gap-2">
                   <Input
                     id="staff-authorization-pin"
-                    type="password"
+                    type={showAuthorizationPin ? "text" : "password"}
                     inputMode="numeric"
                     maxLength={6}
                     autoComplete="new-password"
@@ -716,6 +732,15 @@ export function StaffManager() {
                     }
                     aria-invalid={!authorizationPinValid}
                   />
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    aria-label={showAuthorizationPin ? "Hide generated PIN" : "Show generated PIN"}
+                    onClick={() => setShowAuthorizationPin((value) => !value)}
+                  >
+                    {showAuthorizationPin ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"

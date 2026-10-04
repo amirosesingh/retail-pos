@@ -13,12 +13,17 @@ const executablePath = sourceMode
   : path.resolve(packageArg || path.join("release", "win-unpacked", "Retail.exe"));
 
 async function bounded(label, work, timeoutMs = 20_000) {
-  return Promise.race([
-    Promise.resolve().then(work),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(Object.assign(new Error(`${label} timed out`), { code: "ETIMEDOUT" })), timeoutMs),
-    ),
-  ]);
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(work),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error(`${label} timed out`), { code: "ETIMEDOUT" })), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function main() {
@@ -88,10 +93,11 @@ async function main() {
       process.exitCode = 1;
     }
   } finally {
+    let closeTimer;
     const closed = await Promise.race([
       app.close().then(() => true),
-      new Promise((resolve) => setTimeout(() => resolve(false), 10_000)),
-    ]);
+      new Promise((resolve) => { closeTimer = setTimeout(() => resolve(false), 10_000); }),
+    ]).finally(() => clearTimeout(closeTimer));
     if (!closed) app.process().kill();
   }
 }

@@ -35,7 +35,8 @@ export function downloadCsv(name: string, rows: (string | number)[][]) {
     .map((r) =>
       r
         .map((c) => {
-          const v = String(c ?? "");
+          const raw = String(c ?? "");
+          const v = /^[\t\r\n ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
           return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
         })
         .join(","),

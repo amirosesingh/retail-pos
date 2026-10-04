@@ -21,7 +21,9 @@ describe("source-neutral settings field merge", () => {
     expect(cloud).toContain('"settings_scoped"');
     expect(cloud).toContain("timestampedConfiguration");
     expect(schema).toContain("WHEN 'settings_scoped' THEN");
-    expect(schema).toContain("settings_scoped_pos_fields_write");
+    expect(schema).toContain("CREATE POLICY settings_scoped_pos_fields_insert");
+    expect(schema).toContain("CREATE POLICY settings_scoped_pos_fields_update");
+    expect(schema).toContain("CREATE POLICY settings_scoped_pos_fields_delete");
     expect(schema).toContain("key LIKE 'pos_field:%'");
   });
 

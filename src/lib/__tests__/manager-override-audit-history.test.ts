@@ -32,6 +32,7 @@ describe("manager override audit history", () => {
     expect(gate).toContain("selfAuthorizer");
     expect(functions).toContain("selfAuthorization: z.boolean().default(false)");
     expect(functions).toContain("self_authorization: data.selfAuthorization");
+    expect(functions).toContain('["reason", "requested_amount", "self_authorization"]');
     expect(report).toContain("Where / reference");
     expect(report).toContain("display.method");
   });
@@ -43,5 +44,10 @@ describe("manager override audit history", () => {
     expect(admin).toContain("authorizationPin: z.string().regex");
     expect(server).toContain("p_pin: authorizationPin");
     expect(screen).toContain("Generate 6-digit PIN");
+    expect(screen).toContain("Show generated PIN");
+    expect(server).toContain('serviceRpc("staff_account_set_terminal_pin"');
+    expect(server).toContain('p_pin: ""');
+    expect(read("supabase/migrations/20261004225000_separate_terminal_approval_pins.sql"))
+      .toContain("terminal.pin_hash <> extensions.crypt");
   });
 });

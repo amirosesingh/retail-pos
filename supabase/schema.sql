@@ -4121,6 +4121,32 @@ BEGIN
 END
 $$;
 
+CREATE OR REPLACE FUNCTION public.staff_account_set_terminal_pin(p_user_id text, p_pin text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'extensions', 'pg_temp'
+    AS $$
+DECLARE account public.app_users%rowtype; v_pin_hash text;
+BEGIN
+  IF auth.uid() IS NOT NULL AND NOT public.has_perm('can_manage_staff') THEN
+    RAISE EXCEPTION 'Staff management permission is required';
+  END IF;
+  IF length(COALESCE(p_pin, '')) < 4 OR length(p_pin) > 32 THEN RAISE EXCEPTION 'TERMINAL_PIN_INVALID'; END IF;
+  SELECT * INTO account FROM public.app_users WHERE lower(user_id)=lower(trim(p_user_id)) FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'STAFF_NOT_FOUND'; END IF;
+  IF account.email NOT LIKE '%@pos-internal.local' THEN RAISE EXCEPTION 'TERMINAL_PIN_ACCOUNT_REQUIRED'; END IF;
+  PERFORM pg_advisory_xact_lock(hashtext(lower(account.user_id)));
+  v_pin_hash := extensions.crypt(p_pin, extensions.gen_salt('bf', 10));
+  UPDATE public.cashiers SET full_name=account.full_name, pin_hash=v_pin_hash,
+    store_id=account.store_id, permissions=COALESCE(account.permissions, '{}'::jsonb),
+    is_active=account.is_active, role_slug=account.role_slug, updated_at=now()
+  WHERE lower(username)=lower(account.user_id);
+  IF NOT FOUND THEN
+    INSERT INTO public.cashiers (id,username,full_name,pin_hash,store_id,permissions,is_active,role_slug)
+    VALUES (gen_random_uuid(),account.user_id,account.full_name,v_pin_hash,account.store_id,
+      COALESCE(account.permissions,'{}'::jsonb),account.is_active,account.role_slug);
+  END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION public.staff_role_delete(_slug text) RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
@@ -4639,13 +4665,17 @@ CREATE OR REPLACE FUNCTION public.verify_terminal_pin(p_user_id text, p_pin text
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'extensions', 'pg_temp'
     AS $$
-DECLARE u public.app_users%rowtype;
+DECLARE u public.app_users%rowtype; terminal public.cashiers%rowtype;
 BEGIN
   SELECT * INTO u FROM public.app_users a
    WHERE lower(a.user_id) = lower(trim(p_user_id)) AND a.is_active;
   IF NOT FOUND THEN RETURN; END IF;
-  IF u.pin_hash = '' OR u.pin_hash <> extensions.crypt(p_pin::text, u.pin_hash::text) THEN RETURN; END IF;
+  SELECT * INTO terminal FROM public.cashiers c
+   WHERE lower(c.username)=lower(u.user_id) AND c.is_active LIMIT 1;
+  IF NOT FOUND OR COALESCE(terminal.pin_hash, '') = ''
+     OR terminal.pin_hash <> extensions.crypt(p_pin::text, terminal.pin_hash::text) THEN RETURN; END IF;
   UPDATE public.app_users SET last_login_at = now() WHERE id = u.id;
+  UPDATE public.cashiers SET last_login_at = now() WHERE id = terminal.id;
   RETURN QUERY SELECT u.user_id::text, u.full_name::text, u.role, u.store_id::text, u.email::text;
 END $$;
 
@@ -17019,10 +17049,13 @@ REVOKE EXECUTE ON FUNCTION public.verify_cashier_pin(text, text)
   FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.verify_terminal_pin(text, text)
   FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.staff_account_set_terminal_pin(text, text)
+  FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.verify_terminal_pin(text, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.staff_account_set_terminal_pin(text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.security_report_findings(text, text, jsonb) TO service_role;
 
 GRANT EXECUTE ON FUNCTION public.membership_portal_profile() TO authenticated, service_role;

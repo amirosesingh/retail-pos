@@ -392,7 +392,14 @@ async function listActivityEventPageDirect(
     }
     sourceOffset += batch.length;
   }
-  if (activityScanBudgetExhausted({ batchesRead, exhausted, visibleCount: visibleRows.length, target }))
+  let sourceRowRemains = false;
+  if (!exhausted && batchesRead >= MAX_ACTIVITY_SOURCE_BATCHES && visibleRows.length < target) {
+    const probe = await buildQuery().range(sourceOffset, sourceOffset);
+    if (probe.error) throw probe.error;
+    sourceRowRemains = (probe.data?.length ?? 0) > 0;
+    exhausted = !sourceRowRemains;
+  }
+  if (activityScanBudgetExhausted({ batchesRead, exhausted, sourceRowRemains, visibleCount: visibleRows.length, target }))
     throw Object.assign(new Error(ACTIVITY_WINDOW_ERROR), { code: "ACTIVITY_WINDOW_EXCEEDED" });
   return {
     rows: visibleRows.slice(offset, offset + limit),

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { listSyncedStaff, verifySyncedStaffPin } = require("../../../electron/synced-staff-login.cjs");
+const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = require("../../../electron/synced-staff-login.cjs");
 const bcrypt = require("bcryptjs");
 
 describe("offline terminal operations", () => {
@@ -40,6 +40,7 @@ describe("offline terminal operations", () => {
       staff: { username: "admin", role_slug: "admin", permissions: { can_manage_database: true } },
     });
     await expect(verifySyncedStaffPin(pool, "admin", "0000", "s1")).resolves.toMatchObject({ ok: false, reason: "invalid" });
+    await expect(verifySyncedApprovalPin(pool, "a1", "2468", "s1")).resolves.toMatchObject({ ok: true });
   });
 
   it("wires reconnect sync and local approval through Electron", () => {
@@ -51,12 +52,13 @@ describe("offline terminal operations", () => {
     expect(main).toContain('databaseService.markReady({phase:"sync_pending"');
     expect(preload).toContain('auto: () => invoke("sync:auto")');
     expect(preload).toContain('verifyStaffPin: (username, pin) => invoke("staff:verify-pin"');
+    expect(preload).toContain('verifyApprovalPin: (username, pin) => invoke("staff:verify-approval-pin"');
     expect(preload).toContain('rememberStaffPin: (username, pin) => invoke("staff:enroll"');
     expect(main).toContain('/api/public/cashier-login');
     const auth = readFileSync("src/lib/pos-auth.tsx", "utf8");
     expect(auth).toContain("role: offlineAppRole(local.staff.roleSlug)");
     expect(auth).toContain("roleSlug: local.staff.roleSlug");
-    expect(dialog).toContain("await verifyLocalPin(expectedId, pin)");
+    expect(dialog).toContain("await verifyLocalApprovalPin(expectedId, pin)");
     expect(dialog).toContain("self_authorization: !!prompt.selfAuthorizer");
     expect(dialog).toContain('mode_used: "offline_pin"');
   });

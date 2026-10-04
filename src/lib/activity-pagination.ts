@@ -9,11 +9,12 @@ export const ACTIVITY_WINDOW_ERROR =
 export function activityScanBudgetExhausted(input: {
   batchesRead: number;
   exhausted: boolean;
+  sourceRowRemains?: boolean;
   visibleCount: number;
   target: number;
 }) {
   return (
-    !input.exhausted &&
+    !input.exhausted && input.sourceRowRemains !== false &&
     input.batchesRead >= MAX_ACTIVITY_SOURCE_BATCHES &&
     input.visibleCount < input.target
   );

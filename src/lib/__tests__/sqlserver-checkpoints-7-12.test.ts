@@ -256,6 +256,26 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(pull).toHaveBeenCalledOnce();
   });
 
+  it("queues a sync request when its branch differs from the active run", async () => {
+    let releasePush!: () => void;
+    const firstPush = new Promise<void>((resolve) => { releasePush = resolve; });
+    const push = vi.fn()
+      .mockImplementationOnce(async () => { await firstPush; return { pushed: 1 }; })
+      .mockResolvedValue({ pushed: 1 });
+    const pull = vi.fn().mockResolvedValue({ pulled: 1, conflicts: 0 });
+    const { SyncCoordinator } = await import("../../../electron/sync/coordinator.cjs");
+    const coordinator = new SyncCoordinator({
+      pushWorker: { reader: {}, run: push },
+      pullWorker: { run: pull },
+    });
+    const first = coordinator.runNow({ branchId: "B1" });
+    const second = coordinator.runNow({ branchId: "B2" });
+    releasePush();
+    await Promise.all([first, second]);
+    expect(push).toHaveBeenNthCalledWith(1, { branchId: "B1" });
+    expect(push).toHaveBeenNthCalledWith(2, { branchId: "B2" });
+  });
+
   it("keeps an unacknowledged local row and records the cloud conflict", async () => {
     const commit = vi.fn();
     class Transaction { begin = vi.fn(); commit = commit; rollback = vi.fn(); }

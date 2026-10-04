@@ -9,9 +9,20 @@ describe("activity pagination scan budget", () => {
     expect(activityScanBudgetExhausted({
       batchesRead: MAX_ACTIVITY_SOURCE_BATCHES,
       exhausted: false,
+      sourceRowRemains: true,
       visibleCount: 0,
       target: 25,
     })).toBe(true);
+  });
+
+  it("accepts an exact 5,000-row source after a one-row boundary probe", () => {
+    expect(activityScanBudgetExhausted({
+      batchesRead: MAX_ACTIVITY_SOURCE_BATCHES,
+      exhausted: true,
+      sourceRowRemains: false,
+      visibleCount: 0,
+      target: 25,
+    })).toBe(false);
   });
 
   it("accepts a filled page or an exhausted source", () => {

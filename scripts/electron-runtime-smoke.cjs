@@ -10,6 +10,12 @@ const packagedExecutable = targetPath && fs.existsSync(targetPath)
     ? path.join(targetPath, "Retail.exe")
     : targetPath
   : null;
+const isHttpUrl = (value) => {
+  try { return ["http:", "https:"].includes(new URL(value).protocol); } catch { return false; }
+};
+if (target && !packagedExecutable && !isHttpUrl(target)) {
+  throw new Error(`Packaged target not found: ${targetPath}`);
+}
 const devServerUrl = packagedExecutable ? null : target || process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:8080";
 const smokeUserData = path.join(os.tmpdir(), `retail-pos-electron-runtime-smoke-${process.pid}`);
 

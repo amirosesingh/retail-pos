@@ -169,7 +169,17 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
           }
           sourceOffset += rows.length;
         }
-        if (activityScanBudgetExhausted({ batchesRead, exhausted, visibleCount: visibleRows.length, target }))
+        let sourceRowRemains = false;
+        if (!exhausted && batchesRead >= MAX_ACTIVITY_SOURCE_BATCHES && visibleRows.length < target) {
+          const probe = new URLSearchParams(params);
+          probe.set("limit", "1");
+          probe.set("offset", String(sourceOffset));
+          const response = await serviceRest(`activity_events?${probe}`);
+          if (!response.ok) return reply({ ok: false, error: "Could not load activity" }, 503);
+          sourceRowRemains = ((await response.json()) as Record<string, unknown>[]).length > 0;
+          exhausted = !sourceRowRemains;
+        }
+        if (activityScanBudgetExhausted({ batchesRead, exhausted, sourceRowRemains, visibleCount: visibleRows.length, target }))
           return reply({ ok: false, code: "ACTIVITY_WINDOW_EXCEEDED", error: ACTIVITY_WINDOW_ERROR }, 422);
         return reply({
           ok: true,

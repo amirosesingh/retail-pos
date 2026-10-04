@@ -358,6 +358,11 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
       await import("./authorization");
     const { throttleStatus, throttleFail, throttleReset, minutesLeft } =
       await import("./pin-throttle.server");
+    const auditContext = Object.fromEntries(
+      Object.entries(data.auditContext).filter(
+        ([key]) => !["reason", "requested_amount", "self_authorization"].includes(key),
+      ),
+    );
     let who: Caller;
     try {
       who = await assertCaller(data);
@@ -404,7 +409,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         purpose: data.reason ?? "",
         detail: {
           reason: "PIN is not the configured authorisation method",
-          ...data.auditContext,
+          ...auditContext,
         },
       });
       return {
@@ -432,7 +437,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         terminalId: data.terminalId ?? "",
         outcome: "failed_pin",
         purpose: data.reason ?? "",
-        detail: { reason: data.reason ?? "", ...data.auditContext },
+        detail: { reason: data.reason ?? "", ...auditContext },
       });
       return {
         ok: false as const,
@@ -474,7 +479,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
           reason: "approval authority exceeded",
           requested_amount: data.requestedAmount,
           self_authorization: data.selfAuthorization,
-          ...data.auditContext,
+          ...auditContext,
           ...authority,
         },
       });
@@ -500,7 +505,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         reason: data.reason ?? "",
         requested_amount: data.requestedAmount ?? null,
         self_authorization: data.selfAuthorization,
-        ...data.auditContext,
+        ...auditContext,
       },
     });
     if (!logged.ok) {

@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld("pos", {
   cacheStaffRoster: (rows) => invoke("staff:cache-roster", rows),
   rememberStaffPin: (username, pin) => invoke("staff:enroll", username, pin),
   verifyStaffPin: (username, pin) => invoke("staff:verify-pin", username, pin),
+  verifyApprovalPin: (username, pin) => invoke("staff:verify-approval-pin", username, pin),
   cashierLogin: (username, pin) => invoke("auth:cashier-login", { username, pin }),
   telemetry: {
     presence: (value) => invoke("telemetry:presence", value),

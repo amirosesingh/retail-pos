@@ -20,4 +20,4 @@ ALTER TABLE public.stock_transfers
       'rejected',
       'cancelled'
     )
-  );
+  ) NOT VALID;

@@ -1,6 +1,19 @@
 -- Serialize and enforce exchange lineage independently of the UI or client.
 -- One original bill can fund exactly one exchange bill. Retries of that same
 -- exchange remain valid, while refunded/missing/already-consumed originals fail.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.sales
+     WHERE COALESCE(is_exchange, false) AND original_bill_number IS NOT NULL
+     GROUP BY COALESCE(store_id, ''), original_bill_number
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION 'DUPLICATE_EXCHANGE_LINEAGE: clean duplicate original bill links before migration';
+  END IF;
+END
+$$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS sales_one_exchange_per_original_idx
   ON public.sales ((COALESCE(store_id, '')), original_bill_number)
   WHERE COALESCE(is_exchange, false) AND original_bill_number IS NOT NULL;
