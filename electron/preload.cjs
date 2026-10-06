@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("sqlAdmin", {
   lockAdmin: () => invoke("admin:lock"),
   adoptSession: (proof, terminalConfig) => invoke("admin:adopt-session", proof, terminalConfig),
   status: () => invoke("admin:status"),
+  recoveryUnlock: (code) => invoke("admin:recovery-unlock", code),
+  recoveryLock: () => invoke("admin:recovery-lock"),
 });
 
 /**
@@ -44,6 +46,7 @@ contextBridge.exposeInMainWorld("pos", {
     validateDatabase: (profile) => invoke("database:validate", profile),
     migrateDatabase: (profile) => invoke("database:migrate", profile),
     migrateSavedDatabase: () => invoke("database:migrate-saved"),
+    provisionAndConnect: (profile) => invoke("database:provision-connect", profile),
     exportMigrationSql: () => invoke("database:export-migrations"),
     saveAndConnect: (profile) => invoke("database:save-connect", profile),
     disconnect: () => invoke("database:disconnect"),

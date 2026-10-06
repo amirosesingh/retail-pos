@@ -62,6 +62,7 @@ type DatabaseApi = {
   validateDatabase(profile: Profile): Promise<Record<string, unknown>>;
   migrateDatabase(profile: Profile): Promise<Record<string, unknown>>;
   migrateSavedDatabase(): Promise<Record<string, unknown>>;
+  provisionAndConnect(profile: Profile): Promise<Record<string, unknown>>;
   exportMigrationSql(): Promise<Record<string, unknown>>;
   saveAndConnect(profile: Profile): Promise<Record<string, unknown>>;
   removeConfiguration(): Promise<DbState>;
@@ -85,7 +86,7 @@ const initial: Profile = {
   host: "127.0.0.1",
   instanceName: "",
   port: 1433,
-  database: "",
+  database: "POS_Local",
   authMode: "windows",
   username: "",
   password: "",
@@ -558,20 +559,21 @@ export function LocalDatabaseWizard({
                     }
                     result={result}
                   />
-                  <Field label="Available database">
-                    <select
+                  <Field label="Database to create or update">
+                    <Input
                       aria-label="Available database"
-                      className="h-10 w-full rounded-md border bg-background px-3"
+                      list="available-local-databases"
+                      placeholder="POS_Local"
                       value={profile.database}
                       onChange={(e) => setProfile({ ...profile, database: e.target.value })}
-                    >
-                      <option value="">Select a database…</option>
+                    />
+                    <datalist id="available-local-databases">
                       {shown.map((db) => (
                         <option key={db.name} value={db.name}>
                           {db.name} · {db.state_desc}
                         </option>
                       ))}
-                    </select>
+                    </datalist>
                   </Field>
                   <Input
                     aria-label="Search databases"
@@ -583,6 +585,10 @@ export function LocalDatabaseWizard({
               )}
               {step === 5 && (
                 <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    This check is optional. The final action creates the database when it is
+                    missing, applies pending migrations, and validates it before connecting.
+                  </p>
                   <Action
                     title={`Validate ${profile.database || "selected database"}`}
                     text="Compares tables, columns, types, defaults, indexes, constraints, change tracking, permissions, and a rolled-back write with this application version."
@@ -647,15 +653,15 @@ export function LocalDatabaseWizard({
                     </select>
                   </Field>
                   <Action
-                    title="Save and connect"
-                    text="The password is sealed with Windows DPAPI and is never returned to this screen."
+                    title="Prepare database and connect"
+                    text="Creates the database if needed, applies pending migrations, validates every required table, then seals the password with Windows DPAPI and connects. Existing business rows are not cleared."
                     busy={busy}
                     onClick={() =>
                       run(async () => {
                         const authorization = await authorizeDatabaseChange();
                         if (!authorization.ok) return authorization;
                         await mirrorTerminalConfigToDesktop();
-                        const response = await api()!.saveAndConnect(profile);
+                        const response = await api()!.provisionAndConnect(profile);
                         if (response.ok) {
                           setProfile((old) => ({ ...old, password: "" }));
                           const next = await api()!.getState();
@@ -691,8 +697,7 @@ export function LocalDatabaseWizard({
                     busy ||
                     (step === 1 && Boolean(serverValidation)) ||
                     (step === 3 && !ok) ||
-                    (step === 4 && !profile.database) ||
-                    (step === 5 && result?.ready !== true)
+                    (step === 4 && !profile.database)
                   }
                   onClick={() => {
                     setResult(null);

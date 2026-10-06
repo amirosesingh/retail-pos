@@ -152,7 +152,16 @@ async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
       diagnosis = { issue: "authentication", status };
       return "rejected";
     }
-    if (status === 403 || /not authorized|permission|403/i.test(msg)) {
+    // PostgREST only reaches table/RLS permission evaluation after accepting
+    // the project address and publishable key. A 42501/permission response is
+    // therefore a healthy connection with restricted anonymous data access,
+    // not a bad key. Treating it as rejected traps an already-configured till
+    // on the first-run connection screen before anybody can sign in.
+    if (/permission denied|row-level security|\b42501\b|policy/i.test(msg)) {
+      diagnosis = { issue: "none", status };
+      return "verified";
+    }
+    if (status === 403 || /not authorized|403/i.test(msg)) {
       diagnosis = { issue: "permission", status };
       return "rejected";
     }

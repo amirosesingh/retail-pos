@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   normalizeServerHost,
   parseServerAddress,
@@ -139,7 +139,10 @@ describe("local SQL Server wizard server step", () => {
     );
     expect(wizard).toContain("const response = await database.listServers()");
     expect(wizard).toContain("selectDiscoveredServer(current, server)");
-    expect(wizard).toContain("saveAndConnect(profile)");
+    expect(wizard).toContain("provisionAndConnect(profile)");
+    expect(wizard).toContain('database: "POS_Local"');
+    expect(wizard).toContain("Database to create or update");
+    expect(wizard).toContain("creates the database when it is");
     expect(wizard).toContain("await mirrorTerminalConfigToDesktop()");
     expect(wizard).toContain("validationHasSchemaDifferences");
     expect(wizard).toContain("Download migration SQL file");
@@ -193,6 +196,104 @@ describe("local SQL Server wizard server step", () => {
     const diagnostics = readFileSync("electron/diagnostics.cjs", "utf8");
     expect(diagnostics).toContain('normalUnconfiguredState');
     expect(diagnostics).toContain('=== "enabled_unconfigured"');
+  });
+
+  it("creates a missing named database safely before applying its schema", async () => {
+    // @ts-expect-error CommonJS Electron module has no declaration file.
+    const { ensureDatabase } = await import("../../../../electron/db/migrations.cjs");
+    let exists = false;
+    const batch = vi.fn(async (sql: string) => {
+      expect(sql).toBe("CREATE DATABASE [POS_Local];");
+      exists = true;
+    });
+    const pool = {
+      request: () => ({
+        input() {
+          return this;
+        },
+        query: async () => ({ recordset: [{ database_id: exists ? 7 : null }] }),
+        batch,
+      }),
+    };
+    const inspectionPool = {
+      request: () => ({
+        query: async () => ({ recordset: [{ user_table_count: 0, migration_table_id: null }] }),
+      }),
+    };
+    const manager = {
+      temporary: vi.fn(
+        async (_profile: unknown, database: string, work: (value: typeof pool) => unknown) => {
+          return work(database === "master" ? pool : (inspectionPool as typeof pool));
+        },
+      ),
+    };
+
+    await expect(
+      ensureDatabase(manager, { database: "POS_Local" }),
+    ).resolves.toMatchObject({ ok: true, created: true, database: "POS_Local" });
+    expect(batch).toHaveBeenCalledOnce();
+  });
+
+  it("does not recreate an existing database and rejects unsafe names", async () => {
+    // @ts-expect-error CommonJS Electron module has no declaration file.
+    const { ensureDatabase } = await import("../../../../electron/db/migrations.cjs");
+    const batch = vi.fn();
+    const pool = {
+      request: () => ({
+        input() {
+          return this;
+        },
+        query: async () => ({ recordset: [{ database_id: 9 }] }),
+        batch,
+      }),
+    };
+    const inspectionPool = {
+      request: () => ({
+        query: async () => ({ recordset: [{ user_table_count: 70, migration_table_id: 11 }] }),
+      }),
+    };
+    const manager = {
+      temporary: async (_profile: unknown, database: string, work: (value: typeof pool) => unknown) =>
+        work(database === "master" ? pool : (inspectionPool as typeof pool)),
+    };
+
+    await expect(ensureDatabase(manager, { database: "POS_Local" })).resolves.toMatchObject({
+      ok: true,
+      created: false,
+    });
+    await expect(ensureDatabase(manager, { database: "bad;name" })).resolves.toMatchObject({
+      ok: false,
+      code: "EBADARG",
+    });
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it("refuses to modify an unrelated non-empty database", async () => {
+    // @ts-expect-error CommonJS Electron module has no declaration file.
+    const { ensureDatabase } = await import("../../../../electron/db/migrations.cjs");
+    const masterPool = {
+      request: () => ({
+        input() {
+          return this;
+        },
+        query: async () => ({ recordset: [{ database_id: 9 }] }),
+      }),
+    };
+    const unrelatedPool = {
+      request: () => ({
+        query: async () => ({ recordset: [{ user_table_count: 4, migration_table_id: null }] }),
+      }),
+    };
+    const manager = {
+      temporary: async (_profile: unknown, database: string, work: (value: typeof masterPool) => unknown) =>
+        work(database === "master" ? masterPool : (unrelatedPool as typeof masterPool)),
+    };
+
+    await expect(ensureDatabase(manager, { database: "Accounting" })).resolves.toMatchObject({
+      ok: false,
+      code: "ESCHEMA",
+      hint: "No existing tables were changed.",
+    });
   });
 
   it("repairs the legacy terminal platform default without rewriting terminal rows", () => {

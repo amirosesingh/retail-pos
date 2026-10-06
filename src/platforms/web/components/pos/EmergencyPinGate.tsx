@@ -102,8 +102,15 @@ export function EmergencyPinGate({ children }: { children: ReactNode }) {
     // sync, so a stream of guesses on a till is visible to management even
     // though the screen itself never needs a connection.
     if (ok) {
+      const bridge = recoveryBridge();
+      const desktop = bridge?.recoveryUnlock
+        ? await bridge.recoveryUnlock(code).catch(() => ({ ok: false }))
+        : { ok: true };
+      if (!desktop.ok) {
+        setError("The protected repair session could not be opened. Try again.");
+        return;
+      }
       clearPinFailures(SCOPE);
-      await recoveryBridge()?.recoveryUnlock?.(code).catch(() => undefined);
       logger.log("security", "Emergency access unlocked", "recovery", { outcome: "granted" });
       setUnlocked(true);
       return;

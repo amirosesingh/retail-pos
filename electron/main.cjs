@@ -39,7 +39,7 @@ const { OperationsRepository } = require("./db/repositories/operations.cjs");
 const { AggregateRepository } = require("./db/repositories/aggregates.cjs");
 const { ReceiptRepository } = require("./db/repositories/receipts.cjs");
 const { AuthorizationRulesRepository } = require("./db/repositories/authorization-rules.cjs");
-const { applyMigrations, migrationBundleSql } = require("./db/migrations.cjs");
+const { applyMigrations, ensureDatabase, migrationBundleSql } = require("./db/migrations.cjs");
 const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
@@ -1337,6 +1337,13 @@ function registerIpc() {
   });
   ipcMain.handle("admin:status", () => adminSession.status());
   ipcMain.handle("admin:lock", () => { adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
+  ipcMain.handle("admin:recovery-unlock", (_event, code) => ({
+    ok: adminSession.grantRecovery(guard.text(code, { name: "recovery code", max: 12 })),
+  }));
+  ipcMain.handle("admin:recovery-lock", () => {
+    adminSession.clearRecovery();
+    return { ok: true };
+  });
   ipcMain.handle("admin:adopt-session", async (_e, value, rawTerminal) => guard.guarded(async () => {
     const proof=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
     if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return{ok:false,error:"A verified signed-in user is required."};
@@ -1404,6 +1411,34 @@ function registerIpc() {
       databaseService.markReady({phase:"migration_complete",syncReady:!wasPaused});
       return{...migrated,ok:true,ready:true,state:databaseService.snapshot()};
     }finally{if(!wasPaused){syncCoordinator.resume();scheduleAutomaticSync(250);}}
+  }));
+  ipcMain.handle("database:provision-connect", (_e, value) => guard.guarded(async()=>{
+    const profile=guard.databaseProfile(value,{requireDatabase:true});
+    const wasPaused=syncCoordinator.paused;
+    let resumed=false;
+    if(!wasPaused)syncCoordinator.pause();
+    try{
+      if(syncCoordinator.activeRun)await syncCoordinator.activeRun;
+      const ensured=await observedDatabaseOperation("provision","database",()=>ensureDatabase(databaseManager,profile));
+      if(!ensured.ok)return ensured;
+      const migrated=await observedDatabaseOperation("provision","migration",()=>applyMigrations(databaseManager,profile));
+      if(!migrated.ok)return{...migrated,created:ensured.created};
+      const validation=await observedDatabaseOperation("provision","validation",()=>databaseService.validate(profile));
+      if(!validation.ok)return{...validation,created:ensured.created,applied:migrated.applied};
+      if(!validation.ready)return{ok:false,code:"EMIGRATION_INCOMPLETE",error:"The database was prepared, but schema validation still found differences.",created:ensured.created,applied:migrated.applied,validation};
+      const connected=await observedDatabaseOperation("provision","connect",()=>databaseService.saveAndConnect(profile));
+      if(!connected.ok)return{...connected,created:ensured.created,applied:migrated.applied,validation};
+      // Schema work is complete. Let the existing bootstrap coordinator run;
+      // it performs the initial push/pull itself and refuses to run paused.
+      if(!wasPaused){syncCoordinator.resume();resumed=true;}
+      let synchronization;
+      try{synchronization=await prepareLocalData();}
+      catch(error){synchronization={ok:false,pending:true,code:error?.code??"ESYNC",message:String(error?.message??error)};}
+      return{...connected,ok:true,created:ensured.created,applied:migrated.applied,schemaRepair:migrated.schemaRepair,validation,synchronization,state:databaseService.snapshot()};
+    }finally{
+      if(!wasPaused&&!resumed)syncCoordinator.resume();
+      if(!wasPaused)scheduleAutomaticSync(250);
+    }
   }));
   ipcMain.handle("database:export-migrations", async()=>{
     const chosen=await dialog.showSaveDialog({

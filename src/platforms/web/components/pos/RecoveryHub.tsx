@@ -171,7 +171,7 @@ export function RecoveryHub() {
         status={cloud === null ? "Checking…" : cloud ? "Configured" : "Missing"}
         defaultOpen={cloud === false}
       >
-        <CloudConnectionPanel />
+        <CloudConnectionPanel recoveryUnlocked />
       </Card>
 
       <Card
