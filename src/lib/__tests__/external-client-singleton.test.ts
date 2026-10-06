@@ -13,7 +13,7 @@ vi.mock("@supabase/supabase-js", () => ({
   createClient: vi.fn(() => {
     const client = {
       auth: { stopAutoRefresh: vi.fn() },
-      removeAllChannels: vi.fn(),
+      removeAllChannels: vi.fn(() => Promise.resolve()),
     };
     harness.clients.push(client);
     return client;
@@ -36,6 +36,9 @@ vi.mock("@/integrations/supabase/auth-storage", () => ({ externalAuthStorage: {}
 describe("external Supabase client ownership", () => {
   beforeEach(() => {
     vi.resetModules();
+    delete (globalThis as Record<PropertyKey, unknown>)[
+      Symbol.for("retail-pos.supabase.external-clients.v1")
+    ];
     harness.config = { url: "https://tenant-a.example.co", key: "publishable-a" };
     harness.memberConfig = {
       url: "https://members-a.example.co",
@@ -44,10 +47,21 @@ describe("external Supabase client ownership", () => {
     harness.clients.length = 0;
   });
 
+  it("reuses the same GoTrue owner when the module is evaluated again", async () => {
+    const firstModule = await import("@/integrations/supabase/external-client");
+    const first = firstModule.externalClientSnapshot();
+
+    vi.resetModules();
+    const reloadedModule = await import("@/integrations/supabase/external-client");
+    const second = reloadedModule.externalClientSnapshot();
+
+    expect(second).toBe(first);
+    expect(harness.clients).toHaveLength(1);
+  });
+
   it("keeps one GoTrue client for the same profile and replaces it only when the tenant changes", async () => {
-    const { externalClientSnapshot, resetExternalClient } = await import(
-      "@/integrations/supabase/external-client"
-    );
+    const { externalClientSnapshot, resetExternalClient } =
+      await import("@/integrations/supabase/external-client");
 
     const first = externalClientSnapshot();
     resetExternalClient();
@@ -65,9 +79,8 @@ describe("external Supabase client ownership", () => {
   });
 
   it("keeps membership Auth isolated and replaces only the changed membership tenant", async () => {
-    const { memberPortalClientSnapshot, resetExternalClient } = await import(
-      "@/integrations/supabase/external-client"
-    );
+    const { memberPortalClientSnapshot, resetExternalClient } =
+      await import("@/integrations/supabase/external-client");
 
     const first = memberPortalClientSnapshot();
     resetExternalClient();

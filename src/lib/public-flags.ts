@@ -62,7 +62,7 @@ export async function setPublicFlag(key: string, enabled: boolean) {
     if (!result.ok) throw new Error(result.error ?? "The public page switch could not be saved.");
   } else {
     await commitOps("Saving public flag", [
-      { kind: "upsert", table: "public_flags", rows: [{ key, enabled }] },
+      { kind: "upsert", table: "public_flags", rows: [{ key, enabled }], onConflict: "key" },
     ]);
   }
   cache = {

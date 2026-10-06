@@ -115,8 +115,14 @@ export function describeError(error: unknown, action = "That action"): string {
     return `${action} could not be saved to local SQL Server${target}${reference}. The transaction was rolled back; check Database & Cloud Connection and retry.`;
   }
 
-  if (code === "23503" || /foreign key constraint/i.test(raw))
-    return `${action} is blocked because other records still point at this entry. Remove or reassign those records first.`;
+  if (code === "23503" || /foreign key constraint/i.test(raw)) {
+    const lowerAction = action.toLowerCase();
+    if (/\b(?:delet|remov|archiv)/.test(lowerAction))
+      return `${action} is blocked because other records still point at this entry. Remove or reassign those records first.`;
+    if (/location/.test(lowerAction))
+      return `${action} is blocked because its selected group or parent location no longer exists. Refresh locations and groups, then try again.`;
+    return `${action} is blocked because a required related record is missing or no longer exists. Refresh the related data and try again.`;
+  }
 
   if (category === "network")
     return kind === "sync"

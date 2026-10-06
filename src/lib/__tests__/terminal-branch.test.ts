@@ -48,6 +48,15 @@ describe("error messages", () => {
     expect(message).toContain("other records still point at this entry");
   });
 
+  it("does not describe a location-save foreign key failure as a delete blocker", () => {
+    const message = describeError(
+      { code: "23503", message: 'violates foreign key constraint "stores_group_id_fkey"' },
+      "Saving location",
+    );
+    expect(message).toContain("selected group or parent location no longer exists");
+    expect(message).not.toContain("other records still point at this entry");
+  });
+
   it("does not promise an online-only action was stored", () => {
     expect(describeError(new Error("Failed to fetch"), "Saving the sale")).toContain(
       "internet connection",

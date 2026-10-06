@@ -145,8 +145,9 @@ describe("cashier location bootstrap", () => {
 
   it("loads the location directory independently of heavy business data", () => {
     const store = read("src/lib/pos-store.tsx");
+    expect(store).toContain("const canLoadCloudDirectory =");
     expect(store).toContain(
-      'const locationTask = effectiveDatabaseMode() === "online" ? loadLocationDirectory() : null',
+      "const locationTask = canLoadCloudDirectory ? loadLocationDirectory() : null",
     );
     expect(store).toContain(
       "const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined)",
@@ -154,6 +155,7 @@ describe("cashier location bootstrap", () => {
     expect(store.indexOf('markStartupStage("essential-pos-ready")')).toBeLessThan(
       store.indexOf("const loaded = await cloudTask"),
     );
+    expect(store).toContain('effectiveDatabaseMode() === "online"');
   });
 
   it("honours the Electron startup online override throughout read and sale routing", () => {
@@ -162,6 +164,13 @@ describe("cashier location bootstrap", () => {
     expect(db).toContain('effectiveDatabaseMode() === "local" && bridge?.snapshot');
     expect(db).toContain('const onlineOnly = effectiveDatabaseMode() === "online"');
     expect(query).toContain('effectiveDatabaseMode() === "local" && bridge?.query');
+  });
+
+  it("lets an authenticated admin recover an unbound Electron terminal from the cloud directory", () => {
+    const db = read("src/core/api/pos-db.ts");
+    expect(db).toContain("const terminal = readTerminalConfig() ?? (await hydrateTerminalConfig())");
+    expect(db).toContain("if (!terminal?.locationId && hasStaffSession())");
+    expect(db).toContain("return loadCloudState(storeId, locationTask)");
   });
 
   it("does not accept an anonymous empty store response ahead of a proven relay", () => {

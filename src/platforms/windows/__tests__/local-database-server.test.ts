@@ -209,7 +209,6 @@ describe("local SQL Server wizard server step", () => {
   });
 
   it("creates a missing named database safely before applying its schema", async () => {
-    // @ts-expect-error CommonJS Electron module has no declaration file.
     const { ensureDatabase } = await import("../../../../electron/db/migrations.cjs");
     let exists = false;
     const batch = vi.fn(async (sql: string) => {
@@ -233,7 +232,11 @@ describe("local SQL Server wizard server step", () => {
     const manager = {
       temporary: vi.fn(
         async (_profile: unknown, database: string, work: (value: typeof pool) => unknown) => {
-          return work(database === "master" ? pool : (inspectionPool as typeof pool));
+          return work(
+            database === "master"
+              ? pool
+              : (inspectionPool as unknown as typeof pool),
+          );
         },
       ),
     };
@@ -245,7 +248,6 @@ describe("local SQL Server wizard server step", () => {
   });
 
   it("does not recreate an existing database and rejects unsafe names", async () => {
-    // @ts-expect-error CommonJS Electron module has no declaration file.
     const { ensureDatabase } = await import("../../../../electron/db/migrations.cjs");
     const batch = vi.fn();
     const pool = {
@@ -264,7 +266,11 @@ describe("local SQL Server wizard server step", () => {
     };
     const manager = {
       temporary: async (_profile: unknown, database: string, work: (value: typeof pool) => unknown) =>
-        work(database === "master" ? pool : (inspectionPool as typeof pool)),
+        work(
+          database === "master"
+            ? pool
+            : (inspectionPool as unknown as typeof pool),
+        ),
     };
 
     await expect(ensureDatabase(manager, { database: "POS_Local" })).resolves.toMatchObject({
@@ -279,7 +285,6 @@ describe("local SQL Server wizard server step", () => {
   });
 
   it("refuses to modify an unrelated non-empty database", async () => {
-    // @ts-expect-error CommonJS Electron module has no declaration file.
     const { ensureDatabase } = await import("../../../../electron/db/migrations.cjs");
     const masterPool = {
       request: () => ({
@@ -296,7 +301,11 @@ describe("local SQL Server wizard server step", () => {
     };
     const manager = {
       temporary: async (_profile: unknown, database: string, work: (value: typeof masterPool) => unknown) =>
-        work(database === "master" ? masterPool : (unrelatedPool as typeof masterPool)),
+        work(
+          database === "master"
+            ? masterPool
+            : (unrelatedPool as unknown as typeof masterPool),
+        ),
     };
 
     await expect(ensureDatabase(manager, { database: "Accounting" })).resolves.toMatchObject({
