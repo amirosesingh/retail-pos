@@ -468,4 +468,51 @@ describe("SQL Server checkpoints 7 through 12", () => {
     await lifecycle.ensure({ branchId: "B1", historyDays: 90 });
     expect(order).toEqual(["push", "bootstrap", "sync"]);
   });
+
+  it("repairs an expired table checkpoint with a scoped refresh before retrying sync", async () => {
+    class Transaction {
+      begin = vi.fn();
+      commit = vi.fn();
+      rollback = vi.fn();
+    }
+    const table = {
+      cloudTable: "coupon_campaigns", sqlServerTable: "coupon_campaigns", dependencyOrder: 0,
+      columns: [{ cloudColumn: "id", primaryKey: true }],
+    };
+    const checkpoints = { save: vi.fn() };
+    const cloud = {
+      bootstrapPage: vi.fn().mockResolvedValue({ rows: [{ id: "C1", row_version: 2 }], cursor: null }),
+      applyLocalBatch: vi.fn(),
+    };
+    const pushWorker = {
+      run: vi.fn().mockRejectedValueOnce(Object.assign(new Error("expired"), {
+        code: "ECHANGEGAP", table: "coupon_campaigns",
+      })),
+    };
+    const lifecycle = new (await import("../../../electron/jobs/lifecycle.cjs")).LocalDataLifecycle({
+      connectionManager: {
+        sql: () => ({ Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }),
+        pool: { request: () => ({ query: vi.fn().mockResolvedValue({ recordset: [{ current_version: 1223 }] }) }) },
+      },
+      databaseService: { transition: vi.fn(), markReady: vi.fn() },
+      jobManager: {},
+      jobRepository: {
+        active: vi.fn().mockResolvedValue(null),
+        completed: vi.fn().mockResolvedValue({ status: "completed" }),
+      },
+      registry: { tables: [table] }, cloud, checkpoints,
+      syncCoordinator: { pushWorker, runNow: vi.fn().mockResolvedValue({ ok: true }) },
+    });
+    lifecycle.bootstrap = vi.fn();
+    lifecycle.retain = vi.fn().mockResolvedValue({});
+    lifecycle.reconcile = vi.fn().mockResolvedValue([]);
+
+    await expect(lifecycle.ensure({ branchId: "B1", historyDays: 90, force: true })).resolves.toMatchObject({ ok: true });
+    expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "coupon_campaigns", branchId: "B1", historyDays: 90, cursor: null, limit: 500 });
+    expect(cloud.applyLocalBatch).toHaveBeenCalledWith(expect.any(Transaction), table, expect.objectContaining({
+      rows: [expect.objectContaining({ row_data: { id: "C1", row_version: 2 } })],
+    }));
+    expect(checkpoints.save).toHaveBeenCalledWith("B1", "coupon_campaigns", "push", { change_tracking_version: 1223 });
+    expect(lifecycle.bootstrap).not.toHaveBeenCalled();
+  });
 });

@@ -374,6 +374,8 @@ export type LocalSyncStatus = {
 };
 
 export type PosBridge = {
+  /** Close only the Electron window that sent the request. */
+  closeWindow?: () => Promise<unknown>;
   saveAuthorizationRule?: (value: Record<string, unknown>) => Promise<{
     ok: boolean;
     rule?: Record<string, unknown>;

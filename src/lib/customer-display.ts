@@ -130,6 +130,22 @@ export function openCustomerDisplay() {
   return popup;
 }
 
+/** Close only the window currently showing the customer display. Electron's
+ *  secondary BrowserWindow has no `window.opener`, so browser-history fallback
+ *  would navigate that monitor into the privileged till instead of closing it. */
+export function closeCurrentCustomerDisplay(): boolean {
+  if (typeof window === "undefined") return false;
+  if (window.pos?.closeWindow) {
+    void window.pos.closeWindow();
+    return true;
+  }
+  if (window.opener) {
+    window.close();
+    return true;
+  }
+  return false;
+}
+
 /** Close the customer screen: the popup we own plus any other window
  *  listening on the channel (second monitor, another tab). */
 export function closeCustomerDisplay() {
