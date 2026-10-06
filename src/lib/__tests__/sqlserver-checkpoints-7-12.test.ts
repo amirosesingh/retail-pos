@@ -469,25 +469,39 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(order).toEqual(["push", "bootstrap", "sync"]);
   });
 
-  it("repairs an expired table checkpoint with a scoped refresh before retrying sync", async () => {
+  it("repairs every expired table checkpoint with scoped refreshes before continuing", async () => {
     class Transaction {
       begin = vi.fn();
       commit = vi.fn();
       rollback = vi.fn();
     }
-    const table = {
+    const couponTable = {
       cloudTable: "coupon_campaigns", sqlServerTable: "coupon_campaigns", dependencyOrder: 0,
+      columns: [{ cloudColumn: "id", primaryKey: true }],
+    };
+    const drawerTable = {
+      cloudTable: "drawer_events", sqlServerTable: "drawer_events", dependencyOrder: 1,
       columns: [{ cloudColumn: "id", primaryKey: true }],
     };
     const checkpoints = { save: vi.fn() };
     const cloud = {
-      bootstrapPage: vi.fn().mockResolvedValue({ rows: [{ id: "C1", row_version: 2 }], cursor: null }),
+      bootstrapPage: vi.fn(async ({ table }: { table: string }) => ({
+        rows: table === "coupon_campaigns"
+          ? [{ id: "C1", row_version: 2 }]
+          : [{ id: "D1", row_version: 1 }],
+        cursor: null,
+      })),
       applyLocalBatch: vi.fn(),
     };
     const pushWorker = {
-      run: vi.fn().mockRejectedValueOnce(Object.assign(new Error("expired"), {
-        code: "ECHANGEGAP", table: "coupon_campaigns",
-      })),
+      run: vi.fn()
+        .mockRejectedValueOnce(Object.assign(new Error("expired coupon"), {
+          code: "ECHANGEGAP", table: "coupon_campaigns",
+        }))
+        .mockRejectedValueOnce(Object.assign(new Error("expired drawer"), {
+          code: "ECHANGEGAP", table: "drawer_events",
+        }))
+        .mockResolvedValueOnce({ pushed: 0 }),
     };
     const lifecycle = new (await import("../../../electron/jobs/lifecycle.cjs")).LocalDataLifecycle({
       connectionManager: {
@@ -500,7 +514,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
         active: vi.fn().mockResolvedValue(null),
         completed: vi.fn().mockResolvedValue({ status: "completed" }),
       },
-      registry: { tables: [table] }, cloud, checkpoints,
+      registry: { tables: [couponTable, drawerTable] }, cloud, checkpoints,
       syncCoordinator: { pushWorker, runNow: vi.fn().mockResolvedValue({ ok: true }) },
     });
     lifecycle.bootstrap = vi.fn();
@@ -509,10 +523,29 @@ describe("SQL Server checkpoints 7 through 12", () => {
 
     await expect(lifecycle.ensure({ branchId: "B1", historyDays: 90, force: true })).resolves.toMatchObject({ ok: true });
     expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "coupon_campaigns", branchId: "B1", historyDays: 90, cursor: null, limit: 500 });
-    expect(cloud.applyLocalBatch).toHaveBeenCalledWith(expect.any(Transaction), table, expect.objectContaining({
+    expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "drawer_events", branchId: "B1", historyDays: 90, cursor: null, limit: 500 });
+    expect(cloud.applyLocalBatch).toHaveBeenCalledWith(expect.any(Transaction), couponTable, expect.objectContaining({
       rows: [expect.objectContaining({ row_data: { id: "C1", row_version: 2 } })],
     }));
     expect(checkpoints.save).toHaveBeenCalledWith("B1", "coupon_campaigns", "push", { change_tracking_version: 1223 });
+    expect(checkpoints.save).toHaveBeenCalledWith("B1", "drawer_events", "push", { change_tracking_version: 1223 });
+    expect(pushWorker.run).toHaveBeenCalledTimes(3);
     expect(lifecycle.bootstrap).not.toHaveBeenCalled();
+  });
+
+  it("stops if the same expired checkpoint repeats after recovery", async () => {
+    const expired = () => Object.assign(new Error("still expired"), {
+      code: "ECHANGEGAP", table: "coupon_campaigns",
+    });
+    const lifecycle = new (await import("../../../electron/jobs/lifecycle.cjs")).LocalDataLifecycle({
+      connectionManager: {}, databaseService: {}, jobManager: {}, jobRepository: {},
+      registry: { tables: [] }, cloud: {}, checkpoints: {},
+      syncCoordinator: { pushWorker: { run: vi.fn().mockRejectedValue(expired()) } },
+    });
+    lifecycle.recoverChangeTrackingGap = vi.fn().mockResolvedValue({});
+
+    await expect(lifecycle.pushWithGapRecovery("B1", 90)).rejects.toMatchObject({ code: "ECHANGEGAP" });
+    expect(lifecycle.recoverChangeTrackingGap).toHaveBeenCalledTimes(1);
+    expect(lifecycle.syncCoordinator.pushWorker.run).toHaveBeenCalledTimes(2);
   });
 });

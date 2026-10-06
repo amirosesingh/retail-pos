@@ -15,6 +15,20 @@ if (!adminEmail || !adminPassword || !cashierUsername || !cashierPin) {
 
 const baseURL = "http://127.0.0.1:8080";
 
+async function mainWindow(app) {
+  await app.firstWindow({ timeout: 30_000 });
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const page = app.windows().find((candidate) => {
+      try { return new URL(candidate.url()).pathname !== "/display"; }
+      catch { return false; }
+    });
+    if (page) return page;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("The main Electron window did not open.");
+}
+
 async function localState(page) {
   return page.evaluate(async () => {
     const pos = window.pos;
@@ -60,7 +74,6 @@ async function waitForProfile(page, roleLabel) {
 }
 
 async function signOut(page) {
-  await page.goto(`${baseURL}/`, { waitUntil: "domcontentloaded" });
   const terminalSignIn = page.getByText("Terminal sign in", { exact: true });
   for (let attempt = 0; attempt < 3 && !(await terminalSignIn.isVisible()); attempt += 1) {
     const profile = page.getByRole("button", { name: /Open profile for/ });
@@ -167,7 +180,7 @@ async function main() {
     env: { ...process.env, VITE_DEV_SERVER_URL: baseURL },
   });
   try {
-    const page = await app.firstWindow({ timeout: 30_000 });
+    const page = await mainWindow(app);
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
