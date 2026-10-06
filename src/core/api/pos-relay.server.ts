@@ -259,7 +259,13 @@ export async function runRelayRead(read: RelayRead): Promise<{
     }
   }
   if (read.kind === "stores") {
-    const res = await serviceRest("stores?select=id,code,name,address,phone,group_id&order=name");
+    // This small directory is also the registered terminal's authoritative
+    // location record. Preserve warehouse hierarchy/type flags: reducing the
+    // row to legacy store fields made a registered warehouse reappear as an
+    // ordinary shop after PIN/password sign-in.
+    const res = await serviceRest(
+      "stores?select=id,code,name,address,phone,group_id,location_type,parent_id,is_central,is_primary_sub,building_name,floor_label,is_active,archived_at,private_catalogue&deleted_at=is.null&order=name",
+    );
     if (!res.ok) return { ok: false, error: (await res.text()).slice(0, 400) };
     return { ok: true, rows: (await res.json()) as Record<string, unknown>[] };
   }

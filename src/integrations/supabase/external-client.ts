@@ -136,6 +136,20 @@ function createExternalClient(
 
 let _client: ReturnType<typeof createExternalClient> | undefined;
 let _memberClient: ReturnType<typeof createExternalClient> | undefined;
+type ClientConfig = { url: string; key: string };
+let _clientConfig: ClientConfig | undefined;
+let _memberClientConfig: ClientConfig | undefined;
+
+const sameConfig = (left: ClientConfig | undefined, right: ClientConfig | undefined) =>
+  Boolean(left && right && left.url === right.url && left.key === right.key);
+
+const resolvedConfig = (scope: "pos" | "membership"): ClientConfig | undefined => {
+  try {
+    return supabaseConfig(scope);
+  } catch {
+    return undefined;
+  }
+};
 
 /**
  * One concrete client for a complete authenticated operation. Holding this
@@ -143,7 +157,10 @@ let _memberClient: ReturnType<typeof createExternalClient> | undefined;
  * between an Auth proof and the protected Data API request it authorises.
  */
 export function externalClientSnapshot(): ReturnType<typeof createExternalClient> {
-  if (!_client) _client = createExternalClient();
+  if (!_client) {
+    _client = createExternalClient();
+    _clientConfig = resolvedConfig("pos");
+  }
   return _client;
 }
 
@@ -162,6 +179,7 @@ export function memberPortalClientSnapshot(): ReturnType<typeof createExternalCl
       false,
       "membership",
     );
+    _memberClientConfig = resolvedConfig("membership");
   }
   return _memberClient;
 }
@@ -173,16 +191,35 @@ export function memberPortalClientSnapshot(): ReturnType<typeof createExternalCl
 export function resetExternalClient(): void {
   const previous = _client;
   const previousMember = _memberClient;
-  _client = undefined;
-  _memberClient = undefined;
-  if (previous) {
+  const nextConfig = resolvedConfig("pos");
+  const nextMemberConfig = resolvedConfig("membership");
+
+  // Applying an activation/configuration override can change the resolver's
+  // source without changing its actual URL or key. Keep the concrete GoTrue
+  // owner in that case: constructing another client with the same storage key
+  // triggers Supabase's multiple-client warning and lets two instances race
+  // over the same persisted session.
+  if (previous && sameConfig(_clientConfig, nextConfig)) {
+    _clientConfig = nextConfig;
+  } else {
+    _client = undefined;
+    _clientConfig = undefined;
+  }
+  if (previousMember && sameConfig(_memberClientConfig, nextMemberConfig)) {
+    _memberClientConfig = nextMemberConfig;
+  } else {
+    _memberClient = undefined;
+    _memberClientConfig = undefined;
+  }
+
+  if (previous && previous !== _client) {
     // A config refresh must not leave the former Auth client refreshing the
     // same storage key in the background. That produced duplicate GoTrue
     // clients and races where one instance restored a stale bearer token.
     previous.auth.stopAutoRefresh();
     void previous.removeAllChannels();
   }
-  if (previousMember) {
+  if (previousMember && previousMember !== _memberClient) {
     previousMember.auth.stopAutoRefresh();
     void previousMember.removeAllChannels();
   }

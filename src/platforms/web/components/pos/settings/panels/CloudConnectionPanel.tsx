@@ -66,9 +66,12 @@ function keyHint(value: string): string {
 export function CloudConnectionPanel({
   onConnected,
   presentation = "panel",
+  recoveryUnlocked = false,
 }: {
   onConnected?: () => void | Promise<void>;
   presentation?: "panel" | "dialog";
+  /** The parent EmergencyPinGate has opened Electron's short repair session. */
+  recoveryUnlocked?: boolean;
 } = {}) {
   const auth = useAuthOptional();
   const [status, setStatus] = useState<CloudKeyStatus | null>(null);
@@ -240,7 +243,7 @@ export function CloudConnectionPanel({
   // permission that opens Database Connection controls whether it can change.
   const firstRun = !status?.configured;
   const privileged = Boolean(auth?.isAdmin || auth?.can("can_manage_sync_backup"));
-  const editable = firstRun || privileged || unlocked;
+  const editable = firstRun || privileged || unlocked || recoveryUnlocked;
 
   // An empty key box means "keep the key already sealed on this device", so
   // changing only the backend address never asks for the key again.

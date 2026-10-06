@@ -39,7 +39,7 @@ const { OperationsRepository } = require("./db/repositories/operations.cjs");
 const { AggregateRepository } = require("./db/repositories/aggregates.cjs");
 const { ReceiptRepository } = require("./db/repositories/receipts.cjs");
 const { AuthorizationRulesRepository } = require("./db/repositories/authorization-rules.cjs");
-const { applyMigrations, migrationBundleSql } = require("./db/migrations.cjs");
+const { applyMigrations, ensureDatabase, migrationBundleSql } = require("./db/migrations.cjs");
 const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
@@ -1337,6 +1337,109 @@ function registerIpc() {
   });
   ipcMain.handle("admin:status", () => adminSession.status());
   ipcMain.handle("admin:lock", () => { adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
+  ipcMain.handle("admin:recovery-unlock", async (_event, username, pin) => guard.guarded(async () => {
+    const user = guard.text(username, { name: "username", max: 160 });
+    const secret = guard.text(pin, { name: "password or PIN", max: 128 });
+
+    // A real email address uses the operator's ordinary Supabase password.
+    // Authentication happens in the main process with the project pair sealed
+    // in DPAPI; neither the publishable key nor the returned bearer is exposed
+    // to the recovery renderer. The hosted POS backend then re-reads the staff
+    // row before granting database-management authority.
+    if (user.includes("@")) {
+      const cloud = cloudCredentials.read();
+      if (!cloud)
+        return { ok: false, error: "Cloud authentication is not configured on this terminal. Use a synchronized username and approval PIN instead." };
+      const authController = new AbortController();
+      const authTimer = setTimeout(() => authController.abort(), 8_000);
+      let authResponse;
+      try {
+        authResponse = await fetch(`${cloud.url}/auth/v1/token?grant_type=password`, {
+          method: "POST",
+          headers: { apikey: cloud.key, "content-type": "application/json" },
+          body: JSON.stringify({ email: user, password: secret }),
+          signal: authController.signal,
+        });
+      } catch {
+        return { ok: false, error: "Cloud authentication could not be reached. Use a synchronized username and approval PIN while offline." };
+      } finally {
+        clearTimeout(authTimer);
+      }
+      const auth = await authResponse.json().catch(() => ({}));
+      if (!authResponse.ok || !auth.access_token)
+        return { ok: false, error: "That administrator email or password was not accepted." };
+      const authorizationUrl = authorizationServerUrl();
+      if (!authorizationUrl)
+        return { ok: false, error: "The hosted POS backend address is not configured." };
+      const authorityController = new AbortController();
+      const authorityTimer = setTimeout(() => authorityController.abort(), 8_000);
+      let authorityResponse;
+      try {
+        authorityResponse = await fetch(`${authorizationUrl}/api/v1/pos/ipc-adopt`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ accessToken: auth.access_token }),
+          signal: authorityController.signal,
+        });
+      } catch {
+        return { ok: false, error: "The POS backend could not verify this administrator. Try again when the connection is available." };
+      } finally {
+        clearTimeout(authorityTimer);
+      }
+      const authority = await authorityResponse.json().catch(() => ({}));
+      if (!authorityResponse.ok || !authority.ok)
+        return { ok: false, error: authority.error ?? "This administrator could not be verified." };
+      if (authority.level !== "admin" && authority.permissions?.can_manage_sync_backup !== true)
+        return { ok: false, error: "Database-management permission is required." };
+      adminSession.grantRecovery();
+      return { ok: true };
+    }
+
+    const local = await verifySyncedApprovalPin(databaseManager.pool, user, secret, localBranchId())
+      .catch(() => ({ ok: false, reason: "unavailable" }));
+    if (local.ok) {
+      const role = String(local.staff?.role_slug ?? "staff").toLowerCase();
+      const permissions = local.staff?.permissions ?? {};
+      if (role === "admin" || permissions.can_manage_sync_backup === true) {
+        adminSession.grantRecovery();
+        return { ok: true };
+      }
+      return { ok: false, error: "Database-management permission is required." };
+    }
+
+    // If SQL Server itself is what needs repair, verify the same credential
+    // through the configured hosted backend. Its response is authoritative;
+    // no role or permission supplied by the renderer is ever trusted.
+    const authorizationUrl = authorizationServerUrl();
+    if (!authorizationUrl)
+      return { ok: false, error: "The local database is unavailable and no POS backend is configured." };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    let response;
+    try {
+      response = await fetch(`${authorizationUrl}/api/v1/pos/ipc-authorize`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: user, pin: secret, terminalId: terminalStore.read()?.tokenId ?? null }),
+        signal: controller.signal,
+      });
+    } catch {
+      return { ok: false, error: "The approval service could not be reached. Check the connection or use a PIN already synchronized to this terminal." };
+    } finally {
+      clearTimeout(timer);
+    }
+    const result = await response.json().catch(() => ({ ok: false, error: "Authorization failed." }));
+    if (!response.ok || !result.ok)
+      return { ok: false, error: result.error ?? "That username or PIN was not accepted." };
+    if (result.level !== "admin" && result.permissions?.can_manage_sync_backup !== true)
+      return { ok: false, error: "Database-management permission is required." };
+    adminSession.grantRecovery();
+    return { ok: true };
+  }));
+  ipcMain.handle("admin:recovery-lock", () => {
+    adminSession.clearRecovery();
+    return { ok: true };
+  });
   ipcMain.handle("admin:adopt-session", async (_e, value, rawTerminal) => guard.guarded(async () => {
     const proof=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
     if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return{ok:false,error:"A verified signed-in user is required."};
@@ -1404,6 +1507,34 @@ function registerIpc() {
       databaseService.markReady({phase:"migration_complete",syncReady:!wasPaused});
       return{...migrated,ok:true,ready:true,state:databaseService.snapshot()};
     }finally{if(!wasPaused){syncCoordinator.resume();scheduleAutomaticSync(250);}}
+  }));
+  ipcMain.handle("database:provision-connect", (_e, value) => guard.guarded(async()=>{
+    const profile=guard.databaseProfile(value,{requireDatabase:true});
+    const wasPaused=syncCoordinator.paused;
+    let resumed=false;
+    if(!wasPaused)syncCoordinator.pause();
+    try{
+      if(syncCoordinator.activeRun)await syncCoordinator.activeRun;
+      const ensured=await observedDatabaseOperation("provision","database",()=>ensureDatabase(databaseManager,profile));
+      if(!ensured.ok)return ensured;
+      const migrated=await observedDatabaseOperation("provision","migration",()=>applyMigrations(databaseManager,profile));
+      if(!migrated.ok)return{...migrated,created:ensured.created};
+      const validation=await observedDatabaseOperation("provision","validation",()=>databaseService.validate(profile));
+      if(!validation.ok)return{...validation,created:ensured.created,applied:migrated.applied};
+      if(!validation.ready)return{ok:false,code:"EMIGRATION_INCOMPLETE",error:"The database was prepared, but schema validation still found differences.",created:ensured.created,applied:migrated.applied,validation};
+      const connected=await observedDatabaseOperation("provision","connect",()=>databaseService.saveAndConnect(profile));
+      if(!connected.ok)return{...connected,created:ensured.created,applied:migrated.applied,validation};
+      // Schema work is complete. Let the existing bootstrap coordinator run;
+      // it performs the initial push/pull itself and refuses to run paused.
+      if(!wasPaused){syncCoordinator.resume();resumed=true;}
+      let synchronization;
+      try{synchronization=await prepareLocalData();}
+      catch(error){synchronization={ok:false,pending:true,code:error?.code??"ESYNC",message:String(error?.message??error)};}
+      return{...connected,ok:true,created:ensured.created,applied:migrated.applied,schemaRepair:migrated.schemaRepair,validation,synchronization,state:databaseService.snapshot()};
+    }finally{
+      if(!wasPaused&&!resumed)syncCoordinator.resume();
+      if(!wasPaused)scheduleAutomaticSync(250);
+    }
   }));
   ipcMain.handle("database:export-migrations", async()=>{
     const chosen=await dialog.showSaveDialog({

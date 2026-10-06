@@ -1,15 +1,17 @@
 /**
  * PIN gate in front of Emergency Access.
  *
- * Recovery Settings never open straight away: the operator has to type the
- * one-minute recovery code first. Verification happens entirely on this
- * device — no internet, no cloud, no database, nobody signed in — and the
- * unlock lasts for this screen only, never persisted.
+ * Recovery Settings never open straight away. Electron verifies a real admin
+ * email/password online or a synchronized username/approval PIN locally; the
+ * browser fallback retains the one-minute recovery code. The unlock lasts for
+ * this screen only and is never persisted.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Delete, LifeBuoy, Lock } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { logger } from "@/lib/audit-log";
 import { isTerminalApp } from "@/platform-config/platform";
 import {
@@ -27,13 +29,11 @@ import {
 
 /**
  * The desktop till refuses connection, identity and database changes until
- * somebody unlocks it. On this screen the recovery code *is* the unlock: the
- * desktop process re-checks the same code against its own clock and opens a
- * short repair session, so the operator is never asked for a supervisor sign-in
- * halfway through fixing a terminal that cannot sign anybody in.
+ * somebody unlocks it. The desktop process verifies the credential itself and
+ * opens a short repair session; renderer-supplied roles are never trusted.
  */
 type RecoveryBridge = {
-  recoveryUnlock?: (code: string) => Promise<{ ok: boolean }>;
+  recoveryUnlock?: (username: string, pin: string) => Promise<{ ok: boolean; error?: string }>;
   recoveryLock?: () => Promise<unknown>;
 };
 
@@ -56,6 +56,8 @@ export function EmergencyPinGate({ children }: { children: ReactNode }) {
   const [unlocked, setUnlocked] = useState(!gated);
   const [available, setAvailable] = useState(true);
   const [pin, setPin] = useState("");
+  const [username, setUsername] = useState("");
+  const [adminSecret, setAdminSecret] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(0);
@@ -90,6 +92,29 @@ export function EmergencyPinGate({ children }: { children: ReactNode }) {
 
   if (unlocked) return <>{children}</>;
 
+  const nativeRecovery = Boolean(recoveryBridge()?.recoveryUnlock);
+
+  const submitAdministrator = async () => {
+    if (busy || locked > 0) return;
+    setBusy(true);
+    setError("");
+    const result = await recoveryBridge()
+      ?.recoveryUnlock?.(username, adminSecret)
+      .catch(() => ({ ok: false, error: "The protected repair session could not be opened." }));
+    if (!alive.current) return;
+    setBusy(false);
+    setAdminSecret("");
+    if (!result?.ok) {
+      const wait = notePinFailure(SCOPE);
+      setLocked(wait);
+      setError(result?.error ?? "That administrator credential was not accepted.");
+      return;
+    }
+    clearPinFailures(SCOPE);
+    logger.log("security", "Emergency access unlocked", "recovery", { outcome: "granted" });
+    setUnlocked(true);
+  };
+
   const submit = async (code: string) => {
     if (busy || locked > 0) return;
     setBusy(true);
@@ -103,7 +128,6 @@ export function EmergencyPinGate({ children }: { children: ReactNode }) {
     // though the screen itself never needs a connection.
     if (ok) {
       clearPinFailures(SCOPE);
-      await recoveryBridge()?.recoveryUnlock?.(code).catch(() => undefined);
       logger.log("security", "Emergency access unlocked", "recovery", { outcome: "granted" });
       setUnlocked(true);
       return;
@@ -140,10 +164,50 @@ export function EmergencyPinGate({ children }: { children: ReactNode }) {
         <h1 className="text-lg font-semibold">Emergency access</h1>
       </div>
       <p className="text-sm text-muted-foreground">
-        Enter the recovery code for this device to open its connection settings.
+        {nativeRecovery
+          ? "Use an administrator email and password online, or a synchronized username and approval PIN offline."
+          : "Enter the recovery code for this device to open its connection settings."}
       </p>
 
-      {!available ? (
+      {nativeRecovery ? (
+        <div className="w-full space-y-3 text-left">
+          <div className="space-y-1">
+            <Label htmlFor="recovery-username">Administrator email or username</Label>
+            <Input
+              id="recovery-username"
+              autoFocus
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="recovery-pin">Password or approval PIN</Label>
+            <Input
+              id="recovery-pin"
+              type="password"
+              autoComplete="current-password"
+              value={adminSecret}
+              onChange={(event) => setAdminSecret(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void submitAdministrator();
+              }}
+            />
+          </div>
+          <Button
+            className="w-full"
+            disabled={busy || locked > 0 || !username.trim() || adminSecret.length < 4}
+            onClick={() => void submitAdministrator()}
+          >
+            {busy ? "Verifying administrator…" : "Unlock repair settings"}
+          </Button>
+          {locked > 0 && (
+            <p className="text-sm text-destructive">
+              Locked for {Math.ceil(locked / 1000)}s
+            </p>
+          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+      ) : !available ? (
         <p className="rounded-md border border-border p-3 text-sm text-muted-foreground">
           Recovery codes are not available on this device.
         </p>

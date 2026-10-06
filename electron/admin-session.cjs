@@ -1,6 +1,8 @@
 const MAX_IDLE_MS = 10 * 60 * 1000;
+const RECOVERY_IDLE_MS = 5 * 60 * 1000;
 
 let session = null;
+let recoveryExpiresAt = 0;
 
 function clear() { session = null; }
 function grant(level, subject, permissions = {}, source = "manual", branchId = null) {
@@ -22,6 +24,20 @@ function hasPermission(permission) { return active()?.permissions?.[permission] 
 function hasPosAuthority() { return active()?.source === "pos"; }
 function branchId() { return active()?.branchId ?? null; }
 function touch() { if (active()) session.expiresAt = Date.now() + MAX_IDLE_MS; }
+// Only main.cjs may call this, after verifying a real POS administrator or a
+// staff member carrying the database-management permission. The renderer is
+// deliberately given no clock-, token- or role-based shortcut.
+function grantRecovery() {
+  recoveryExpiresAt = Date.now() + RECOVERY_IDLE_MS;
+}
+function clearRecovery() { recoveryExpiresAt = 0; }
+function recoveryActive() {
+  if (recoveryExpiresAt <= Date.now()) clearRecovery();
+  return recoveryExpiresAt > 0;
+}
+function recoveryTouch() {
+  if (recoveryActive()) recoveryExpiresAt = Date.now() + RECOVERY_IDLE_MS;
+}
 function status() {
   const current = active();
   return current ? { ok: true, unlocked: true, level: current.level, subject: current.subject } : { ok: true, unlocked: false };
@@ -39,4 +55,4 @@ function identity() {
   } : null;
 }
 
-module.exports = { clear, grant, hasLevel, hasPermission, hasPosAuthority, branchId, touch, status, identity, recoveryActive: () => false, recoveryTouch: () => {} };
+module.exports = { clear, grant, hasLevel, hasPermission, hasPosAuthority, branchId, touch, status, identity, grantRecovery, clearRecovery, recoveryActive, recoveryTouch };

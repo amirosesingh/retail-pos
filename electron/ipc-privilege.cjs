@@ -30,7 +30,7 @@ const DATABASE_SYNC_CHANNELS = new Set([
   "pos:apply-schema", "pos:apply-schema-tables", "pos:restore", "pos:restore-verify",
   "pos:restore-drill", "pos:backup", "pos:set-sync-config", "pos:set-sync-enabled",
   "pos:retry-connection", "pos:reconnect", "pos:retry-errored", "pos:retry-row",
-  "pos:discard-row", "database:set-enabled", "database:migrate", "database:migrate-saved", "database:save-connect",
+  "pos:discard-row", "database:set-enabled", "database:migrate", "database:migrate-saved", "database:provision-connect", "database:save-connect",
   "database:disconnect", "database:remove-configuration", "database:backup",
   "database:restore", "sync:run-now", "sync:pause", "sync:resume",
   "sync:reconcile", "cloud:set", "cloud:remove", "backend:set",
@@ -52,6 +52,8 @@ const CHANNEL_LEVELS = {
   "admin:lock": OPEN,
   "admin:status": OPEN,
   "admin:adopt-session": OPEN,
+  "admin:recovery-unlock": OPEN,
+  "admin:recovery-lock": OPEN,
 
   /* --- trading: the register cannot sell without these --- */
   "pos:write": OPEN,
@@ -193,6 +195,7 @@ const CHANNEL_LEVELS = {
   "database:authorize-settings": ADMIN,
   "database:migrate": ADMIN,
   "database:migrate-saved": ADMIN,
+  "database:provision-connect": ADMIN,
   "database:save-connect": ADMIN,
   "database:disconnect": ADMIN,
   "database:remove-configuration": ADMIN,

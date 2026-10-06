@@ -173,6 +173,27 @@ describe("cashier location bootstrap", () => {
     expect(db).toContain("Could not verify access to the location directory");
   });
 
+  it("returns warehouse identity fields through the registered-terminal relay", () => {
+    const relay = read("src/core/api/pos-relay.server.ts");
+    const directory = relay.slice(relay.indexOf('if (read.kind === "stores")'));
+    expect(directory).toContain("location_type,parent_id,is_central,is_primary_sub");
+    expect(directory).toContain("building_name,floor_label,is_active,archived_at");
+    expect(directory).toContain("deleted_at=is.null");
+  });
+
+  it("repairs the authenticated profile privileges required after password sign-in", () => {
+    const migration = read(
+      "supabase/migrations/20261006073000_restore_staff_login_privileges.sql",
+    );
+    expect(migration).toContain(
+      "GRANT EXECUTE ON FUNCTION public.current_app_user() TO authenticated, service_role",
+    );
+    expect(migration).toContain(
+      "GRANT SELECT ON TABLE public.user_roles TO authenticated, service_role",
+    );
+    expect(migration).not.toMatch(/GRANT\s+(ALL|INSERT|UPDATE|DELETE).*user_roles/i);
+  });
+
   it("keeps loading failures separate from a confirmed empty directory", () => {
     const guard = read("src/platforms/web/components/pos/LocationBootGuard.tsx");
     expect(guard.indexOf("Could not load locations")).toBeLessThan(

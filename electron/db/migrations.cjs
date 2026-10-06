@@ -37,6 +37,42 @@ async function applyMigrations(connectionManager,profile=null){
  if(!(connectionManager.isConnected?.()??connectionManager.pool))return{ok:false,code:"EDATABASE",error:"SQL Server is not connected."};
  return runOnPool(connectionManager,connectionManager.pool);
 }
+function databaseIdentifier(value){
+ const name=String(value??"");
+ if(!name||name.length>128||/[;{}\\/\x00-\x1f]/.test(name))throw Object.assign(new Error("The database name is invalid."),{code:"EBADARG"});
+ if(new Set(["master","model","msdb","tempdb"]).has(name.trim().toLowerCase()))throw Object.assign(new Error("A SQL Server system database cannot be used as the Retail POS database."),{code:"EBADARG"});
+ return`[${name.replaceAll("]","]]")}]`;
+}
+async function ensureDatabase(connectionManager,profile){
+ try{
+  const database=String(profile?.database??"");
+  const identifier=databaseIdentifier(database);
+  const ensured=await connectionManager.temporary(profile,"master",async(pool)=>{
+   const found=await pool.request().input("database",database).query("SELECT DB_ID(@database) database_id;");
+   if(found.recordset?.[0]?.database_id!=null)return{ok:true,created:false,database};
+   try{await pool.request().batch(`CREATE DATABASE ${identifier};`);}
+   catch(error){
+    // Another terminal may have created the same database after our check.
+    if(Number(error?.number)!==1801)throw error;
+   }
+   const confirmed=await pool.request().input("database",database).query("SELECT DB_ID(@database) database_id;");
+   if(confirmed.recordset?.[0]?.database_id==null)throw Object.assign(new Error("SQL Server did not create the requested database."),{code:"EDATABASE"});
+   return{ok:true,created:true,database};
+  });
+  const inspection=await connectionManager.temporary(profile,database,async(pool)=>{
+   const result=await pool.request().query("SELECT COUNT(*) user_table_count, OBJECT_ID(N'dbo.pos_schema_migrations',N'U') migration_table_id FROM sys.tables WHERE is_ms_shipped=0;");
+   const row=result.recordset?.[0]??{};
+   return{userTableCount:Number(row.user_table_count??0),managed:row.migration_table_id!=null};
+  });
+  if(!ensured.created&&inspection.userTableCount>0&&!inspection.managed){
+   throw Object.assign(new Error("The selected database contains tables but is not a managed Retail POS database. Choose an empty database or the existing POS database."),{code:"ESCHEMA"});
+  }
+  return{...ensured,...inspection};
+ }catch(error){
+  if(error?.code==="ESCHEMA")return{ok:false,code:"ESCHEMA",error:String(error.message),hint:"No existing tables were changed."};
+  return safeError(error,"The local POS database could not be created.");
+ }
+}
 function migrationBundleSql(appVersion="current"){
  const header=[
   "-- Retail POS local SQL Server migration bundle",
@@ -48,4 +84,4 @@ function migrationBundleSql(appVersion="current"){
  const numbered=migrationFiles().flatMap(file=>[`-- ${file.name}`,fs.readFileSync(file.path,"utf8").trim(),"GO"]);
  return [...header,...numbered,"-- Current additive schema repair",fs.readFileSync(schemaFile(),"utf8").trim(),""].join("\n\n");
 }
-module.exports={applyMigrations,migrationFiles,migrationBundleSql,splitBatches};
+module.exports={applyMigrations,ensureDatabase,migrationFiles,migrationBundleSql,splitBatches,databaseIdentifier};
