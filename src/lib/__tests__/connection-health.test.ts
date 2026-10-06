@@ -82,6 +82,13 @@ describe("connection health", () => {
     expect(report.cloud).toBe(false);
     expect(cloudVerdict()).toBe("rejected");
   });
+
+  it("does not treat unrelated policy errors as proof that the key is valid", async () => {
+    cloud.error = { status: 403, message: "The project access policy is unavailable" };
+    const report = await checkHealth(true);
+    expect(report.cloud).toBe(false);
+    expect(cloudVerdict()).toBe("rejected");
+  });
 });
 
 describe("notification guard", () => {

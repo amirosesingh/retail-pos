@@ -9,8 +9,17 @@ import {
 
 // @ts-expect-error CommonJS Electron module has no declaration file.
 import { discoverLocalSqlServers } from "../../../../electron/db/local-server-discovery.cjs";
+// @ts-expect-error CommonJS Electron module has no declaration file.
+import { databaseIdentifier } from "../../../../electron/db/migrations.cjs";
 
 describe("local SQL Server wizard server step", () => {
+  it("never provisions Retail POS inside a SQL Server system database", () => {
+    for (const name of ["master", "MODEL", " msdb ", "tempdb"]) {
+      expect(() => databaseIdentifier(name)).toThrow(/system database/i);
+    }
+    expect(databaseIdentifier("POS_Local")).toBe("[POS_Local]");
+  });
+
   it("accepts valid hostnames, localhost values, and IP addresses without a connection test", () => {
     for (const host of ["localhost", "SHOP-TILL", "sql.example.internal", "127.0.0.1", "[::1]"]) {
       expect(validateServerEndpoint(host, 1433)).toBeNull();
@@ -140,6 +149,7 @@ describe("local SQL Server wizard server step", () => {
     expect(wizard).toContain("const response = await database.listServers()");
     expect(wizard).toContain("selectDiscoveredServer(current, server)");
     expect(wizard).toContain("provisionAndConnect(profile)");
+    expect(wizard).toContain("Provisioning already succeeded");
     expect(wizard).toContain('database: "POS_Local"');
     expect(wizard).toContain("Database to create or update");
     expect(wizard).toContain("creates the database when it is");

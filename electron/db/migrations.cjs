@@ -40,6 +40,7 @@ async function applyMigrations(connectionManager,profile=null){
 function databaseIdentifier(value){
  const name=String(value??"");
  if(!name||name.length>128||/[;{}\\/\x00-\x1f]/.test(name))throw Object.assign(new Error("The database name is invalid."),{code:"EBADARG"});
+ if(new Set(["master","model","msdb","tempdb"]).has(name.trim().toLowerCase()))throw Object.assign(new Error("A SQL Server system database cannot be used as the Retail POS database."),{code:"EBADARG"});
  return`[${name.replaceAll("]","]]")}]`;
 }
 async function ensureDatabase(connectionManager,profile){

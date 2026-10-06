@@ -142,6 +142,7 @@ async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
     }
     const msg = error.message ?? "";
     const status = Number((error as { status?: unknown }).status) || undefined;
+    const code = String((error as { code?: unknown }).code ?? "");
     // A rejected key is a configuration fault, not a network fault: saying
     // "offline" here is what let a wrong key look like a working connection.
     if (/invalid api ?key/i.test(msg)) {
@@ -157,7 +158,11 @@ async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
     // therefore a healthy connection with restricted anonymous data access,
     // not a bad key. Treating it as rejected traps an already-configured till
     // on the first-run connection screen before anybody can sign in.
-    if (/permission denied|row-level security|\b42501\b|policy/i.test(msg)) {
+    if (
+      code === "42501" ||
+      /permission denied for/i.test(msg) ||
+      /new row violates row-level security policy/i.test(msg)
+    ) {
       diagnosis = { issue: "none", status };
       return "verified";
     }

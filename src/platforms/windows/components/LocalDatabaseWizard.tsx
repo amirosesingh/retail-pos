@@ -285,7 +285,7 @@ export function LocalDatabaseWizard({
           <DialogHeader>
             <DialogTitle>Connect directly to Microsoft SQL Server</DialogTitle>
             <DialogDescription>
-              Nothing is enabled or saved until the final Save and connect step succeeds.
+              Nothing is enabled or saved until the final Prepare database and connect step succeeds.
             </DialogDescription>
           </DialogHeader>
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
@@ -664,8 +664,12 @@ export function LocalDatabaseWizard({
                         const response = await api()!.provisionAndConnect(profile);
                         if (response.ok) {
                           setProfile((old) => ({ ...old, password: "" }));
-                          const next = await api()!.getState();
-                          setState(next);
+                          try {
+                            setState(await api()!.getState());
+                          } catch {
+                            // Provisioning already succeeded. The database status subscription
+                            // will refresh this view without falsely reporting setup as failed.
+                          }
                           setOpen(false);
                         }
                         return response;
