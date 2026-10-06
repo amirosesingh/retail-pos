@@ -23,6 +23,24 @@ class LocalDataLifecycle {
     await this.checkpoints.save(branchId,table.sqlServerTable,"push",{change_tracking_version:currentVersion});
     return{table:table.sqlServerTable,completed:refreshed.completed,currentVersion};
   }
+  async pushWithGapRecovery(branchId,historyDays){
+    const recovered=new Set();
+    while(true){
+      try{
+        const result=await this.syncCoordinator.pushWorker.run({branchId,batchSize:500});
+        return{result,recovered:[...recovered]};
+      }catch(error){
+        if(error?.code!=="ECHANGEGAP"||!error?.table)throw error;
+        const tableName=String(error.table);
+        // A checkpoint reset must make progress. Seeing the same table twice
+        // means the recovery did not establish a usable baseline, so surface
+        // the original failure instead of looping forever.
+        if(recovered.has(tableName))throw error;
+        await this.recoverChangeTrackingGap(branchId,historyDays,tableName);
+        recovered.add(tableName);
+      }
+    }
+  }
   async ensure({branchId,historyDays=90,force=false}){
     if(!branchId)throw Object.assign(new Error("This terminal needs a branch before local data can be prepared."),{code:"EBRANCH"});
     this.databaseService.transition("enabled_bootstrapping",{phase:"resume"});
@@ -31,14 +49,8 @@ class LocalDataLifecycle {
     // Upload local changes before refreshing shared reference rows. Older
     // databases may have a completed bootstrap from before store_groups was
     // part of the registry, leaving stores.group_id without its local parent.
-    let recoveredGap=false;
-    try{
-      await this.syncCoordinator.pushWorker.run({branchId,batchSize:500});
-    }catch(error){
-      if(error?.code!=="ECHANGEGAP"||!error?.table)throw error;
-      await this.recoverChangeTrackingGap(branchId,historyDays,error.table);
-      recoveredGap=true;
-    }
+    const initialPush=await this.pushWithGapRecovery(branchId,historyDays);
+    const recoveredGap=initialPush.recovered.length>0;
     if((force&&!recoveredGap)||!completed){
       // A reused till database can contain completed offline sales before it
       // has a bootstrap checkpoint. Upload every locally tracked transaction

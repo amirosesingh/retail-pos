@@ -145,22 +145,30 @@ async function observedDatabaseOperation(category, stage, work) {
     throw error;
   }
 }
-async function prepareLocalData({force=false}={}){
+let localDataPreparePromise=null;
+function prepareLocalData({force=false}={}){
+  // Startup, the automatic ECHANGEGAP recovery path, and a manual database
+  // action can request preparation together. Share one lifecycle run so a
+  // periodic push cannot race the scoped checkpoint repairs.
+  if(localDataPreparePromise)return localDataPreparePromise;
   const profile=databaseConfig.profile()??{};
-  try{
-    const result=await localDataLifecycle.ensure({branchId:localBranchId(),historyDays:Number(profile.retentionDays)||90,force});
-    diagnostics.logConnection("synchronization.bootstrap.succeeded", { category:"synchronization", stage:"bootstrap", state:"ready" });
-    return result;
-  }
-  catch(error){
-    // Reaching this function means SQL Server already passed validation and is
-    // connected. A cloud, activation or reconciliation problem belongs to the
-    // synchronization status; it must not describe the healthy local database
-    // as degraded or disable offline trading.
-    databaseService.markReady({phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences});
-    diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error) });
-    throw error;
-  }
+  localDataPreparePromise=(async()=>{
+    try{
+      const result=await localDataLifecycle.ensure({branchId:localBranchId(),historyDays:Number(profile.retentionDays)||90,force});
+      diagnostics.logConnection("synchronization.bootstrap.succeeded", { category:"synchronization", stage:"bootstrap", state:"ready" });
+      return result;
+    }
+    catch(error){
+      // Reaching this function means SQL Server already passed validation and is
+      // connected. A cloud, activation or reconciliation problem belongs to the
+      // synchronization status; it must not describe the healthy local database
+      // as degraded or disable offline trading.
+      databaseService.markReady({phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences});
+      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error) });
+      throw error;
+    }
+  })().finally(()=>{localDataPreparePromise=null;});
+  return localDataPreparePromise;
 }
 
 const AUTO_SYNC_OK_MS = 15_000;
@@ -182,7 +190,7 @@ async function runAutomaticSync() {
   automaticSyncTimer = null;
   // A cached administrator branch is never a substitute for a registered
   // terminal identity. Revocation clears the vault before this can run again.
-  if (!terminalStore.read()?.tokenId || !databaseManager.isConnected() || !localBranchId() || jobManager.running || syncCoordinator.paused) {
+  if (!terminalStore.read()?.tokenId || !databaseManager.isConnected() || !localBranchId() || jobManager.running || localDataPreparePromise || syncCoordinator.paused) {
     scheduleAutomaticSync();
     return;
   }
