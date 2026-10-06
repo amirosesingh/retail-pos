@@ -143,6 +143,43 @@ describe("scoped SQL Server synchronization", () => {
     );
   });
 
+  it("scopes offline push rows to the active branch, including owned catalogue rows", () => {
+    const { branchPredicate } = require("../../../electron/db/branch-scope.cjs");
+    const registry = {
+      tables: [
+        {
+          sqlServerTable: "products",
+          cloudTable: "products",
+          columns: [
+            { sqlServerColumn: "id", cloudColumn: "id" },
+            { sqlServerColumn: "owner_store_id", cloudColumn: "owner_store_id" },
+          ],
+        },
+        {
+          sqlServerTable: "product_barcodes",
+          cloudTable: "product_barcodes",
+          columns: [
+            {
+              sqlServerColumn: "product_id",
+              cloudColumn: "product_id",
+              foreignKey: true,
+              foreignKeyTarget: { table: "products", column: "id" },
+            },
+          ],
+        },
+      ],
+    };
+    expect(branchPredicate(registry, registry.tables[0], "source")).toBe(
+      "(NULLIF(source.[owner_store_id],N'') IS NULL OR source.[owner_store_id]=@branch)",
+    );
+    expect(branchPredicate(registry, registry.tables[1], "source")).toContain(
+      "parent.[id]=source.[product_id]",
+    );
+    expect(branchPredicate(registry, registry.tables[1], "source")).toContain(
+      "parent.[owner_store_id]=@branch",
+    );
+  });
+
   it("leaves zero-stock lifecycle decisions to the current database row", () => {
     const store = read("src/lib/pos-store.tsx");
     const catalog = read("src/routes/settings.catalog.tsx");
@@ -251,6 +288,25 @@ describe("scoped SQL Server synchronization", () => {
     expect(pull).toContain(`x."id"=((f.entity_id::jsonb)->>'id')::integer`);
     expect(pull).toContain(`x."key"=((f.entity_id::jsonb)->>'key')`);
     expect(pull).not.toContain(`x."id"::text=(f.entity_id::jsonb)->>'id'`);
+  });
+
+  it("allows byte-safe sync pages for unusually large settings and audit rows", () => {
+    const migration = read(
+      "supabase/migrations/20261006043000_allow_byte_safe_sync_pages.sql",
+    );
+    const endpoint = read("src/lib/sync-endpoint.server.ts");
+    const pullWorker = read("electron/sync/pull-worker.cjs");
+    const canonical = read("supabase/schema.sql");
+    expect(migration).toContain("LEAST(GREATEST(p_limit,10),2000)");
+    expect(migration).toContain("public.pos_sync_pull(text,text,text,bigint,integer)");
+    expect(migration).toContain(
+      "public.pos_sync_bootstrap(text,text,text,text,text,integer,integer)",
+    );
+    expect(endpoint).toMatch(/limit:\s*z\.number\(\)\.int\(\)\.min\(10\)/);
+    expect(pullWorker).toContain("batchSize = 10");
+    expect(canonical.lastIndexOf("LEAST(GREATEST(p_limit,10),2000)")).toBeGreaterThan(
+      canonical.lastIndexOf("LEAST(GREATEST(p_limit,100),2000)"),
+    );
   });
 
   it("returns stale authorization edits once instead of triggering PostgreSQL retries", () => {

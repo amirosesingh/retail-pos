@@ -1,8 +1,10 @@
 const { toCloudRow } = require("./row-codec.cjs");
+const { branchPredicate } = require("../db/branch-scope.cjs");
 
 class ChangeReader {
   constructor(connectionManager, registry = null) {
     this.connectionManager = connectionManager;
+    this.registry = registry ?? { tables: [] };
     this.tables = new Map((registry?.tables ?? []).map((table) => [table.sqlServerTable, table]));
   }
   table(value) {
@@ -37,7 +39,7 @@ class ChangeReader {
     }
     return (result.recordset ?? []).map((row) => ({ ...row, remote: Boolean(row.change_context), key: Object.fromEntries(primary.map((column) => [column, row[column]])), entityId: this.entityId(primary, row) }));
   }
-  async rows(value, changes) {
+  async rows(value, changes, { branchId = "" } = {}) {
     const { table, primary } = this.table(value);
     if (!changes.length) return [];
     const request = this.connectionManager.pool.request();
@@ -45,7 +47,11 @@ class ChangeReader {
       const key = change.key ?? change;
       return `(${primary.map((column, part) => { request.input(`k${index}_${part}`, key[column]); return `[${column}]=@k${index}_${part}`; }).join(" AND ")})`;
     });
-    const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] WHERE ${clauses.join(" OR ")};`);
+    const scope = branchId && table.scope === "branch"
+      ? branchPredicate(this.registry, table, "source")
+      : null;
+    if (scope) request.input("branch", String(branchId));
+    const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);
     return (result.recordset ?? []).map((row) => toCloudRow(table, row));
   }
   async pendingAggregates(branchId, limit = 500) {

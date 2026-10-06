@@ -93,7 +93,7 @@ const bodySchema = z.object({
       organizationId: z.string().min(1).max(128),
       branchId: z.string().min(1).max(128),
       cursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-      limit: z.number().int().min(100).max(2000),
+      limit: z.number().int().min(10).max(2000),
     })
     .optional(),
   sqlServerBootstrap: z
@@ -106,7 +106,7 @@ const bodySchema = z.object({
         .max(64),
       cursor: z.string().max(512).nullable(),
       historyDays: z.number().int().min(30).max(7300),
-      limit: z.number().int().min(100).max(2000),
+      limit: z.number().int().min(10).max(2000),
     })
     .optional(),
   sqlServerCounts: z

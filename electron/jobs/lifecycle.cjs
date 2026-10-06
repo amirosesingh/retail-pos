@@ -61,7 +61,7 @@ class LocalDataLifecycle {
     // Always repair this small parent table, including databases whose old
     // completed bootstrap marker would otherwise skip newly-added tables.
     await refreshTable({registry:this.registry,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:"store_groups"});
-    const synced=await this.syncCoordinator.runNow({branchId,batchSize:500});
+    const synced=await this.syncCoordinator.runNow({branchId,batchSize:10});
     if(!synced.ok)throw Object.assign(new Error(synced.error??"Final synchronization failed."),{code:"ESYNC"});
     await this.retain(branchId,historyDays);
     const differences=await this.reconcile(branchId,historyDays);
@@ -89,10 +89,10 @@ class LocalDataLifecycle {
     const allowed=new Set(this.registry.tables.map(table=>table.cloudTable));
     const requested=[...new Set((tableNames??[]).map(String).filter(table=>allowed.has(table)))];
     if(!requested.length)return this.reconcile(branchId,historyDays);
-    const pushed=await this.syncCoordinator.runNow({branchId,batchSize:500});
+    const pushed=await this.syncCoordinator.runNow({branchId,batchSize:10});
     if(!pushed.ok)throw Object.assign(new Error(pushed.error??"Synchronization failed before repair."),{code:pushed.code??"ESYNC"});
     for(const tableName of requested)await refreshTable({registry:this.registry,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName});
-    const pulled=await this.syncCoordinator.runNow({branchId,batchSize:500});
+    const pulled=await this.syncCoordinator.runNow({branchId,batchSize:10});
     if(!pulled.ok)throw Object.assign(new Error(pulled.error??"Synchronization failed after repair."),{code:pulled.code??"ESYNC"});
     return this.reconcile(branchId,historyDays);
   }

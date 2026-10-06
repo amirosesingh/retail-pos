@@ -272,6 +272,8 @@ type Ctx = {
   upsertStore: (store: Store) => Promise<CommitTarget>;
   /** archive (never delete) a location; returns why it was refused, if it was */
   archiveStore: (id: string, archived: boolean) => Promise<string | null>;
+  /** Remove a location already deleted by the protected central transaction. */
+  forgetDeletedStore: (id: string) => void;
   openShift: (cashier: string, openingFloat: number) => Promise<CommitTarget>;
   closeShift: (
     countedCash: number,
@@ -1337,6 +1339,24 @@ export function PosProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+
+  const forgetDeletedStore = useCallback((id: string) => {
+    setState((current) => {
+      const stores = current.stores.filter((store) => store.id !== id);
+      const fallback = activeLocations(stores)[0]?.id ?? "";
+      return {
+        ...current,
+        stores,
+        currentStoreId: current.currentStoreId === id ? fallback : current.currentStoreId,
+        products: current.products.map((product) => {
+          if (!(id in product.stockByStore)) return product;
+          const stockByStore = { ...product.stockByStore };
+          delete stockByStore[id];
+          return { ...product, stockByStore };
+        }),
+      };
+    });
+  }, []);
 
   const openShift = useCallback(
     async (cashier: string, openingFloat: number) => {
@@ -3074,8 +3094,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
         return;
       }
       logger.log("settings", "Settings updated", "settings", {
-        previous: stateRef.current.settings,
-        updated: patch,
+        sections: Object.keys(patch),
+        fields: Object.fromEntries(
+          Object.entries(patch).map(([section, value]) => [
+            section,
+            value && typeof value === "object" && !Array.isArray(value)
+              ? Object.keys(value)
+              : "value",
+          ]),
+        ),
       });
       const scope = scopeRef.current;
       const ids = scopeIdsRef.current;
@@ -3723,6 +3750,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setCurrentStore,
     upsertStore,
     archiveStore,
+    forgetDeletedStore,
     activeShift,
     shiftReadError,
     shiftChecked,

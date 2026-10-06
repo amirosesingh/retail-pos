@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Archive, ArchiveRestore, Building2, Layers, Plus, ShieldAlert } from "lucide-react";
+import { Archive, ArchiveRestore, Building2, Layers, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -9,6 +9,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Sheet,
   SheetContent,
@@ -29,6 +39,7 @@ import {
   subWarehouses,
 } from "@/lib/locations";
 import { groupName, selectableGroups, useStoreGroups } from "@/lib/store-groups";
+import { permanentlyDeleteEmptyLocation } from "@/lib/location-admin";
 
 export const Route = createFileRoute("/stores")({
   head: () => ({
@@ -93,6 +104,7 @@ function Locations() {
     currentStore,
     upsertStore,
     archiveStore,
+    forgetDeletedStore,
     setCurrentStore,
     state,
     updateSettings,
@@ -101,6 +113,10 @@ function Locations() {
   const groups = useStoreGroups();
   const pickableGroups = useMemo(() => selectableGroups(groups), [groups]);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Store | null>(null);
+  const [deleteName, setDeleteName] = useState("");
+  const [deleteBlockers, setDeleteBlockers] = useState<Record<string, number>>({});
+  const [deleting, setDeleting] = useState(false);
 
   const roots = useMemo(
     () => allStores.filter((s) => s.locationType !== "sub_warehouse"),
@@ -234,6 +250,30 @@ function Locations() {
 
     toast.success(`${name} ${isNew ? "created" : "saved"}`);
     setDraft(null);
+  }
+
+  async function permanentlyDelete() {
+    if (!deleteTarget || deleteName !== deleteTarget.name) return;
+    setDeleting(true);
+    setDeleteBlockers({});
+    try {
+      const result = await permanentlyDeleteEmptyLocation(deleteTarget.id, deleteName);
+      if (!result.ok) {
+        setDeleteBlockers(result.blockers ?? {});
+        toast.error(`${deleteTarget.name} cannot be deleted`, { description: result.error });
+        return;
+      }
+      forgetDeletedStore(deleteTarget.id);
+      void window.pos?.sync?.auto?.().catch(() => undefined);
+      toast.success(`${result.deletedName} permanently deleted`);
+      setDeleteTarget(null);
+      setDeleteName("");
+      setDraft(null);
+    } catch (error) {
+      notifyError(error, "Deleting location");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -641,6 +681,19 @@ function Locations() {
                           <ArchiveRestore className="size-4 text-success" />
                         )}
                       </Button>
+                      <Button
+                        variant="ghost"
+                        className="text-destructive"
+                        onClick={() => {
+                          const store = allStores.find((x) => x.id === draft.id);
+                          if (!store) return;
+                          setDeleteTarget(store);
+                          setDeleteName("");
+                          setDeleteBlockers({});
+                        }}
+                      >
+                        <Trash2 className="size-4" /> Delete permanently
+                      </Button>
                     </>
                   )}
                 </div>
@@ -649,6 +702,64 @@ function Locations() {
           )}
         </SheetContent>
       </Sheet>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !deleting) {
+            setDeleteTarget(null);
+            setDeleteName("");
+            setDeleteBlockers({});
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.name} permanently?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This succeeds only when the server confirms there are no users, sales, stock,
+              transfers, terminals, history, or child locations connected to it. Type the exact
+              location name to continue.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3">
+            <Input
+              aria-label="Location name confirmation"
+              value={deleteName}
+              onChange={(event) => setDeleteName(event.target.value)}
+              placeholder={deleteTarget?.name}
+              autoComplete="off"
+            />
+            {Object.values(deleteBlockers).some((count) => count > 0) && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs">
+                <p className="font-semibold">Connected records must be removed or retained:</p>
+                <ul className="mt-2 space-y-1">
+                  {Object.entries(deleteBlockers)
+                    .filter(([, count]) => count > 0)
+                    .map(([label, count]) => (
+                      <li key={label}>
+                        {label}: <span className="numeric">{count}</span>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting || !deleteTarget || deleteName !== deleteTarget.name}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void permanentlyDelete();
+              }}
+            >
+              {deleting ? "Checking records…" : "Delete permanently"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }

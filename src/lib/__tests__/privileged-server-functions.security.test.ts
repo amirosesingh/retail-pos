@@ -10,6 +10,7 @@ describe("privileged server functions", () => {
       "src/lib/central-inventory.functions.ts",
       "src/lib/central-schema.functions.ts",
       "src/lib/idle-timeout.functions.ts",
+      "src/lib/location-admin.functions.ts",
       "src/lib/store-groups.functions.ts",
     ]) {
       expect(read(path)).toContain("requireCallerScope");

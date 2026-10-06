@@ -897,6 +897,11 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
   };
   if (config.backendUrl) await saveBackendUrl(config.backendUrl);
   writeTerminalConfig(config);
+  // Electron synchronization reads the OS-vault mirror, not renderer storage.
+  // Await the protected mirror before reporting activation success; otherwise
+  // a quick reload or smoke-test shutdown can leave the UI activated while
+  // the desktop service still has no branch identity.
+  if (desktopBridge()) await mirrorTerminalConfigToDesktop();
   note("succeeded", "This till claimed the code and registered.", {
     id: config.locationId,
     name: config.locationName,

@@ -25,7 +25,10 @@ class PullWorker {
   }
   async run({ branchId, batchSize = 500 }) {
     if (!branchId) throw new Error("A branch is required for synchronization.");
-    batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
+    // A single legacy settings/audit row can approach 2 MiB. Keep downloads at
+    // the database's byte-safe minimum even when a caller asks for a larger
+    // upload batch through the coordinator's shared options object.
+    batchSize = 10;
     let merged = 0; let conflictCount = 0; let membershipMirrored = 0; let membershipDeferred = false;
     let membershipCheckpoint = await this.checkpoints.get(branchId, "__membership_directory__", "pull");
     try {

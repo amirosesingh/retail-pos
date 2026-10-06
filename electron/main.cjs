@@ -200,7 +200,7 @@ async function runAutomaticSync() {
     return;
   }
   automaticSyncQueued = false;
-  let result = await syncCoordinator.runNow({ branchId: localBranchId(), batchSize: 500 });
+  let result = await syncCoordinator.runNow({ branchId: localBranchId(), batchSize: 10 });
   if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed." });
   if (result.code === "ECHANGEGAP") {
     try {
@@ -235,7 +235,7 @@ async function flushSyncBeforeShutdown() {
     if (remaining <= 0 || syncCoordinator.running) return { ...result, timedOut: true };
     let timeout;
     result = await Promise.race([
-      syncCoordinator.runNow({ branchId, batchSize: 500 }),
+      syncCoordinator.runNow({ branchId, batchSize: 10 }),
       new Promise((resolve) => { timeout = setTimeout(() => resolve({ ok: false, timedOut: true }), remaining); }),
     ]).finally(() => clearTimeout(timeout));
     // One run drains every normal change-tracking page. Aggregate journals are
@@ -1439,7 +1439,7 @@ function registerIpc() {
   ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{const input=guard.options(options,{name:"sync options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});const result=await observedDatabaseOperation("synchronization","manual",() => syncCoordinator.runNow({...input,branchId}));return result.code==="ECHANGEGAP"?prepareLocalData({force:true}):result;}));
   ipcMain.handle("sync:auto", async () => {
     if(!databaseManager.isConnected()||!localBranchId())return{ok:false,skipped:true};
-    return syncCoordinator.runNow({branchId:localBranchId(),batchSize:500});
+    return syncCoordinator.runNow({branchId:localBranchId(),batchSize:10});
   });
   ipcMain.handle("sync:pause", () => syncCoordinator.pause());
   ipcMain.handle("sync:resume", () => syncCoordinator.resume());

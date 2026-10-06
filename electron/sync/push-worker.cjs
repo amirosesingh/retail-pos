@@ -113,7 +113,11 @@ class PushWorker {
             dependencyOrder: table.dependencyOrder,
             deletePhase: false,
             changes: live,
-            rows: rowsForBranch(table.cloudTable, await this.reader.rows(table, live), branchId),
+            rows: rowsForBranch(
+              table.cloudTable,
+              await this.reader.rows(table, live, { branchId }),
+              branchId,
+            ),
           });
         if (removed.length)
           operations.push({
@@ -203,7 +207,11 @@ class PushWorker {
           continue;
         }
         let live = changes.filter((change) => change.operation !== "D");
-        let rows = rowsForBranch(table.cloudTable, await this.reader.rows(table, live), branchId);
+        let rows = rowsForBranch(
+          table.cloudTable,
+          await this.reader.rows(table, live, { branchId }),
+          branchId,
+        );
         while (Buffer.byteLength(JSON.stringify({ changes, rows }), "utf8") > 6 * 1024 * 1024) {
           const versions = [...new Set(changes.map((change) => Number(change.version)))];
           if (versions.length <= 1)
@@ -214,7 +222,11 @@ class PushWorker {
           const last = versions.at(-1);
           changes = changes.filter((change) => Number(change.version) !== last);
           live = changes.filter((change) => change.operation !== "D");
-          rows = rowsForBranch(table.cloudTable, await this.reader.rows(table, live), branchId);
+          rows = rowsForBranch(
+            table.cloudTable,
+            await this.reader.rows(table, live, { branchId }),
+            branchId,
+          );
         }
         const batchId = stableUuid({
           branchId,
