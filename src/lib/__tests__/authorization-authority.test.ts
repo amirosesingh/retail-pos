@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   approvalReference,
   canAuthorizeAmount,
+  canBypassAuthorization,
   canAuthorize,
   canAuthorizeEscalated,
   canDecideRequestAmount,
@@ -39,6 +40,19 @@ describe("central relative approval authority", () => {
     expect(canRequestApproval(rule, { role: "cashier" })).toBe(true);
     expect(canRequestApproval(rule, { role: "guest" })).toBe(false);
     expect(canRequestApproval({ ...rule, mode: "pin" }, { role: "cashier" })).toBe(false);
+  });
+
+  it("bypasses the dialog only for an administrator who is an allowed approver", () => {
+    const adminRule = { ...rule, allowedRoles: ["admin", "manager"] };
+    expect(canBypassAuthorization(adminRule, { userId: "owner", role: "admin" }, 25)).toBe(true);
+    expect(canBypassAuthorization(adminRule, { userId: "manager1", role: "manager" }, 25)).toBe(false);
+    expect(
+      canBypassAuthorization(
+        { ...adminRule, allowedUserIds: ["!owner"] },
+        { userId: "owner", role: "admin" },
+        25,
+      ),
+    ).toBe(false);
   });
 
   it("supports a named requester without granting that person approval authority", () => {

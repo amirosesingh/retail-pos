@@ -2,7 +2,7 @@ const { createHash } = require("node:crypto");
 const { branchPredicate } = require("../branch-scope.cjs");
 
 const AGGREGATE_KINDS = new Set([
-  "sale", "payment", "refund", "shift", "receiving", "stock",
+  "sale", "payment", "refund", "shift", "product", "receiving", "stock",
   "transfer", "booking", "held_order", "general", "branch",
 ]);
 

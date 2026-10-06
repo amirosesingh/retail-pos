@@ -202,10 +202,20 @@ export const verifyBusinessAuthorization = createServerFn({ method: "POST" })
       const who = await assertCaller(data);
       const storeId = callerStore(who, data.storeId);
       const { loadRuleRows } = await import("./authorization.server");
-      const { resolveRules, authorizationBinding } = await import("./authorization");
+      const { resolveRules, authorizationBinding, canBypassAuthorization } =
+        await import("./authorization");
       const { verifyOverrideGrant } = await import("./pos-rules.server");
       const rule = resolveRules(await loadRuleRows(storeId), storeId)[data.actionKey];
       if (!rule?.isEnabled || rule.mode === "none") return { ok: true as const, required: false };
+      if (
+        canBypassAuthorization(
+          rule,
+          { userId: who.id, role: who.role },
+          data.requestedAmount,
+        )
+      ) {
+        return { ok: true as const, required: false, bypassedBy: who.id };
+      }
       const binding = authorizationBinding(data.payload, data.snapshotHash);
       const grant = verifyOverrideGrant(data.grantToken ?? undefined, data.actionKey, {
         storeId,

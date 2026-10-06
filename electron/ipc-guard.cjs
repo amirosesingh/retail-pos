@@ -147,6 +147,7 @@ function aggregate(value) {
       "payment",
       "refund",
       "shift",
+      "product",
       "receiving",
       "stock",
       "transfer",

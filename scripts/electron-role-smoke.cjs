@@ -13,7 +13,7 @@ if (!adminEmail || !adminPassword || !cashierUsername || !cashierPin) {
   throw new Error("Set the POS_E2E admin and branch-user credentials at runtime.");
 }
 
-const baseURL = "http://127.0.0.1:8080";
+const baseURL = process.env.POS_E2E_BASE_URL || "http://127.0.0.1:8080";
 
 async function mainWindow(app) {
   await app.firstWindow({ timeout: 30_000 });
@@ -192,19 +192,24 @@ async function main() {
     if (await existingProfile.isVisible()) await signOut(page);
     await terminalSignIn.waitFor({ state: "visible", timeout: 30_000 });
 
-    await signInAdmin(page);
-    const adoption = await page.evaluate(async () => {
-      const [{ readCredentials }, { readTerminalConfig }] = await Promise.all([
-        import("/src/lib/pos-credentials.ts"),
-        import("/src/core/activation/terminal-tokens.ts"),
-      ]);
-      const result = await window.sqlAdmin.adoptSession(await readCredentials(), readTerminalConfig());
-      return { result, status: await window.sqlAdmin.status() };
-    });
+    let adoption = null;
     const settingsAccess = {};
-    for (const route of ["/settings", "/settings/updates", "/settings/database"]) {
-      await page.goto(`${baseURL}${route}`, { waitUntil: "domcontentloaded" });
-      settingsAccess[route] = !(await page.locator("body").innerText()).includes("Permission required");
+    if (cashierOnly) {
+      await signInCashier(page);
+    } else {
+      await signInAdmin(page);
+      adoption = await page.evaluate(async () => {
+        const [{ readCredentials }, { readTerminalConfig }] = await Promise.all([
+          import("/src/lib/pos-credentials.ts"),
+          import("/src/core/activation/terminal-tokens.ts"),
+        ]);
+        const result = await window.sqlAdmin.adoptSession(await readCredentials(), readTerminalConfig());
+        return { result, status: await window.sqlAdmin.status() };
+      });
+      for (const route of ["/settings", "/settings/updates", "/settings/database"]) {
+        await page.goto(`${baseURL}${route}`, { waitUntil: "domcontentloaded" });
+        settingsAccess[route] = !(await page.locator("body").innerText()).includes("Permission required");
+      }
     }
     const syncAttempt = await page.evaluate(() => window.pos.sync.runNow({ batchSize: 500 }));
     let afterInitialSync = await localState(page);
@@ -218,9 +223,9 @@ async function main() {
       throw new Error(`Initial sync left the local catalogue empty. ${JSON.stringify({ adoption, syncAttempt, repair, afterInitialSync })}`);
     }
     const admin = cashierOnly ? null : await completeSmallCashSale(page, "admin");
-    await signOut(page);
+    if (!cashierOnly) await signOut(page);
 
-    await signInCashier(page);
+    if (!cashierOnly) await signInCashier(page);
     const cashier = await completeSmallCashSale(page, "cashier");
     const reconciliation = await page.evaluate(() => window.pos.sync.reconcile({ deep: false }));
     await page.waitForTimeout(3_000);
@@ -231,7 +236,7 @@ async function main() {
     if (
       !cashier.state.database.connected ||
       (admin && !admin.state.database.connected) ||
-      !Object.values(settingsAccess).every(Boolean) ||
+      (!cashierOnly && !Object.values(settingsAccess).every(Boolean)) ||
       consoleErrors.length ||
       pageErrors.length
     ) process.exitCode = 1;

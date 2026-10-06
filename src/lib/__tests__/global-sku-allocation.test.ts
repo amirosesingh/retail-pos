@@ -28,8 +28,14 @@ describe("global SKU allocation", () => {
 
   it("uses durable local leases instead of an unsafe terminal-only counter", () => {
     const sku = read("src/lib/sku.ts");
+    const relay = read("src/lib/sku.functions.ts");
     expect(sku).toContain('const LEASE_KEY = "pos.sku.global-lease.v1"');
-    expect(sku).toContain('supabaseExternal.rpc("reserve_product_skus"');
+    expect(sku).toContain("reserveSkuLease");
+    expect(sku).toContain("getPosCallerAuth");
+    expect(sku).not.toContain('supabaseExternal.rpc("reserve_product_skus"');
+    expect(relay).toContain('permission: "can_add_new_product"');
+    expect(relay).toContain('serviceRpc("reserve_product_skus"');
+    expect(relay).toContain("requestedStore !== scope.storeId");
     expect(sku).toContain('supabaseConfig("pos").url');
     expect(sku).toContain('locks.request("pos-global-sku-lease", run)');
     expect(sku).toContain("No globally reserved SKU numbers are available offline");

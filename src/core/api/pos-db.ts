@@ -1947,6 +1947,8 @@ export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitT
             ? "refund"
             : /shift/i.test(context)
               ? "shift"
+              : /product|inventory/i.test(context)
+                ? "product"
               : /receiv|purchase|invoice/i.test(context)
                 ? "receiving"
                 : /stock/i.test(context)

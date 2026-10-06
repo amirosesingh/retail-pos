@@ -10,7 +10,7 @@ import { authHeaders, cashierTokenSync, readCredentials } from "@/lib/pos-creden
 import { serverOrigin, serverUnreachableOnDevice, serverUrl } from "@/lib/server-origin";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import type { SyncOp } from "@/lib/sync-outbox";
-import { hasCentralAuthSession } from "@/lib/session-presence";
+import { centralAuthAccessToken, hasCentralAuthSession } from "@/lib/session-presence";
 
 const credentials = readCredentials;
 
@@ -102,10 +102,7 @@ export function hasStaffSession(): boolean {
   // server-side session still exists before any protected table is queried.
   if (!hasCentralAuthSession()) return false;
   try {
-    const raw = window.localStorage.getItem("sb-external-auth-token");
-    if (!raw) return false;
-    const parsed = JSON.parse(raw) as { access_token?: string } | null;
-    const token = parsed?.access_token;
+    const token = centralAuthAccessToken();
     if (!token) return false;
     const encoded = token.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") ?? "";
     const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=");

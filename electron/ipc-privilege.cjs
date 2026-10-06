@@ -399,6 +399,13 @@ function allowed(channel, args = []) {
       payment: ["can_process_sale", "can_collect_booking"],
       refund: ["can_refund", "can_process_refund"],
       shift: ["can_open_shift", "can_close_shift"],
+      product: [
+        "can_add_new_product",
+        "can_edit_product_details",
+        "can_edit_product_price",
+        "can_archive_product",
+        "can_publish_product",
+      ],
       receiving: ["can_receive_purchase_order"],
       stock: ["can_adjust_stock"],
       transfer: ["can_create_transfer", "can_receive_transfer", "can_approve_transfer"],

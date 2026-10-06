@@ -185,6 +185,9 @@ describe("offline terminal operations", () => {
     expect(aggregates).toContain("terminalId: aggregate.terminalId");
     expect(aggregates).toContain('code: "SYNC_BRANCH_FORBIDDEN"');
     expect(aggregates).toContain('"held_order", "general", "branch"');
+    expect(aggregates).toContain('"shift", "product", "receiving"');
+    expect(privilege).toContain('product: [');
+    expect(privilege).toContain('"can_add_new_product"');
     expect(readFileSync("electron/ipc-guard.cjs", "utf8")).toContain('"branch",');
     expect(privilege).toContain('"business:write-batch": SUPERVISOR');
     expect(privilege).toContain('channel === "business:commit-aggregate"');

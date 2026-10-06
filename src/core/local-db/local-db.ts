@@ -414,7 +414,7 @@ export type PosBridge = {
   writeBatch?: (context: string, ops: SyncOp[]) => Promise<{ ok: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null }>;
   /** Commit a complete workflow and its metadata exactly once. */
   commitAggregate?: (aggregate: {
-    kind: "sale" | "payment" | "refund" | "shift" | "receiving" | "stock" | "transfer" | "booking" | "held_order" | "general" | "branch";
+    kind: "sale" | "payment" | "refund" | "shift" | "product" | "receiving" | "stock" | "transfer" | "booking" | "held_order" | "general" | "branch";
     operationId?: string;
     branchId?: string;
     operations: SyncOp[];
@@ -630,7 +630,7 @@ export type PosBridge = {
   /** Main-process notification emitted after a durable local aggregate commit. */
   onBusinessChanged?: (
     cb: (change: {
-      kind: "sale" | "payment" | "refund" | "shift" | "receiving" | "stock" | "transfer" | "booking" | "held_order" | "general" | "branch";
+      kind: "sale" | "payment" | "refund" | "shift" | "product" | "receiving" | "stock" | "transfer" | "booking" | "held_order" | "general" | "branch";
       branchId?: string | null;
       operationId?: string | null;
     }) => void,

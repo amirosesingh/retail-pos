@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 import { supabaseConfig } from "@/lib/external-supabase-config";
 import { inspectResponse, noteConnectivityIssue } from "@/lib/session-expiry";
+import { externalAuthStorage } from "./auth-storage";
 
 function isNewSupabaseApiKey(value: string): boolean {
   return value.startsWith("sb_publishable_") || value.startsWith("sb_secret_");
@@ -124,7 +125,7 @@ function createExternalClient(
     // swaps the whole client atomically.
     global: { fetch: supabaseFetchFor(key) },
     auth: {
-      storage: persistSession && typeof window !== "undefined" ? localStorage : undefined,
+      storage: persistSession && typeof window !== "undefined" ? externalAuthStorage : undefined,
       storageKey,
       persistSession,
       autoRefreshToken: true,

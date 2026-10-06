@@ -579,6 +579,24 @@ export function canAuthorizeAmount(
   );
 }
 
+/**
+ * Administrators who are configured as valid approvers do not approve their
+ * own action twice. The final server boundary repeats this calculation before
+ * allowing a grant-free mutation, so the client-side shortcut is only a UX
+ * optimization and cannot weaken the rule.
+ */
+export function canBypassAuthorization(
+  rule: AuthorizationRule | undefined,
+  who: { userId?: string | null; role?: string | null },
+  amount: number | null | undefined,
+  directLimit?: number | null,
+): boolean {
+  return (
+    (who.role ?? "").toLowerCase() === "admin" &&
+    canAuthorizeAmount(rule, who, amount, directLimit)
+  );
+}
+
 /** Backup roles become eligible only after the configured escalation delay. */
 export function canAuthorizeEscalated(
   rule: AuthorizationRule | undefined,

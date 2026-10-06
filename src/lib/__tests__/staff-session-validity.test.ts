@@ -33,17 +33,22 @@ afterEach(() => {
 
 describe("staff session validity", () => {
   it("accepts a signed-in session that remains valid beyond the request margin", () => {
-    __setAuthSessionForTests(true);
-    installToken(sessionToken(Math.floor(Date.now() / 1000) + 120));
+    const token = sessionToken(Math.floor(Date.now() / 1000) + 120);
+    __setAuthSessionForTests(true, token);
+    installToken(token);
     expect(hasStaffSession()).toBe(true);
   });
 
   it("rejects expired, near-expiry, and malformed cached tokens", () => {
-    __setAuthSessionForTests(true);
-    installToken(sessionToken(Math.floor(Date.now() / 1000) - 1));
+    let token = sessionToken(Math.floor(Date.now() / 1000) - 1);
+    __setAuthSessionForTests(true, token);
+    installToken(token);
     expect(hasStaffSession()).toBe(false);
-    installToken(sessionToken(Math.floor(Date.now() / 1000) + 10));
+    token = sessionToken(Math.floor(Date.now() / 1000) + 10);
+    __setAuthSessionForTests(true, token);
+    installToken(token);
     expect(hasStaffSession()).toBe(false);
+    __setAuthSessionForTests(true, "not-a-jwt");
     installToken("not-a-jwt");
     expect(hasStaffSession()).toBe(false);
   });

@@ -26,7 +26,7 @@ import { recordSignIn } from "@/lib/shift-attendance";
 import { endShiftSessions } from "@/lib/shift-sessions";
 import { notifySessionExpired, onSessionExpired } from "@/lib/session-expiry";
 import { validateStoredAuthSession } from "@/lib/auth-session-guard";
-import { setCentralAuthSessionPresent } from "@/lib/session-presence";
+import { setCentralAuthSessionPresent as publishCentralAuthSessionPresent } from "@/lib/session-presence";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 import {
   clearAutoLockActivity,
@@ -264,6 +264,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [sessionState, setSessionState] = useState<SessionState>("signed-out");
   const centralIdentityRef = useRef<string | null>(null);
   const centralSessionVerifiedRef = useRef(false);
+  const [centralAuthVerified, setCentralAuthVerified] = useState(false);
+  const setCentralSessionVerified = useCallback((value: boolean, accessToken?: string) => {
+    centralSessionVerifiedRef.current = value;
+    setCentralAuthVerified(value);
+    publishCentralAuthSessionPresent(value, accessToken);
+  }, []);
 
   useEffect(() => {
     try {
@@ -329,7 +335,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // it to the application until the server has proved that its Supabase
       // session still exists. This also keeps sync/telemetry quiet on boot.
       if (event === "INITIAL_SESSION") {
-        if (!next) setCentralAuthSessionPresent(false);
+        if (!next) setCentralSessionVerified(false);
         return;
       }
       if (!bootstrapped) {
@@ -347,7 +353,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // TOKEN_REFRESHED/SIGNED_IN can also be emitted for a restored local
         // session. Preserve a previous server proof; never create one merely
         // because the client replayed or refreshed its cached token.
-        setCentralAuthSessionPresent(centralSessionVerifiedRef.current);
+        setCentralSessionVerified(centralSessionVerifiedRef.current, next?.access_token);
         if (!centralSessionVerifiedRef.current && event === "TOKEN_REFRESHED") return;
         setSession(next);
         return;
@@ -357,7 +363,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (next && event !== "TOKEN_REFRESHED") bumpSessionEpoch();
       centralIdentityRef.current = nextIdentity;
       centralSessionVerifiedRef.current = Boolean(next && event === "SIGNED_IN");
-      setCentralAuthSessionPresent(centralSessionVerifiedRef.current);
+      setCentralSessionVerified(centralSessionVerifiedRef.current, next?.access_token);
       setSession(next);
       if (!next) {
         setRoles([]);
@@ -378,7 +384,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const next = checked.session;
       centralIdentityRef.current = next?.user?.id ?? null;
       centralSessionVerifiedRef.current = checked.state === "verified";
-      setCentralAuthSessionPresent(centralSessionVerifiedRef.current);
+      setCentralSessionVerified(centralSessionVerifiedRef.current, next?.access_token);
       setSession(next);
       if (!next) {
         setRoles([]);
@@ -396,13 +402,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false;
       sub.subscription.unsubscribe();
     };
-  }, [authEnabled]);
+  }, [authEnabled, setCentralSessionVerified]);
 
   // Backend roles for the signed-in account.
   const userId = session?.user?.id ?? null;
   useEffect(() => {
     let cancelled = false;
-    if (!userId) {
+    // A restored or transitioning Auth object may still carry a user id after
+    // GoTrue has dropped its bearer. Do not let that provisional identity send
+    // protected PostgREST reads as `anon`; interactive sign-in and the
+    // authoritative boot check turn this flag on once the session is proven.
+    if (!userId || !centralAuthVerified || terminalUser) {
       setRoles([]);
       setRolesReady(true);
       return;
@@ -429,12 +439,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [userId, centralAuthVerified, terminalUser]);
 
   // Identity + permission toggles from public.app_users for the signed-in account.
   useEffect(() => {
     let cancelled = false;
-    if (!userId) {
+    if (!userId || !centralAuthVerified || terminalUser) {
       setAppUser(null);
       setProfileReady(true);
       return;
@@ -463,7 +473,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [userId, centralAuthVerified, terminalUser]);
 
   const persist = useCallback((next: StaffMember[]) => {
     setStaff(next);
@@ -521,11 +531,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // SIGNED_IN event for an unverified restored token.
     centralIdentityRef.current = null;
     centralSessionVerifiedRef.current = false;
-    setCentralAuthSessionPresent(false);
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: address,
-      password,
-    });
+    setCentralSessionVerified(false);
+    let data;
+    let error;
+    try {
+      ({ data, error } = await supabase.auth.signInWithPassword({
+        email: address,
+        password,
+      }));
+    } catch (failure) {
+      const code = failureFromAuthError(failure as Error);
+      return { ok: false, code, error: loginFailureMessage(code) };
+    }
     if (error) {
       const code = failureFromAuthError(error);
       return { ok: false, code, error: loginFailureMessage(code) };
@@ -587,7 +604,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* the account token still works on its own */
     }
     return { ok: true };
-  }, []);
+  }, [setCentralSessionVerified]);
 
   const cashierLogin = useCallback(
     async (
@@ -927,7 +944,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       endShiftSessions({});
       setSessionState(reason === "locked" ? "locked" : reason);
       centralSessionVerifiedRef.current = false;
-      setCentralAuthSessionPresent(false);
+      setCentralSessionVerified(false);
       setSession(null);
       setRoles([]);
       setAppUser(null);
@@ -962,7 +979,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         /* web/Android, or a desktop bridge that is already closing */
       }
     },
-    [],
+    [setCentralSessionVerified],
   );
 
   const logout = useCallback(async () => {
@@ -976,7 +993,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Resolved fresh from the staff list so a duty change applies immediately.
   const user = useMemo<PosUser | null>(() => {
-    const account = session?.user;
+    // A PIN login already carries its verified role and permissions in
+    // terminalUser. If the optional Supabase bearer is absent or still being
+    // checked, keep using that proven terminal identity instead of replacing
+    // it with a permission-empty provisional Auth user.
+    const account = !terminalUser && centralAuthVerified ? session?.user : null;
     if (!account) {
       if (!terminalUser) return null;
       // Local bootstrap / offline terminal session.
@@ -1059,7 +1080,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               fromDbRole(appUser?.role ?? null),
             ),
     };
-  }, [session, roles, staff, terminalUser, appUser]);
+  }, [session, centralAuthVerified, roles, staff, terminalUser, appUser]);
 
   // "Active" is simply the state of having somebody signed in; the other
   // states are set by the teardown that produced them.
@@ -1122,7 +1143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // A PIN/offline terminal user has no Supabase bearer. Its status is
     // enforced by the signed device session, not by an authenticated-only RPC.
-    if (!centralUserId || typeof window === "undefined") return;
+    if (!centralUserId || !centralAuthVerified || typeof window === "undefined") return;
     let alive = true;
     const check = async () => {
       if (document.visibilityState === "hidden") return;
@@ -1154,7 +1175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", check);
     };
-  }, [centralUserId, endSession]);
+  }, [centralUserId, centralAuthVerified, endSession]);
 
   // Boot / resume check: before the dashboard trusts what it has, ask the
   // server whether this device's token is still live and its branch still
@@ -1182,7 +1203,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // session does not: connectivity loss must not sign out a till.
           centralSessionVerifiedRef.current = false;
         }
-        setCentralAuthSessionPresent(centralSessionVerifiedRef.current);
+        setCentralSessionVerified(
+          centralSessionVerifiedRef.current,
+          authCheck.session?.access_token,
+        );
         const creds = await readCredentials();
         const hasIndependentPosProof = Boolean(
           creds.sessionToken || creds.cashierToken || creds.terminalToken,
@@ -1221,14 +1245,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("online", onVisible);
       window.removeEventListener(APP_RESUME_EVENT, onVisible);
     };
-  }, [user?.staffId]);
+  }, [user?.staffId, setCentralSessionVerified]);
 
   const isWarehouse =
-    !!session?.user &&
-    !terminalUser?.cashierId &&
     user?.role !== "admin" &&
-    (appUser?.role === "staff" ||
-      (session.user.user_metadata?.["role"] as string | undefined) === "warehouse");
+    (terminalUser?.roleSlug === "warehouse" ||
+      (!!session?.user &&
+        !terminalUser?.cashierId &&
+        (appUser?.role === "staff" ||
+          (session.user.user_metadata?.["role"] as string | undefined) === "warehouse")));
 
   // Branch this PC is registered to. A terminal is bound to one store, so
   // whoever signs in here trades in that branch — a staff member assigned
@@ -1253,7 +1278,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.staffId]);
 
-  const ready = authReady && (!userId || (rolesReady && profileReady));
+  const ready = authReady && (!!terminalUser || !userId || (rolesReady && profileReady));
 
   const value = useMemo<AuthCtx>(
     () => ({
@@ -1279,7 +1304,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         appUser?.role !== "manager" &&
         !user.roles.includes("manager"),
       isWarehouse,
-      authUserId: userId,
+      authUserId: centralAuthVerified ? userId : null,
       terminalUser,
       appUser,
       can: (flag) => hasPermission(user, flag),
@@ -1297,6 +1322,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ready,
       user,
       userId,
+      centralAuthVerified,
       terminalStoreId,
       terminalStoreName,
       terminalUser,

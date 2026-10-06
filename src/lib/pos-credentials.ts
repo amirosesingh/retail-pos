@@ -12,7 +12,6 @@
  * The desktop and Android shells mirror the same sealed value through their own
  * secure stores.
  */
-import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { clearDeviceSecret, getDeviceSecret, setDeviceSecret } from "./device-secrets";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 
@@ -118,12 +117,12 @@ export async function readCredentials(): Promise<PosCredentials> {
   if (typeof window === "undefined") return {};
   const cashierToken = (await loadCashierToken()) ?? undefined;
   const sessionToken = (await loadSessionToken()) ?? undefined;
-  let accessToken: string | undefined;
-  try {
-    accessToken = (await supabaseExternal.auth.getSession()).data.session?.access_token;
-  } catch {
-    /* offline */
-  }
+  // AuthProvider must prove a cached Supabase session before this hot path
+  // asks the client for it. Besides avoiding anonymous protected requests,
+  // this prevents PIN-terminal operations from waiting behind Supabase's
+  // auth-storage lock while an optional account session is being refreshed.
+  const { centralAuthAccessToken } = await import("./session-presence");
+  const accessToken = centralAuthAccessToken();
   let terminalToken: string | undefined;
   try {
     terminalToken = readTerminalConfig()?.tokenId ?? undefined;
