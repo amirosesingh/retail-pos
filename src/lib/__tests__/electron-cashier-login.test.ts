@@ -41,7 +41,8 @@ describe("Electron cashier sign in", () => {
     const client = read("src/integrations/supabase/external-client.ts");
     const config = read("src/lib/secure-cloud-config.ts");
 
-    expect(client).toContain("previous.auth.stopAutoRefresh()");
+    expect(client).toContain("retireClient(previous)");
+    expect(client).toContain('Symbol.for("retail-pos.supabase.external-clients.v1")');
     expect(client).toContain("pos-transient-auth-");
     expect(client).toContain("supabaseFetchFor(key)");
     expect(client).not.toContain("const SUPABASE_PUBLISHABLE_KEY = supabaseConfig().key");

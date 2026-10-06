@@ -1369,6 +1369,15 @@ export async function loadPrimaryState(
       );
     }
     if (status?.enabled && status.tradingReady === false) {
+      const terminal = readTerminalConfig() ?? (await hydrateTerminalConfig());
+      // A freshly installed or recovered desktop can have a saved SQL Server
+      // connection before it has a branch identity. An authenticated admin
+      // still needs the central location directory in order to register this
+      // machine; treating EBRANCH as a fatal local-database error deadlocks
+      // that recovery screen. RLS remains the authority for this cloud read.
+      if (!terminal?.locationId && hasStaffSession()) {
+        return loadCloudState(storeId, locationTask);
+      }
       throw new Error(
         "Local SQL Server is enabled but not ready for trading. Open Database & Cloud Connection, restore the connection, and apply the current local database update if requested.",
       );

@@ -402,6 +402,7 @@ CREATE TABLE IF NOT EXISTS public.members (
     membership_member_id uuid,
     membership_revision bigint DEFAULT 0 NOT NULL,
     membership_status text DEFAULT 'active'::text NOT NULL,
+    deleted_at text,
     CONSTRAINT members_country_code_check CHECK ((country_code IS NULL) OR (country_code ~ '^[A-Z]{2}$'::text)),
     CONSTRAINT members_postal_code_check CHECK ((postal_code IS NULL) OR (char_length(postal_code) <= 32))
 );
@@ -413,8 +414,15 @@ CREATE TABLE IF NOT EXISTS public.membership_tiers (
     points_multiplier numeric DEFAULT 1.0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    row_version integer DEFAULT 1 NOT NULL
+    row_version integer DEFAULT 1 NOT NULL,
+    deleted_at text
 );
+
+-- These soft-delete columns are used by normalized member indexes below.
+-- Keep the additive form here as well so rerunning after an older partial
+-- installation repairs the tables before those indexes are created.
+ALTER TABLE public.members ADD COLUMN IF NOT EXISTS deleted_at text;
+ALTER TABLE public.membership_tiers ADD COLUMN IF NOT EXISTS deleted_at text;
 
 CREATE TABLE IF NOT EXISTS public.offline_sync_audit_log (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -625,8 +633,16 @@ CREATE TABLE IF NOT EXISTS public.purchase_orders (
     invoice_date date,
     invoice_entry_date timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    row_version integer DEFAULT 1 NOT NULL
+    row_version integer DEFAULT 1 NOT NULL,
+    status text DEFAULT 'posted'::text NOT NULL,
+    reference text
 );
+
+-- The store/status index is created before the later compatibility section.
+-- Repair partial or older installations before that index is reached.
+ALTER TABLE public.purchase_orders
+  ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'posted',
+  ADD COLUMN IF NOT EXISTS reference text;
 
 CREATE TABLE IF NOT EXISTS public.sale_items (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -1059,6 +1075,37 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_queue (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+-- ============================================================
+-- Early compatibility preflight. Later policies and indexes reference these
+-- columns, so a fresh or partially completed installation must have them
+-- before the normal chronological migration section is reached.
+-- ============================================================
+ALTER TABLE public.stores
+  ADD COLUMN IF NOT EXISTS private_catalogue boolean NOT NULL DEFAULT false;
+
+ALTER TABLE public.products
+  ADD COLUMN IF NOT EXISTS owner_store_id text;
+
+DO $products_owner_store_fk$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.products'::regclass
+      AND conname = 'products_owner_store_id_fkey'
+  ) THEN
+    ALTER TABLE public.products
+      ADD CONSTRAINT products_owner_store_id_fkey
+      FOREIGN KEY (owner_store_id) REFERENCES public.stores(id) ON DELETE SET NULL;
+  END IF;
+END;
+$products_owner_store_fk$;
+
+ALTER TABLE public.uom_units
+  ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
+
+ALTER TABLE public.product_categories
+  ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
 
 -- ============================================================
 -- Additive column top-up: brings an older database up to date.

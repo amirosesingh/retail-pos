@@ -627,10 +627,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // The PIN/session proofs live in encrypted device storage. Load them
         // before branch discovery decides whether the protected relay exists.
         await Promise.all([loadCashierToken(), loadSessionToken()]);
-        // On web/mobile the tiny location request and the heavier business
-        // snapshot start together. The location gate can open as soon as its
-        // authoritative answer arrives; catalogue size no longer controls it.
-        const locationTask = effectiveDatabaseMode() === "online" ? loadLocationDirectory() : null;
+        // Resolve the small location directory whenever the central service is
+        // reachable, including on a local-first Electron till. Business data
+        // still comes from SQL Server, but a newly registered/created branch
+        // must not stay invisible until a later full local snapshot refresh.
+        const canLoadCloudDirectory = typeof navigator === "undefined" || navigator.onLine;
+        const locationTask = canLoadCloudDirectory ? loadLocationDirectory() : null;
         const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined);
         const directory = locationTask ? await locationTask : null;
         if (cancelled) return;
@@ -644,7 +646,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
         }
         const loaded = await cloudTask;
         if (cancelled) return;
-        if (directory && !directory.ok && !loaded.stores.length) throw directory.error;
+        // A cloud-only client cannot proceed without an authoritative branch
+        // answer. An Electron till may continue from its durable SQL snapshot
+        // while the relay/server is temporarily unavailable.
+        if (
+          directory &&
+          !directory.ok &&
+          !loaded.stores.length &&
+          effectiveDatabaseMode() === "online"
+        )
+          throw directory.error;
         const cloud = directory?.ok ? { ...loaded, stores: directory.stores } : loaded;
         setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
         markStartupStage("remaining-data-ready");

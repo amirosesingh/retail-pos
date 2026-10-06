@@ -48,6 +48,7 @@ describe("Electron database error recovery", () => {
     expect(flags).toContain('platformName() === "electron"');
     expect(flags).toContain("await relayOp");
     expect(policy).toContain('public_flags: { write: "can_access_pos_settings"');
+    expect(flags).toContain('onConflict: "key"');
   });
 
   it("hides failed bootstrap jobs after a later successful recovery", () => {

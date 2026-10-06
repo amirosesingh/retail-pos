@@ -68,7 +68,7 @@ let discardRejectedLogout = false;
  */
 export async function discardRejectedExternalAuthSession(): Promise<void> {
   if (typeof window === "undefined") return;
-  const client = _client;
+  const client = clientRegistry.client;
   if (client) {
     // Let GoTrue own the teardown so its refresh lock, in-memory session and
     // subscribers are updated atomically. The server has already rejected the
@@ -134,11 +134,25 @@ function createExternalClient(
   });
 }
 
-let _client: ReturnType<typeof createExternalClient> | undefined;
-let _memberClient: ReturnType<typeof createExternalClient> | undefined;
 type ClientConfig = { url: string; key: string };
-let _clientConfig: ClientConfig | undefined;
-let _memberClientConfig: ClientConfig | undefined;
+type ExternalClient = ReturnType<typeof createExternalClient>;
+type ExternalClientRegistry = {
+  client?: ExternalClient;
+  memberClient?: ExternalClient;
+  clientConfig?: ClientConfig;
+  memberClientConfig?: ClientConfig;
+};
+
+// Vite HMR, lazy chunks and Electron renderer reloads can evaluate this module
+// more than once in the same browser realm. A module-local singleton is not
+// enough in that case: each copy creates a GoTrueClient for the same storage
+// key and both instances race session refresh and Realtime socket ownership.
+// Symbol.for gives every copy one durable owner without exposing it by name.
+const CLIENT_REGISTRY_KEY = Symbol.for("retail-pos.supabase.external-clients.v1");
+const globalClientRegistry = globalThis as typeof globalThis & {
+  [CLIENT_REGISTRY_KEY]?: ExternalClientRegistry;
+};
+const clientRegistry = (globalClientRegistry[CLIENT_REGISTRY_KEY] ??= {});
 
 const sameConfig = (left: ClientConfig | undefined, right: ClientConfig | undefined) =>
   Boolean(left && right && left.url === right.url && left.key === right.key);
@@ -151,17 +165,36 @@ const resolvedConfig = (scope: "pos" | "membership"): ClientConfig | undefined =
   }
 };
 
+const retireClient = (client: ExternalClient | undefined): void => {
+  if (!client) return;
+  client.auth.stopAutoRefresh();
+  void client.removeAllChannels().catch(() => {
+    /* the retired client no longer owns application state */
+  });
+};
+
 /**
  * One concrete client for a complete authenticated operation. Holding this
  * snapshot prevents a connection-profile refresh from swapping the proxy
  * between an Auth proof and the protected Data API request it authorises.
  */
 export function externalClientSnapshot(): ReturnType<typeof createExternalClient> {
-  if (!_client) {
-    _client = createExternalClient();
-    _clientConfig = resolvedConfig("pos");
+  const currentConfig = resolvedConfig("pos");
+  if (
+    clientRegistry.client &&
+    currentConfig &&
+    !sameConfig(clientRegistry.clientConfig, currentConfig)
+  ) {
+    const previous = clientRegistry.client;
+    clientRegistry.client = undefined;
+    clientRegistry.clientConfig = undefined;
+    retireClient(previous);
   }
-  return _client;
+  if (!clientRegistry.client) {
+    clientRegistry.client = createExternalClient();
+    clientRegistry.clientConfig = currentConfig;
+  }
+  return clientRegistry.client;
 }
 
 /**
@@ -171,17 +204,28 @@ export function externalClientSnapshot(): ReturnType<typeof createExternalClient
  * detection remains off and cannot consume a staff or recovery callback.
  */
 export function memberPortalClientSnapshot(): ReturnType<typeof createExternalClient> {
-  if (!_memberClient) {
-    _memberClient = createExternalClient(
+  const currentConfig = resolvedConfig("membership");
+  if (
+    clientRegistry.memberClient &&
+    currentConfig &&
+    !sameConfig(clientRegistry.memberClientConfig, currentConfig)
+  ) {
+    const previous = clientRegistry.memberClient;
+    clientRegistry.memberClient = undefined;
+    clientRegistry.memberClientConfig = undefined;
+    retireClient(previous);
+  }
+  if (!clientRegistry.memberClient) {
+    clientRegistry.memberClient = createExternalClient(
       MEMBER_STORAGE_KEY,
       MEMBER_PROJECT_MARK_KEY,
       false,
       false,
       "membership",
     );
-    _memberClientConfig = resolvedConfig("membership");
+    clientRegistry.memberClientConfig = currentConfig;
   }
-  return _memberClient;
+  return clientRegistry.memberClient;
 }
 
 /**
@@ -189,8 +233,8 @@ export function memberPortalClientSnapshot(): ReturnType<typeof createExternalCl
  * is activated (or unpaired) so no restart is needed.
  */
 export function resetExternalClient(): void {
-  const previous = _client;
-  const previousMember = _memberClient;
+  const previous = clientRegistry.client;
+  const previousMember = clientRegistry.memberClient;
   const nextConfig = resolvedConfig("pos");
   const nextMemberConfig = resolvedConfig("membership");
 
@@ -199,34 +243,31 @@ export function resetExternalClient(): void {
   // owner in that case: constructing another client with the same storage key
   // triggers Supabase's multiple-client warning and lets two instances race
   // over the same persisted session.
-  if (previous && sameConfig(_clientConfig, nextConfig)) {
-    _clientConfig = nextConfig;
+  if (previous && sameConfig(clientRegistry.clientConfig, nextConfig)) {
+    clientRegistry.clientConfig = nextConfig;
   } else {
-    _client = undefined;
-    _clientConfig = undefined;
+    clientRegistry.client = undefined;
+    clientRegistry.clientConfig = undefined;
   }
-  if (previousMember && sameConfig(_memberClientConfig, nextMemberConfig)) {
-    _memberClientConfig = nextMemberConfig;
+  if (previousMember && sameConfig(clientRegistry.memberClientConfig, nextMemberConfig)) {
+    clientRegistry.memberClientConfig = nextMemberConfig;
   } else {
-    _memberClient = undefined;
-    _memberClientConfig = undefined;
+    clientRegistry.memberClient = undefined;
+    clientRegistry.memberClientConfig = undefined;
   }
 
-  if (previous && previous !== _client) {
+  if (previous && previous !== clientRegistry.client) {
     // A config refresh must not leave the former Auth client refreshing the
     // same storage key in the background. That produced duplicate GoTrue
     // clients and races where one instance restored a stale bearer token.
-    previous.auth.stopAutoRefresh();
-    void previous.removeAllChannels();
+    retireClient(previous);
   }
-  if (previousMember && previousMember !== _memberClient) {
-    previousMember.auth.stopAutoRefresh();
-    void previousMember.removeAllChannels();
+  if (previousMember && previousMember !== clientRegistry.memberClient) {
+    retireClient(previousMember);
   }
 }
 
 /** A throwaway client for a tenant this machine is not registered to yet. */
-let transientClientSequence = 0;
 export function createTenantClient(url: string, key: string) {
   return createClient<Database>(url, key, {
     global: {
@@ -254,7 +295,7 @@ export function createTenantClient(url: string, key: string) {
       // Supabase warns when independent clients share its default project key
       // even when persistence is disabled. Probe/activation clients are
       // deliberately isolated and never own the live staff session.
-      storageKey: `pos-transient-auth-${++transientClientSequence}`,
+      storageKey: `pos-transient-auth-${crypto.randomUUID()}`,
     },
   });
 }

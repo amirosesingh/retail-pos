@@ -98,7 +98,13 @@ export default defineConfig({
   css: { transformer: "lightningcss" },
   resolve: {
     tsconfigPaths: true,
-    dedupe: ["react", "react-dom", "@tanstack/react-router", "@tanstack/react-query"],
+    dedupe: [
+      "react",
+      "react-dom",
+      "@tanstack/react-router",
+      "@tanstack/react-query",
+      "@supabase/supabase-js",
+    ],
   },
   plugins: [
     stripThirdPartyRscMarkers(),
