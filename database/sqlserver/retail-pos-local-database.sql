@@ -2,7 +2,7 @@
   Retail POS local Microsoft SQL Server schema
   Generated from the migrations loaded by the POS application.
 
-  Application version: 1.4.13
+  Application version: 1.4.14
   Target database: POS_Local
 
   Run this file while connected to the local Microsoft SQL Server instance.
@@ -12625,5 +12625,5 @@ EXEC(N'SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;');
 
-PRINT N'Retail POS 1.4.13: POS_Local installation and validation completed successfully.';
+PRINT N'Retail POS 1.4.14: POS_Local installation and validation completed successfully.';
 GO

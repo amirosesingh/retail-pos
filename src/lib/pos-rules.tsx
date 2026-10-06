@@ -29,12 +29,15 @@ import { platformName } from "@/platform-config/platform";
 
 export { platformName };
 import { DEFAULT_POS_RULES, normalizeRules, type PosRules } from "./pos-rules";
+import {
+  classifyRulesFailure,
+  type RulesFailure as RulesFailureKind,
+} from "./pos-rules-failure";
 
 export const posRulesQueryKey = (storeId: string) => ["pos-rules", storeId.trim()] as const;
 
 /** Why the live values are not in use, in words a supervisor can act on. */
-export type RulesFailureKind =
-  "none" | "config" | "network" | "auth" | "permission" | "data" | "unknown";
+export type { RulesFailure as RulesFailureKind } from "./pos-rules-failure";
 
 /** Where the rules in use came from. */
 export type RulesSourceKind =
@@ -176,7 +179,8 @@ async function fetchRulesResilient(auth: Record<string, string>, storeId: string
     try {
       answer = await fetchRules(auth, storeId);
     } catch (error) {
-      answer = { ok: false, failure: "network", error: (error as Error).message };
+      const message = (error as Error).message;
+      answer = { ok: false, failure: classifyRulesFailure(message), error: message };
     }
     if (answer.ok && answer.backend === "database") return answer;
     if (answer.failure !== "network" && answer.failure !== "unknown") return answer;
@@ -452,15 +456,16 @@ export function PosRulesProvider({
         return unverified("NOT_VERIFIED", failure, detail);
       } catch (e) {
         const message = (e as Error).message;
+        const failure = classifyRulesFailure(message);
         logRules("POS_RULES_LOAD_FAILED", {
           platform,
           terminal_id: me,
           branch_id: scope,
-          category: "network",
+          category: failure,
         });
         if (cached?.pending) return pendingHeld(message);
-        if (cached) return held("network", message);
-        return unverified("NOT_VERIFIED", "network", message);
+        if (cached) return held(failure, message);
+        return unverified("NOT_VERIFIED", failure, message);
       }
     },
   });

@@ -7,7 +7,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
-import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { SettingsLink } from "@/platforms/web/components/pos/settings/SettingsNavTree";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import {
@@ -41,45 +40,43 @@ export function SettingsShell({ children, home = false }: { children: ReactNode;
   }, []);
 
   return (
-    <AppShell>
-      <div className="flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden">
-        <div
-          className={
-            "z-20 shrink-0 border-b border-border bg-background/95 px-3 py-2 text-xs backdrop-blur " +
-            (home ? "hidden" : "block")
-          }
-        >
-          {!home && (
-            <div className="mx-auto w-full max-w-7xl space-y-2">
-              <div className="flex min-w-0 items-center gap-1.5">
-                <Link
-                  to="/settings"
-                  search={category ? ({ cat: category.id } as never) : ({} as never)}
-                  className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                  aria-label="Back to settings"
-                >
-                  <ChevronLeft className="size-4" /> Settings
-                </Link>
-                {category && (
-                  <>
-                    <span className="text-muted-foreground">/</span>
-                    <span className="truncate text-muted-foreground">{category.label}</span>
-                  </>
-                )}
-                {active && (
-                  <>
-                    <span className="text-muted-foreground">/</span>
-                    <span className="truncate font-medium">{active.label}</span>
-                  </>
-                )}
-              </div>
-              <SettingsTabs current={pathname} activeTab={tab} placement="shell" />
+    <div className="flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden">
+      <div
+        className={
+          "z-20 shrink-0 border-b border-border bg-background/95 px-3 py-2 text-xs backdrop-blur " +
+          (home ? "hidden" : "block")
+        }
+      >
+        {!home && (
+          <div className="mx-auto w-full max-w-7xl space-y-2">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Link
+                to="/settings"
+                search={category ? ({ cat: category.id } as never) : ({} as never)}
+                className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Back to settings"
+              >
+                <ChevronLeft className="size-4" /> Settings
+              </Link>
+              {category && (
+                <>
+                  <span className="text-muted-foreground">/</span>
+                  <span className="truncate text-muted-foreground">{category.label}</span>
+                </>
+              )}
+              {active && (
+                <>
+                  <span className="text-muted-foreground">/</span>
+                  <span className="truncate font-medium">{active.label}</span>
+                </>
+              )}
             </div>
-          )}
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+            <SettingsTabs current={pathname} activeTab={tab} placement="shell" />
+          </div>
+        )}
       </div>
-    </AppShell>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+    </div>
   );
 }

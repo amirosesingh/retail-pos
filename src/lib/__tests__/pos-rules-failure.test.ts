@@ -6,6 +6,10 @@ import { DEFAULT_POS_RULES } from "../pos-rules";
 describe("rules failure classification", () => {
   it("separates a stale key from a network outage", () => {
     expect(classifyRulesFailure("Invalid API key")).toBe("auth");
+    expect(
+      classifyRulesFailure("This till could not prove who it is — sign in again or re-activate it."),
+    ).toBe("auth");
+    expect(classifyRulesFailure("Your session has ended — please sign in again.")).toBe("auth");
     expect(classifyRulesFailure("fetch failed")).toBe("network");
   });
 

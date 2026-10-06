@@ -10,6 +10,12 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { supabaseConfig } from "./external-supabase-config";
 import { DEFAULT_POS_RULES, normalizeRules, type PosRules } from "./pos-rules";
+import {
+  classifyRulesFailure,
+  type RulesFailure,
+} from "./pos-rules-failure";
+
+export { classifyRulesFailure } from "./pos-rules-failure";
 
 const GRANT_TTL_MS = 5 * 60 * 1000;
 
@@ -121,9 +127,6 @@ export type RulesSource = "database" | "defaults";
  * only what is recorded and shown, so a stale key is never reported as a
  * network outage.
  */
-export type RulesFailure =
-  "none" | "config" | "network" | "auth" | "permission" | "data" | "unknown";
-
 export type RulesResult = {
   rules: PosRules;
   source: RulesSource;
@@ -145,31 +148,6 @@ type RulesSnapshotRow = {
   updated_at?: unknown;
   updated_by?: unknown;
 };
-
-/** Classify a raw database/transport error without leaking credentials. */
-export function classifyRulesFailure(message: string): RulesFailure {
-  const m = message.toLowerCase();
-  if (m.includes("service key is not configured") || m.includes("not configured")) return "config";
-  if (m.includes("invalid api key") || m.includes("jwt") || m.includes("not signed in")) {
-    return "auth";
-  }
-  if (m.includes("permission denied") || m.includes("row-level security") || m.includes("42501")) {
-    return "permission";
-  }
-  if (m.includes("pgrst") || m.includes("schema cache") || m.includes("does not exist")) {
-    return "data";
-  }
-  if (
-    m.includes("fetch") ||
-    m.includes("network") ||
-    m.includes("timeout") ||
-    m.includes("econn") ||
-    m.includes("getaddrinfo")
-  ) {
-    return "network";
-  }
-  return "unknown";
-}
 
 /** Stable content stamp for a rule set (order-independent). */
 export function rulesRevision(rules: PosRules): string {
