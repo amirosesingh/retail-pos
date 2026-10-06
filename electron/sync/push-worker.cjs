@@ -94,8 +94,14 @@ class PushWorker {
   async pushAggregates(branchId, batchSize) {
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
-    const aggregates = await this.reader.pendingAggregates(branchId, batchSize);
-    for (const aggregate of aggregates) {
+    // Read and acknowledge one bounded page at a time until the durable
+    // journal is caught up. The old implementation stopped after one page,
+    // so a final shift-close sync could report success while later committed
+    // sales were still waiting for the next timer tick.
+    while (true) {
+      const aggregates = await this.reader.pendingAggregates(branchId, batchSize);
+      if (!aggregates.length) break;
+      for (const aggregate of aggregates) {
       const operations = [];
       const finalChanges = collapseChanges(aggregate.changes);
       for (const [tableName, changes] of groupBy(finalChanges, (change) => change.entity_type)) {
@@ -152,6 +158,7 @@ class PushWorker {
       } catch (error) {
         await this.reader.failAggregate(aggregate.aggregateId, error);
         throw error;
+      }
       }
     }
     return pushed;

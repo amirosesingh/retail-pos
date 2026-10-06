@@ -19,10 +19,10 @@ export type SystemAuditInput = {
   note?: string | null;
 };
 
-export function logSystemAction(entry: SystemAuditInput): void {
+export function logSystemAction(entry: SystemAuditInput): Promise<void> {
   // The server only accepts a line it can attribute, so the device's proof
   // goes with it.
-  void (async () => {
+  return (async () => {
     const credentials = await readCredentials();
     await recordSystemAudit({ data: { ...entry, ...credentials } });
   })().catch(() => {});

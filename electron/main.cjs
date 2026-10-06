@@ -244,6 +244,71 @@ async function flushSyncBeforeShutdown() {
   return result;
 }
 
+async function synchronizeClosingShifts(shiftId = null) {
+  if (shiftId) pendingShiftCloseSync.add(String(shiftId));
+  if (!pendingShiftCloseSync.size) return { ok: true, skipped: true };
+  if (mandatoryShiftSyncRun) return mandatoryShiftSyncRun;
+  mandatoryShiftSyncRun = (async () => {
+    const branchId = localBranchId();
+    if (!databaseManager.isConnected() || !branchId)
+      return { ok: false, code: "ELOCALDB", error: "The local database is not ready." };
+    const healthResult = await syncCloud.health({ timeoutMs: SHUTDOWN_SYNC_TIMEOUT_MS });
+    // Preserve the established offline close behaviour. The durable journal
+    // remains available for the next successful periodic synchronization.
+    if (!healthResult.online) {
+      const remaining = await changeReader.pendingSummary(branchId);
+      pendingShiftCloseSync.clear();
+      return { ok: true, offline: true, ...remaining };
+    }
+    if (!healthResult.ready)
+      return {
+        ok: false,
+        code: healthResult.code ?? "ECENTRAL_UNAVAILABLE",
+        error: healthResult.error ?? "The central POS server is not ready.",
+      };
+    let result = await syncCoordinator.runFinal({ branchId, batchSize: 500 });
+    if (result.code === "ECHANGEGAP") {
+      await prepareLocalData({ force: true });
+      result = await syncCoordinator.runFinal({ branchId, batchSize: 500 });
+    }
+    if (result.ok) pendingShiftCloseSync.clear();
+    return result;
+  })();
+  try {
+    return await mandatoryShiftSyncRun;
+  } finally {
+    mandatoryShiftSyncRun = null;
+  }
+}
+
+async function restoreShiftCloseGuard() {
+  const branchId = localBranchId();
+  if (!databaseManager.isConnected() || !branchId) return;
+  const result = await databaseManager.pool.request().input("branch", branchId).query(`SELECT TOP (1) 1 required
+    WHERE EXISTS (
+      SELECT 1 FROM dbo.shifts
+      WHERE store_id=@branch AND COALESCE(state,CASE WHEN closed_at IS NULL THEN 'ACTIVE' ELSE 'CLOSED' END) NOT IN ('ACTIVE','CLOSED')
+    ) OR EXISTS (
+      SELECT 1 FROM dbo.sync_change_journal
+      WHERE branch_id IN (@branch,'global') AND acknowledged_at IS NULL
+        AND entity_type IN ('shifts','shift_cash_counts','shift_close_events','shift_reconciliations','shift_variance_alerts','shift_notifications')
+    );`);
+  if (result.recordset?.length) pendingShiftCloseSync.add("recovered-shift-close");
+}
+
+async function showMandatorySyncFailure(result) {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  await dialog.showMessageBox(win, {
+    type: "error",
+    title: "Shift synchronization incomplete",
+    message: "The shift cannot finish closing while the central server is online and synchronization has failed.",
+    detail: String(result?.error ?? "Retry after checking the synchronization status."),
+    buttons: ["Keep application open"],
+    defaultId: 0,
+    noLink: true,
+  });
+}
+
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
 const DEBUG = process.env.POS_DEBUG === "1";
 
@@ -349,6 +414,10 @@ let readyWatchdog = null;
 let safeMode = false;
 /** Set once the operator (or the shell) has genuinely asked the till to close. */
 let quitting = false;
+/** Shift closes committed locally but not yet finalized against the online peer. */
+const pendingShiftCloseSync = new Set();
+let mandatoryShiftSyncRun = null;
+let allowMainWindowClose = false;
 
 
 /** The till reported in, the page painted, or a person is looking at a screen. */
@@ -630,6 +699,28 @@ function createWindows(initialRoute = "/") {
   mainWindow.on("maximize", sendWindowState);
   mainWindow.on("unmaximize", sendWindowState);
 
+  // The title-bar X must not destroy the last renderer while an online shift
+  // close is waiting for its final acknowledgement. Join the same coordinator
+  // used by the timer, then retry the close only after it succeeds (or after
+  // the established offline path has safely retained the journal).
+  mainWindow.on("close", (event) => {
+    if (allowMainWindowClose || quitting || !pendingShiftCloseSync.size) return;
+    event.preventDefault();
+    const closingWindow = mainWindow;
+    void synchronizeClosingShifts().then(async (result) => {
+      if (!result.ok) {
+        await showMandatorySyncFailure(result);
+        closingWindow?.show();
+        closingWindow?.focus();
+        return;
+      }
+      allowMainWindowClose = true;
+      closingWindow?.close();
+    }).catch(async (error) => {
+      await showMandatorySyncFailure({ error: String(error?.message ?? error) });
+    });
+  });
+
   // The customer screen is a companion of the till, never the other way
   // round: closing the till takes the second screen with it.
   mainWindow.on("closed", () => {
@@ -887,7 +978,10 @@ async function startLocalShiftClose(raw) {
   const shift = result.rows?.[0];
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
-  if (state !== "ACTIVE") return { ok: true, state, replayed: true };
+  if (state !== "ACTIVE") {
+    pendingShiftCloseSync.add(shiftId);
+    return { ok: true, state, replayed: true };
+  }
   const identity = adminSession.identity();
   const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
   const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
@@ -914,6 +1008,7 @@ async function startLocalShiftClose(raw) {
     }] },
   ]);
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
+  pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);
   return { ok: true, state: "CASH_COUNT_REQUIRED" };
 }
@@ -937,10 +1032,14 @@ async function commitLocalShiftCashCount(raw) {
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (state === "ACTIVE") throw new Error("Start the closing process before counting the drawer.");
-  if (!["CLOSING_STARTED", "CASH_COUNT_REQUIRED"].includes(state)) return { ok: true, state };
+  if (!["CLOSING_STARTED", "CASH_COUNT_REQUIRED"].includes(state)) {
+    pendingShiftCloseSync.add(shiftId);
+    return { ok: true, state };
+  }
   const prior = await operationsRepository.query(branchId, "shift_cash_counts", { match: { shift_id: shiftId, kind: "ORIGINAL" }, limit: 1 });
   if (prior.rows?.length) {
     const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
+    pendingShiftCloseSync.add(shiftId);
     return { ok: true, state: String(current.rows?.[0]?.state ?? "CLOSED"), replayed: true };
   }
   const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
@@ -1051,9 +1150,11 @@ async function commitLocalShiftCashCount(raw) {
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
     const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
+    pendingShiftCloseSync.add(shiftId);
     return { ok: true, state: String(current.rows?.[0]?.state ?? "CLOSED"), replayed: true };
   }
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
+  pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);
   return { ok: true, state: "CLOSED" };
 }
@@ -1128,9 +1229,11 @@ async function commitLocalShiftRecount(raw) {
     ]);
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
+    pendingShiftCloseSync.add(shiftId);
     return { ok: true, state: "CLOSED", replayed: true };
   }
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
+  pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);
   return { ok: true, state: "CLOSED" };
 }
@@ -1143,7 +1246,10 @@ async function approveLocalShiftVariance(raw) {
   const shift = result.rows?.[0];
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
-  if (state === "CLOSED") return { ok: true, state: "CLOSED", replayed: true };
+  if (state === "CLOSED") {
+    pendingShiftCloseSync.add(shiftId);
+    return { ok: true, state: "CLOSED", replayed: true };
+  }
   if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION"].includes(state))
     throw new Error("This shift is not waiting for variance approval.");
   const identity = adminSession.identity();
@@ -1162,6 +1268,7 @@ async function approveLocalShiftVariance(raw) {
     }] },
   ]);
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
+  pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);
   return { ok: true, state: "CLOSED" };
 }
@@ -1437,6 +1544,9 @@ function registerIpc() {
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
   ipcMain.handle("sync:get-status", () => syncCoordinator.refresh(localBranchId()));
   ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{const input=guard.options(options,{name:"sync options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});const result=await observedDatabaseOperation("synchronization","manual",() => syncCoordinator.runNow({...input,branchId}));return result.code==="ECHANGEGAP"?prepareLocalData({force:true}):result;}));
+  ipcMain.handle("sync:finalize-shift-close", (_e, shiftId) => guard.guarded(() =>
+    synchronizeClosingShifts(guard.uuid(shiftId, { name: "shift id" })),
+  ));
   ipcMain.handle("sync:auto", async () => {
     if(!databaseManager.isConnected()||!localBranchId())return{ok:false,skipped:true};
     return syncCoordinator.runNow({branchId:localBranchId(),batchSize:10});
@@ -1744,6 +1854,7 @@ app.whenReady().then(async () => {
   try { storageHygiene.runOnLaunch(app.getPath("userData"), app.getVersion()); } catch (error) { if (DEBUG) console.warn("[pos] storage hygiene skipped:", fail(error).error); }
   registerIpc();
   const restoredDatabase=await databaseService.restore();
+  await restoreShiftCloseGuard().catch((error) => recordFault("shift-close.guard-restore", error));
   mainTelemetry.start();
   const boot = health.beginBoot();
   if (health.shouldEnterSafeMode(boot)) { safeMode = true; health.beginRecovery(boot.reason ?? "Repeated failed launches"); updater.pause(); recovery.open(); return; }
@@ -1776,19 +1887,32 @@ app.on("before-quit", (event) => {
   shutdownFlushStarted = true;
   quitting = true;
   stopAutomaticSync();
-  mainTelemetry.stop();
-  closeCustomerDisplay();
-  void flushSyncBeforeShutdown()
-    .then((result) => {
-      if (result?.timedOut) recordFault("shutdown.sync-timeout", new Error("Final synchronization exceeded 8 seconds; pending SQL changes remain durable for next launch."));
-      else if (result?.ok === false) recordFault("shutdown.sync", new Error(result.error ?? "Final synchronization failed; pending SQL changes remain durable for next launch."));
-    })
-    .catch((error) => recordFault("shutdown.sync", error))
-    .finally(async () => {
-      await databaseManager.close().catch((error) => recordFault("shutdown.database-close", error));
-      shutdownFlushComplete = true;
-      app.quit();
-    });
+  const mandatory = pendingShiftCloseSync.size > 0;
+  void (async () => {
+    let result;
+    try {
+      result = mandatory ? await synchronizeClosingShifts() : await flushSyncBeforeShutdown();
+    } catch (error) {
+      result = { ok: false, error: String(error?.message ?? error) };
+    }
+    if (mandatory && result?.ok === false) {
+      recordFault("shutdown.shift-sync", new Error(result.error ?? "Mandatory shift synchronization failed."));
+      quitting = false;
+      shutdownFlushStarted = false;
+      scheduleAutomaticSync(250);
+      await showMandatorySyncFailure(result);
+      mainWindow?.show();
+      mainWindow?.focus();
+      return;
+    }
+    if (result?.timedOut) recordFault("shutdown.sync-timeout", new Error("Final synchronization exceeded 8 seconds; pending SQL changes remain durable for next launch."));
+    else if (result?.ok === false) recordFault("shutdown.sync", new Error(result.error ?? "Final synchronization failed; pending SQL changes remain durable for next launch."));
+    mainTelemetry.stop();
+    closeCustomerDisplay();
+    await databaseManager.close().catch((error) => recordFault("shutdown.database-close", error));
+    shutdownFlushComplete = true;
+    app.quit();
+  })();
 });
 app.on("window-all-closed", () => {
   if (recovery.isOpen()) return;

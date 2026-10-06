@@ -25,6 +25,27 @@ class SyncCoordinator {
     this.activeRun=this.runOnce(options);
     try{return await this.activeRun;}finally{this.activeRun=null;this.activeOptions=null;}
   }
+  async runFinal(options = {}) {
+    // A distinct option makes a shift-close request wait for an already
+    // running periodic cycle and then perform its own catch-up pass. It never
+    // overlaps the active coordinator run.
+    const result=await this.runNow({ ...options, final:true });
+    if(!result.ok)return result;
+    const reader=this.pushWorker?.reader;
+    const remaining=reader?.pendingSummary
+      ? await reader.pendingSummary(options.branchId)
+      : { pending:0,failed:0 };
+    if(Number(remaining.pending??0)>0||Number(remaining.failed??0)>0){
+      return {
+        ...result,
+        ...remaining,
+        ok:false,
+        code:"ESYNC_PENDING",
+        error:"Required local transactions are still waiting for central acknowledgement.",
+      };
+    }
+    return { ...result, ...remaining, final:true };
+  }
   async runOnce(options = {}) {
     this.running=true;
     let result;

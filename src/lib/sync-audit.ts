@@ -42,6 +42,8 @@ const bridge = (): Bridge | null =>
 
 const KEY = "pos.sync.audit";
 const LIMIT = 300;
+const MAX_SERIALIZED_CHARS = 256_000;
+const MAX_ERROR_CHARS = 1_000;
 
 const listeners = new Set<() => void>();
 
@@ -67,7 +69,35 @@ function readLocal(): SyncAuditRow[] {
 
 function writeLocal(rows: SyncAuditRow[]) {
   if (typeof window === "undefined") return;
-  writeBusinessValue(KEY, JSON.stringify(rows.slice(0, LIMIT)));
+  let kept = rows.slice(0, LIMIT).map((row) => ({
+    ...row,
+    entity: String(row.entity ?? "").slice(0, 160),
+    record_id: row.record_id == null ? null : String(row.record_id).slice(0, 256),
+    error: row.error == null ? null : String(row.error).slice(0, MAX_ERROR_CHARS),
+  }));
+  // Count and byte bounds are both required: a few large error strings can
+  // exceed Web Storage long before the row limit is reached. If the origin is
+  // already near its quota, progressively retain fewer recent rows. Auditing
+  // is best-effort and must never reject the synchronization promise.
+  while (kept.length) {
+    let serialized = JSON.stringify(kept);
+    while (serialized.length > MAX_SERIALIZED_CHARS && kept.length > 1) {
+      kept = kept.slice(0, Math.max(1, Math.floor(kept.length / 2)));
+      serialized = JSON.stringify(kept);
+    }
+    try {
+      writeBusinessValue(KEY, serialized);
+      return;
+    } catch {
+      kept = kept.slice(0, Math.floor(kept.length / 2));
+    }
+  }
+  try {
+    writeBusinessValue(KEY, "[]");
+  } catch {
+    // The origin is completely full. The desktop ledger or future writes can
+    // recover after storage is cleared; the active sync must still complete.
+  }
 }
 
 /** Record one sync operation. Never throws — auditing must not break a sale. */

@@ -15,6 +15,10 @@ export type ShiftCloseStep =
   | { ok: true; state: ShiftState }
   | { ok: false; error: string; queued?: boolean };
 
+export type ShiftCloseSyncResult =
+  | { ok: true; offline?: boolean; pending?: number; pushed?: number; merged?: number }
+  | { ok: false; error: string; code?: string };
+
 const fail = (e: unknown, fallback: string): ShiftCloseStep => ({
   ok: false,
   error:
@@ -30,6 +34,34 @@ async function localShift(shiftId: string): Promise<Record<string, unknown>> {
 
 const stateOf = (row: Record<string, unknown>) =>
   String(row.state ?? (row.closed_at ? "CLOSED" : "ACTIVE")) as ShiftState;
+
+/**
+ * Electron's final, mutex-protected push/pull barrier. Browser clients already
+ * execute each closing step against the central database, so they have no
+ * local journal to drain here.
+ */
+export async function synchronizeShiftClose(shiftId: string): Promise<ShiftCloseSyncResult> {
+  const finalize = localDb()?.sync?.finalizeShiftClose;
+  if (!finalize) return { ok: true };
+  try {
+    const result = await finalize(shiftId);
+    if (!result.ok)
+      return {
+        ok: false,
+        code: result.code,
+        error: result.error ?? "The central database did not acknowledge the shift transactions.",
+      };
+    return {
+      ok: true,
+      offline: result.offline,
+      pending: result.pending,
+      pushed: result.pushed,
+      merged: result.merged,
+    };
+  } catch (e) {
+    return fail(e, "Shift synchronization failed.") as ShiftCloseSyncResult;
+  }
+}
 
 async function callState(fn: string, args: Record<string, unknown>): Promise<ShiftCloseStep> {
   try {

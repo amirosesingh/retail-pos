@@ -1406,7 +1406,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           }
         }
       }
-      trackTransition({
+      void trackTransition({
         entity: "shift",
         entityId: shift.id,
         from: null,
@@ -1423,7 +1423,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         storeId,
         terminal: terminal?.locationName ?? "This PC",
       });
-      recordActivity({
+      void recordActivity({
         type: "shift_open",
         title: "Shift opened",
         message: `${cashier} opened a shift with a float of ${openingFloat}.`,
@@ -1485,7 +1485,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       justOpenedRef.current = null;
       setDbShift(null);
       setShiftChecked(true);
-      trackTransition({
+      const transitionWritten = trackTransition({
         entity: "shift",
         entityId: closed.id,
         from: "OPEN",
@@ -1506,7 +1506,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         closedBy: closed.closedBy,
         overdue: closed.overdue,
       });
-      recordActivity({
+      const activityWritten = recordActivity({
         type: "shift_close",
         severity: closed.overdue ? "warning" : "info",
         title: "Shift closed",
@@ -1521,8 +1521,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         amount: countedCash,
         meta: { note, overdue: closed.overdue },
       });
-      // Day-end summary goes out on whatever channels this device enabled.
-      void (async () => {
+      // Do not let Electron exit until the closing records have either reached
+      // the server or been parked durably in the terminal database.
+      const summaryWritten = (async () => {
         const snapshot = stateRef.current;
         const storeName = branchDisplayName(snapshot.stores, closed.storeId);
         const { buildShiftSummary, dispatchShiftSummary } = await import("./shift-alerts");
@@ -1530,6 +1531,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           () => null,
         );
       })();
+      await Promise.all([transitionWritten, activityWritten, summaryWritten]);
       return closed;
     },
     [activeShift, user, terminalUser, can],

@@ -127,7 +127,7 @@ export async function recordTransition(t: StatusTransition): Promise<void> {
   });
 }
 
-/** Fire-and-forget form for call sites that must not await. */
-export function trackTransition(t: StatusTransition): void {
-  void recordTransition(t).catch(() => undefined);
+/** Non-throwing form; callers may await local/cloud persistence when required. */
+export function trackTransition(t: StatusTransition): Promise<void> {
+  return recordTransition(t).catch(() => undefined);
 }

@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld("pos", {
   sync: {
     getStatus: () => invoke("sync:get-status"),
     runNow: (options) => invoke("sync:run-now", options),
+    finalizeShiftClose: (shiftId) => invoke("sync:finalize-shift-close", shiftId),
     auto: () => invoke("sync:auto"),
     pause: () => invoke("sync:pause"),
     resume: () => invoke("sync:resume"),
