@@ -210,15 +210,15 @@ export async function flushActivityQueue(): Promise<void> {
   writeQueue(left);
 }
 
-/** Raise an event. Never throws, never blocks the caller. */
-export function recordActivity(input: ActivityEventInput): void {
+/** Raise an event. Never throws; callers may await durable storage when required. */
+export async function recordActivity(input: ActivityEventInput): Promise<void> {
   const entry: Queued = {
     ...input,
     severity: input.severity ?? "info",
     clientEventId: isBrowser() && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}`,
     createdAt: new Date().toISOString(),
   };
-  void (async () => {
+  try {
     // Electron governance events enter SQL Server first and are uploaded by
     // the same durable coordinator as the sale. Its browser queue is never an
     // Electron outbox.
@@ -233,9 +233,9 @@ export function recordActivity(input: ActivityEventInput): void {
     // the browser queue holds it until the line is back.
     if (await park(entry)) return;
     writeQueue([...readQueue(), entry]);
-  })().catch(() => {
+  } catch {
     // Visibility events are non-critical and must never reject into checkout.
-  });
+  }
 }
 
 export const pendingActivityCount = () => readQueue().length;

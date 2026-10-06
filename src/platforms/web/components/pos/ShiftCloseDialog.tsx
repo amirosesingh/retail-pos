@@ -156,7 +156,7 @@ export function ShiftCloseDialog({
       return false;
     }
     if (forcedClosure) {
-      logSystemAction({
+      await logSystemAction({
         actorId,
         actorName: user?.name ?? null,
         actorRole: user?.role ?? null,

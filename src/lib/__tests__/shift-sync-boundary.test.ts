@@ -9,6 +9,7 @@ describe("shift sync boundaries", () => {
     const dialog = read("src/platforms/web/components/pos/ShiftCloseDialog.tsx");
     const closing = read("src/lib/shift-closing.ts");
     const main = read("electron/main.cjs");
+    const store = read("src/lib/pos-store.tsx");
     expect(dialog.indexOf("await synchronizeShiftClose(shift.id)")).toBeLessThan(
       dialog.indexOf("await closeShift("),
     );
@@ -20,6 +21,13 @@ describe("shift sync boundaries", () => {
     expect(main).toContain("syncCoordinator.runFinal");
     expect(main).toContain("pendingShiftCloseSync.size > 0");
     expect(main).toContain("if (mandatory && result?.ok === false)");
+    expect(store).toContain("await Promise.all([transitionWritten, activityWritten, summaryWritten])");
+    expect(store.indexOf("await Promise.all([transitionWritten")).toBeLessThan(
+      store.indexOf("return closed;"),
+    );
+    expect(dialog.indexOf("await logSystemAction({")).toBeLessThan(
+      dialog.indexOf("await localDb()?.closeWindow?.()"),
+    );
   });
 
   it("sends protected shift writes and summaries through the existing relay", () => {
