@@ -100,6 +100,11 @@ describe("SQL Server checkpoints 7 through 12", () => {
       await expect(running).resolves.toMatchObject({ pushed: 1 });
       expect(cloud.pushBatch).toHaveBeenCalledTimes(2);
       expect(cloud.pushBatch.mock.calls[0][0].batchId).toBe(cloud.pushBatch.mock.calls[1][0].batchId);
+      expect(reader.rows).toHaveBeenCalledWith(
+        expect.objectContaining({ sqlServerTable: "sales" }),
+        [change],
+        { branchId: "B1" },
+      );
       expect(checkpoints.save).toHaveBeenCalledWith("B1", "sales", "push", { change_tracking_version: 4 });
     } finally { vi.useRealTimers(); }
   });
@@ -359,7 +364,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
     };
     const { runBootstrap } = await import("../../../electron/jobs/bootstrap.cjs");
     await expect(runBootstrap({ registry, cloud, connectionManager, checkpoints, branchId: "B1", historyDays: 90, context })).resolves.toEqual({ completed: 201 });
-    expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "sales", branchId: "B1", historyDays: 90, cursor: "page-4", limit: 500 });
+    expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "sales", branchId: "B1", historyDays: 90, cursor: "page-4", limit: 10 });
     expect(cloud.applyLocalBatch).toHaveBeenCalledOnce();
     expect(checkpoint).toHaveBeenCalledWith(expect.objectContaining({ completed_rows: 201, dependency_index: 1 }), expect.any(Transaction));
     expect(checkpoints.save).toHaveBeenCalledWith("B1", "sales", "push", { change_tracking_version: 12 });
@@ -443,7 +448,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
       connectionManager: { sql: () => ({ Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: {} },
       branchId: "B1", historyDays: 90, tableName: "store_groups",
     })).resolves.toEqual({ completed: 1 });
-    expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "store_groups", branchId: "B1", historyDays: 90, cursor: null, limit: 500 });
+    expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "store_groups", branchId: "B1", historyDays: 90, cursor: null, limit: 10 });
     expect(cloud.applyLocalBatch).toHaveBeenCalledWith(expect.any(Transaction), table, expect.objectContaining({
       rows: [expect.objectContaining({ row_data: { id: "default" } })],
     }));
@@ -522,8 +527,8 @@ describe("SQL Server checkpoints 7 through 12", () => {
     lifecycle.reconcile = vi.fn().mockResolvedValue([]);
 
     await expect(lifecycle.ensure({ branchId: "B1", historyDays: 90, force: true })).resolves.toMatchObject({ ok: true });
-    expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "coupon_campaigns", branchId: "B1", historyDays: 90, cursor: null, limit: 500 });
-    expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "drawer_events", branchId: "B1", historyDays: 90, cursor: null, limit: 500 });
+    expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "coupon_campaigns", branchId: "B1", historyDays: 90, cursor: null, limit: 10 });
+    expect(cloud.bootstrapPage).toHaveBeenCalledWith({ table: "drawer_events", branchId: "B1", historyDays: 90, cursor: null, limit: 10 });
     expect(cloud.applyLocalBatch).toHaveBeenCalledWith(expect.any(Transaction), couponTable, expect.objectContaining({
       rows: [expect.objectContaining({ row_data: { id: "C1", row_version: 2 } })],
     }));

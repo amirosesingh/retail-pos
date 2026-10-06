@@ -4,7 +4,7 @@ async function refreshTable({registry,cloud,connectionManager,branchId,historyDa
   if(!table)return{completed:0,skipped:true};
   let completed=0;let cursor=null;
   do{
-    const batch=await cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit:500});
+    const batch=await cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit:10});
     const rows=batch.rows??[];
     const sql=connectionManager.sql();const transaction=new sql.Transaction(connectionManager.pool);await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
     try{
@@ -24,7 +24,7 @@ async function runBootstrap({registry,cloud,connectionManager,checkpoints,branch
     await context.checkpoint({status:"running",phase:"bootstrap",current_table:table.sqlServerTable,dependency_index:index,last_committed_cursor:cursor});
     do{
       await context.waitWhilePaused();
-      const batch=await cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit:Number(context.job.batch_size)||500});
+      const batch=await cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit:Math.min(10,Number(context.job.batch_size)||10)});
       const rows=batch.rows??[];
       const sql=connectionManager.sql(); const transaction=new sql.Transaction(connectionManager.pool); await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
       try{

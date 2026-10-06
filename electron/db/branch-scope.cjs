@@ -13,6 +13,11 @@ function branchPredicate(registry, table, alias = "source", seen = new Set()) {
   const names = columnNames(table);
   if (names.has("store_id")) return `${alias}.[store_id]=@branch`;
   if (names.has("branch_id")) return `${alias}.[branch_id]=@branch`;
+  // Catalogue rows are either shared (no owner) or owned by exactly one
+  // branch. Treat shared products as visible everywhere, while preventing a
+  // terminal from reading or uploading another branch's owned catalogue.
+  if (names.has("owner_store_id"))
+    return `(NULLIF(${alias}.[owner_store_id],N'') IS NULL OR ${alias}.[owner_store_id]=@branch)`;
   if (names.has("from_store_id") && names.has("to_store_id"))
     return `(${alias}.[from_store_id]=@branch OR ${alias}.[to_store_id]=@branch)`;
   for (const column of table.columns ?? []) {

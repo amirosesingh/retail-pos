@@ -185,6 +185,39 @@ const KEY = "pos-audit-logs-v1";
 /** Cap applies to already-synced history only — pending entries are never
  *  dropped, however long the terminal stays offline. */
 const MAX_SYNCED = 4000;
+const MAX_DETAIL_STRING = 4_000;
+const MAX_DETAIL_ITEMS = 50;
+const MAX_DETAIL_DEPTH = 5;
+
+/**
+ * Audit metadata is supporting evidence, never a second copy of application
+ * state. Bound every caller here so a logo/data URL or an accidental state
+ * snapshot cannot make one audit row too large for the durable SQL batch.
+ */
+export function boundedAuditDetails(value: Record<string, unknown>): Record<string, unknown> {
+  const visit = (input: unknown, depth: number): unknown => {
+    if (input == null || typeof input === "boolean" || typeof input === "number") return input;
+    if (typeof input === "string")
+      return input.length <= MAX_DETAIL_STRING
+        ? input
+        : `${input.slice(0, MAX_DETAIL_STRING)}… [${input.length - MAX_DETAIL_STRING} characters omitted]`;
+    if (depth >= MAX_DETAIL_DEPTH) return "[nested value omitted]";
+    if (Array.isArray(input)) {
+      const rows = input.slice(0, MAX_DETAIL_ITEMS).map((entry) => visit(entry, depth + 1));
+      if (input.length > MAX_DETAIL_ITEMS) rows.push(`[${input.length - MAX_DETAIL_ITEMS} items omitted]`);
+      return rows;
+    }
+    if (typeof input === "object") {
+      const entries = Object.entries(input as Record<string, unknown>);
+      const limited = entries.slice(0, MAX_DETAIL_ITEMS).map(([key, entry]) => [key, visit(entry, depth + 1)]);
+      if (entries.length > MAX_DETAIL_ITEMS)
+        limited.push(["_omittedFields", entries.length - MAX_DETAIL_ITEMS]);
+      return Object.fromEntries(limited);
+    }
+    return String(input);
+  };
+  return visit(value, 0) as Record<string, unknown>;
+}
 
 let logs: AuditLog[] = [];
 let sqlLogs: AuditLog[] = [];
@@ -267,7 +300,7 @@ export const logger = {
       role: actor.role,
       storeId: actor.storeId ?? s.branchId,
       route: window.location.pathname,
-      details: { ...details, role: actor.role, authUserId: actor.authUserId },
+      details: boundedAuditDetails({ ...details, role: actor.role, authUserId: actor.authUserId }),
       synced_to_cloud: false,
       syncedAt: null,
       terminalId: s.terminalId,

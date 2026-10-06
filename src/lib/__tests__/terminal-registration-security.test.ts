@@ -79,6 +79,14 @@ describe("terminal registration trust boundary", () => {
     expect(activation).toContain("crypto.randomUUID()");
   });
 
+  it("does not report Electron activation before the OS-vault mirror is durable", () => {
+    const activation = source("src/core/activation/terminal-tokens.ts");
+    const persisted = activation.indexOf("await mirrorTerminalConfigToDesktop();");
+    const succeeded = activation.indexOf('note("succeeded"');
+    expect(persisted).toBeGreaterThan(activation.indexOf("export async function activateTerminal"));
+    expect(persisted).toBeLessThan(succeeded);
+  });
+
   it("keeps a remotely revoked terminal locked instead of exposing activation", () => {
     const shell = source("src/platforms/web/components/pos/AppShell.tsx");
     const screen = source("src/platforms/web/components/pos/TerminalActivation.tsx");

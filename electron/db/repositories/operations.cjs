@@ -41,7 +41,21 @@ class OperationsRepository {
   }
   validate(ops) {
     if (!Array.isArray(ops) || !ops.length || ops.length > 200) throw new Error("A batch must contain 1 to 200 operations.");
-    if (Buffer.byteLength(JSON.stringify(ops), "utf8") > MAX_ENCODED_BYTES) throw new Error("The operation batch exceeds 6 MiB.");
+    const encodedBytes = Buffer.byteLength(JSON.stringify(ops), "utf8");
+    if (encodedBytes > MAX_ENCODED_BYTES) {
+      const largest = ops
+        .map((operation) => ({
+          table: String(operation?.table ?? "unknown"),
+          bytes: Buffer.byteLength(JSON.stringify(operation), "utf8"),
+        }))
+        .sort((left, right) => right.bytes - left.bytes)[0];
+      throw Object.assign(new Error("The operation batch exceeds 6 MiB."), {
+        code: "EBATCH_SIZE",
+        table: largest?.table ?? null,
+        encodedBytes,
+        sqlDetail: `encodedBytes=${encodedBytes}; largestBytes=${largest?.bytes ?? 0}`,
+      });
+    }
     for (const op of ops) {
       const table = this.tables.get(op?.table);
       if (!table) throw new Error("Unsupported business table.");
