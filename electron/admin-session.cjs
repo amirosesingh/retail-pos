@@ -24,25 +24,11 @@ function hasPermission(permission) { return active()?.permissions?.[permission] 
 function hasPosAuthority() { return active()?.source === "pos"; }
 function branchId() { return active()?.branchId ?? null; }
 function touch() { if (active()) session.expiresAt = Date.now() + MAX_IDLE_MS; }
-function recoveryCodeAt(date) {
-  const pad = (value, width = 2) => String(value).padStart(width, "0");
-  return `${pad(date.getFullYear(), 4)}${pad(date.getMonth() + 1)}${pad(date.getDate())}${pad(date.getHours())}${pad(date.getMinutes())}`;
-}
-function sameCode(left, right) {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1)
-    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  return difference === 0;
-}
-function grantRecovery(value, now = Date.now()) {
-  const code = String(value ?? "").trim();
-  if (!/^\d{12}$/.test(code)) return false;
-  const accepted = [-1, 0, 1].some((offset) =>
-    sameCode(code, recoveryCodeAt(new Date(now + offset * 60_000))),
-  );
-  recoveryExpiresAt = accepted ? Date.now() + RECOVERY_IDLE_MS : 0;
-  return accepted;
+// Only main.cjs may call this, after verifying a real POS administrator or a
+// staff member carrying the database-management permission. The renderer is
+// deliberately given no clock-, token- or role-based shortcut.
+function grantRecovery() {
+  recoveryExpiresAt = Date.now() + RECOVERY_IDLE_MS;
 }
 function clearRecovery() { recoveryExpiresAt = 0; }
 function recoveryActive() {

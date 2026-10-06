@@ -124,6 +124,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261006050000_complete_empty_store_guards.sql",
       "supabase/migrations/20261006053000_fix_empty_store_edge_cases.sql",
       "supabase/migrations/20261006070000_start_product_row_versions_at_one.sql",
+      "supabase/migrations/20261006073000_restore_staff_login_privileges.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

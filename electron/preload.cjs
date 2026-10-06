@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld("sqlAdmin", {
   lockAdmin: () => invoke("admin:lock"),
   adoptSession: (proof, terminalConfig) => invoke("admin:adopt-session", proof, terminalConfig),
   status: () => invoke("admin:status"),
-  recoveryUnlock: (code) => invoke("admin:recovery-unlock", code),
+  recoveryUnlock: (username, pin) => invoke("admin:recovery-unlock", username, pin),
   recoveryLock: () => invoke("admin:recovery-lock"),
 });
 

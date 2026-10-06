@@ -19,8 +19,15 @@ describe("offline connection recovery", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
     expect(recovery).toContain("<CloudConnectionPanel recoveryUnlocked />");
     expect(panel).toContain("firstRun || privileged || unlocked || recoveryUnlocked");
-    expect(gate).toContain("if (!desktop.ok)");
-    expect(preload).toContain('recoveryUnlock: (code) => invoke("admin:recovery-unlock", code)');
+    expect(gate).toContain("submitAdministrator");
+    expect(preload).toContain('recoveryUnlock: (username, pin) => invoke("admin:recovery-unlock", username, pin)');
     expect(main).toContain('ipcMain.handle("admin:recovery-unlock"');
+    expect(main).toContain("verifySyncedApprovalPin(databaseManager.pool, user, secret");
+    expect(main).toContain('/auth/v1/token?grant_type=password');
+    expect(main).toContain('/api/v1/pos/ipc-adopt');
+    expect(main).toContain('setTimeout(() => authController.abort(), 8_000)');
+    expect(main).not.toContain("grantRecovery(guard.text(code");
+    expect(gate).toContain("Verifying administrator…");
+    expect(gate).toContain('{error && <p className="text-sm text-destructive">{error}</p>}');
   });
 });
