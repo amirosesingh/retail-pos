@@ -112,6 +112,7 @@ const CHANNEL_LEVELS = {
   // of the renderer network console.
   "auth:cashier-login": OPEN,
   "sync:auto": OPEN,
+  "sync:finalize-shift-close": OPEN,
   "settings:get": OPEN,
   "config:read": OPEN,
   "config:get": OPEN,

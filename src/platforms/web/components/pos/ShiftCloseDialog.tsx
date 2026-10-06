@@ -30,6 +30,7 @@ import { parseAmount, parsePositiveAmount } from "@/core/pricing/amount";
 import { openCashDrawer, printShiftReport } from "@/lib/pos-print";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { localTerminalId } from "@/lib/shift-hours";
+import { localDb } from "@/core/local-db/local-db";
 import { logSystemAction } from "@/lib/system-audit";
 import {
   approveVariance,
@@ -37,6 +38,7 @@ import {
   startShiftClose,
   submitCashCount,
   submitRecount,
+  synchronizeShiftClose,
   type ShiftReconciliation,
 } from "@/lib/shift-closing";
 import type { ShiftState } from "@/core/types/pos-types";
@@ -61,6 +63,8 @@ export function ShiftCloseDialog({
   const [note, setNote] = useState("");
   const [recountReason, setRecountReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [syncingClose, setSyncingClose] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [serverState, setServerState] = useState<ShiftState | null>(null);
   const [recon, setRecon] = useState<ShiftReconciliation | null>(null);
 
@@ -99,6 +103,8 @@ export function ShiftCloseDialog({
     setCard("");
     setDigital("");
     setRecountReason("");
+    setSyncingClose(false);
+    setSyncError(null);
   }, [open, activeShift?.id, activeShift?.state, activeShift?.closeReason]);
 
   // Managers see the numbers; the database refuses everyone else.
@@ -120,14 +126,34 @@ export function ShiftCloseDialog({
   /** Mirror the finished closure into local state, then print and kick out. */
   async function finish() {
     const shift = activeShift;
-    if (!shift) return;
+    if (!shift) return false;
+    setSyncingClose(true);
+    setSyncError(null);
+    const syncToast = toast.loading("Closing shift…", {
+      description: "Synchronizing pending transactions with the central database.",
+    });
+    const synchronized = await synchronizeShiftClose(shift.id);
+    toast.dismiss(syncToast);
+    setSyncingClose(false);
+    if (!synchronized.ok) {
+      setSyncError(synchronized.error);
+      toast.error("Synchronization failed — the shift remains open on this screen.", {
+        description: synchronized.error,
+      });
+      return false;
+    }
+    if (synchronized.offline) {
+      toast.info("Central server unavailable", {
+        description: "The shift is stored safely on this terminal and will synchronize when the server returns.",
+      });
+    }
     const closed = await closeShift(cashValue ?? shift.countedCash ?? 0, note.trim(), {
       countedCard: counted.card,
       countedDigital: counted.digital,
     });
     if (!closed) {
       toast.error("The shift close was not accepted.");
-      return;
+      return false;
     }
     if (forcedClosure) {
       logSystemAction({
@@ -166,6 +192,12 @@ export function ShiftCloseDialog({
     });
     setStep("done");
     onOpenChange(false);
+    // The browser has no native window to close. On Electron this request is
+    // deliberately last: the local close is durable, final sync has been
+    // acknowledged (or safely classified offline), and the Z report attempt
+    // has completed before the main-process exit guard is engaged.
+    await localDb()?.closeWindow?.();
+    return true;
   }
 
   async function handleState(next: ShiftState) {
@@ -347,13 +379,14 @@ export function ShiftCloseDialog({
                           recountReason.trim(),
                           terminalId,
                         );
-                        setBusy(false);
                         if (!res.ok) {
+                          setBusy(false);
                           toast.error(res.error);
                           return;
                         }
                         toast.success("Recount recorded — the original count is kept.");
                         await handleState(res.state);
+                        setBusy(false);
                       })();
                     }}
                   >
@@ -366,6 +399,17 @@ export function ShiftCloseDialog({
 
           {serverState && serverState !== "ACTIVE" && step !== "review" && (
             <p className="text-[11px] text-muted-foreground">Shift state: {serverState}</p>
+          )}
+          {syncingClose && (
+            <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              Closing shift… Synchronizing pending transactions.
+            </p>
+          )}
+          {syncError && (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <span>Synchronization failed. Check the connection and submit again to retry. {syncError}</span>
+            </div>
           )}
         </div>
 
@@ -396,12 +440,13 @@ export function ShiftCloseDialog({
                     return;
                   }
                   const res = await startShiftClose(activeShift.id, reason.trim(), terminalId);
-                  setBusy(false);
                   if (!res.ok) {
+                    setBusy(false);
                     toast.error(res.error);
                     return;
                   }
                   await handleState(res.state);
+                  setBusy(false);
                 })();
               }}
             >
@@ -423,8 +468,8 @@ export function ShiftCloseDialog({
                     clientKey: `${activeShift.id}:original`,
                     terminalId,
                   });
-                  setBusy(false);
                   if (!res.ok) {
+                    setBusy(false);
                     // A parked count is not a failure: the drawer has been
                     // counted, the server just cannot be told yet.
                     if (res.queued) toast.success(res.error);
@@ -433,6 +478,7 @@ export function ShiftCloseDialog({
                   }
 
                   await handleState(res.state);
+                  setBusy(false);
                 })();
               }}
             >
@@ -447,13 +493,14 @@ export function ShiftCloseDialog({
                 void (async () => {
                   setBusy(true);
                   const res = await approveVariance(activeShift.id, note.trim() || undefined);
-                  setBusy(false);
                   if (!res.ok) {
+                    setBusy(false);
                     toast.error(res.error);
                     return;
                   }
                   toast.success("Variance approved");
                   await handleState(res.state);
+                  setBusy(false);
                 })();
               }}
             >

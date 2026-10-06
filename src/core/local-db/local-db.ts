@@ -399,6 +399,16 @@ export type PosBridge = {
     runNow?: (options?: { branchId?: string; batchSize?: number }) => Promise<
       LocalSyncStatus & { ok?: boolean; busy?: boolean; pushed?: number; merged?: number }
     >;
+    finalizeShiftClose?: (shiftId: string) => Promise<
+      LocalSyncStatus & {
+        ok: boolean;
+        offline?: boolean;
+        pushed?: number;
+        merged?: number;
+        error?: string;
+        code?: string;
+      }
+    >;
     auto?: () => Promise<
       LocalSyncStatus & { ok?: boolean; busy?: boolean; skipped?: boolean; pushed?: number; merged?: number }
     >;

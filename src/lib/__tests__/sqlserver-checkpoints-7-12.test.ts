@@ -152,6 +152,36 @@ describe("SQL Server checkpoints 7 through 12", () => {
     });
   });
 
+  it("drains every bounded aggregate page before reporting push completion", async () => {
+    const aggregate = (id: string) => ({
+      aggregateId: id,
+      changes: [{ entity_type: "sales", entity_id: `{"id":"${id}"}`, operation: "insert", key: { id } }],
+    });
+    const reader = {
+      pendingAggregates: vi.fn()
+        .mockResolvedValueOnce([aggregate("00000000-0000-4000-8000-000000000001")])
+        .mockResolvedValueOnce([aggregate("00000000-0000-4000-8000-000000000002")])
+        .mockResolvedValueOnce([]),
+      rows: vi.fn(async (_table, changes) => changes.map((change: { key: { id: string } }) => ({ id: change.key.id, store_id: "B1" }))),
+      acknowledgeAggregate: vi.fn(),
+      failAggregate: vi.fn(),
+      changedIds: vi.fn().mockResolvedValue([]),
+    };
+    const cloud = { pushAggregate: vi.fn().mockResolvedValue({ ok: true }), terminalId: vi.fn().mockReturnValue("T1") };
+    const checkpoints = { get: vi.fn().mockResolvedValue(null), save: vi.fn() };
+    const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
+    const worker = new PushWorker({
+      reader,
+      cloud,
+      checkpoints,
+      registry: { tables: [{ cloudTable: "sales", sqlServerTable: "sales", dependencyOrder: 0, direction: "bidirectional", scope: "branch", columns: [{ primaryKey: true }] }] },
+    });
+    await expect(worker.run({ branchId: "B1", batchSize: 100 })).resolves.toEqual({ pushed: 2 });
+    expect(reader.pendingAggregates).toHaveBeenCalledTimes(3);
+    expect(cloud.pushAggregate).toHaveBeenCalledTimes(2);
+    expect(reader.acknowledgeAggregate).toHaveBeenCalledTimes(2);
+  });
+
   it("defers a membership page that claims more data without advancing its cursor", async () => {
     const checkpoints = {
       get: vi.fn(async (_branch: string, table: string) =>
@@ -279,6 +309,26 @@ describe("SQL Server checkpoints 7 through 12", () => {
     await Promise.all([first, second]);
     expect(push).toHaveBeenNthCalledWith(1, { branchId: "B1" });
     expect(push).toHaveBeenNthCalledWith(2, { branchId: "B2" });
+  });
+
+  it("runs a distinct final catch-up pass and refuses unacknowledged rows", async () => {
+    const pendingSummary = vi.fn()
+      .mockResolvedValueOnce({ pending: 0, failed: 0 })
+      .mockResolvedValueOnce({ pending: 1, failed: 0 })
+      .mockResolvedValueOnce({ pending: 1, failed: 0 });
+    const push = vi.fn().mockResolvedValue({ pushed: 1 });
+    const pull = vi.fn().mockResolvedValue({ merged: 1, conflicts: 0 });
+    const { SyncCoordinator } = await import("../../../electron/sync/coordinator.cjs");
+    const coordinator = new SyncCoordinator({
+      pushWorker: { reader: { connectionManager: { pool: {} }, pendingSummary }, run: push },
+      pullWorker: { run: pull },
+    });
+    await expect(coordinator.runFinal({ branchId: "B1", batchSize: 100 })).resolves.toMatchObject({
+      ok: false,
+      code: "ESYNC_PENDING",
+      pending: 1,
+    });
+    expect(push).toHaveBeenCalledWith({ branchId: "B1", batchSize: 100, final: true });
   });
 
   it("keeps an unacknowledged local row and records the cloud conflict", async () => {

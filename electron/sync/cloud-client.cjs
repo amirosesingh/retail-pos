@@ -48,13 +48,40 @@ class CloudClient {
   terminalId() {
     return String(this.terminalStore.read()?.tokenId ?? "").trim();
   }
+  backendUrl() {
+    const terminal = this.terminalStore.read() ?? {};
+    return String(this.configStore.get("backendUrl") || terminal.backendUrl || "")
+      .trim()
+      .replace(/\/+$/, "");
+  }
+  async health({ timeoutMs = 8000 } = {}) {
+    const base = this.backendUrl();
+    if (!base || !/^https:\/\/.+/i.test(base))
+      return { online: false, ready: false, code: "EBACKEND", error: "The hosted POS backend is not configured." };
+    let response;
+    try {
+      response = await fetch(`${base}/api/public/sync-health`, {
+        method: "GET",
+        cache: "no-store",
+        signal: AbortSignal.timeout(Math.max(1000, Number(timeoutMs) || 8000)),
+      });
+    } catch (error) {
+      return { online: false, ready: false, code: "EOFFLINE", error: String(error?.message ?? error) };
+    }
+    const data = await response.json().catch(() => null);
+    const ready = response.ok && data?.serviceKey === true && data?.posUrl === true;
+    return {
+      online: true,
+      ready,
+      code: ready ? null : `HTTP_${response.status}`,
+      error: ready ? null : data?.error ?? data?.message ?? "The hosted POS backend cannot reach the central database.",
+    };
+  }
   async request(payload, operation = "") {
     const terminal = this.terminalStore.read() ?? {};
     // An empty config-store value must not mask the HTTPS recovery copy sealed
     // with the terminal activation (nullish coalescing treats "" as present).
-    const base = String(this.configStore.get("backendUrl") || terminal.backendUrl || "")
-      .trim()
-      .replace(/\/+$/, "");
+    const base = this.backendUrl();
     const terminalToken = String(terminal.tokenId ?? "").trim();
     if (!base)
       throw Object.assign(
