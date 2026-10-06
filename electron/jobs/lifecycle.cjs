@@ -11,6 +11,18 @@ class LocalDataLifecycle {
   async bootstrap(branchId,historyDays,existing=null){return this.jobManager.run(this.bootstrapType(historyDays),context=>runBootstrap({registry:this.registry,cloud:this.cloud,connectionManager:this.connectionManager,checkpoints:this.checkpoints,branchId,historyDays,context}),existing,{branchId});}
   async retain(branchId,historyDays,existing=null){if(historyDays===7300)return{status:"completed",skipped:true};return this.jobManager.run("retention",context=>runRetention({connectionManager:this.connectionManager,days:historyDays,context}),existing,{branchId});}
   async resume(branchId,historyDays){const active=await this.jobRepository.active();if(!active||String(active.branch_id??"")!==String(branchId))return null;if(String(active.job_type).startsWith("bootstrap_"))return this.bootstrap(branchId,Number(String(active.job_type).slice(10))||historyDays,active);if(active.job_type==="retention")return this.retain(branchId,historyDays,active);return null;}
+  async recoverChangeTrackingGap(branchId,historyDays,tableName){
+    const table=this.registry.tables.find(candidate=>candidate.sqlServerTable===tableName);
+    if(!table)throw Object.assign(new Error(`The expired Change Tracking table ${tableName} is not registered.`),{code:"ESCHEMA_REGISTRY"});
+    // The failed push has already uploaded durable aggregate-journal work. Pull
+    // an authoritative branch-scoped snapshot before establishing a new SQL
+    // Change Tracking baseline; never advance the checkpoint first.
+    const refreshed=await refreshTable({registry:this.registry,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable});
+    const version=await this.connectionManager.pool.request().query("SELECT CHANGE_TRACKING_CURRENT_VERSION() current_version;");
+    const currentVersion=Number(version.recordset?.[0]?.current_version??0);
+    await this.checkpoints.save(branchId,table.sqlServerTable,"push",{change_tracking_version:currentVersion});
+    return{table:table.sqlServerTable,completed:refreshed.completed,currentVersion};
+  }
   async ensure({branchId,historyDays=90,force=false}){
     if(!branchId)throw Object.assign(new Error("This terminal needs a branch before local data can be prepared."),{code:"EBRANCH"});
     this.databaseService.transition("enabled_bootstrapping",{phase:"resume"});
@@ -19,8 +31,15 @@ class LocalDataLifecycle {
     // Upload local changes before refreshing shared reference rows. Older
     // databases may have a completed bootstrap from before store_groups was
     // part of the registry, leaving stores.group_id without its local parent.
-    await this.syncCoordinator.pushWorker.run({branchId,batchSize:500});
-    if(force||!completed){
+    let recoveredGap=false;
+    try{
+      await this.syncCoordinator.pushWorker.run({branchId,batchSize:500});
+    }catch(error){
+      if(error?.code!=="ECHANGEGAP"||!error?.table)throw error;
+      await this.recoverChangeTrackingGap(branchId,historyDays,error.table);
+      recoveredGap=true;
+    }
+    if((force&&!recoveredGap)||!completed){
       // A reused till database can contain completed offline sales before it
       // has a bootstrap checkpoint. Upload every locally tracked transaction
       // first; otherwise bootstrap could establish a new baseline over work

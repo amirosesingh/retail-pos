@@ -3,6 +3,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { X } from "lucide-react";
 
 import {
+  closeCurrentCustomerDisplay,
   readDisplaySnapshot,
   subscribeDisplay,
   subscribeDisplayShutdown,
@@ -47,10 +48,7 @@ function CustomerDisplay() {
   // The display is often launched from the sidebar in the same window, so it
   // needs its own way back to the till.
   const exit = () => {
-    if (typeof window !== "undefined" && window.opener) {
-      window.close();
-      return;
-    }
+    if (closeCurrentCustomerDisplay()) return;
     if (typeof window !== "undefined" && window.history.length > 1) {
       router.history.back();
       return;
