@@ -33,7 +33,8 @@ describe("row-rule regression", () => {
     const tail = schema.slice(schema.lastIndexOf("CREATE POLICY audit_logs_staff_insert"));
     expect(tail).toContain("CREATE POLICY audit_logs_staff_insert");
     expect(tail).toContain("CREATE POLICY audit_logs_staff_read");
-    expect(tail.match(/\(SELECT public\.is_staff_now\(\)\)/gi)).toHaveLength(2);
+    expect(tail).toContain("CREATE POLICY audit_logs_staff_update");
+    expect(tail.match(/\(SELECT public\.is_staff_now\(\)\)/gi)).toHaveLength(4);
     expect(tail).not.toMatch(/(?:USING|WITH CHECK)\s*\(\s*true\s*\)/i);
   });
 

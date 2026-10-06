@@ -13518,10 +13518,16 @@ DROP POLICY IF EXISTS "Staff can append audit logs" ON public.audit_logs;
 DROP POLICY IF EXISTS "Staff can read audit logs" ON public.audit_logs;
 DROP POLICY IF EXISTS audit_logs_staff_insert ON public.audit_logs;
 DROP POLICY IF EXISTS audit_logs_staff_read ON public.audit_logs;
+DROP POLICY IF EXISTS audit_logs_staff_update ON public.audit_logs;
 CREATE POLICY audit_logs_staff_insert ON public.audit_logs FOR INSERT TO authenticated
  WITH CHECK ((SELECT public.is_staff_now()));
 CREATE POLICY audit_logs_staff_read ON public.audit_logs FOR SELECT TO authenticated
  USING ((SELECT public.is_staff_now()));
+-- Audit delivery is idempotent and uses ON CONFLICT(id) DO UPDATE.  Keep
+-- delete forbidden, but permit signed-in staff to complete that retry path.
+CREATE POLICY audit_logs_staff_update ON public.audit_logs FOR UPDATE TO authenticated
+ USING ((SELECT public.is_staff_now()))
+ WITH CHECK ((SELECT public.is_staff_now()));
 
 -- SQLSERVER_SYNC_CONTRACT_BEGIN
 
@@ -17335,3 +17341,61 @@ $function$;
 
 REVOKE ALL ON FUNCTION public.delete_empty_store(text, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_empty_store(text, text) TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- Final Data API authorization repair
+-- ---------------------------------------------------------------------------
+-- A restored/fresh project can expose the schema before every historical
+-- GRANT has been replayed.  Auth may then succeed while PostgREST still runs
+-- into 42501 for the first location/session queries.  Keep this final block
+-- after all objects so a complete installer run always converges on the
+-- intended authenticated-only surface.  RLS remains the row-level authority.
+GRANT USAGE ON SCHEMA public TO authenticated, service_role;
+
+ALTER TABLE public.settings_locks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stores ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.public_flags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.held_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_transfers ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE
+  public.settings_locks,
+  public.stores,
+  public.user_roles,
+  public.audit_logs,
+  public.bookings,
+  public.held_orders,
+  public.stock_transfers
+FROM anon;
+
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.public_flags FROM anon;
+GRANT SELECT ON TABLE public.public_flags TO anon;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+  public.settings_locks,
+  public.stores,
+  public.user_roles,
+  public.bookings,
+  public.held_orders,
+  public.stock_transfers
+TO authenticated;
+
+REVOKE DELETE ON TABLE public.audit_logs FROM authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.audit_logs TO authenticated;
+
+REVOKE DELETE ON TABLE public.public_flags FROM authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.public_flags TO authenticated;
+
+REVOKE ALL ON FUNCTION public.current_app_user() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.current_app_user() TO authenticated, service_role;
+
+REVOKE ALL ON FUNCTION public.reserve_product_skus(integer,text,text,text,integer)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.reserve_product_skus(integer,text,text,text,integer)
+  TO authenticated, service_role;
+
+-- Make the repaired privileges visible to PostgREST immediately after a reset.
+NOTIFY pgrst, 'reload schema';
