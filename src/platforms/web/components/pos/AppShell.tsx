@@ -148,10 +148,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     // Profile hydration may replace the provisional staffId after sign-in.
     // The authentication account / terminal person key remains stable and
     // must be used so an in-flight page is not mistaken for another user.
-    const identity = authUserId
-      ? `auth:${authUserId}`
-      : terminalUser?.userCode
-        ? `terminal:${terminalUser.userCode}`
+    const identity = terminalUser?.userCode
+      ? `terminal:${terminalUser.userCode}`
+      : authUserId
+        ? `auth:${authUserId}`
         : `user:${user.email || user.staffId || user.name}`;
     const key = "pos.last-signed-in-identity";
     let previous: string;

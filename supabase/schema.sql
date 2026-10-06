@@ -568,7 +568,7 @@ CREATE TABLE IF NOT EXISTS public.products (
     brand text,
     product_group text,
     barcode_variants jsonb DEFAULT '[]'::jsonb NOT NULL,
-    row_version integer DEFAULT 0 NOT NULL
+    row_version integer DEFAULT 1 NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.promotions (

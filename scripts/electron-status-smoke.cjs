@@ -11,7 +11,7 @@ if (!adminEmail || !adminPassword) {
   throw new Error("Set the administrator E2E credentials at runtime.");
 }
 
-const baseURL = "http://127.0.0.1:8080";
+const baseURL = process.env.POS_E2E_BASE_URL || "http://127.0.0.1:8080";
 
 async function signInIfNeeded(page) {
   const profile = page.getByRole("button", { name: /Open profile for/ });
@@ -31,7 +31,22 @@ async function signInIfNeeded(page) {
     await profile.waitFor({ state: "visible", timeout: 45_000 });
   } catch (error) {
     const visibleText = (await page.locator("body").innerText().catch(() => "")).slice(0, 1500);
-    throw new Error(`Administrator sign-in did not reach the register. Visible screen: ${visibleText}`, { cause: error });
+    const authState = await page.evaluate(async () => {
+      const { supabaseExternal } = await import("/src/integrations/supabase/external-client.ts");
+      const { data, error: sessionError } = await supabaseExternal.auth.getSession();
+      return {
+        hasCentralSession: Boolean(data.session),
+        centralUserId: data.session?.user?.id ?? null,
+        sessionError: sessionError?.message ?? null,
+        hasTerminalUser: Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index))
+          .filter(Boolean)
+          .some((key) => key.includes("terminal") || key.includes("staff")),
+      };
+    }).catch(() => ({ diagnosticUnavailable: true }));
+    throw new Error(
+      `Administrator sign-in did not reach the register. ${JSON.stringify({ visibleText, authState })}`,
+      { cause: error },
+    );
   }
 }
 

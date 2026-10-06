@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const read = (path: string) =>
   readFileSync(resolve(process.cwd(), path), "utf8").replaceAll("\r\n", "\n");
@@ -260,6 +260,48 @@ describe("scoped SQL Server synchronization", () => {
         { branchId: "A", terminalId: "T" },
       ),
     ).not.toThrow();
+  });
+
+  it("starts new versioned local records at revision one", async () => {
+    const queries: string[] = [];
+    const inputs: Record<string, unknown> = {};
+    const request = {
+      input: vi.fn((name: string, value: unknown) => {
+        inputs[name] = value;
+        return request;
+      }),
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql);
+        return { rowsAffected: [1] };
+      }),
+    };
+    const transaction = {};
+    const manager = {
+      sql: () => ({ Request: class { constructor(_tx: unknown) { return request; } } }),
+    };
+    const registry = {
+      tables: [{
+        cloudTable: "products",
+        sqlServerTable: "products",
+        conflictRule: "last_write_wins",
+        columns: [
+          { cloudColumn: "id", sqlServerColumn: "id", primaryKey: true },
+          { cloudColumn: "name", sqlServerColumn: "name", primaryKey: false },
+          { cloudColumn: "row_version", sqlServerColumn: "row_version", primaryKey: false },
+        ],
+      }],
+    };
+    const { OperationsRepository } = require("../../../electron/db/repositories/operations.cjs");
+    const repository = new OperationsRepository(manager, registry);
+
+    await repository.applyOperation(
+      transaction,
+      { kind: "upsert", table: "products", rows: [{ id: "P1", name: "New" }] },
+      { branchId: "B1", terminalId: "T1" },
+    );
+
+    expect(Object.values(inputs)).toContain(1);
+    expect(queries[0]).toContain("[row_version]");
   });
 
   it("removes permissive settings and terminal command policies", () => {

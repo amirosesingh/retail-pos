@@ -127,12 +127,18 @@ class OperationsRepository {
     if (op.kind === "insert" || op.kind === "upsert") {
       let affected = 0;
       for (const row of op.rows ?? (op.values ? [op.values] : [])) {
-        const columns = Object.keys(row);
-        if (!columns.length || primary.some((key) => row[key] == null)) throw new Error(`A complete stable key is required for ${op.table}.`);
+        // Every versioned record starts at revision 1. Some legacy SQL Server
+        // tables still have a DEFAULT 0, and omitting the value here allowed a
+        // brand-new offline product to reach the cloud at revision 0.
+        const normalizedRow = hasRowVersion && row.row_version == null
+          ? { ...row, row_version: 1 }
+          : row;
+        const columns = Object.keys(normalizedRow);
+        if (!columns.length || primary.some((key) => normalizedRow[key] == null)) throw new Error(`A complete stable key is required for ${op.table}.`);
         const request = new (this.connectionManager.sql().Request)(transaction);
         request.input("branch", String(branchId));
         request.input("terminal", String(terminalId ?? ""));
-        columns.forEach((column, index) => request.input(`v${index}`, valueForSql(row[column])));
+        columns.forEach((column, index) => request.input(`v${index}`, valueForSql(normalizedRow[column])));
         const source = columns.map((column, index) => `@v${index} AS [${column}]`).join(",");
         const on = primary.map((column) => `target.[${column}]=source.[${column}]`).join(" AND ");
         const updates = columns.filter((column) => !primary.includes(column) && column !== "row_version").map((column) => `target.[${column}]=source.[${column}]`);

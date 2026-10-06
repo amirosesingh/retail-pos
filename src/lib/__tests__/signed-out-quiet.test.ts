@@ -45,7 +45,9 @@ describe("hasSignedInIdentity", () => {
   it("does not trust an initial stored token or poll account state for a local terminal user", () => {
     const authProvider = readFileSync("src/lib/pos-auth.tsx", "utf8");
     expect(authProvider).toContain('if (event === "INITIAL_SESSION")');
-    expect(authProvider).toContain("if (!centralUserId || typeof window");
+    expect(authProvider).toContain(
+      'if (!centralUserId || !centralAuthVerified || typeof window === "undefined")',
+    );
     expect(authProvider).not.toContain("if (!user || typeof window");
   });
 });

@@ -35,6 +35,7 @@ import {
   AUTH_ACTION_LABEL,
   authorizationBinding,
   canAuthorizeAmount,
+  canBypassAuthorization,
   resolveRules,
   rulesFromLegacy,
   type AuthActionKey,
@@ -147,6 +148,29 @@ export function ManagerGateProvider({
       // 1 · this branch does not gate the action
       if (mode === "none") return { ok: true, grantToken: null };
 
+      const signedInRole = session?.user
+        ? session.user.roles.includes("admin")
+          ? "admin"
+          : session.user.roles.includes("manager")
+            ? "manager"
+            : session.user.metaRole ?? session.user.role
+        : null;
+      const signedInWho = {
+        userId: session?.user?.staffId ?? null,
+        role: signedInRole,
+      };
+      // A configured administrator approver is already the highest authority
+      // at this boundary. The server repeats this check before the mutation.
+      if (
+        canBypassAuthorization(
+          rule,
+          signedInWho,
+          request.requestedAmount,
+        )
+      ) {
+        return { ok: true, grantToken: null };
+      }
+
       // Retrying the exact action after an asynchronous decision consumes the
       // ready grant instead of opening a second request.
       if (isOnline() && (mode === "request" || mode === "either")) {
@@ -173,13 +197,6 @@ export function ManagerGateProvider({
       //     approved here, and how.
       const offline = !isOnline();
       let promptMode = mode;
-      const signedInRole = session?.user
-        ? session.user.roles.includes("admin")
-          ? "admin"
-          : session.user.roles.includes("manager")
-            ? "manager"
-            : session.user.metaRole ?? session.user.role
-        : null;
       const signedInApprover =
         rule && session?.user && signedInRole &&
         canAuthorizeAmount(

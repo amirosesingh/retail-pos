@@ -10,8 +10,9 @@
  * cluster. A till can consume its current lease offline without colliding with
  * another till, and cluster merges never require SKU renumbering.
  */
-import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { supabaseConfig } from "@/lib/external-supabase-config";
+import { getPosCallerAuth } from "@/lib/pos-caller-auth";
+import { reserveSkuLease } from "@/lib/sku.functions";
 export type SkuMode = "auto" | "manual";
 
 export type SkuSettings = {
@@ -124,15 +125,18 @@ type LeaseRow = {
 let allocationQueue: Promise<void> = Promise.resolve();
 
 async function reserveLease(settings: SkuSettings, context: SkuContext, count: number) {
-  const result = await supabaseExternal.rpc("reserve_product_skus", {
-    p_count: Math.max(DEFAULT_LEASE_SIZE, Math.min(5000, count)),
-    p_store_id: context.storeId?.trim() || undefined,
-    p_terminal_id: context.terminalId?.trim() || undefined,
-    p_prefix: settings.prefix,
-    p_padding: settings.pad,
+  const result = await reserveSkuLease({
+    data: {
+      ...(await getPosCallerAuth()),
+      count: Math.max(DEFAULT_LEASE_SIZE, Math.min(5000, count)),
+      storeId: context.storeId?.trim() || undefined,
+      terminalId: context.terminalId?.trim() || undefined,
+      prefix: settings.prefix,
+      padding: settings.pad,
+    },
   });
-  if (result.error) throw result.error;
-  const row = (Array.isArray(result.data) ? result.data[0] : result.data) as LeaseRow | null;
+  if (!result.ok) throw new Error(result.error);
+  const row = result.lease as LeaseRow;
   const start = Number(row?.start_value);
   const end = Number(row?.end_value);
   if (!row?.lease_id || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start)

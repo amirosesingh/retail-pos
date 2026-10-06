@@ -16,18 +16,25 @@
 import { cashierTokenSync, sessionTokenSync } from "./pos-credentials";
 
 let authSession = false;
+let verifiedAccessToken: string | undefined;
 
 /**
  * AuthProvider is the authority for this flag. In particular, a persisted
  * token is not counted until its server-side session has been checked.
  */
-export function setCentralAuthSessionPresent(value: boolean): void {
+export function setCentralAuthSessionPresent(value: boolean, accessToken?: string): void {
   authSession = value;
+  verifiedAccessToken = value ? accessToken : undefined;
 }
 
 /** A persisted JWT counts only after AuthProvider has verified it server-side. */
 export function hasCentralAuthSession(): boolean {
   return authSession;
+}
+
+/** The token paired with the server-verified session, never an unproved cache. */
+export function centralAuthAccessToken(): string | undefined {
+  return authSession ? verifiedAccessToken : undefined;
 }
 
 /**
@@ -41,6 +48,6 @@ export function hasSignedInIdentity(): boolean {
 }
 
 /** Test seam. */
-export function __setAuthSessionForTests(value: boolean) {
-  setCentralAuthSessionPresent(value);
+export function __setAuthSessionForTests(value: boolean, accessToken?: string) {
+  setCentralAuthSessionPresent(value, accessToken);
 }

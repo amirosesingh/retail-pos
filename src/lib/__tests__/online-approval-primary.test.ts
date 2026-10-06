@@ -42,10 +42,14 @@ describe("online approval primary database", () => {
   it("enforces the configured method and binds the request to the parked ticket", () => {
     const fn = source("src/lib/authorization.functions.ts");
     const gate = source("src/lib/manager-gate.tsx");
+    const dialog = source("src/platforms/web/components/pos/AuthorizationDialog.tsx");
     const register = source("src/routes/index.tsx");
     const held = source("src/lib/register/use-held-orders.ts");
 
     expect(fn).toContain('rule.mode !== "pin" && rule.mode !== "either"');
+    expect(fn).toContain("canBypassAuthorization(");
+    expect(gate).toContain("canBypassAuthorization(");
+    expect(dialog).toContain('activeMode === "request"');
     expect(fn).toContain("rule.approvalTimeoutMinutes / 60");
     expect(gate).not.toContain("authorizeAsAdmin");
     expect(gate).toContain("An already-authorised person confirms with their own PIN");

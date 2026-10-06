@@ -334,6 +334,7 @@ export function AuthorizationDialog({
   }
 
   const reasonMissing = prompt?.requireReason && !note.trim();
+  const activeMode = prompt?.mode === "either" ? tab : prompt?.mode;
 
   const pinPane = (
     <div className="space-y-3">
@@ -440,7 +441,7 @@ export function AuthorizationDialog({
           <Button variant="outline" onClick={() => onFinish({ kind: "cancelled" })} disabled={busy}>
             Cancel
           </Button>
-          {tab === "request" || prompt?.mode === "request" ? (
+          {activeMode === "request" ? (
             <Button onClick={() => void submitRequest()} disabled={busy || !!reasonMissing}>
               <Send className="mr-1 size-4" />
               {busy ? "Sending…" : "Send for approval"}
