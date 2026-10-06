@@ -56,4 +56,29 @@ describe("anonymous Data API access", () => {
     expect(posDb).toContain("if (localDb() && !hasStaffSession())");
     expect(posDb).toContain('throw new Error("No verified cloud staff session is active.")');
   });
+
+  it("finishes every fresh install with authenticated core access and a PostgREST reload", () => {
+    const repair = schema.slice(schema.lastIndexOf("-- Final Data API authorization repair"));
+
+    expect(repair).toContain("GRANT USAGE ON SCHEMA public TO authenticated, service_role");
+    expect(repair).toContain("public.settings_locks");
+    expect(repair).toContain("public.stores");
+    expect(repair).toContain("public.user_roles");
+    expect(repair).toContain("TO authenticated");
+    expect(schema).toContain(
+      "CREATE POLICY audit_logs_staff_update ON public.audit_logs FOR UPDATE TO authenticated",
+    );
+    expect(repair).toContain(
+      "GRANT SELECT, INSERT, UPDATE ON TABLE public.audit_logs TO authenticated",
+    );
+    expect(repair).toContain("REVOKE DELETE ON TABLE public.audit_logs FROM authenticated");
+    expect(repair).toContain(
+      "REVOKE ALL ON FUNCTION public.current_app_user() FROM PUBLIC, anon",
+    );
+    expect(repair).toContain(
+      "GRANT EXECUTE ON FUNCTION public.current_app_user() TO authenticated, service_role",
+    );
+    expect(repair).toContain("NOTIFY pgrst, 'reload schema'");
+    expect(repair).not.toMatch(/GRANT (?:ALL|INSERT|UPDATE|DELETE).* TO anon/i);
+  });
 });
