@@ -344,7 +344,9 @@ export const rowToStore = (r: Row): Store => ({
   name: r.name ?? "",
   address: r.address ?? "",
   phone: r.phone ?? "",
-  groupId: r.group_id ?? "default",
+  // NULL means the location is not assigned to a saved cluster. Do not invent
+  // a `default` foreign key: a clean database intentionally has no group rows.
+  groupId: r.group_id ?? undefined,
   locationType: (r.location_type ?? "store") as Store["locationType"],
   parentId: r.parent_id ?? null,
   isCentral: !!r.is_central,
@@ -363,7 +365,7 @@ export const storeToRow = (s: Store): Row => ({
   name: s.name,
   address: s.address || null,
   phone: s.phone || null,
-  group_id: s.groupId?.trim() || "default",
+  group_id: s.groupId?.trim() || null,
   location_type: s.locationType ?? "store",
   parent_id: s.parentId || null,
   is_central: !!s.isCentral,

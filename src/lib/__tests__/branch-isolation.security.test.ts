@@ -139,6 +139,19 @@ describe("the owner survives a round trip through the database", () => {
     expect(rowToStore(row).privateCatalogue).toBe(true);
     expect(storeToRow({ ...branch, privateCatalogue: false }).private_catalogue).toBe(false);
   });
+
+  it("does not invent a missing store-group foreign key for an ungrouped location", () => {
+    const branch = {
+      id: "first-location",
+      code: "FIRST",
+      name: "First location",
+      address: "",
+      phone: "",
+    } as Store;
+    const row = storeToRow(branch);
+    expect(row.group_id).toBeNull();
+    expect(rowToStore(row).groupId).toBeUndefined();
+  });
 });
 
 describe("scoped product prices", () => {

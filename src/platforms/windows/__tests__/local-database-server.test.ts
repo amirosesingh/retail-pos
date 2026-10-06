@@ -139,6 +139,9 @@ describe("local SQL Server wizard server step", () => {
     expect(wizard).toContain("Manual hostname or IP entry is always available.");
     expect(wizard).toContain('aria-label="Detected SQL Server instance"');
     expect(wizard).toContain('aria-label="Available database"');
+    expect(wizard).toContain('aria-label="Accessible SQL Server databases"');
+    expect(wizard).toContain('role="option"');
+    expect(wizard).toContain("compatibility {db.compatibility_level}");
   });
 
   it("preserves the seven-step wizard and keeps discovery separate from persistence", () => {
@@ -151,12 +154,13 @@ describe("local SQL Server wizard server step", () => {
     expect(wizard).toContain("provisionAndConnect(profile)");
     expect(wizard).toContain("Provisioning already succeeded");
     expect(wizard).toContain('database: "POS_Local"');
-    expect(wizard).toContain("Database to create or update");
+    expect(wizard).toContain("Database name (select existing or create new)");
     expect(wizard).toContain("creates the database when it is");
     expect(wizard).toContain("await mirrorTerminalConfigToDesktop()");
     expect(wizard).toContain("validationHasSchemaDifferences");
     expect(wizard).toContain("Download migration SQL file");
     expect(wizard).toContain("Apply directly and validate again");
+    expect(wizard).toContain("Apply POS database, validate and connect");
     expect(wizard).toContain("Missing tables:");
     expect(wizard).toContain("Table changes required:");
 

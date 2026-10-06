@@ -12,4 +12,13 @@ describe("settings scroll containment", () => {
     expect(shell).toContain('className="min-h-0 flex-1 overflow-y-auto"');
     expect(shell).toContain("max-h-full");
   });
+
+  it("uses the root-owned app shell instead of duplicating the sidebar and header", () => {
+    const shell = readFileSync(
+      "src/platforms/web/components/pos/settings/SettingsShell.tsx",
+      "utf8",
+    );
+    expect(shell).not.toContain('from "@/platforms/web/components/pos/AppShell"');
+    expect(shell).not.toContain("<AppShell>");
+  });
 });

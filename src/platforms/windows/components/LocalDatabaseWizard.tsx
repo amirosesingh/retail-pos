@@ -285,7 +285,8 @@ export function LocalDatabaseWizard({
           <DialogHeader>
             <DialogTitle>Connect directly to Microsoft SQL Server</DialogTitle>
             <DialogDescription>
-              Nothing is enabled or saved until the final Prepare database and connect step succeeds.
+              Nothing is enabled or saved until the final Apply POS database and connect step
+              succeeds.
             </DialogDescription>
           </DialogHeader>
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
@@ -559,7 +560,7 @@ export function LocalDatabaseWizard({
                     }
                     result={result}
                   />
-                  <Field label="Database to create or update">
+                  <Field label="Database name (select existing or create new)">
                     <Input
                       aria-label="Available database"
                       list="available-local-databases"
@@ -581,6 +582,56 @@ export function LocalDatabaseWizard({
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
+                  {databases.length > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">
+                        {shown.length} of {databases.length} accessible online database
+                        {databases.length === 1 ? "" : "s"}. Select one below, or type a new name
+                        above.
+                      </p>
+                      <div
+                        className="max-h-52 space-y-1 overflow-y-auto rounded-md border p-1"
+                        role="listbox"
+                        aria-label="Accessible SQL Server databases"
+                      >
+                        {shown.map((db) => {
+                          const selected = profile.database === db.name;
+                          return (
+                            <button
+                              key={db.name}
+                              type="button"
+                              role="option"
+                              aria-selected={selected}
+                              className={
+                                "flex w-full items-center justify-between gap-3 rounded px-3 py-2 text-left text-sm transition-colors " +
+                                (selected ? "bg-primary text-primary-foreground" : "hover:bg-muted")
+                              }
+                              onClick={() =>
+                                setProfile((current) => ({ ...current, database: db.name }))
+                              }
+                            >
+                              <span className="truncate font-medium">{db.name}</span>
+                              <span
+                                className={
+                                  "shrink-0 text-xs " +
+                                  (selected
+                                    ? "text-primary-foreground/80"
+                                    : "text-muted-foreground")
+                                }
+                              >
+                                {db.state_desc} · compatibility {db.compatibility_level}
+                              </span>
+                            </button>
+                          );
+                        })}
+                        {shown.length === 0 ? (
+                          <p className="px-3 py-4 text-center text-sm text-muted-foreground">
+                            No accessible database matches this filter.
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               )}
               {step === 5 && (
@@ -653,7 +704,7 @@ export function LocalDatabaseWizard({
                     </select>
                   </Field>
                   <Action
-                    title="Prepare database and connect"
+                    title="Apply POS database, validate and connect"
                     text="Creates the database if needed, applies pending migrations, validates every required table, then seals the password with Windows DPAPI and connects. Existing business rows are not cleared."
                     busy={busy}
                     onClick={() =>
