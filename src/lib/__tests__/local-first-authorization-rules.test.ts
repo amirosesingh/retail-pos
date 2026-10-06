@@ -12,6 +12,8 @@ describe("local-first authorization rules", () => {
     expect(repository).toContain("ESTALE_RULE");
     expect(repository).toContain("INSERT dbo.authorization_action_history");
     expect(repository).toContain("await transaction.commit()");
+    expect(repository).toContain("Number.isFinite(threshold)");
+    expect(repository).toContain('code: "ERULE"');
   });
 
   it("requires a verified POS settings identity at both desktop and hosted boundaries", () => {

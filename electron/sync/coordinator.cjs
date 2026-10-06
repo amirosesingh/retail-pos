@@ -17,7 +17,9 @@ class SyncCoordinator {
     if (this.activeRun) {
       const active = this.activeRun;
       if (JSON.stringify(this.activeOptions) === JSON.stringify(options)) return active;
-      await active;
+      // A different caller (notably the final shift-close pass) must still get
+      // its own run even if the background pass itself rejects unexpectedly.
+      await active.catch(() => undefined);
       return this.runNow(options);
     }
     if (this.paused) return { ok:false, ...this.snapshot(), paused:true, code:"ESYNC_PAUSED", error:"Synchronization is paused." };

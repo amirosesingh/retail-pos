@@ -79,6 +79,30 @@ function pruneCaches(userData) {
   return removed;
 }
 
+function entryBytes(target) {
+  try {
+    const stat = fs.lstatSync(target);
+    if (!stat.isDirectory()) return stat.size;
+    return fs.readdirSync(target).reduce((total, name) => total + entryBytes(path.join(target, name)), 0);
+  } catch {
+    return 0;
+  }
+}
+
+/** Byte-level storage report used by Settings; no file contents are exposed. */
+function usage(userData) {
+  const cacheBytes = CACHE_DIRS.reduce((total, name) => total + entryBytes(path.join(userData, name)), 0);
+  const diagnosticBytes = ["crash.log", "crash.log.1", "connection.log", "connection.log.1", "server.log", "server.log.1"]
+    .reduce((total, name) => total + entryBytes(path.join(userData, name)), 0);
+  const totalBytes = entryBytes(userData);
+  return {
+    totalBytes,
+    cacheBytes,
+    diagnosticBytes,
+    retainedBytes: Math.max(0, totalBytes - cacheBytes - diagnosticBytes),
+  };
+}
+
 const markerPath = (userData) => path.join(userData, "app-version.json");
 
 /** The version recorded on the previous launch, or "" on a fresh install. */
@@ -123,6 +147,7 @@ module.exports = {
   isRequiredEntry,
   isDisposableCacheDir,
   pruneCaches,
+  usage,
   lastVersion,
   rememberVersion,
   runOnLaunch,

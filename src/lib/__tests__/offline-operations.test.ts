@@ -107,7 +107,24 @@ describe("offline terminal operations", () => {
     expect(login).toContain("WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544)");
     expect(login).toContain("OUTER APPLY (");
     expect(login).toContain("ORDER BY candidate.updated_at DESC,candidate.id DESC");
+    expect(login).toContain("String(row.id).toLowerCase()");
     expect(login).not.toContain("offlineStaffCredentials");
+  });
+
+  it("passes the sealed branch and terminal scope to trusted shift and drawer writes", () => {
+    const main = readFileSync("electron/main.cjs", "utf8");
+    for (const context of [
+      "Starting shift close",
+      "Closing shift cash count",
+      "Saving shift recount",
+      "Approving shift variance",
+      "Recording cash drawer request",
+      "Recording cash drawer result",
+    ]) {
+      const start = main.indexOf(`operationsRepository.apply("${context}"`);
+      expect(start, context).toBeGreaterThan(-1);
+      expect(main.slice(start, start + 4_000), context).toContain("{ branchId, terminalId }");
+    }
   });
 
   it("does not serialize the complete POS state into encrypted device configuration", () => {

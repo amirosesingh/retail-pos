@@ -30,6 +30,13 @@ const dot: Record<ServiceState, string> = {
   checking: "bg-muted-foreground",
 };
 
+const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
+};
+
 /** On/off switch for a public subdomain, saved straight to the database. */
 function DomainSwitch({
   label,
@@ -73,6 +80,8 @@ export function SystemStatusPanel() {
   const [errors, setErrors] = useState<HealthError[]>([]);
   const [showErrors, setShowErrors] = useState(false);
   const [dnsOpen, setDnsOpen] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
+  const [cacheUsage, setCacheUsage] = useState<{ totalBytes: number; cacheBytes: number; diagnosticBytes: number } | null>(null);
   const [memberDomain, setMemberDomain] = useState(integrations.memberDomain);
   const [redeemDomain, setRedeemDomain] = useState(integrations.redeemDomain);
   const { flags } = usePublicFlags();
@@ -99,6 +108,9 @@ export function SystemStatusPanel() {
 
   useEffect(() => {
     diagnose();
+    void window.pos?.cacheStatus?.().then((result) => {
+      if (result.ok) setCacheUsage(result);
+    }).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -111,7 +123,8 @@ export function SystemStatusPanel() {
     diagnose();
   };
 
-  const clearCache = () => {
+  const clearCache = async () => {
+    setClearingCache(true);
     try {
       for (const key of Object.keys(window.localStorage)) {
         // Recovery must never unregister this device or replace its pending QR.
@@ -119,11 +132,16 @@ export function SystemStatusPanel() {
           window.localStorage.removeItem(key);
         }
       }
-    } catch {
-      /* nothing else to do */
+      window.sessionStorage.clear();
+      const result = await window.pos?.clearAppCache?.();
+      if (result?.ok === false) throw new Error(result.error ?? "Electron could not clear its cache.");
+      if (result?.ok) setCacheUsage(result as { totalBytes: number; cacheBytes: number; diagnosticBytes: number });
+      toast.success("App cache cleared — reloading");
+      window.setTimeout(() => window.location.reload(), 600);
+    } catch (error) {
+      notifyError(error, "App cache could not be cleared");
+      setClearingCache(false);
     }
-    toast.success("Local cache cleared — reloading");
-    window.setTimeout(() => window.location.reload(), 600);
   };
 
   const saveDomains = async () => {
@@ -198,6 +216,17 @@ Both subdomains serve the same build; only the landing path differs.`;
           <RefreshCw className={cn("size-4", busy && "animate-spin")} />
           {busy ? "Testing services…" : "Run diagnostics / test connection"}
         </Button>
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2">
+          <div className="mr-auto text-[11px] text-muted-foreground">
+            {cacheUsage
+              ? `Electron profile ${formatBytes(cacheUsage.totalBytes)} · disposable cache ${formatBytes(cacheUsage.cacheBytes)} · diagnostics ${formatBytes(cacheUsage.diagnosticBytes)}`
+              : "Browser cache size is managed by the browser; Electron cache size is unavailable here."}
+          </div>
+          <Button size="sm" variant="outline" onClick={() => void clearCache()} disabled={clearingCache}>
+            <Eraser className={cn("size-4", clearingCache && "animate-pulse")} />
+            {clearingCache ? "Clearing…" : "Clear app cache & reload"}
+          </Button>
+        </div>
       </section>
 
       <UnpairTerminalCard />
@@ -208,9 +237,6 @@ Both subdomains serve the same build; only the landing path differs.`;
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={forceReconnect}>
               <PlugZap className="size-4" /> Force reconnect
-            </Button>
-            <Button size="sm" variant="outline" onClick={clearCache}>
-              <Eraser className="size-4" /> Clear app cache & resync
             </Button>
             <Button size="sm" variant="outline" onClick={() => setShowErrors((v) => !v)}>
               {showErrors ? "Hide" : "View"} error logs ({errors.length})

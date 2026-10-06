@@ -102,13 +102,15 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
     );
   }
 
-  const clearAndRestart = () => {
+  const clearAndRestart = async () => {
     try {
       window.localStorage.removeItem("pos.offline.snapshot.v1");
       window.localStorage.removeItem("pos-state-v2");
+      window.sessionStorage.clear();
     } catch {
       /* nothing else we can do */
     }
+    await window.pos?.clearAppCache?.().catch(() => undefined);
     window.location.reload();
   };
 

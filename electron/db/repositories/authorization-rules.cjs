@@ -30,6 +30,9 @@ function cleanRule(value, { branchId, actor, isAdmin }) {
   const actionKey = text(value?.actionKey, 128);
   if (!actionKey) throw Object.assign(new Error("Select an authorization rule to save."), { code: "ERULE" });
   const mode = MODES.has(value?.mode) ? value.mode : "none";
+  const threshold = value?.threshold == null || value.threshold === "" ? null : Number(value.threshold);
+  if (threshold != null && !Number.isFinite(threshold))
+    throw Object.assign(new Error("The authorization threshold must be a finite number."), { code: "ERULE" });
   return {
     action_key: actionKey,
     scope_type: scopeType,
@@ -46,7 +49,7 @@ function cleanRule(value, { branchId, actor, isAdmin }) {
     escalation_after_minutes: value?.escalationAfterMinutes == null ? null : Math.min(1440, Math.max(1, Number(value.escalationAfterMinutes) || 1)),
     escalation_roles: stringList(value?.escalationRoles, 20),
     require_reason: value?.requireReason === true,
-    threshold: value?.threshold == null ? null : Number(value.threshold),
+    threshold,
     is_enabled: value?.isEnabled !== false,
     updated_by: text(actor, 160),
     expected_version: Math.max(0, Number(value?.expectedVersion ?? value?.rowVersion ?? 0) || 0),
