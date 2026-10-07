@@ -134,6 +134,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261007111500_harden_warehouse_transfer_lifecycle.sql",
       "supabase/migrations/20261007142937_secure_global_pos_settings_sync.sql",
       "supabase/migrations/20261007152914_cleanup_revoked_terminal_settings.sql",
+      "supabase/migrations/20261008010000_persist_held_approval_fingerprint.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

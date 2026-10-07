@@ -2089,6 +2089,7 @@ IF OBJECT_ID(N'dbo.held_orders', N'U') IS NULL BEGIN CREATE TABLE dbo.[held_orde
   [row_version] int NOT NULL CONSTRAINT [DF_held_orders_row_version] DEFAULT (1),
   [status] nvarchar(max) NOT NULL CONSTRAINT [DF_held_orders_status] DEFAULT ('held'),
   [pending_request_id] uniqueidentifier NULL,
+  [approval_snapshot_hash] nvarchar(max) NULL,
   [bill_no] nvarchar(max) NULL,
   CONSTRAINT [PK_held_orders] PRIMARY KEY ([id])
 
@@ -2275,6 +2276,8 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.held_orders
 END;
 
 IF COL_LENGTH(N'dbo.held_orders', N'pending_request_id') IS NULL ALTER TABLE dbo.[held_orders] ADD [pending_request_id] uniqueidentifier NULL;
+
+IF COL_LENGTH(N'dbo.held_orders', N'approval_snapshot_hash') IS NULL ALTER TABLE dbo.[held_orders] ADD [approval_snapshot_hash] nvarchar(max) NULL;
 
 IF COL_LENGTH(N'dbo.held_orders', N'bill_no') IS NULL ALTER TABLE dbo.[held_orders] ADD [bill_no] nvarchar(max) NULL;
 
@@ -4186,7 +4189,7 @@ IF OBJECT_ID(N'dbo.products', N'U') IS NULL BEGIN CREATE TABLE dbo.[products] (
   [brand] nvarchar(max) NULL,
   [product_group] nvarchar(max) NULL,
   [barcode_variants] nvarchar(max) NOT NULL CONSTRAINT [DF_products_barcode_variants] DEFAULT (N'[]'),
-  [row_version] int NOT NULL CONSTRAINT [DF_products_row_version] DEFAULT (0),
+  [row_version] int NOT NULL CONSTRAINT [DF_products_row_version] DEFAULT (1),
   [owner_store_id] nvarchar(450) NULL,
   [deleted_at] nvarchar(max) NULL,
   CONSTRAINT [PK_products] PRIMARY KEY ([id])
@@ -4426,10 +4429,10 @@ IF OBJECT_ID(N'dbo.products', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.products', 
   SELECT 1 FROM sys.default_constraints dc
   JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
   WHERE dc.parent_object_id=OBJECT_ID(N'dbo.products') AND c.name=N'row_version'
-) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_row_version] DEFAULT (0) FOR [row_version];
+) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_row_version] DEFAULT (1) FOR [row_version];
 
 IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.products') AND name=N'row_version' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[products] SET [row_version]=0 WHERE [row_version] IS NULL;';
+  EXEC sys.sp_executesql N'UPDATE dbo.[products] SET [row_version]=1 WHERE [row_version] IS NULL;';
   ALTER TABLE dbo.[products] ALTER COLUMN [row_version] int NOT NULL;
 END;
 
@@ -4812,11 +4815,11 @@ IF OBJECT_ID(N'dbo.purchase_orders', N'U') IS NULL BEGIN CREATE TABLE dbo.[purch
   [invoice_entry_date] datetimeoffset(7) NULL CONSTRAINT [DF_purchase_orders_invoice_entry_date] DEFAULT (SYSDATETIMEOFFSET()),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_purchase_orders_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
   [row_version] int NOT NULL CONSTRAINT [DF_purchase_orders_row_version] DEFAULT (1),
+  [status] nvarchar(max) NOT NULL CONSTRAINT [DF_purchase_orders_status] DEFAULT ('posted'),
+  [reference] nvarchar(max) NULL,
   [pending_edit_request_id] uniqueidentifier NULL,
   [pending_edit_by] nvarchar(max) NULL,
   [pending_edit_at] datetimeoffset(7) NULL,
-  [status] nvarchar(max) NOT NULL CONSTRAINT [DF_purchase_orders_status] DEFAULT ('posted'),
-  [reference] nvarchar(max) NULL,
   CONSTRAINT [PK_purchase_orders] PRIMARY KEY ([id])
 
 ); END;
@@ -4933,12 +4936,6 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.purchase_or
   ALTER TABLE dbo.[purchase_orders] ALTER COLUMN [row_version] int NOT NULL;
 END;
 
-IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_request_id') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_request_id] uniqueidentifier NULL;
-
-IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_by') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_by] nvarchar(max) NULL;
-
-IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_at') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_at] datetimeoffset(7) NULL;
-
 IF COL_LENGTH(N'dbo.purchase_orders', N'status') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [status] nvarchar(max) NULL;
 
 IF OBJECT_ID(N'dbo.purchase_orders', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.purchase_orders', N'status') IS NOT NULL AND NOT EXISTS (
@@ -4953,6 +4950,12 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.purchase_or
 END;
 
 IF COL_LENGTH(N'dbo.purchase_orders', N'reference') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [reference] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_request_id') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_request_id] uniqueidentifier NULL;
+
+IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_by') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_by] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_at') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_at] datetimeoffset(7) NULL;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.purchase_orders') AND name=N'UX_purchase_orders_po_number') CREATE UNIQUE INDEX [UX_purchase_orders_po_number] ON dbo.[purchase_orders]([po_number]);
 

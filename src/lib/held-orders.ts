@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CartLine } from "@/core/types/pos-types";
 import { db } from "@/core/api/pos-db";
 import { readBusinessValue, writeBusinessValue } from "./business-storage";
+import { clearDeviceSecret, getDeviceSecret, setDeviceSecret } from "./device-secrets";
 
 export type HeldOrder = {
   id: string;
@@ -48,6 +49,7 @@ export type HeldOrder = {
 
 const KEY = "pos.held.orders";
 const EVENT = "pos:held-orders-changed";
+const CORRECTION_RETRY_KEY = "pending-correction-holds";
 const isElectronRenderer = () =>
   typeof window !== "undefined" && !!(window as unknown as { pos?: unknown }).pos;
 let electronOrders: HeldOrder[] = [];
@@ -85,6 +87,8 @@ export function rowToHeldOrder(row: Record<string, unknown>): HeldOrder {
       row.status === "waiting" || row.status === "ready" ? row.status : "held",
     pendingRequestId:
       row.pending_request_id == null ? null : String(row.pending_request_id),
+    approvalSnapshotHash:
+      row.approval_snapshot_hash == null ? null : String(row.approval_snapshot_hash),
   };
 }
 
@@ -150,6 +154,7 @@ export function persistHeldOrder(order: HeldOrder) {
     heldAt: order.heldAt,
     status: order.status ?? "held",
     pendingRequestId: order.pendingRequestId ?? null,
+    approvalSnapshotHash: order.approvalSnapshotHash ?? null,
   });
 }
 
@@ -163,13 +168,14 @@ export async function updateHeldOrder(id: string, patch: Partial<HeldOrder>) {
 
 /** Park a cancelled bill so the till can correct and re-ring it. */
 export function holdCancelledBill(input: {
+  id?: string;
   receiptNo: string;
   total: number;
   lines: CartLine[];
   storeId: string;
 }): Promise<HeldOrder> {
   const order: HeldOrder = {
-    id: `C${crypto.randomUUID()}`,
+    id: input.id ?? `C${crypto.randomUUID()}`,
     label: `Cancelled ${input.receiptNo} · ${input.lines.length} item(s)`,
     total: input.total,
     lines: input.lines.filter((l) => !l.credit),
@@ -178,6 +184,30 @@ export function holdCancelledBill(input: {
     storeId: input.storeId,
   };
   return addHeldOrder(order).then(() => order);
+}
+
+export type PendingCorrectionHold = Parameters<typeof holdCancelledBill>[0] & { saleId: string };
+
+export async function rememberPendingCorrectionHold(input: PendingCorrectionHold) {
+  const pending =
+    (await getDeviceSecret<Record<string, PendingCorrectionHold>>(CORRECTION_RETRY_KEY)) ?? {};
+  pending[input.saleId] = input;
+  await setDeviceSecret(CORRECTION_RETRY_KEY, pending);
+}
+
+export async function loadPendingCorrectionHold(
+  saleId: string,
+): Promise<PendingCorrectionHold | null> {
+  const pending = await getDeviceSecret<Record<string, PendingCorrectionHold>>(CORRECTION_RETRY_KEY);
+  return pending?.[saleId] ?? null;
+}
+
+export async function clearPendingCorrectionHold(saleId: string) {
+  const pending = await getDeviceSecret<Record<string, PendingCorrectionHold>>(CORRECTION_RETRY_KEY);
+  if (!pending?.[saleId]) return;
+  delete pending[saleId];
+  if (Object.keys(pending).length) await setDeviceSecret(CORRECTION_RETRY_KEY, pending);
+  else clearDeviceSecret(CORRECTION_RETRY_KEY);
 }
 
 export function useHeldOrders(storeId?: string): HeldOrder[] {

@@ -2112,6 +2112,7 @@ IF OBJECT_ID(N'dbo.held_orders', N'U') IS NULL BEGIN CREATE TABLE dbo.[held_orde
   [row_version] int NOT NULL CONSTRAINT [DF_held_orders_row_version] DEFAULT (1),
   [status] nvarchar(max) NOT NULL CONSTRAINT [DF_held_orders_status] DEFAULT ('held'),
   [pending_request_id] uniqueidentifier NULL,
+  [approval_snapshot_hash] nvarchar(max) NULL,
   [bill_no] nvarchar(max) NULL,
   CONSTRAINT [PK_held_orders] PRIMARY KEY ([id])
 
@@ -2298,6 +2299,8 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.held_orders
 END;
 
 IF COL_LENGTH(N'dbo.held_orders', N'pending_request_id') IS NULL ALTER TABLE dbo.[held_orders] ADD [pending_request_id] uniqueidentifier NULL;
+
+IF COL_LENGTH(N'dbo.held_orders', N'approval_snapshot_hash') IS NULL ALTER TABLE dbo.[held_orders] ADD [approval_snapshot_hash] nvarchar(max) NULL;
 
 IF COL_LENGTH(N'dbo.held_orders', N'bill_no') IS NULL ALTER TABLE dbo.[held_orders] ADD [bill_no] nvarchar(max) NULL;
 
@@ -4209,7 +4212,7 @@ IF OBJECT_ID(N'dbo.products', N'U') IS NULL BEGIN CREATE TABLE dbo.[products] (
   [brand] nvarchar(max) NULL,
   [product_group] nvarchar(max) NULL,
   [barcode_variants] nvarchar(max) NOT NULL CONSTRAINT [DF_products_barcode_variants] DEFAULT (N'[]'),
-  [row_version] int NOT NULL CONSTRAINT [DF_products_row_version] DEFAULT (0),
+  [row_version] int NOT NULL CONSTRAINT [DF_products_row_version] DEFAULT (1),
   [owner_store_id] nvarchar(450) NULL,
   [deleted_at] nvarchar(max) NULL,
   CONSTRAINT [PK_products] PRIMARY KEY ([id])
@@ -4449,10 +4452,10 @@ IF OBJECT_ID(N'dbo.products', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.products', 
   SELECT 1 FROM sys.default_constraints dc
   JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
   WHERE dc.parent_object_id=OBJECT_ID(N'dbo.products') AND c.name=N'row_version'
-) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_row_version] DEFAULT (0) FOR [row_version];
+) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_row_version] DEFAULT (1) FOR [row_version];
 
 IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.products') AND name=N'row_version' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[products] SET [row_version]=0 WHERE [row_version] IS NULL;';
+  EXEC sys.sp_executesql N'UPDATE dbo.[products] SET [row_version]=1 WHERE [row_version] IS NULL;';
   ALTER TABLE dbo.[products] ALTER COLUMN [row_version] int NOT NULL;
 END;
 
@@ -4835,11 +4838,11 @@ IF OBJECT_ID(N'dbo.purchase_orders', N'U') IS NULL BEGIN CREATE TABLE dbo.[purch
   [invoice_entry_date] datetimeoffset(7) NULL CONSTRAINT [DF_purchase_orders_invoice_entry_date] DEFAULT (SYSDATETIMEOFFSET()),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_purchase_orders_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
   [row_version] int NOT NULL CONSTRAINT [DF_purchase_orders_row_version] DEFAULT (1),
+  [status] nvarchar(max) NOT NULL CONSTRAINT [DF_purchase_orders_status] DEFAULT ('posted'),
+  [reference] nvarchar(max) NULL,
   [pending_edit_request_id] uniqueidentifier NULL,
   [pending_edit_by] nvarchar(max) NULL,
   [pending_edit_at] datetimeoffset(7) NULL,
-  [status] nvarchar(max) NOT NULL CONSTRAINT [DF_purchase_orders_status] DEFAULT ('posted'),
-  [reference] nvarchar(max) NULL,
   CONSTRAINT [PK_purchase_orders] PRIMARY KEY ([id])
 
 ); END;
@@ -4956,12 +4959,6 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.purchase_or
   ALTER TABLE dbo.[purchase_orders] ALTER COLUMN [row_version] int NOT NULL;
 END;
 
-IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_request_id') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_request_id] uniqueidentifier NULL;
-
-IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_by') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_by] nvarchar(max) NULL;
-
-IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_at') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_at] datetimeoffset(7) NULL;
-
 IF COL_LENGTH(N'dbo.purchase_orders', N'status') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [status] nvarchar(max) NULL;
 
 IF OBJECT_ID(N'dbo.purchase_orders', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.purchase_orders', N'status') IS NOT NULL AND NOT EXISTS (
@@ -4976,6 +4973,12 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.purchase_or
 END;
 
 IF COL_LENGTH(N'dbo.purchase_orders', N'reference') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [reference] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_request_id') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_request_id] uniqueidentifier NULL;
+
+IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_by') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_by] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_at') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_at] datetimeoffset(7) NULL;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.purchase_orders') AND name=N'UX_purchase_orders_po_number') CREATE UNIQUE INDEX [UX_purchase_orders_po_number] ON dbo.[purchase_orders]([po_number]);
 
@@ -11391,6 +11394,15 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8)
   VALUES (8, N'008_repair_scoped_values_and_company_name', SYSDATETIMEOFFSET());
 
 GO
+IF OBJECT_ID(N'dbo.held_orders', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.held_orders', N'approval_snapshot_hash') IS NULL
+  ALTER TABLE dbo.held_orders ADD approval_snapshot_hash nvarchar(max) NULL;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9)
+  INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
+  VALUES (9, N'009_persist_held_approval_fingerprint', SYSDATETIMEOFFSET());
+
+GO
 
 DECLARE @RequiredTables TABLE ([name] sysname NOT NULL PRIMARY KEY);
 INSERT INTO @RequiredTables ([name]) VALUES
@@ -11785,6 +11797,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'held_orders', N'row_version'),
   (N'held_orders', N'status'),
   (N'held_orders', N'pending_request_id'),
+  (N'held_orders', N'approval_snapshot_hash'),
   (N'held_orders', N'bill_no'),
   (N'integration_settings', N'id'),
   (N'integration_settings', N'provider_name'),
@@ -12048,11 +12061,11 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'purchase_orders', N'invoice_entry_date'),
   (N'purchase_orders', N'updated_at'),
   (N'purchase_orders', N'row_version'),
+  (N'purchase_orders', N'status'),
+  (N'purchase_orders', N'reference'),
   (N'purchase_orders', N'pending_edit_request_id'),
   (N'purchase_orders', N'pending_edit_by'),
   (N'purchase_orders', N'pending_edit_at'),
-  (N'purchase_orders', N'status'),
-  (N'purchase_orders', N'reference'),
   (N'sale_items', N'id'),
   (N'sale_items', N'sale_id'),
   (N'sale_items', N'product_id'),
@@ -12493,9 +12506,9 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_action_history', N'action_key'),
   (N'authorization_action_history', N'scope_type'),
   (N'authorization_action_history', N'scope_id'),
-  (N'authorization_action_history', N'row_version'),
-  (N'authorization_action_history', N'changed_by');
+  (N'authorization_action_history', N'row_version');
 INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N'authorization_action_history', N'changed_by'),
   (N'authorization_action_history', N'change_source'),
   (N'authorization_action_history', N'change_kind'),
   (N'authorization_action_history', N'snapshot'),
@@ -12709,7 +12722,7 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
   THROW 51002, 'Retail POS local database migration history table is missing.', 1;
 
-EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8)
+EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9)
   THROW 51002, ''Retail POS local database migration history is incomplete.'', 1;');
 
 EXEC(N'SELECT version, name, applied_at

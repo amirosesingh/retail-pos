@@ -967,6 +967,10 @@ export const CENTRAL_SCHEMA: CentralTableSchema[] = [
       { name: "created_at", pgType: "timestamptz" },
       { name: "updated_at", pgType: "timestamptz" },
       { name: "row_version", pgType: "integer" },
+      { name: "status", pgType: "text" },
+      { name: "pending_request_id", pgType: "uuid" },
+      { name: "bill_no", pgType: "text" },
+      { name: "approval_snapshot_hash", pgType: "text" },
     ],
   },
   {

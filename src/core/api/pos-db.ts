@@ -2980,6 +2980,7 @@ export const db = {
     heldAt: string;
     status?: "held" | "waiting" | "ready";
     pendingRequestId?: string | null;
+    approvalSnapshotHash?: string | null;
   }) =>
     commitOps("Holding ticket", [
       {
@@ -3005,6 +3006,7 @@ export const db = {
             held_at: row.heldAt,
             status: row.status ?? "held",
             pending_request_id: row.pendingRequestId ?? null,
+            approval_snapshot_hash: row.approvalSnapshotHash ?? null,
           },
         ],
       },

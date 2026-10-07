@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Gift, Printer, ReceiptText, Search, ScrollText, Wallet, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
@@ -21,7 +21,13 @@ import { money, usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import { useUserPermissions } from "@/lib/pos-permissions";
 import { logger } from "@/lib/audit-log";
-import { holdCancelledBill } from "@/lib/held-orders";
+import {
+  clearPendingCorrectionHold,
+  holdCancelledBill,
+  loadPendingCorrectionHold,
+  rememberPendingCorrectionHold,
+  type PendingCorrectionHold,
+} from "@/lib/held-orders";
 import {
   printSaleReceipt,
   printShiftReport,
@@ -94,10 +100,10 @@ function ReceiptVault() {
     input: RecordEditHistoryInput;
     persisted: boolean;
   } | null>(null);
-  const [pendingCorrectionHold, setPendingCorrectionHold] = useState<{
-    saleId: string;
-    input: Parameters<typeof holdCancelledBill>[0];
-  } | null>(null);
+  const [pendingCorrectionHold, setPendingCorrectionHold] = useState<PendingCorrectionHold | null>(
+    null,
+  );
+  const correctionHoldRetries = useRef(new Set<string>());
   const [payOpen, setPayOpen] = useState(false);
   const [payMethod, setPayMethod] = useState<PaymentMethod>("cash");
   const [payReason, setPayReason] = useState("");
@@ -201,6 +207,19 @@ function ReceiptVault() {
       active = false;
     };
   }, [selected?.id]);
+
+  useEffect(() => {
+    if (!selected?.id) return;
+    let active = true;
+    void loadPendingCorrectionHold(selected.id)
+      .then((pending) => {
+        if (active) setPendingCorrectionHold(pending);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [selected?.id]);
   const member = selected ? (state.members.find((m) => m.id === selected.memberId) ?? null) : null;
   const shift = selected ? (state.shifts.find((s) => s.id === selected.shiftId) ?? null) : null;
 
@@ -260,8 +279,11 @@ function ReceiptVault() {
 
   async function confirmCancel() {
     if (pendingCorrectionHold && retryingCorrectionHold) {
+      if (correctionHoldRetries.current.has(pendingCorrectionHold.saleId)) return;
+      correctionHoldRetries.current.add(pendingCorrectionHold.saleId);
       try {
-        await holdCancelledBill(pendingCorrectionHold.input);
+        await holdCancelledBill(pendingCorrectionHold);
+        await clearPendingCorrectionHold(pendingCorrectionHold.saleId);
         setPendingCorrectionHold(null);
         if (!retryingCorrectionAudit) setCancelOpen(false);
         toast.success(
@@ -271,6 +293,8 @@ function ReceiptVault() {
         );
       } catch (error) {
         notifyError(error, "The bill is reversed, but preparing its correction draft still failed");
+      } finally {
+        correctionHoldRetries.current.delete(pendingCorrectionHold.saleId);
       }
       return;
     }
@@ -352,6 +376,8 @@ function ReceiptVault() {
         rows.map((row) => (row.id === selected.id ? { ...row, refunded: true } : row)),
       );
       const correctionHold = {
+        id: `C-${selected.id}`,
+        saleId: selected.id,
         receiptNo: selected.receiptNo,
         total: selected.total,
         lines: selected.lines,
@@ -362,7 +388,8 @@ function ReceiptVault() {
         await holdCancelledBill(correctionHold);
       } catch {
         holdPrepared = false;
-        setPendingCorrectionHold({ saleId: selected.id, input: correctionHold });
+        setPendingCorrectionHold(correctionHold);
+        await rememberPendingCorrectionHold(correctionHold).catch(() => undefined);
       }
       if (cancelMode === "correct") {
         const completedAudit = {
@@ -659,6 +686,18 @@ function ReceiptVault() {
               </p>
               {isAdmin && (
                 <>
+                  {retryingCorrectionHold && (
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start border-amber-500/60 text-amber-600"
+                      onClick={() => {
+                        setCancelMode("correct");
+                        setCancelOpen(true);
+                      }}
+                    >
+                      <Wrench className="size-4" /> Retry preparing correction
+                    </Button>
+                  )}
                   {retryingCorrectionAudit && (
                     <Button
                       variant="outline"

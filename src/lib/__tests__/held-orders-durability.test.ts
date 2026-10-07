@@ -100,9 +100,10 @@ describe("held order durability", () => {
     expect(store).toContain("requestSequence !== electronReadSequence");
     expect(store).toContain("order.storeId === storeId");
     expect(register).toContain("ticketSignature(latestDeps.current) !== originalSignature");
-    expect(register.indexOf("await removeHeldOrder(id)")).toBeLessThan(
+    expect(register.indexOf("await removeHeldOrder(id)")).toBeGreaterThan(
       register.indexOf("const claimed = await claimApproval"),
     );
+    expect(register).toContain("The ticket stayed in Holds and needs approval again");
     expect(register).toContain('status: "waiting" as const');
     expect(register).toContain("pendingRequestId: pending.requestId");
     expect(approval).toContain("await Promise.all(readiness)");

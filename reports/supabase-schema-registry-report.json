@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-04T14:15:49.345Z",
+  "generatedAt": "2026-10-07T16:55:15.684Z",
   "tableCount": 70,
-  "columnCount": 1187,
+  "columnCount": 1188,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -1930,6 +1930,12 @@
           "hasDefault": false
         },
         {
+          "name": "approval_snapshot_hash",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
           "name": "bill_no",
           "declaration": "text",
           "nullable": true,
@@ -3418,13 +3424,13 @@
         },
         {
           "name": "row_version",
-          "declaration": "integer DEFAULT 0 NOT NULL",
+          "declaration": "integer DEFAULT 1 NOT NULL",
           "nullable": false,
           "hasDefault": true
         },
         {
           "name": "owner_store_id",
-          "declaration": "text REFERENCES public.stores(id) ON DELETE SET NULL",
+          "declaration": "text",
           "nullable": true,
           "hasDefault": false
         },
@@ -3443,7 +3449,13 @@
           "barcode"
         ]
       ],
-      "foreignKeys": []
+      "foreignKeys": [
+        {
+          "column": "owner_store_id",
+          "table": "stores",
+          "targetColumn": "id"
+        }
+      ]
     },
     {
       "name": "promotions",
@@ -3772,6 +3784,18 @@
           "hasDefault": true
         },
         {
+          "name": "status",
+          "declaration": "text DEFAULT 'posted'::text NOT NULL",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "reference",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
           "name": "pending_edit_request_id",
           "declaration": "uuid",
           "nullable": true,
@@ -3786,18 +3810,6 @@
         {
           "name": "pending_edit_at",
           "declaration": "timestamptz",
-          "nullable": true,
-          "hasDefault": false
-        },
-        {
-          "name": "status",
-          "declaration": "text NOT NULL DEFAULT 'posted'",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "reference",
-          "declaration": "text",
           "nullable": true,
           "hasDefault": false
         }
@@ -5288,7 +5300,7 @@
         },
         {
           "name": "private_catalogue",
-          "declaration": "boolean DEFAULT false NOT NULL",
+          "declaration": "boolean NOT NULL DEFAULT false",
           "nullable": false,
           "hasDefault": true
         },

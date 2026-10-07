@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-04T14:15:49.345Z",
+  "generatedAt": "2026-10-07T16:55:15.684Z",
   "tables": [
     {
       "cloudTable": "coupon_campaigns",
@@ -3985,6 +3985,19 @@
           "uniqueGroup": null
         },
         {
+          "cloudColumn": "approval_snapshot_hash",
+          "sqlServerColumn": "approval_snapshot_hash",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
           "cloudColumn": "bill_no",
           "sqlServerColumn": "bill_no",
           "cloudType": "text",
@@ -6991,7 +7004,7 @@
           "cloudType": "integer",
           "sqlServerType": "int",
           "nullable": false,
-          "defaultRule": "0",
+          "defaultRule": "1",
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,
@@ -7698,6 +7711,32 @@
           "uniqueGroup": null
         },
         {
+          "cloudColumn": "status",
+          "sqlServerColumn": "status",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": false,
+          "defaultRule": "'posted'",
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "reference",
+          "sqlServerColumn": "reference",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
           "cloudColumn": "pending_edit_request_id",
           "sqlServerColumn": "pending_edit_request_id",
           "cloudType": "uuid",
@@ -7728,32 +7767,6 @@
           "sqlServerColumn": "pending_edit_at",
           "cloudType": "timestamptz",
           "sqlServerType": "datetimeoffset(7)",
-          "nullable": true,
-          "defaultRule": null,
-          "primaryKey": false,
-          "foreignKey": false,
-          "foreignKeyTarget": null,
-          "unique": false,
-          "uniqueGroup": null
-        },
-        {
-          "cloudColumn": "status",
-          "sqlServerColumn": "status",
-          "cloudType": "text",
-          "sqlServerType": "nvarchar(max)",
-          "nullable": false,
-          "defaultRule": "'posted'",
-          "primaryKey": false,
-          "foreignKey": false,
-          "foreignKeyTarget": null,
-          "unique": false,
-          "uniqueGroup": null
-        },
-        {
-          "cloudColumn": "reference",
-          "sqlServerColumn": "reference",
-          "cloudType": "text",
-          "sqlServerType": "nvarchar(max)",
           "nullable": true,
           "defaultRule": null,
           "primaryKey": false,

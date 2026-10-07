@@ -7,11 +7,12 @@
  * the register screen unchanged, including the audit trail.
  */
 import { toast } from "sonner";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { notifyError } from "@/lib/notify";
 import {
   addHeldOrder,
   removeHeldOrder,
+  updateHeldOrder,
   useHeldOrders,
   type HeldOrder,
 } from "@/lib/held-orders";
@@ -76,7 +77,9 @@ type HeldOrdersDeps = {
 export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   const held = useHeldOrders(deps.storeId);
   const latestDeps = useRef(deps);
-  latestDeps.current = deps;
+  useEffect(() => {
+    latestDeps.current = deps;
+  }, [deps]);
   // Route effects can run twice in React development mode, and a fast double
   // click can do the same in production. Claiming is a one-time server write,
   // so collapse concurrent attempts for the same parked ticket.
@@ -192,7 +195,6 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       }
       const parked = deps.lines.length ? await holdOrder(true) : null;
       if (deps.lines.length && !parked) return;
-      await removeHeldOrder(id);
       if (order.pendingRequestId) {
         const storedSnapshotHash = order.approvalSnapshotHash ?? undefined;
         const claimed = await claimApproval(
@@ -200,7 +202,6 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
           storedSnapshotHash ?? request?.snapshotHash ?? undefined,
         ).catch(() => null);
         if (!claimed || !claimed.ok) {
-          await addHeldOrder(order);
           toast.error(
             (claimed && "error" in claimed ? claimed.error : "") ||
               "That approval can no longer be used",
@@ -225,6 +226,23 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
             approvedByName: claimed.approvedByName ?? null,
           };
         }
+      }
+      try {
+        await removeHeldOrder(id);
+      } catch (error) {
+        if (restoredApproval) {
+          await updateHeldOrder(id, {
+            status: "held",
+            pendingRequestId: null,
+            approvalSnapshotHash: null,
+          }).catch(() => undefined);
+          toast.warning("The ticket stayed in Holds and needs approval again", {
+            description:
+              "Its previous approval was consumed, but the database could not release the draft safely.",
+          });
+          return;
+        }
+        throw error;
       }
       deps.onApprovalCleared?.();
       const approvedDiscount = restoredApproval
