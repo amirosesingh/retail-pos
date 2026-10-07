@@ -130,6 +130,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261007022338_harden_public_rpc_boundaries.sql",
       "supabase/migrations/20261007022428_remove_redundant_prefix_indexes.sql",
       "supabase/migrations/20261007042149_fix_sku_service_role_detection.sql",
+      "supabase/migrations/20261007110407_restore_pos_settings_sync_contract.sql",
       "supabase/migrations/20261007111500_harden_warehouse_transfer_lifecycle.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
