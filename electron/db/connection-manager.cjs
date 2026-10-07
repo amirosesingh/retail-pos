@@ -37,17 +37,25 @@ class ConnectionManager {
     return this.driver ?? defaultDriver();
   }
   async open(profile) {
-    await this.close();
     const sql = this.sql();
     const pool = new sql.ConnectionPool({
       connectionString: connectionString(profile),
       pool: { min: 0, max: 10, idleTimeoutMillis: 30_000 },
       requestTimeout: profile.requestTimeoutMs,
     });
-    await pool.connect();
+    try {
+      await pool.connect();
+    } catch (error) {
+      await pool.close().catch(() => undefined);
+      throw error;
+    }
     pool.on?.("error", () => { pool.__posConnectionFaulted = true; });
+    const previous = this.pool;
     this.pool = pool;
     this.profile = { ...profile, password: undefined };
+    // Swap only after the replacement is connected. Reads already in flight
+    // may finish on the former pool while every new read sees the new owner.
+    if (previous && previous !== pool) await previous.close().catch(() => undefined);
     return pool;
   }
   isConnected() {

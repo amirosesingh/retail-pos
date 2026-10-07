@@ -1556,13 +1556,13 @@ function registerIpc() {
   ipcMain.handle("database:validate", (_e, value) => guard.guarded(() => observedDatabaseOperation("validation","schema",() => databaseService.validate(guard.databaseProfile(value, { requireDatabase: true })))));
   ipcMain.handle("database:migrate", (_e, value) => guard.guarded(async () => {
     const profile=guard.databaseProfile(value,{requireDatabase:true});
-    const preflight=await observedDatabaseOperation("migration","preflight",() => databaseService.validate(profile));
-    if(!preflight.ok)return preflight;
+    const ensured=await observedDatabaseOperation("migration","database",() => ensureDatabase(databaseManager,profile));
+    if(!ensured.ok)return{...ensured,stage:"database"};
     const migrated=await observedDatabaseOperation("migration","apply",() => applyMigrations(databaseManager,profile));
-    if(!migrated.ok)return migrated;
+    if(!migrated.ok)return{...migrated,stage:"migration",created:ensured.created,hint:migrated.code==="ETIMEOUT"?"The initial POS schema did not finish within the five-minute setup limit. SQL Server remains unchanged outside the current migration batch.":migrated.hint};
     const validation=await observedDatabaseOperation("migration","revalidate",() => databaseService.validate(profile));
-    if(!validation.ok)return validation;
-    return validation.ready?{...migrated,ready:true,validation}:{...migrated,ok:false,code:"EMIGRATION_INCOMPLETE",error:"The migration ran, but schema validation still found differences.",validation};
+    if(!validation.ok)return{...validation,stage:"validation",created:ensured.created,applied:migrated.applied};
+    return validation.ready?{...validation,...migrated,ok:true,ready:true,created:ensured.created}:{...validation,ok:false,code:"EMIGRATION_INCOMPLETE",error:"The migration ran, but schema validation still found differences.",stage:"validation",created:ensured.created,applied:migrated.applied};
   }));
   ipcMain.handle("database:migrate-saved", () => guard.guarded(async()=>{
     const wasPaused=syncCoordinator.paused;
@@ -1587,14 +1587,14 @@ function registerIpc() {
     try{
       if(syncCoordinator.activeRun)await syncCoordinator.activeRun;
       const ensured=await observedDatabaseOperation("provision","database",()=>ensureDatabase(databaseManager,profile));
-      if(!ensured.ok)return ensured;
+      if(!ensured.ok)return{...ensured,stage:"database"};
       const migrated=await observedDatabaseOperation("provision","migration",()=>applyMigrations(databaseManager,profile));
-      if(!migrated.ok)return{...migrated,created:ensured.created};
+      if(!migrated.ok)return{...migrated,stage:"migration",created:ensured.created,hint:migrated.code==="ETIMEOUT"?"The initial POS schema did not finish within the five-minute setup limit. SQL Server remains unchanged outside the current migration batch.":migrated.hint};
       const validation=await observedDatabaseOperation("provision","validation",()=>databaseService.validate(profile));
-      if(!validation.ok)return{...validation,created:ensured.created,applied:migrated.applied};
+      if(!validation.ok)return{...validation,stage:"validation",created:ensured.created,applied:migrated.applied};
       if(!validation.ready)return{ok:false,code:"EMIGRATION_INCOMPLETE",error:"The database was prepared, but schema validation still found differences.",created:ensured.created,applied:migrated.applied,validation};
       const connected=await observedDatabaseOperation("provision","connect",()=>databaseService.saveAndConnect(profile));
-      if(!connected.ok)return{...connected,created:ensured.created,applied:migrated.applied,validation};
+      if(!connected.ok)return{...connected,stage:"connection",created:ensured.created,applied:migrated.applied,validation};
       // Schema work is complete. Let the existing bootstrap coordinator run;
       // it performs the initial push/pull itself and refuses to run paused.
       if(!wasPaused){syncCoordinator.resume();resumed=true;}
@@ -1694,12 +1694,14 @@ function registerIpc() {
     }
   }));
   ipcMain.handle("business:snapshot", () => guard.guarded(async () => {
+    if(!databaseManager.isConnected())return{ok:false,code:"EDATABASE_NOT_READY",error:"SQL Server setup or connection is not complete yet."};
     const snapshot = await operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null);
     return { ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) };
   }));
   ipcMain.handle("business:query", (_e, table, options) => guard.guarded(async () => {
     try {
       const safeTable = guard.text(table, { name: "business table", max: 80 });
+      if(!databaseManager.isConnected())return{ok:false,code:"EDATABASE_NOT_READY",rows:[],error:"SQL Server setup or connection is not complete yet."};
       const result = await operationsRepository.query(localBranchId(), safeTable, guard.queryOptions(options));
       return safeTable === "shifts"
         ? { ...result, rows: (result.rows ?? []).map(redactShiftRow) }

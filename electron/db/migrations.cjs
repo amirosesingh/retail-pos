@@ -2,6 +2,11 @@ const fs=require("node:fs");
 const path=require("node:path");
 const { safeError }=require("./errors.cjs");
 
+// Installing the initial schema executes a generated batch of roughly 800 KB.
+// It is setup work, not a normal till query, so the operator's short runtime
+// request timeout must not abort a healthy fresh installation.
+const MIGRATION_REQUEST_TIMEOUT_MS=300_000;
+
 function migrationFiles(){const directory=path.join(__dirname,"..","..","database","sqlserver","migrations");return fs.readdirSync(directory).filter(name=>/^\d+_.+\.sql$/i.test(name)).sort().map(name=>({name,path:path.join(directory,name)}));}
 const schemaFile=()=>path.join(__dirname,"..","..","database","sqlserver","schema.sql");
 const splitBatches=(sql)=>String(sql).split(/^\s*GO\s*$/gim).map(value=>value.trim()).filter(Boolean);
@@ -33,7 +38,13 @@ async function runOnPool(connectionManager,pool){
  }catch(error){return safeError(error);}
 }
 async function applyMigrations(connectionManager,profile=null){
- if(profile)return connectionManager.temporary(profile,profile.database,(pool)=>runOnPool(connectionManager,pool));
+ if(profile){
+  const migrationProfile={
+   ...profile,
+   requestTimeoutMs:Math.max(Number(profile.requestTimeoutMs)||0,MIGRATION_REQUEST_TIMEOUT_MS),
+  };
+  return connectionManager.temporary(migrationProfile,profile.database,(pool)=>runOnPool(connectionManager,pool));
+ }
  if(!(connectionManager.isConnected?.()??connectionManager.pool))return{ok:false,code:"EDATABASE",error:"SQL Server is not connected."};
  return runOnPool(connectionManager,connectionManager.pool);
 }
@@ -84,4 +95,4 @@ function migrationBundleSql(appVersion="current"){
  const numbered=migrationFiles().flatMap(file=>[`-- ${file.name}`,fs.readFileSync(file.path,"utf8").trim(),"GO"]);
  return [...header,...numbered,"-- Current additive schema repair",fs.readFileSync(schemaFile(),"utf8").trim(),""].join("\n\n");
 }
-module.exports={applyMigrations,ensureDatabase,migrationFiles,migrationBundleSql,splitBatches,databaseIdentifier};
+module.exports={applyMigrations,ensureDatabase,migrationFiles,migrationBundleSql,splitBatches,databaseIdentifier,MIGRATION_REQUEST_TIMEOUT_MS};

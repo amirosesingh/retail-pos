@@ -72,4 +72,66 @@ describe("SQL Server persistent state machine", () => {
     expect(manager.open).toHaveBeenCalledOnce();
     expect(manager.close).not.toHaveBeenCalled();
   });
+
+  it("connects an exactly validated profile without validating or disconnecting again", async () => {
+    const { DatabaseService } = await import("../../../electron/db/service.cjs");
+    const profile = {
+      host: "127.0.0.1",
+      instanceName: "",
+      port: 1433,
+      database: "POS_Local",
+      authMode: "windows",
+      username: "",
+      password: "",
+      encrypt: true,
+      trustServerCertificate: true,
+    };
+    const manager: {
+      pool?: object;
+      isConnected: () => boolean;
+      open: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+    } = {
+      pool: undefined,
+      isConnected() { return Boolean(this.pool); },
+      open: vi.fn(async function (this: { pool?: object }) { this.pool = {}; }),
+      close: vi.fn(),
+    };
+    const validator = vi.fn().mockResolvedValue({ ok: true, ready: true });
+    const save = vi.fn(() => ({ ...profile, password: undefined }));
+    const service = new DatabaseService({
+      secureConfig: { enabled: () => false, profile: () => null, save },
+      manager,
+      validator,
+    });
+
+    await expect(service.validate(profile)).resolves.toMatchObject({ ok: true, ready: true });
+    await expect(service.saveAndConnect(profile)).resolves.toMatchObject({ ok: true });
+
+    expect(validator).toHaveBeenCalledOnce();
+    expect(manager.open).toHaveBeenCalledOnce();
+    expect(manager.close).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledWith(profile);
+  });
+
+  it("requires validation again when the final TCP port differs", async () => {
+    const { DatabaseService } = await import("../../../electron/db/service.cjs");
+    const profile = {
+      host: "127.0.0.1", port: 1433, database: "POS_Local", authMode: "windows",
+      username: "", password: "", encrypt: true, trustServerCertificate: true,
+    };
+    const manager = { open: vi.fn(), close: vi.fn(), isConnected: () => false };
+    const service = new DatabaseService({
+      secureConfig: { enabled: () => false, profile: () => null, save: vi.fn() },
+      manager,
+      validator: vi.fn().mockResolvedValue({ ok: true, ready: true }),
+    });
+
+    await service.validate(profile);
+    await expect(service.saveAndConnect({ ...profile, port: 1434 })).resolves.toMatchObject({
+      ok: false,
+      code: "EVALIDATION_REQUIRED",
+    });
+    expect(manager.open).not.toHaveBeenCalled();
+  });
 });

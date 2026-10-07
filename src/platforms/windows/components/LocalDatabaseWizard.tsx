@@ -204,17 +204,6 @@ export function LocalDatabaseWizard({
     }
   };
   const ok = result?.ok === true;
-  const validationHasSchemaDifferences =
-    typeof result?.requiredTables === "number" &&
-    result.ready !== true &&
-    ((Array.isArray(result.missingTables) && result.missingTables.length > 0) ||
-      (Array.isArray(result.incompatibleColumns) && result.incompatibleColumns.length > 0) ||
-      (Array.isArray(result.differences) && result.differences.length > 0) ||
-      result.changeTracking === false);
-  const migrationRequired =
-    validationHasSchemaDifferences ||
-    result?.status === "migration_required" ||
-    state.detail?.status === "migration_required";
   const recoveringSavedMigration =
     initiallyOpen && state.configured && state.detail?.status === "migration_required";
 
@@ -295,8 +284,7 @@ export function LocalDatabaseWizard({
           <DialogHeader>
             <DialogTitle>Connect directly to Microsoft SQL Server</DialogTitle>
             <DialogDescription>
-              Nothing is enabled or saved until the final Apply POS database and connect step
-              succeeds.
+              Nothing is enabled or saved until the final Save and connect step succeeds.
             </DialogDescription>
           </DialogHeader>
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
@@ -647,8 +635,9 @@ export function LocalDatabaseWizard({
               {step === 5 && (
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">
-                    This check is optional. The final action creates the database when it is
-                    missing, applies pending migrations, and validates it before connecting.
+                    Validation is required before saving. If the database is missing or needs an
+                    update, apply the POS migration here; it creates the database when needed and
+                    validates the completed schema.
                   </p>
                   <Action
                     title={`Validate ${profile.database || "selected database"}`}
@@ -657,8 +646,7 @@ export function LocalDatabaseWizard({
                     onClick={() => run(() => api()!.validateDatabase(profile))}
                     result={result}
                   />
-                  {migrationRequired && (
-                    <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                       <Button
                         variant="outline"
                         disabled={busy}
@@ -674,15 +662,13 @@ export function LocalDatabaseWizard({
                             if (!authorization.ok) return authorization;
                             if (recoveringSavedMigration) return api()!.migrateSavedDatabase();
                             const migrated = await api()!.migrateDatabase(profile);
-                            if (!migrated.ok) return migrated;
-                            return api()!.validateDatabase(profile);
+                            return migrated;
                           })
                         }
                       >
                         Apply directly and validate again
                       </Button>
                     </div>
-                  )}
                   {migrationExport ? <ResultSummary result={migrationExport} /> : null}
                 </div>
               )}
@@ -714,21 +700,21 @@ export function LocalDatabaseWizard({
                     </select>
                   </Field>
                   <Action
-                    title="Apply POS database, validate and connect"
-                    text="Creates the database if needed, applies pending migrations, validates every required table, then seals the password with Windows DPAPI and connects. Existing business rows are not cleared."
+                    title="Save and connect"
+                    text="Saves the already validated connection, seals the password with Windows DPAPI, and opens the persistent POS connection. It does not migrate or validate again."
                     busy={busy}
                     onClick={() =>
                       run(async () => {
                         const authorization = await authorizeDatabaseChange();
                         if (!authorization.ok) return authorization;
                         await mirrorTerminalConfigToDesktop();
-                        const response = await api()!.provisionAndConnect(profile);
+                        const response = await api()!.saveAndConnect(profile);
                         if (response.ok) {
                           setProfile((old) => ({ ...old, password: "" }));
                           try {
                             setState(await api()!.getState());
                           } catch {
-                            // Provisioning already succeeded. The database status subscription
+                            // Connecting already succeeded. The database status subscription
                             // will refresh this view without falsely reporting setup as failed.
                           }
                           setOpen(false);
@@ -762,7 +748,8 @@ export function LocalDatabaseWizard({
                     busy ||
                     (step === 1 && Boolean(serverValidation)) ||
                     (step === 3 && !ok) ||
-                    (step === 4 && !profile.database)
+                    (step === 4 && !profile.database) ||
+                    (step === 5 && result?.ready !== true)
                   }
                   onClick={() => {
                     setResult(null);
