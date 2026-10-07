@@ -344,6 +344,107 @@ function canonicalJsonValue(value: unknown): unknown {
 const sameJsonValue = (left: unknown, right: unknown) =>
   JSON.stringify(canonicalJsonValue(left)) === JSON.stringify(canonicalJsonValue(right));
 
+const PRODUCT_FIELD_PERMISSIONS: Readonly<Record<string, string>> = {
+  selling_price: "can_edit_product_price",
+  cost_price: "can_edit_product_price",
+  ecom_price: "can_edit_product_price",
+  landing_pct: "can_edit_product_price",
+  name: "can_edit_product_details",
+  sku: "can_edit_product_details",
+  barcode: "can_edit_product_details",
+  category: "can_edit_product_details",
+  sub_category: "can_edit_product_details",
+  product_group: "can_edit_product_details",
+  brand: "can_edit_product_details",
+  unit: "can_edit_product_details",
+  packs: "can_edit_product_details",
+  reorder_level: "can_edit_product_details",
+  tax_rate: "can_edit_product_details",
+  barcode_aliases: "can_link_product_barcode",
+  barcode_variants: "can_link_product_barcode",
+  ecom_visible: "can_publish_product",
+  stock_quantity: "can_adjust_stock",
+  stock_by_store: "can_adjust_stock",
+};
+
+const PRODUCT_GUARD_COLUMNS = [
+  "id",
+  ...Object.keys(PRODUCT_FIELD_PERMISSIONS),
+  "is_archived",
+] as const;
+
+/**
+ * Product writes use the service role in the relay, so the database trigger
+ * cannot see the cashier's identity. Reapply the same granular permission
+ * comparison here against the stored row before any service-role write.
+ */
+async function authorizeProductOp(
+  op: RelayOp,
+  scope: RelayScope,
+): Promise<{ ok: true; op: RelayOp } | RelayDenial> {
+  if (scope.isSupervisor) return { ok: true, op };
+  if (op.kind === "delete") {
+    if (
+      scope.permissions.can_bulk_edit_products !== true &&
+      scope.permissions.can_merge_products !== true
+    )
+      return deny("PERMISSION_DENIED", "Your account cannot permanently remove products.");
+    return { ok: true, op };
+  }
+
+  const payloads = op.kind === "update" ? [op.values] : op.rows;
+  const ids = [
+    ...new Set(
+      (op.kind === "update" ? [op.match["id"]] : payloads.map((row) => row["id"]))
+        .filter((id) => id != null && String(id))
+        .map(String),
+    ),
+  ];
+  const existing = new Map<string, Record<string, unknown>>();
+  if (ids.length) {
+    const encoded = ids.map((id) => encodeURIComponent(id)).join(",");
+    const response = await serviceRest(
+      `products?id=in.(${encoded})&select=${PRODUCT_GUARD_COLUMNS.join(",")}`,
+    );
+    if (!response.ok)
+      return deny("PERMISSION_DENIED", "The existing product could not be verified — try again.");
+    for (const row of (await response.json()) as Record<string, unknown>[]) {
+      if (row["id"] != null) existing.set(String(row["id"]), row);
+    }
+  }
+
+  for (const payload of payloads) {
+    const id = String(
+      payload["id"] ?? (op.kind === "update" ? op.match["id"] : "") ?? "",
+    );
+    const before = existing.get(id);
+    if (!before) {
+      if (!allowed(scope, "can_add_new_product"))
+        return deny("PERMISSION_DENIED", "Your account cannot add products.");
+      continue;
+    }
+    for (const [column, permission] of Object.entries(PRODUCT_FIELD_PERMISSIONS)) {
+      if (
+        payload[column] !== undefined &&
+        !sameJsonValue(payload[column], before[column]) &&
+        !allowed(scope, permission)
+      )
+        return deny("PERMISSION_DENIED", `Your account cannot change "${column}".`);
+    }
+    if (
+      payload["is_archived"] !== undefined &&
+      !sameJsonValue(payload["is_archived"], before["is_archived"])
+    ) {
+      const permission = payload["is_archived"]
+        ? "can_archive_product"
+        : "can_restore_product";
+      if (!allowed(scope, permission))
+        return deny("PERMISSION_DENIED", "Your account cannot change product archive status.");
+    }
+  }
+  return { ok: true, op };
+}
+
 /** A cashier may create a sale with tenders, but cannot change tenders later. */
 async function upsertChangesExistingTender(rows: Record<string, unknown>[]): Promise<boolean> {
   for (const row of rows) {
@@ -390,6 +491,10 @@ export async function authorizeRelayOp(
     );
 
   const isAdmin = scope.role === "admin" || scope.roleSlug === "admin";
+  if (op.table === "products") {
+    const productAccess = await authorizeProductOp(op, scope);
+    if (!productAccess.ok) return productAccess;
+  }
   let saleTenderCorrection = false;
   if (op.table === "sales" && !isAdmin) {
     saleTenderCorrection =

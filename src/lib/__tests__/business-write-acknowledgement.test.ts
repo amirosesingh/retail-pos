@@ -37,6 +37,7 @@ describe("business UI persistence acknowledgements", () => {
 
   it("awaits product and member acceptance before changing business state", () => {
     const store = source("src/lib/pos-store.tsx");
+    const inventory = source("src/routes/inventory.tsx");
     const quickMember = source("src/platforms/web/components/pos/QuickMemberDialog.tsx");
     expect(store).toContain("const target = await db.commitProduct(stored)");
     expect(store).toContain("const target = await db.commitProducts(updated)");
@@ -45,6 +46,10 @@ describe("business UI persistence acknowledgements", () => {
     expect(store).toContain("await db.deleteMember(id)");
     expect(quickMember).toContain("await upsertMember(member)");
     expect(quickMember).toContain("await upsertMember({ ...verifying, verified: true })");
+    expect(inventory).toContain('notifyError(error, "Updating product categories")');
+    expect(inventory).toContain('notifyError(error, "Archiving selected products")');
+    expect(inventory).toContain('notifyError(error, `Archiving ${p.name}`)');
+    expect(inventory).toContain("disabled={bulkSaving}");
   });
 
   it("commits bulk-import stock as an idempotent audited movement", () => {
