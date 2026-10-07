@@ -70,6 +70,16 @@ type DatabaseApi = {
 };
 const api = () => (window.pos as unknown as { database?: DatabaseApi })?.database;
 async function authorizeDatabaseChange(): Promise<{ ok: boolean; error?: string }> {
+  // First-run and Emergency Access are deliberately authorized by Electron's
+  // main-process privilege gate. Checking that path first keeps a brand-new or
+  // broken offline terminal repairable before a hosted user can sign in.
+  try {
+    const local = await api()?.authorizeSettings?.();
+    if (local?.ok) return local;
+  } catch {
+    // An activated terminal still needs to prove its hosted administrator
+    // session below; the main process correctly rejects this early probe.
+  }
   const adopt = window.sqlAdmin?.adoptSession;
   if (!adopt) {
     return {

@@ -376,6 +376,23 @@ export type LocalSyncStatus = {
 export type PosBridge = {
   /** Close only the Electron window that sent the request. */
   closeWindow?: () => Promise<unknown>;
+  cacheStatus?: () => Promise<{
+    ok: boolean;
+    totalBytes: number;
+    cacheBytes: number;
+    diagnosticBytes: number;
+    retainedBytes: number;
+  }>;
+  clearAppCache?: () => Promise<{
+    ok: boolean;
+    removedEntries?: number;
+    removedInstallers?: number;
+    totalBytes?: number;
+    cacheBytes?: number;
+    diagnosticBytes?: number;
+    retainedBytes?: number;
+    error?: string;
+  }>;
   saveAuthorizationRule?: (value: Record<string, unknown>) => Promise<{
     ok: boolean;
     rule?: Record<string, unknown>;

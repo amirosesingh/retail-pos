@@ -115,17 +115,26 @@ function stampVerifiedBranchOperations(operations,branchId,aggregateKind=null){
     ["item_activity_logs",["store_id"]],
   ]);
   return operations.map((operation)=>{
-    const saleFields=aggregateKind==="sale"?saleBranchFields.get(operation.table):null;
+    const table=syncRegistry.tables.find((entry)=>entry.sqlServerTable===operation.table);
+    const supportedColumns=new Set((table?.columns??[]).map((column)=>column.sqlServerColumn));
+    const saleFields=aggregateKind==="sale"
+      ? (saleBranchFields.get(operation.table)??[]).filter((field)=>supportedColumns.has(field))
+      : null;
     const verified=verifiedBranchTables.has(operation.table);
     const fillMissing=branchStampedTables.has(operation.table);
     if(operation.kind==="insert"||operation.kind==="upsert"){
-      if(!saleFields&&!verified&&!fillMissing)return operation;
-      return{...operation,rows:operation.rows.map((row)=>{
-        if(saleFields)return saleFields.reduce((next,field)=>({...next,[field]:branchId}),{...row});
+      const rows=operation.rows??(operation.values?[operation.values]:[]);
+      if(!rows.length||(!saleFields?.length&&!verified&&!fillMissing))return operation;
+      const stamped=rows.map((row)=>{
+        if(saleFields?.length)return saleFields.reduce((next,field)=>({...next,[field]:branchId}),{...row});
+        if(!supportedColumns.has("store_id"))return row;
         return verified||!String(row?.store_id??"").trim()?{...row,store_id:branchId}:row;
-      })};
+      });
+      return operation.rows
+        ? {...operation,rows:stamped}
+        : {...operation,values:stamped[0]};
     }
-    if(operation.kind==="update"&&verified)
+    if(operation.kind==="update"&&verified&&supportedColumns.has("store_id"))
       return{...operation,values:{...operation.values,store_id:branchId}};
     return operation;
   });
@@ -170,6 +179,31 @@ function prepareLocalData({force=false}={}){
   })().finally(()=>{localDataPreparePromise=null;});
   return localDataPreparePromise;
 }
+let localDatabaseRecoveryPromise=null;
+function recoverLocalDatabase({prepare=true}={}){
+  if(localDatabaseRecoveryPromise)return localDatabaseRecoveryPromise;
+  localDatabaseRecoveryPromise=(async()=>{
+    const restored=await databaseService.restore();
+    if(!restored.connected||!restored.tradingReady)return restored;
+    const branchId=localBranchId();
+    if(!branchId)return databaseService.snapshot();
+    if(prepare){
+      try{await prepareLocalData();}
+      catch{return databaseService.snapshot();}
+      return databaseService.snapshot();
+    }
+    try{
+      const synced=await syncCoordinator.runNow({branchId,batchSize:10});
+      if(synced.code==="ECHANGEGAP")await prepareLocalData({force:true});
+      else if(!synced.ok)throw Object.assign(new Error(synced.error??"Synchronization failed after reconnect."),{code:synced.code??"ESYNC"});
+      else databaseService.markReady({phase:"reconnected",syncReady:true});
+    }catch(error){
+      databaseService.markReady({phase:"sync_pending",syncReady:false,code:error?.code??"ESYNC",error:String(error?.message??error)});
+    }
+    return databaseService.snapshot();
+  })().finally(()=>{localDatabaseRecoveryPromise=null;});
+  return localDatabaseRecoveryPromise;
+}
 
 const AUTO_SYNC_OK_MS = 15_000;
 const AUTO_SYNC_RETRY_MS = 60_000;
@@ -188,6 +222,15 @@ function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
 }
 async function runAutomaticSync() {
   automaticSyncTimer = null;
+  const databaseState=databaseService.snapshot();
+  if(databaseState.enabled&&databaseState.configured&&!databaseManager.isConnected()){
+    const recovered=await recoverLocalDatabase({prepare:false}).catch(error=>{
+      recordFault("database.automatic-reconnect",error);
+      return databaseService.snapshot();
+    });
+    scheduleAutomaticSync(recovered.connected?250:AUTO_SYNC_RETRY_MS);
+    return;
+  }
   // A cached administrator branch is never a substitute for a registered
   // terminal identity. Revocation clears the vault before this can run again.
   if (!terminalStore.read()?.tokenId || !databaseManager.isConnected() || !localBranchId() || jobManager.running || localDataPreparePromise || syncCoordinator.paused) {
@@ -502,7 +545,7 @@ function waitForPort(port, timeoutMs = 30000) {
   });
 }
 
-async function startAppServer() {
+async function startAppServer(preferredPort = null) {
   if (!fs.existsSync(serverEntry)) {
     throw new Error(`Desktop build missing (${serverEntry}). Run: npm run desktop:build`);
   }
@@ -510,7 +553,7 @@ async function startAppServer() {
   // used or accepted, so it is erased the first time this build starts.
   serverKeys.purgeLegacyServiceKey();
   const cloud = cloudCredentials.read();
-  const port = await choosePort();
+  const port = preferredPort && await portFree(preferredPort) ? preferredPort : await choosePort();
   // ELECTRON_RUN_AS_NODE makes the bundled Electron binary behave as plain
   // Node, so the packaged app needs no separate Node.js install.
   const child = spawn(process.execPath, [serverEntry], {
@@ -587,8 +630,9 @@ function scheduleCloudServerRestart() {
       }
     });
     try {
-      stopAppServer();
-      baseUrl = await startAppServer();
+      const previousPort = baseUrl ? Number(new URL(baseUrl).port) : null;
+      await stopAppServer();
+      baseUrl = await startAppServer(previousPort);
       await Promise.all(windows.map((win, index) => load(win, routes[index])));
     } catch (error) {
       recordFault("app-server.cloud-config-restart", error);
@@ -598,11 +642,25 @@ function scheduleCloudServerRestart() {
 }
 
 function stopAppServer() {
-  if (serverProcess && !serverProcess.killed) {
-    intentionallyStoppedServers.add(serverProcess);
-    serverProcess.kill();
-  }
-  serverProcess = null;
+  const child = serverProcess;
+  if (!child) return Promise.resolve();
+  if (serverProcess === child) serverProcess = null;
+  intentionallyStoppedServers.add(child);
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* the process may have just exited */ }
+      reject(new Error("The previous local app server did not stop in time."));
+    }, 10_000);
+    child.once("exit", () => { clearTimeout(timeout); resolve(); });
+    child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+    try {
+      child.kill();
+    } catch (error) {
+      clearTimeout(timeout);
+      reject(error);
+    }
+  });
 }
 
 function load(win, route) {
@@ -1006,7 +1064,7 @@ async function startLocalShiftClose(raw) {
       },
       actor_name: actor, actor_staff_id: actor, created_at: now,
     }] },
-  ]);
+  ], { branchId, terminalId });
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
   pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);
@@ -1146,7 +1204,7 @@ async function commitLocalShiftCashCount(raw) {
     });
   }
   try {
-    await operationsRepository.apply("Closing shift cash count", operations);
+    await operationsRepository.apply("Closing shift cash count", operations, { branchId, terminalId });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
     const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
@@ -1226,7 +1284,7 @@ async function commitLocalShiftRecount(raw) {
         variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
         variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now,
       } },
-    ]);
+    ], { branchId, terminalId });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
     pendingShiftCloseSync.add(shiftId);
@@ -1254,6 +1312,8 @@ async function approveLocalShiftVariance(raw) {
     throw new Error("This shift is not waiting for variance approval.");
   const identity = adminSession.identity();
   const actor = identity?.subject ?? "";
+  const terminal = terminalStore.read() ?? {};
+  const terminalId = String(shift.terminal_id ?? terminal.tokenId ?? terminal.terminalId ?? "").trim() || null;
   const now = new Date().toISOString();
   await operationsRepository.apply("Approving shift variance", [
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
@@ -1266,7 +1326,7 @@ async function approveLocalShiftVariance(raw) {
       detail: { note: String(raw.note ?? "").slice(0, 400) }, actor_name: actor,
       actor_staff_id: actor, created_at: now,
     }] },
-  ]);
+  ], { branchId, terminalId });
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
   pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);
@@ -1406,6 +1466,17 @@ function registerIpc() {
       }
       return { ok: false, error: "Database-management permission is required." };
     }
+    // A freshly installed or repaired local database may not have pulled the
+    // administrator yet, so "missing" may use the authoritative hosted check.
+    // Never use that fallback to bypass a local lock, bad PIN or deactivation.
+    if (!["unavailable", "missing"].includes(local.reason)) {
+      const messages = {
+        locked: "This administrator PIN is temporarily locked after repeated failed attempts.",
+        inactive: "This administrator account is inactive.",
+        invalid: "The administrator username or approval PIN is incorrect.",
+      };
+      return { ok: false, error: local.error ?? messages[local.reason] ?? "The administrator could not be verified." };
+    }
 
     // If SQL Server itself is what needs repair, verify the same credential
     // through the configured hosted backend. Its response is authoritative;
@@ -1476,7 +1547,7 @@ function registerIpc() {
     return { ok: true, level: result.level };
   }));
   ipcMain.handle("database:get-state", () => databaseService.snapshot());
-  ipcMain.handle("database:retry-startup", () => databaseService.restore());
+  ipcMain.handle("database:retry-startup", () => recoverLocalDatabase({prepare:true}));
   ipcMain.handle("database:authorize-settings", () => ({ ok: true }));
   ipcMain.handle("database:set-enabled", (_e, value) => guard.guarded(async()=>{await databaseService.setEnabled(value===true);if(value===true&&databaseManager.isConnected())void prepareLocalData().catch(error=>recordFault("local-data.prepare",error));return databaseService.snapshot();}));
   ipcMain.handle("database:list-servers", () => discoverLocalSqlServers());
@@ -1566,7 +1637,7 @@ function registerIpc() {
   ipcMain.handle("database:schema-status", () => databaseService.schemaStatus());
   ipcMain.handle("database:backup", (_e, file) => guard.guarded(() => backupService.backup(guard.filePath(file,{name:"backup file",extension:"bak"}))));
   ipcMain.handle("database:restore", (_e, file) => guard.guarded(async () => { const result=await backupService.restore(guard.filePath(file,{name:"backup file",extension:"bak"})); if(result.ok)await databaseService.restore(); return result; }));
-  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const branchId=localBranchId();const operations=stampVerifiedBranchOperations(guard.writeOps(ops,{max:200}),branchId);const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}),operations,{branchId,terminalId:terminal.tokenId??terminal.terminalId});scheduleAutomaticSync(250);return result;}));
+  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const branchId=localBranchId();const identity=adminSession.identity();const operations=stampVerifiedBranchOperations(guard.writeOps(ops,{max:200}),branchId);const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}),operations,{branchId,terminalId:terminal.tokenId??terminal.terminalId,permissions:identity?.permissions??{},enforcePermissions:true});scheduleAutomaticSync(250);return result;}));
   ipcMain.handle("business:save-authorization-rule", (_e, value) => guard.guarded(async () => {
     const identity = adminSession.identity();
     if (!identity || !adminSession.hasPosAuthority() || !adminSession.hasPermission("can_access_pos_settings"))
@@ -1607,6 +1678,11 @@ function registerIpc() {
         operations,
         branchId,
         terminalId:terminal.tokenId??terminal.terminalId??null,
+        permissions:adminSession.identity()?.permissions??{},
+        // Automatic sale/payment accrual is governed by the aggregate itself.
+        // Direct member administration uses the generic aggregate and must
+        // enforce the same add/points permissions as the central relay.
+        enforcePermissions:aggregate.kind==="general",
       };
       const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null});
@@ -1793,6 +1869,15 @@ function registerIpc() {
     );
     return { ok: true };
   });
+  ipcMain.handle("cache:status", () => ({ ok: true, ...storageHygiene.usage(app.getPath("userData")) }));
+  ipcMain.handle("cache:clear", async () => {
+    await session.defaultSession.clearCache();
+    await session.defaultSession.clearStorageData({ storages: ["serviceworkers", "cachestorage", "shadercache"] });
+    session.defaultSession.flushStorageData();
+    const removedEntries = storageHygiene.pruneCaches(app.getPath("userData"));
+    const removedInstallers = updater.cleanupFallbackInstallers(updater.status().installerFile);
+    return { ok: true, removedEntries, removedInstallers, ...storageHygiene.usage(app.getPath("userData")) };
+  });
   ipcMain.handle("health:quit", () => app.quit());
 
   ipcMain.handle("print:silent", async (_e, html, options) => guard.guarded(async () => {
@@ -1842,7 +1927,7 @@ function registerIpc() {
         approved_by: null,
         created_at: new Date().toISOString(),
       }],
-    }]);
+    }], { branchId, terminalId });
     const result = await printRaw([0x1b, 0x70, Number(input.pin) === 5 ? 1 : 0, 0x19, 0xfa], {
       deviceName: guard.shellSafeText(printer.deviceName, { name: "printer name" }),
       share: guard.shellSafeText(printer.share, { name: "printer share" }),
@@ -1850,7 +1935,7 @@ function registerIpc() {
     await operationsRepository.apply("Recording cash drawer result", [{
       kind: "update", table: "drawer_events", match: { id: eventId },
       values: { note: result.ok ? "OPENED" : `FAILED: ${String(result.error ?? "Printer refused the drawer pulse").slice(0, 300)}` },
-    }]);
+    }], { branchId, terminalId });
     publishBusinessChange({ kind: "drawer", branchId, operationId: eventId });
     scheduleAutomaticSync(250);
     return { ...result, eventId };
@@ -1867,10 +1952,14 @@ function registerIpc() {
   ipcMain.handle("update:check", () => updater.check());
   ipcMain.handle("update:download", () => updater.downloadUpdate());
   const installUpdateWhenShiftClosed = async (downloadFirst) => {
-    const shifts = await operationsRepository.query(localBranchId(), "shifts", { limit: 500 });
+    const branchId = localBranchId();
+    if (!branchId) {
+      return { ok: false, code: "EBRANCH", error: "The terminal branch is not configured." };
+    }
+    const shifts = await operationsRepository.query(branchId, "shifts", { match: { closed_at: null }, limit: 1 });
     // CASH_COUNT_REQUIRED is still an open financial shift. Never let either
     // install path quit the till until every shift has a durable closed_at.
-    const active = (shifts.rows ?? []).some((shift) => !shift.closed_at);
+    const active = (shifts.rows ?? []).length > 0;
     if (active) {
       return {
         ok: false,
@@ -2047,6 +2136,6 @@ app.on("before-quit", (event) => {
 });
 app.on("window-all-closed", () => {
   if (recovery.isOpen()) return;
-  markStartupSettled(); updater.stop(); stopAppServer();
+  markStartupSettled(); updater.stop(); void stopAppServer().catch((error) => recordFault("app-server.stop", error));
   if (process.platform !== "darwin") app.quit();
 });

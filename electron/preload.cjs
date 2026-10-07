@@ -145,6 +145,8 @@ contextBridge.exposeInMainWorld("pos", {
   openLogFolder: () => invoke("health:open-logs"),
   collectDiagnostics: () => invoke("health:collect-diagnostics"),
   logConnection: (event, detail) => invoke("health:log-connection", event, detail),
+  cacheStatus: () => invoke("cache:status"),
+  clearAppCache: () => invoke("cache:clear"),
   onFatal: (cb) => {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("app:fatal", handler);

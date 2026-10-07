@@ -133,6 +133,7 @@ import {
   batches,
   DEFAULT_BATCH_SIZE,
   importFailureReason,
+  isSystemicImportFailure,
   persistBatchWithIsolation,
   type ImportProductsOptions,
   type ImportProductsResult,
@@ -2593,7 +2594,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
               }
               done += failed.length;
               options.onProgress?.(done, todo.length);
-              if (options.stopOnBatchFailure) halted = true;
+              if (options.stopOnBatchFailure || isSystemicImportFailure(error)) halted = true;
             },
             !options.stopOnBatchFailure,
           );

@@ -10,7 +10,7 @@ import { OPEN_LOCAL_DATABASE_SETTINGS_EVENT } from "./LocalDatabaseWizard";
 
 type DatabaseState = { state?: string; enabled?: boolean; connected?: boolean; profile?: { database?: string } | null };
 type TableStatus = { table: string; local: string; cloud: string; status: "SYNCED" | "VERIFIED" | "DIFFERENT"; verified?: boolean; comparedAt?: string | null };
-type SyncState = { phase?: string; running?: boolean; paused?: boolean; pending?: number; failed?: number; conflicts?: number; lastPushAt?: string | null; lastPullAt?: string | null; lastComparedAt?: string | null; lastVerifiedAt?: string | null; tables?: TableStatus[] };
+type SyncState = { phase?: string; running?: boolean; paused?: boolean; pending?: number; failed?: number; conflicts?: number; membershipDeferred?: boolean; membershipMirrored?: number; lastPushAt?: string | null; lastPullAt?: string | null; lastComparedAt?: string | null; lastVerifiedAt?: string | null; tables?: TableStatus[] };
 type FailureRow = { job_id?: string; job_type?: string; status?: string; phase?: string; current_table?: string | null; error_code?: string | null; error_message?: string | null; updated_at?: string | null };
 type ConflictRow = { conflict_id?: string; entity_type?: string; entity_id?: string; reason?: string; created_at?: string | null };
 type DatabaseErrorRow = { id?: string; occurred_at?: string; event?: string; category?: string; stage?: string | null; state?: string | null; code?: string | null; message?: string | null; occurrences?: number };
@@ -97,6 +97,7 @@ export function LocalDatabaseOperations() {
         <CardHeader><CardTitle className="text-base">Database jobs and synchronization</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <DatabaseJobProgress job={job} />
+          {sync.membershipDeferred ? <p role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">Membership directory synchronization is waiting for the membership service. Sales and other POS data continue syncing normally.</p> : null}
           <div className="grid gap-3 rounded-md border p-3 text-sm sm:grid-cols-2 xl:grid-cols-5">
             <div><div className="text-xs text-muted-foreground">Phase</div><div>{sync.paused ? "Paused" : label(sync.phase)}</div></div>
             <div><div className="text-xs text-muted-foreground">Waiting</div><div>{Number(sync.pending ?? 0).toLocaleString()}</div></div>

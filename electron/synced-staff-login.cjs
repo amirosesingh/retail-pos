@@ -43,14 +43,6 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose) {
   const name = String(username ?? "").trim().toLowerCase();
   const secret = String(pin ?? "");
   if (!name || secret.length < 4 || secret.length > 32) return { ok: false, reason: "invalid" };
-  const throttleKey = `electron:${purpose}:${String(branchId).toLowerCase()}:${name}`;
-  const throttle = await pool.request().input("key", throttleKey).query(
-    "SELECT TOP (1) attempts,window_started_at,locked_until FROM dbo.pin_attempts WHERE [key]=@key;",
-  );
-  const lockUntil = throttle.recordset?.[0]?.locked_until;
-  if (lockUntil && new Date(lockUntil).getTime() > Date.now()) {
-    return { ok: false, reason: "locked", lockedUntil: new Date(lockUntil).toISOString() };
-  }
   // app_users owns the manager-approval PIN; cashiers owns the independent
   // terminal sign-in PIN. Never swap these or one credential can authorize
   // the other operation again.
@@ -74,6 +66,16 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose) {
   const row = result.recordset?.[0];
   if (!row) return { ok: false, reason: "missing" };
   if (!row.is_active) return { ok: false, reason: "inactive", error: "Account deactivated" };
+  // Username and UUID are aliases for the same account. Throttle them under
+  // one canonical identity so switching identifier cannot bypass the lock.
+  const throttleKey = `electron:${purpose}:${String(branchId).toLowerCase()}:${String(row.id).toLowerCase()}`;
+  const throttle = await pool.request().input("key", throttleKey).query(
+    "SELECT TOP (1) attempts,window_started_at,locked_until FROM dbo.pin_attempts WHERE [key]=@key;",
+  );
+  const lockUntil = throttle.recordset?.[0]?.locked_until;
+  if (lockUntil && new Date(lockUntil).getTime() > Date.now()) {
+    return { ok: false, reason: "locked", lockedUntil: new Date(lockUntil).toISOString() };
+  }
   const hash = String(row.pin_hash ?? "");
   if (!hash || !await bcrypt.compare(secret, hash)) {
     const failed = await pool.request().input("key", throttleKey)

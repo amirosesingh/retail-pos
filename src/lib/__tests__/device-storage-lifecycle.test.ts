@@ -52,6 +52,37 @@ describe("Windows till storage hygiene", () => {
 
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  it("reports disposable, diagnostic and retained bytes without reading values", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pos-userdata-"));
+    fs.mkdirSync(path.join(dir, "Cache"));
+    fs.writeFileSync(path.join(dir, "Cache", "data"), "cache");
+    fs.writeFileSync(path.join(dir, "connection.log"), "diagnostic");
+    fs.writeFileSync(path.join(dir, "terminal-config.bin"), "sealed");
+
+    expect(hygiene.usage(dir)).toEqual({
+      totalBytes: 21,
+      cacheBytes: 5,
+      diagnosticBytes: 10,
+      retainedBytes: 6,
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exposes a real Electron cache clear and byte report to Settings", () => {
+    const main = fs.readFileSync(path.resolve(process.cwd(), "electron/main.cjs"), "utf8");
+    const preload = fs.readFileSync(path.resolve(process.cwd(), "electron/preload.cjs"), "utf8");
+    const panel = fs.readFileSync(
+      path.resolve(process.cwd(), "src/platforms/web/components/pos/settings/panels/SystemStatusPanel.tsx"),
+      "utf8",
+    );
+    expect(main).toContain('ipcMain.handle("cache:status"');
+    expect(main).toContain("session.defaultSession.clearCache()");
+    expect(main).toContain("session.defaultSession.clearStorageData");
+    expect(preload).toContain('clearAppCache: () => invoke("cache:clear")');
+    expect(panel).toContain("disposable cache");
+    expect(panel).toContain("Clear app cache & reload");
+  });
 });
 
 describe("phone storage hygiene", () => {

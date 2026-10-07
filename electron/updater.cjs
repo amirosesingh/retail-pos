@@ -43,6 +43,21 @@ let timer = null;
 let paused = false;
 let fallbackPromise = null;
 
+function cleanupFallbackInstallers(except = null) {
+  let removed = 0;
+  try {
+    for (const name of fs.readdirSync(os.tmpdir())) {
+      if (!/^pos-(?:update|rollback)-.+\.exe$/i.test(name)) continue;
+      const file = path.join(os.tmpdir(), name);
+      if (except && path.resolve(file) === path.resolve(except)) continue;
+      try { fs.rmSync(file, { force: true }); removed += 1; } catch { /* a running installer is retried next launch */ }
+    }
+  } catch {
+    /* temporary-folder cleanup is best-effort */
+  }
+  return removed;
+}
+
 
 function broadcast() {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -226,6 +241,7 @@ async function fallbackDownload() {
   if (!version || !url) return state;
   fallbackPromise = (async () => {
     const file = path.join(os.tmpdir(), `pos-update-${version}.exe`);
+    cleanupFallbackInstallers(file);
     for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
       set({
         status: "downloading",
@@ -256,6 +272,7 @@ async function fallbackDownload() {
         const { code, friendly } = netHttp.explainNetworkError(raw);
         set({ status: "error", stage: "download", code, detail: raw, error: friendly, url });
         if (attempt < ATTEMPTS) await wait(attempt * 3000);
+        else try { fs.rmSync(file, { force: true }); } catch { /* next launch cleans it */ }
       }
     }
     return state;
@@ -312,6 +329,7 @@ const downloadPage = () => installerUrl(state.available);
 
 function start() {
   if (paused) return;
+  cleanupFallbackInstallers(state.installerFile);
   void check();
   timer = setInterval(() => void check(), SIX_HOURS);
   if (timer.unref) timer.unref();
@@ -541,9 +559,11 @@ async function rollback(version, onProgress) {
   if (!/^https:\/\//i.test(url))
     return { ok: false, error: "The update feed is not served over a secure connection." };
   const file = path.join(os.tmpdir(), `pos-rollback-${version}.exe`);
+  cleanupFallbackInstallers(file);
   try {
     await download(url, file, onProgress);
   } catch (err) {
+    try { fs.rmSync(file, { force: true }); } catch { /* next launch cleans it */ }
     return { ok: false, error: `Could not download version ${version}: ${err?.message || err}` };
   }
   const verified = await verifyInstaller(file, version);
@@ -573,6 +593,7 @@ module.exports = {
   install,
   rollback,
   diagnose,
+  cleanupFallbackInstallers,
   downloadPage,
   status: () => state,
 };

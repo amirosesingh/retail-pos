@@ -68,7 +68,7 @@ describe("desktop release configuration", () => {
     expect(updater).toContain("if (fallbackPromise) return fallbackPromise");
     const main = read("electron/main.cjs");
     expect(main).toContain('code: "EACTIVE_SHIFT"');
-    expect(main).toContain('(shift) => !shift.closed_at');
+    expect(main).toContain('match: { closed_at: null }, limit: 1');
     expect(main).not.toContain('["", "ACTIVE", "OPEN"].includes(state)');
   });
 

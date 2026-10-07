@@ -39,7 +39,7 @@ class DatabaseService {
   async health() {
     if (!(this.manager.isConnected?.() ?? this.manager.pool)) return { ok: false, connected: false, state: this.snapshot() };
     try { const started=Date.now(); const result=await this.manager.pool.request().query("SELECT DB_NAME() database_name, CHANGE_TRACKING_CURRENT_VERSION() change_tracking_version;"); return { ok:true,connected:true,latencyMs:Date.now()-started,...result.recordset?.[0],state:this.snapshot() }; }
-    catch(error){const safe=safeError(error);this.validated=false;this.transition("enabled_degraded",safe);return {...safe,connected:false,state:this.snapshot()};}
+    catch(error){const safe=safeError(error);this.manager.markFaulted?.();this.validated=false;this.transition("enabled_degraded",safe);return {...safe,connected:false,state:this.snapshot()};}
   }
   async schemaStatus() { const profile=this.secureConfig.credentials(); return profile ? validateDatabase(this.manager,profile) : {ok:false,code:"EDATABASE",error:"No database is configured."}; }
   async validate(profile) {

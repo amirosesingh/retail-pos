@@ -11,7 +11,10 @@ const ipcGuard = require("../../../electron/ipc-guard.cjs");
 
 const DATABASE_ADMIN_CHANNELS = [
   "database:set-enabled",
+  "database:authorize-settings",
   "database:migrate",
+  "database:migrate-saved",
+  "database:provision-connect",
   "database:save-connect",
   "database:disconnect",
   "database:remove-configuration",
@@ -20,7 +23,10 @@ const DATABASE_ADMIN_CHANNELS = [
 ] as const;
 
 describe("local SQL Server discovery privilege", () => {
-  beforeEach(() => adminSession.clear());
+  beforeEach(() => {
+    adminSession.clear();
+    adminSession.clearRecovery();
+  });
 
   it("explicitly classifies discovery as open", () => {
     expect(privilege.CHANNEL_LEVELS["database:list-servers"]).toBe(privilege.OPEN);
@@ -75,6 +81,34 @@ describe("local SQL Server discovery privilege", () => {
       expect(privilege.CHANNEL_LEVELS[channel], channel).toBe(privilege.ADMIN);
       expect(privilege.allowed(channel), channel).toBe(false);
     }
+  });
+
+  it("allows the complete SQL provisioning path only during first run", () => {
+    const ipcMain = { handle: vi.fn() };
+    privilege.install(ipcMain, { isFirstRun: () => true });
+    for (const channel of [
+      "database:set-enabled",
+      "database:authorize-settings",
+      "database:migrate",
+      "database:migrate-saved",
+      "database:provision-connect",
+      "database:save-connect",
+    ]) expect(privilege.allowed(channel), channel).toBe(true);
+    privilege.install(ipcMain, { isFirstRun: () => false });
+    expect(privilege.allowed("database:provision-connect")).toBe(false);
+  });
+
+  it("allows Emergency Access to repair or replace the saved SQL connection", () => {
+    adminSession.grantRecovery();
+    for (const channel of [
+      "database:authorize-settings",
+      "database:migrate-saved",
+      "database:provision-connect",
+      "database:save-connect",
+      "database:disconnect",
+      "database:remove-configuration",
+    ]) expect(privilege.allowed(channel), channel).toBe(true);
+    adminSession.clearRecovery();
   });
 
   it("uses only the verified POS account permission instead of a desktop role", () => {

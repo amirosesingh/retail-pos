@@ -41,6 +41,15 @@ const APPEND_ONLY = new Set([
   "shift_reconciliations",
   "authorization_action_history",
 ]);
+const ORGANIZATION_SHARED = new Set([
+  "stores",
+  "store_groups",
+  "coupon_campaigns",
+  "payment_types",
+  "staff_roles",
+  "members",
+  "membership_tiers",
+]);
 
 function sqlType(declaration) {
   const d = declaration.toLowerCase();
@@ -87,9 +96,7 @@ function unicodeSqlLiteral(statement) {
 const tables = report.tables.map((table, tableIndex) => ({
   cloudTable: table.name,
   sqlServerTable: table.name,
-  scope: /^(?:stores|store_groups|coupon_campaigns|payment_types|staff_roles)$/.test(table.name)
-    ? "organization"
-    : "branch",
+  scope: ORGANIZATION_SHARED.has(table.name) ? "organization" : "branch",
   direction: PULL_ONLY.has(table.name) ? "pull" : "bidirectional",
   retentionClass:
     /^(?:sales|sale_items|payment_transactions|refunds|audit_logs|item_activity_logs|shift_notifications)/.test(

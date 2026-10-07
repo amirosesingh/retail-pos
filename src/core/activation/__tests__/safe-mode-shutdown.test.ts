@@ -51,6 +51,7 @@ describe("desktop safe mode", () => {
       "if (!quitting && !safeMode && !intentionallyStoppedServers.has(child))",
     );
     expect(main).toContain('enterSafeMode("The local app server stopped")');
-    expect(main).toContain("intentionallyStoppedServers.add(serverProcess)");
+    expect(main).toContain("intentionallyStoppedServers.add(child)");
+    expect(main).toContain("await stopAppServer()");
   });
 });

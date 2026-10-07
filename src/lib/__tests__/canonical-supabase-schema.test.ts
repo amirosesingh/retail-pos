@@ -125,6 +125,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261006053000_fix_empty_store_edge_cases.sql",
       "supabase/migrations/20261006070000_start_product_row_versions_at_one.sql",
       "supabase/migrations/20261006073000_restore_staff_login_privileges.sql",
+      "supabase/migrations/20261007000955_harden_membership_sync_and_installer.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -151,6 +152,38 @@ describe("canonical Supabase SQL", () => {
     expect(read("supabase/schema.sql")).toContain(
       "FOR EACH STATEMENT EXECUTE FUNCTION public.sync_feed_audit_logs_insert()",
     );
+  });
+
+  it("keeps membership-owned identity fields out of terminal member upserts", () => {
+    for (const sql of [
+      read("supabase/schema.sql"),
+      read("supabase/migrations/20261007000955_harden_membership_sync_and_installer.sql"),
+    ]) {
+      const memberApply = sql.match(
+        /(?:CREATE OR REPLACE FUNCTION|create or replace function) public\.sync_apply_members[\s\S]*?(?:REVOKE ALL ON FUNCTION|revoke all on function) public\.sync_apply_members/,
+      )?.[0] ?? "";
+      expect(memberApply).toContain("loyalty_points");
+      expect(memberApply).not.toContain("membership_member_id");
+      expect(memberApply).not.toContain("membership_revision");
+      expect(memberApply).not.toContain("verified_channel");
+    }
+  });
+
+  it("installs the membership directory gateway in migrations and the fresh-project installer", () => {
+    for (const sql of [
+      read("supabase/schema.sql"),
+      read("supabase/migrations/20261007000955_harden_membership_sync_and_installer.sql"),
+    ]) {
+      expect(sql.toLowerCase()).toContain("function public.membership_directory_apply(p_rows jsonb)");
+      expect(sql.toLowerCase()).toContain("grant execute on function public.membership_directory_apply(jsonb) to service_role");
+      expect(sql.toLowerCase()).toContain("membership_service_required");
+      expect(sql.toLowerCase()).toMatch(
+        /member\.id = source\.id[\s\S]{0,120}member\.membership_member_id is null[\s\S]{0,120}member\.membership_member_id = source\.id/,
+      );
+      expect(sql.toLowerCase()).toMatch(
+        /member\.member_code = source\.member_code[\s\S]{0,120}member\.membership_member_id is null[\s\S]{0,120}member\.membership_member_id = source\.id/,
+      );
+    }
   });
 
   it("builds production foreign-key indexes without blocking writes", () => {

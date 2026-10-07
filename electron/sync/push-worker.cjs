@@ -85,6 +85,7 @@ class PushWorker {
       try {
         return await work();
       } catch (error) {
+        if (error?.code === "GOVERNANCE_AUTH_REQUIRED") throw error;
         if (attempt === 5) throw error;
         await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt, { maxMs: 5000 })));
       }

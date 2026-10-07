@@ -130,6 +130,23 @@ export const IMPORT_HEADERS = [
 /** Default rows per save. Small enough to stay responsive, large enough to be quick. */
 export const DEFAULT_BATCH_SIZE = 200;
 
+/** Failures that affect the whole import rather than one malformed row. */
+export function isSystemicImportFailure(error: unknown): boolean {
+  const value = error as { message?: string; code?: string; status?: number } | undefined;
+  const message = String(value?.message ?? error ?? "").toLowerCase();
+  const code = String(value?.code ?? "").toUpperCase();
+  const status = Number(value?.status ?? 0);
+  return (
+    status === 401 ||
+    status === 403 ||
+    code === "42501" ||
+    code === "PGRST301" ||
+    /jwt|session expired|not signed in|authentication|permission denied|row-level security/.test(message) ||
+    /failed to fetch|network|offline|timeout|timed out|econn|connection lost/.test(message) ||
+    /sql server.*(?:unavailable|not connected)|database bridge unavailable|local transaction storage unavailable/.test(message)
+  );
+}
+
 /**
  * Save a batch atomically, then isolate rejected rows by bisecting the batch.
  * This keeps one invalid database row from discarding every valid neighbour.
@@ -146,7 +163,7 @@ export async function persistBatchWithIsolation<T>(
     await save(rows);
     await onSaved(rows);
   } catch (error) {
-    if (isolateFailures && rows.length > 1) {
+    if (isolateFailures && rows.length > 1 && !isSystemicImportFailure(error)) {
       const middle = Math.ceil(rows.length / 2);
       await persistBatchWithIsolation(rows.slice(0, middle), save, onSaved, onFailed, true);
       await persistBatchWithIsolation(rows.slice(middle), save, onSaved, onFailed, true);
@@ -497,9 +514,16 @@ export type ImportProductsResult = {
 
 /** Plain wording for why a batch would not save. */
 export function importFailureReason(error: unknown): string {
-  const message = String((error as { message?: string })?.message ?? error ?? "").trim();
+  const value = error as { message?: string; code?: string; status?: number } | undefined;
+  const message = String(value?.message ?? error ?? "").trim();
   const lower = message.toLowerCase();
   if (!message) return "The database refused the batch without saying why";
+  if (
+    Number(value?.status ?? 0) === 401 ||
+    String(value?.code ?? "").toUpperCase() === "PGRST301" ||
+    /jwt|session expired|not signed in|authentication/.test(lower)
+  )
+    return "Your sign-in expired while saving. Sign in again, then resume this import";
   if (lower.includes("permission") || lower.includes("row-level security"))
     return "Not allowed to add products here";
   if (lower.includes("duplicate key") || lower.includes("unique"))

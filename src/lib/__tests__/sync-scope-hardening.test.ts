@@ -304,6 +304,73 @@ describe("scoped SQL Server synchronization", () => {
     expect(queries[0]).toContain("[row_version]");
   });
 
+  it("checks protected member updates even when the match is not the member id", async () => {
+    const inputs: Record<string, unknown> = {};
+    const query = vi.fn(async (_sql: string) => ({
+      recordset: [{ loyalty_points: 10, total_spent: 50, tier_id: "silver" }],
+    }));
+    const request = {
+      input: vi.fn((name: string, value: unknown) => {
+        inputs[name] = value;
+        return request;
+      }),
+      query,
+    };
+    const manager = {
+      sql: () => ({ Request: class { constructor(_tx: unknown) { return request; } } }),
+    };
+    const { OperationsRepository } = require("../../../electron/db/repositories/operations.cjs");
+    const repository = new OperationsRepository(manager, { tables: [] });
+
+    await expect(repository.assertMemberPermissions(
+      {},
+      { kind: "update", table: "members", match: { member_code: "M-1" }, values: { loyalty_points: 11 } },
+      { enforcePermissions: true, permissions: { can_add_member: true } },
+    )).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(inputs.member_match_0).toBe("M-1");
+    expect(query.mock.calls[0][0]).toContain("[member_code]=@member_match_0");
+
+    await expect(repository.assertMemberPermissions(
+      {},
+      { kind: "update", table: "members", match: { member_code: "M-1" }, values: { loyalty_points: 10 } },
+      { enforcePermissions: true, permissions: { can_add_member: true } },
+    )).resolves.toBeUndefined();
+  });
+
+  it("reads every page of a local catalogue snapshot in one serializable transaction", async () => {
+    const transaction = { begin: vi.fn(), commit: vi.fn(), rollback: vi.fn() };
+    const query = vi.fn(async (_sql: string) => ({ recordset: [{ id: "P1", deleted_at: null }] }));
+    const request = {
+      input: vi.fn(() => request),
+      query,
+    };
+    class Transaction { constructor(_pool: unknown) { return transaction; } }
+    class Request { constructor(received: unknown) { expect(received).toBe(transaction); return request; } }
+    const manager = {
+      pool: {},
+      sql: () => ({ Transaction, Request, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }),
+    };
+    const registry = { tables: [{
+      cloudTable: "products",
+      sqlServerTable: "products",
+      columns: [
+        { cloudColumn: "id", sqlServerColumn: "id", primaryKey: true },
+        { cloudColumn: "deleted_at", sqlServerColumn: "deleted_at", primaryKey: false },
+        { cloudColumn: "owner_store_id", sqlServerColumn: "owner_store_id", primaryKey: false },
+      ],
+    }] };
+    const { OperationsRepository } = require("../../../electron/db/repositories/operations.cjs");
+    const repository = new OperationsRepository(manager, registry);
+
+    await expect(repository.snapshotRows("products", "B1")).resolves.toEqual([
+      { id: "P1", deleted_at: null },
+    ]);
+    expect(transaction.begin).toHaveBeenCalledWith(4);
+    expect(transaction.commit).toHaveBeenCalledOnce();
+    expect(transaction.rollback).not.toHaveBeenCalled();
+    expect(query.mock.calls[0][0]).toContain("deleted_at IS NULL");
+  });
+
   it("removes permissive settings and terminal command policies", () => {
     const migration = read("supabase/migrations/20260929062541_harden_scoped_settings_sync.sql");
     expect(migration).toContain("settings_scope_visible(scope,scope_id)");
