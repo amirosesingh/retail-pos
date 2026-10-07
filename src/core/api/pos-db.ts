@@ -3014,15 +3014,13 @@ export const db = {
   removeHeldOrder: (id: string) =>
     queue("Releasing held ticket", { kind: "delete", table: "held_orders", match: { id } }),
 
-  /** Every ticket still parked, newest first. */
-  async listHeldOrders() {
-    const { data, error } = await supabase
-      .from("held_orders")
-      .select("*")
-      .order("held_at", { ascending: false });
-    if (error) throw error;
-    return data ?? [];
-  },
+  /** Every ticket still parked for this branch, read through the active database route. */
+  listHeldOrders: (storeId?: string) =>
+    routedQuery("held_orders", {
+      ...(storeId ? { match: { store_id: storeId } } : {}),
+      orderBy: { column: "held_at", ascending: false },
+      limit: 2000,
+    }),
 
   /* ----------------------- stock adjustments ---------------------- */
 

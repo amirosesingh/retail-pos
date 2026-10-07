@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { closeCurrentCustomerDisplay } from "@/lib/customer-display";
+import {
+  closeCurrentCustomerDisplay,
+  closeCustomerDisplay,
+  DISPLAY_STORAGE_KEY,
+} from "@/lib/customer-display";
 
 describe("customer display window ownership", () => {
   afterEach(() => {
@@ -22,5 +26,17 @@ describe("customer display window ownership", () => {
     vi.stubGlobal("window", { pos: undefined, opener: null, close: vi.fn() });
 
     expect(closeCurrentCustomerDisplay()).toBe(false);
+  });
+
+  it("removes the last customer's display snapshot when the display closes", () => {
+    const removeItem = vi.fn();
+    vi.stubGlobal("BroadcastChannel", undefined);
+    vi.stubGlobal("window", {
+      localStorage: { setItem: vi.fn(), removeItem },
+    });
+
+    closeCustomerDisplay();
+
+    expect(removeItem).toHaveBeenCalledWith(DISPLAY_STORAGE_KEY);
   });
 });

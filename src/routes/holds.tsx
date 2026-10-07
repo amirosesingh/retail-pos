@@ -65,7 +65,7 @@ function HoldTickets() {
   const { user, can } = useAuth();
   const { requirePermission } = useUserPermissions();
   const navigate = useNavigate();
-  const held = useHeldOrders();
+  const held = useHeldOrders(currentStore.id);
   const trail = useTicketTrail();
   const [openId, setOpenId] = useState<string | null>(null);
   const [approvalRequests, setApprovalRequests] = useState<AuthorizationRequest[]>([]);
@@ -124,7 +124,12 @@ function HoldTickets() {
         return;
       }
     }
-    removeHeldOrder(order.id);
+    try {
+      await removeHeldOrder(order.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The held ticket could not be removed");
+      return;
+    }
     logTicketEvent(TICKET_ACTIONS.discarded, {
       holdRef: order.id,
       lines: order.lines.length,

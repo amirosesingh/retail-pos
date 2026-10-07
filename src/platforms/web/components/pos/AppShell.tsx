@@ -527,7 +527,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               </header>
 
               {/* Desktop header: system controls and signed-in operator profile. */}
-              <header className="sticky top-0 z-30 hidden shrink-0 items-center gap-3 border-b border-border bg-sidebar px-4 py-2 md:flex">
+              <header className="sticky top-0 z-30 hidden shrink-0 items-center gap-2.5 border-b border-border bg-sidebar px-4 py-1.5 md:flex">
                 <div className="ml-auto" />
                 <span className="hidden xl:inline-flex">
                   <LiveClock />

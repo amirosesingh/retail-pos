@@ -331,10 +331,11 @@ function ReceiptVault() {
       setOlder((rows) =>
         rows.map((row) => (row.id === selected.id ? { ...row, refunded: true } : row)),
       );
-      holdCancelledBill({
+      await holdCancelledBill({
         receiptNo: selected.receiptNo,
         total: selected.total,
         lines: selected.lines,
+        storeId: selected.storeId,
       });
       if (cancelMode === "correct") {
         const completedAudit = {

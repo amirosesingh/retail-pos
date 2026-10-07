@@ -218,7 +218,9 @@ function Register() {
    */
   const ticketSnapshot = useRef<() => TicketSnapshot | null>(() => null);
   /** Parks the open ticket; filled in once the held-orders hook exists. */
-  const parkTicket = useRef<((id?: string) => { id: string } | null) | null>(null);
+  const parkTicket = useRef<
+    ((id?: string) => Promise<{ id: string } | null>) | null
+  >(null);
   const appliedApprovalRef = useRef<AppliedApproval | null>(null);
   const revokeApprovalDiscountRef = useRef<(approval: AppliedApproval) => void>(() => undefined);
   const [appliedApproval, setAppliedApproval] = useState<AppliedApproval | null>(null);
@@ -388,9 +390,9 @@ function Register() {
     // A queued action must not hold the till hostage: the ticket is parked
     // exactly as the approver sees it and the next customer can be served.
     if (res.pendingRequestId) {
-      const parked = parkTicket.current?.(heldOrderId);
+      const parked = await parkTicket.current?.(heldOrderId);
       if (parked) {
-        markHeldWaiting(
+        await markHeldWaiting(
           parked.id,
           res.pendingRequestId,
           snapshot ? snapshotFingerprint(snapshot) : undefined,
@@ -1957,15 +1959,17 @@ function Register() {
                 {member.code} · {member.tier} · {member.points} pts · {member.phone}
               </p>
             </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="size-7 shrink-0"
-              aria-label="Purchase history"
-              onClick={() => setHistoryMemberId(memberId)}
-            >
-              <History className="size-3.5" />
-            </Button>
+            {can("can_view_member_history") && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7 shrink-0"
+                aria-label="Purchase history"
+                onClick={() => setHistoryMemberId(memberId)}
+              >
+                <History className="size-3.5" />
+              </Button>
+            )}
             <Button
               size="icon"
               variant="ghost"
@@ -2000,14 +2004,16 @@ function Register() {
                   className="h-10 pl-8 text-sm"
                 />
               </div>
-              <Button
-                variant="outline"
-                className="h-10 shrink-0"
-                onClick={() => setQuickMemberOpen(true)}
-              >
-                <UserPlus className="size-4" />
-                <span className="hidden sm:inline">New member</span>
-              </Button>
+              {can("can_add_member") && (
+                <Button
+                  variant="outline"
+                  className="h-10 shrink-0"
+                  onClick={() => setQuickMemberOpen(true)}
+                >
+                  <UserPlus className="size-4" />
+                  <span className="hidden sm:inline">New member</span>
+                </Button>
+              )}
             </div>
             <div className="mt-2 space-y-1">
               {memberMatches.map((m) => (
@@ -2021,14 +2027,16 @@ function Register() {
                       {m.phone} · {m.points} pts · {m.tier}
                     </p>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-[11px]"
-                    onClick={() => setHistoryMemberId(m.id)}
-                  >
-                    <History className="size-3" /> History
-                  </Button>
+                  {can("can_view_member_history") && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-[11px]"
+                      onClick={() => setHistoryMemberId(m.id)}
+                    >
+                      <History className="size-3" /> History
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -2056,13 +2064,15 @@ function Register() {
                     >
                       <Search className="size-3" /> Search again
                     </Button>
-                    <Button
-                      size="sm"
-                      className="h-7 text-[11px]"
-                      onClick={() => setQuickMemberOpen(true)}
-                    >
-                      <UserPlus className="size-3" /> Enroll new member
-                    </Button>
+                    {can("can_add_member") && (
+                      <Button
+                        size="sm"
+                        className="h-7 text-[11px]"
+                        onClick={() => setQuickMemberOpen(true)}
+                      >
+                        <UserPlus className="size-3" /> Enroll new member
+                      </Button>
+                    )}
                   </div>
                 </div>
               )}
@@ -2399,7 +2409,7 @@ function Register() {
   );
 
   /** Always on the right panel, cart empty or not. */
-  const atom_actBooking = (
+  const atom_actBooking = can("can_manage_bookings") ? (
     <div className="relative flex h-full min-w-0 items-center px-1">
       {activeBookingCount > 0 && (
         <Badge className="absolute right-2 top-0 z-10 h-5 min-w-5 justify-center px-1 text-[10px]">
@@ -2416,7 +2426,7 @@ function Register() {
         onClick={() => setBookingHubOpen(true)}
       />
     </div>
-  );
+  ) : null;
 
   const atom_reprintDeck = lastSale ? (
     <div className="flex flex-wrap items-center gap-2 px-3 py-2">
@@ -2444,38 +2454,42 @@ function Register() {
           }}
         />
       )}
-      <ActionButton
-        layout="inline"
-        variant="outline"
-        size="sm"
-        label="Gift"
-        icon={<Gift className="size-4" />}
-        disabled={tillLocked}
-        disabledReason={tillLocked ? lockedReason : undefined}
-        onClick={() => {
-          printSaleReceipt(lastSale, null, "gift");
-          logger.log("print", "Gift receipt printed", "register", {
-            saleId: lastSale.id,
-            receiptNo: lastSale.receiptNo,
-          });
-        }}
-      />
-      <ActionButton
-        layout="inline"
-        variant="outline"
-        size="sm"
-        label="Kitchen"
-        icon={<ChefHat className="size-4" />}
-        disabled={tillLocked}
-        disabledReason={tillLocked ? lockedReason : undefined}
-        onClick={() => {
-          printSaleReceipt(lastSale, null, "kitchen");
-          logger.log("print", "Kitchen receipt printed", "register", {
-            saleId: lastSale.id,
-            receiptNo: lastSale.receiptNo,
-          });
-        }}
-      />
+      {can("can_reprint_bill") && (
+        <>
+          <ActionButton
+            layout="inline"
+            variant="outline"
+            size="sm"
+            label="Gift"
+            icon={<Gift className="size-4" />}
+            disabled={tillLocked}
+            disabledReason={tillLocked ? lockedReason : undefined}
+            onClick={() => {
+              printSaleReceipt(lastSale, null, "gift");
+              logger.log("print", "Gift receipt printed", "register", {
+                saleId: lastSale.id,
+                receiptNo: lastSale.receiptNo,
+              });
+            }}
+          />
+          <ActionButton
+            layout="inline"
+            variant="outline"
+            size="sm"
+            label="Kitchen"
+            icon={<ChefHat className="size-4" />}
+            disabled={tillLocked}
+            disabledReason={tillLocked ? lockedReason : undefined}
+            onClick={() => {
+              printSaleReceipt(lastSale, null, "kitchen");
+              logger.log("print", "Kitchen receipt printed", "register", {
+                saleId: lastSale.id,
+                receiptNo: lastSale.receiptNo,
+              });
+            }}
+          />
+        </>
+      )}
       {state.settings.whatsapp.enabled && can("can_send_whatsapp_bill") && (
         <div className="flex flex-wrap items-center gap-2">
           <Input
@@ -2523,7 +2537,7 @@ function Register() {
           icon={<PauseCircle className="size-4" />}
           disabled={!lines.length || tillLocked}
           disabledReason={tillLocked ? lockedReason : undefined}
-          onClick={() => holdOrder()}
+          onClick={() => void holdOrder()}
         />
       </div>
     ) : null;
@@ -2660,17 +2674,28 @@ function Register() {
     "cart.barcode": () =>
       document.querySelector<HTMLInputElement>("[data-scan-focus] input")?.focus(),
     "hold.new": () => {
-      if (can("can_hold_cart")) holdOrder();
+      if (can("can_hold_cart")) void holdOrder();
     },
     "void.cart": () => void clearCart(),
-    "book.hub": () => setBookingHubOpen(true),
+    "book.hub": () => {
+      if (can("can_manage_bookings")) setBookingHubOpen(true);
+    },
     "shift.open": () => setOpenShiftOpen(true),
     "shift.close": () => setCloseShiftOpen(true),
-    "drawer.open": () => setNoSaleOpen(true),
-    "member.add": () => setQuickMemberOpen(true),
+    "drawer.open": () => {
+      void requirePermission("can_open_drawer").then((approved) => {
+        if (!approved) return;
+        setNoSaleNote("");
+        setNoSaleReason("");
+        setNoSaleOpen(true);
+      });
+    },
+    "member.add": () => {
+      if (can("can_add_member")) setQuickMemberOpen(true);
+    },
     "product.search": () => setCatalogOpen(true),
     "exchange.open": () => void beginExchange(),
-    ...(lastSale
+    ...(lastSale && can("can_reprint_bill")
       ? {
           "receipt.reprint": () =>
             printSaleReceipt(
@@ -3769,8 +3794,10 @@ function Register() {
                 <Label>Customer</Label>
                 <button
                   type="button"
+                  disabled={!can("can_add_member")}
                   className="text-[11px] text-primary hover:underline"
                   onClick={() => {
+                    if (!can("can_add_member")) return;
                     setMemberQuery(bookMemberQuery);
                     setQuickMemberOpen(true);
                   }}

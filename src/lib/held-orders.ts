@@ -48,9 +48,48 @@ export type HeldOrder = {
 
 const KEY = "pos.held.orders";
 const EVENT = "pos:held-orders-changed";
+const isElectronRenderer = () =>
+  typeof window !== "undefined" && !!(window as unknown as { pos?: unknown }).pos;
+let electronOrders: HeldOrder[] = [];
+
+const parseJson = <T,>(value: unknown, fallback: T): T => {
+  if (value == null) return fallback;
+  if (typeof value !== "string") return value as T;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+export function rowToHeldOrder(row: Record<string, unknown>): HeldOrder {
+  return {
+    id: String(row.id ?? ""),
+    label: String(row.label ?? "Held ticket"),
+    total: Number(row.total ?? 0),
+    lines: parseJson<CartLine[]>(row.lines, []),
+    heldAt: String(row.held_at ?? new Date().toISOString()),
+    storeId: row.store_id == null ? undefined : String(row.store_id),
+    heldBy: row.held_by == null ? undefined : String(row.held_by),
+    billNo: row.bill_no == null ? undefined : String(row.bill_no),
+    cartDiscount: Number(row.cart_discount ?? 0),
+    cartDiscountType: row.cart_discount_type === "percent" ? "percent" : "amount",
+    exchangeRef: row.exchange_ref == null ? null : String(row.exchange_ref),
+    memberId: row.member_id == null ? null : String(row.member_id),
+    memberName: row.member_name == null ? null : String(row.member_name),
+    coupon: parseJson(row.coupon, null),
+    note: String(row.note ?? ""),
+    cancelledFrom: row.cancelled_from == null ? undefined : String(row.cancelled_from),
+    status:
+      row.status === "waiting" || row.status === "ready" ? row.status : "held",
+    pendingRequestId:
+      row.pending_request_id == null ? null : String(row.pending_request_id),
+  };
+}
 
 export function readHeldOrders(): HeldOrder[] {
   if (typeof window === "undefined") return [];
+  if (isElectronRenderer()) return electronOrders;
   try {
     const raw = readBusinessValue(KEY);
     const parsed = raw ? JSON.parse(raw) : [];
@@ -62,6 +101,7 @@ export function readHeldOrders(): HeldOrder[] {
 
 function write(orders: HeldOrder[]) {
   if (typeof window === "undefined") return;
+  if (isElectronRenderer()) electronOrders = orders;
   try {
     writeBusinessValue(KEY, JSON.stringify(orders));
   } catch {
@@ -74,14 +114,14 @@ export function setHeldOrders(update: (current: HeldOrder[]) => HeldOrder[]) {
   write(update(readHeldOrders()));
 }
 
-export function addHeldOrder(order: HeldOrder) {
-  setHeldOrders((hs) => [...hs, order]);
-  void persistHeldOrder(order);
+export async function addHeldOrder(order: HeldOrder) {
+  await persistHeldOrder(order);
+  setHeldOrders((hs) => [...hs.filter((held) => held.id !== order.id), order]);
 }
 
-export function removeHeldOrder(id: string) {
+export async function removeHeldOrder(id: string) {
+  await db.removeHeldOrder(id);
   setHeldOrders((hs) => hs.filter((h) => h.id !== id));
-  db.removeHeldOrder(id);
 }
 
 /**
@@ -112,16 +152,12 @@ export function persistHeldOrder(order: HeldOrder) {
   });
 }
 
-export function updateHeldOrder(id: string, patch: Partial<HeldOrder>) {
-  let updated: HeldOrder | undefined;
-  setHeldOrders((hs) =>
-    hs.map((h) => {
-      if (h.id !== id) return h;
-      updated = { ...h, ...patch };
-      return updated;
-    }),
-  );
-  if (updated) void persistHeldOrder(updated);
+export async function updateHeldOrder(id: string, patch: Partial<HeldOrder>) {
+  const current = readHeldOrders().find((held) => held.id === id);
+  if (!current) return;
+  const updated = { ...current, ...patch };
+  await persistHeldOrder(updated);
+  setHeldOrders((orders) => orders.map((held) => (held.id === id ? updated : held)));
 }
 
 /** Park a cancelled bill so the till can correct and re-ring it. */
@@ -129,31 +165,49 @@ export function holdCancelledBill(input: {
   receiptNo: string;
   total: number;
   lines: CartLine[];
-}): HeldOrder {
+  storeId: string;
+}): Promise<HeldOrder> {
   const order: HeldOrder = {
-    id: `C${Date.now()}`,
+    id: `C${crypto.randomUUID()}`,
     label: `Cancelled ${input.receiptNo} · ${input.lines.length} item(s)`,
     total: input.total,
     lines: input.lines.filter((l) => !l.credit),
     heldAt: new Date().toISOString(),
     cancelledFrom: input.receiptNo,
+    storeId: input.storeId,
   };
-  addHeldOrder(order);
-  return order;
+  return addHeldOrder(order).then(() => order);
 }
 
-export function useHeldOrders(): HeldOrder[] {
+export function useHeldOrders(storeId?: string): HeldOrder[] {
   const [orders, setOrders] = useState<HeldOrder[]>(() => readHeldOrders());
   useEffect(() => {
-    const sync = () => setOrders(readHeldOrders());
-    sync();
-    window.addEventListener(EVENT, sync);
-    window.addEventListener("storage", sync);
-    return () => {
-      window.removeEventListener(EVENT, sync);
-      window.removeEventListener("storage", sync);
+    let active = true;
+    const sync = async () => {
+      if (isElectronRenderer()) {
+        try {
+          const rows = await db.listHeldOrders(storeId);
+          if (!active) return;
+          electronOrders = rows.map((row) => rowToHeldOrder(row as Record<string, unknown>));
+        } catch {
+          // Keep the last confirmed SQL result visible while connection recovery runs.
+        }
+      }
+      if (active) {
+        const current = readHeldOrders();
+        setOrders(storeId ? current.filter((order) => order.storeId === storeId) : current);
+      }
     };
-  }, []);
+    void sync();
+    const refresh = () => void sync();
+    window.addEventListener(EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener(EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, [storeId]);
   return orders;
 }
 
@@ -164,7 +218,7 @@ export function useHeldOrders(): HeldOrder[] {
  * the approver saw it, bound to the request that will decide it.
  */
 export function markHeldWaiting(id: string, requestId: string, snapshotHash?: string) {
-  updateHeldOrder(id, {
+  return updateHeldOrder(id, {
     status: "waiting",
     pendingRequestId: requestId,
     approvalSnapshotHash: snapshotHash ?? null,
@@ -173,12 +227,12 @@ export function markHeldWaiting(id: string, requestId: string, snapshotHash?: st
 
 /** The decision has arrived — the ticket can be picked up again. */
 export function markHeldReady(id: string) {
-  updateHeldOrder(id, { status: "ready" });
+  return updateHeldOrder(id, { status: "ready" });
 }
 
 /** Back to an ordinary parked ticket, with no request attached. */
 export function clearHeldPending(id: string) {
-  updateHeldOrder(id, {
+  return updateHeldOrder(id, {
     status: "held",
     pendingRequestId: null,
     approvalSnapshotHash: null,

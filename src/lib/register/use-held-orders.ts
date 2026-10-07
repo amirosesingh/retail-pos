@@ -8,6 +8,7 @@
  */
 import { toast } from "sonner";
 import { useRef } from "react";
+import { notifyError } from "@/lib/notify";
 import {
   addHeldOrder,
   clearHeldPending,
@@ -15,7 +16,7 @@ import {
   useHeldOrders,
   type HeldOrder,
 } from "@/lib/held-orders";
-import { claimApproval } from "@/lib/approval-centre";
+import { claimApproval, loadApprovalCentre } from "@/lib/approval-centre";
 import type { TicketSnapshot } from "@/lib/ticket-snapshot";
 import type { AuthPayload } from "@/lib/authorization";
 import { TICKET_ACTIONS, logTicketEvent } from "@/lib/ticket-audit";
@@ -74,16 +75,19 @@ type HeldOrdersDeps = {
 };
 
 export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
-  const held = useHeldOrders();
+  const held = useHeldOrders(deps.storeId);
   // Route effects can run twice in React development mode, and a fast double
   // click can do the same in production. Claiming is a one-time server write,
   // so collapse concurrent attempts for the same parked ticket.
   const resuming = useRef(new Set<string>());
+  const holding = useRef(false);
 
   /** Park the open ticket with everything on it, so reopening is lossless. */
-  function holdOrder(silent = false, requestedId?: string) {
+  async function holdOrder(silent = false, requestedId?: string) {
     const { lines, total, storeId, memberId, memberName } = deps;
-    if (!lines.length) return null;
+    if (!lines.length || holding.current) return null;
+    holding.current = true;
+    try {
     const cleaned = deps.activeApproval
       ? removeApprovedDiscount(
           {
@@ -99,7 +103,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       ? (deps.calculateTotal?.(cleaned.lines, cleaned.cartDiscount, cleaned.cartDiscountType) ??
         total)
       : total;
-    const id = requestedId ?? `H${Date.now()}`;
+    const id = requestedId ?? `H${crypto.randomUUID()}`;
     const order: HeldOrder = {
       id,
       label: `${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${snapshot.length} item(s)`,
@@ -116,7 +120,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       memberName,
       coupon: deps.coupon,
     };
-    addHeldOrder(order);
+    await addHeldOrder(order);
     logTicketEvent(TICKET_ACTIONS.held, {
       holdRef: id,
       lines: snapshot.length,
@@ -129,6 +133,12 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
     deps.resetCart("held");
     if (!silent) toast.success("Order held — reopen it from Hold tickets");
     return order;
+    } catch (error) {
+      notifyError(error, "Holding the ticket");
+      return null;
+    } finally {
+      holding.current = false;
+    }
   }
 
   /** Reopen a parked ticket. An open ticket is parked first, so the cashier
@@ -147,13 +157,18 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       let restoredApproval: Parameters<NonNullable<HeldOrdersDeps["onApprovalClaimed"]>>[0] | null =
         null;
       if (order.pendingRequestId) {
-        if (order.status === "waiting") {
+        const centre = await loadApprovalCentre(deps.storeId);
+        const request = [...centre.waiting, ...centre.ready, ...centre.history].find(
+          (candidate) => candidate.id === order.pendingRequestId,
+        );
+        if (order.status === "waiting" && (!request || request.status === "pending")) {
           toast.info("Still waiting for a decision on this ticket");
           return;
         }
+        const storedSnapshotHash = order.approvalSnapshotHash ?? undefined;
         const claimed = await claimApproval(
           order.pendingRequestId,
-          order.approvalSnapshotHash ?? undefined,
+          storedSnapshotHash ?? request?.snapshotHash ?? undefined,
         ).catch(() => null);
         if (!claimed || !claimed.ok) {
           toast.error(
@@ -163,7 +178,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
           return;
         }
         if (claimed.status !== "approved" || !claimed.grantToken) {
-          clearHeldPending(order.id);
+          await clearHeldPending(order.id);
           toast.warning(
             `The request was ${claimed.status}; the restricted change was not applied.`,
           );
@@ -182,7 +197,8 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
           };
         }
       }
-      const parked = deps.lines.length ? holdOrder(true) : null;
+      const parked = deps.lines.length ? await holdOrder(true) : null;
+      if (deps.lines.length && !parked) return;
       deps.onApprovalCleared?.();
       const approvedDiscount = restoredApproval
         ? applyApprovedDiscount(order, restoredApproval)
@@ -191,6 +207,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
             cartDiscount: order.cartDiscount ?? 0,
             cartDiscountType: order.cartDiscountType ?? ("amount" as DiscountType),
           };
+      await removeHeldOrder(id);
       deps.setLines(approvedDiscount.lines);
       deps.setCartDiscount(approvedDiscount.cartDiscount);
       deps.setCartDiscountType(approvedDiscount.cartDiscountType);
@@ -199,7 +216,6 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       deps.setCoupon((order.coupon as CartCoupon | null) ?? null);
       deps.setBillNo(order.billNo ?? null);
       if (restoredApproval) deps.onApprovalClaimed?.(restoredApproval);
-      removeHeldOrder(id);
       logTicketEvent(parked ? TICKET_ACTIONS.switched : TICKET_ACTIONS.resumed, {
         holdRef: order.id,
         parkedRef: parked?.id ?? null,
@@ -213,6 +229,8 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       toast.success(
         parked ? "Switched ticket — the previous one is on hold" : "Held order resumed",
       );
+    } catch (error) {
+      notifyError(error, "Reopening the held ticket");
     } finally {
       resuming.current.delete(id);
     }

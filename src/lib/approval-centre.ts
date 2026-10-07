@@ -66,7 +66,7 @@ export async function loadApprovalCentre(storeId?: string | null): Promise<Centr
   for (const r of [...view.ready, ...view.history]) {
     if (r.status === "pending") continue;
     const heldId = r.heldOrderId ?? heldOrderForRequest(r.id)?.id;
-    if (heldId) markHeldReady(heldId);
+    if (heldId) void Promise.resolve(markHeldReady(heldId)).catch(() => undefined);
   }
   return { ...view, me: meId };
 }
