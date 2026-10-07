@@ -30,6 +30,26 @@ describe("shift sync boundaries", () => {
     );
   });
 
+  it("contains every asynchronous close action and always clears its busy state", () => {
+    const dialog = read("src/platforms/web/components/pos/ShiftCloseDialog.tsx");
+    expect(dialog).toContain("async function runBusy(");
+    expect(dialog).toContain("if (busyRef.current) return");
+    expect(dialog).toContain("busyRef.current = true");
+    expect(dialog).toContain("try {");
+    expect(dialog).toContain('notifyError(error, context)');
+    expect(dialog).toContain("finally {");
+    expect(dialog).toContain("busyRef.current = false");
+    expect(dialog).toContain("setBusy(false)");
+    for (const context of [
+      "Starting shift close",
+      "Submitting the shift cash count",
+      "Submitting the authorised recount",
+      "Approving the shift variance",
+    ]) {
+      expect(dialog).toContain(context);
+    }
+  });
+
   it("sends protected shift writes and summaries through the existing relay", () => {
     const engine = read("src/lib/sync-engine.ts");
     expect(engine).toContain('op.table === "shifts"');
