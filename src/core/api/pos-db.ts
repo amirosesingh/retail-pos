@@ -3017,12 +3017,21 @@ export const db = {
     queue("Releasing held ticket", { kind: "delete", table: "held_orders", match: { id } }),
 
   /** Every ticket still parked for this branch, read through the active database route. */
-  listHeldOrders: (storeId?: string) =>
-    routedQuery("held_orders", {
-      ...(storeId ? { match: { store_id: storeId } } : {}),
-      orderBy: { column: "held_at", ascending: false },
-      limit: 2000,
-    }),
+  async listHeldOrders(storeId?: string) {
+    const rows: Row[] = [];
+    const pageSize = 200;
+    for (let offset = 0; ; offset += pageSize) {
+      const page = await routedQuery("held_orders", {
+        ...(storeId ? { match: { store_id: storeId } } : {}),
+        orderBy: { column: "held_at", ascending: false },
+        limit: pageSize,
+        offset,
+      });
+      rows.push(...page);
+      if (page.length < pageSize) break;
+    }
+    return rows;
+  },
 
   /* ----------------------- stock adjustments ---------------------- */
 

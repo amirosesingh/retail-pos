@@ -1,5 +1,13 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { terminalId as posTerminalId } from "@/lib/activity-journal";
 import {
   maskSnapshotEmail,
@@ -1068,7 +1076,9 @@ function Register() {
               }
             : null,
         };
-  parkTicket.current = (id, pending) => holdOrder(true, id, pending);
+  useLayoutEffect(() => {
+    parkTicket.current = (id, pending) => holdOrder(true, id, pending);
+  }, [holdOrder]);
   // Capture the ticket immediately after the approved change is applied. Any
   // later line, quantity, member, coupon or total change voids the database
   // approval before its signed grant can be accepted again.
