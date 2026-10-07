@@ -50,6 +50,7 @@ const databaseManager = new ConnectionManager();
 const databaseService = new DatabaseService({
   secureConfig: databaseConfig,
   manager: databaseManager,
+  migrate: (profile) => applyMigrations(databaseManager, profile),
   log: diagnostics.logConnection,
   publish: (state) => {
     for (const win of BrowserWindow.getAllWindows()) win.webContents.send("database:state", state);

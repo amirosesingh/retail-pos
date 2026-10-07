@@ -1,5 +1,6 @@
 const { safeError } = require("./errors.cjs");
 const { loadRegistry } = require("./schema-registry.cjs");
+const { migrationFiles } = require("./migrations.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const normalizeSqlExpression = (value) => String(value ?? "").replace(/[()\s]/g, "").toLowerCase();
@@ -33,6 +34,14 @@ async function validateDatabase(manager, profile) {
         if (!actual.has(row.table_name)) actual.set(row.table_name, new Map());
         actual.get(row.table_name).set(row.column_name, row);
       }
+      const migrationHistoryPresent = actual.has("pos_schema_migrations");
+      const requiredMigrationVersions = migrationFiles().map((file) => Number(file.name.split("_", 1)[0]));
+      const installedMigrationVersions = migrationHistoryPresent
+        ? new Set((await pool.request().query("SELECT version FROM dbo.pos_schema_migrations;")).recordset?.map((row) => Number(row.version)) ?? [])
+        : new Set();
+      const missingMigrationVersions = migrationHistoryPresent
+        ? requiredMigrationVersions.filter((version) => !installedMigrationVersions.has(version))
+        : [];
       const keyRows = await pool.request().query(`SELECT t.name table_name,i.name index_name,i.is_primary_key,i.is_unique,i.has_filter,i.filter_definition,c.name column_name,ic.key_ordinal
         FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id JOIN sys.indexes i ON i.object_id=t.object_id AND i.index_id>0 AND i.is_hypothetical=0 AND i.is_disabled=0
         JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
@@ -53,6 +62,10 @@ async function validateDatabase(manager, profile) {
       const normalizeDefault=(value)=>{let text=String(value??"").trim().toLowerCase().replace(/\s+/g,"");while(text.startsWith("(")&&text.endsWith(")"))text=text.slice(1,-1);return text.replace(/^n'/,"'");};
       const details = [];
       const differences = [];
+      for (const version of missingMigrationVersions) differences.push({
+        kind: "migration", table: "pos_schema_migrations", object: String(version),
+        issue: "missing", expected: "applied", actual: "not applied",
+      });
       for (const table of registry.tables ?? []) {
         const columns = actual.get(table.sqlServerTable ?? table.name);
         const tableName=table.sqlServerTable??table.name;
@@ -84,11 +97,12 @@ async function validateDatabase(manager, profile) {
         writeTest = true;
       } finally { await transaction.rollback(); }
       if(!changeTracking.recordset?.length)differences.push({kind:"database",table:null,object:"change tracking",issue:"disabled",expected:"enabled",actual:"disabled"});
-      const ready = registry.tables?.length > 0 && missingTables.length === 0 && incompatibleColumns.length === 0 && differences.filter((item)=>item.kind==="index").length===0 && writeTest && Boolean(changeTracking.recordset?.length);
+      const ready = registry.tables?.length > 0 && missingTables.length === 0 && incompatibleColumns.length === 0 && missingMigrationVersions.length === 0 && differences.filter((item)=>item.kind==="index").length===0 && writeTest && Boolean(changeTracking.recordset?.length);
       return { ok: true, ready, schemaVersion: registry.version, requiredTables: registry.tables?.length ?? 0,
         presentTables: (registry.tables?.length ?? 0) - missingTables.length, missingTables,
         columnsCompatible: incompatibleColumns.length === 0, incompatibleColumns, writeTest,
-        changeTracking: Boolean(changeTracking.recordset?.length), differences, details,
+        changeTracking: Boolean(changeTracking.recordset?.length), migrationHistoryPresent,
+        missingMigrationVersions, differences, details,
         status: ready ? "ready" : actual.size ? "migration_required" : "not_pos_database" };
     });
   } catch (error) { return { ...safeError(error), ready: false, status: "error" }; }

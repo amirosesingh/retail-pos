@@ -232,6 +232,10 @@ describe("SQL Server schema registry", () => {
       "database/sqlserver/migrations/006_allow_missing_company_name.sql",
       "utf8",
     ).trim();
+    const scopedJsonRepair = readFileSync(
+      "database/sqlserver/migrations/007_repair_scoped_json_values.sql",
+      "utf8",
+    ).trim();
     const pipeline = readFileSync(
       "database/sqlserver/migrations/002_sync_pipeline.sql",
       "utf8",
@@ -247,6 +251,7 @@ describe("SQL Server schema registry", () => {
     expect(normalizedCompleteSql).toContain(normalize(pipeline));
     expect(normalizedCompleteSql).toContain(normalize(notificationPreferences));
     expect(normalizedCompleteSql).toContain(normalize(companyNameRepair));
+    expect(normalizedCompleteSql).toContain(normalize(scopedJsonRepair));
     expect(completeSql).toContain("IF DB_ID(N'POS_Local') IS NULL");
     expect(completeSql).toContain("EXEC(N'CREATE DATABASE [POS_Local]')");
     expect(completeSql).toContain("USE [POS_Local]");

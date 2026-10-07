@@ -11,6 +11,8 @@ describe("company name cloud-to-Electron sync", () => {
     expect(cloudMigration).toContain("ALTER COLUMN company_name DROP NOT NULL");
     expect(cloudMigration).not.toContain("company_name = COALESCE");
     expect(localMigration).toContain("ALTER COLUMN company_name nvarchar(max) NULL");
+    expect(localMigration).toContain("EXEC sys.sp_executesql @drop_company_name_default_sql");
+    expect(localMigration).not.toContain("EXEC(N'ALTER TABLE dbo.pos_settings DROP CONSTRAINT '");
     expect(localSchema).toContain("[company_name] nvarchar(max) NULL");
     expect(localSchema).not.toContain("[company_name]=''RETAIL''");
   });
@@ -58,9 +60,16 @@ describe("scoped settings JSON synchronization", () => {
 
   it("repairs only invalid local scoped JSON while retaining its original text", () => {
     const migration = read("database/sqlserver/migrations/006_allow_missing_company_name.sql");
+    const upgradeRepair = read("database/sqlserver/migrations/007_repair_scoped_json_values.sql");
     expect(migration).toContain("UPDATE dbo.settings_scoped");
     expect(migration).toContain("STRING_ESCAPE([value], 'json')");
     expect(migration).toContain("ISJSON(N'[' + [value] + N']') <> 1");
+    expect(upgradeRepair).toContain("UPDATE dbo.settings_scoped");
+    const manualRepair = read("database/sqlserver/POS_Local_company_name_scoped_json_repair.sql");
+    expect(manualRepair).toContain("IF DB_NAME() <> N'POS_Local'");
+    expect(manualRepair).toContain("BEGIN TRANSACTION");
+    expect(manualRepair).toContain("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION");
+    expect(manualRepair).toContain("invalid_scoped_json_rows");
   });
 
   it("encodes scalar JSON when a terminal writes directly to SQL Server", async () => {

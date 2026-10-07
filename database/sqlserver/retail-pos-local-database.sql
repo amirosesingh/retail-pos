@@ -2,7 +2,7 @@
   Retail POS local Microsoft SQL Server schema
   Generated from the migrations loaded by the POS application.
 
-  Application version: 1.4.25
+  Application version: 1.4.26
   Target database: POS_Local
 
   Run this file while connected to the local Microsoft SQL Server instance.
@@ -11303,7 +11303,12 @@ BEGIN
   WHERE dc.parent_object_id = OBJECT_ID(N'dbo.pos_settings')
     AND c.name = N'company_name';
   IF @company_name_default IS NOT NULL
-    EXEC(N'ALTER TABLE dbo.pos_settings DROP CONSTRAINT ' + QUOTENAME(@company_name_default));
+  BEGIN
+    DECLARE @drop_company_name_default_sql nvarchar(max);
+    SET @drop_company_name_default_sql =
+      N'ALTER TABLE dbo.pos_settings DROP CONSTRAINT ' + QUOTENAME(@company_name_default);
+    EXEC sys.sp_executesql @drop_company_name_default_sql;
+  END;
 
   IF EXISTS (
     SELECT 1 FROM sys.columns
@@ -11323,6 +11328,18 @@ IF OBJECT_ID(N'dbo.settings_scoped', N'U') IS NOT NULL
 IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6)
   INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
   VALUES (6, N'006_allow_missing_company_name', SYSDATETIMEOFFSET());
+
+-- Re-run the scoped JSON repair on upgrades where migration 006 was already
+-- recorded but an older Electron build subsequently wrote plain text again.
+IF OBJECT_ID(N'dbo.settings_scoped', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.settings_scoped', N'value') IS NOT NULL
+  UPDATE dbo.settings_scoped
+  SET [value] = N'"' + STRING_ESCAPE([value], 'json') + N'"'
+  WHERE [value] IS NOT NULL AND ISJSON(N'[' + [value] + N']') <> 1;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7)
+  INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
+  VALUES (7, N'007_repair_scoped_json_values', SYSDATETIMEOFFSET());
 
 DECLARE @RequiredTables TABLE ([name] sysname NOT NULL PRIMARY KEY);
 INSERT INTO @RequiredTables ([name]) VALUES
@@ -11407,7 +11424,7 @@ DECLARE @Missing int = @Required - @Present;
 
 SELECT
   DB_NAME() AS database_name,
-  N'1.4.25' AS application_version,
+  N'1.4.26' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -12641,12 +12658,12 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
   THROW 51002, 'Retail POS local database migration history table is missing.', 1;
 
-EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6)
+EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7)
   THROW 51002, ''Retail POS local database migration history is incomplete.'', 1;');
 
 EXEC(N'SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;');
 
-PRINT N'Retail POS 1.4.25: POS_Local installation and validation completed successfully.';
+PRINT N'Retail POS 1.4.26: POS_Local installation and validation completed successfully.';
 GO
