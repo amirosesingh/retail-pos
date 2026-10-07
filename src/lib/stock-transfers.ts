@@ -131,24 +131,25 @@ async function loadTransferLines(ids: string[]): Promise<Row[]> {
 
 /** Every note this branch raised or is due to receive. */
 export async function loadTransfers(): Promise<StoredTransfer[]> {
-  try {
-    const rows = await routedQuery("stock_transfers", { orderBy: { column: "created_at", ascending: false }, limit: 500 }) as Row[];
-    if (!rows.length) return [];
-
-    const lines = await loadTransferLines(rows.map((r) => r.id));
-    const byTransfer = new Map<string, Row[]>();
-    for (const l of lines) {
-      const list = byTransfer.get(l.transfer_id) ?? [];
-      list.push(l);
-      byTransfer.set(l.transfer_id, list);
-    }
-    return rows.map((r) => rowToTransfer(r, byTransfer.get(r.id) ?? []));
-  } catch {
-    // A branch with no connection still opens the transfers screen; it just
-    // shows nothing rather than a crash.
-    if (import.meta.env.DEV) console.error("[transfers] load failed");
-    return [];
+  const rows: Row[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await routedQuery("stock_transfers", {
+      orderBy: { column: "created_at", ascending: false }, offset, limit: pageSize,
+    }) as Row[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
   }
+  if (!rows.length) return [];
+
+  const lines = await loadTransferLines(rows.map((r) => r.id));
+  const byTransfer = new Map<string, Row[]>();
+  for (const line of lines) {
+    const list = byTransfer.get(String(line.transfer_id)) ?? [];
+    list.push(line);
+    byTransfer.set(String(line.transfer_id), list);
+  }
+  return rows.map((row) => rowToTransfer(row, byTransfer.get(String(row.id)) ?? []));
 }
 
 /** One note by id, for a deep link into a page the till has not cached. */

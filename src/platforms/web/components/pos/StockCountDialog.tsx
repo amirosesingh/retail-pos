@@ -313,6 +313,7 @@ export function StockCountDialog({
   /** Auto-save: the same write, after the counter pauses. */
   useEffect(() => {
     if (!open) return;
+    if (draft?.status === "posted") return;
     if (!rows.length && !draftId) return;
     setDirty(true);
     timerRef.current = setTimeout(() => {
@@ -326,7 +327,7 @@ export function StockCountDialog({
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [rows, reason, note, open, draftId, persistDraft]);
+  }, [rows, reason, note, open, draftId, draft?.status, persistDraft]);
 
   const saveNow = async () => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -411,7 +412,7 @@ export function StockCountDialog({
               postedBy: draft.posted_by,
             }
           : null;
-      const saved = await persistDraft();
+      const saved = draft?.status === "posted" ? null : await persistDraft();
       const persistedDraftId = saved?.id ?? draftId;
       await applyStockCount(
         entries,
@@ -420,6 +421,7 @@ export function StockCountDialog({
         targetStore.id,
         persistedDraftId,
         user?.name ?? null,
+        { lines: rows, totalImpact },
       );
       if (before && draftId) {
         const deltas: Record<string, number> = {};
@@ -490,7 +492,7 @@ export function StockCountDialog({
       <DialogContent className="max-h-[92vh] w-[min(96vw,1100px)] max-w-none overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            {draft ? "Resume stock count" : "New stock count"}
+            {draft?.status === "posted" ? "Edit posted stock count" : draft ? "Resume stock count" : "New stock count"}
             {reference ? <span className="ml-2 font-mono text-sm">{reference}</span> : null}
           </DialogTitle>
           <DialogDescription>
@@ -565,7 +567,7 @@ export function StockCountDialog({
               </div>
             </div>
 
-            {draftId && (
+            {draftId && draft?.status !== "posted" && (
               <p className="text-xs text-muted-foreground">
                 Draft saved automatically
                 {savedAt ? ` · last saved ${new Date(savedAt).toLocaleTimeString()}` : ""}
@@ -648,10 +650,12 @@ export function StockCountDialog({
             <span className="numeric text-sm text-muted-foreground">
               Impact {money(totalImpact)}
             </span>
-            <Button variant="outline" onClick={saveNow} disabled={!rows.length || !dirty}>
-              Save draft
-            </Button>
-            {draftId && (
+            {draft?.status !== "posted" && (
+              <Button variant="outline" onClick={saveNow} disabled={!rows.length || !dirty}>
+                Save draft
+              </Button>
+            )}
+            {draftId && draft?.status !== "posted" && (
               <Button variant="outline" onClick={() => onDiscard(draftId)}>
                 Discard draft
               </Button>

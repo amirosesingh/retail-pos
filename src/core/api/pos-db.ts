@@ -3028,7 +3028,9 @@ export const db = {
   commitStockAdjustments: (
     products: Product[],
     adjustments: StockAdjustmentInput[],
-    postedDraft?: { id: string; by?: string | null },
+    postedDraft?: { id: string; by?: string | null; record?: {
+      reason: string; note: string; lines: unknown[]; totalImpact: number;
+    } },
   ) =>
     commitOps("Saving stock adjustment", [
       ...(products.length
@@ -3053,6 +3055,13 @@ export const db = {
                 posted_at: new Date().toISOString(),
                 posted_by: postedDraft.by ?? null,
                 updated_at: new Date().toISOString(),
+                ...(postedDraft.record ? {
+                  reason: postedDraft.record.reason,
+                  note: postedDraft.record.note,
+                  lines: JSON.stringify(postedDraft.record.lines),
+                  line_count: postedDraft.record.lines.length,
+                  total_impact: postedDraft.record.totalImpact,
+                } : {}),
               },
               match: { id: postedDraft.id },
             },

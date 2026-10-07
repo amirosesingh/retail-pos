@@ -1,12 +1,38 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Store } from "@/core/types/pos-types";
-import { scopeBetween } from "@/lib/stock-transfers";
+const { routedQuery } = vi.hoisted(() => ({ routedQuery: vi.fn() }));
+vi.mock("@/core/api/db-query", () => ({ routedQuery }));
+import { loadTransfers, scopeBetween } from "@/lib/stock-transfers";
 
 const store = (id: string, groupId: string): Store =>
   ({ id, code: id, name: id, groupId, address: "", phone: "", isActive: true }) as Store;
 
 describe("multi-branch stock transfer contract", () => {
+  it("restores every page of persisted drafts and their lines", async () => {
+    routedQuery.mockReset();
+    const firstPage = Array.from({ length: 500 }, (_, index) => ({
+      id: `transfer-${index}`, status: "pending", from_store_id: "branch-a",
+      to_store_id: "branch-b", created_at: "2026-10-07T00:00:00Z",
+    }));
+    routedQuery.mockImplementation(async (table: string, options: { offset?: number }) => {
+      if (table === "stock_transfers")
+        return options.offset === 0 ? firstPage : [{ ...firstPage[0], id: "transfer-500" }];
+      return [];
+    });
+    const transfers = await loadTransfers();
+    expect(transfers).toHaveLength(501);
+    expect(transfers[500].id).toBe("transfer-500");
+    expect(transfers[0].status).toBe("awaiting_approval");
+    expect(routedQuery).toHaveBeenCalledWith("stock_transfers", expect.objectContaining({ offset: 500 }));
+  });
+
+  it("reports a failed transfer read instead of presenting an empty draft list", async () => {
+    routedQuery.mockReset();
+    routedQuery.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(loadTransfers()).rejects.toThrow("database unavailable");
+  });
+
   it("models a transfer as a source/destination branch pair, independent of terminals", () => {
     expect(scopeBetween(store("branch-a", "group-1"), store("branch-b", "group-1"))).toBe(
       "INTRA_GROUP",
