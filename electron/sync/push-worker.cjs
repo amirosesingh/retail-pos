@@ -45,6 +45,13 @@ function changeKey(change) {
   }
 }
 
+function isSharedPosFieldChange(change) {
+  const key = changeKey(change);
+  return String(key.scope ?? "").toLowerCase() === "global" &&
+    String(key.scope_id ?? "") === "" &&
+    String(key.key ?? "").startsWith("pos_field:");
+}
+
 /** A child-only retry must carry its locally owned parent into the same cloud transaction. */
 async function includeMissingParents(operations, reader, registry, branchId) {
   for (const [childName, parentName, foreignKey, belongs] of [
@@ -126,14 +133,24 @@ class PushWorker {
   async pushAggregates(branchId, batchSize) {
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
+    const deferred = new Set();
+    const protectedSettings = new Set(["pos_settings", "pos_store_settings",
+      "authorization_actions", "authorization_action_history"]);
     // Read and acknowledge one bounded page at a time until the durable
     // journal is caught up. The old implementation stopped after one page,
     // so a final shift-close sync could report success while later committed
     // sales were still waiting for the next timer tick.
     while (true) {
-      const aggregates = await this.reader.pendingAggregates(branchId, batchSize);
+      const aggregates = await this.reader.pendingAggregates(branchId, batchSize, [...deferred]);
       if (!aggregates.length) break;
       for (const aggregate of aggregates) {
+      const requiresSettingsProof = aggregate.changes.some((change) =>
+        protectedSettings.has(change.entity_type) ||
+        (change.entity_type === "settings_scoped" && isSharedPosFieldChange(change)));
+      if (requiresSettingsProof && !this.cloud.hasAuthorizationProof?.()) {
+        deferred.add(aggregate.aggregateId);
+        continue;
+      }
       const operations = [];
       const finalChanges = collapseChanges(aggregate.changes);
       for (const [tableName, changes] of groupBy(finalChanges, (change) => change.entity_type)) {
@@ -172,6 +189,13 @@ class PushWorker {
         await this.reader.failAggregate(aggregate.aggregateId, error);
         throw error;
       }
+      if (!operations.length) {
+        if (finalChanges.some((change) => !["settings_overrides", "settings_scoped"].includes(change.entity_type) ||
+          !["global", "cluster"].includes(String(changeKey(change).scope ?? "").toLowerCase())))
+          throw new Error("The aggregate has no writable rows and cannot be acknowledged safely.");
+        await this.reader.acknowledgeAggregate(aggregate.aggregateId);
+        continue;
+      }
       operations.sort((a, b) =>
         a.deletePhase === b.deletePhase
           ? a.deletePhase
@@ -194,10 +218,15 @@ class PushWorker {
         await this.reader.acknowledgeAggregate(aggregate.aggregateId);
         pushed += aggregate.changes.length;
       } catch (error) {
+        if (requiresSettingsProof && error?.code === "GOVERNANCE_AUTH_REQUIRED") {
+          deferred.add(aggregate.aggregateId);
+          continue;
+        }
         await this.reader.failAggregate(aggregate.aggregateId, error);
         throw error;
       }
       }
+      if (deferred.size >= 2000) break;
     }
     return pushed;
   }
@@ -207,6 +236,7 @@ class PushWorker {
     const terminalId = this.cloud.terminalId?.() ?? "";
     let pushed = await this.pushAggregates(branchId, batchSize);
     const governance = new Set([
+      "pos_settings",
       "pos_store_settings",
       "authorization_actions",
       "authorization_action_history",
@@ -251,6 +281,9 @@ class PushWorker {
           checkpoint = { ...(checkpoint ?? {}), change_tracking_version: version };
           continue;
         }
+        const requiresSettingsProof = table.cloudTable === "settings_scoped" &&
+          changes.some(isSharedPosFieldChange);
+        if (requiresSettingsProof && !this.cloud.hasAuthorizationProof?.()) break;
         let live = changes.filter((change) => change.operation !== "D");
         let rows = rowsForBranch(
           table.cloudTable,
@@ -289,7 +322,8 @@ class PushWorker {
             this.cloud.pushBatch({ batchId, branchId, table: table.cloudTable, changes, rows }),
           );
         } catch (error) {
-          if (governance.has(table.cloudTable) && error?.code === "GOVERNANCE_AUTH_REQUIRED") break;
+          if ((governance.has(table.cloudTable) || requiresSettingsProof) &&
+            error?.code === "GOVERNANCE_AUTH_REQUIRED") break;
           throw error;
         }
         if (!acknowledged?.ok)

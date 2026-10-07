@@ -45,6 +45,71 @@ describe("queued receiving aggregate recovery", () => {
   });
 });
 
+describe("queued global settings while a cashier is signed in", () => {
+  it("defers the settings aggregate but still uploads later branch sales", async () => {
+    const settings = { aggregateId: "settings-1", changes: [{ entity_type: "pos_settings",
+      entity_id: '{"id":1}', operation: "insert", key: { id: 1 } }] };
+    const sale = { aggregateId: "sale-1", changes: [{ entity_type: "sales",
+      entity_id: '{"id":"sale"}', operation: "insert", key: { id: "sale" } }] };
+    const reader = {
+      pendingAggregates: vi.fn(async (_branch: string, _limit: number, excluded: string[]) =>
+        [settings, sale].filter((entry) => !excluded.includes(entry.aggregateId) &&
+          !(entry.aggregateId === "sale-1" && reader.acknowledgeAggregate.mock.calls.length))),
+      rows: vi.fn(async () => [{ id: "sale", store_id: "B1" }]),
+      acknowledgeAggregate: vi.fn(), failAggregate: vi.fn(),
+    };
+    const cloud = { hasAuthorizationProof: () => false,
+      pushAggregate: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
+    const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
+    await new PushWorker({ reader, cloud, checkpoints: {}, registry: { tables: [
+      { cloudTable: "pos_settings", sqlServerTable: "pos_settings", dependencyOrder: 1 },
+      { cloudTable: "sales", sqlServerTable: "sales", dependencyOrder: 2 },
+    ] } }).pushAggregates("B1", 100);
+    expect(cloud.pushAggregate).toHaveBeenCalledTimes(1);
+    expect(cloud.pushAggregate.mock.calls[0][0].batchId).toBe("sale-1");
+    expect(reader.acknowledgeAggregate).toHaveBeenCalledWith("sale-1");
+    expect(reader.acknowledgeAggregate).not.toHaveBeenCalledWith("settings-1");
+  });
+
+  it("still uploads an ordinary branch price without POS settings proof", async () => {
+    const price = { aggregateId: "price-1", changes: [{ entity_type: "settings_scoped",
+      entity_id: '{"scope":"BRANCH","scope_id":"B1","key":"product_price:P1"}',
+      operation: "insert", key: { scope: "BRANCH", scope_id: "B1", key: "product_price:P1" } }] };
+    const reader = {
+      pendingAggregates: vi.fn().mockResolvedValueOnce([price]).mockResolvedValueOnce([]),
+      rows: vi.fn().mockResolvedValue([{ scope: "BRANCH", scope_id: "B1",
+        key: "product_price:P1", value: { selling_price: 5 } }]),
+      acknowledgeAggregate: vi.fn(), failAggregate: vi.fn(),
+    };
+    const cloud = { hasAuthorizationProof: () => false,
+      pushAggregate: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
+    const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
+    await new PushWorker({ reader, cloud, checkpoints: {}, registry: { tables: [
+      { cloudTable: "settings_scoped", sqlServerTable: "settings_scoped", dependencyOrder: 1 },
+    ] } }).pushAggregates("B1", 100);
+    expect(cloud.pushAggregate).toHaveBeenCalledOnce();
+    expect(reader.acknowledgeAggregate).toHaveBeenCalledWith("price-1");
+  });
+
+  it("defers a global POS field without proof", async () => {
+    const field = { aggregateId: "field-1", changes: [{ entity_type: "settings_scoped",
+      entity_id: '{"scope":"GLOBAL","scope_id":"","key":"pos_field:company_name"}',
+      operation: "insert", key: { scope: "GLOBAL", scope_id: "", key: "pos_field:company_name" } }] };
+    const reader = {
+      pendingAggregates: vi.fn().mockResolvedValueOnce([field]).mockResolvedValueOnce([]),
+      rows: vi.fn(), acknowledgeAggregate: vi.fn(), failAggregate: vi.fn(),
+    };
+    const cloud = { hasAuthorizationProof: () => false,
+      pushAggregate: vi.fn(), terminalId: () => "T1" };
+    const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
+    await new PushWorker({ reader, cloud, checkpoints: {}, registry: { tables: [
+      { cloudTable: "settings_scoped", sqlServerTable: "settings_scoped", dependencyOrder: 1 },
+    ] } }).pushAggregates("B1", 100);
+    expect(cloud.pushAggregate).not.toHaveBeenCalled();
+    expect(reader.acknowledgeAggregate).not.toHaveBeenCalled();
+  });
+});
+
 describe.each([
   ["booking_payments", "bookings", "booking_id", { store_id: "B1" }],
   ["payment_transactions", "bookings", "booking_id", { store_id: "B1" }],

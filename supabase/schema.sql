@@ -5031,6 +5031,10 @@ EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL;
           WHEN duplicate_column THEN NULL; WHEN invalid_table_definition THEN NULL;
           WHEN unique_violation THEN NULL; END $do$;
 
+-- A new tenant needs a shared settings snapshot before any terminal bootstraps.
+-- Keep the business name unset until an authorized operator supplies it.
+INSERT INTO public.pos_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
 DO $do$ BEGIN
 ALTER TABLE ONLY public.product_barcodes
     ADD CONSTRAINT product_barcodes_barcode_key UNIQUE (barcode);
@@ -15778,7 +15782,7 @@ BEGIN
     WHEN 'uom_units' THEN  v_count:=public.sync_apply_uom_units(p_rows)+public.sync_delete_uom_units(p_changes,p_branch_id,p_terminal_id);
     WHEN 'whatsapp_queue' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_whatsapp_queue(p_rows)+public.sync_delete_whatsapp_queue(p_changes,p_branch_id,p_terminal_id);
     WHEN 'pos_store_settings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(p_rows)+public.sync_delete_pos_store_settings(p_changes,p_branch_id,p_terminal_id);
-    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_scoped(p_rows)+public.sync_delete_settings_scoped(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='global' AND r->>'scope_id'='' AND r->>'key' LIKE 'pos_field:%' AND auth.role()='service_role') OR (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_scoped(p_rows)+public.sync_delete_settings_scoped(p_changes,p_branch_id,p_terminal_id);
     WHEN 'stock_count_drafts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(p_rows)+public.sync_delete_stock_count_drafts(p_changes,p_branch_id,p_terminal_id);
     WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(p_rows)+public.sync_delete_authorization_actions(p_changes,p_branch_id,p_terminal_id);
     WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(p_rows)+public.sync_delete_authorization_action_history(p_changes,p_branch_id,p_terminal_id);
@@ -15861,7 +15865,7 @@ BEGIN
     WHEN 'uom_units' THEN  v_count:=public.sync_apply_uom_units(v_rows)+public.sync_delete_uom_units(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'whatsapp_queue' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_whatsapp_queue(v_rows)+public.sync_delete_whatsapp_queue(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'pos_store_settings' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(v_rows)+public.sync_delete_pos_store_settings(v_op->'changes',p_branch_id,p_terminal_id);
-    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_scoped(v_rows)+public.sync_delete_settings_scoped(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='global' AND r->>'scope_id'='' AND r->>'key' LIKE 'pos_field:%' AND auth.role()='service_role') OR (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_scoped(v_rows)+public.sync_delete_settings_scoped(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'stock_count_drafts' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(v_rows)+public.sync_delete_stock_count_drafts(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(v_rows)+public.sync_delete_authorization_actions(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(v_rows)+public.sync_delete_authorization_action_history(v_op->'changes',p_branch_id,p_terminal_id);
@@ -17693,7 +17697,51 @@ ALTER TABLE public.stock_transfer_items VALIDATE CONSTRAINT stock_transfer_items
 ALTER TABLE public.stock_transfer_items VALIDATE CONSTRAINT stock_transfer_items_received_within_dispatch;
 ALTER TABLE public.stock_transfer_items VALIDATE CONSTRAINT stock_transfer_items_verified_within_dispatch;
 
--- Final public-schema privilege hardening after the last warehouse routine definition.
+-- Retire only a revoked/deleted terminal's own exceptions. Keep global,
+-- cluster and branch settings intact for the remaining registered devices.
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE OR REPLACE FUNCTION private.cleanup_retired_terminal_settings()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $cleanup$
+DECLARE
+  retire boolean := false;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    retire := true;
+  ELSE
+    retire := NEW.status = 'revoked' AND
+      (OLD.status IS DISTINCT FROM NEW.status OR OLD.revoked_at IS DISTINCT FROM NEW.revoked_at);
+  END IF;
+  IF retire THEN
+    DELETE FROM public.settings_overrides
+     WHERE lower(scope) = 'terminal' AND scope_id = OLD.id::text;
+    DELETE FROM public.settings_scoped
+     WHERE lower(scope) = 'terminal' AND scope_id = OLD.id::text;
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END $cleanup$;
+REVOKE ALL ON FUNCTION private.cleanup_retired_terminal_settings()
+  FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS cleanup_retired_terminal_settings_update ON public.terminal_tokens;
+CREATE TRIGGER cleanup_retired_terminal_settings_update
+BEFORE UPDATE OF status, revoked_at ON public.terminal_tokens
+FOR EACH ROW EXECUTE FUNCTION private.cleanup_retired_terminal_settings();
+DROP TRIGGER IF EXISTS cleanup_retired_terminal_settings_delete ON public.terminal_tokens;
+CREATE TRIGGER cleanup_retired_terminal_settings_delete
+BEFORE DELETE ON public.terminal_tokens
+FOR EACH ROW EXECUTE FUNCTION private.cleanup_retired_terminal_settings();
+DELETE FROM public.settings_overrides scoped
+ WHERE lower(scoped.scope) = 'terminal'
+   AND NOT EXISTS (SELECT 1 FROM public.terminal_tokens token
+    WHERE token.id::text = scoped.scope_id
+      AND token.status IN ('active', 'used') AND token.revoked_at IS NULL);
+DELETE FROM public.settings_scoped scoped
+ WHERE lower(scoped.scope) = 'terminal'
+   AND NOT EXISTS (SELECT 1 FROM public.terminal_tokens token
+    WHERE token.id::text = scoped.scope_id
+      AND token.status IN ('active', 'used') AND token.revoked_at IS NULL);
+
+-- Final public-schema privilege hardening after the last routine definition.
 DO $final_warehouse_rpc_hardening$
 DECLARE
   routine record;

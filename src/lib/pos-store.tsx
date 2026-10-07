@@ -91,6 +91,7 @@ import {
   closeRequestInDb,
   verifyTransferInDb,
   saveTransfer,
+  loadTransfers,
   setTransferStatus,
   type LineQty,
   type RpcResult,
@@ -119,6 +120,7 @@ import {
   type SettingSource,
   type SettingTier,
 } from "./branch-settings";
+
 import {
   SECTION_BY_ID,
   getPath,
@@ -144,6 +146,10 @@ import { productCodes } from "./product-lookup";
 import { applyZeroStockLifecycle, applyZeroStockLifecycleToProducts } from "./product-lifecycle";
 import { nextSku, readSkuSettings } from "./sku";
 import { canonicalBranchId, canonicalStockMap, sameBranchId } from "./branch-id";
+
+/** Avoid waking every POS consumer when a database refresh returned the same rows. */
+const hasSameValue = (left: unknown, right: unknown) =>
+  left === right || JSON.stringify(left) === JSON.stringify(right);
 
 const LEGACY_STATE_KEY = "pos-state-v2";
 
@@ -381,6 +387,7 @@ type Ctx = {
     storeId?: string,
     draftId?: string | null,
     postedBy?: string | null,
+    record?: { lines: unknown[]; totalImpact: number },
   ) => Promise<CommitTarget | null>;
   upsertMember: (member: Member) => Promise<CommitTarget>;
   removeMember: (id: string) => Promise<void>;
@@ -733,6 +740,74 @@ export function PosProvider({ children }: { children: ReactNode }) {
     };
   }, [signedIn, authReady, reloadTick]);
 
+  // Transfers are not part of the register's small startup snapshot. Restore
+  // their persisted headers and lines separately so a reload does not turn a
+  // dispatched delivery into an empty receiving page or a read-only deep link.
+  useEffect(() => {
+    if (!signedIn || !state.currentStoreId) return;
+    let cancelled = false;
+    let running = false;
+    let queued = false;
+    let warned = false;
+    const refresh = async () => {
+      if (running) {
+        queued = true;
+        return;
+      }
+      running = true;
+      try {
+        const rows = await loadTransfers();
+        if (!cancelled) {
+          const byId = new Map(rows.map((row) => [row.id, row]));
+          setState((current) => {
+            const transfers = [
+              ...rows,
+              ...current.transfers.filter((row) => !byId.has(row.id)),
+            ];
+            return hasSameValue(current.transfers, transfers)
+              ? current
+              : { ...current, transfers };
+          });
+          warned = false;
+        }
+      } catch (error) {
+        if (!cancelled && !warned) {
+          warned = true;
+          toast.error("Stock transfers could not be loaded", {
+            description: error instanceof Error ? error.message : "Retry when the database is ready.",
+          });
+        }
+      } finally {
+        running = false;
+        if (queued && !cancelled) {
+          queued = false;
+          void refresh();
+        }
+      }
+    };
+    const wake = () => { void refresh(); };
+    wake();
+    const offData = subscribeDataChange((change) => {
+      if (change.table === "stock_transfers" || change.table === "stock_transfer_items") wake();
+    });
+    const offSettings = subscribeSettingsChange((change) => {
+      if (change.reason === "desktop:pull-complete" || change.reason === "reconnect") wake();
+    });
+    const offLocal = localDb()?.onBusinessChanged?.((change) => {
+      if (change.kind === "transfer") wake();
+    });
+    window.addEventListener("focus", wake);
+    window.addEventListener("online", wake);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", wake);
+      window.removeEventListener("online", wake);
+      offData();
+      offSettings();
+      offLocal?.();
+    };
+  }, [signedIn, state.currentStoreId]);
+
   useEffect(() => {
     if (!ready) return;
     if (effectiveDatabaseMode() === "online") return;
@@ -766,7 +841,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           !settingsWrites.current.pending &&
           revision === settingsWrites.current.revision
         ) {
-          setScope(next);
+          setScope((current) => (hasSameValue(current, next) ? current : next));
           setConfirmedScopeKey(scopeKey);
         }
       } catch {
@@ -1233,7 +1308,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
           !settingsWrites.current.pending &&
           revision === settingsWrites.current.revision
         )
-          setState((current) => ({ ...current, settings: mergeCloudSettings(settings) }));
+          setState((current) => {
+            const next = mergeCloudSettings(settings);
+            return hasSameValue(current.settings, next)
+              ? current
+              : { ...current, settings: next };
+          });
       } catch {
         /* Keep the last confirmed settings until a later refresh. */
       } finally {
@@ -3012,6 +3092,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       storeId?: string,
       draftId?: string | null,
       postedBy?: string | null,
+      record?: { lines: unknown[]; totalImpact: number },
     ): Promise<CommitTarget | null> => {
       const target = storeId ?? stateRef.current.currentStoreId;
       const changes = entries
@@ -3066,7 +3147,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         .commitStockAdjustments(
           products,
           adjustments,
-          draftId ? { id: draftId, by: postedBy } : undefined,
+          draftId ? { id: draftId, by: postedBy,
+            record: record ? { ...record, reason, note } : undefined } : undefined,
         )
         .then((committed) => {
           const byId = new Map(changes.map((c) => [c.product.id, c.counted]));

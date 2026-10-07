@@ -34,7 +34,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useAuth } from "@/lib/pos-auth";
 import { db } from "@/core/api/pos-db";
+import { localDb } from "@/core/local-db/local-db";
 import { money, usePos } from "@/lib/pos-store";
+import { subscribeDataChange, subscribeSettingsChange } from "@/lib/sync-engine";
 import { canEditPosted } from "@/lib/stock-ref";
 import { useManagerGate } from "@/lib/manager-gate";
 import {
@@ -66,6 +68,7 @@ function StockOperationsPage() {
   const [activeCountStoreId, setActiveCountStoreId] = useState(currentStore.id);
   const [records, setRecords] = useState<StockRecordRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [branchFilter, setBranchFilter] = useState<string>("current");
   const [countOpen, setCountOpen] = useState(false);
@@ -91,8 +94,9 @@ function StockOperationsPage() {
         storeId: branchFilter === ALL ? null : currentStore.id,
       })) as unknown as StockRecordRow[];
       setRecords(list);
-    } catch {
-      setRecords([]);
+      setReadError(null);
+    } catch (error) {
+      setReadError(error instanceof Error ? error.message : "Stock count records could not be read.");
     } finally {
       setLoading(false);
     }
@@ -100,6 +104,28 @@ function StockOperationsPage() {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const wake = () => { void refresh(); };
+    const offData = subscribeDataChange((change) => {
+      if (change.table === "stock_count_drafts") wake();
+    });
+    const offSettings = subscribeSettingsChange((change) => {
+      if (change.reason === "desktop:pull-complete" || change.reason === "reconnect") wake();
+    });
+    const offLocal = localDb()?.onBusinessChanged?.((change) => {
+      if (change.kind === "stock") wake();
+    });
+    const interval = window.setInterval(wake, 60_000);
+    window.addEventListener("focus", wake);
+    return () => {
+      offData();
+      offSettings();
+      offLocal?.();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", wake);
+    };
   }, [refresh]);
 
   const visible = useMemo(
@@ -214,6 +240,7 @@ function StockOperationsPage() {
           </TabsList>
 
           <TabsContent value="records" className="space-y-4">
+            {readError && <p role="alert" className="text-sm text-destructive">Stock count records: {readError}</p>}
             <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-border bg-card p-4">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="w-44">

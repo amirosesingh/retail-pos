@@ -338,17 +338,33 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         { status: 403 },
       );
     const protectedSettingsTables = new Set([
+      "pos_settings",
       "pos_store_settings",
       "authorization_actions",
       "authorization_action_history",
     ]);
     const governanceRpcTables = new Set(["authorization_actions", "authorization_action_history"]);
+    const sharedPosField = (row: Record<string, unknown>) =>
+      String(row.scope ?? "").toLowerCase() === "global" &&
+      String(row.scope_id ?? "") === "" && String(row.key ?? "").startsWith("pos_field:");
+    const hasSharedPosField = (operation: { table: string; rows: Record<string, unknown>[];
+      changes: Record<string, unknown>[] }) => operation.table === "settings_scoped" &&
+      (operation.rows.some(sharedPosField) || operation.changes.some((change) => {
+        if (change.key && typeof change.key === "object" &&
+          sharedPosField(change.key as Record<string, unknown>)) return true;
+        const encoded = change.entityId ?? change.entity_id;
+        if (typeof encoded !== "string") return false;
+        try { return sharedPosField(JSON.parse(encoded) as Record<string, unknown>); }
+        catch { return false; }
+      }));
     const governanceOperations = body.sqlServerBatch
-      ? protectedSettingsTables.has(body.sqlServerBatch.table)
-        ? [{ table: body.sqlServerBatch.table, rows: body.sqlServerBatch.rows }]
+      ? protectedSettingsTables.has(body.sqlServerBatch.table) ||
+          hasSharedPosField(body.sqlServerBatch)
+        ? [{ table: body.sqlServerBatch.table, rows: body.sqlServerBatch.rows,
+            changes: body.sqlServerBatch.changes }]
         : []
       : (body.sqlServerAggregate?.operations ?? []).filter((operation) =>
-          protectedSettingsTables.has(operation.table),
+          protectedSettingsTables.has(operation.table) || hasSharedPosField(operation),
         );
     if (governanceOperations.length) {
       const isAdmin = scope.role === "admin" || scope.roleSlug === "admin";
@@ -364,7 +380,21 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         );
       }
       const invalidScope = governanceOperations.some((operation) =>
+        ((operation.table === "pos_settings" || operation.table === "settings_scoped") &&
+          operation.changes.some((change) =>
+            ["D", "DELETE"].includes(String(change.operation ?? "").toUpperCase()))) ||
         operation.rows.some((row) => {
+          if (operation.table === "pos_settings") return Number(row.id) !== 1;
+          if (operation.table === "settings_scoped") {
+            const settingScope = String(row.scope ?? "").toLowerCase();
+            const scopeId = String(row.scope_id ?? "");
+            return !(
+              (settingScope === "global" && scopeId === "" &&
+                String(row.key ?? "").startsWith("pos_field:")) ||
+              (settingScope === "branch" && scopeId === scope.storeId) ||
+              (settingScope === "terminal" && scopeId === scope.terminalId)
+            );
+          }
           if (operation.table === "pos_store_settings")
             return String(row.store_id ?? "") !== scope.storeId;
           const scopeType = String(row.scope_type ?? "branch");

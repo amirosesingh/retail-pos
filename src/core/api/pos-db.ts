@@ -1863,6 +1863,7 @@ export async function loadReceivingInvoices(
   limit = 100,
   allStores = false,
   status: ReceivingStatus | "any" = "posted",
+  offset = 0,
 ): Promise<ReceivingInvoice[]> {
   if (effectiveDatabaseMode() === "local" && localDb()?.query) {
     // A locally committed draft must remain visible even before cloud sync.
@@ -1872,7 +1873,7 @@ export async function loadReceivingInvoices(
       routedQuery("purchase_orders", {
         ...(value === "any" ? {} : { match: { status: value } }),
         orderBy: { column: "invoice_entry_date", ascending: false },
-        limit,
+        limit, offset,
       }),
     ))).flat()
       .filter((row) => allStores || !storeId || row.store_id === storeId || row.store_id == null)
@@ -1903,7 +1904,8 @@ export async function loadReceivingInvoices(
     .from("purchase_orders" as never)
     .select("*, purchase_order_items(*)")
     .order("invoice_entry_date", { ascending: false })
-    .limit(limit);
+    .order("id", { ascending: false })
+    .range(offset, offset + limit - 1);
   // Rows written before drafts existed have no status; they are received stock.
   if (status !== "any") {
     q = (
@@ -1948,8 +1950,16 @@ export async function loadCompleteReceivingHistory(
 }
 
 /** Unfinished receiving orders for a branch, newest first. */
-export const loadReceivingDrafts = (storeId: string | null, allStores = false) =>
-  loadReceivingInvoices(storeId, 50, allStores, "draft");
+export async function loadReceivingDrafts(storeId: string | null, allStores = false) {
+  const pageSize = 100;
+  const drafts: ReceivingInvoice[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await loadReceivingInvoices(storeId, pageSize, allStores, "draft", offset);
+    drafts.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return drafts;
+}
 
 /**
  * True when another *finalized* invoice already uses this number. Drafts are
@@ -2081,27 +2091,31 @@ export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitT
     if (state?.enabled && state?.connected && (state.tradingReady ?? state.connected)) {
       const refund =
         ops.length === 1 && ops[0].kind === "rpc" && ops[0].fn === "sale_refund" ? ops[0] : null;
-      const aggregateKind = /sale/i.test(context)
-        ? "sale"
-        : /payment|tender/i.test(context)
-          ? "payment"
-          : /refund/i.test(context)
-            ? "refund"
-            : /shift/i.test(context)
-              ? "shift"
-              : /product|inventory/i.test(context)
-                ? "product"
-                : /receiv|purchase|invoice/i.test(context)
-                  ? "receiving"
-                  : /stock/i.test(context)
-                    ? "stock"
-                    : /transfer/i.test(context)
-                      ? "transfer"
-                      : /booking/i.test(context)
-                        ? "booking"
-                        : /hold|ticket/i.test(context)
-                          ? "held_order"
-                          : "general";
+      const sharedPosSettings = ops.some((op) => op.table === "pos_settings") &&
+        ops.every((op) => op.table === "pos_settings" || op.table === "settings_scoped");
+      const aggregateKind = sharedPosSettings
+        ? "settings"
+        : /sale/i.test(context)
+          ? "sale"
+          : /payment|tender/i.test(context)
+            ? "payment"
+            : /refund/i.test(context)
+              ? "refund"
+              : /shift/i.test(context)
+                ? "shift"
+                : /product|inventory/i.test(context)
+                  ? "product"
+                  : /receiv|purchase|invoice/i.test(context)
+                    ? "receiving"
+                    : /stock/i.test(context)
+                      ? "stock"
+                      : /transfer/i.test(context)
+                        ? "transfer"
+                        : /booking/i.test(context)
+                          ? "booking"
+                          : /hold|ticket/i.test(context)
+                            ? "held_order"
+                            : "general";
       const branchRow = ops
         .flatMap((op): Row[] => {
           if (op.kind === "insert" || op.kind === "upsert") return op.rows as Row[];
@@ -2132,7 +2146,7 @@ export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitT
               branchId: String((refund.args as Record<string, unknown>)._branch_id ?? ""),
               reason: refund.args._reason == null ? null : String(refund.args._reason),
             })
-          : local.commitAggregate
+          : local.commitAggregate && aggregateKind !== "settings"
             ? await local.commitAggregate({
                 kind: aggregateKind,
                 branchId: branchId || undefined,
@@ -3024,7 +3038,9 @@ export const db = {
   commitStockAdjustments: (
     products: Product[],
     adjustments: StockAdjustmentInput[],
-    postedDraft?: { id: string; by?: string | null },
+    postedDraft?: { id: string; by?: string | null; record?: {
+      reason: string; note: string; lines: unknown[]; totalImpact: number;
+    } },
   ) =>
     commitOps("Saving stock adjustment", [
       ...(products.length
@@ -3049,6 +3065,13 @@ export const db = {
                 posted_at: new Date().toISOString(),
                 posted_by: postedDraft.by ?? null,
                 updated_at: new Date().toISOString(),
+                ...(postedDraft.record ? {
+                  reason: postedDraft.record.reason,
+                  note: postedDraft.record.note,
+                  lines: JSON.stringify(postedDraft.record.lines),
+                  line_count: postedDraft.record.lines.length,
+                  total_impact: postedDraft.record.totalImpact,
+                } : {}),
               },
               match: { id: postedDraft.id },
             },
@@ -3123,12 +3146,18 @@ export const db = {
 
   /** Open drafts for a branch, newest first. */
   async listStockCountDrafts(storeId: string) {
-    const rows = await routedQuery("stock_count_drafts", {
-      match: { store_id: storeId, status: "draft" },
-      orderBy: { column: "updated_at", ascending: false },
-      limit: 50,
-    });
-    return rows as Row[];
+    const rows: Row[] = [];
+    const pageSize = 200;
+    for (let offset = 0; ; offset += pageSize) {
+      const page = await routedQuery("stock_count_drafts", {
+        match: { store_id: storeId, status: "draft" },
+        orderBy: { column: "updated_at", ascending: false },
+        limit: pageSize, offset,
+      });
+      rows.push(...page);
+      if (page.length < pageSize) break;
+    }
+    return rows;
   },
 
   /**
@@ -3137,12 +3166,28 @@ export const db = {
    * same read serves the tab's filter chips.
    */
   async listStockCountRecords(opts: { storeId?: string | null; limit?: number } = {}) {
-    const rows = await routedQuery("stock_count_drafts", {
+    const recent = await routedQuery("stock_count_drafts", {
       ...(opts.storeId ? { match: { store_id: opts.storeId } } : {}),
       orderBy: { column: "created_at", ascending: false },
       limit: opts.limit ?? 200,
     });
-    return rows as Row[];
+    // A long posted history must not push an unfinished count beyond the
+    // recent-record cap. Read every draft from the same routed local/cloud DB.
+    const drafts: Row[] = [];
+    const pageSize = 200;
+    for (let offset = 0; ; offset += pageSize) {
+      const page = await routedQuery("stock_count_drafts", {
+        match: { ...(opts.storeId ? { store_id: opts.storeId } : {}), status: "draft" },
+        orderBy: { column: "created_at", ascending: false },
+        limit: pageSize, offset,
+      });
+      drafts.push(...page);
+      if (page.length < pageSize) break;
+    }
+    const byId = new Map<string, Row>();
+    for (const row of [...recent, ...drafts]) byId.set(String(row.id), row);
+    return [...byId.values()].sort((a, b) =>
+      String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
   },
 
   /* ------------------------ whatsapp outbox ----------------------- */

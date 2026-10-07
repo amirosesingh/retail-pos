@@ -68,7 +68,9 @@ describe("business UI persistence acknowledgements", () => {
     expect(dialog).toContain("postingRef.current = true");
     expect(dialog).toContain("postingRef.current = false");
     expect(store).toContain(".commitStockAdjustments(");
-    expect(store).toContain("draftId ? { id: draftId, by: postedBy }");
+    expect(store).toContain("draftId ? { id: draftId, by: postedBy,");
+    expect(store).toContain("record: record ? { ...record, reason, note } : undefined");
+    expect(dialog).toContain('draft?.status === "posted" ? null : await persistDraft()');
   });
 
   it("removes the detached purchase-order writer and preserves atomic receiving", () => {

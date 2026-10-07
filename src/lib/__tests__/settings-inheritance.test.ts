@@ -263,3 +263,17 @@ describe("central settings ownership UI", () => {
     expect(resolver).toContain('match: { scope: tier, scope_id: scopeId }');
   });
 });
+
+it("retires only a removed terminal's own overrides in the database", () => {
+  const migration = readFileSync(
+    "supabase/migrations/20261007152914_cleanup_revoked_terminal_settings.sql", "utf8",
+  );
+  expect(migration).toContain("BEFORE UPDATE OF status, revoked_at ON public.terminal_tokens");
+  expect(migration).toContain("BEFORE DELETE ON public.terminal_tokens");
+  for (const table of ["settings_overrides", "settings_scoped"]) {
+    expect(migration).toContain(`DELETE FROM public.${table}`);
+  }
+  expect(migration.match(/lower\(scope\) = 'terminal' AND scope_id = OLD\.id::text/g))
+    .toHaveLength(2);
+  expect(migration).not.toMatch(/DELETE FROM public\.settings_locks/);
+});

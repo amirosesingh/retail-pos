@@ -148,6 +148,21 @@ describe("local SQL Server discovery privilege", () => {
     expect(adminSession.branchId()).toBeNull();
   });
 
+  it("allows a settings-permitted staff member to save only the shared settings batch", () => {
+    const batch = [
+      { kind: "upsert", table: "settings_scoped", rows: [{ scope: "GLOBAL", scope_id: "", key: "pos_field:company_name" }] },
+      { kind: "upsert", table: "pos_settings", rows: [{ id: 1 }] },
+    ];
+    adminSession.grant("staff", "settings-staff", { can_access_pos_settings: true }, "pos", "branch-7");
+    expect(privilege.allowed("business:write-batch", ["Saving settings", batch])).toBe(true);
+    expect(privilege.allowed("business:write-batch", ["Other", [
+      ...batch, { kind: "upsert", table: "sales", rows: [{ id: "x" }] },
+    ]])).toBe(false);
+    adminSession.grant("staff", "cashier", {}, "pos", "branch-7");
+    expect(privilege.allowed("business:write-batch", ["Saving settings", batch])).toBe(false);
+    adminSession.clear();
+  });
+
   it("keeps privileged retries wired to server-verified session adoption", () => {
     const gate = readFileSync("src/platforms/windows/components/PrivilegeGate.tsx", "utf8");
     const ipcGate = readFileSync("electron/ipc-privilege.cjs", "utf8");
