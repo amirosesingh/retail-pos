@@ -30,6 +30,14 @@ function valueForSql(value) {
   return value;
 }
 
+function columnValueForSql(table, name, value) {
+  const column = table.columns.find((item) => item.sqlServerColumn === name);
+  const type = String(column?.cloudType ?? "").toLowerCase();
+  return value !== null && (type === "jsonb" || type.endsWith("[]"))
+    ? JSON.stringify(value)
+    : valueForSql(value);
+}
+
 class OperationsRepository {
   constructor(connectionManager, registry = loadRegistry()) {
     this.connectionManager = connectionManager;
@@ -199,7 +207,7 @@ class OperationsRepository {
         const request = new (this.connectionManager.sql().Request)(transaction);
         request.input("branch", String(branchId));
         request.input("terminal", String(terminalId ?? ""));
-        columns.forEach((column, index) => request.input(`v${index}`, valueForSql(normalizedRow[column])));
+        columns.forEach((column, index) => request.input(`v${index}`, columnValueForSql(table, column, normalizedRow[column])));
         const source = columns.map((column, index) => `@v${index} AS [${column}]`).join(",");
         const on = primary.map((column) => `target.[${column}]=source.[${column}]`).join(" AND ");
         const updates = columns.filter((column) => !primary.includes(column) && column !== "row_version").map((column) => `target.[${column}]=source.[${column}]`);
@@ -236,7 +244,7 @@ class OperationsRepository {
     else {
       const values = Object.entries(op.values ?? {}).filter(([column]) => column !== "row_version");
       if (!values.length && !hasRowVersion) return 0;
-      values.forEach(([, value], index) => request.input(`v${index}`, valueForSql(value)));
+      values.forEach(([column, value], index) => request.input(`v${index}`, columnValueForSql(table, column, value)));
       const setters = values.map(([column], index) => `[${column}]=@v${index}`);
       if (hasRowVersion) setters.push("[row_version]=COALESCE([row_version],0)+1");
       query = `UPDATE source SET ${setters.join(",")} FROM dbo.[${op.table}] source WHERE ${restrictedWhere};`;

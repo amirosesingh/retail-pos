@@ -74,6 +74,8 @@ type Props = {
   description: string;
   children: ReactNode;
   showPreview?: boolean;
+  /** Business identity cannot be published without a real company name. */
+  requireCompanyName?: boolean;
   /** Diagnostics pages need the whole window: tables and graphs, no reading column. */
   wide?: boolean;
   /** Device registration may also be managed by supervisors. */
@@ -95,6 +97,7 @@ export function SettingsFrame({
   description,
   children,
   showPreview = false,
+  requireCompanyName = false,
   wide = false,
   terminalManagement = false,
   permission,
@@ -161,6 +164,12 @@ export function SettingsFrame({
   }, []);
 
   const save = async () => {
+    if (requireCompanyName && !state.settings.receipt.companyName?.trim()) {
+      const message = "Enter the company name before saving business identity.";
+      setSaveError(message);
+      toast.error(message);
+      return;
+    }
     setSaving(true);
     setSaveError("");
     try {

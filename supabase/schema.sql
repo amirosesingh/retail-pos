@@ -504,7 +504,7 @@ CREATE TABLE IF NOT EXISTS public.pos_settings (
     show_barcode boolean DEFAULT true NOT NULL,
     show_tax_details boolean DEFAULT true NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    company_name text DEFAULT 'RETAIL'::text NOT NULL,
+    company_name text,
     tax_number text,
     reg_number text,
     phone text,
@@ -1897,7 +1897,7 @@ ALTER TABLE public.pos_settings ADD COLUMN IF NOT EXISTS show_tax_details boolea
 
 ALTER TABLE public.pos_settings ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now() NOT NULL;
 
-ALTER TABLE public.pos_settings ADD COLUMN IF NOT EXISTS company_name text DEFAULT 'RETAIL'::text NOT NULL;
+ALTER TABLE public.pos_settings ADD COLUMN IF NOT EXISTS company_name text;
 
 ALTER TABLE public.pos_settings ADD COLUMN IF NOT EXISTS tax_number text;
 

@@ -557,10 +557,24 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setLoadPhase("loading");
     setReloadTick((v) => v + 1);
   }, []);
-  const { authUserId, terminalUser, user, can, ready: authReady } = useAuth();
+  const { authUserId, terminalUser, user, can, isAdmin, ready: authReady } = useAuth();
   // Nothing is fetched from the cloud until a cashier or supervisor session
   // exists — visitors never receive catalogue, member or sales data.
   const signedIn = Boolean(authUserId || terminalUser);
+  const missingCompanyNameNotice = useRef(false);
+  useEffect(() => {
+    if (!signedIn || !isAdmin || !ready || loadPhase !== "ready") return;
+    if (state.settings.receipt.companyName?.trim()) {
+      missingCompanyNameNotice.current = false;
+      return;
+    }
+    if (missingCompanyNameNotice.current) return;
+    missingCompanyNameNotice.current = true;
+    toast.warning("Company name is missing", {
+      description: "Enter the business name in Settings → Business identity. Other POS work can continue.",
+      duration: 10000,
+    });
+  }, [signedIn, isAdmin, ready, loadPhase, state.settings.receipt.companyName]);
   // Latest snapshot for audit logging without re-creating every callback.
   const stateRef = useRef(state);
   stateRef.current = state;

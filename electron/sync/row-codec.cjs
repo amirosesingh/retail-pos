@@ -17,7 +17,7 @@ function toCloudRow(table, row) {
 }
 
 function toLocalValue(column, value) {
-  return structured(column) && value !== null && typeof value === "object"
+  return structured(column) && value !== null
     ? JSON.stringify(value)
     : value;
 }

@@ -406,7 +406,7 @@ const rowToSettings = (r: Row | null): AppSettings =>
         receipt: {
           ...defaultSettings.receipt,
           paper: (r.paper_size ?? "80mm") as PaperSize,
-          companyName: r.company_name ?? defaultSettings.receipt.companyName,
+          companyName: r.company_name ?? "",
           taxNumber: r.tax_number ?? "",
           regNumber: r.reg_number ?? "",
           phone: r.phone ?? "",

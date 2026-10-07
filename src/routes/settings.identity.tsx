@@ -15,7 +15,7 @@ import { prepareReceiptLogo } from "@/lib/receipt-logo";
 import type { ReceiptOverride, ReceiptSettings } from "@/core/types/pos-types";
 
 const IDENTITY_FIELDS: { key: keyof ReceiptOverride; label: string; placeholder: string }[] = [
-  { key: "companyName", label: "Company name", placeholder: "RETAIL" },
+  { key: "companyName", label: "Company name", placeholder: "Enter the business name" },
   { key: "taxNumber", label: "Tax / VAT number", placeholder: "88-2201194" },
   { key: "regNumber", label: "Registration number", placeholder: "REG-000123" },
   { key: "phone", label: "Phone", placeholder: "555-0100" },
@@ -42,6 +42,7 @@ export const Route = createFileRoute("/settings/identity")({
       title="Business identity"
       description="Company details printed at the top and bottom of every slip."
       showPreview
+      requireCompanyName
     >
       <IdentityForm />
     </SettingsFrame>
@@ -79,6 +80,12 @@ function IdentityForm() {
 
   return (
     <div className="space-y-3">
+      {!effective.companyName?.trim() ? (
+        <p role="alert" className="rounded-md border border-amber-500 p-3 text-sm">
+          Company name is missing from the cloud. An administrator must enter it here and save.
+          Other POS work can continue meanwhile.
+        </p>
+      ) : null}
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">Terminal name (this machine only)</Label>
         <Input
