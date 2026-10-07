@@ -6,17 +6,31 @@ const database = vi.hoisted(() => ({
   removeHeldOrder: vi.fn(),
   listHeldOrders: vi.fn(),
 }));
+const secrets = vi.hoisted(() => new Map<string, unknown>());
 
 vi.mock("@/core/api/pos-db", () => ({ db: database }));
 vi.mock("@/lib/business-storage", () => ({
   readBusinessValue: vi.fn(() => null),
   writeBusinessValue: vi.fn(),
 }));
+vi.mock("@/lib/device-secrets", () => ({
+  getDeviceSecret: vi.fn(async (name: string) => {
+    await Promise.resolve();
+    return structuredClone(secrets.get(name));
+  }),
+  setDeviceSecret: vi.fn(async (name: string, value: unknown) => {
+    await Promise.resolve();
+    secrets.set(name, structuredClone(value));
+  }),
+  clearDeviceSecret: vi.fn((name: string) => secrets.delete(name)),
+}));
 
 import {
   addHeldOrder,
   readHeldOrders,
   removeHeldOrder,
+  rememberPendingCorrectionHold,
+  loadPendingCorrectionHold,
   rowToHeldOrder,
   setHeldOrders,
   updateHeldOrder,
@@ -27,9 +41,7 @@ const order: HeldOrder = {
   id: "held-1",
   label: "10:30 · 1 item",
   total: 12,
-  lines: [
-    { productId: "product-1", name: "Tea", qty: 1, price: 12, taxRate: 0, discount: 0 },
-  ],
+  lines: [{ productId: "product-1", name: "Tea", qty: 1, price: 12, taxRate: 0, discount: 0 }],
   heldAt: "2026-10-08T10:30:00.000Z",
   storeId: "branch-1",
 };
@@ -39,9 +51,13 @@ describe("held order durability", () => {
     database.commitHeldOrder.mockReset();
     database.removeHeldOrder.mockReset();
     database.listHeldOrders.mockReset();
-    vi.stubGlobal("CustomEvent", class {
-      constructor(public type: string) {}
-    });
+    secrets.clear();
+    vi.stubGlobal(
+      "CustomEvent",
+      class {
+        constructor(public type: string) {}
+      },
+    );
     vi.stubGlobal("window", {
       pos: {},
       dispatchEvent: vi.fn(),
@@ -112,6 +128,25 @@ describe("held order durability", () => {
       expect.objectContaining({ id: order.id, status: "ready", storeId: order.storeId }),
     );
     expect(readHeldOrders()).toEqual([expect.objectContaining({ id: order.id, status: "ready" })]);
+  });
+
+  it("serializes overlapping correction retries without dropping either sale", async () => {
+    const first = {
+      receiptNo: "R-1",
+      total: 10,
+      lines: order.lines,
+      storeId: "branch-1",
+      saleId: "sale-1",
+    };
+    const second = { ...first, receiptNo: "R-2", saleId: "sale-2" };
+
+    await Promise.all([
+      rememberPendingCorrectionHold(first),
+      rememberPendingCorrectionHold(second),
+    ]);
+
+    expect(await loadPendingCorrectionHold("sale-1")).toEqual(first);
+    expect(await loadPendingCorrectionHold("sale-2")).toEqual(second);
   });
 
   it("keeps branch, approval and cart races behind durable boundaries", () => {

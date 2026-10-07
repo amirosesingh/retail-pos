@@ -54,8 +54,15 @@ const isElectronRenderer = () =>
   typeof window !== "undefined" && !!(window as unknown as { pos?: unknown }).pos;
 let electronOrders: HeldOrder[] = [];
 let electronReadSequence = 0;
+let correctionRetryWrite = Promise.resolve();
 
-const parseJson = <T,>(value: unknown, fallback: T): T => {
+function serializeCorrectionRetryWrite(work: () => Promise<void>): Promise<void> {
+  const next = correctionRetryWrite.then(work, work);
+  correctionRetryWrite = next.catch(() => undefined);
+  return next;
+}
+
+const parseJson = <T>(value: unknown, fallback: T): T => {
   if (value == null) return fallback;
   if (typeof value !== "string") return value as T;
   try {
@@ -83,10 +90,8 @@ export function rowToHeldOrder(row: Record<string, unknown>): HeldOrder {
     coupon: parseJson(row.coupon, null),
     note: String(row.note ?? ""),
     cancelledFrom: row.cancelled_from == null ? undefined : String(row.cancelled_from),
-    status:
-      row.status === "waiting" || row.status === "ready" ? row.status : "held",
-    pendingRequestId:
-      row.pending_request_id == null ? null : String(row.pending_request_id),
+    status: row.status === "waiting" || row.status === "ready" ? row.status : "held",
+    pendingRequestId: row.pending_request_id == null ? null : String(row.pending_request_id),
     approvalSnapshotHash:
       row.approval_snapshot_hash == null ? null : String(row.approval_snapshot_hash),
   };
@@ -200,25 +205,31 @@ export function holdCancelledBill(input: {
 export type PendingCorrectionHold = Parameters<typeof holdCancelledBill>[0] & { saleId: string };
 
 export async function rememberPendingCorrectionHold(input: PendingCorrectionHold) {
-  const pending =
-    (await getDeviceSecret<Record<string, PendingCorrectionHold>>(CORRECTION_RETRY_KEY)) ?? {};
-  pending[input.saleId] = input;
-  await setDeviceSecret(CORRECTION_RETRY_KEY, pending);
+  return serializeCorrectionRetryWrite(async () => {
+    const pending =
+      (await getDeviceSecret<Record<string, PendingCorrectionHold>>(CORRECTION_RETRY_KEY)) ?? {};
+    pending[input.saleId] = input;
+    await setDeviceSecret(CORRECTION_RETRY_KEY, pending);
+  });
 }
 
 export async function loadPendingCorrectionHold(
   saleId: string,
 ): Promise<PendingCorrectionHold | null> {
-  const pending = await getDeviceSecret<Record<string, PendingCorrectionHold>>(CORRECTION_RETRY_KEY);
+  const pending =
+    await getDeviceSecret<Record<string, PendingCorrectionHold>>(CORRECTION_RETRY_KEY);
   return pending?.[saleId] ?? null;
 }
 
 export async function clearPendingCorrectionHold(saleId: string) {
-  const pending = await getDeviceSecret<Record<string, PendingCorrectionHold>>(CORRECTION_RETRY_KEY);
-  if (!pending?.[saleId]) return;
-  delete pending[saleId];
-  if (Object.keys(pending).length) await setDeviceSecret(CORRECTION_RETRY_KEY, pending);
-  else clearDeviceSecret(CORRECTION_RETRY_KEY);
+  return serializeCorrectionRetryWrite(async () => {
+    const pending =
+      await getDeviceSecret<Record<string, PendingCorrectionHold>>(CORRECTION_RETRY_KEY);
+    if (!pending?.[saleId]) return;
+    delete pending[saleId];
+    if (Object.keys(pending).length) await setDeviceSecret(CORRECTION_RETRY_KEY, pending);
+    else clearDeviceSecret(CORRECTION_RETRY_KEY);
+  });
 }
 
 export function useHeldOrders(storeId?: string): HeldOrder[] {
