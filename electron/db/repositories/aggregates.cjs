@@ -109,6 +109,8 @@ class AggregateRepository {
         const operationAffected = await this.operationsRepository.applyOperation(transaction, operation, {
           branchId: aggregate.branchId,
           terminalId: aggregate.terminalId,
+          permissions: aggregate.permissions,
+          enforcePermissions: aggregate.enforcePermissions === true,
         });
         if (operation.requireMatch && operationAffected !== 1)
           throw Object.assign(
@@ -143,7 +145,7 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
-      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE"].includes(error?.code))
+      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "PERMISSION_DENIED"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const sqlNumber = Number.isFinite(Number(error?.number)) ? Number(error.number) : null;

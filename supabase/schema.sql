@@ -14075,17 +14075,12 @@ CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."memb
 REVOKE ALL ON FUNCTION public.sync_feed_member_verifications() FROM PUBLIC, anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.sync_apply_members(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
-DECLARE v_count integer; v_row jsonb;
+DECLARE v_count integer;
 BEGIN
-
-
-  INSERT INTO public."members" ("id","member_code","full_name","phone","email","address","country_code","postal_code","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","is_verified","verified_at","verified_channel","membership_member_id","membership_revision","membership_status","deleted_at")
-  SELECT "id","member_code","full_name","phone","email","address","country_code","postal_code","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","is_verified","verified_at","verified_channel","membership_member_id","membership_revision","membership_status","deleted_at" FROM jsonb_populate_recordset(NULL::public."members", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "member_code"=EXCLUDED."member_code","full_name"=EXCLUDED."full_name","phone"=EXCLUDED."phone","email"=EXCLUDED."email","address"=EXCLUDED."address","country_code"=EXCLUDED."country_code","postal_code"=EXCLUDED."postal_code","date_of_birth"=EXCLUDED."date_of_birth","tier_id"=EXCLUDED."tier_id","loyalty_points"=EXCLUDED."loyalty_points","total_spent"=EXCLUDED."total_spent","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","row_version"=EXCLUDED."row_version","is_verified"=EXCLUDED."is_verified","verified_at"=EXCLUDED."verified_at","verified_channel"=EXCLUDED."verified_channel","membership_member_id"=EXCLUDED."membership_member_id","membership_revision"=EXCLUDED."membership_revision","membership_status"=EXCLUDED."membership_status","deleted_at"=EXCLUDED."deleted_at" WHERE EXCLUDED."row_version">public."members"."row_version";
+  INSERT INTO public."members" ("id","member_code","full_name","phone","email","address","country_code","postal_code","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","deleted_at")
+  SELECT "id","member_code","full_name","phone","email","address","country_code","postal_code","date_of_birth","tier_id","loyalty_points","total_spent","created_at","updated_at","row_version","deleted_at" FROM jsonb_populate_recordset(NULL::public."members", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO UPDATE SET "member_code"=EXCLUDED."member_code","full_name"=EXCLUDED."full_name","phone"=EXCLUDED."phone","email"=EXCLUDED."email","address"=EXCLUDED."address","country_code"=EXCLUDED."country_code","postal_code"=EXCLUDED."postal_code","date_of_birth"=EXCLUDED."date_of_birth","tier_id"=EXCLUDED."tier_id","loyalty_points"=EXCLUDED."loyalty_points","total_spent"=EXCLUDED."total_spent","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","row_version"=EXCLUDED."row_version","deleted_at"=EXCLUDED."deleted_at" WHERE EXCLUDED."row_version">public."members"."row_version";
   GET DIAGNOSTICS v_count=ROW_COUNT;
-
-
-
   RETURN v_count;
 END $fn$;
 
@@ -17074,6 +17069,79 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- Import the isolated membership directory into the POS mirror. This is part
+-- of the canonical installer as well as the incremental migration so a fresh
+-- Supabase project never starts without the gateway RPC.
+CREATE OR REPLACE FUNCTION public.membership_directory_apply(p_rows jsonb)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE source record; v_target_id uuid; v_affected integer; v_count integer := 0;
+BEGIN
+  IF coalesce(
+    nullif(current_setting('request.jwt.claim.role', true), ''),
+    nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role',
+    ''
+  ) <> 'service_role' THEN
+    RAISE EXCEPTION 'MEMBERSHIP_SERVICE_REQUIRED';
+  END IF;
+  FOR source IN
+    SELECT * FROM jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) AS incoming(
+      id uuid, member_code text, full_name text, phone text, tier_name text,
+      loyalty_points numeric, total_spent numeric, is_verified boolean, status text,
+      created_at timestamptz, updated_at timestamptz, directory_revision bigint)
+  LOOP
+    PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('member-id:' || source.id::text, 0));
+    IF nullif(btrim(source.phone), '') IS NOT NULL THEN
+      PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('member-phone:' || source.phone, 0));
+    END IF;
+    SELECT member.id INTO v_target_id FROM public.members member
+     WHERE member.membership_member_id = source.id
+        OR (member.id = source.id
+            AND (member.membership_member_id IS NULL OR member.membership_member_id = source.id))
+        OR (member.member_code = source.member_code
+            AND (member.membership_member_id IS NULL OR member.membership_member_id = source.id))
+        OR (nullif(btrim(source.phone), '') IS NOT NULL
+            AND member.membership_member_id IS NULL AND member.phone = source.phone)
+     ORDER BY CASE WHEN member.membership_member_id = source.id THEN 0
+                   WHEN member.id = source.id THEN 1
+                   WHEN member.member_code = source.member_code THEN 2 ELSE 3 END, member.id
+     LIMIT 1 FOR UPDATE;
+    IF v_target_id IS NULL THEN
+      INSERT INTO public.members (
+        id,membership_member_id,member_code,full_name,phone,tier_id,loyalty_points,
+        total_spent,created_at,updated_at,is_verified,deleted_at,membership_revision,membership_status)
+      VALUES (
+        source.id,source.id,source.member_code,source.full_name,source.phone,
+        (SELECT tier.id FROM public.membership_tiers tier WHERE lower(tier.name)=lower(source.tier_name) LIMIT 1),
+        source.loyalty_points,source.total_spent,source.created_at,source.updated_at,source.is_verified,
+        CASE WHEN source.status='active' THEN NULL ELSE source.updated_at END,
+        source.directory_revision,source.status);
+      GET DIAGNOSTICS v_affected = ROW_COUNT;
+    ELSE
+      UPDATE public.members target SET
+        membership_member_id=source.id,
+        member_code=CASE WHEN NOT EXISTS (SELECT 1 FROM public.members other WHERE other.id<>target.id AND other.member_code=source.member_code) THEN source.member_code ELSE target.member_code END,
+        full_name=source.full_name,
+        phone=CASE WHEN nullif(btrim(source.phone),'') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.members other WHERE other.id<>target.id AND other.phone=source.phone) THEN source.phone ELSE target.phone END,
+        tier_id=(SELECT tier.id FROM public.membership_tiers tier WHERE lower(tier.name)=lower(source.tier_name) LIMIT 1),
+        loyalty_points=source.loyalty_points,total_spent=source.total_spent,updated_at=source.updated_at,
+        is_verified=source.is_verified,
+        deleted_at=CASE WHEN source.status='active' THEN NULL ELSE source.updated_at END,
+        membership_revision=source.directory_revision,membership_status=source.status
+       WHERE target.id=v_target_id AND source.directory_revision>target.membership_revision;
+      GET DIAGNOSTICS v_affected = ROW_COUNT;
+      IF v_affected > 0 THEN
+        UPDATE public.members SET membership_member_id=NULL
+         WHERE membership_member_id=source.id AND id<>v_target_id;
+      END IF;
+    END IF;
+    v_count := v_count + v_affected;
+  END LOOP;
+  RETURN v_count;
+END;
+$fn$;
+REVOKE ALL ON FUNCTION public.membership_directory_apply(jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.membership_directory_apply(jsonb) TO service_role;
 
 -- Final public-schema privilege hardening
 -- This must remain after every routine definition in this canonical installer.

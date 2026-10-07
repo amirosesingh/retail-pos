@@ -57,6 +57,9 @@ class ConnectionManager {
     if (typeof pool.healthy === "boolean") return pool.healthy;
     return true;
   }
+  markFaulted() {
+    if (this.pool) this.pool.__posConnectionFaulted = true;
+  }
   async close() {
     const pool = this.pool;
     this.pool = null;

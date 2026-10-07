@@ -8,6 +8,7 @@ import {
   ONLINE_STARTUP_OVERRIDE,
 } from "@/core/local-db/db-mode";
 import { LocalDatabaseWizard } from "@/platforms/windows/components/LocalDatabaseWizard";
+import { checkHealth, cloudDiagnosis } from "@/core/activation/connection-health";
 
 type DatabaseState = {
   connected?: boolean;
@@ -70,8 +71,20 @@ function DatabaseStartupPage() {
   };
 
   const continueOnline = async () => {
-    window.sessionStorage.setItem(ONLINE_STARTUP_OVERRIDE, "1");
-    await navigate({ to: "/" });
+    setBusy(true);
+    setError("");
+    try {
+      const report = await checkHealth(true);
+      if (!report.cloud) {
+        const issue = cloudDiagnosis().issue.replaceAll("-", " ");
+        setError(`The configured central POS service is not reachable (${issue}). Retry it or restore the local SQL Server connection.`);
+        return;
+      }
+      window.sessionStorage.setItem(ONLINE_STARTUP_OVERRIDE, "1");
+      await navigate({ to: "/" });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const openSettings = async () => {

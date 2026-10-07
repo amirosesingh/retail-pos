@@ -4,6 +4,8 @@ const { branchPredicate } = require("../branch-scope.cjs");
 const MAX_BATCH_ROWS = 2000;
 const MAX_ENCODED_BYTES = 6 * 1024 * 1024;
 const MAX_QUERY_ROWS = 2000;
+const SNAPSHOT_PAGE_ROWS = 2000;
+const MAX_SNAPSHOT_ROWS = 500000;
 const DEDICATED_WRITE_TABLES = new Set(["authorization_actions", "authorization_action_history"]);
 
 // Renderer reads are intentionally narrower than the synchronization registry.
@@ -12,7 +14,7 @@ const DEDICATED_WRITE_TABLES = new Set(["authorization_actions", "authorization_
 const SAFE_RENDERER_TABLES = new Set([
   "activity_events", "audit_logs", "authorization_actions", "booking_payments", "bookings",
   "coupon_campaigns", "coupon_events", "coupon_redemptions", "expenses", "held_orders", "issued_vouchers",
-  "item_activity_logs", "member_tiers", "members", "payment_types",
+  "item_activity_logs", "membership_tiers", "members", "payment_types",
   "pos_settings", "pos_store_settings", "product_barcodes", "product_categories",
   "products", "promotions", "public_flags", "purchase_order_items", "purchase_orders", "nav_pins",
   "receiving_items", "receivings", "sale_items", "sales", "settings_locks",
@@ -120,7 +122,66 @@ class OperationsRepository {
       throw error;
     }
   }
-  async applyOperation(transaction, op, { branchId, terminalId } = {}) {
+  async assertMemberPermissions(transaction, op, scope = {}) {
+    if (op.table !== "members" || scope.enforcePermissions !== true) return;
+    const permissions = scope.permissions ?? {};
+    if (permissions.can_add_member !== true) {
+      throw Object.assign(new Error("Member management permission is required."), {
+        code: "PERMISSION_DENIED",
+      });
+    }
+    if (op.kind === "delete" || permissions.can_edit_member_points === true) return;
+    if (op.kind === "update") {
+      const protectedValues = Object.fromEntries(
+        Object.entries(op.values ?? {}).filter(([column]) =>
+          ["loyalty_points", "total_spent", "tier_id"].includes(column)),
+      );
+      if (!Object.keys(protectedValues).length) return;
+      const match = Object.entries(op.match ?? {});
+      if (!match.length) return;
+      const request = new (this.connectionManager.sql().Request)(transaction);
+      match.forEach(([, value], index) => {
+        if (value !== null) request.input(`member_match_${index}`, valueForSql(value));
+      });
+      const where = match.map(([column, value], index) =>
+        value === null ? `[${column}] IS NULL` : `[${column}]=@member_match_${index}`).join(" AND ");
+      const current = await request.query(
+        `SELECT loyalty_points,total_spent,tier_id FROM dbo.members WITH (UPDLOCK,HOLDLOCK) WHERE ${where};`,
+      );
+      const changed = (current.recordset ?? []).some((existing) =>
+        (protectedValues.loyalty_points !== undefined && Number(protectedValues.loyalty_points) !== Number(existing.loyalty_points)) ||
+        (protectedValues.total_spent !== undefined && Number(protectedValues.total_spent) !== Number(existing.total_spent)) ||
+        (protectedValues.tier_id !== undefined && String(protectedValues.tier_id ?? "") !== String(existing.tier_id ?? "")),
+      );
+      if (changed) {
+        throw Object.assign(new Error("Member points and tier permission is required."), {
+          code: "PERMISSION_DENIED",
+        });
+      }
+      return;
+    }
+    const rows = op.rows ?? (op.values ? [{ ...(op.match ?? {}), ...op.values }] : []);
+    for (const row of rows) {
+      if (!row?.id) continue;
+      const current = await new (this.connectionManager.sql().Request)(transaction)
+        .input("member_id", row.id)
+        .query("SELECT loyalty_points,total_spent,tier_id FROM dbo.members WITH (UPDLOCK,HOLDLOCK) WHERE id=@member_id;");
+      const existing = current.recordset?.[0];
+      const changesProtectedValue = existing
+        ? (row.loyalty_points !== undefined && Number(row.loyalty_points) !== Number(existing.loyalty_points)) ||
+          (row.total_spent !== undefined && Number(row.total_spent) !== Number(existing.total_spent)) ||
+          (row.tier_id !== undefined && String(row.tier_id ?? "") !== String(existing.tier_id ?? ""))
+        : Number(row.loyalty_points ?? 0) !== 0 || Number(row.total_spent ?? 0) !== 0;
+      if (changesProtectedValue) {
+        throw Object.assign(new Error("Member points and tier permission is required."), {
+          code: "PERMISSION_DENIED",
+        });
+      }
+    }
+  }
+  async applyOperation(transaction, op, scope = {}) {
+    const { branchId, terminalId } = scope;
+    await this.assertMemberPermissions(transaction, op, scope);
     const table = this.tables.get(op.table);
     const primary = table.columns.filter((column) => column.primaryKey).map((column) => column.sqlServerColumn);
     const hasRowVersion = table.columns.some((column) => column.sqlServerColumn === "row_version");
@@ -164,7 +225,14 @@ class OperationsRepository {
     let query;
     const ownership = this.branchPredicate(table, "source");
     const restrictedWhere = `${where}${ownership ? ` AND (${ownership})` : ""}`;
-    if (op.kind === "delete") query = `DELETE source FROM dbo.[${op.table}] source WHERE ${restrictedWhere};`;
+    if (op.kind === "delete" && table.deleteRule === "tombstone" && table.columns.some((column) => column.sqlServerColumn === "deleted_at")) {
+      request.input("deletedAt", new Date().toISOString());
+      const setters = ["[deleted_at]=@deletedAt"];
+      if (table.columns.some((column) => column.sqlServerColumn === "updated_at")) setters.push("[updated_at]=@deletedAt");
+      if (hasRowVersion) setters.push("[row_version]=COALESCE([row_version],0)+1");
+      query = `UPDATE source SET ${setters.join(",")} FROM dbo.[${op.table}] source WHERE ${restrictedWhere};`;
+    }
+    else if (op.kind === "delete") query = `DELETE source FROM dbo.[${op.table}] source WHERE ${restrictedWhere};`;
     else {
       const values = Object.entries(op.values ?? {}).filter(([column]) => column !== "row_version");
       if (!values.length && !hasRowVersion) return 0;
@@ -178,6 +246,47 @@ class OperationsRepository {
   }
   branchPredicate(table, alias = "source", seen = new Set()) {
     return branchPredicate(this.registry, table, alias, seen);
+  }
+  async snapshotRows(name, branchId = null) {
+    const table = this.tables.get(name);
+    if (!table) return [];
+    const names = new Set(table.columns.map((column) => column.sqlServerColumn));
+    const where = [];
+    if (names.has("deleted_at")) where.push("deleted_at IS NULL");
+    if (name === "products") where.push("(NULLIF(owner_store_id,N'') IS NULL OR owner_store_id=@branch)");
+    const sql = this.connectionManager.sql();
+    const transaction = new sql.Transaction(this.pool());
+    await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
+    const rows = [];
+    try {
+      for (let offset = 0; offset <= MAX_SNAPSHOT_ROWS; offset += SNAPSHOT_PAGE_ROWS) {
+        const request = new sql.Request(transaction).input("offset", offset).input("limit", SNAPSHOT_PAGE_ROWS);
+        if (name === "products") request.input("branch", branchId == null ? null : String(branchId));
+        const page = await request.query(`SELECT * FROM dbo.[${name}] ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY [id] OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`);
+        const pageRows = page.recordset ?? [];
+        // The extra empty page proves that exactly MAX_SNAPSHOT_ROWS is safe;
+        // any row beyond it must fail visibly instead of being silently omitted.
+        if (offset >= MAX_SNAPSHOT_ROWS) {
+          if (pageRows.length === 0) {
+            await transaction.commit();
+            return rows;
+          }
+          break;
+        }
+        rows.push(...pageRows);
+        if (pageRows.length < SNAPSHOT_PAGE_ROWS) {
+          await transaction.commit();
+          return rows;
+        }
+      }
+      throw Object.assign(new Error(`${name} exceeds the supported 500,000-row terminal snapshot.`), {
+        code: "ESNAPSHOT_LIMIT",
+        table: name,
+      });
+    } catch (error) {
+      await Promise.resolve(transaction.rollback()).catch(() => undefined);
+      throw error;
+    }
   }
   async query(branchId, tableName, options = {}) {
     const table = this.cloudTables.get(String(tableName ?? ""));
@@ -292,18 +401,11 @@ class OperationsRepository {
   async snapshot(branchId = null, terminalId = null) {
     // Branch-owned rows are loaded separately with an explicit predicate.
     // The list below contains only shared catalogue/reference data.
-    const names = ["products", "members", "stores", "promotions", "member_tiers"];
+    const names = ["products", "members", "stores", "promotions", "membership_tiers"];
     const output = {};
     for (const name of names) {
       if (!this.tables.has(name)) continue;
-      const request = this.pool().request();
-      let sql = `SELECT TOP (2000) * FROM dbo.[${name}] ORDER BY [id];`;
-      if (name === "products") {
-        request.input("branch", branchId == null ? null : String(branchId));
-        sql = "SELECT TOP (2000) * FROM dbo.products WHERE NULLIF(owner_store_id,N'') IS NULL OR owner_store_id=@branch ORDER BY id;";
-      }
-      const result = await request.query(sql);
-      output[name === "member_tiers" ? "tiers" : name] = result.recordset ?? [];
+      output[name === "membership_tiers" ? "tiers" : name] = await this.snapshotRows(name, branchId);
     }
     if (this.tables.has("settings_scoped") && output.products?.length) {
       const request = this.pool().request()

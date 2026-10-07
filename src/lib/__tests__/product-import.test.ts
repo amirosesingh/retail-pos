@@ -3,6 +3,7 @@ import {
   batches,
   describeOutcome,
   importFailureReason,
+  isSystemicImportFailure,
   outcomeReportRows,
   planImport,
   planImportReview,
@@ -194,6 +195,22 @@ describe("batches", () => {
     expect(saved).toEqual([1, 2, 4]);
     expect(failed).toEqual([3]);
   });
+
+  it("does not retry an authentication failure one product at a time", async () => {
+    const attempts: number[][] = [];
+    const failed: number[][] = [];
+    await persistBatchWithIsolation(
+      [1, 2, 3, 4],
+      async (rows) => {
+        attempts.push(rows);
+        throw Object.assign(new Error("JWT expired"), { status: 401 });
+      },
+      () => undefined,
+      (rows) => { failed.push(rows); },
+    );
+    expect(attempts).toEqual([[1, 2, 3, 4]]);
+    expect(failed).toEqual([[1, 2, 3, 4]]);
+  });
 });
 
 describe("importFailureReason", () => {
@@ -204,6 +221,14 @@ describe("importFailureReason", () => {
     expect(importFailureReason(new Error("duplicate key value"))).toContain("already used");
     expect(importFailureReason(new Error("Failed to fetch"))).toContain("Connection lost");
     expect(importFailureReason(undefined)).toContain("without saying why");
+  });
+
+  it("classifies authentication, permission, connectivity, and bridge failures as systemic", () => {
+    expect(isSystemicImportFailure(Object.assign(new Error("JWT expired"), { status: 401 }))).toBe(true);
+    expect(isSystemicImportFailure(Object.assign(new Error("permission denied"), { code: "42501" }))).toBe(true);
+    expect(isSystemicImportFailure(new Error("Failed to fetch"))).toBe(true);
+    expect(isSystemicImportFailure(new Error("Local transaction storage unavailable"))).toBe(true);
+    expect(isSystemicImportFailure(new Error("duplicate key value"))).toBe(false);
   });
 });
 

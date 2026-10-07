@@ -179,6 +179,31 @@ function prepareLocalData({force=false}={}){
   })().finally(()=>{localDataPreparePromise=null;});
   return localDataPreparePromise;
 }
+let localDatabaseRecoveryPromise=null;
+function recoverLocalDatabase({prepare=true}={}){
+  if(localDatabaseRecoveryPromise)return localDatabaseRecoveryPromise;
+  localDatabaseRecoveryPromise=(async()=>{
+    const restored=await databaseService.restore();
+    if(!restored.connected||!restored.tradingReady)return restored;
+    const branchId=localBranchId();
+    if(!branchId)return databaseService.snapshot();
+    if(prepare){
+      try{await prepareLocalData();}
+      catch{return databaseService.snapshot();}
+      return databaseService.snapshot();
+    }
+    try{
+      const synced=await syncCoordinator.runNow({branchId,batchSize:10});
+      if(synced.code==="ECHANGEGAP")await prepareLocalData({force:true});
+      else if(!synced.ok)throw Object.assign(new Error(synced.error??"Synchronization failed after reconnect."),{code:synced.code??"ESYNC"});
+      else databaseService.markReady({phase:"reconnected",syncReady:true});
+    }catch(error){
+      databaseService.markReady({phase:"sync_pending",syncReady:false,code:error?.code??"ESYNC",error:String(error?.message??error)});
+    }
+    return databaseService.snapshot();
+  })().finally(()=>{localDatabaseRecoveryPromise=null;});
+  return localDatabaseRecoveryPromise;
+}
 
 const AUTO_SYNC_OK_MS = 15_000;
 const AUTO_SYNC_RETRY_MS = 60_000;
@@ -197,6 +222,15 @@ function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
 }
 async function runAutomaticSync() {
   automaticSyncTimer = null;
+  const databaseState=databaseService.snapshot();
+  if(databaseState.enabled&&databaseState.configured&&!databaseManager.isConnected()){
+    const recovered=await recoverLocalDatabase({prepare:false}).catch(error=>{
+      recordFault("database.automatic-reconnect",error);
+      return databaseService.snapshot();
+    });
+    scheduleAutomaticSync(recovered.connected?250:AUTO_SYNC_RETRY_MS);
+    return;
+  }
   // A cached administrator branch is never a substitute for a registered
   // terminal identity. Revocation clears the vault before this can run again.
   if (!terminalStore.read()?.tokenId || !databaseManager.isConnected() || !localBranchId() || jobManager.running || localDataPreparePromise || syncCoordinator.paused) {
@@ -1513,7 +1547,7 @@ function registerIpc() {
     return { ok: true, level: result.level };
   }));
   ipcMain.handle("database:get-state", () => databaseService.snapshot());
-  ipcMain.handle("database:retry-startup", () => databaseService.restore());
+  ipcMain.handle("database:retry-startup", () => recoverLocalDatabase({prepare:true}));
   ipcMain.handle("database:authorize-settings", () => ({ ok: true }));
   ipcMain.handle("database:set-enabled", (_e, value) => guard.guarded(async()=>{await databaseService.setEnabled(value===true);if(value===true&&databaseManager.isConnected())void prepareLocalData().catch(error=>recordFault("local-data.prepare",error));return databaseService.snapshot();}));
   ipcMain.handle("database:list-servers", () => discoverLocalSqlServers());
@@ -1603,7 +1637,7 @@ function registerIpc() {
   ipcMain.handle("database:schema-status", () => databaseService.schemaStatus());
   ipcMain.handle("database:backup", (_e, file) => guard.guarded(() => backupService.backup(guard.filePath(file,{name:"backup file",extension:"bak"}))));
   ipcMain.handle("database:restore", (_e, file) => guard.guarded(async () => { const result=await backupService.restore(guard.filePath(file,{name:"backup file",extension:"bak"})); if(result.ok)await databaseService.restore(); return result; }));
-  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const branchId=localBranchId();const operations=stampVerifiedBranchOperations(guard.writeOps(ops,{max:200}),branchId);const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}),operations,{branchId,terminalId:terminal.tokenId??terminal.terminalId});scheduleAutomaticSync(250);return result;}));
+  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const branchId=localBranchId();const identity=adminSession.identity();const operations=stampVerifiedBranchOperations(guard.writeOps(ops,{max:200}),branchId);const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}),operations,{branchId,terminalId:terminal.tokenId??terminal.terminalId,permissions:identity?.permissions??{},enforcePermissions:true});scheduleAutomaticSync(250);return result;}));
   ipcMain.handle("business:save-authorization-rule", (_e, value) => guard.guarded(async () => {
     const identity = adminSession.identity();
     if (!identity || !adminSession.hasPosAuthority() || !adminSession.hasPermission("can_access_pos_settings"))
@@ -1644,6 +1678,11 @@ function registerIpc() {
         operations,
         branchId,
         terminalId:terminal.tokenId??terminal.terminalId??null,
+        permissions:adminSession.identity()?.permissions??{},
+        // Automatic sale/payment accrual is governed by the aggregate itself.
+        // Direct member administration uses the generic aggregate and must
+        // enforce the same add/points permissions as the central relay.
+        enforcePermissions:aggregate.kind==="general",
       };
       const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null});

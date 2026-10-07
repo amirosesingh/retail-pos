@@ -4664,7 +4664,7 @@
     {
       "cloudTable": "members",
       "sqlServerTable": "members",
-      "scope": "branch",
+      "scope": "organization",
       "direction": "bidirectional",
       "retentionClass": "current",
       "insertRule": "idempotent_upsert",
@@ -4968,7 +4968,7 @@
     {
       "cloudTable": "membership_tiers",
       "sqlServerTable": "membership_tiers",
-      "scope": "branch",
+      "scope": "organization",
       "direction": "bidirectional",
       "retentionClass": "current",
       "insertRule": "idempotent_upsert",
