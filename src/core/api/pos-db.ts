@@ -211,7 +211,8 @@ function jsonValue<T>(value: unknown, fallback: T): T {
 function settingsObject(value: unknown): Record<string, unknown> {
   const parsed = jsonValue<unknown>(value, {});
   return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? parsed as Record<string, unknown> : {};
+    ? (parsed as Record<string, unknown>)
+    : {};
 }
 
 /** Strict numeric coercion: "" / null / NaN / Infinity never reach the database. */
@@ -409,7 +410,9 @@ const settingsText = (value: unknown): string => {
     try {
       const decoded: unknown = JSON.parse(value);
       if (typeof decoded === "string") return decoded;
-    } catch { /* ordinary text beginning with a quote */ }
+    } catch {
+      /* ordinary text beginning with a quote */
+    }
   }
   return value;
 };
@@ -434,9 +437,7 @@ export const rowToSettings = (r: Row | null): AppSettings =>
           footerText: settingsText(r.footer_text),
           showLogo: r.show_logo ?? true,
           logo: settingsText((r as { logo_data_url?: unknown }).logo_data_url),
-          logoLayout: normalizeReceiptLogoLayout(
-            settingsObject(r.receipt_design).logoLayout,
-          ),
+          logoLayout: normalizeReceiptLogoLayout(settingsObject(r.receipt_design).logoLayout),
           showPoints: r.show_points ?? true,
           showBarcode: r.show_barcode ?? true,
           showTax: r.show_tax_details ?? true,
@@ -444,7 +445,9 @@ export const rowToSettings = (r: Row | null): AppSettings =>
             ...defaultSettings.receipt.fonts,
             ...settingsObject(r.fonts),
           },
-          customLines: Array.isArray(jsonValue(r.custom_lines, [])) ? jsonValue(r.custom_lines, []) : [],
+          customLines: Array.isArray(jsonValue(r.custom_lines, []))
+            ? jsonValue(r.custom_lines, [])
+            : [],
           qr: { ...defaultSettings.receipt.qr, ...settingsObject(r.qr) },
           css: (r as { receipt_css?: string | null }).receipt_css ?? "",
           bookingSlip: {
@@ -461,8 +464,8 @@ export const rowToSettings = (r: Row | null): AppSettings =>
           ...settingsObject(r.whatsapp_settings),
         },
         visibility: {
-          hidden: ((settingsObject(r.ui_visibility).hidden as Record<string, string[]> | undefined) ??
-            {}) as Record<string, string[]>,
+          hidden: ((settingsObject(r.ui_visibility).hidden as
+            Record<string, string[]> | undefined) ?? {}) as Record<string, string[]>,
         },
         integrations: {
           ...defaultSettings.integrations,
@@ -581,7 +584,10 @@ const settingsFieldRows = (row: Row): Row[] => {
 };
 
 /** Overlay independently versioned fields onto the legacy settings snapshot. */
-export const applySettingsFields = (base: Row | null, fields: Row[] | null | undefined): Row | null => {
+export const applySettingsFields = (
+  base: Row | null,
+  fields: Row[] | null | undefined,
+): Row | null => {
   if (!base && !fields?.length) return null;
   const merged: Row = { ...(base ?? { id: 1 }) };
   for (const field of fields ?? []) {
@@ -589,8 +595,12 @@ export const applySettingsFields = (base: Row | null, fields: Row[] | null | und
     if (!rawKey.startsWith("pos_field:")) continue;
     const key = rawKey.slice("pos_field:".length);
     if (key === "company_name") {
-      const name = typeof field.value === "string" ? settingsText(field.value)
-        : typeof field.value === "number" ? String(field.value) : "";
+      const name =
+        typeof field.value === "string"
+          ? settingsText(field.value)
+          : typeof field.value === "number"
+            ? String(field.value)
+            : "";
       // A stale, empty field row must not erase a name already pulled from
       // the cloud snapshot. Missing names still remain missing for the admin.
       if (name.trim() || !String(merged.company_name ?? "").trim()) merged[key] = name;
@@ -1020,8 +1030,8 @@ const receivingActivityRows = (inv: ReceivingInvoice, storeId: string | null) =>
     }));
 
 /** Pricing never writes absolute stock: movement commits own quantities. */
-export const receivingPriceOps = (inv: ReceivingInvoice): SyncOp[] =>
-  inv.status !== "posted"
+export const receivingPriceOps = (inv: ReceivingInvoice, updateProductPrices = false): SyncOp[] =>
+  inv.status !== "posted" || !updateProductPrices
     ? []
     : inv.lines
         .filter((line) => line.productId)
@@ -1343,9 +1353,14 @@ export async function loadCloudState(
 
     // Publish the small identity row as soon as it answers; the catalogue can
     // take many pages, and the shell should not show a placeholder meanwhile.
-    authenticatedClient.from("pos_settings").select("*").eq("id", 1).maybeSingle()
+    authenticatedClient
+      .from("pos_settings")
+      .select("*")
+      .eq("id", 1)
+      .maybeSingle()
       .then((result) => {
-        if (!result.error && result.data) onCompanyName?.(settingsText((result.data as Row).company_name));
+        if (!result.error && result.data)
+          onCompanyName?.(settingsText((result.data as Row).company_name));
         return result;
       }),
     (async () => {
@@ -1801,10 +1816,24 @@ const rowToReceivingLine = (r: Row): ReceivingLine => ({
   qty: num(r.quantity_received),
 });
 
+const DRAFT_PO_PREFIX = "__draft__:";
+
+const visiblePurchaseOrderNumber = (value: unknown, status: unknown): string => {
+  const stored = String(value ?? "");
+  if (status !== "draft" || !stored.startsWith(DRAFT_PO_PREFIX)) return stored;
+  const separator = stored.indexOf(":", DRAFT_PO_PREFIX.length);
+  return separator < 0 ? "" : stored.slice(separator + 1);
+};
+
+const storedPurchaseOrderNumber = (inv: ReceivingInvoice): string =>
+  inv.status === "draft"
+    ? `${DRAFT_PO_PREFIX}${inv.id}:${inv.invoiceNo.trim().slice(0, 400)}`
+    : inv.invoiceNo.trim();
+
 const rowToReceivingInvoice = (r: Row): ReceivingInvoice => ({
   id: r.id,
   reference: r.reference ?? null,
-  invoiceNo: r.po_number ?? "",
+  invoiceNo: visiblePurchaseOrderNumber(r.po_number, r.status),
   supplier: r.supplier_name ?? "",
   supplierId: r.supplier_id ?? null,
   operator: r.operator_name ?? "",
@@ -1826,7 +1855,10 @@ const rowToReceivingInvoice = (r: Row): ReceivingInvoice => ({
 const invoiceRow = (inv: ReceivingInvoice): Row => ({
   id: inv.id,
   reference: inv.reference,
-  po_number: inv.invoiceNo,
+  // Draft invoice numbers are provisional. Namespacing the indexed database
+  // value by draft id lets several unfinished receipts coexist and prevents a
+  // draft from reserving a real supplier invoice number before it is posted.
+  po_number: storedPurchaseOrderNumber(inv),
   supplier_name: inv.supplier,
   supplier_id: inv.supplierId,
   operator_name: inv.operator,
@@ -1869,23 +1901,34 @@ export async function loadReceivingInvoices(
     // A locally committed draft must remain visible even before cloud sync.
     // SQL Server enforces terminal branch scope for both headers and lines.
     const statuses = status === "posted" ? ["posted", null] : [status];
-    const heads = (await Promise.all(statuses.map((value) =>
-      routedQuery("purchase_orders", {
-        ...(value === "any" ? {} : { match: { status: value } }),
-        orderBy: { column: "invoice_entry_date", ascending: false },
-        limit, offset,
-      }),
-    ))).flat()
+    const heads = (
+      await Promise.all(
+        statuses.map((value) =>
+          routedQuery("purchase_orders", {
+            ...(value === "any" ? {} : { match: { status: value } }),
+            orderBy: { column: "invoice_entry_date", ascending: false },
+            limit,
+            offset,
+          }),
+        ),
+      )
+    )
+      .flat()
       .filter((row) => allStores || !storeId || row.store_id === storeId || row.store_id == null)
-      .sort((a, b) => String(b.invoice_entry_date ?? b.created_at ?? "")
-        .localeCompare(String(a.invoice_entry_date ?? a.created_at ?? "")))
+      .sort((a, b) =>
+        String(b.invoice_entry_date ?? b.created_at ?? "").localeCompare(
+          String(a.invoice_entry_date ?? a.created_at ?? ""),
+        ),
+      )
       .slice(0, limit);
     const lines: Row[] = [];
     for (let start = 0; start < heads.length; start += 500) {
       const ids = heads.slice(start, start + 500).map((row) => row.id);
       for (let offset = 0; ; offset += 2000) {
         const page = await routedQuery("purchase_order_items", {
-          in: { column: "po_id", values: ids }, limit: 2000, offset,
+          in: { column: "po_id", values: ids },
+          limit: 2000,
+          offset,
         });
         lines.push(...page);
         if (page.length < 2000) break;
@@ -1896,9 +1939,12 @@ export async function loadReceivingInvoices(
       const key = String(line.po_id);
       byOrder.set(key, [...(byOrder.get(key) ?? []), line]);
     }
-    return heads.map((row) => rowToReceivingInvoice({
-      ...row, purchase_order_items: byOrder.get(String(row.id)) ?? [],
-    }));
+    return heads.map((row) =>
+      rowToReceivingInvoice({
+        ...row,
+        purchase_order_items: byOrder.get(String(row.id)) ?? [],
+      }),
+    );
   }
   let q = supabase
     .from("purchase_orders" as never)
@@ -1967,7 +2013,10 @@ export async function loadReceivingDrafts(storeId: string | null, allStores = fa
  */
 export async function invoiceNumberTaken(invoiceNo: string, exceptId?: string): Promise<boolean> {
   if (effectiveDatabaseMode() === "local" && localDb()?.query) {
-    const rows = await routedQuery("purchase_orders", { match: { po_number: invoiceNo }, limit: 20 });
+    const rows = await routedQuery("purchase_orders", {
+      match: { po_number: invoiceNo },
+      limit: 20,
+    });
     return rows.some((r) => r.id !== exceptId && (r.status ?? "posted") === "posted");
   }
   const res = await supabase
@@ -2091,7 +2140,8 @@ export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitT
     if (state?.enabled && state?.connected && (state.tradingReady ?? state.connected)) {
       const refund =
         ops.length === 1 && ops[0].kind === "rpc" && ops[0].fn === "sale_refund" ? ops[0] : null;
-      const sharedPosSettings = ops.some((op) => op.table === "pos_settings") &&
+      const sharedPosSettings =
+        ops.some((op) => op.table === "pos_settings") &&
         ops.every((op) => op.table === "pos_settings" || op.table === "settings_scoped");
       const aggregateKind = sharedPosSettings
         ? "settings"
@@ -2602,7 +2652,11 @@ export const db = {
    * writes the goods-received movement rows in the very same commit, so a
    * received line can never change stock without leaving a history row.
    */
-  commitReceivingInvoice: (inv: ReceivingInvoice, movementStoreId?: string | null) =>
+  commitReceivingInvoice: (
+    inv: ReceivingInvoice,
+    movementStoreId?: string | null,
+    updateProductPrices = false,
+  ) =>
     commitOps("Saving receiving invoice", [
       { kind: "upsert", table: "purchase_orders", rows: [invoiceRow(inv)] },
       ...(inv.lines.length
@@ -2615,7 +2669,7 @@ export const db = {
           ]
         : []),
       ...receivingActivityOps(inv, movementStoreId),
-      ...receivingPriceOps(inv),
+      ...receivingPriceOps(inv, updateProductPrices),
     ]),
 
   /**
@@ -2628,6 +2682,7 @@ export const db = {
     removedLineIds: string[],
     movementStoreId?: string | null,
     correction?: { previous: ReceivingInvoice; attemptId: string },
+    updateProductPrices = false,
   ) =>
     commitOps("Updating receiving invoice", [
       { kind: "upsert", table: "purchase_orders", rows: [invoiceRow(inv)] },
@@ -2648,7 +2703,7 @@ export const db = {
       ...(correction
         ? receivingCorrectionOps(inv, correction.previous, correction.attemptId)
         : receivingActivityOps(inv, movementStoreId)),
-      ...receivingPriceOps(inv),
+      ...receivingPriceOps(inv, updateProductPrices),
     ]),
 
   /**
@@ -3050,9 +3105,16 @@ export const db = {
   commitStockAdjustments: (
     products: Product[],
     adjustments: StockAdjustmentInput[],
-    postedDraft?: { id: string; by?: string | null; record?: {
-      reason: string; note: string; lines: unknown[]; totalImpact: number;
-    } },
+    postedDraft?: {
+      id: string;
+      by?: string | null;
+      record?: {
+        reason: string;
+        note: string;
+        lines: unknown[];
+        totalImpact: number;
+      };
+    },
   ) =>
     commitOps("Saving stock adjustment", [
       ...(products.length
@@ -3077,13 +3139,15 @@ export const db = {
                 posted_at: new Date().toISOString(),
                 posted_by: postedDraft.by ?? null,
                 updated_at: new Date().toISOString(),
-                ...(postedDraft.record ? {
-                  reason: postedDraft.record.reason,
-                  note: postedDraft.record.note,
-                  lines: JSON.stringify(postedDraft.record.lines),
-                  line_count: postedDraft.record.lines.length,
-                  total_impact: postedDraft.record.totalImpact,
-                } : {}),
+                ...(postedDraft.record
+                  ? {
+                      reason: postedDraft.record.reason,
+                      note: postedDraft.record.note,
+                      lines: JSON.stringify(postedDraft.record.lines),
+                      line_count: postedDraft.record.lines.length,
+                      total_impact: postedDraft.record.totalImpact,
+                    }
+                  : {}),
               },
               match: { id: postedDraft.id },
             },
@@ -3164,7 +3228,8 @@ export const db = {
       const page = await routedQuery("stock_count_drafts", {
         match: { store_id: storeId, status: "draft" },
         orderBy: { column: "updated_at", ascending: false },
-        limit: pageSize, offset,
+        limit: pageSize,
+        offset,
       });
       rows.push(...page);
       if (page.length < pageSize) break;
@@ -3191,7 +3256,8 @@ export const db = {
       const page = await routedQuery("stock_count_drafts", {
         match: { ...(opts.storeId ? { store_id: opts.storeId } : {}), status: "draft" },
         orderBy: { column: "created_at", ascending: false },
-        limit: pageSize, offset,
+        limit: pageSize,
+        offset,
       });
       drafts.push(...page);
       if (page.length < pageSize) break;
@@ -3199,7 +3265,8 @@ export const db = {
     const byId = new Map<string, Row>();
     for (const row of [...recent, ...drafts]) byId.set(String(row.id), row);
     return [...byId.values()].sort((a, b) =>
-      String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+      String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")),
+    );
   },
 
   /* ------------------------ whatsapp outbox ----------------------- */

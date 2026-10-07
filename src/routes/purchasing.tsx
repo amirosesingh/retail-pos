@@ -448,7 +448,8 @@ function Purchasing() {
       if (saved) {
         toast.success("Draft saved");
         await refreshDrafts();
-      } else toast.error("Draft was not saved", { description: "Check the error above and try again." });
+      } else
+        toast.error("Draft was not saved", { description: "Check the error above and try again." });
     } finally {
       setSavingDraft(false);
     }
@@ -726,8 +727,16 @@ function Purchasing() {
 
       // The hub is where the stock actually lands, so the movement rows are
       // stamped with it and committed alongside the invoice.
-      if (wasDraft) await db.updateReceivingInvoice(invoice, draftLineRemovals, hubId);
-      else await db.commitReceivingInvoice(invoice, hubId);
+      const mayUpdateCataloguePrices = can("can_edit_product_price");
+      if (wasDraft)
+        await db.updateReceivingInvoice(
+          invoice,
+          draftLineRemovals,
+          hubId,
+          undefined,
+          mayUpdateCataloguePrices,
+        );
+      else await db.commitReceivingInvoice(invoice, hubId, mayUpdateCataloguePrices);
 
       const movements = [];
       for (const l of lines) {
@@ -846,10 +855,16 @@ function Purchasing() {
       };
       // Corrections append only the quantity difference under stable retry IDs.
       if (!original) throw new Error("Reload the invoice before editing it");
-      await db.updateReceivingInvoice(next, removedLineIds, next.storeId, {
-        previous: original,
-        attemptId: editAttempt.current,
-      });
+      await db.updateReceivingInvoice(
+        next,
+        removedLineIds,
+        next.storeId,
+        {
+          previous: original,
+          attemptId: editAttempt.current,
+        },
+        can("can_edit_product_price"),
+      );
 
       // Deltas only: nothing is removed and re-added, so history stays intact.
       const deltas: Record<string, number> = {};
@@ -979,6 +994,7 @@ function Purchasing() {
                   <Input
                     value={invoiceNo}
                     onChange={(e) => setInvoiceNo(e.target.value)}
+                    maxLength={400}
                     placeholder="e.g. INV-2026-0417"
                     className="numeric h-11"
                   />
@@ -1199,7 +1215,11 @@ function Purchasing() {
           </DialogContent>
         </Dialog>
 
-        {draftError && <p role="alert" className="text-sm text-destructive">Drafts: {draftError}</p>}
+        {draftError && (
+          <p role="alert" className="text-sm text-destructive">
+            Drafts: {draftError}
+          </p>
+        )}
         {drafts.length > 0 && (
           <section className="rounded-lg border border-warning/40 bg-warning/5 p-5">
             <h2 className="text-sm font-semibold">Draft receiving orders</h2>

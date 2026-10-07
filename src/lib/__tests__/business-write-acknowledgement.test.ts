@@ -48,7 +48,7 @@ describe("business UI persistence acknowledgements", () => {
     expect(quickMember).toContain("await upsertMember({ ...verifying, verified: true })");
     expect(inventory).toContain('notifyError(error, "Updating product categories")');
     expect(inventory).toContain('notifyError(error, "Archiving selected products")');
-    expect(inventory).toContain('notifyError(error, `Archiving ${p.name}`)');
+    expect(inventory).toContain("notifyError(error, `Archiving ${p.name}`)");
     expect(inventory).toContain("disabled={bulkSaving}");
   });
 
@@ -83,10 +83,10 @@ describe("business UI persistence acknowledgements", () => {
     const purchasing = source("src/routes/purchasing.tsx");
     expect(db).not.toContain("recordPurchaseOrder(");
     expect(db).toContain('commitOps("Saving receiving invoice"');
-    expect(purchasing).toContain("await db.commitReceivingInvoice(invoice, hubId)");
     expect(purchasing).toContain(
-      "await db.updateReceivingInvoice(invoice, draftLineRemovals, hubId)",
+      "await db.commitReceivingInvoice(invoice, hubId, mayUpdateCataloguePrices)",
     );
+    expect(purchasing).toContain("await db.updateReceivingInvoice(");
   });
 
   it("waits for each transfer transition before success UI", () => {

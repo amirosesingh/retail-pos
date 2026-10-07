@@ -327,7 +327,7 @@ describe("receiving stock ownership", () => {
     lines: [{ productId: "product-1", name: "Item", qty: 4, cost: 2, price: 3 }],
   } as ReceivingInvoice;
   it("changes pricing without writing absolute quantities", () => {
-    const ops = receivingPriceOps(previous);
+    const ops = receivingPriceOps(previous, true);
     expect(ops).toEqual([
       {
         kind: "update",
@@ -354,5 +354,6 @@ describe("receiving stock ownership", () => {
     if (op.kind !== "upsert") throw new Error("Expected movement upsert");
     expect(op.rows[0].quantity_delta).toBe(-4);
     expect(receivingPriceOps({ ...previous, status: "draft" })).toEqual([]);
+    expect(receivingPriceOps(previous, false)).toEqual([]);
   });
 });

@@ -11403,6 +11403,27 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9)
   VALUES (9, N'009_persist_held_approval_fingerprint', SYSDATETIMEOFFSET());
 
 GO
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+IF OBJECT_ID(N'dbo.purchase_orders', N'U') IS NOT NULL
+BEGIN
+  UPDATE dbo.purchase_orders
+  SET po_number = CONCAT(
+    N'__draft__:',
+    CONVERT(nvarchar(36), id),
+    N':',
+    LEFT(COALESCE(po_number, N''), 400)
+  )
+  WHERE status = N'draft'
+    AND po_number NOT LIKE N'__draft__:%';
+END;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10)
+  INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
+  VALUES (10, N'010_namespace_receiving_draft_numbers', SYSDATETIMEOFFSET());
+
+GO
 
 DECLARE @RequiredTables TABLE ([name] sysname NOT NULL PRIMARY KEY);
 INSERT INTO @RequiredTables ([name]) VALUES
@@ -12722,7 +12743,7 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
   THROW 51002, 'Retail POS local database migration history table is missing.', 1;
 
-EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9)
+EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10)
   THROW 51002, ''Retail POS local database migration history is incomplete.'', 1;');
 
 EXEC(N'SELECT version, name, applied_at
