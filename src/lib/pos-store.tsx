@@ -56,6 +56,7 @@ import {
   loadCloudSettings,
   loadSalesPage,
   openShiftOnServer,
+  stableChildId,
 } from "@/core/api/pos-db";
 import { recordActivity } from "./activity-events";
 import { notifyError } from "./notify";
@@ -569,6 +570,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Who is acting right now — stamped on transfer approvals and receipts.
   const actorRef = useRef("Manager");
   actorRef.current = terminalUser?.name || user?.email || "Manager";
+  const actorStaffIdRef = useRef<string | null>(null);
+  actorStaffIdRef.current = user?.staffId ?? terminalUser?.userCode ?? null;
+  const actorRoleRef = useRef<string | null>(null);
+  actorRoleRef.current = user?.role ?? terminalUser?.role ?? null;
   // Scoped business/terminal overrides and global locks.
   const [scope, setScope] = useState<BranchSettingsState>(emptyBranchSettings);
   const settingsWrites = useRef(new SettingsWriteQueue());
@@ -2436,6 +2441,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         savedProducts: [],
       };
       if (!todo.length) return result;
+      const importId = options.importId ?? crypto.randomUUID();
 
       const privateCatalogue = branchPolicy(stateRef.current.settings, storeId).privateCatalogue;
       const zeroStockLifecycle =
@@ -2480,7 +2486,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
                   (hit.stockByStore?.[storeId] ?? 0) +
                   (options.applyStock === false ? 0 : row.stock),
               },
-              customPoints: row.customPoints || hit.customPoints,
+              customPoints: row.customPoints ?? hit.customPoints,
             };
             for (const id of storeIds) {
               if (record.stockByStore[id] === undefined) record.stockByStore[id] = 0;
@@ -2543,7 +2549,47 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ): Promise<void> =>
           persistBatchWithIsolation(
             slice,
-            (part) => db.commitProducts(part.map((entry) => entry.record)),
+            async (part) => {
+              const movements =
+                options.applyStock === false
+                  ? []
+                  : part.flatMap((entry) => {
+                      const delta = Math.round(entry.row.stock);
+                      if (!delta) return [];
+                      const after = Math.round(entry.record.stockByStore?.[storeId] ?? delta);
+                      return [
+                        {
+                          id: stableChildId(importId, "6", entry.row.line),
+                          productId: entry.record.id,
+                          productName: entry.record.name,
+                          sku: entry.record.sku,
+                          barcode: entry.record.barcode,
+                          storeId,
+                          terminalId: localTerminalId(),
+                          quantityDelta: delta,
+                          stockBefore: after - delta,
+                          stockAfter: after,
+                          unitCost: entry.record.cost,
+                          staffId: actorStaffIdRef.current,
+                          staffName: actorRef.current,
+                          role: actorRoleRef.current,
+                          reference: `Bulk import ${importId}`,
+                        },
+                      ];
+                    });
+              const target = await db.commitProducts(
+                part.map((entry) => entry.record),
+                movements,
+              );
+              if (target === "offline") {
+                throw Object.assign(
+                  new Error(
+                    "Connection lost while saving this batch. It is queued safely and will be verified before the import is marked complete.",
+                  ),
+                  { code: "NETWORK" },
+                );
+              }
+            },
             async (saved) => {
               const records = saved.map((entry) => entry.record);
               const keys = saved.map((entry) => entry.row.key);
@@ -2559,7 +2605,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
               }
 
               logger.log("inventory_edit", "Products imported", "inventory", {
-                importId: options.importId ?? null,
+                importId,
                 storeId,
                 created,
                 restocked,

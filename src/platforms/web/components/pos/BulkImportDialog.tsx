@@ -34,6 +34,7 @@ import {
   DEFAULT_BATCH_SIZE,
   IMPORT_HEADERS,
   describeOutcome,
+  importFailureReason,
   outcomeReportRows,
   planImportReview,
   resolveReviewConflict,
@@ -49,6 +50,7 @@ import { parseProductImportFile } from "./product-import-file";
 import { productCodes } from "@/lib/product-lookup";
 import { lookupProductsByCodes } from "@/lib/product-search";
 import type { Product } from "@/core/types/pos-types";
+import { localDb } from "@/core/local-db/local-db";
 
 const TEMPLATE_ROWS = [
   ["8901234500011", "Colombian Whole Bean 1kg", 24, 14.5, "Coffee", "bag", 40, 2],
@@ -148,7 +150,25 @@ export function BulkImportDialog({
     setProgressLabel(`Checking ${records.length.toLocaleString()} rows against SQL…`);
     await new Promise((r) => setTimeout(r, 0));
 
-    const catalogue = await lookupProductsByCodes(records.map(sourceBarcode), state.products);
+    let catalogue: Product[];
+    try {
+      const local = localDb();
+      const localState = await local?.database?.getState?.().catch(() => null);
+      catalogue = await lookupProductsByCodes(records.map(sourceBarcode), state.products, {
+        // A configured Electron terminal owns a complete SQL Server snapshot
+        // and can verify imports offline. Web/mobile must not mistake a partial
+        // browser catalogue for the authoritative database.
+        allowLocalFallback: Boolean(
+          localState?.enabled &&
+          localState.connected &&
+          (localState.tradingReady ?? localState.connected),
+        ),
+      });
+    } catch (error) {
+      setBusy("");
+      toast.error(importFailureReason(error));
+      return;
+    }
     // One pass over the file and the matched catalogue — no per-row queries.
     const plan = planImportReview(records, catalogue, {
       quantityRequired: mode !== "inventory",
@@ -194,90 +214,95 @@ export function BulkImportDialog({
       `${mode === "inventory" ? "Saving" : "Preparing"} ${readyRows.length - done.size} ready products…`,
     );
 
-    const journal: ImportRun = {
-      importId,
-      fileName: `${mode}:${fileName}`,
-      storeId: currentStore.id,
-      startedAt,
-      updatedAt: startedAt,
-      total,
-      created: continueRun?.created ?? 0,
-      restocked: continueRun?.restocked ?? 0,
-      done: [...done],
-      skipped: attention,
-      failed: [],
-      pending: [],
-    };
-    saveRun(journal);
+    try {
+      const journal: ImportRun = {
+        importId,
+        fileName: `${mode}:${fileName}`,
+        storeId: currentStore.id,
+        startedAt,
+        updatedAt: startedAt,
+        total,
+        created: continueRun?.created ?? 0,
+        restocked: continueRun?.restocked ?? 0,
+        done: [...done],
+        skipped: attention,
+        failed: [],
+        pending: [],
+      };
+      saveRun(journal);
 
-    const rowsToSave =
-      mode !== "inventory"
-        ? readyRows.map((row) => ({ ...row, updateExisting: false }))
-        : readyRows;
-    const result = await importProducts(rowsToSave, {
-      importId,
-      batchSize: DEFAULT_BATCH_SIZE,
-      alreadyDone: [...done],
-      applyStock: mode === "inventory",
-      onProgress: (saved, count) => {
-        const pct = Math.round((saved / Math.max(1, count)) * 100);
-        setProgress(pct);
-        setProgressLabel(`Saved ${saved} of ${count} products… ${pct}%`);
-      },
-      // Written down as each batch lands, so a crash never loses the trail.
-      onBatchSaved: (keys, totals) => {
-        journal.done.push(...keys);
-        journal.created = (continueRun?.created ?? 0) + totals.created;
-        journal.restocked = (continueRun?.restocked ?? 0) + totals.restocked;
+      const rowsToSave =
+        mode !== "inventory"
+          ? readyRows.map((row) => ({ ...row, updateExisting: false }))
+          : readyRows;
+      const result = await importProducts(rowsToSave, {
+        importId,
+        batchSize: DEFAULT_BATCH_SIZE,
+        alreadyDone: [...done],
+        applyStock: mode === "inventory",
+        onProgress: (saved, count) => {
+          const pct = Math.round((saved / Math.max(1, count)) * 100);
+          setProgress(pct);
+          setProgressLabel(`Saved ${saved} of ${count} products… ${pct}%`);
+        },
+        // Written down as each batch lands, so a crash never loses the trail.
+        onBatchSaved: (keys, totals) => {
+          journal.done.push(...keys);
+          journal.created = (continueRun?.created ?? 0) + totals.created;
+          journal.restocked = (continueRun?.restocked ?? 0) + totals.restocked;
+          saveRun(journal);
+        },
+      });
+
+      const finished: ImportOutcome = {
+        importId,
+        fileName,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        total,
+        created: journal.created,
+        restocked: journal.restocked,
+        skipped: attention,
+        failed: result.failed,
+        pending: result.pending,
+      };
+      journal.failed = result.failed;
+      journal.pending = result.pending;
+      if (!result.failed.length && !result.pending.length) {
+        journal.finishedAt = finished.finishedAt;
         saveRun(journal);
-      },
-    });
+        clearRun(importId);
+      } else {
+        saveRun(journal);
+      }
 
-    const finished: ImportOutcome = {
-      importId,
-      fileName,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      total,
-      created: journal.created,
-      restocked: journal.restocked,
-      skipped: attention,
-      failed: result.failed,
-      pending: result.pending,
-    };
-    journal.failed = result.failed;
-    journal.pending = result.pending;
-    if (!result.failed.length && !result.pending.length) {
-      journal.finishedAt = finished.finishedAt;
-      saveRun(journal);
-      clearRun(importId);
-    } else {
-      saveRun(journal);
-    }
-
-    setBusy("");
-    if (mode !== "inventory" && onReceivingRows) {
-      const byCode = new Map<string, Product>();
-      result.savedProducts.forEach((product) =>
-        productCodes(product).forEach((code) => byCode.set(code, product)),
-      );
-      const saved = new Set(result.savedKeys);
-      onReceivingRows(
-        readyRows
-          .filter((row) => saved.has(row.key))
-          .flatMap((row) => {
-            const product = byCode.get(row.key);
-            return product
-              ? [{ product, quantity: row.stock, cost: row.cost, price: row.price }]
-              : [];
-          }),
-      );
-    }
-    setOutcome(finished);
-    if (result.failed.length || result.pending.length) {
-      toast.error(describeOutcome(finished));
-    } else {
-      toast.success(describeOutcome(finished));
+      if (mode !== "inventory" && onReceivingRows) {
+        const byCode = new Map<string, Product>();
+        result.savedProducts.forEach((product) =>
+          productCodes(product).forEach((code) => byCode.set(code, product)),
+        );
+        const saved = new Set(result.savedKeys);
+        onReceivingRows(
+          readyRows
+            .filter((row) => saved.has(row.key))
+            .flatMap((row) => {
+              const product = byCode.get(row.key);
+              return product
+                ? [{ product, quantity: row.stock, cost: row.cost, price: row.price }]
+                : [];
+            }),
+        );
+      }
+      setOutcome(finished);
+      if (result.failed.length || result.pending.length) {
+        toast.error(describeOutcome(finished));
+      } else {
+        toast.success(describeOutcome(finished));
+      }
+    } catch (error) {
+      toast.error(importFailureReason(error));
+    } finally {
+      setBusy("");
     }
   }
 

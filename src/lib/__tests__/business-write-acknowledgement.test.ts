@@ -47,6 +47,17 @@ describe("business UI persistence acknowledgements", () => {
     expect(quickMember).toContain("await upsertMember({ ...verifying, verified: true })");
   });
 
+  it("commits bulk-import stock as an idempotent audited movement", () => {
+    const store = source("src/lib/pos-store.tsx");
+    const db = source("src/core/api/pos-db.ts");
+    expect(store).toContain('id: stableChildId(importId, "6", entry.row.line)');
+    expect(store).toContain("const target = await db.commitProducts(");
+    expect(store).toContain('if (target === "offline")');
+    expect(db).toContain('table: "item_activity_logs"');
+    expect(db).toContain('activity_type: "adjustment"');
+    expect(db).toContain('note: "Bulk inventory import"');
+  });
+
   it("makes stock count draft and posting states acknowledgement-driven", () => {
     const dialog = source("src/platforms/web/components/pos/StockCountDialog.tsx");
     const store = source("src/lib/pos-store.tsx");
