@@ -1,6 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Archive, ArchiveRestore, Building2, Layers, Plus, ShieldAlert, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  Building2,
+  Layers,
+  Plus,
+  ShieldAlert,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -40,6 +48,7 @@ import {
 } from "@/lib/locations";
 import { groupName, selectableGroups, useStoreGroups } from "@/lib/store-groups";
 import { permanentlyDeleteEmptyLocation } from "@/lib/location-admin";
+import { validateLocationReferences } from "@/lib/location-reference-validation";
 
 export const Route = createFileRoute("/stores")({
   head: () => ({
@@ -184,6 +193,11 @@ function Locations() {
     if (!draft) return;
     const name = draft.name.trim();
     if (!name) return toast.error("Location name is required");
+    const referenceError = validateLocationReferences(draft, allStores, groups);
+    if (referenceError) {
+      toast.error("Refresh the location assignment", { description: referenceError });
+      return;
+    }
     const isNew = !draft.id;
     const id = draft.id ?? crypto.randomUUID();
     const code =

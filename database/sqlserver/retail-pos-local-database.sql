@@ -2,7 +2,7 @@
   Retail POS local Microsoft SQL Server schema
   Generated from the migrations loaded by the POS application.
 
-  Application version: 1.4.15
+  Application version: 1.4.16
   Target database: POS_Local
 
   Run this file while connected to the local Microsoft SQL Server instance.

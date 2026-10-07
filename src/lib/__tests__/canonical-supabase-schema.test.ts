@@ -126,6 +126,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261006070000_start_product_row_versions_at_one.sql",
       "supabase/migrations/20261006073000_restore_staff_login_privileges.sql",
       "supabase/migrations/20261007000955_harden_membership_sync_and_installer.sql",
+      "supabase/migrations/20261007013301_harden_sync_replay_and_location_selection.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
