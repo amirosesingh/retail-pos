@@ -1863,6 +1863,7 @@ export async function loadReceivingInvoices(
   limit = 100,
   allStores = false,
   status: ReceivingStatus | "any" = "posted",
+  offset = 0,
 ): Promise<ReceivingInvoice[]> {
   if (effectiveDatabaseMode() === "local" && localDb()?.query) {
     // A locally committed draft must remain visible even before cloud sync.
@@ -1872,7 +1873,7 @@ export async function loadReceivingInvoices(
       routedQuery("purchase_orders", {
         ...(value === "any" ? {} : { match: { status: value } }),
         orderBy: { column: "invoice_entry_date", ascending: false },
-        limit,
+        limit, offset,
       }),
     ))).flat()
       .filter((row) => allStores || !storeId || row.store_id === storeId || row.store_id == null)
@@ -1903,7 +1904,8 @@ export async function loadReceivingInvoices(
     .from("purchase_orders" as never)
     .select("*, purchase_order_items(*)")
     .order("invoice_entry_date", { ascending: false })
-    .limit(limit);
+    .order("id", { ascending: false })
+    .range(offset, offset + limit - 1);
   // Rows written before drafts existed have no status; they are received stock.
   if (status !== "any") {
     q = (
@@ -1948,8 +1950,16 @@ export async function loadCompleteReceivingHistory(
 }
 
 /** Unfinished receiving orders for a branch, newest first. */
-export const loadReceivingDrafts = (storeId: string | null, allStores = false) =>
-  loadReceivingInvoices(storeId, 50, allStores, "draft");
+export async function loadReceivingDrafts(storeId: string | null, allStores = false) {
+  const pageSize = 100;
+  const drafts: ReceivingInvoice[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await loadReceivingInvoices(storeId, pageSize, allStores, "draft", offset);
+    drafts.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return drafts;
+}
 
 /**
  * True when another *finalized* invoice already uses this number. Drafts are
@@ -3136,12 +3146,18 @@ export const db = {
 
   /** Open drafts for a branch, newest first. */
   async listStockCountDrafts(storeId: string) {
-    const rows = await routedQuery("stock_count_drafts", {
-      match: { store_id: storeId, status: "draft" },
-      orderBy: { column: "updated_at", ascending: false },
-      limit: 50,
-    });
-    return rows as Row[];
+    const rows: Row[] = [];
+    const pageSize = 200;
+    for (let offset = 0; ; offset += pageSize) {
+      const page = await routedQuery("stock_count_drafts", {
+        match: { store_id: storeId, status: "draft" },
+        orderBy: { column: "updated_at", ascending: false },
+        limit: pageSize, offset,
+      });
+      rows.push(...page);
+      if (page.length < pageSize) break;
+    }
+    return rows;
   },
 
   /**
@@ -3150,12 +3166,28 @@ export const db = {
    * same read serves the tab's filter chips.
    */
   async listStockCountRecords(opts: { storeId?: string | null; limit?: number } = {}) {
-    const rows = await routedQuery("stock_count_drafts", {
+    const recent = await routedQuery("stock_count_drafts", {
       ...(opts.storeId ? { match: { store_id: opts.storeId } } : {}),
       orderBy: { column: "created_at", ascending: false },
       limit: opts.limit ?? 200,
     });
-    return rows as Row[];
+    // A long posted history must not push an unfinished count beyond the
+    // recent-record cap. Read every draft from the same routed local/cloud DB.
+    const drafts: Row[] = [];
+    const pageSize = 200;
+    for (let offset = 0; ; offset += pageSize) {
+      const page = await routedQuery("stock_count_drafts", {
+        match: { ...(opts.storeId ? { store_id: opts.storeId } : {}), status: "draft" },
+        orderBy: { column: "created_at", ascending: false },
+        limit: pageSize, offset,
+      });
+      drafts.push(...page);
+      if (page.length < pageSize) break;
+    }
+    const byId = new Map<string, Row>();
+    for (const row of [...recent, ...drafts]) byId.set(String(row.id), row);
+    return [...byId.values()].sort((a, b) =>
+      String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
   },
 
   /* ------------------------ whatsapp outbox ----------------------- */
