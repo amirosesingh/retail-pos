@@ -2,7 +2,7 @@
   Retail POS local Microsoft SQL Server schema
   Generated from the migrations loaded by the POS application.
 
-  Application version: 1.4.24
+  Application version: 1.4.25
   Target database: POS_Local
 
   Run this file while connected to the local Microsoft SQL Server instance.
@@ -3550,7 +3550,7 @@ IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NULL BEGIN CREATE TABLE dbo.[pos_sett
   [show_barcode] bit NOT NULL CONSTRAINT [DF_pos_settings_show_barcode] DEFAULT (1),
   [show_tax_details] bit NOT NULL CONSTRAINT [DF_pos_settings_show_tax_details] DEFAULT (1),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_pos_settings_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
-  [company_name] nvarchar(max) NOT NULL CONSTRAINT [DF_pos_settings_company_name] DEFAULT ('RETAIL'),
+  [company_name] nvarchar(max) NULL,
   [tax_number] nvarchar(max) NULL,
   [reg_number] nvarchar(max) NULL,
   [phone] nvarchar(max) NULL,
@@ -3717,17 +3717,6 @@ END;
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'updated_at' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[pos_settings] ALTER COLUMN [updated_at] datetimeoffset(7) NOT NULL;
 
 IF COL_LENGTH(N'dbo.pos_settings', N'company_name') IS NULL ALTER TABLE dbo.[pos_settings] ADD [company_name] nvarchar(max) NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'company_name') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'company_name'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_company_name] DEFAULT ('RETAIL') FOR [company_name];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'company_name' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [company_name]=''RETAIL'' WHERE [company_name] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [company_name] nvarchar(max) NOT NULL;
-END;
 
 IF COL_LENGTH(N'dbo.pos_settings', N'tax_number') IS NULL ALTER TABLE dbo.[pos_settings] ADD [tax_number] nvarchar(max) NULL;
 
@@ -11301,6 +11290,40 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5)
   INSERT dbo.pos_schema_migrations(version, name)
   VALUES (5, N'staff_sql_and_member_directory');
 
+-- Cloud company_name may be NULL until an administrator enters the business name.
+-- Run in the configured POS_Local database, never in Supabase/PostgreSQL.
+IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.pos_settings', N'company_name') IS NOT NULL
+BEGIN
+  DECLARE @company_name_default sysname;
+  SELECT @company_name_default = dc.name
+  FROM sys.default_constraints AS dc
+  JOIN sys.columns AS c
+    ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id
+  WHERE dc.parent_object_id = OBJECT_ID(N'dbo.pos_settings')
+    AND c.name = N'company_name';
+  IF @company_name_default IS NOT NULL
+    EXEC(N'ALTER TABLE dbo.pos_settings DROP CONSTRAINT ' + QUOTENAME(@company_name_default));
+
+  IF EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.pos_settings')
+      AND name = N'company_name' AND is_nullable = 0
+  ) ALTER TABLE dbo.pos_settings ALTER COLUMN company_name nvarchar(max) NULL;
+END;
+
+-- Older local writes stored JSON scalar strings as bare nvarchar. Keep the
+-- original text but encode it as a JSON string so change tracking can push it.
+IF OBJECT_ID(N'dbo.settings_scoped', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.settings_scoped', N'value') IS NOT NULL
+  UPDATE dbo.settings_scoped
+  SET [value] = N'"' + STRING_ESCAPE([value], 'json') + N'"'
+  WHERE [value] IS NOT NULL AND ISJSON(N'[' + [value] + N']') <> 1;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6)
+  INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
+  VALUES (6, N'006_allow_missing_company_name', SYSDATETIMEOFFSET());
+
 DECLARE @RequiredTables TABLE ([name] sysname NOT NULL PRIMARY KEY);
 INSERT INTO @RequiredTables ([name]) VALUES
   (N'coupon_campaigns'),
@@ -11384,7 +11407,7 @@ DECLARE @Missing int = @Required - @Present;
 
 SELECT
   DB_NAME() AS database_name,
-  N'1.4.24' AS application_version,
+  N'1.4.25' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -12618,12 +12641,12 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
   THROW 51002, 'Retail POS local database migration history table is missing.', 1;
 
-EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5)
+EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6)
   THROW 51002, ''Retail POS local database migration history is incomplete.'', 1;');
 
 EXEC(N'SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;');
 
-PRINT N'Retail POS 1.4.24: POS_Local installation and validation completed successfully.';
+PRINT N'Retail POS 1.4.25: POS_Local installation and validation completed successfully.';
 GO

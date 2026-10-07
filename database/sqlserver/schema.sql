@@ -3527,7 +3527,7 @@ IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NULL BEGIN CREATE TABLE dbo.[pos_sett
   [show_barcode] bit NOT NULL CONSTRAINT [DF_pos_settings_show_barcode] DEFAULT (1),
   [show_tax_details] bit NOT NULL CONSTRAINT [DF_pos_settings_show_tax_details] DEFAULT (1),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_pos_settings_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
-  [company_name] nvarchar(max) NOT NULL CONSTRAINT [DF_pos_settings_company_name] DEFAULT ('RETAIL'),
+  [company_name] nvarchar(max) NULL,
   [tax_number] nvarchar(max) NULL,
   [reg_number] nvarchar(max) NULL,
   [phone] nvarchar(max) NULL,
@@ -3694,17 +3694,6 @@ END;
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'updated_at' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[pos_settings] ALTER COLUMN [updated_at] datetimeoffset(7) NOT NULL;
 
 IF COL_LENGTH(N'dbo.pos_settings', N'company_name') IS NULL ALTER TABLE dbo.[pos_settings] ADD [company_name] nvarchar(max) NULL;
-
-IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.pos_settings', N'company_name') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.pos_settings') AND c.name=N'company_name'
-) ALTER TABLE dbo.[pos_settings] ADD CONSTRAINT [DF_pos_settings_company_name] DEFAULT ('RETAIL') FOR [company_name];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.pos_settings') AND name=N'company_name' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[pos_settings] SET [company_name]=''RETAIL'' WHERE [company_name] IS NULL;';
-  ALTER TABLE dbo.[pos_settings] ALTER COLUMN [company_name] nvarchar(max) NOT NULL;
-END;
 
 IF COL_LENGTH(N'dbo.pos_settings', N'tax_number') IS NULL ALTER TABLE dbo.[pos_settings] ADD [tax_number] nvarchar(max) NULL;
 

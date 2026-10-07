@@ -2952,9 +2952,9 @@
         },
         {
           "name": "company_name",
-          "declaration": "text DEFAULT 'RETAIL'::text NOT NULL",
-          "nullable": false,
-          "hasDefault": true
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
         },
         {
           "name": "tax_number",

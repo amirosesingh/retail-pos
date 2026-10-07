@@ -224,7 +224,14 @@ describe("SQL Server schema registry", () => {
   });
 
   it("ships one complete re-runnable local database script", () => {
-    const initial = readFileSync("database/sqlserver/migrations/001_initial.sql", "utf8").trim();
+    // The installer uses the current additive schema. Migration 001 remains
+    // immutable for installed tills; its company-name constraint was retired
+    // by migration 006 and must not be reintroduced by the installer.
+    const currentSchema = readFileSync("database/sqlserver/schema.sql", "utf8").trim();
+    const companyNameRepair = readFileSync(
+      "database/sqlserver/migrations/006_allow_missing_company_name.sql",
+      "utf8",
+    ).trim();
     const pipeline = readFileSync(
       "database/sqlserver/migrations/002_sync_pipeline.sql",
       "utf8",
@@ -236,9 +243,10 @@ describe("SQL Server schema registry", () => {
     const normalize = (value: string) => value.replaceAll("\r\n", "\n").trim();
     const normalizedCompleteSql = normalize(completeSql);
 
-    expect(normalizedCompleteSql).toContain(normalize(initial));
+    expect(normalizedCompleteSql).toContain(normalize(currentSchema));
     expect(normalizedCompleteSql).toContain(normalize(pipeline));
     expect(normalizedCompleteSql).toContain(normalize(notificationPreferences));
+    expect(normalizedCompleteSql).toContain(normalize(companyNameRepair));
     expect(completeSql).toContain("IF DB_ID(N'POS_Local') IS NULL");
     expect(completeSql).toContain("EXEC(N'CREATE DATABASE [POS_Local]')");
     expect(completeSql).toContain("USE [POS_Local]");

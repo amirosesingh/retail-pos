@@ -22,7 +22,7 @@ export const defaultPaymentDetails: PaymentDetails = {
 
 export const defaultReceiptSettings: ReceiptSettings = {
   paper: "80mm",
-  companyName: "RETAIL",
+  companyName: "",
   taxNumber: "88-2201194",
   regNumber: "",
   phone: "555-0100",
