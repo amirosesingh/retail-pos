@@ -510,7 +510,10 @@ GO`;
 const installer = [
   installerHeader,
   lines.join("\n\n").trim(),
-  ...supplementalMigrations,
+  // Each migration is its own T-SQL batch. BEGIN/END does not scope DECLARE,
+  // so migrations 006 and 008 otherwise redeclare the same variables.
+  ...supplementalMigrations.map((sql) => `GO\n${sql}`),
+  "GO",
   validation,
 ].join("\n\n");
 fs.writeFileSync(path.join(outputDir, "retail-pos-local-database.sql"), `${installer}\n`);

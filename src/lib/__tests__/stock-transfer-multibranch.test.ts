@@ -16,6 +16,13 @@ describe("multi-branch stock transfer contract", () => {
     );
   });
 
+  it("gives each locally journaled transfer line a stable primary key", () => {
+    const source = readFileSync("src/lib/stock-transfers.ts", "utf8");
+    expect(source).toContain('id: stableChildId(transfer.id, "6", index)');
+    expect(source).toContain('table: "stock_transfer_items", rows: lines');
+    expect(source).not.toContain('table: "stock_transfer_items", match: { transfer_id: transfer.id }');
+  });
+
   it("accepts every current lifecycle state while preserving rolling-upgrade aliases", () => {
     const migration = readFileSync(
       "supabase/migrations/20261004220000_align_stock_transfer_statuses.sql",

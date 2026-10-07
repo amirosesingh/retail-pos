@@ -342,7 +342,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   ).length;
 
   // Receipt identity wins; the locally captured install name is the fallback.
-  const companyName = state.settings.receipt.companyName?.trim() || branding.company;
+  const companyName = (typeof state.settings.receipt.companyName === "string"
+    ? state.settings.receipt.companyName.trim() : "") || branding.company;
 
   // The sidebar and the route guard below run exactly the same test, so a link
   // that is shown always opens, and a link that is hidden cannot be reached by

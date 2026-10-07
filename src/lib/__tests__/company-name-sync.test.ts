@@ -53,12 +53,22 @@ describe("company name cloud-to-Electron sync", () => {
     expect(localSchema).not.toContain("[company_name]=''RETAIL''");
   });
 
+  it("runs each bundled SQL Server migration in a separate batch", () => {
+    const bundle = read("database/sqlserver/retail-pos-local-database.sql");
+    const declarationBatches = bundle.split(/^GO\s*$/m).filter((batch) =>
+      batch.includes("DECLARE @company_name_default sysname"));
+    expect(declarationBatches).toHaveLength(2);
+    for (const batch of declarationBatches) {
+      expect(batch.match(/DECLARE @company_name_default sysname/g)).toHaveLength(1);
+    }
+  });
+
   it.each([null, "Actual Business Name"])("MERGEs the actual cloud company name %s", async (companyName) => {
     const inputs = new Map<string, unknown>();
-    let query = "";
+    const queries: string[] = [];
     class Request {
       input(name: string, value: unknown) { inputs.set(name, value); return this; }
-      async query(sql: string) { query = sql; return { rowsAffected: [1] }; }
+      async query(sql: string) { queries.push(sql); return { rowsAffected: [1] }; }
     }
     const { CloudClient } = await import("../../../electron/sync/cloud-client.cjs");
     const client = new CloudClient({
@@ -73,13 +83,18 @@ describe("company name cloud-to-Electron sync", () => {
       ],
     }, { rows: [{ row_data: { id: 1, company_name: companyName } }], tombstones: [] });
     expect([...inputs.values()]).toContain(companyName);
-    expect(query).toContain("[company_name]");
+    expect(queries[0]).toContain("[company_name]");
+    if (companyName) {
+      expect(queries[1]).toContain("SET [company_name]");
+      expect(queries[1]).toContain("NULLIF(LTRIM(RTRIM([company_name])),N'') IS NULL");
+      expect(queries[1]).toContain("CHANGE_TRACKING_CONTEXT (0x434C4F5544)");
+    } else expect(queries).toHaveLength(1);
   });
 
   it("prompts admins but does not block ordinary POS work", () => {
     const store = read("src/lib/pos-store.tsx");
     const identity = read("src/routes/settings.identity.tsx");
-    expect(store).toContain("if (!signedIn || !isAdmin || !ready || loadPhase !== \"ready\") return;");
+    expect(store).toContain("if (!signedIn || !isAdmin || !ready || loadPhase !== \"ready\" || !settingsSnapshotLoaded) return;");
     expect(identity).toContain("Company name is missing from the cloud");
   });
 });

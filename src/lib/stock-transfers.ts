@@ -7,7 +7,7 @@
  * which the database does atomically when the note is received.
  */
 import type { Store, Transfer, TransferItem, TransferKind, TransferStatus } from "@/core/types/pos-types";
-import { commitOps } from "@/core/api/pos-db";
+import { commitOps, stableChildId } from "@/core/api/pos-db";
 import { routedQuery } from "@/core/api/db-query";
 import { describeError } from "./notify";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -192,9 +192,10 @@ export async function saveTransfer({ transfer, from, to, products }: SaveTransfe
     note: transfer.note ?? "",
     created_by: transfer.createdBy || null,
   };
-  const lines = transfer.items.map((i: TransferItem) => {
+  const lines = transfer.items.map((i: TransferItem, index) => {
     const p = products.find((x) => x.id === i.productId);
     return {
+      id: stableChildId(transfer.id, "6", index),
       transfer_id: transfer.id,
       product_id: i.productId,
       barcode: p?.barcode ?? null,
@@ -208,9 +209,8 @@ export async function saveTransfer({ transfer, from, to, products }: SaveTransfe
   });
   return commitOps("Saving transfer", [
     { kind: "upsert", table: "stock_transfers", rows: [head] },
-    { kind: "delete", table: "stock_transfer_items", match: { transfer_id: transfer.id } },
     ...(lines.length
-      ? [{ kind: "insert" as const, table: "stock_transfer_items", rows: lines }]
+      ? [{ kind: "upsert" as const, table: "stock_transfer_items", rows: lines }]
       : []),
   ]);
 }

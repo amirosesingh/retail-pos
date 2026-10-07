@@ -10989,6 +10989,7 @@ IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL CREATE TABLE dbo.pos_sc
  version int NOT NULL PRIMARY KEY, name nvarchar(200) NOT NULL, applied_at datetimeoffset(7) NOT NULL DEFAULT SYSDATETIMEOFFSET());
 IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=1) INSERT dbo.pos_schema_migrations(version,name) VALUES(1,N'initial_sqlserver_parity');
 
+GO
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 SET ANSI_PADDING ON;
@@ -11023,6 +11024,7 @@ IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=2)
   INSERT dbo.pos_schema_migrations(version,name)
   VALUES(2,N'sync_pipeline_jobs_bootstrap_retention');
 
+GO
 /*
   Durable per-user notification clear/reopen state for existing POS_Local
   databases. Re-runnable, additive, and safe for databases created before the
@@ -11111,6 +11113,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3)
   VALUES (3, N'activity_notification_preferences');
 GO
 
+GO
 /*
   Repair databases created by an older installer that assigned 'unknown' as
   the terminal platform default. Existing non-null platform values are data
@@ -11177,6 +11180,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4)
   VALUES (4, N'repair_terminal_platform_default');
 GO
 
+GO
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11290,6 +11294,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5)
   INSERT dbo.pos_schema_migrations(version, name)
   VALUES (5, N'staff_sql_and_member_directory');
 
+GO
 -- Cloud company_name may be NULL until an administrator enters the business name.
 -- Run in the configured POS_Local database, never in Supabase/PostgreSQL.
 IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL
@@ -11329,6 +11334,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6)
   INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
   VALUES (6, N'006_allow_missing_company_name', SYSDATETIMEOFFSET());
 
+GO
 -- Re-run the scoped JSON repair on upgrades where migration 006 was already
 -- recorded but an older Electron build subsequently wrote plain text again.
 IF OBJECT_ID(N'dbo.settings_scoped', N'U') IS NOT NULL
@@ -11341,6 +11347,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7)
   INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
   VALUES (7, N'007_repair_scoped_json_values', SYSDATETIMEOFFSET());
 
+GO
 -- Reassert nullable company_name for local databases that recorded an older
 -- repair, and preserve bare-text scoped settings as valid JSON strings.
 IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL
@@ -11382,6 +11389,8 @@ IF OBJECT_ID(N'dbo.settings_scoped', N'U') IS NOT NULL
 IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8)
   INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
   VALUES (8, N'008_repair_scoped_values_and_company_name', SYSDATETIMEOFFSET());
+
+GO
 
 DECLARE @RequiredTables TABLE ([name] sysname NOT NULL PRIMARY KEY);
 INSERT INTO @RequiredTables ([name]) VALUES

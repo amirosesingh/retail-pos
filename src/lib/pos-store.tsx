@@ -548,6 +548,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   // Loading, ready, stalled or failed — never "the clock ran out, call it ready".
   const [loadPhase, setLoadPhase] = useState<LoadPhase>("loading");
+  const [settingsSnapshotLoaded, setSettingsSnapshotLoaded] = useState(false);
   // Whether the location list has actually been answered for, so an empty list
   // can be told apart from a list that has not arrived yet.
   const [storesLoaded, setStoresLoaded] = useState(false);
@@ -555,6 +556,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const retryLoad = useCallback(() => {
     setStoresLoaded(false);
     setLoadPhase("loading");
+    setSettingsSnapshotLoaded(false);
     setReloadTick((v) => v + 1);
   }, []);
   const { authUserId, terminalUser, user, can, isAdmin, ready: authReady } = useAuth();
@@ -563,8 +565,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const signedIn = Boolean(authUserId || terminalUser);
   const missingCompanyNameNotice = useRef(false);
   useEffect(() => {
-    if (!signedIn || !isAdmin || !ready || loadPhase !== "ready") return;
-    if (state.settings.receipt.companyName?.trim()) {
+    if (!signedIn || !isAdmin || !ready || loadPhase !== "ready" || !settingsSnapshotLoaded) return;
+    if (typeof state.settings.receipt.companyName === "string" &&
+        state.settings.receipt.companyName.trim()) {
       missingCompanyNameNotice.current = false;
       return;
     }
@@ -574,7 +577,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       description: "Enter the business name in Settings → Business identity. Other POS work can continue.",
       duration: 10000,
     });
-  }, [signedIn, isAdmin, ready, loadPhase, state.settings.receipt.companyName]);
+  }, [signedIn, isAdmin, ready, loadPhase, settingsSnapshotLoaded, state.settings.receipt.companyName]);
   // Latest snapshot for audit logging without re-creating every callback.
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -653,7 +656,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // must not stay invisible until a later full local snapshot refresh.
         const canLoadCloudDirectory = typeof navigator === "undefined" || navigator.onLine;
         const locationTask = canLoadCloudDirectory ? loadLocationDirectory() : null;
-        const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined);
+        let fullSnapshotApplied = false;
+        const settingsRevision = settingsWrites.current.revision;
+        const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined, (name) => {
+          if (cancelled || fullSnapshotApplied || settingsWrites.current.pending ||
+              settingsWrites.current.revision !== settingsRevision) return;
+          setState((current) => ({ ...current, settings: {
+            ...current.settings,
+            receipt: { ...current.settings.receipt, companyName: name },
+          } }));
+        });
         const directory = locationTask ? await locationTask : null;
         if (cancelled) return;
         if (directory?.ok) {
@@ -677,7 +689,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         )
           throw directory.error;
         const cloud = directory?.ok ? { ...loaded, stores: directory.stores } : loaded;
+        fullSnapshotApplied = true;
         setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
+        setSettingsSnapshotLoaded(true);
         markStartupStage("remaining-data-ready");
         // The locations question now has a real answer, empty or not.
         setStoresLoaded(true);
