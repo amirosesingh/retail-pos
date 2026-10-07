@@ -45,9 +45,14 @@ describe("session epoch", () => {
 });
 
 describe("activation contract in the canonical schema", () => {
-  it("declares exactly one check-in routine", () => {
+  it("ends with one invoker-only check-in wrapper", () => {
     const defs = schema.match(/CREATE OR REPLACE FUNCTION public\.terminal_token_heartbeat/g) ?? [];
-    expect(defs.length).toBe(1);
+    expect(defs.length).toBe(2);
+    const boundary = schema.slice(schema.indexOf("-- Public pre-authentication RPC boundary"));
+    expect(boundary.match(/CREATE OR REPLACE FUNCTION public\.terminal_token_heartbeat/g)).toHaveLength(
+      1,
+    );
+    expect(boundary).toContain("LANGUAGE sql SECURITY INVOKER");
   });
 
   it("installs every column written by the check-in routine", () => {

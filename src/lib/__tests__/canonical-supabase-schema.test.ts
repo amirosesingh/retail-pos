@@ -127,6 +127,8 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261006073000_restore_staff_login_privileges.sql",
       "supabase/migrations/20261007000955_harden_membership_sync_and_installer.sql",
       "supabase/migrations/20261007013301_harden_sync_replay_and_location_selection.sql",
+      "supabase/migrations/20261007022338_harden_public_rpc_boundaries.sql",
+      "supabase/migrations/20261007022428_remove_redundant_prefix_indexes.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -366,7 +368,7 @@ describe("canonical Supabase SQL", () => {
 
   it("closes server-only tables and privileged routines after every definition", () => {
     const sql = read("supabase/schema.sql");
-    const hardening = sql.indexOf("-- Final public-schema privilege hardening");
+    const hardening = sql.lastIndexOf("-- Final public-schema privilege hardening");
     expect(hardening).toBeGreaterThan(sql.lastIndexOf("CREATE OR REPLACE FUNCTION"));
     expect(sql).toContain("REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated");
     expect(sql).toMatch(
