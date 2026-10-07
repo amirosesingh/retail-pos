@@ -36,10 +36,11 @@ describe("staff management boundaries", () => {
 
   it("keeps a failed permission save contained and clears the busy state", () => {
     const accounts = read("src/platforms/web/components/admin/StaffManager.tsx");
-    const save = accounts.slice(
-      accounts.indexOf("const savePermissions = async"),
-      accounts.indexOf("const remove = async"),
-    );
+    const start = accounts.indexOf("const savePermissions = async");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = accounts.indexOf("const remove = async", start);
+    expect(end).toBeGreaterThan(start);
+    const save = accounts.slice(start, end);
     expect(save).toContain("try {");
     expect(save).toContain("catch (error)");
     expect(save).toContain("finally {");
