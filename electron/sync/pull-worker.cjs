@@ -1,3 +1,5 @@
+const { refreshTable } = require("../jobs/bootstrap.cjs");
+
 class PullWorker {
   constructor({ connectionManager, cloud, checkpoints, registry, reader, conflicts }) {
     this.connectionManager = connectionManager; this.cloud = cloud; this.checkpoints = checkpoints;
@@ -22,6 +24,38 @@ class PullWorker {
       tombstones: safe.filter((change) => change.tombstone),
     });
     return { applied: safe.length, conflicts: conflictCount };
+  }
+  async ensureStoreGroups(batch, branchId) {
+    const groupIds = [...new Set(batch.rows
+      .filter((row) => row.table_name === "stores")
+      .map((row) => String(row.row_data?.group_id ?? "").trim())
+      .filter(Boolean))];
+    if (!groupIds.length) return;
+    const included = new Set(batch.rows
+      .filter((row) => row.table_name === "store_groups")
+      .map((row) => String(row.row_data?.id ?? "")));
+    const needed = groupIds.filter((id) => !included.has(id));
+    if (!needed.length) return;
+    const sql = this.connectionManager.sql();
+    const request = new sql.Request(this.connectionManager.pool);
+    needed.forEach((id, index) => request.input(`group${index}`, id));
+    const present = await request.query(`SELECT [id] FROM dbo.[store_groups] WHERE [id] IN (${needed.map((_, index) => `@group${index}`).join(",")});`);
+    const existing = new Set((present.recordset ?? []).map((row) => String(row.id)));
+    const missing = new Set(needed.filter((id) => !existing.has(id)));
+    if (!missing.size) return;
+    await refreshTable({
+      registry: this.registry, cloud: this.cloud, connectionManager: this.connectionManager,
+      branchId, tableName: "store_groups",
+      rowFilter: (row) => {
+        if (!missing.has(String(row.id))) return false;
+        missing.delete(String(row.id));
+        return true;
+      },
+    });
+    if (missing.size) throw Object.assign(
+      new Error(`The cloud store group ${[...missing].join(", ")} is missing. Check the store group on the server before retrying synchronization.`),
+      { code: "ESTORE_GROUP_MISSING" },
+    );
   }
   async run({ branchId, batchSize = 500 }) {
     if (!branchId) throw new Error("A branch is required for synchronization.");
@@ -68,6 +102,9 @@ class PullWorker {
     while (true) {
       const batch = await this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit: batchSize });
       if (!batch.count) break;
+      // Feed pages are ordered by change cursor, not by foreign-key dependency.
+      // A store update can arrive before the page containing its new group.
+      await this.ensureStoreGroups(batch, branchId);
       const sql = this.connectionManager.sql();
       const transaction = new sql.Transaction(this.connectionManager.pool);
       await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
