@@ -292,6 +292,17 @@ class CloudClient {
       await request.query(
         `WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544) MERGE dbo.[${table.sqlServerTable}] WITH(HOLDLOCK) AS target USING(SELECT ${source}) AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT(${names.map(([name]) => `[${name}]`).join(",")}) VALUES(${names.map(([name]) => `source.[${name}]`).join(",")});`,
       );
+      // A previously empty local identity must not mask the configured cloud
+      // name just because its local settings row has a newer timestamp. Do not
+      // replace the rest of that row (or a nonblank locally entered name).
+      const companyParameter = names.find(([name]) => name === "company_name")?.[1];
+      const idParameter = names.find(([name]) => name === "id")?.[1];
+      if (table.cloudTable === "pos_settings" && companyParameter && idParameter &&
+          typeof deviceRow.company_name === "string" && deviceRow.company_name.trim()) {
+        await request.query(
+          `WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544) UPDATE dbo.[pos_settings] SET [company_name]=@${companyParameter} WHERE [id]=@${idParameter} AND NULLIF(LTRIM(RTRIM([company_name])),N'') IS NULL;`,
+        );
+      }
     }
   }
   async applyLocalBatchToPool(connectionManager, table, rows) {

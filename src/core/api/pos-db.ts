@@ -1267,6 +1267,7 @@ async function loadCompleteProductCatalogue(client: typeof supabase): Promise<Pa
 export async function loadCloudState(
   storeId?: string | null,
   locationTask?: Promise<LocationDirectoryResult>,
+  onCompanyName?: (name: string) => void,
 ): Promise<CloudSlice> {
   await hydrateTerminalConfig();
   // A Windows till with no network must not wait for a cloud timeout before
@@ -1340,7 +1341,13 @@ export async function loadCloudState(
       .order("id")
       .limit(1000),
 
-    authenticatedClient.from("pos_settings").select("*").eq("id", 1).maybeSingle(),
+    // Publish the small identity row as soon as it answers; the catalogue can
+    // take many pages, and the shell should not show a placeholder meanwhile.
+    authenticatedClient.from("pos_settings").select("*").eq("id", 1).maybeSingle()
+      .then((result) => {
+        if (!result.error && result.data) onCompanyName?.(settingsText((result.data as Row).company_name));
+        return result;
+      }),
     (async () => {
       try {
         const rows = await routedQuery("settings_scoped", { limit: 5000 });
@@ -1423,6 +1430,7 @@ export async function loadCloudState(
 export async function loadPrimaryState(
   storeId?: string | null,
   locationTask?: Promise<LocationDirectoryResult>,
+  onCompanyName?: (name: string) => void,
 ): Promise<CloudSlice> {
   const bridge = localDb();
   if (effectiveDatabaseMode() === "local" && bridge?.snapshot) {
@@ -1440,14 +1448,14 @@ export async function loadPrimaryState(
       // machine; treating EBRANCH as a fatal local-database error deadlocks
       // that recovery screen. RLS remains the authority for this cloud read.
       if (!terminal?.locationId && hasStaffSession()) {
-        return loadCloudState(storeId, locationTask);
+        return loadCloudState(storeId, locationTask, onCompanyName);
       }
       throw new Error(
         "Local SQL Server is enabled but not ready for trading. Open Database & Cloud Connection, restore the connection, and apply the current local database update if requested.",
       );
     }
   }
-  return loadCloudState(storeId, locationTask);
+  return loadCloudState(storeId, locationTask, onCompanyName);
 }
 
 /** Refresh a settings notification without downloading the whole POS state. */

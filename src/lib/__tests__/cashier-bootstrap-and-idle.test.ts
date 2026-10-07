@@ -150,7 +150,7 @@ describe("cashier location bootstrap", () => {
       "const locationTask = canLoadCloudDirectory ? loadLocationDirectory() : null",
     );
     expect(store).toContain(
-      "const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined)",
+      "const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined, (name) =>",
     );
     expect(store.indexOf('markStartupStage("essential-pos-ready")')).toBeLessThan(
       store.indexOf("const loaded = await cloudTask"),
@@ -172,7 +172,7 @@ describe("cashier location bootstrap", () => {
       "const terminal = readTerminalConfig() ?? (await hydrateTerminalConfig())",
     );
     expect(db).toContain("if (!terminal?.locationId && hasStaffSession())");
-    expect(db).toContain("return loadCloudState(storeId, locationTask)");
+    expect(db).toContain("return loadCloudState(storeId, locationTask, onCompanyName)");
   });
 
   it("does not accept an anonymous empty store response ahead of a proven relay", () => {
