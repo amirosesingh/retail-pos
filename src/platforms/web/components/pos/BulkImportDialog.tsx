@@ -53,9 +53,9 @@ import type { Product } from "@/core/types/pos-types";
 import { localDb } from "@/core/local-db/local-db";
 
 const TEMPLATE_ROWS = [
-  ["8901234500011", "Colombian Whole Bean 1kg", 24, 14.5, "Coffee", "bag", 40, 2],
-  ["8901234500028", "Ceramic Pour-Over Dripper", 18.5, 9.25, "Merch", "each", 15, 1],
-  ["8901234500035", "Cold Brew Concentrate 500ml", 9.75, 4.4, "Drinks", "bottle", 60, 1],
+  ["8901234500011", "Colombian Whole Bean 1kg", 24, 14.5, "Coffee", "bag", 40, 2, 0],
+  ["8901234500028", "Ceramic Pour-Over Dripper", 18.5, 9.25, "Merch", "each", 15, 1, 0],
+  ["8901234500035", "Cold Brew Concentrate 500ml", 9.75, 4.4, "Drinks", "bottle", 60, 1, 0],
 ];
 
 /** Only this many rows are drawn in the preview; a big file must not freeze it. */
@@ -73,6 +73,19 @@ function templateSheet() {
   const ws = XLSX.utils.aoa_to_sheet([[...IMPORT_HEADERS], ...TEMPLATE_ROWS]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Products");
+  const instructions = XLSX.utils.aoa_to_sheet([
+    ["Field", "Required", "What to enter"],
+    ["barcode", "Yes", "Unique barcode or SKU"],
+    ["name", "Yes", "Product name"],
+    ["price", "Yes", "Selling price greater than zero"],
+    ["cost", "No", "Cost price; blank becomes 0"],
+    ["category", "No", "Product category"],
+    ["unit", "No", "Unit of measure, for example pcs, bag, or kg"],
+    ["stock_quantity", "No*", "Required and greater than zero for receiving imports"],
+    ["custom_points", "No", "Loyalty points; blank becomes 0"],
+    ["tax_rate_percent", "No", "0 to 100; blank uses enabled Tax Settings, otherwise 0"],
+  ]);
+  XLSX.utils.book_append_sheet(wb, instructions, "Instructions");
   return wb;
 }
 
@@ -423,7 +436,9 @@ export function BulkImportDialog({
                 </button>
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Expected headers: {IMPORT_HEADERS.join(" · ")}
+                Required: barcode · name · price. Optional: cost · category · unit · stock_quantity
+                · custom_points · tax_rate_percent. Tax defaults to enabled Tax Settings, otherwise
+                0%.
               </p>
             </>
           )}
@@ -522,6 +537,7 @@ export function BulkImportDialog({
                       <TableHead>Unit</TableHead>
                       <TableHead className="text-right">Price</TableHead>
                       <TableHead className="text-right">Cost</TableHead>
+                      <TableHead className="text-right">Tax %</TableHead>
                       <TableHead className="text-right">Stock</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Resolve</TableHead>
@@ -612,6 +628,20 @@ export function BulkImportDialog({
                             onChange={(event) =>
                               patchRow(r.line, {
                                 cost: event.target.value === "" ? null : Number(event.target.value),
+                              })
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            className="numeric h-8 w-20 text-right"
+                            inputMode="decimal"
+                            value={r.taxRate ?? ""}
+                            aria-invalid={r.missingFields.includes("taxRate")}
+                            onChange={(event) =>
+                              patchRow(r.line, {
+                                taxRate:
+                                  event.target.value === "" ? null : Number(event.target.value),
                               })
                             }
                           />

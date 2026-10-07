@@ -51,7 +51,7 @@ import {
   loadPrimaryState,
   loadLocalSales,
   loadCloudMember,
-  loadCloudProduct,
+  loadCloudProducts,
   loadCloudPromotion,
   loadCloudSettings,
   loadSalesPage,
@@ -1001,6 +1001,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!signedIn) return;
     const timers = new Map<string, number>();
+    const pendingProductIds = new Set<string>();
     const unsubscribe = subscribeDataChange((change) => {
       if (
         !change.entityId ||
@@ -1008,6 +1009,39 @@ export function PosProvider({ children }: { children: ReactNode }) {
       )
         return;
       const kind = change.table === "product_barcodes" ? "products" : change.table;
+      if (kind === "products") {
+        pendingProductIds.add(change.entityId);
+        const previous = timers.get("products:batch");
+        if (previous) window.clearTimeout(previous);
+        timers.set(
+          "products:batch",
+          window.setTimeout(() => {
+            timers.delete("products:batch");
+            const ids = [...pendingProductIds];
+            pendingProductIds.clear();
+            void loadCloudProducts(ids)
+              .then((records) => {
+                const changed = new Set(ids);
+                const byId = new Map(records.map((record) => [record.id, record]));
+                setState((current) => ({
+                  ...current,
+                  products: [
+                    ...current.products
+                      .filter((product) => !changed.has(product.id) || byId.has(product.id))
+                      .map((product) => byId.get(product.id) ?? product),
+                    ...records.filter(
+                      (record) => !current.products.some((product) => product.id === record.id),
+                    ),
+                  ],
+                }));
+              })
+              .catch(() => {
+                /* the next reconnect snapshot remains the recovery path */
+              });
+          }, 150),
+        );
+        return;
+      }
       const key = `${kind}:${change.entityId}`;
       const previous = timers.get(key);
       if (previous) window.clearTimeout(previous);
@@ -1016,24 +1050,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         window.setTimeout(() => {
           timers.delete(key);
           const read =
-            kind === "products"
-              ? loadCloudProduct(change.entityId!)
-              : kind === "members"
-                ? loadCloudMember(change.entityId!)
-                : loadCloudPromotion(change.entityId!);
+            kind === "members"
+              ? loadCloudMember(change.entityId!)
+              : loadCloudPromotion(change.entityId!);
           void read
             .then((record) => {
               setState((current) => {
-                if (kind === "products") {
-                  const products = record
-                    ? current.products.some((row) => row.id === record.id)
-                      ? current.products.map((row) =>
-                          row.id === record.id ? (record as Product) : row,
-                        )
-                      : [record as Product, ...current.products]
-                    : current.products.filter((row) => row.id !== change.entityId);
-                  return { ...current, products };
-                }
                 if (kind === "members") {
                   const members = record
                     ? current.members.some((row) => row.id === record.id)
@@ -2478,6 +2500,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
                     category: row.category,
                     unit: row.unit || hit.unit,
                     ecomPrice: hit.ecomPrice || row.price,
+                    ...(row.taxRate === undefined ? {} : { taxRate: row.taxRate }),
                   }
                 : {}),
               stockByStore: {
@@ -2532,7 +2555,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
                 ]),
               ),
               reorderLevel: 10,
-              taxRate: 0.05,
+              taxRate:
+                row.taxRate ??
+                (stateRef.current.settings.tax.enabled
+                  ? stateRef.current.settings.tax.rate / 100
+                  : 0),
               customPoints: row.customPoints,
               ...(privateCatalogue ? { ownerStoreId: storeId } : {}),
             };

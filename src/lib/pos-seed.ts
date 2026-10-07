@@ -115,7 +115,9 @@ export const defaultIntegrations: AppSettings["integrations"] = {
 };
 
 export const defaultSettings: AppSettings = {
-  tax: { enabled: true, rate: 5, mode: "exclusive" },
+  // A new installation must never charge tax until the operator explicitly
+  // enables it and supplies the applicable rate in Settings.
+  tax: { enabled: false, rate: 0, mode: "exclusive" },
   receipt: defaultReceiptSettings,
   payment: defaultPaymentDetails,
   whatsapp: defaultWhatsApp,

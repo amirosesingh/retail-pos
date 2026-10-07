@@ -31,6 +31,7 @@ type LooseFilter = PromiseLike<{
   count?: number | null;
 }> & {
   eq: (column: string, value: unknown) => LooseFilter;
+  is: (column: string, value: null | boolean) => LooseFilter;
   in: (column: string, values: unknown[]) => LooseFilter;
   order: (column: string, opts: { ascending: boolean }) => LooseFilter;
   or: (expression: string) => LooseFilter;
@@ -117,7 +118,10 @@ async function runQuery(
   }
   const build = (start: number, end: number) => {
     let q = from(cloudClient, table).select(options.columns ?? "*", { count: "exact" });
-    for (const [k, v] of Object.entries(options.match ?? {})) q = q.eq(k, v);
+    // PostgREST uses `is.null`, not `eq.null`.  The latter can return no rows
+    // (or fail outright) and leaves deleted/archived records stale in the UI.
+    for (const [k, v] of Object.entries(options.match ?? {}))
+      q = v === null ? q.is(k, null) : q.eq(k, v);
     if (options.in) q = q.in(options.in.column, options.in.values);
     if (options.cursor) {
       const op = options.orderBy?.ascending === true ? "gt" : "lt";

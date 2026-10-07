@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { orders, ranges, auth } = vi.hoisted(() => ({
+const { orders, ranges, nullFilters, auth } = vi.hoisted(() => ({
   orders: [] as string[],
   ranges: [] as [number, number][],
+  nullFilters: [] as string[],
   auth: { present: true, restored: true },
 }));
 
@@ -12,6 +13,10 @@ vi.mock("@/integrations/supabase/external-client", () => {
       select: () => {
         const query = {
           eq: () => query,
+          is: (column: string) => {
+            nullFilters.push(column);
+            return query;
+          },
           in: () => query,
           order: (column: string) => {
             orders.push(column);
@@ -52,6 +57,7 @@ describe("routed query ordering", () => {
   beforeEach(() => {
     orders.splice(0);
     ranges.splice(0);
+    nullFilters.splice(0);
     auth.present = true;
     auth.restored = true;
   });
@@ -71,6 +77,11 @@ describe("routed query ordering", () => {
     await routedQuery("products", { limit: 1 });
 
     expect(orders).toEqual(["id"]);
+  });
+
+  it("uses PostgREST is.null semantics for active-row filters", async () => {
+    await routedQuery("products", { match: { deleted_at: null }, limit: 1 });
+    expect(nullFilters).toEqual(["deleted_at"]);
   });
 
   it("uses the complete primary key when a cloud table has no id column", async () => {

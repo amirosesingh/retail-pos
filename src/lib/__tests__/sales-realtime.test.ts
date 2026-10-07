@@ -28,7 +28,8 @@ describe("sales realtime refresh", () => {
     expect(store).toContain("loadSalesPage(active, null, 500)");
     expect(store).toContain("loadCloudSettings()");
     expect(store).toContain("subscribeDataChange");
-    expect(store).toContain("loadCloudProduct(change.entityId!)");
+    expect(store).toContain("loadCloudProducts(ids)");
+    expect(store).not.toContain("loadCloudProduct(change.entityId!)");
     expect(store).toContain('App.addListener("appStateChange"');
     expect(store).toContain('window.addEventListener("focus", resume)');
     expect(store).toContain('window.addEventListener("focus", focus)');
