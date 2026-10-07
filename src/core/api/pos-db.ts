@@ -2081,27 +2081,31 @@ export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitT
     if (state?.enabled && state?.connected && (state.tradingReady ?? state.connected)) {
       const refund =
         ops.length === 1 && ops[0].kind === "rpc" && ops[0].fn === "sale_refund" ? ops[0] : null;
-      const aggregateKind = /sale/i.test(context)
-        ? "sale"
-        : /payment|tender/i.test(context)
-          ? "payment"
-          : /refund/i.test(context)
-            ? "refund"
-            : /shift/i.test(context)
-              ? "shift"
-              : /product|inventory/i.test(context)
-                ? "product"
-                : /receiv|purchase|invoice/i.test(context)
-                  ? "receiving"
-                  : /stock/i.test(context)
-                    ? "stock"
-                    : /transfer/i.test(context)
-                      ? "transfer"
-                      : /booking/i.test(context)
-                        ? "booking"
-                        : /hold|ticket/i.test(context)
-                          ? "held_order"
-                          : "general";
+      const sharedPosSettings = ops.some((op) => op.table === "pos_settings") &&
+        ops.every((op) => op.table === "pos_settings" || op.table === "settings_scoped");
+      const aggregateKind = sharedPosSettings
+        ? "settings"
+        : /sale/i.test(context)
+          ? "sale"
+          : /payment|tender/i.test(context)
+            ? "payment"
+            : /refund/i.test(context)
+              ? "refund"
+              : /shift/i.test(context)
+                ? "shift"
+                : /product|inventory/i.test(context)
+                  ? "product"
+                  : /receiv|purchase|invoice/i.test(context)
+                    ? "receiving"
+                    : /stock/i.test(context)
+                      ? "stock"
+                      : /transfer/i.test(context)
+                        ? "transfer"
+                        : /booking/i.test(context)
+                          ? "booking"
+                          : /hold|ticket/i.test(context)
+                            ? "held_order"
+                            : "general";
       const branchRow = ops
         .flatMap((op): Row[] => {
           if (op.kind === "insert" || op.kind === "upsert") return op.rows as Row[];
@@ -2132,7 +2136,7 @@ export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitT
               branchId: String((refund.args as Record<string, unknown>)._branch_id ?? ""),
               reason: refund.args._reason == null ? null : String(refund.args._reason),
             })
-          : local.commitAggregate
+          : local.commitAggregate && aggregateKind !== "settings"
             ? await local.commitAggregate({
                 kind: aggregateKind,
                 branchId: branchId || undefined,

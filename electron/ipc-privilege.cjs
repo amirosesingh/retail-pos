@@ -410,6 +410,15 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  if (channel === "business:write-batch" && Array.isArray(args[1]) &&
+      args[1].some((op) => op?.table === "pos_settings") &&
+      args[1].every((op) => ["pos_settings", "settings_scoped"].includes(op?.table))) {
+    if (adminSession.hasPosAuthority() && adminSession.hasPermission("can_access_pos_settings")) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
+  }
   if (channel === "business:commit-aggregate") {
     const kind = String(args[0]?.kind ?? "");
     const permissions = {

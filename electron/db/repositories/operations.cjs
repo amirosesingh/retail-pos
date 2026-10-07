@@ -86,7 +86,8 @@ class OperationsRepository {
     }
     return ops;
   }
-  assertWriteScope(ops, { branchId, terminalId }) {
+  assertWriteScope(ops, scopeContext) {
+    const { branchId, terminalId } = scopeContext;
     if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
     const branch = String(branchId);
     const terminal = String(terminalId ?? "");
@@ -104,12 +105,23 @@ class OperationsRepository {
         if (names.has("from_store_id") && names.has("to_store_id") && ![row.from_store_id, row.to_store_id].map(String).includes(branch))
           throw Object.assign(new Error("A stock transfer must involve this terminal's branch."), { code: "EWRITE_SCOPE" });
       }
+      if (op.table === "pos_settings") {
+        if (scopeContext.enforcePermissions !== true || scopeContext.permissions?.can_access_pos_settings !== true)
+          throw Object.assign(new Error("POS settings require a verified settings operator."), { code: "EWRITE_SCOPE" });
+        if (op.kind === "delete" || (inserting && (op.rows ?? []).some((row) => Number(row.id) !== 1)) ||
+            (op.kind === "update" && Number(op.match?.id) !== 1))
+          throw Object.assign(new Error("Only the shared POS settings row may be saved."), { code: "EWRITE_SCOPE" });
+      }
       if (["settings_overrides", "settings_scoped"].includes(op.table)) {
         const candidates = inserting ? (op.rows ?? (op.values ? [op.values] : [])) : [op.match ?? {}];
         for (const row of candidates) {
           const scope = String(row.scope ?? "").toLowerCase();
           const scopeId = String(row.scope_id ?? "");
-          const allowed = (scope === "branch" && scopeId === branch) || (scope === "terminal" && terminal && scopeId === terminal);
+          const globalField = op.table === "settings_scoped" && scope === "global" &&
+            scopeId === "" && String(row.key ?? "").startsWith("pos_field:") &&
+            scopeContext.enforcePermissions === true &&
+            scopeContext.permissions?.can_access_pos_settings === true;
+          const allowed = globalField || (scope === "branch" && scopeId === branch) || (scope === "terminal" && terminal && scopeId === terminal);
           if (!allowed) throw Object.assign(new Error("A terminal may only write its own branch or terminal settings."), { code: "EWRITE_SCOPE" });
         }
       }

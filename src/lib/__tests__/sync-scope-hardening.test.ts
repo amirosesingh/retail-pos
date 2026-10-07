@@ -262,6 +262,49 @@ describe("scoped SQL Server synchronization", () => {
     ).not.toThrow();
   });
 
+  it("accepts only verified global POS field saves and keeps other global settings read-only", () => {
+    const { OperationsRepository } = require("../../../electron/db/repositories/operations.cjs");
+    const repository = new OperationsRepository({}, { tables: [
+      { cloudTable: "pos_settings", sqlServerTable: "pos_settings", columns: [] },
+      { cloudTable: "settings_scoped", sqlServerTable: "settings_scoped", columns: [] },
+    ] });
+    const scope = { branchId: "A", terminalId: "T", enforcePermissions: true,
+      permissions: { can_access_pos_settings: true } };
+    const field = { kind: "upsert", table: "settings_scoped", rows: [
+      { scope: "GLOBAL", scope_id: "", key: "pos_field:company_name", value: "Business" },
+    ] };
+    expect(() => repository.assertWriteScope([field], scope)).not.toThrow();
+    expect(() => repository.assertWriteScope([field], { ...scope, permissions: {} }))
+      .toThrow(/own branch or terminal settings/);
+    expect(() => repository.assertWriteScope([{ ...field, rows: [
+      { scope: "GLOBAL", scope_id: "", key: "secret", value: "bad" },
+    ] }], scope)).toThrow(/own branch or terminal settings/);
+    expect(() => repository.assertWriteScope([
+      { kind: "upsert", table: "pos_settings", rows: [{ id: 1 }] },
+    ], scope)).not.toThrow();
+    expect(() => repository.assertWriteScope([
+      { kind: "upsert", table: "pos_settings", rows: [{ id: 1 }] },
+    ], { ...scope, permissions: {} })).toThrow(/verified settings operator/);
+  });
+
+  it("routes global settings through the permission-gated SQL batch and cloud sync", () => {
+    const db = read("src/core/api/pos-db.ts");
+    const privilege = read("electron/ipc-privilege.cjs");
+    const endpoint = read("src/lib/sync-endpoint.server.ts");
+    const push = read("electron/sync/push-worker.cjs");
+    const migration = read("supabase/migrations/20261007142937_secure_global_pos_settings_sync.sql");
+    expect(db).toContain('aggregateKind !== "settings"');
+    expect(privilege).toContain('channel === "business:write-batch"');
+    expect(privilege).toContain('adminSession.hasPermission("can_access_pos_settings")');
+    for (const name of ["pos_settings", "settings_scoped"]) {
+      expect(endpoint).toContain(`"${name}"`);
+      expect(push).toContain(`"${name}"`);
+    }
+    expect(migration).toContain("INSERT INTO public.pos_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING");
+    expect(migration).toContain("r->>'key' LIKE 'pos_field:%'");
+    expect(migration).toContain("auth.role()='service_role'");
+  });
+
   it("starts new versioned local records at revision one", async () => {
     const queries: string[] = [];
     const inputs: Record<string, unknown> = {};

@@ -107,14 +107,25 @@ class CloudClient {
     // The OS-sealed activation token is authoritative. Put it last so no
     // caller-supplied payload can replace the device identity or its branch.
     const governanceTables = new Set([
+      "pos_settings",
       "pos_store_settings",
       "authorization_actions",
       "authorization_action_history",
     ]);
+    const sharedPosField = (row) => String(row?.scope ?? "").toLowerCase() === "global" &&
+      String(row?.scope_id ?? "") === "" && String(row?.key ?? "").startsWith("pos_field:");
+    const hasSharedPosField = (operation) => operation?.table === "settings_scoped" &&
+      ((operation.rows ?? []).some(sharedPosField) ||
+        (operation.changes ?? []).some((change) => {
+          if (sharedPosField(change?.key)) return true;
+          try { return sharedPosField(JSON.parse(change?.entityId ?? change?.entity_id)); }
+          catch { return false; }
+        }));
     const governance =
       governanceTables.has(payload?.sqlServerBatch?.table) ||
+      hasSharedPosField(payload?.sqlServerBatch) ||
       payload?.sqlServerAggregate?.operations?.some((operation) =>
-        governanceTables.has(operation.table),
+        governanceTables.has(operation.table) || hasSharedPosField(operation),
       );
     const personProof = governance ? (this.authorizationProof ?? {}) : {};
     const suffix = operation ? `?operation=${encodeURIComponent(operation)}` : "";

@@ -132,6 +132,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261007042149_fix_sku_service_role_detection.sql",
       "supabase/migrations/20261007110407_restore_pos_settings_sync_contract.sql",
       "supabase/migrations/20261007111500_harden_warehouse_transfer_lifecycle.sql",
+      "supabase/migrations/20261007142937_secure_global_pos_settings_sync.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

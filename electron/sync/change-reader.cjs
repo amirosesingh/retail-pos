@@ -54,11 +54,17 @@ class ChangeReader {
     const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);
     return (result.recordset ?? []).map((row) => toCloudRow(table, row));
   }
-  async pendingAggregates(branchId, limit = 500) {
-    const result = await this.connectionManager.pool.request().input("branch", branchId).input("limit", Math.max(1, Math.min(2000, limit))).query(`WITH selected AS (
+  async pendingAggregates(branchId, limit = 500, excludeAggregateIds = []) {
+    const request = this.connectionManager.pool.request().input("branch", branchId).input("limit", Math.max(1, Math.min(2000, limit)));
+    const excluded = excludeAggregateIds.slice(0, 2000).map((id, index) => {
+      request.input(`excluded${index}`, id);
+      return `@excluded${index}`;
+    });
+    const result = await request.query(`WITH selected AS (
       SELECT TOP (@limit) aggregate_id,MIN(change_id) first_change
       FROM dbo.sync_change_journal
       WHERE branch_id IN (@branch,'global') AND acknowledged_at IS NULL AND aggregate_id IS NOT NULL
+        ${excluded.length ? `AND aggregate_id NOT IN (${excluded.join(",")})` : ""}
       GROUP BY aggregate_id ORDER BY MIN(change_id)
     )
     SELECT journal.change_id,journal.entity_type,journal.entity_id,journal.operation,journal.entity_version,journal.aggregate_id
