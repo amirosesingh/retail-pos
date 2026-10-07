@@ -15728,6 +15728,7 @@ CREATE OR REPLACE FUNCTION public.pos_sync_push_batch(p_batch_id uuid,p_organiza
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
 DECLARE v_me public.app_users%ROWTYPE; v_count integer:=0; v_hash text:=md5(p_table||COALESCE(p_rows,'[]'::jsonb)::text||COALESCE(p_changes,'[]'::jsonb)::text); v_prior text;
 BEGIN
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('pos-sync-batch:' || p_batch_id::text, 0));
  PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
  PERFORM set_config('pos.source_application','electron',true);
  PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
@@ -15807,6 +15808,7 @@ CREATE OR REPLACE FUNCTION public.pos_sync_push_aggregate(p_batch_id uuid,p_orga
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
 DECLARE v_me public.app_users%ROWTYPE; v_op jsonb; v_table text; v_rows jsonb; v_count integer:=0; v_total integer:=0; v_hash text:=md5(COALESCE(p_operations,'[]'::jsonb)::text); v_prior text;
 BEGIN
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('pos-sync-batch:' || p_batch_id::text, 0));
  PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
  PERFORM set_config('pos.source_application','electron',true);
  PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
