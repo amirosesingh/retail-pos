@@ -1,15 +1,16 @@
 function keyFor(table,row){const primary=table.columns.filter(column=>column.primaryKey).map(column=>column.cloudColumn);return JSON.stringify(Object.fromEntries(primary.map(column=>[column,row[column]])));}
-async function refreshTable({registry,cloud,connectionManager,branchId,historyDays=90,tableName}){
+async function refreshTable({registry,cloud,connectionManager,branchId,historyDays=90,tableName,rowFilter=()=>true}){
   const table=(registry.tables??[]).find(candidate=>candidate.cloudTable===tableName);
   if(!table)return{completed:0,skipped:true};
   let completed=0;let cursor=null;
   do{
     const batch=await cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit:10});
     const rows=batch.rows??[];
+    const selected=rows.filter(rowFilter);
     const sql=connectionManager.sql();const transaction=new sql.Transaction(connectionManager.pool);await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
     try{
-      if(rows.length)await cloud.applyLocalBatch(transaction,table,{rows:rows.map(row=>({entity_id:keyFor(table,row),row_data:row,tombstone:false})),tombstones:[]});
-      await transaction.commit();completed+=rows.length;cursor=batch.cursor??null;
+      if(selected.length)await cloud.applyLocalBatch(transaction,table,{rows:selected.map(row=>({entity_id:keyFor(table,row),row_data:row,tombstone:false})),tombstones:[]});
+      await transaction.commit();completed+=selected.length;cursor=batch.cursor??null;
     }catch(error){await Promise.resolve(transaction.rollback()).catch(()=>undefined);throw error;}
     rows.length=0;
   }while(cursor);

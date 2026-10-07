@@ -82,6 +82,78 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(checkpoints.save).not.toHaveBeenCalled();
   });
 
+  it("loads store groups before a store arrives ahead of its parent in the feed", async () => {
+    const applied: string[] = [];
+    const appliedRows: unknown[] = [];
+    class Transaction {
+      begin = vi.fn();
+      commit = vi.fn();
+      rollback = vi.fn();
+    }
+    class Request {
+      input = vi.fn();
+      query = vi.fn().mockResolvedValue({ recordset: [] });
+    }
+    const checkpoints = { get: vi.fn().mockResolvedValue(null), save: vi.fn() };
+    const cloud = {
+      pullBatch: vi.fn().mockResolvedValue({
+        count: 1, cursor: 8,
+        rows: [{ table_name: "stores", entity_id: '{"id":"S1"}', row_data: { id: "S1", group_id: "G1" } }],
+        tombstones: [],
+      }),
+      bootstrapPage: vi.fn().mockResolvedValue({ rows: [{ id: "G1" }, { id: "G2" }], cursor: null }),
+      applyLocalBatch: vi.fn(async (_transaction: unknown, table: { cloudTable: string }, batch: unknown) => {
+        applied.push(table.cloudTable);
+        if (table.cloudTable === "store_groups") appliedRows.push(batch);
+      }),
+    };
+    const registry = { tables: [
+      { cloudTable: "store_groups", sqlServerTable: "store_groups", dependencyOrder: 0, columns: [{ cloudColumn: "id", primaryKey: true }] },
+      { cloudTable: "stores", sqlServerTable: "stores", dependencyOrder: 1, columns: [{ cloudColumn: "id", primaryKey: true }] },
+    ] };
+    const worker = new (await import("../../../electron/sync/pull-worker.cjs")).PullWorker({
+      connectionManager: { sql: () => ({ Request, Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: {} },
+      cloud, checkpoints, registry,
+      reader: { unacknowledged: vi.fn().mockResolvedValue(new Set()) },
+      conflicts: { record: vi.fn() },
+    });
+    await expect(worker.run({ branchId: "B1" })).resolves.toMatchObject({ merged: 1 });
+    expect(applied).toEqual(["store_groups", "stores"]);
+    expect(appliedRows).toEqual([{ rows: [{ entity_id: '{"id":"G1"}', row_data: { id: "G1" }, tombstone: false }], tombstones: [] }]);
+    expect(checkpoints.save).toHaveBeenCalledWith("B1", "__feed__", "pull", { committed_cursor: 8 }, expect.any(Transaction));
+  });
+
+  it("does not apply a store or advance the feed if its group refresh fails", async () => {
+    class Transaction {
+      begin = vi.fn();
+      commit = vi.fn();
+      rollback = vi.fn();
+    }
+    class Request {
+      input = vi.fn();
+      query = vi.fn().mockResolvedValue({ recordset: [] });
+    }
+    const checkpoints = { get: vi.fn().mockResolvedValue(null), save: vi.fn() };
+    const cloud = {
+      pullBatch: vi.fn().mockResolvedValue({
+        count: 1, cursor: 8,
+        rows: [{ table_name: "stores", entity_id: '{"id":"S1"}', row_data: { id: "S1", group_id: "G1" } }],
+        tombstones: [],
+      }),
+      bootstrapPage: vi.fn().mockRejectedValue(new Error("group refresh failed")),
+      applyLocalBatch: vi.fn(),
+    };
+    const worker = new (await import("../../../electron/sync/pull-worker.cjs")).PullWorker({
+      connectionManager: { sql: () => ({ Request, Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: {} },
+      cloud, checkpoints,
+      registry: { tables: [{ cloudTable: "store_groups", sqlServerTable: "store_groups", dependencyOrder: 0, columns: [{ cloudColumn: "id", primaryKey: true }] }] },
+      reader: { unacknowledged: vi.fn() }, conflicts: { record: vi.fn() },
+    });
+    await expect(worker.run({ branchId: "B1" })).rejects.toThrow("group refresh failed");
+    expect(cloud.applyLocalBatch).not.toHaveBeenCalled();
+    expect(checkpoints.save).not.toHaveBeenCalled();
+  });
+
   it("retries an uncertain outbound commit with the exact same batch ID", async () => {
     vi.useFakeTimers();
     try {
