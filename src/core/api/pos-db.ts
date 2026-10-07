@@ -402,6 +402,18 @@ const promotionToRow = (p: Promotion): Row => ({
   partner: p.partner?.trim() ? p.partner.trim() : null,
 });
 
+/** Older SQL copies may expose a JSON-encoded scalar rather than text. */
+const settingsText = (value: unknown): string => {
+  if (typeof value !== "string") return "";
+  if (value.startsWith('"')) {
+    try {
+      const decoded: unknown = JSON.parse(value);
+      if (typeof decoded === "string") return decoded;
+    } catch { /* ordinary text beginning with a quote */ }
+  }
+  return value;
+};
+
 export const rowToSettings = (r: Row | null): AppSettings =>
   r
     ? {
@@ -413,15 +425,15 @@ export const rowToSettings = (r: Row | null): AppSettings =>
         receipt: {
           ...defaultSettings.receipt,
           paper: (r.paper_size ?? "80mm") as PaperSize,
-          companyName: r.company_name ?? "",
-          taxNumber: r.tax_number ?? "",
-          regNumber: r.reg_number ?? "",
-          phone: r.phone ?? "",
-          website: r.website ?? "",
-          headerText: r.header_text ?? "",
-          footerText: r.footer_text ?? "",
+          companyName: settingsText(r.company_name),
+          taxNumber: settingsText(r.tax_number),
+          regNumber: settingsText(r.reg_number),
+          phone: settingsText(r.phone),
+          website: settingsText(r.website),
+          headerText: settingsText(r.header_text),
+          footerText: settingsText(r.footer_text),
           showLogo: r.show_logo ?? true,
-          logo: (r as { logo_data_url?: string | null }).logo_data_url ?? "",
+          logo: settingsText((r as { logo_data_url?: unknown }).logo_data_url),
           logoLayout: normalizeReceiptLogoLayout(
             settingsObject(r.receipt_design).logoLayout,
           ),
@@ -577,7 +589,7 @@ export const applySettingsFields = (base: Row | null, fields: Row[] | null | und
     if (!rawKey.startsWith("pos_field:")) continue;
     const key = rawKey.slice("pos_field:".length);
     if (key === "company_name") {
-      const name = typeof field.value === "string" ? field.value
+      const name = typeof field.value === "string" ? settingsText(field.value)
         : typeof field.value === "number" ? String(field.value) : "";
       // A stale, empty field row must not erase a name already pulled from
       // the cloud snapshot. Missing names still remain missing for the admin.
@@ -1844,6 +1856,41 @@ export async function loadReceivingInvoices(
   allStores = false,
   status: ReceivingStatus | "any" = "posted",
 ): Promise<ReceivingInvoice[]> {
+  if (effectiveDatabaseMode() === "local" && localDb()?.query) {
+    // A locally committed draft must remain visible even before cloud sync.
+    // SQL Server enforces terminal branch scope for both headers and lines.
+    const statuses = status === "posted" ? ["posted", null] : [status];
+    const heads = (await Promise.all(statuses.map((value) =>
+      routedQuery("purchase_orders", {
+        ...(value === "any" ? {} : { match: { status: value } }),
+        orderBy: { column: "invoice_entry_date", ascending: false },
+        limit,
+      }),
+    ))).flat()
+      .filter((row) => allStores || !storeId || row.store_id === storeId || row.store_id == null)
+      .sort((a, b) => String(b.invoice_entry_date ?? b.created_at ?? "")
+        .localeCompare(String(a.invoice_entry_date ?? a.created_at ?? "")))
+      .slice(0, limit);
+    const lines: Row[] = [];
+    for (let start = 0; start < heads.length; start += 500) {
+      const ids = heads.slice(start, start + 500).map((row) => row.id);
+      for (let offset = 0; ; offset += 2000) {
+        const page = await routedQuery("purchase_order_items", {
+          in: { column: "po_id", values: ids }, limit: 2000, offset,
+        });
+        lines.push(...page);
+        if (page.length < 2000) break;
+      }
+    }
+    const byOrder = new Map<string, Row[]>();
+    for (const line of lines) {
+      const key = String(line.po_id);
+      byOrder.set(key, [...(byOrder.get(key) ?? []), line]);
+    }
+    return heads.map((row) => rowToReceivingInvoice({
+      ...row, purchase_order_items: byOrder.get(String(row.id)) ?? [],
+    }));
+  }
   let q = supabase
     .from("purchase_orders" as never)
     .select("*, purchase_order_items(*)")
@@ -1901,6 +1948,10 @@ export const loadReceivingDrafts = (storeId: string | null, allStores = false) =
  * ignored: their number is provisional until the order is posted.
  */
 export async function invoiceNumberTaken(invoiceNo: string, exceptId?: string): Promise<boolean> {
+  if (effectiveDatabaseMode() === "local" && localDb()?.query) {
+    const rows = await routedQuery("purchase_orders", { match: { po_number: invoiceNo }, limit: 20 });
+    return rows.some((r) => r.id !== exceptId && (r.status ?? "posted") === "posted");
+  }
   const res = await supabase
     .from("purchase_orders" as never)
     .select("id, status")

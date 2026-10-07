@@ -180,6 +180,7 @@ function Purchasing() {
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
   const [draftLineRemovals, setDraftLineRemovals] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<ReceivingInvoice[]>([]);
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [discardId, setDiscardId] = useState<string | null>(null);
   const catalogLists = useCategories();
   const scanRef = useRef<HTMLInputElement>(null);
@@ -288,8 +289,9 @@ function Purchasing() {
   const refreshDrafts = async () => {
     try {
       setDrafts(await loadReceivingDrafts(currentStore.id, masterView));
-    } catch {
-      /* offline: the list simply stays as it was */
+      setDraftError(null);
+    } catch (error) {
+      setDraftError((error as Error).message || "Could not read receiving drafts");
     }
   };
 
@@ -416,8 +418,8 @@ function Purchasing() {
         setDraftLineRemovals((r) => r.filter((x) => !removals.includes(x)));
         setDraftSavedAt(new Date().toISOString());
         return { id, reference: ref };
-      } catch {
-        /* the outbox retries; the queue on screen is unaffected */
+      } catch (error) {
+        setDraftError((error as Error).message || "Could not save receiving draft");
         return null;
       }
     })();
@@ -443,9 +445,10 @@ function Purchasing() {
     setSavingDraft(true);
     try {
       const saved = await persistDraft();
-      if (saved) toast.success("Draft saved");
-      else toast.message("Saving…", { description: "The last change is still being written." });
-      await refreshDrafts();
+      if (saved) {
+        toast.success("Draft saved");
+        await refreshDrafts();
+      } else toast.error("Draft was not saved", { description: "Check the error above and try again." });
     } finally {
       setSavingDraft(false);
     }
@@ -1196,6 +1199,7 @@ function Purchasing() {
           </DialogContent>
         </Dialog>
 
+        {draftError && <p role="alert" className="text-sm text-destructive">Drafts: {draftError}</p>}
         {drafts.length > 0 && (
           <section className="rounded-lg border border-warning/40 bg-warning/5 p-5">
             <h2 className="text-sm font-semibold">Draft receiving orders</h2>

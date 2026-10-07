@@ -27,7 +27,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import type { PermissionFlag } from "@/lib/permissions";
-import { defaultPaymentDetails, defaultWhatsApp } from "@/lib/pos-seed";
+import { defaultPaymentDetails, defaultReceiptSettings, defaultWhatsApp } from "@/lib/pos-seed";
 import {
   PAPER_LABELS,
   paperCss,
@@ -164,7 +164,7 @@ export function SettingsFrame({
   }, []);
 
   const save = async () => {
-    if (requireCompanyName && !state.settings.receipt.companyName?.trim()) {
+    if (requireCompanyName && !(typeof state.settings.receipt.companyName === "string" && state.settings.receipt.companyName.trim())) {
       const message = "Enter the company name before saving business identity.";
       setSaveError(message);
       toast.error(message);
@@ -199,7 +199,23 @@ export function SettingsFrame({
 
   // `state.settings` has already been resolved by the central scope engine.
   // Receipt pages must not layer a second, branch-only override system on top.
-  const effective = receipt;
+  const effective = useMemo(() => ({
+    ...receipt,
+    ...Object.fromEntries(
+      (["companyName", "taxNumber", "regNumber", "phone", "website", "headerText", "footerText", "logo"] as const)
+        .map((key) => [key, typeof receipt[key] === "string" ? receipt[key] : ""]),
+    ),
+    fonts: Object.fromEntries(
+      (["header", "body", "footer"] as const).map((key) =>
+        [key, { ...defaultReceiptSettings.fonts[key], ...(receipt.fonts?.[key] ?? {}) }]),
+    ) as ReceiptSettings["fonts"],
+    customLines: Array.isArray(receipt.customLines)
+      ? receipt.customLines.filter((line) => line && typeof line.text === "string") : [],
+    qr: { ...defaultReceiptSettings.qr, ...receipt.qr,
+      value: typeof receipt.qr?.value === "string" ? receipt.qr.value : "" },
+    bookingSlip: { ...defaultReceiptSettings.bookingSlip, ...receipt.bookingSlip,
+      terms: typeof receipt.bookingSlip?.terms === "string" ? receipt.bookingSlip.terms : "" },
+  }), [receipt]);
 
   const setField = <K extends keyof ReceiptOverride>(key: K, value: ReceiptOverride[K]) => {
     updateSettings({ receipt: { ...receipt, [key]: value } as ReceiptSettings });
@@ -275,9 +291,9 @@ export function SettingsFrame({
       },
       "sale",
     );
-    setPrintSettings(receipt, tax);
+    setPrintSettings(effective, tax);
     return html;
-  }, [effective, receipt, tax, sample]);
+  }, [effective, tax, sample]);
 
   if (!canSettings) {
     const denied = (

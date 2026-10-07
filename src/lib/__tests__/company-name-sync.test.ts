@@ -20,6 +20,14 @@ describe("company name cloud-to-Electron sync", () => {
     expect(settings.payment).toMatchObject({ cash: true });
   });
 
+  it("unwraps legacy JSON-quoted identity text without rendering quotes", async () => {
+    const { rowToSettings } = await import("../../core/api/pos-db");
+    const settings = rowToSettings({ company_name: '"Actual Business Name"', logo_data_url: '"data:image/png;base64,abc"' });
+    expect(settings.receipt.companyName).toBe("Actual Business Name");
+    expect(settings.receipt.logo).toBe("data:image/png;base64,abc");
+    expect(rowToSettings({ company_name: { invalid: true } }).receipt.companyName).toBe("");
+  });
+
   it("does not let an old blank scoped field erase the cloud company name", async () => {
     const { applySettingsFields } = await import("../../core/api/pos-db");
     expect(applySettingsFields(

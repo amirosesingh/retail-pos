@@ -60,7 +60,7 @@ function IdentityForm() {
 
   // Keep the locally stored install name aligned with the receipt company name.
   useEffect(() => {
-    const name = (effective.companyName ?? "").trim();
+    const name = typeof effective.companyName === "string" ? effective.companyName.trim() : "";
     if (name && name !== readBranding().company) writeBranding({ company: name });
   }, [effective.companyName]);
 
@@ -80,7 +80,7 @@ function IdentityForm() {
 
   return (
     <div className="space-y-3">
-      {!effective.companyName?.trim() ? (
+      {!(typeof effective.companyName === "string" && effective.companyName.trim()) ? (
         <p role="alert" className="rounded-md border border-amber-500 p-3 text-sm">
           Company name is missing from the cloud. An administrator must enter it here and save.
           Other POS work can continue meanwhile.
@@ -105,7 +105,7 @@ function IdentityForm() {
         </div>
         <div className="flex flex-wrap items-center gap-4">
           <div className="grid h-20 w-36 place-items-center rounded-md border border-dashed border-border bg-muted/40 p-2">
-            {effective.logo ? (
+            {typeof effective.logo === "string" && effective.logo ? (
               <img
                 src={effective.logo}
                 alt="Current business logo"
@@ -132,7 +132,7 @@ function IdentityForm() {
             <ImageUp className="size-4" />
             {logoBusy ? "Preparing…" : effective.logo ? "Replace PNG" : "Upload PNG"}
           </Button>
-          {effective.logo ? (
+          {typeof effective.logo === "string" && effective.logo ? (
             <Button type="button" size="sm" variant="ghost" onClick={() => setField("logo", "")}>
               <Trash2 className="size-4" /> Remove
             </Button>
@@ -145,7 +145,8 @@ function IdentityForm() {
             <Label className="text-xs text-muted-foreground">{f.label}</Label>
             <Input
               placeholder={f.placeholder}
-              value={(effective[f.key as keyof ReceiptSettings] as string) ?? ""}
+              value={typeof effective[f.key as keyof ReceiptSettings] === "string"
+                ? effective[f.key as keyof ReceiptSettings] as string : ""}
               onChange={(e) => setField(f.key, e.target.value as never)}
             />
           </div>
@@ -155,7 +156,7 @@ function IdentityForm() {
         <Label className="text-xs text-muted-foreground">Header text (address / extra info)</Label>
         <Textarea
           rows={2}
-          value={effective.headerText}
+          value={typeof effective.headerText === "string" ? effective.headerText : ""}
           onChange={(e) => setField("headerText", e.target.value)}
         />
       </div>
@@ -163,7 +164,7 @@ function IdentityForm() {
         <Label className="text-xs text-muted-foreground">Footer / thank-you note</Label>
         <Textarea
           rows={2}
-          value={effective.footerText}
+          value={typeof effective.footerText === "string" ? effective.footerText : ""}
           onChange={(e) => setField("footerText", e.target.value)}
         />
       </div>
