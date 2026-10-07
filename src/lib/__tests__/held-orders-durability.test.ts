@@ -129,6 +129,9 @@ describe("held order durability", () => {
       register.indexOf("const claimed = await claimApproval"),
     );
     expect(register).toContain("The ticket stayed in Holds and needs approval again");
+    expect(register).toContain("await removeHeldOrder(parked.id)");
+    expect(register).toContain("deps.setLines(parked.lines)");
+    expect(register).toContain("Your open ticket is safely available in Holds");
     expect(register).toContain('status: "waiting" as const');
     expect(register).toContain("pendingRequestId: pending.requestId");
     expect(approval).toContain("await Promise.all(readiness)");

@@ -202,6 +202,25 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
           storedSnapshotHash ?? request?.snapshotHash ?? undefined,
         ).catch(() => null);
         if (!claimed || !claimed.ok) {
+          if (parked) {
+            try {
+              // holdOrder cleared the open cart only after its durable insert.
+              // If claiming the target approval fails, remove that temporary
+              // hold first and put the cashier's original ticket back exactly
+              // as it was instead of leaving the register unexpectedly blank.
+              await removeHeldOrder(parked.id);
+              deps.onApprovalCleared?.();
+              deps.setLines(parked.lines);
+              deps.setCartDiscount(parked.cartDiscount ?? 0);
+              deps.setCartDiscountType(parked.cartDiscountType ?? "amount");
+              deps.setExchangeRef(parked.exchangeRef ?? null);
+              deps.setMemberId(parked.memberId ?? null);
+              deps.setCoupon((parked.coupon as CartCoupon | null) ?? null);
+              deps.setBillNo(parked.billNo ?? null);
+            } catch {
+              toast.warning("Your open ticket is safely available in Holds");
+            }
+          }
           toast.error(
             (claimed && "error" in claimed ? claimed.error : "") ||
               "That approval can no longer be used",
