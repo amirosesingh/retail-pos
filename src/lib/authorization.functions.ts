@@ -154,6 +154,7 @@ type Caller = {
   storeId: string;
   canAccessAllBranches: boolean;
   canManageRules: boolean;
+  canManageStaff: boolean;
   canDiscardHeldOrder: boolean;
 };
 
@@ -179,6 +180,7 @@ async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
     canAccessAllBranches: role === "admin",
     canManageRules:
       role === "admin" || role === "manager" || scope.permissions.can_access_pos_settings === true,
+    canManageStaff: role === "admin" || scope.permissions.can_manage_staff === true,
     canDiscardHeldOrder: scope.isSupervisor || scope.permissions.can_discard_held_order === true,
   };
 }
@@ -1199,7 +1201,7 @@ export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
     }
   });
 
-/** Administrators set another person's authorisation PIN; it is never read back. */
+/** Staff managers set another person's authorisation PIN; it is never read back. */
 export const setStaffAuthorizationPin = createServerFn({ method: "POST" })
   .validator((data: unknown) =>
     caller.extend({ userId: z.string().min(1), pin: z.string().regex(/^\d{4,6}$/) }).parse(data),
@@ -1207,7 +1209,9 @@ export const setStaffAuthorizationPin = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
-      if (!who.isSupervisor) return { ok: false as const, error: "Administrators only" };
+      if (!who.canManageStaff) {
+        return { ok: false as const, error: "Staff management permission is required" };
+      }
       const { setUserAuthorizationPin, writeLog } = await import("./authorization.server");
       await setUserAuthorizationPin(data.userId, data.pin, who.id);
       const logged = await writeLog({

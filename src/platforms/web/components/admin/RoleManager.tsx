@@ -55,6 +55,11 @@ import {
   type RoleDef,
 } from "@/lib/role-admin";
 import { notifyError } from "@/lib/notify";
+import { broadcastSettingsChange, syncNow } from "@/lib/sync-engine";
+
+async function propagateRoleChange(reason: string) {
+  await Promise.all([broadcastSettingsChange("staff_roles"), syncNow(reason)]);
+}
 
 export function RoleManager() {
   const [roles, setRoles] = useState<RoleDef[]>([]);
@@ -91,6 +96,7 @@ export function RoleManager() {
     setSaving(role.slug);
     try {
       await updateRolePermissions(role, next);
+      await propagateRoleChange("staff role permissions changed");
     } catch (e) {
       notifyError(e, "That permission could not be saved");
       void load();
@@ -103,6 +109,7 @@ export function RoleManager() {
     setCreating(true);
     try {
       const role = await createCustomRole(name, rolePermissions(base), base);
+      await propagateRoleChange("staff role created");
       toast.success(`${role.name} created`);
       setOpen(false);
       setName("");
@@ -117,6 +124,7 @@ export function RoleManager() {
   const remove = async (role: RoleDef) => {
     try {
       await deleteCustomRole(role);
+      await propagateRoleChange("staff role deleted");
       toast.success(`${role.name} removed`);
       void load();
     } catch (e) {

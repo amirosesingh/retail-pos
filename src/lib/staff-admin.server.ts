@@ -103,6 +103,7 @@ export type StaffPayload = {
   branchId?: string | null;
   roleSlug: string;
   baseRole: "admin" | "manager" | "staff";
+  permissions?: Record<string, boolean>;
   active: boolean;
 };
 
@@ -203,7 +204,7 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
     p_pin: authorizationPin,
     p_pin_length: authorizationPin.length,
     p_auth_user_id: userId,
-    p_permissions: null,
+    p_permissions: payload.permissions ?? null,
   });
   if (!emailMode) {
     await serviceRpc("staff_account_set_terminal_pin", {

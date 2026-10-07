@@ -625,6 +625,20 @@ const LIVE_SETTINGS_TABLES = [
   "authorization_actions",
 ] as const;
 
+/**
+ * Control-plane changes contain no row data in the broadcast; they only wake
+ * the authenticated, scoped pull. Include staff identity tables so a global
+ * account or PIN change reaches every activated till instead of depending on
+ * a branch-filtered Postgres Changes event or the next timer tick.
+ */
+const LIVE_CONTROL_TABLES = [
+  ...LIVE_SETTINGS_TABLES,
+  "app_users",
+  "cashiers",
+  "staff_roles",
+  "user_roles",
+] as const;
+
 const ORGANIZATION_LIVE_TABLES = ["staff_roles", "stores", "members", "promotions"] as const;
 
 /**
@@ -676,7 +690,7 @@ const SETTINGS_BROADCAST_TIMEOUT_MS = 1_500;
  */
 export async function broadcastSettingsChange(table: string): Promise<boolean> {
   if (localDb()) return false;
-  if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return false;
+  if (!(LIVE_CONTROL_TABLES as readonly string[]).includes(table)) return false;
   const channel = settingsLiveChannel;
   if (!channel) return false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -958,7 +972,7 @@ export function startSyncEngine() {
       const next = supabaseExternal.channel("pos-live-settings");
       next.on("broadcast", { event: "settings_changed" }, (message) => {
         const table = String((message as { payload?: { table?: unknown } }).payload?.table ?? "");
-        if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return;
+        if (!(LIVE_CONTROL_TABLES as readonly string[]).includes(table)) return;
         queueLiveChange({ reason: `broadcast:${table}`, table, storeId: null });
       });
       // Database-change subscriptions require table SELECT privileges. PIN-only
