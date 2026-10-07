@@ -11,7 +11,12 @@ BEGIN
   WHERE dc.parent_object_id = OBJECT_ID(N'dbo.pos_settings')
     AND c.name = N'company_name';
   IF @company_name_default IS NOT NULL
-    EXEC(N'ALTER TABLE dbo.pos_settings DROP CONSTRAINT ' + QUOTENAME(@company_name_default));
+  BEGIN
+    DECLARE @drop_company_name_default_sql nvarchar(max);
+    SET @drop_company_name_default_sql =
+      N'ALTER TABLE dbo.pos_settings DROP CONSTRAINT ' + QUOTENAME(@company_name_default);
+    EXEC sys.sp_executesql @drop_company_name_default_sql;
+  END;
 
   IF EXISTS (
     SELECT 1 FROM sys.columns

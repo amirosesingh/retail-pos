@@ -15,10 +15,10 @@ const STATES = new Set([
 ]);
 
 class DatabaseService {
-  constructor({ secureConfig, manager, publish = () => {}, log = () => {}, validator = validateDatabase }) {
+  constructor({ secureConfig, manager, publish = () => {}, log = () => {}, validator = validateDatabase, migrate = null }) {
     this.secureConfig = secureConfig; this.manager = manager; this.publish = publish;
     this.log = log;
-    this.validator = validator;
+    this.validator = validator; this.migrate = migrate;
     this.validatedProfileKey = null;
     this.state = secureConfig.enabled() ? (secureConfig.profile() ? "enabled_connecting" : "enabled_unconfigured") : "disabled";
     this.detail = null; this.lastCheckedAt = null; this.validated = false;
@@ -113,7 +113,14 @@ class DatabaseService {
     try {
       this.validated = false;
       this.transition("enabled_validating");
-      const validation = await this.validator(this.manager, profile);
+      let validation = await this.validator(this.manager, profile);
+      if (validation.ok && !validation.ready && validation.status === "migration_required" &&
+          validation.migrationHistoryPresent && this.migrate) {
+        this.transition("enabled_validating", { status: "applying_migration" });
+        const migrated = await this.migrate(profile);
+        if (!migrated.ok) return this.transition("enabled_error", { ...migrated, status: "migration_required" });
+        validation = await this.validator(this.manager, profile);
+      }
       if (!validation.ok || !validation.ready) {
         if(validation.ok&&validation.status==="migration_required"&&!(this.manager.isConnected?.()??this.manager.pool)){
           await this.manager.open(profile);

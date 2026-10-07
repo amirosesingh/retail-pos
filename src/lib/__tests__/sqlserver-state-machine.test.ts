@@ -1,6 +1,41 @@
 import { describe, expect, it, vi } from "vitest";
 
 describe("SQL Server persistent state machine", () => {
+  it("applies a pending packaged migration automatically on saved-profile restore", async () => {
+    const { DatabaseService } = await import("../../../electron/db/service.cjs");
+    const profile = { host: "db", port: 1433, database: "POS_Local" };
+    const manager = {
+      pool: undefined as object | undefined,
+      isConnected() { return Boolean(this.pool); },
+      open: vi.fn(async function (this: { pool?: object }) { this.pool = {}; }),
+      close: vi.fn(),
+    };
+    const validator = vi.fn()
+      .mockResolvedValueOnce({ ok: true, ready: false, status: "migration_required", migrationHistoryPresent: true, missingMigrationVersions: [7] })
+      .mockResolvedValueOnce({ ok: true, ready: true, status: "ready", migrationHistoryPresent: true, missingMigrationVersions: [] });
+    const migrate = vi.fn().mockResolvedValue({ ok: true, applied: ["007_repair_scoped_json_values.sql"] });
+    const service = new DatabaseService({
+      secureConfig: { enabled: () => true, profile: () => profile, credentials: () => profile },
+      manager, validator, migrate,
+    });
+    await expect(service.restore()).resolves.toMatchObject({ state: "enabled_bootstrapping", tradingReady: true });
+    expect(migrate).toHaveBeenCalledExactlyOnceWith(profile);
+    expect(validator).toHaveBeenCalledTimes(2);
+  });
+
+  it("never auto-migrates a database without Retail POS migration history", async () => {
+    const { DatabaseService } = await import("../../../electron/db/service.cjs");
+    const profile = { host: "db", database: "Other" };
+    const migrate = vi.fn();
+    const service = new DatabaseService({
+      secureConfig: { enabled: () => true, profile: () => profile, credentials: () => profile },
+      manager: { pool: {}, isConnected: () => true, open: vi.fn(), close: vi.fn() },
+      validator: vi.fn().mockResolvedValue({ ok: true, ready: false, status: "migration_required", migrationHistoryPresent: false }),
+      migrate,
+    });
+    await expect(service.restore()).resolves.toMatchObject({ state: "enabled_error", tradingReady: false });
+    expect(migrate).not.toHaveBeenCalled();
+  });
   it("starts nothing while disabled and restores one pool when enabled", async () => {
     const { DatabaseService } = await import("../../../electron/db/service.cjs");
     let enabled = false;
