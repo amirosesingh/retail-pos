@@ -19,6 +19,7 @@ import {
   removeHeldOrder,
   rowToHeldOrder,
   setHeldOrders,
+  updateHeldOrder,
   type HeldOrder,
 } from "@/lib/held-orders";
 
@@ -89,6 +90,28 @@ describe("held order durability", () => {
     expect(decoded.lines).toEqual(order.lines);
     expect(decoded.coupon).toBeNull();
     expect(decoded.total).toBe(5.5);
+  });
+
+  it("updates a durable ticket before the Electron renderer cache hydrates", async () => {
+    database.listHeldOrders.mockResolvedValue([
+      {
+        id: order.id,
+        label: order.label,
+        total: order.total,
+        lines: JSON.stringify(order.lines),
+        held_at: order.heldAt,
+        store_id: order.storeId,
+        status: "waiting",
+      },
+    ]);
+    database.commitHeldOrder.mockResolvedValue("local");
+
+    await updateHeldOrder(order.id, { status: "ready" });
+
+    expect(database.commitHeldOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ id: order.id, status: "ready", storeId: order.storeId }),
+    );
+    expect(readHeldOrders()).toEqual([expect.objectContaining({ id: order.id, status: "ready" })]);
   });
 
   it("keeps branch, approval and cart races behind durable boundaries", () => {

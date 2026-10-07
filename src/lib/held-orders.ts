@@ -159,11 +159,22 @@ export function persistHeldOrder(order: HeldOrder) {
 }
 
 export async function updateHeldOrder(id: string, patch: Partial<HeldOrder>) {
-  const current = readHeldOrders().find((held) => held.id === id);
+  let current = readHeldOrders().find((held) => held.id === id);
+  if (!current) {
+    // Electron starts with an empty renderer cache. Approval decisions can
+    // arrive before the holds screen has hydrated it, so recover the durable
+    // row instead of dropping the state transition.
+    const row = (await db.listHeldOrders()).find((held) => String(held.id ?? "") === id);
+    if (row) current = rowToHeldOrder(row as Record<string, unknown>);
+  }
   if (!current) return;
   const updated = { ...current, ...patch };
   await persistHeldOrder(updated);
-  setHeldOrders((orders) => orders.map((held) => (held.id === id ? updated : held)));
+  setHeldOrders((orders) =>
+    orders.some((held) => held.id === id)
+      ? orders.map((held) => (held.id === id ? updated : held))
+      : [...orders, updated],
+  );
 }
 
 /** Park a cancelled bill so the till can correct and re-ring it. */

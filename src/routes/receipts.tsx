@@ -480,6 +480,9 @@ function ReceiptVault() {
       const after = { paymentMethod: payMethod };
       const changed = await changeSalePayment(selected.id, payMethod, reason, selected);
       if (!changed) return;
+      setOlder((rows) =>
+        rows.map((row) => (row.id === selected.id ? { ...row, method: payMethod } : row)),
+      );
       await saveRecordEditHistory({
         kind: "sale",
         recordId: selected.id,

@@ -22,12 +22,13 @@ describe("administrator corrections and shared table controls", () => {
     const store = read("src/lib/pos-store.tsx");
     const receipts = read("src/routes/receipts.tsx");
     const db = read("src/core/api/pos-db.ts");
-    expect(store).toContain("stateRef.current.sales.find((x) => x.id === saleId) ?? loadedSale");
+    expect(store).toContain("loadedSale?.id === saleId");
     expect(store).toContain("db.updateSalePayment(saleId, method, sale.storeId)");
     expect(receipts).toContain(
       "changeSalePayment(selected.id, payMethod, reason, selected)",
     );
     expect(db).toContain("match: { id: saleId, store_id: branchId }");
+    expect(receipts).toContain("rows.map((row) => (row.id === selected.id");
   });
 
   it("keeps shift correction behind server-verified admin and branch checks", () => {

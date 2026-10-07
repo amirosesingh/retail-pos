@@ -2450,7 +2450,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // older page may not be in the store's small live window, so retain the
       // verified row supplied by that screen instead of silently doing
       // nothing after the operator confirms the correction.
-      const sale = stateRef.current.sales.find((x) => x.id === saleId) ?? loadedSale;
+      const sale =
+        loadedSale?.id === saleId
+          ? loadedSale
+          : stateRef.current.sales.find((x) => x.id === saleId);
       if (!sale || sale.method === method) return false;
       await db.updateSalePayment(saleId, method, sale.storeId);
       logger.log("sale_event", "Bill payment method corrected", "receipts", {
@@ -2462,9 +2465,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
       });
       setState((s) => ({
         ...s,
-        sales: s.sales.some((x) => x.id === saleId)
-          ? s.sales.map((x) => (x.id === saleId ? { ...x, method } : x))
-          : [{ ...sale, method }, ...s.sales],
+        // Historical pages are owned by the receipt screen. Do not inject an
+        // old bill into this newest-first, bounded live-sales window.
+        sales: s.sales.map((x) => (x.id === saleId ? { ...x, method } : x)),
       }));
       return true;
     },
