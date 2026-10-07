@@ -88,6 +88,55 @@ describe("Electron sales visibility", () => {
     await expect(repository.query("branch-1", "secure_settings", {})).rejects.toMatchObject({ code: "EQUERY_TABLE" });
   });
 
+  it("binds terminal scope and decodes scoped settings on local queries", async () => {
+    const inputs = new Map<string, unknown>();
+    let statement = "";
+    const request = {
+      input(name: string, value: unknown) { inputs.set(name, value); return this; },
+      async query(sql: string) {
+        statement = sql;
+        return { recordset: [{ scope: "GLOBAL", scope_id: "", key: "pos_field:company_name", value: '"Actual Business Name"' }] };
+      },
+    };
+    const registry = { tables: [{
+      cloudTable: "settings_scoped", sqlServerTable: "settings_scoped",
+      columns: [
+        { cloudColumn: "scope", sqlServerColumn: "scope", primaryKey: true },
+        { cloudColumn: "scope_id", sqlServerColumn: "scope_id", primaryKey: true },
+        { cloudColumn: "key", sqlServerColumn: "key", primaryKey: true },
+        { cloudColumn: "value", sqlServerColumn: "value", cloudType: "jsonb" },
+      ],
+    }] };
+    const { OperationsRepository } = await import("../../../electron/db/repositories/operations.cjs");
+    const repository = new OperationsRepository({ pool: { request: () => request } }, registry);
+    const result = await repository.query("branch-1", "settings_scoped", { limit: 1 }, "terminal-1");
+    expect(inputs.get("terminal")).toBe("terminal-1");
+    expect(statement).toContain("[scope_id]=@terminal");
+    expect(statement).toContain("[scope_id]=@branch");
+    expect(statement).toContain("scoped_store.[group_id]");
+    expect(result.rows[0].value).toBe("Actual Business Name");
+  });
+
+  it("binds terminal scope during local/cloud verification", async () => {
+    const inputs = new Map<string, unknown>();
+    let statement = "";
+    const request = {
+      input(name: string, value: unknown) { inputs.set(name, value); return this; },
+      async query(sql: string) { statement = sql; return { recordset: [] }; },
+    };
+    const table = {
+      cloudTable: "settings_scoped", sqlServerTable: "settings_scoped",
+      columns: [{ cloudColumn: "key", sqlServerColumn: "key", primaryKey: true }],
+    };
+    const { localSignature } = await import("../../../electron/sync/verifier.cjs");
+    await localSignature({
+      connectionManager: { pool: { request: () => request } },
+      registry: { tables: [table] }, table, branchId: "branch-1", terminalId: "terminal-1", historyDays: 90,
+    });
+    expect(inputs.get("terminal")).toBe("terminal-1");
+    expect(statement).toContain("[scope_id]=@terminal");
+  });
+
   it("keeps Electron local-first and uses the nested sync bridge", async () => {
     const { readFileSync } = await import("node:fs");
     const store = readFileSync("src/lib/pos-store.tsx", "utf8");
