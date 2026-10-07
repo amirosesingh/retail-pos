@@ -926,7 +926,7 @@ function Purchasing() {
 
       // The same before/after, in the authorisation record book, with who
       // allowed the change and how it was allowed.
-      void saveRecordEditHistory({
+      await saveRecordEditHistory({
         kind: "purchase_order",
         recordId: next.id,
         ...(next.reference ? { reference: next.reference } : {}),

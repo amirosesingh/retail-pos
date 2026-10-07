@@ -393,6 +393,7 @@ type Ctx = {
     draftId?: string | null,
     postedBy?: string | null,
     record?: { lines: unknown[]; totalImpact: number },
+    adjustmentAttemptId?: string | null,
   ) => Promise<CommitTarget | null>;
   upsertMember: (member: Member) => Promise<CommitTarget>;
   removeMember: (id: string) => Promise<void>;
@@ -3112,6 +3113,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       draftId?: string | null,
       postedBy?: string | null,
       record?: { lines: unknown[]; totalImpact: number },
+      adjustmentAttemptId?: string | null,
     ): Promise<CommitTarget | null> => {
       const target = storeId ?? stateRef.current.currentStoreId;
       const changes = entries
@@ -3149,7 +3151,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ...c.product,
         stockByStore: { ...c.product.stockByStore, [target]: c.counted },
       }));
-      const adjustments = changes.map((c) => ({
+      // Stable movement ids make a retry safe after a local/cloud timeout. The
+      // product id sort keeps the child index deterministic even if the UI
+      // rows were re-ordered between attempts.
+      const adjustmentChanges = [...changes].sort((a, b) =>
+        a.product.id.localeCompare(b.product.id),
+      );
+      const adjustments = adjustmentChanges.map((c, index) => ({
+        id: adjustmentAttemptId ? stableChildId(adjustmentAttemptId, "7", index) : undefined,
         productId: c.product.id,
         productName: c.product.name,
         sku: c.product.sku ?? null,
@@ -3166,8 +3175,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
         .commitStockAdjustments(
           products,
           adjustments,
-          draftId ? { id: draftId, by: postedBy,
-            record: record ? { ...record, reason, note } : undefined } : undefined,
+          draftId
+            ? {
+                id: draftId,
+                by: postedBy,
+                record: record ? { ...record, reason, note } : undefined,
+              }
+            : undefined,
         )
         .then((committed) => {
           const byId = new Map(changes.map((c) => [c.product.id, c.counted]));

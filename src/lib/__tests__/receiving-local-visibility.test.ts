@@ -57,6 +57,27 @@ describe("Electron receiving reads", () => {
     ]);
   });
 
+  it("restores the operator invoice number after a draft is discarded", async () => {
+    vi.spyOn(mode, "effectiveDatabaseMode").mockReturnValue("local");
+    vi.spyOn(local, "localDb").mockReturnValue({ query: vi.fn() } as never);
+    vi.spyOn(query, "routedQuery").mockImplementation(async (table) =>
+      table === "purchase_orders"
+        ? [
+            {
+              id: "order-3",
+              store_id: "B1",
+              status: "cancelled",
+              po_number: "__draft__:order-3:SUPPLIER-88",
+            },
+          ]
+        : [],
+    );
+    const { loadReceivingInvoices } = await import("../../core/api/pos-db");
+    await expect(loadReceivingInvoices("B1", 100, false, "cancelled")).resolves.toMatchObject([
+      { id: "order-3", invoiceNo: "SUPPLIER-88" },
+    ]);
+  });
+
   it("does not hide older local drafts after the first page", async () => {
     vi.spyOn(mode, "effectiveDatabaseMode").mockReturnValue("local");
     vi.spyOn(local, "localDb").mockReturnValue({ query: vi.fn() } as never);

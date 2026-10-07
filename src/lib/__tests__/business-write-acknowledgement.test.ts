@@ -69,11 +69,19 @@ describe("business UI persistence acknowledgements", () => {
     expect(dialog).toContain("await db.saveStockCountDraft");
     expect(dialog).toContain("await persistDraft()");
     expect(dialog).toContain("await applyStockCount(");
+    expect(dialog).toContain("postingAttemptRef.current ??=");
+    expect(dialog).toContain("await saveRecordEditHistory({");
+    expect(dialog).toContain("const run = saveTailRef.current");
+    expect(dialog).toContain(".catch(() => undefined)");
+    expect(dialog).toContain(".then(() => onOpenChange(false))");
     expect(dialog).toContain("if (postingRef.current) return");
     expect(dialog).toContain("postingRef.current = true");
     expect(dialog).toContain("postingRef.current = false");
     expect(store).toContain(".commitStockAdjustments(");
-    expect(store).toContain("draftId ? { id: draftId, by: postedBy,");
+    expect(store).toContain('stableChildId(adjustmentAttemptId, "7", index)');
+    expect(store).toContain(
+      "draftId\n            ? {\n                id: draftId,\n                by: postedBy,",
+    );
     expect(store).toContain("record: record ? { ...record, reason, note } : undefined");
     expect(dialog).toContain('draft?.status === "posted" ? null : await persistDraft()');
   });
@@ -86,6 +94,7 @@ describe("business UI persistence acknowledgements", () => {
     expect(purchasing).toContain(
       "await db.commitReceivingInvoice(invoice, hubId, mayUpdateCataloguePrices)",
     );
+    expect(purchasing).toContain("await saveRecordEditHistory({");
     expect(purchasing).toContain("await db.updateReceivingInvoice(");
   });
 

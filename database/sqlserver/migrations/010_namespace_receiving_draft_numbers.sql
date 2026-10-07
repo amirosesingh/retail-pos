@@ -11,7 +11,7 @@ BEGIN
     LEFT(COALESCE(po_number, N''), 400)
   )
   WHERE status = N'draft'
-    AND po_number NOT LIKE N'__draft__:%';
+    AND LEFT(COALESCE(po_number, N''), 10) <> N'__draft__:';
 END;
 
 IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10)

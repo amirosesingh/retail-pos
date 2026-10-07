@@ -4,4 +4,4 @@
 UPDATE public.purchase_orders
 SET po_number = '__draft__:' || id::text || ':' || left(COALESCE(po_number, ''), 400)
 WHERE status = 'draft'
-  AND po_number NOT LIKE '__draft__:%';
+  AND left(COALESCE(po_number, ''), 10) <> '__draft__:';

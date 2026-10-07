@@ -1820,7 +1820,8 @@ const DRAFT_PO_PREFIX = "__draft__:";
 
 const visiblePurchaseOrderNumber = (value: unknown, status: unknown): string => {
   const stored = String(value ?? "");
-  if (status !== "draft" || !stored.startsWith(DRAFT_PO_PREFIX)) return stored;
+  if ((status !== "draft" && status !== "cancelled") || !stored.startsWith(DRAFT_PO_PREFIX))
+    return stored;
   const separator = stored.indexOf(":", DRAFT_PO_PREFIX.length);
   return separator < 0 ? "" : stored.slice(separator + 1);
 };
