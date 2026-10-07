@@ -44,7 +44,8 @@ BEGIN TRY
 
   UPDATE dbo.settings_scoped
   SET [value] = N'"' + STRING_ESCAPE([value], 'json') + N'"'
-  WHERE [value] IS NOT NULL AND ISJSON(N'[' + [value] + N']') <> 1;
+  WHERE [value] IS NOT NULL
+    AND (LTRIM(RTRIM([value])) = N'' OR ISJSON(N'[' + [value] + N']') <> 1);
 
   IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6)
     INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
@@ -52,6 +53,9 @@ BEGIN TRY
   IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7)
     INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
     VALUES (7, N'007_repair_scoped_json_values', SYSDATETIMEOFFSET());
+  IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8)
+    INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
+    VALUES (8, N'008_repair_scoped_values_and_company_name', SYSDATETIMEOFFSET());
 
   COMMIT TRANSACTION;
 END TRY
@@ -62,8 +66,10 @@ END CATCH;
 
 SELECT DB_NAME() AS database_name,
        (SELECT is_nullable FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.pos_settings') AND name = N'company_name') AS company_name_nullable,
-       (SELECT COUNT_BIG(*) FROM dbo.settings_scoped WHERE [value] IS NOT NULL AND ISJSON(N'[' + [value] + N']') <> 1) AS invalid_scoped_json_rows;
+       (SELECT COUNT_BIG(*) FROM dbo.settings_scoped
+        WHERE [value] IS NOT NULL
+          AND (LTRIM(RTRIM([value])) = N'' OR ISJSON(N'[' + [value] + N']') <> 1)) AS invalid_scoped_json_rows;
 SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
-WHERE version IN (6, 7)
+WHERE version IN (6, 7, 8)
 ORDER BY version;

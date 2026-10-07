@@ -1,5 +1,6 @@
 const { loadRegistry } = require("../schema-registry.cjs");
-const { branchPredicate } = require("../branch-scope.cjs");
+const { branchPredicate, settingsScopePredicate } = require("../branch-scope.cjs");
+const { toRendererRow } = require("../../sync/row-codec.cjs");
 
 const MAX_BATCH_ROWS = 2000;
 const MAX_ENCODED_BYTES = 6 * 1024 * 1024;
@@ -281,7 +282,7 @@ class OperationsRepository {
           }
           break;
         }
-        rows.push(...pageRows);
+        rows.push(...pageRows.map((row) => toRendererRow(table, row)));
         if (pageRows.length < SNAPSHOT_PAGE_ROWS) {
           await transaction.commit();
           return rows;
@@ -296,7 +297,7 @@ class OperationsRepository {
       throw error;
     }
   }
-  async query(branchId, tableName, options = {}) {
+  async query(branchId, tableName, options = {}, terminalId = null) {
     const table = this.cloudTables.get(String(tableName ?? ""));
     if (!table || !SAFE_RENDERER_TABLES.has(table.cloudTable)) {
       throw Object.assign(new Error("Unsupported local business read."), { code: "EQUERY_TABLE" });
@@ -310,9 +311,11 @@ class OperationsRepository {
     if (!columns.length || (requested !== "*" && columns.length !== requested.split(",").length)) {
       throw Object.assign(new Error("Unsupported local query column."), { code: "EQUERY_COLUMN" });
     }
-    const request = this.pool().request().input("branch", String(branchId));
+    const request = this.pool().request()
+      .input("branch", String(branchId))
+      .input("terminal", String(terminalId ?? ""));
     const where = [];
-    const scope = this.branchPredicate(table);
+    const scope = settingsScopePredicate(table) ?? this.branchPredicate(table);
     if (scope) where.push(scope);
     let parameter = 0;
     for (const [cloudColumn, value] of Object.entries(options.match ?? {})) {
@@ -356,7 +359,7 @@ class OperationsRepository {
     const select = columns.map((column) => `source.[${column.sqlServerColumn}] AS [${column.cloudColumn}]`).join(",");
     const tieOrder = primary.sqlServerColumn === orderColumn.sqlServerColumn ? "" : `,source.[${primary.sqlServerColumn}] ${direction}`;
     const result = await request.query(`SELECT ${select} FROM dbo.[${table.sqlServerTable}] source ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY source.[${orderColumn.sqlServerColumn}] ${direction}${tieOrder} OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`);
-    return { ok: true, rows: result.recordset ?? [] };
+    return { ok: true, rows: (result.recordset ?? []).map((row) => toRendererRow(table, row)) };
   }
   /**
    * Database-side tender aggregation for a shift close. This stays bounded in
@@ -453,17 +456,18 @@ class OperationsRepository {
     }
     if (this.tables.has("pos_settings")) {
       const result = await this.pool().request().query("SELECT TOP (1) * FROM dbo.pos_settings ORDER BY id;");
-      output.settings = result.recordset?.[0] ?? null;
+      output.settings = result.recordset?.[0]
+        ? toRendererRow(this.tables.get("pos_settings"), result.recordset[0]) : null;
     }
     if (this.tables.has("settings_scoped")) {
-      const result = await this.pool().request().query("SELECT TOP (200) * FROM dbo.settings_scoped WHERE [key] LIKE N'pos_field:%' ORDER BY [key];");
-      output.settingFields = (result.recordset ?? []).map((row) => {
-        try {
-          return { ...row, value: typeof row.value === "string" ? JSON.parse(row.value) : row.value };
-        } catch {
-          return row;
-        }
-      });
+      const table = this.tables.get("settings_scoped");
+      const scope = settingsScopePredicate(table);
+      const result = await this.pool().request()
+        .input("branch", String(branchId ?? ""))
+        .input("terminal", String(terminalId ?? ""))
+        .query(`SELECT TOP (200) * FROM dbo.settings_scoped source WHERE [key] LIKE N'pos_field:%' AND ${scope} ORDER BY [key];`);
+      output.settingFields = (result.recordset ?? []).map((row) =>
+        toRendererRow(table, row));
     }
     if (this.tables.has("shifts")) {
       const result = branchId

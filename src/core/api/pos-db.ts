@@ -207,6 +207,13 @@ function jsonValue<T>(value: unknown, fallback: T): T {
   }
 }
 
+/** SQL Server returns structured settings as text; cloud reads return objects. */
+function settingsObject(value: unknown): Record<string, unknown> {
+  const parsed = jsonValue<unknown>(value, {});
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown> : {};
+}
+
 /** Strict numeric coercion: "" / null / NaN / Infinity never reach the database. */
 export const safeNum = (value: unknown, fallback = 0): number => {
   if (value === "" || value == null || typeof value === "boolean") return fallback;
@@ -395,7 +402,7 @@ const promotionToRow = (p: Promotion): Row => ({
   partner: p.partner?.trim() ? p.partner.trim() : null,
 });
 
-const rowToSettings = (r: Row | null): AppSettings =>
+export const rowToSettings = (r: Row | null): AppSettings =>
   r
     ? {
         tax: {
@@ -416,38 +423,38 @@ const rowToSettings = (r: Row | null): AppSettings =>
           showLogo: r.show_logo ?? true,
           logo: (r as { logo_data_url?: string | null }).logo_data_url ?? "",
           logoLayout: normalizeReceiptLogoLayout(
-            (r as { receipt_design?: { logoLayout?: unknown } | null }).receipt_design?.logoLayout,
+            settingsObject(r.receipt_design).logoLayout,
           ),
           showPoints: r.show_points ?? true,
           showBarcode: r.show_barcode ?? true,
           showTax: r.show_tax_details ?? true,
           fonts: {
             ...defaultSettings.receipt.fonts,
-            ...((r.fonts ?? {}) as AppSettings["receipt"]["fonts"]),
+            ...settingsObject(r.fonts),
           },
-          customLines: Array.isArray(r.custom_lines) ? r.custom_lines : [],
-          qr: { ...defaultSettings.receipt.qr, ...((r.qr ?? {}) as object) },
+          customLines: Array.isArray(jsonValue(r.custom_lines, [])) ? jsonValue(r.custom_lines, []) : [],
+          qr: { ...defaultSettings.receipt.qr, ...settingsObject(r.qr) },
           css: (r as { receipt_css?: string | null }).receipt_css ?? "",
           bookingSlip: {
             ...defaultSettings.receipt.bookingSlip,
-            ...((r.booking_slip ?? {}) as object),
+            ...settingsObject(r.booking_slip),
           },
         },
         payment: {
           ...defaultSettings.payment,
-          ...((r.payment_details ?? {}) as object),
+          ...settingsObject(r.payment_details),
         },
         whatsapp: {
           ...defaultSettings.whatsapp,
-          ...((r.whatsapp_settings ?? {}) as object),
+          ...settingsObject(r.whatsapp_settings),
         },
         visibility: {
-          hidden: ((r.ui_visibility as { hidden?: Record<string, string[]> } | null)?.hidden ??
+          hidden: ((settingsObject(r.ui_visibility).hidden as Record<string, string[]> | undefined) ??
             {}) as Record<string, string[]>,
         },
         integrations: {
           ...defaultSettings.integrations,
-          ...((r.integration_settings ?? {}) as object),
+          ...settingsObject(r.integration_settings),
         },
       }
     : defaultSettings;
@@ -562,14 +569,20 @@ const settingsFieldRows = (row: Row): Row[] => {
 };
 
 /** Overlay independently versioned fields onto the legacy settings snapshot. */
-const applySettingsFields = (base: Row | null, fields: Row[] | null | undefined): Row | null => {
+export const applySettingsFields = (base: Row | null, fields: Row[] | null | undefined): Row | null => {
   if (!base && !fields?.length) return null;
   const merged: Row = { ...(base ?? { id: 1 }) };
   for (const field of fields ?? []) {
     const rawKey = String(field.key ?? "");
     if (!rawKey.startsWith("pos_field:")) continue;
     const key = rawKey.slice("pos_field:".length);
-    if (key && key !== "id") merged[key] = field.value;
+    if (key === "company_name") {
+      const name = typeof field.value === "string" ? field.value
+        : typeof field.value === "number" ? String(field.value) : "";
+      // A stale, empty field row must not erase a name already pulled from
+      // the cloud snapshot. Missing names still remain missing for the admin.
+      if (name.trim() || !String(merged.company_name ?? "").trim()) merged[key] = name;
+    } else if (key && key !== "id") merged[key] = field.value;
   }
   return merged;
 };

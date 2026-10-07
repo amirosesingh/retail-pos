@@ -70,14 +70,14 @@ function keyset(primary, alias = "source") {
   return primary.map((column, index) => `(${primary.slice(0, index).map((prior, part) => `${alias}.[${prior.sqlServerColumn}]=@cursor${part}`).concat(`${alias}.[${column.sqlServerColumn}]>@cursor${index}`).join(" AND ")})`).join(" OR ");
 }
 
-async function localSignature({ connectionManager, registry, table, branchId, historyDays }) {
+async function localSignature({ connectionManager, registry, table, branchId, historyDays, terminalId = "" }) {
   const primary = table.columns.filter((column) => column.primaryKey);
   if (!primary.length) throw new Error(`No stable key is registered for ${table.sqlServerTable}.`);
   const state = accumulator();
   let cursor = null;
   const cutoff = new Date(Date.now() - Math.max(30, Number(historyDays) || 90) * 86400000);
   for (;;) {
-    const request = connectionManager.pool.request().input("branch", String(branchId)).input("cutoff", cutoff).input("limit", PAGE);
+    const request = connectionManager.pool.request().input("branch", String(branchId)).input("terminal", String(terminalId ?? "")).input("cutoff", cutoff).input("limit", PAGE);
     if (cursor) primary.forEach((column, index) => request.input(`cursor${index}`, cursor[column.sqlServerColumn]));
     const scope = scopedWhere(registry, table, { historyDays, alias: "source" });
     const after = cursor ? ` AND (${keyset(primary)})` : "";
@@ -109,7 +109,7 @@ async function verifyTables({ connectionManager, registry, cloud, branchId, hist
   for (const table of registry.tables) {
     if (wanted && !wanted.has(table.cloudTable)) continue;
     const [localSignatureValue, cloudSignatureValue] = await Promise.all([
-      localSignature({ connectionManager, registry, table, branchId, historyDays }),
+      localSignature({ connectionManager, registry, table, branchId, historyDays, terminalId: cloud.terminalId?.() ?? "" }),
       cloudSignature({ cloud, table, branchId, historyDays }),
     ]);
     const result = {

@@ -4,6 +4,34 @@ import { describe, expect, it } from "vitest";
 const read = (file: string) => readFileSync(file, "utf8");
 
 describe("company name cloud-to-Electron sync", () => {
+  it("renders local structured settings as native values rather than quoted SQL text", async () => {
+    const { rowToSettings } = await import("../../core/api/pos-db");
+    const settings = rowToSettings({
+      company_name: "Actual Business Name",
+      fonts: '{"header":{"family":"Arial"}}',
+      custom_lines: '[{"text":"Thank you"}]',
+      receipt_design: '{"logoLayout":{"position":"above-name"}}',
+      payment_details: '{"cash":true}',
+    });
+    expect(settings.receipt.companyName).toBe("Actual Business Name");
+    expect(settings.receipt.fonts.header).toEqual({ family: "Arial" });
+    expect(settings.receipt.customLines).toEqual([{ text: "Thank you" }]);
+    expect(settings.receipt.fonts).not.toHaveProperty("0");
+    expect(settings.payment).toMatchObject({ cash: true });
+  });
+
+  it("does not let an old blank scoped field erase the cloud company name", async () => {
+    const { applySettingsFields } = await import("../../core/api/pos-db");
+    expect(applySettingsFields(
+      { id: 1, company_name: "Actual Business Name" },
+      [{ key: "pos_field:company_name", value: "" }],
+    )?.company_name).toBe("Actual Business Name");
+    expect(applySettingsFields(
+      { id: 1, company_name: "" },
+      [{ key: "pos_field:company_name", value: "" }],
+    )?.company_name).toBe("");
+  });
+
   it("keeps a missing cloud value missing without breaking the local schema", () => {
     const cloudMigration = read("supabase/migrations/20261007110407_restore_pos_settings_sync_contract.sql");
     const localMigration = read("database/sqlserver/migrations/006_allow_missing_company_name.sql");
@@ -58,6 +86,23 @@ describe("scoped settings JSON synchronization", () => {
       .toBe("Actual Business Name");
   });
 
+  it("keeps legacy bare scoped strings syncable and decodes local settings for the renderer", async () => {
+    const { toCloudRow, toRendererRow } = await import("../../../electron/sync/row-codec.cjs");
+    const scoped = {
+      sqlServerTable: "settings_scoped",
+      columns: [{ cloudColumn: "value", sqlServerColumn: "value", cloudType: "jsonb" }],
+    };
+    expect(toCloudRow(scoped, { value: "" }).value).toBe("");
+    expect(toCloudRow(scoped, { value: "  " }).value).toBe("  ");
+    expect(toCloudRow(scoped, { value: "one,two" }).value).toBe("one,two");
+    expect(toRendererRow(scoped, { value: '"Actual Business Name"' }).value)
+      .toBe("Actual Business Name");
+    expect(toRendererRow(scoped, { value: '{"logoLayout":"left"}' }).value)
+      .toEqual({ logoLayout: "left" });
+    expect(() => toCloudRow({ ...scoped, sqlServerTable: "products" }, { value: "broken" }))
+      .toThrow("Invalid local JSON in products.value");
+  });
+
   it("repairs only invalid local scoped JSON while retaining its original text", () => {
     const migration = read("database/sqlserver/migrations/006_allow_missing_company_name.sql");
     const upgradeRepair = read("database/sqlserver/migrations/007_repair_scoped_json_values.sql");
@@ -65,11 +110,15 @@ describe("scoped settings JSON synchronization", () => {
     expect(migration).toContain("STRING_ESCAPE([value], 'json')");
     expect(migration).toContain("ISJSON(N'[' + [value] + N']') <> 1");
     expect(upgradeRepair).toContain("UPDATE dbo.settings_scoped");
+    const currentRepair = read("database/sqlserver/migrations/008_repair_scoped_values_and_company_name.sql");
+    expect(currentRepair).toContain("LTRIM(RTRIM([value])) = N''");
+    expect(currentRepair).toContain("ALTER TABLE dbo.pos_settings ALTER COLUMN company_name nvarchar(max) NULL");
     const manualRepair = read("database/sqlserver/POS_Local_company_name_scoped_json_repair.sql");
     expect(manualRepair).toContain("IF DB_NAME() <> N'POS_Local'");
     expect(manualRepair).toContain("BEGIN TRANSACTION");
     expect(manualRepair).toContain("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION");
     expect(manualRepair).toContain("invalid_scoped_json_rows");
+    expect(manualRepair).toContain("LTRIM(RTRIM([value])) = N''");
   });
 
   it("encodes scalar JSON when a terminal writes directly to SQL Server", async () => {

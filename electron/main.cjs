@@ -1703,7 +1703,11 @@ function registerIpc() {
     try {
       const safeTable = guard.text(table, { name: "business table", max: 80 });
       if(!databaseManager.isConnected())return{ok:false,code:"EDATABASE_NOT_READY",rows:[],error:"SQL Server setup or connection is not complete yet."};
-      const result = await operationsRepository.query(localBranchId(), safeTable, guard.queryOptions(options));
+      const terminal = terminalStore.read() ?? {};
+      const result = await operationsRepository.query(
+        localBranchId(), safeTable, guard.queryOptions(options),
+        terminal.tokenId ?? terminal.terminalId ?? null,
+      );
       return safeTable === "shifts"
         ? { ...result, rows: (result.rows ?? []).map(redactShiftRow) }
         : result;
