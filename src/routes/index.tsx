@@ -1,6 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { markHeldWaiting } from "@/lib/held-orders";
 import { terminalId as posTerminalId } from "@/lib/activity-journal";
 import {
   maskSnapshotEmail,
@@ -219,7 +218,10 @@ function Register() {
   const ticketSnapshot = useRef<() => TicketSnapshot | null>(() => null);
   /** Parks the open ticket; filled in once the held-orders hook exists. */
   const parkTicket = useRef<
-    ((id?: string) => Promise<{ id: string } | null>) | null
+    ((
+      id: string | undefined,
+      pending: { requestId: string; snapshotHash?: string },
+    ) => Promise<{ id: string } | null>) | null
   >(null);
   const appliedApprovalRef = useRef<AppliedApproval | null>(null);
   const revokeApprovalDiscountRef = useRef<(approval: AppliedApproval) => void>(() => undefined);
@@ -390,13 +392,11 @@ function Register() {
     // A queued action must not hold the till hostage: the ticket is parked
     // exactly as the approver sees it and the next customer can be served.
     if (res.pendingRequestId) {
-      const parked = await parkTicket.current?.(heldOrderId);
+      const parked = await parkTicket.current?.(heldOrderId, {
+        requestId: res.pendingRequestId,
+        ...(snapshot ? { snapshotHash: snapshotFingerprint(snapshot) } : {}),
+      });
       if (parked) {
-        await markHeldWaiting(
-          parked.id,
-          res.pendingRequestId,
-          snapshot ? snapshotFingerprint(snapshot) : undefined,
-        );
         toast.info("Ticket parked while it waits for approval", {
           description: "Pick it up from Hold tickets once the decision arrives.",
         });
@@ -1068,7 +1068,7 @@ function Register() {
               }
             : null,
         };
-  parkTicket.current = (id) => holdOrder(true, id);
+  parkTicket.current = (id, pending) => holdOrder(true, id, pending);
   // Capture the ticket immediately after the approved change is applied. Any
   // later line, quantity, member, coupon or total change voids the database
   // approval before its signed grant can be accepted again.

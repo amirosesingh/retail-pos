@@ -94,6 +94,10 @@ function ReceiptVault() {
     input: RecordEditHistoryInput;
     persisted: boolean;
   } | null>(null);
+  const [pendingCorrectionHold, setPendingCorrectionHold] = useState<{
+    saleId: string;
+    input: Parameters<typeof holdCancelledBill>[0];
+  } | null>(null);
   const [payOpen, setPayOpen] = useState(false);
   const [payMethod, setPayMethod] = useState<PaymentMethod>("cash");
   const [payReason, setPayReason] = useState("");
@@ -178,6 +182,7 @@ function ReceiptVault() {
 
   const selected: Sale | null = rows.find((s) => s.id === selectedId) ?? rows[0] ?? null;
   const retryingCorrectionAudit = pendingCorrectionAudit?.input.recordId === selected?.id;
+  const retryingCorrectionHold = pendingCorrectionHold?.saleId === selected?.id;
 
   useEffect(() => {
     if (!selected?.id) return;
@@ -254,6 +259,21 @@ function ReceiptVault() {
   }
 
   async function confirmCancel() {
+    if (pendingCorrectionHold && retryingCorrectionHold) {
+      try {
+        await holdCancelledBill(pendingCorrectionHold.input);
+        setPendingCorrectionHold(null);
+        if (!retryingCorrectionAudit) setCancelOpen(false);
+        toast.success(
+          retryingCorrectionAudit
+            ? "The correction draft is now in Holds. Retry its audit entry next."
+            : "The correction draft is now available in Holds.",
+        );
+      } catch (error) {
+        notifyError(error, "The bill is reversed, but preparing its correction draft still failed");
+      }
+      return;
+    }
     if (pendingCorrectionAudit && retryingCorrectionAudit) {
       const saved = await saveRecordEditHistory(pendingCorrectionAudit.input);
       if (!saved) {
@@ -331,12 +351,19 @@ function ReceiptVault() {
       setOlder((rows) =>
         rows.map((row) => (row.id === selected.id ? { ...row, refunded: true } : row)),
       );
-      await holdCancelledBill({
+      const correctionHold = {
         receiptNo: selected.receiptNo,
         total: selected.total,
         lines: selected.lines,
         storeId: selected.storeId,
-      });
+      };
+      let holdPrepared = true;
+      try {
+        await holdCancelledBill(correctionHold);
+      } catch {
+        holdPrepared = false;
+        setPendingCorrectionHold({ saleId: selected.id, input: correctionHold });
+      }
       if (cancelMode === "correct") {
         const completedAudit = {
           historyId: crypto.randomUUID(),
@@ -360,13 +387,22 @@ function ReceiptVault() {
           logActivity(selected, reason);
           toast.error(
             retryRemembered
-              ? "The bill was reversed and placed in Holds, but its completed audit entry still needs saving. The retry is secured on this device."
+              ? holdPrepared
+                ? "The bill was reversed and placed in Holds, but its completed audit entry still needs saving. The retry is secured on this device."
+                : "The bill was reversed, but its correction draft and completed audit entry still need retrying. Keep this dialog open."
               : "The bill was reversed, but this device could not preserve the audit retry. Keep this dialog open and retry before leaving.",
           );
           return;
         }
       }
       logActivity(selected, reason);
+      if (!holdPrepared) {
+        toast.error("The bill was reversed, but its correction draft was not prepared", {
+          description:
+            "The reversal is safely recorded. Keep this dialog open and use Retry preparing correction.",
+        });
+        return;
+      }
       setCancelOpen(false);
       toast.success(
         cancelMode === "correct"
@@ -716,7 +752,9 @@ function ReceiptVault() {
               Keep bill
             </Button>
             <Button variant="destructive" onClick={confirmCancel}>
-              {retryingCorrectionAudit
+              {retryingCorrectionHold
+                ? "Retry preparing correction"
+                : retryingCorrectionAudit
                 ? "Retry saving completed audit"
                 : cancelMode === "correct"
                   ? "Reverse and prepare correction"

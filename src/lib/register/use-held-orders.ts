@@ -11,7 +11,6 @@ import { useRef } from "react";
 import { notifyError } from "@/lib/notify";
 import {
   addHeldOrder,
-  clearHeldPending,
   removeHeldOrder,
   useHeldOrders,
   type HeldOrder,
@@ -76,6 +75,8 @@ type HeldOrdersDeps = {
 
 export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   const held = useHeldOrders(deps.storeId);
+  const latestDeps = useRef(deps);
+  latestDeps.current = deps;
   // Route effects can run twice in React development mode, and a fast double
   // click can do the same in production. Claiming is a one-time server write,
   // so collapse concurrent attempts for the same parked ticket.
@@ -83,56 +84,74 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   const holding = useRef(false);
 
   /** Park the open ticket with everything on it, so reopening is lossless. */
-  async function holdOrder(silent = false, requestedId?: string) {
+  async function holdOrder(
+    silent = false,
+    requestedId?: string,
+    pending?: { requestId: string; snapshotHash?: string },
+  ) {
     const { lines, total, storeId, memberId, memberName } = deps;
     if (!lines.length || holding.current) return null;
     holding.current = true;
     try {
-    const cleaned = deps.activeApproval
-      ? removeApprovedDiscount(
-          {
-            lines,
-            cartDiscount: deps.cartDiscount,
-            cartDiscountType: deps.cartDiscountType,
-          },
-          deps.activeApproval,
-        )
-      : { lines, cartDiscount: deps.cartDiscount, cartDiscountType: deps.cartDiscountType };
-    const snapshot = cleaned.lines;
-    const heldTotal = deps.activeApproval
-      ? (deps.calculateTotal?.(cleaned.lines, cleaned.cartDiscount, cleaned.cartDiscountType) ??
-        total)
-      : total;
-    const id = requestedId ?? `H${crypto.randomUUID()}`;
-    const order: HeldOrder = {
-      id,
-      label: `${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${snapshot.length} item(s)`,
-      total: heldTotal,
-      lines: snapshot,
-      heldAt: new Date().toISOString(),
-      storeId,
-      heldBy: deps.cashier,
-      cartDiscount: cleaned.cartDiscount,
-      ...(deps.billNo ? { billNo: deps.billNo } : {}),
-      cartDiscountType: deps.cartDiscountType,
-      exchangeRef: deps.exchangeRef,
-      memberId,
-      memberName,
-      coupon: deps.coupon,
-    };
-    await addHeldOrder(order);
-    logTicketEvent(TICKET_ACTIONS.held, {
-      holdRef: id,
-      lines: snapshot.length,
-      value: heldTotal,
-      storeId,
-      memberId,
-      member: memberName,
-      items: snapshot.map((l) => ({ name: l.name, qty: l.qty, price: l.price })),
-    });
-    deps.resetCart("held");
-    if (!silent) toast.success("Order held — reopen it from Hold tickets");
-    return order;
+      const originalSignature = ticketSignature(deps);
+      const cleaned = deps.activeApproval
+        ? removeApprovedDiscount(
+            {
+              lines,
+              cartDiscount: deps.cartDiscount,
+              cartDiscountType: deps.cartDiscountType,
+            },
+            deps.activeApproval,
+          )
+        : { lines, cartDiscount: deps.cartDiscount, cartDiscountType: deps.cartDiscountType };
+      const snapshot = cleaned.lines;
+      const heldTotal = deps.activeApproval
+        ? (deps.calculateTotal?.(cleaned.lines, cleaned.cartDiscount, cleaned.cartDiscountType) ??
+          total)
+        : total;
+      const id = requestedId ?? `H${crypto.randomUUID()}`;
+      const order: HeldOrder = {
+        id,
+        label: `${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${snapshot.length} item(s)`,
+        total: heldTotal,
+        lines: snapshot,
+        heldAt: new Date().toISOString(),
+        storeId,
+        heldBy: deps.cashier,
+        cartDiscount: cleaned.cartDiscount,
+        ...(deps.billNo ? { billNo: deps.billNo } : {}),
+        cartDiscountType: deps.cartDiscountType,
+        exchangeRef: deps.exchangeRef,
+        memberId,
+        memberName,
+        coupon: deps.coupon,
+        ...(pending
+          ? {
+              status: "waiting" as const,
+              pendingRequestId: pending.requestId,
+              approvalSnapshotHash: pending.snapshotHash ?? null,
+            }
+          : {}),
+      };
+      await addHeldOrder(order);
+      logTicketEvent(TICKET_ACTIONS.held, {
+        holdRef: id,
+        lines: snapshot.length,
+        value: heldTotal,
+        storeId,
+        memberId,
+        member: memberName,
+        items: snapshot.map((l) => ({ name: l.name, qty: l.qty, price: l.price })),
+      });
+      if (ticketSignature(latestDeps.current) !== originalSignature) {
+        toast.warning("Ticket held, but the current cart changed while it was saving", {
+          description: "The newer cart was left open. The saved version is available in Holds.",
+        });
+        return order;
+      }
+      latestDeps.current.resetCart("held");
+      if (!silent) toast.success("Order held — reopen it from Hold tickets");
+      return order;
     } catch (error) {
       notifyError(error, "Holding the ticket");
       return null;
@@ -154,23 +173,34 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
     try {
       const order = held.find((h) => h.id === id);
       if (!order) return;
+      if (order.storeId !== deps.storeId) {
+        toast.error("That held ticket belongs to another branch");
+        return;
+      }
       let restoredApproval: Parameters<NonNullable<HeldOrdersDeps["onApprovalClaimed"]>>[0] | null =
         null;
+      let request: Awaited<ReturnType<typeof loadApprovalCentre>>["ready"][number] | undefined;
       if (order.pendingRequestId) {
         const centre = await loadApprovalCentre(deps.storeId);
-        const request = [...centre.waiting, ...centre.ready, ...centre.history].find(
+        request = [...centre.waiting, ...centre.ready, ...centre.history].find(
           (candidate) => candidate.id === order.pendingRequestId,
         );
         if (order.status === "waiting" && (!request || request.status === "pending")) {
           toast.info("Still waiting for a decision on this ticket");
           return;
         }
+      }
+      const parked = deps.lines.length ? await holdOrder(true) : null;
+      if (deps.lines.length && !parked) return;
+      await removeHeldOrder(id);
+      if (order.pendingRequestId) {
         const storedSnapshotHash = order.approvalSnapshotHash ?? undefined;
         const claimed = await claimApproval(
           order.pendingRequestId,
           storedSnapshotHash ?? request?.snapshotHash ?? undefined,
         ).catch(() => null);
         if (!claimed || !claimed.ok) {
+          await addHeldOrder(order);
           toast.error(
             (claimed && "error" in claimed ? claimed.error : "") ||
               "That approval can no longer be used",
@@ -178,7 +208,6 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
           return;
         }
         if (claimed.status !== "approved" || !claimed.grantToken) {
-          await clearHeldPending(order.id);
           toast.warning(
             `The request was ${claimed.status}; the restricted change was not applied.`,
           );
@@ -197,8 +226,6 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
           };
         }
       }
-      const parked = deps.lines.length ? await holdOrder(true) : null;
-      if (deps.lines.length && !parked) return;
       deps.onApprovalCleared?.();
       const approvedDiscount = restoredApproval
         ? applyApprovedDiscount(order, restoredApproval)
@@ -207,7 +234,6 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
             cartDiscount: order.cartDiscount ?? 0,
             cartDiscountType: order.cartDiscountType ?? ("amount" as DiscountType),
           };
-      await removeHeldOrder(id);
       deps.setLines(approvedDiscount.lines);
       deps.setCartDiscount(approvedDiscount.cartDiscount);
       deps.setCartDiscountType(approvedDiscount.cartDiscountType);
@@ -237,6 +263,27 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   }
 
   return { held, holdOrder, resumeHeld };
+}
+
+function ticketSignature(deps: Pick<
+  HeldOrdersDeps,
+  | "lines"
+  | "cartDiscount"
+  | "cartDiscountType"
+  | "exchangeRef"
+  | "memberId"
+  | "coupon"
+  | "billNo"
+>) {
+  return JSON.stringify([
+    deps.lines,
+    deps.cartDiscount,
+    deps.cartDiscountType,
+    deps.exchangeRef,
+    deps.memberId,
+    deps.coupon,
+    deps.billNo,
+  ]);
 }
 
 export type ClaimedGrant = Omit<

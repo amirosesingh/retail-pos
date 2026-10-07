@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 const database = vi.hoisted(() => ({
   commitHeldOrder: vi.fn(),
@@ -88,5 +89,23 @@ describe("held order durability", () => {
     expect(decoded.lines).toEqual(order.lines);
     expect(decoded.coupon).toBeNull();
     expect(decoded.total).toBe(5.5);
+  });
+
+  it("keeps branch, approval and cart races behind durable boundaries", () => {
+    const store = readFileSync("src/lib/held-orders.ts", "utf8");
+    const register = readFileSync("src/lib/register/use-held-orders.ts", "utf8");
+    const approval = readFileSync("src/lib/approval-centre.ts", "utf8");
+    const receipts = readFileSync("src/routes/receipts.tsx", "utf8");
+
+    expect(store).toContain("requestSequence !== electronReadSequence");
+    expect(store).toContain("order.storeId === storeId");
+    expect(register).toContain("ticketSignature(latestDeps.current) !== originalSignature");
+    expect(register.indexOf("await removeHeldOrder(id)")).toBeLessThan(
+      register.indexOf("const claimed = await claimApproval"),
+    );
+    expect(register).toContain('status: "waiting" as const');
+    expect(register).toContain("pendingRequestId: pending.requestId");
+    expect(approval).toContain("await Promise.all(readiness)");
+    expect(receipts).toContain("Retry preparing correction");
   });
 });

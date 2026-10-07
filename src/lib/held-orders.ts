@@ -6,7 +6,7 @@
  * small platform store lets the receipts screen push a cancelled
  * bill straight back onto the register's hold list.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { CartLine } from "@/core/types/pos-types";
 import { db } from "@/core/api/pos-db";
@@ -51,6 +51,7 @@ const EVENT = "pos:held-orders-changed";
 const isElectronRenderer = () =>
   typeof window !== "undefined" && !!(window as unknown as { pos?: unknown }).pos;
 let electronOrders: HeldOrder[] = [];
+let electronReadSequence = 0;
 
 const parseJson = <T,>(value: unknown, fallback: T): T => {
   if (value == null) return fallback;
@@ -180,14 +181,20 @@ export function holdCancelledBill(input: {
 }
 
 export function useHeldOrders(storeId?: string): HeldOrder[] {
-  const [orders, setOrders] = useState<HeldOrder[]>(() => readHeldOrders());
+  const [orders, setOrders] = useState<HeldOrder[]>(() =>
+    readHeldOrders().filter((order) => !storeId || order.storeId === storeId),
+  );
+  const latestStore = useRef(storeId);
+  latestStore.current = storeId;
   useEffect(() => {
     let active = true;
     const sync = async () => {
       if (isElectronRenderer()) {
+        const requestSequence = ++electronReadSequence;
         try {
           const rows = await db.listHeldOrders(storeId);
-          if (!active) return;
+          if (!active || requestSequence !== electronReadSequence || latestStore.current !== storeId)
+            return;
           electronOrders = rows.map((row) => rowToHeldOrder(row as Record<string, unknown>));
         } catch {
           // Keep the last confirmed SQL result visible while connection recovery runs.
@@ -208,7 +215,7 @@ export function useHeldOrders(storeId?: string): HeldOrder[] {
       window.removeEventListener("storage", refresh);
     };
   }, [storeId]);
-  return orders;
+  return storeId ? orders.filter((order) => order.storeId === storeId) : orders;
 }
 
 /**
