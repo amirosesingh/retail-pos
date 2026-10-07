@@ -104,8 +104,9 @@ export async function searchCatalog(
 export async function lookupProductsByCodes(
   codes: string[],
   fallback: Product[],
-  chunkSize = 500,
+  options: { chunkSize?: number; allowLocalFallback?: boolean } = {},
 ): Promise<Product[]> {
+  const chunkSize = options.chunkSize ?? 500;
   const wanted = [...new Set(codes.map(normaliseCode).filter(Boolean))];
   if (!wanted.length) return [];
 
@@ -142,6 +143,13 @@ export async function lookupProductsByCodes(
           found.set(product.id, product);
         }
       } else {
+        if (!options.allowLocalFallback) {
+          const reason =
+            result.status === "rejected"
+              ? String(result.reason ?? "request failed")
+              : result.value.error?.message || "request failed";
+          throw new Error(`Could not verify the import against the product database: ${reason}`);
+        }
         for (const code of group) {
           const product = localByCode.get(code);
           if (product) found.set(product.id, product);

@@ -38,6 +38,13 @@ type SkuLease = {
   project: string;
 };
 
+// Web Storage is a cache, not the source of truth. A browser whose quota is
+// already full must still be able to consume the server-reserved range for
+// the rest of this session. Without this in-memory copy every imported row
+// reserved another 250 numbers, then failed when localStorage rejected the
+// lease write.
+let volatileLease: SkuLease | null = null;
+
 export type SkuContext = { storeId?: string | null; terminalId?: string | null };
 
 export const defaultSkuSettings: SkuSettings = {
@@ -64,7 +71,12 @@ export function readSkuSettings(): SkuSettings {
 export function writeSkuSettings(patch: Partial<SkuSettings>) {
   if (!isBrowser()) return;
   const merged = { ...readSkuSettings(), ...patch };
-  window.localStorage.setItem(KEY, JSON.stringify(merged));
+  try {
+    window.localStorage.setItem(KEY, JSON.stringify(merged));
+  } catch {
+    // A full browser cache must not turn an already reserved SKU into a failed
+    // product save. The active lease remains available in memory.
+  }
   for (const l of listeners) l();
 }
 
@@ -79,18 +91,20 @@ export function formatSku(s: SkuSettings, n: number) {
 
 function readLease(settings = readSkuSettings()): SkuLease | null {
   if (!isBrowser()) return null;
+  const project = currentProjectIdentity();
+  const valid = (value: SkuLease | null) =>
+    !!value &&
+    value.project === project &&
+    value.prefix === settings.prefix &&
+    value.pad === settings.pad &&
+    Number.isSafeInteger(value.next) &&
+    Number.isSafeInteger(value.end) &&
+    value.next <= value.end;
+  if (valid(volatileLease)) return volatileLease;
   try {
     const value = JSON.parse(window.localStorage.getItem(LEASE_KEY) ?? "null") as SkuLease | null;
-    if (
-      !value ||
-      value.project !== currentProjectIdentity() ||
-      value.prefix !== settings.prefix ||
-      value.pad !== settings.pad ||
-      !Number.isSafeInteger(value.next) ||
-      !Number.isSafeInteger(value.end) ||
-      value.next > value.end
-    )
-      return null;
+    if (!valid(value)) return null;
+    volatileLease = value;
     return value;
   } catch {
     return null;
@@ -107,7 +121,13 @@ function currentProjectIdentity(): string {
 
 function writeLease(lease: SkuLease) {
   if (!isBrowser()) return;
-  window.localStorage.setItem(LEASE_KEY, JSON.stringify(lease));
+  volatileLease = lease;
+  try {
+    window.localStorage.setItem(LEASE_KEY, JSON.stringify(lease));
+  } catch {
+    // Keep using the unique server-owned range in memory. Losing unused
+    // numbers on reload is safe; reserving the same number twice is not.
+  }
 }
 
 type LeaseRow = {
@@ -175,8 +195,7 @@ async function allocateNextSku(existing: string[], context: SkuContext): Promise
   let lease = readLease(s);
   if (!lease) {
     try {
-      await reserveLease(s, context, 1);
-      lease = readLease(s);
+      lease = await reserveLease(s, context, 1);
     } catch (error) {
       throw new Error(
         "No globally reserved SKU numbers are available offline. Connect this till once and try again.",

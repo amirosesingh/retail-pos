@@ -2119,6 +2119,46 @@ export type StockAdjustmentInput = {
   at?: string;
 };
 
+export type ProductImportMovement = {
+  id: string;
+  productId: string;
+  productName: string;
+  sku: string;
+  barcode: string;
+  storeId: string;
+  terminalId?: string | null;
+  quantityDelta: number;
+  stockBefore: number;
+  stockAfter: number;
+  unitCost: number;
+  staffId?: string | null;
+  staffName?: string | null;
+  role?: string | null;
+  reference: string;
+  createdAt?: string;
+};
+
+const productImportMovementToRow = (movement: ProductImportMovement): Row => ({
+  id: movement.id,
+  product_id: movement.productId,
+  product_name: movement.productName,
+  sku: movement.sku || null,
+  barcode: movement.barcode || null,
+  store_id: movement.storeId,
+  terminal_id: movement.terminalId ?? null,
+  activity_type: "adjustment",
+  reference: movement.reference,
+  quantity_delta: Math.round(movement.quantityDelta),
+  stock_before: Math.round(movement.stockBefore),
+  stock_after: Math.round(movement.stockAfter),
+  unit_cost: movement.unitCost,
+  staff_id: movement.staffId ?? null,
+  staff_name: movement.staffName ?? null,
+  role: movement.role ?? null,
+  note: "Bulk inventory import",
+  created_at: movement.createdAt ?? new Date().toISOString(),
+});
+
 const stockAdjustmentToRow = (row: StockAdjustmentInput): Row => ({
   id: row.id ?? crypto.randomUUID(),
   product_id: row.productId,
@@ -2738,10 +2778,20 @@ export const db = {
     ]),
 
   /** Save stock changes and wait until they are stored somewhere. */
-  commitProducts: (list: Product[]) =>
+  commitProducts: (list: Product[], movements: ProductImportMovement[] = []) =>
     list.length
       ? commitOps("Saving products", [
           { kind: "upsert", table: "products", rows: list.map(productToRow) },
+          ...(movements.length
+            ? [
+                {
+                  kind: "upsert" as const,
+                  table: "item_activity_logs",
+                  rows: movements.map(productImportMovementToRow),
+                  onConflict: "id",
+                },
+              ]
+            : []),
         ])
       : Promise.resolve<CommitTarget>("cloud"),
 
