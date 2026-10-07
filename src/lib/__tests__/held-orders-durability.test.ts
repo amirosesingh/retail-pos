@@ -120,7 +120,9 @@ describe("held order durability", () => {
     const approval = readFileSync("src/lib/approval-centre.ts", "utf8");
     const receipts = readFileSync("src/routes/receipts.tsx", "utf8");
 
-    expect(store).toContain("requestSequence !== electronReadSequence");
+    expect(store).toContain("requestSequence === electronReadSequence");
+    expect(store).toContain("const rows = await db.listHeldOrders()");
+    expect(store).toContain("const current = loaded ?? readHeldOrders()");
     expect(store).toContain("order.storeId === storeId");
     expect(register).toContain("ticketSignature(latestDeps.current) !== originalSignature");
     expect(register.indexOf("await removeHeldOrder(id)")).toBeGreaterThan(

@@ -228,18 +228,24 @@ export function useHeldOrders(storeId?: string): HeldOrder[] {
   useEffect(() => {
     let active = true;
     const sync = async () => {
+      let loaded: HeldOrder[] | null = null;
       if (isElectronRenderer()) {
         const requestSequence = ++electronReadSequence;
         try {
-          const rows = await db.listHeldOrders(storeId);
-          if (!active || requestSequence !== electronReadSequence) return;
-          electronOrders = rows.map((row) => rowToHeldOrder(row as Record<string, unknown>));
+          // Keep the process-wide cache complete. Branch-filtered reads from
+          // two mounted screens must never replace each other's tickets.
+          const rows = await db.listHeldOrders();
+          if (!active) return;
+          loaded = rows.map((row) => rowToHeldOrder(row as Record<string, unknown>));
+          if (requestSequence === electronReadSequence) electronOrders = loaded;
         } catch {
           // Keep the last confirmed SQL result visible while connection recovery runs.
         }
       }
       if (active) {
-        const current = readHeldOrders();
+        // Even if another hook issued a newer shared-cache request, this hook
+        // can still render the durable rows it just loaded.
+        const current = loaded ?? readHeldOrders();
         setOrders(storeId ? current.filter((order) => order.storeId === storeId) : current);
       }
     };
