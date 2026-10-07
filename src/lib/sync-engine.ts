@@ -803,6 +803,10 @@ function flushLiveChanges(): void {
         "promotions",
         "purchase_orders",
         "purchase_order_items",
+        "app_users",
+        "cashiers",
+        "staff_roles",
+        "user_roles",
       ].includes(change.table)
     ) {
       announceDataChange(change);
@@ -825,7 +829,11 @@ function queueLiveChange(change: LiveChange): void {
  * Failures are retried with growing gaps and every attempt is logged, so a
  * record that never reaches the shop database is visible rather than silent.
  */
-export async function syncNow(reason: string, attempt = 0): Promise<void> {
+export type SyncNowResult =
+  | { ok: true }
+  | { ok: false; error: string; retryScheduled: boolean };
+
+export async function syncNow(reason: string, attempt = 0): Promise<SyncNowResult> {
   try {
     await runExclusive(reason);
     const completed = syncState();
@@ -834,13 +842,15 @@ export async function syncNow(reason: string, attempt = 0): Promise<void> {
     await refreshStaffMirror();
     logSync("push", reason, true, "sent to this shop's database");
     recordSync({ direction: "push", entity: reason, status: "success" });
+    return { ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logSync("push", reason, false, message);
     recordSync({ direction: "push", entity: reason, status: "failed", error: message });
     const delay = RETRY_DELAYS_MS[attempt];
-    if (delay === undefined || typeof window === "undefined") return;
-    window.setTimeout(() => void syncNow(reason, attempt + 1), delay);
+    const retryScheduled = delay !== undefined && typeof window !== "undefined";
+    if (retryScheduled) window.setTimeout(() => void syncNow(reason, attempt + 1), delay);
+    return { ok: false, error: message, retryScheduled };
   }
 }
 

@@ -4,7 +4,7 @@
  * Built-in roles keep their names and can never be removed; custom roles are
  * free to add, edit and delete while nobody holds them.
  */
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -55,10 +55,16 @@ import {
   type RoleDef,
 } from "@/lib/role-admin";
 import { notifyError } from "@/lib/notify";
-import { broadcastSettingsChange, syncNow } from "@/lib/sync-engine";
+import { broadcastSettingsChange, subscribeDataChange, syncNow } from "@/lib/sync-engine";
 
 async function propagateRoleChange(reason: string) {
-  await Promise.all([broadcastSettingsChange("staff_roles"), syncNow(reason)]);
+  const [, result] = await Promise.all([broadcastSettingsChange("staff_roles"), syncNow(reason)]);
+  if (!result.ok) {
+    toast.warning("Role saved centrally; the local database will retry synchronization", {
+      description: result.error,
+    });
+  }
+  return result;
 }
 
 export function RoleManager() {
@@ -73,7 +79,7 @@ export function RoleManager() {
     () => new Set(PERMISSION_GROUPS.map((group) => group.id)),
   );
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       setRoles(await getRolesWithPermissions());
@@ -82,11 +88,19 @@ export function RoleManager() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
+
+  useEffect(
+    () =>
+      subscribeDataChange((change) => {
+        if (change.table === "staff_roles") void load();
+      }),
+    [load],
+  );
 
   const columns = useMemo(() => roles, [roles]);
 

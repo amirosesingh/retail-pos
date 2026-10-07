@@ -25,10 +25,13 @@ describe("staff management boundaries", () => {
       expect(engine).toContain(`"${table}"`);
     }
     expect(engine).toContain("LIVE_CONTROL_TABLES");
+    expect(engine).toContain("retryScheduled: boolean");
     expect(accounts).toContain('propagateStaffChange("staff approval PIN changed"');
     expect(accounts).toContain('propagateStaffChange("staff permissions changed"');
     expect(accounts).toContain('propagateStaffChange("staff account status changed"');
     expect(roles).toContain('broadcastSettingsChange("staff_roles")');
+    expect(accounts).toContain("subscribeDataChange");
+    expect(roles).toContain("subscribeDataChange");
   });
 
   it("keeps a failed permission save contained and clears the busy state", () => {

@@ -59,7 +59,7 @@ import {
 import { useAuth } from "@/lib/pos-auth";
 import { usePos } from "@/lib/pos-store";
 import { getRolesWithPermissions, type RoleDef } from "@/lib/role-admin";
-import { broadcastSettingsChange, syncNow } from "@/lib/sync-engine";
+import { broadcastSettingsChange, subscribeDataChange, syncNow } from "@/lib/sync-engine";
 import { isExternalEmail, isInternalAddress } from "@/lib/internal-domains";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { setStaffAuthorizationPin } from "@/lib/authorization-client";
@@ -142,7 +142,13 @@ async function propagateStaffChange(reason: string, tables: string[]) {
   await Promise.all(tables.map((table) => broadcastSettingsChange(table)));
   // Electron has no browser broadcast path; its durable scoped pull is the
   // source of truth and must run before the administration action is done.
-  await syncNow(reason);
+  const result = await syncNow(reason);
+  if (!result.ok) {
+    toast.warning("Saved centrally; the local database will retry synchronization", {
+      description: result.error,
+    });
+  }
+  return result;
 }
 
 export function StaffManager() {
@@ -243,6 +249,16 @@ export function StaffManager() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(
+    () =>
+      subscribeDataChange((change) => {
+        if (["app_users", "cashiers", "staff_roles", "user_roles"].includes(change.table)) {
+          void load();
+        }
+      }),
+    [load],
+  );
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
