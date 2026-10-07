@@ -2466,12 +2466,15 @@ export const db = {
   },
 
   /** Correct the tender recorded against a completed bill (e.g. card -> cash). */
-  updateSalePayment(saleId: string, method: PaymentMethod) {
+  updateSalePayment(saleId: string, method: PaymentMethod, branchId: string) {
     return queue("Correcting bill payment", {
       kind: "update",
       table: "sales",
       values: { payment_type: method },
-      match: { id: saleId },
+      // Keep the branch in the mutation itself. The relay pins ordinary staff
+      // automatically, but administrators and direct local SQL writes also
+      // need the same immutable ownership boundary.
+      match: { id: saleId, store_id: branchId },
     });
   },
 

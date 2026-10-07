@@ -315,7 +315,12 @@ type Ctx = {
     grantToken?: string | null,
     loadedSale?: Sale,
   ) => Promise<boolean>;
-  changeSalePayment: (saleId: string, method: PaymentMethod, reason?: string) => Promise<boolean>;
+  changeSalePayment: (
+    saleId: string,
+    method: PaymentMethod,
+    reason?: string,
+    loadedSale?: Sale,
+  ) => Promise<boolean>;
   createBooking: (input: NewBooking) => Promise<Booking>;
   setBookingJobStatus: (
     id: string,
@@ -2435,10 +2440,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   /** Correct the tender recorded on a completed bill (e.g. rung up as card). */
   const changeSalePayment = useCallback(
-    async (saleId: string, method: PaymentMethod, reason?: string): Promise<boolean> => {
-      const sale = stateRef.current.sales.find((x) => x.id === saleId);
+    async (
+      saleId: string,
+      method: PaymentMethod,
+      reason?: string,
+      loadedSale?: Sale,
+    ): Promise<boolean> => {
+      // Receipt history is paged. A bill found through exact search or an
+      // older page may not be in the store's small live window, so retain the
+      // verified row supplied by that screen instead of silently doing
+      // nothing after the operator confirms the correction.
+      const sale = stateRef.current.sales.find((x) => x.id === saleId) ?? loadedSale;
       if (!sale || sale.method === method) return false;
-      await db.updateSalePayment(saleId, method);
+      await db.updateSalePayment(saleId, method, sale.storeId);
       logger.log("sale_event", "Bill payment method corrected", "receipts", {
         saleId,
         receiptNo: sale.receiptNo,
@@ -2448,7 +2462,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
       });
       setState((s) => ({
         ...s,
-        sales: s.sales.map((x) => (x.id === saleId ? { ...x, method } : x)),
+        sales: s.sales.some((x) => x.id === saleId)
+          ? s.sales.map((x) => (x.id === saleId ? { ...x, method } : x))
+          : [{ ...sale, method }, ...s.sales],
       }));
       return true;
     },

@@ -478,7 +478,7 @@ function ReceiptVault() {
     try {
       const before = { paymentMethod: selected.method };
       const after = { paymentMethod: payMethod };
-      const changed = await changeSalePayment(selected.id, payMethod, reason);
+      const changed = await changeSalePayment(selected.id, payMethod, reason, selected);
       if (!changed) return;
       await saveRecordEditHistory({
         kind: "sale",
