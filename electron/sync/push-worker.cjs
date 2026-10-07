@@ -45,6 +45,37 @@ function changeKey(change) {
   }
 }
 
+/** A child-only retry must carry its locally owned parent into the same cloud transaction. */
+async function includeMissingParents(operations, reader, registry, branchId) {
+  for (const [childName, parentName, foreignKey, belongs] of [
+    ["booking_payments", "bookings", "booking_id", (row) => row.store_id === branchId],
+    ["payment_transactions", "bookings", "booking_id", (row) => row.store_id === branchId],
+    ["payment_transactions", "sales", "sale_id", (row) => row.store_id === branchId],
+    ["purchase_order_items", "purchase_orders", "po_id", (row) => row.store_id === branchId],
+    ["sale_items", "sales", "sale_id", (row) => row.store_id === branchId],
+    ["stock_transfer_items", "stock_transfers", "transfer_id", (row) =>
+      row.from_store_id === branchId || row.to_store_id === branchId],
+  ]) {
+    const children = operations.find((op) => op.table === childName && !op.deletePhase);
+    if (!children?.rows?.length) continue;
+    const parent = operations.find((op) => op.table === parentName && !op.deletePhase);
+    const present = new Set((parent?.rows ?? []).map((row) => String(row.id)));
+    const ids = [...new Set(children.rows.map((row) => String(row[foreignKey] ?? "")))]
+      .filter((id) => id && !present.has(id));
+    if (!ids.length) continue;
+    const table = registry.tables.find((item) => item.cloudTable === parentName);
+    const rows = await reader.rows(table, ids.map((id) => ({ key: { id } })), { branchId });
+    const found = new Set(rows.filter(belongs).map((row) => String(row.id)));
+    if (ids.some((id) => !found.has(id)))
+      throw Object.assign(new Error(`${childName} has no ${parentName} parent in this terminal branch.`), {
+        code: "SYNC_BRANCH_FORBIDDEN", table: childName,
+      });
+    if (parent) parent.rows.push(...rows);
+    else operations.push({ table: parentName, dependencyOrder: table.dependencyOrder,
+      deletePhase: false, changes: [], rows });
+  }
+}
+
 /**
  * Global and cluster settings are normally read-only cache entries on a
  * terminal. The one exception is a pos_field:* settings_scoped row: explicit
@@ -134,6 +165,12 @@ class PushWorker {
             changes: removed,
             rows: [],
           });
+      }
+      try {
+        await includeMissingParents(operations, this.reader, this.registry, branchId);
+      } catch (error) {
+        await this.reader.failAggregate(aggregate.aggregateId, error);
+        throw error;
       }
       operations.sort((a, b) =>
         a.deletePhase === b.deletePhase
