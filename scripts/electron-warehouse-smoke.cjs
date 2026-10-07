@@ -252,7 +252,7 @@ async function main() {
       limit: 1,
     });
     const items = await query(page, "stock_transfer_items", {
-      columns: "id,transfer_id,product_id,quantity,dispatched_qty,row_version",
+      columns: "id,transfer_id,product_id,quantity,quantity_dispatched,row_version",
       match: { transfer_id: transferId },
       limit: 10,
     });
