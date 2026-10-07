@@ -3,7 +3,8 @@
  * /api/public/security-alerts) and by the nightly database self-check, and are
  * readable by admins only.
  */
-import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
+import { authenticatedExternalClientSnapshot } from "@/integrations/supabase/external-client";
+import { hasCentralAuthSession } from "@/lib/session-presence";
 
 export type FindingSeverity = "critical" | "high" | "medium" | "low" | "info";
 export type FindingStatus = "open" | "acknowledged" | "resolved";
@@ -60,7 +61,10 @@ function map(row: Row): SecurityFinding {
 
 /** Newest findings first. Returns [] when the caller is not an admin. */
 export async function listSecurityFindings(includeResolved = false): Promise<SecurityFinding[]> {
-  let q = supabase
+  if (!hasCentralAuthSession()) return [];
+  const client = await authenticatedExternalClientSnapshot();
+  if (!client) return [];
+  let q = client
     .from("security_findings")
     .select("*")
     .order("last_seen_at", { ascending: false })
@@ -73,7 +77,10 @@ export async function listSecurityFindings(includeResolved = false): Promise<Sec
 
 /** Count of findings still needing attention — drives the header bell. */
 export async function countOpenFindings(): Promise<number> {
-  const { count, error } = await supabase
+  if (!hasCentralAuthSession()) return 0;
+  const client = await authenticatedExternalClientSnapshot();
+  if (!client) return 0;
+  const { count, error } = await client
     .from("security_findings")
     .select("id", { count: "exact", head: true })
     .eq("status", "open");
@@ -82,7 +89,10 @@ export async function countOpenFindings(): Promise<number> {
 }
 
 export async function setFindingStatus(id: string, status: FindingStatus, by: string) {
-  const { error } = await supabase.rpc("security_set_finding_status", {
+  if (!hasCentralAuthSession()) throw new Error("A verified administrator session is required.");
+  const client = await authenticatedExternalClientSnapshot();
+  if (!client) throw new Error("The administrator session is still being restored.");
+  const { error } = await client.rpc("security_set_finding_status", {
     _id: id,
     _status: status,
     _by: by,
@@ -92,7 +102,10 @@ export async function setFindingStatus(id: string, status: FindingStatus, by: st
 
 /** Run the database posture audit immediately (admins only). */
 export async function runSecuritySelfCheck(): Promise<{ new: number; resolved: number }> {
-  const { data, error } = await supabase.rpc("security_selfcheck");
+  if (!hasCentralAuthSession()) throw new Error("A verified administrator session is required.");
+  const client = await authenticatedExternalClientSnapshot();
+  if (!client) throw new Error("The administrator session is still being restored.");
+  const { data, error } = await client.rpc("security_selfcheck");
   if (error) throw new Error(error.message);
   const out = (data ?? {}) as Record<string, number>;
   return { new: Number(out["new"] ?? 0), resolved: Number(out["resolved"] ?? 0) };

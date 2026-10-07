@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { orders, ranges } = vi.hoisted(() => ({
+const { orders, ranges, auth } = vi.hoisted(() => ({
   orders: [] as string[],
   ranges: [] as [number, number][],
+  auth: { present: true, restored: true },
 }));
 
-vi.mock("@/integrations/supabase/external-client", () => ({
-  supabaseExternal: {
+vi.mock("@/integrations/supabase/external-client", () => {
+  const client = {
     from: () => ({
       select: () => {
         const query = {
@@ -25,7 +26,15 @@ vi.mock("@/integrations/supabase/external-client", () => ({
         return query;
       },
     }),
-  },
+  };
+  return {
+    supabaseExternal: client,
+    authenticatedExternalClientSnapshot: async () => (auth.restored ? client : null),
+  };
+});
+
+vi.mock("@/lib/session-presence", () => ({
+  hasCentralAuthSession: () => auth.present,
 }));
 
 vi.mock("@/core/local-db/db-mode", () => ({
@@ -43,6 +52,8 @@ describe("routed query ordering", () => {
   beforeEach(() => {
     orders.splice(0);
     ranges.splice(0);
+    auth.present = true;
+    auth.restored = true;
   });
 
   it("does not append id when a composite-key table supplies its own order", async () => {
@@ -72,5 +83,20 @@ describe("routed query ordering", () => {
   it("honours bounded offsets for large paged reads", async () => {
     await routedQuery("stock_transfer_items", { offset: 2000, limit: 1000 });
     expect(ranges).toEqual([[2000, 2999]]);
+  });
+
+  it("does not send protected reads before the verified client session is ready", async () => {
+    auth.restored = false;
+    await expect(routedQuery("settings_scoped", { limit: 1 })).rejects.toThrow(
+      "still being restored",
+    );
+    expect(ranges).toEqual([]);
+  });
+
+  it("keeps the deliberately public bootstrap surface available while signed out", async () => {
+    auth.present = false;
+    auth.restored = false;
+    await expect(routedQuery("public_flags", { limit: 1 })).resolves.toEqual([]);
+    expect(ranges).toEqual([[0, 0]]);
   });
 });

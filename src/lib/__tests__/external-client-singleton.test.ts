@@ -4,15 +4,22 @@ const harness = vi.hoisted(() => ({
   config: { url: "https://tenant-a.example.co", key: "publishable-a" },
   memberConfig: { url: "https://members-a.example.co", key: "member-publishable-a" },
   clients: [] as Array<{
-    auth: { stopAutoRefresh: ReturnType<typeof vi.fn> };
+    auth: {
+      stopAutoRefresh: ReturnType<typeof vi.fn>;
+      getSession: ReturnType<typeof vi.fn>;
+    };
     removeAllChannels: ReturnType<typeof vi.fn>;
   }>,
+  session: null as { access_token: string } | null,
 }));
 
 vi.mock("@supabase/supabase-js", () => ({
   createClient: vi.fn(() => {
     const client = {
-      auth: { stopAutoRefresh: vi.fn() },
+      auth: {
+        stopAutoRefresh: vi.fn(),
+        getSession: vi.fn(async () => ({ data: { session: harness.session }, error: null })),
+      },
       removeAllChannels: vi.fn(() => Promise.resolve()),
     };
     harness.clients.push(client);
@@ -45,6 +52,7 @@ describe("external Supabase client ownership", () => {
       key: "member-publishable-a",
     };
     harness.clients.length = 0;
+    harness.session = null;
   });
 
   it("reuses the same GoTrue owner when the module is evaluated again", async () => {
@@ -96,5 +104,30 @@ describe("external Supabase client ownership", () => {
     expect(harness.clients).toHaveLength(2);
     expect(harness.clients[0]!.auth.stopAutoRefresh).toHaveBeenCalledOnce();
     expect(harness.clients[0]!.removeAllChannels).toHaveBeenCalledOnce();
+  });
+
+  it("returns an authenticated snapshot only after the concrete client restores a bearer", async () => {
+    const { authenticatedExternalClientSnapshot, externalClientSnapshot } =
+      await import("@/integrations/supabase/external-client");
+
+    expect(await authenticatedExternalClientSnapshot()).toBeNull();
+    harness.session = { access_token: "verified-user-token" };
+    expect(await authenticatedExternalClientSnapshot()).toBe(externalClientSnapshot());
+  });
+
+  it("notifies Auth owners only when the POS tenant client is replaced", async () => {
+    const { externalClientSnapshot, resetExternalClient, subscribeExternalClientReset } =
+      await import("@/integrations/supabase/external-client");
+    const listener = vi.fn();
+    const unsubscribe = subscribeExternalClientReset(listener);
+
+    externalClientSnapshot();
+    resetExternalClient();
+    expect(listener).not.toHaveBeenCalled();
+
+    harness.config = { url: "https://tenant-b.example.co", key: "publishable-b" };
+    resetExternalClient();
+    expect(listener).toHaveBeenCalledOnce();
+    unsubscribe();
   });
 });

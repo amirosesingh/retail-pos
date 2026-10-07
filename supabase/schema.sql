@@ -16915,7 +16915,7 @@ DECLARE
   v_end bigint;
   v_lease uuid := gen_random_uuid();
   v_now timestamptz := now();
-  v_service boolean := coalesce(current_setting('request.jwt.claim.role', true), '') = 'service_role';
+  v_service boolean := coalesce((SELECT auth.role()), '') = 'service_role';
 BEGIN
   IF p_count < 1 OR p_count > 5000 THEN RAISE EXCEPTION 'SKU_LEASE_SIZE_INVALID'; END IF;
   IF p_padding < 1 OR p_padding > 12 THEN RAISE EXCEPTION 'SKU_PADDING_INVALID'; END IF;

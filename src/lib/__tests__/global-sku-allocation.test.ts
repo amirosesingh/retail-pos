@@ -43,6 +43,21 @@ describe("global SKU allocation", () => {
     expect(sku).not.toContain("const n = Math.max(s.next, highestUsed(existing, s.prefix) + 1)");
   });
 
+  it("recognizes both legacy JWTs and current opaque server keys", () => {
+    const schema = read("supabase/schema.sql");
+    const migration = read(
+      "supabase/migrations/20261007042149_fix_sku_service_role_detection.sql",
+    );
+    const canonicalFunction = schema.match(
+      /CREATE OR REPLACE FUNCTION public\.reserve_product_skus[\s\S]*?REVOKE ALL ON FUNCTION public\.reserve_product_skus/,
+    )?.[0];
+    expect(canonicalFunction).toBeTruthy();
+    for (const sql of [canonicalFunction!, migration]) {
+      expect(sql).toContain("coalesce((SELECT auth.role()), '') = 'service_role'");
+      expect(sql).not.toContain("current_setting('request.jwt.claim.role', true)");
+    }
+  });
+
   it("advances the global sequence when trusted sync imports an explicit numeric SKU", () => {
     expect(migration).toContain("v_explicit_number := nullif(substring(new.sku from '([0-9]+)$'), '')::bigint");
     expect(migration).toContain(

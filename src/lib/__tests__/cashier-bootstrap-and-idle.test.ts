@@ -168,7 +168,9 @@ describe("cashier location bootstrap", () => {
 
   it("lets an authenticated admin recover an unbound Electron terminal from the cloud directory", () => {
     const db = read("src/core/api/pos-db.ts");
-    expect(db).toContain("const terminal = readTerminalConfig() ?? (await hydrateTerminalConfig())");
+    expect(db).toContain(
+      "const terminal = readTerminalConfig() ?? (await hydrateTerminalConfig())",
+    );
     expect(db).toContain("if (!terminal?.locationId && hasStaffSession())");
     expect(db).toContain("return loadCloudState(storeId, locationTask)");
   });
@@ -178,8 +180,9 @@ describe("cashier location bootstrap", () => {
     expect(db).toContain("const relayFirst = await relayed()");
     expect(db).toContain("const relayFallback = await relayed()");
     expect(db).toContain("if (!(direct.data ?? []).length)");
-    expect(db).toContain("if (!directAuthenticated)");
-    expect(db).toContain("Could not verify access to the location directory");
+    expect(db).toContain("if (!hasStaffSession())");
+    expect(db).toContain("const directClient = await authenticatedExternalClientSnapshot()");
+    expect(db).toContain("The verified cloud staff session is still being restored.");
   });
 
   it("returns warehouse identity fields through the registered-terminal relay", () => {
@@ -191,9 +194,7 @@ describe("cashier location bootstrap", () => {
   });
 
   it("repairs the authenticated profile privileges required after password sign-in", () => {
-    const migration = read(
-      "supabase/migrations/20261006073000_restore_staff_login_privileges.sql",
-    );
+    const migration = read("supabase/migrations/20261006073000_restore_staff_login_privileges.sql");
     expect(migration).toContain(
       "GRANT EXECUTE ON FUNCTION public.current_app_user() TO authenticated, service_role",
     );
