@@ -5351,7 +5351,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS bookings_ref_key ON public.bookings USING btre
 
 CREATE INDEX IF NOT EXISTS bookings_status_idx ON public.bookings USING btree (job_status, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS bookings_store_idx ON public.bookings USING btree (store_id);
 
 CREATE INDEX IF NOT EXISTS bookings_store_status_created_idx ON public.bookings USING btree (store_id, job_status, created_at DESC);
 
@@ -5389,7 +5388,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS integration_settings_provider_idx ON public.in
 
 CREATE INDEX IF NOT EXISTS issued_vouchers_active_member_idx ON public.issued_vouchers USING btree (member_id) WHERE (status = 'ISSUED'::text);
 
-CREATE INDEX IF NOT EXISTS issued_vouchers_campaign_idx ON public.issued_vouchers USING btree (campaign_id);
 
 CREATE INDEX IF NOT EXISTS issued_vouchers_campaign_member_idx ON public.issued_vouchers USING btree (campaign_id, member_id);
 
@@ -5467,7 +5465,6 @@ CREATE INDEX IF NOT EXISTS purchase_order_items_product_idx ON public.purchase_o
 
 CREATE INDEX IF NOT EXISTS purchase_orders_entry_idx ON public.purchase_orders USING btree (invoice_entry_date DESC);
 
-CREATE INDEX IF NOT EXISTS purchase_orders_store_idx ON public.purchase_orders USING btree (store_id);
 
 CREATE INDEX IF NOT EXISTS purchase_orders_store_status_entry_idx
   ON public.purchase_orders (store_id, status, invoice_entry_date DESC);
@@ -5491,13 +5488,11 @@ CREATE INDEX IF NOT EXISTS sales_created_idx ON public.sales USING btree (create
 
 CREATE INDEX IF NOT EXISTS sales_shift_created_idx ON public.sales USING btree (shift_id, created_at);
 
-CREATE INDEX IF NOT EXISTS sales_shift_idx ON public.sales USING btree (shift_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS sales_store_bill_number_key ON public.sales USING btree (COALESCE(store_id, ''::text), bill_number);
 
 CREATE INDEX IF NOT EXISTS sales_store_created_idx ON public.sales USING btree (store_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS sales_store_idx ON public.sales USING btree (store_id);
 
 CREATE INDEX IF NOT EXISTS security_findings_open_idx ON public.security_findings USING btree (severity, last_seen_at DESC) WHERE (status <> 'resolved'::text);
 
@@ -5532,7 +5527,6 @@ CREATE INDEX IF NOT EXISTS stock_transfers_from_idx ON public.stock_transfers US
 
 CREATE INDEX IF NOT EXISTS stock_transfers_status_idx ON public.stock_transfers USING btree (status);
 
-CREATE INDEX IF NOT EXISTS stock_transfers_to_idx ON public.stock_transfers USING btree (to_store_id);
 
 CREATE INDEX IF NOT EXISTS stock_transfers_to_status_idx ON public.stock_transfers USING btree (to_store_id, status);
 
@@ -17468,4 +17462,138 @@ GRANT EXECUTE ON FUNCTION public.reserve_product_skus(integer,text,text,text,int
   TO authenticated, service_role;
 
 -- Make the repaired privileges visible to PostgREST immediately after a reset.
+NOTIFY pgrst, 'reload schema';
+
+-- ---------------------------------------------------------------------------
+-- Public pre-authentication RPC boundary
+-- ---------------------------------------------------------------------------
+-- Clone the current canonical implementations into a schema PostgREST does
+-- not expose, then replace the public routines with invoker-only wrappers.
+-- On a re-run the earlier definitions refresh the public implementation first,
+-- so this block also refreshes the corresponding private implementation.
+CREATE SCHEMA IF NOT EXISTS private;
+REVOKE ALL ON SCHEMA private FROM PUBLIC;
+GRANT USAGE ON SCHEMA private TO anon, authenticated, service_role;
+
+DO $private_rpc_impls$
+DECLARE
+  mapping record;
+  signature regprocedure;
+  definition text;
+BEGIN
+  FOR mapping IN
+    SELECT * FROM (VALUES
+      ('coupon_claim', 'coupon_claim_impl', 'public.coupon_claim(text,text,text,text)'),
+      ('terminal_token_claim', 'terminal_token_claim_impl', 'public.terminal_token_claim(uuid,text,text,text,text)'),
+      ('terminal_token_heartbeat', 'terminal_token_heartbeat_impl', 'public.terminal_token_heartbeat(uuid,boolean,text,boolean,text)'),
+      ('terminal_token_status', 'terminal_token_status_impl', 'public.terminal_token_status(uuid)'),
+      ('voucher_by_token', 'voucher_by_token_impl', 'public.voucher_by_token(text)')
+    ) AS routines(public_name, private_name, identity)
+  LOOP
+    signature := to_regprocedure(mapping.identity);
+    IF signature IS NULL THEN
+      RAISE EXCEPTION 'Required public RPC is missing: %', mapping.identity;
+    END IF;
+    definition := pg_get_functiondef(signature);
+    definition := regexp_replace(
+      definition,
+      '^CREATE OR REPLACE FUNCTION public\.' || mapping.public_name || '\(',
+      'CREATE OR REPLACE FUNCTION private.' || mapping.private_name || '('
+    );
+    IF position('FUNCTION private.' || mapping.private_name || '(' IN definition) = 0 THEN
+      RAISE EXCEPTION 'Could not isolate public RPC: %', mapping.identity;
+    END IF;
+    EXECUTE definition;
+  END LOOP;
+END
+$private_rpc_impls$;
+
+ALTER FUNCTION private.coupon_claim_impl(text,text,text,text) SET search_path = '';
+ALTER FUNCTION private.terminal_token_claim_impl(uuid,text,text,text,text) SET search_path = '';
+ALTER FUNCTION private.terminal_token_heartbeat_impl(uuid,boolean,text,boolean,text) SET search_path = '';
+ALTER FUNCTION private.terminal_token_status_impl(uuid) SET search_path = '';
+ALTER FUNCTION private.voucher_by_token_impl(text) SET search_path = '';
+
+REVOKE ALL ON FUNCTION private.coupon_claim_impl(text,text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION private.terminal_token_claim_impl(uuid,text,text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION private.terminal_token_heartbeat_impl(uuid,boolean,text,boolean,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION private.terminal_token_status_impl(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION private.voucher_by_token_impl(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION private.coupon_claim_impl(text,text,text,text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION private.terminal_token_claim_impl(uuid,text,text,text,text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION private.terminal_token_heartbeat_impl(uuid,boolean,text,boolean,text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION private.terminal_token_status_impl(uuid) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION private.voucher_by_token_impl(text) TO anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.coupon_claim(
+  _slug text, _phone text, _full_name text DEFAULT NULL::text, _email text DEFAULT NULL::text
+) RETURNS text LANGUAGE sql SECURITY INVOKER SET search_path = ''
+AS $wrapper$ SELECT private.coupon_claim_impl(_slug, _phone, _full_name, _email) $wrapper$;
+CREATE OR REPLACE FUNCTION public.terminal_token_claim(
+  p_token_id uuid, p_device text DEFAULT NULL::text, p_proof_hash text DEFAULT NULL::text,
+  p_platform text DEFAULT NULL::text, p_os text DEFAULT NULL::text
+) RETURNS boolean LANGUAGE sql SECURITY INVOKER SET search_path = ''
+AS $wrapper$ SELECT private.terminal_token_claim_impl(p_token_id, p_device, p_proof_hash, p_platform, p_os) $wrapper$;
+CREATE OR REPLACE FUNCTION public.terminal_token_heartbeat(
+  p_token_id uuid, p_activate boolean DEFAULT false, p_version text DEFAULT NULL::text,
+  p_synced boolean DEFAULT false, p_proof_hash text DEFAULT NULL::text
+) RETURNS void LANGUAGE sql SECURITY INVOKER SET search_path = ''
+AS $wrapper$ SELECT private.terminal_token_heartbeat_impl(p_token_id, p_activate, p_version, p_synced, p_proof_hash) $wrapper$;
+CREATE OR REPLACE FUNCTION public.terminal_token_status(p_token_id uuid)
+RETURNS TABLE(status text, location_name text, location_id text, is_claimed boolean, expires_at timestamp with time zone)
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = ''
+AS $wrapper$ SELECT * FROM private.terminal_token_status_impl(p_token_id) $wrapper$;
+CREATE OR REPLACE FUNCTION public.voucher_by_token(_token text)
+RETURNS TABLE(voucher jsonb, campaign jsonb, member_name text, member_code text)
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = ''
+AS $wrapper$ SELECT * FROM private.voucher_by_token_impl(_token) $wrapper$;
+
+REVOKE ALL ON FUNCTION public.coupon_claim(text,text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.terminal_token_claim(uuid,text,text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.terminal_token_heartbeat(uuid,boolean,text,boolean,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.terminal_token_status(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.voucher_by_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.coupon_claim(text,text,text,text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.terminal_token_claim(uuid,text,text,text,text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.terminal_token_heartbeat(uuid,boolean,text,boolean,text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.terminal_token_status(uuid) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.voucher_by_token(text) TO anon, authenticated, service_role;
+
+-- Remove only non-unique left-prefix duplicates. Every retained replacement
+-- serves the same leading-column probes and an additional filter/order shape.
+DROP INDEX IF EXISTS public.bookings_store_idx;
+DROP INDEX IF EXISTS public.issued_vouchers_campaign_idx;
+DROP INDEX IF EXISTS public.item_activity_logs_product_id_idx;
+DROP INDEX IF EXISTS public.item_activity_logs_store_id_idx;
+DROP INDEX IF EXISTS public.payment_transactions_store_id_idx;
+DROP INDEX IF EXISTS public.purchase_orders_store_idx;
+DROP INDEX IF EXISTS public.purchase_orders_store_status_idx;
+DROP INDEX IF EXISTS public.sales_shift_idx;
+DROP INDEX IF EXISTS public.sales_store_idx;
+DROP INDEX IF EXISTS public.stock_transfers_to_idx;
+
+-- Final public-schema privilege hardening after the invoker wrappers above.
+-- This must remain after every routine definition in the canonical installer.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated;
+DO $final_public_rpc_hardening$
+DECLARE
+  routine record;
+BEGIN
+  FOR routine IN
+    SELECT p.oid::regprocedure AS signature
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.prosecdef
+  LOOP
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon', routine.signature);
+  END LOOP;
+END
+$final_public_rpc_hardening$;
+GRANT EXECUTE ON FUNCTION public.coupon_claim(text,text,text,text) TO anon;
+GRANT EXECUTE ON FUNCTION public.terminal_token_claim(uuid,text,text,text,text) TO anon;
+GRANT EXECUTE ON FUNCTION public.terminal_token_heartbeat(uuid,boolean,text,boolean,text) TO anon;
+GRANT EXECUTE ON FUNCTION public.terminal_token_status(uuid) TO anon;
+GRANT EXECUTE ON FUNCTION public.voucher_by_token(text) TO anon;
+
 NOTIFY pgrst, 'reload schema';
