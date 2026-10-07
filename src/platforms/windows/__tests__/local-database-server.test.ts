@@ -151,16 +151,16 @@ describe("local SQL Server wizard server step", () => {
     );
     expect(wizard).toContain("const response = await database.listServers()");
     expect(wizard).toContain("selectDiscoveredServer(current, server)");
-    expect(wizard).toContain("provisionAndConnect(profile)");
-    expect(wizard).toContain("Provisioning already succeeded");
+    expect(wizard).toContain("saveAndConnect(profile)");
+    expect(wizard).toContain("Connecting already succeeded");
     expect(wizard).toContain('database: "POS_Local"');
     expect(wizard).toContain("Database name (select existing or create new)");
-    expect(wizard).toContain("creates the database when it is");
+    expect(wizard).toContain("creates the database when needed");
     expect(wizard).toContain("await mirrorTerminalConfigToDesktop()");
-    expect(wizard).toContain("validationHasSchemaDifferences");
     expect(wizard).toContain("Download migration SQL file");
     expect(wizard).toContain("Apply directly and validate again");
-    expect(wizard).toContain("Apply POS database, validate and connect");
+    expect(wizard).toContain('title="Save and connect"');
+    expect(wizard).toContain("It does not migrate or validate again.");
     expect(wizard).toContain("Missing tables:");
     expect(wizard).toContain("Table changes required:");
 
@@ -195,13 +195,16 @@ describe("local SQL Server wizard server step", () => {
     expect(wizard).toContain("window.addEventListener(OPEN_LOCAL_DATABASE_SETTINGS_EVENT");
   });
 
-  it("performs migration connectivity preflight and revalidation", () => {
+  it("creates a fresh database, applies setup migrations, and revalidates before Save", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
     const handler = main.slice(main.indexOf('ipcMain.handle("database:migrate"'), main.indexOf('ipcMain.handle("database:migrate-saved"'));
-    expect(handler).toContain('observedDatabaseOperation("migration","preflight"');
+    expect(handler).toContain('observedDatabaseOperation("migration","database"');
+    expect(handler).toContain("ensureDatabase(databaseManager,profile)");
     expect(handler).toContain('observedDatabaseOperation("migration","apply"');
     expect(handler).toContain('observedDatabaseOperation("migration","revalidate"');
-    expect(handler).toContain("if(!validation.ok)return validation");
+    expect(handler).toContain("databaseService.validate(profile)");
+    const wizard = readFileSync("src/platforms/windows/components/LocalDatabaseWizard.tsx", "utf8");
+    expect(wizard).toContain("(step === 5 && result?.ready !== true)");
     const health = readFileSync("electron/db/health.cjs", "utf8");
     expect(health).toContain('kind:"index"');
     expect(health).toContain('kind:"constraint"');
@@ -210,6 +213,23 @@ describe("local SQL Server wizard server step", () => {
     const diagnostics = readFileSync("electron/diagnostics.cjs", "utf8");
     expect(diagnostics).toContain('normalUnconfiguredState');
     expect(diagnostics).toContain('=== "enabled_unconfigured"');
+  });
+
+  it("uses a setup-only timeout for the large fresh-install schema", async () => {
+    const { applyMigrations, MIGRATION_REQUEST_TIMEOUT_MS } = await import(
+      "../../../../electron/db/migrations.cjs"
+    );
+    const temporary = vi.fn(async () => ({ ok: true }));
+    await applyMigrations(
+      { temporary },
+      { database: "POS_Local", requestTimeoutMs: 30_000 },
+    );
+    expect(MIGRATION_REQUEST_TIMEOUT_MS).toBe(300_000);
+    expect(temporary).toHaveBeenCalledWith(
+      expect.objectContaining({ database: "POS_Local", requestTimeoutMs: 300_000 }),
+      "POS_Local",
+      expect.any(Function),
+    );
   });
 
   it("creates a missing named database safely before applying its schema", async () => {

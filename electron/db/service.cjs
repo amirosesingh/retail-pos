@@ -2,6 +2,13 @@ const { safeError } = require("./errors.cjs");
 const { listDatabases } = require("./catalog.cjs");
 const { validateDatabase } = require("./health.cjs");
 
+const profileValidationKey = (profile) => JSON.stringify([
+  profile?.host ?? "", profile?.instanceName ?? "", Number(profile?.port) || 0,
+  profile?.database ?? "", profile?.authMode ?? "", profile?.username ?? "",
+  profile?.password ?? "", Boolean(profile?.encrypt), Boolean(profile?.trustServerCertificate),
+  Number(profile?.connectionTimeoutMs) || 0, Number(profile?.requestTimeoutMs) || 0,
+]);
+
 const STATES = new Set([
   "disabled", "enabled_unconfigured", "enabled_connecting", "enabled_validating",
   "enabled_bootstrapping", "enabled_ready", "enabled_degraded", "enabled_error",
@@ -12,6 +19,7 @@ class DatabaseService {
     this.secureConfig = secureConfig; this.manager = manager; this.publish = publish;
     this.log = log;
     this.validator = validator;
+    this.validatedProfileKey = null;
     this.state = secureConfig.enabled() ? (secureConfig.profile() ? "enabled_connecting" : "enabled_unconfigured") : "disabled";
     this.detail = null; this.lastCheckedAt = null; this.validated = false;
   }
@@ -43,7 +51,11 @@ class DatabaseService {
   }
   async schemaStatus() { const profile=this.secureConfig.credentials(); return profile ? validateDatabase(this.manager,profile) : {ok:false,code:"EDATABASE",error:"No database is configured."}; }
   async validate(profile) {
-    return validateDatabase(this.manager, profile);
+    const validation = await this.validator(this.manager, profile);
+    this.validatedProfileKey = validation.ok && validation.ready
+      ? profileValidationKey(profile)
+      : null;
+    return validation;
   }
   async revalidateConnected() {
     const profile = this.secureConfig.credentials();
@@ -67,24 +79,25 @@ class DatabaseService {
     return this.transition("enabled_error", { ...detail, status: "migration_required" });
   }
   async saveAndConnect(profile) {
+    if (this.validatedProfileKey !== profileValidationKey(profile)) {
+      return {
+        ok: false,
+        code: "EVALIDATION_REQUIRED",
+        error: "Validate this exact database connection before saving it.",
+        hint: "Return to Validate, complete validation, then connect without changing the connection details.",
+      };
+    }
     try {
-      await this.manager.close();
       this.validated = false;
-      this.transition("enabled_validating");
-      const validation = await this.validator(this.manager, profile);
-      if (!validation.ok || !validation.ready) {
-        this.transition("enabled_error", validation);
-        return validation;
-      }
       this.transition("enabled_connecting");
       await this.manager.open(profile);
       this.validated = true;
       const saved = this.secureConfig.save(profile);
+      this.validatedProfileKey = null;
       this.lastCheckedAt = new Date().toISOString();
       this.transition("enabled_bootstrapping");
       return { ok: true, profile: saved, state: this.snapshot() };
     } catch (error) {
-      await this.manager.close().catch(() => undefined);
       this.validated = false;
       const safe = safeError(error);
       this.transition("enabled_error", safe);

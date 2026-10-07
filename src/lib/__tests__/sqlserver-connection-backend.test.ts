@@ -101,4 +101,32 @@ describe("direct SQL Server backend", () => {
     expect(JSON.stringify(result)).not.toContain("secret-user");
     expect(JSON.stringify(result)).not.toContain("secret-pass");
   });
+
+  it("keeps the current pool available until its replacement is connected", async () => {
+    const previous = { close: vi.fn().mockResolvedValue(undefined), connected: true };
+    class Pool {
+      static instance: Pool | undefined;
+      connect = vi.fn().mockRejectedValue(
+        Object.assign(new Error("connect timeout"), { code: "ETIMEOUT" }),
+      );
+      close = vi.fn().mockResolvedValue(undefined);
+      on = vi.fn();
+      constructor() { Pool.instance = this; }
+    }
+    const { ConnectionManager } = await import("../../../electron/db/connection-manager.cjs");
+    const manager = new ConnectionManager({
+      driver: { ConnectionPool: Pool },
+    });
+    manager.pool = previous;
+
+    await expect(manager.open({
+      host: "127.0.0.1", port: 1433, database: "POS_Local", authMode: "windows",
+      username: "", password: "", encrypt: true, trustServerCertificate: true,
+      connectionTimeoutMs: 15_000, requestTimeoutMs: 30_000,
+    })).rejects.toMatchObject({ code: "ETIMEOUT" });
+
+    expect(manager.pool).toBe(previous);
+    expect(previous.close).not.toHaveBeenCalled();
+    expect(Pool.instance?.close).toHaveBeenCalledOnce();
+  });
 });
