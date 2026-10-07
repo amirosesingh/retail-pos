@@ -1,4 +1,7 @@
-import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
+import {
+  authenticatedExternalClientSnapshot,
+  supabaseExternal as supabase,
+} from "@/integrations/supabase/external-client";
 import { defaultSettings, sampleState } from "@/lib/pos-seed";
 import { broadcastSettingsChange, runOpLive } from "@/lib/sync-engine";
 import { localDb } from "@/core/local-db/local-db";
@@ -502,10 +505,25 @@ const settingsToRow = (s: AppSettings): Row => {
 const SETTINGS_SECTION_COLUMNS: Record<keyof AppSettings, string[]> = {
   tax: ["tax_percentage", "enable_tax", "tax_mode"],
   receipt: [
-    "paper_size", "company_name", "tax_number", "reg_number", "phone", "website",
-    "fonts", "custom_lines", "qr", "receipt_css", "booking_slip", "header_text",
-    "footer_text", "show_logo", "logo_data_url", "receipt_design", "show_points",
-    "show_barcode", "show_tax_details",
+    "paper_size",
+    "company_name",
+    "tax_number",
+    "reg_number",
+    "phone",
+    "website",
+    "fonts",
+    "custom_lines",
+    "qr",
+    "receipt_css",
+    "booking_slip",
+    "header_text",
+    "footer_text",
+    "show_logo",
+    "logo_data_url",
+    "receipt_design",
+    "show_points",
+    "show_barcode",
+    "show_tax_details",
   ],
   payment: ["payment_details"],
   whatsapp: ["whatsapp_settings"],
@@ -1122,13 +1140,24 @@ export async function loadLocationDirectory(): Promise<LocationDirectoryResult> 
     const relayFirst = await relayed();
     if (relayFirst) return relayFirst;
 
-    // An RLS-filtered anonymous SELECT can legitimately answer `200 []`.
-    // Remember whether this request carries a real user session so that empty
-    // can only mean "no locations" when access was actually established.
-    const { data: auth } = await supabase.auth.getSession();
-    const directAuthenticated = Boolean(auth.session?.access_token);
+    // Never probe the protected directory with only a publishable key. This
+    // path is shared by web, Electron and Android, so it must wait for the
+    // concrete GoTrue client that owns the verified staff bearer.
+    if (!hasStaffSession()) {
+      return {
+        ok: false,
+        error: relayError ?? new Error("No verified cloud staff session is active."),
+      };
+    }
+    const directClient = await authenticatedExternalClientSnapshot();
+    if (!directClient) {
+      return {
+        ok: false,
+        error: relayError ?? new Error("The verified cloud staff session is still being restored."),
+      };
+    }
     const direct = await readAllPages<Row>((from, to, withCount) =>
-      supabase
+      directClient
         .from("stores")
         .select("*", withCount ? { count: "exact" } : {})
         .is("deleted_at", null)
@@ -1142,12 +1171,6 @@ export async function loadLocationDirectory(): Promise<LocationDirectoryResult> 
       if (!(direct.data ?? []).length) {
         const relayFallback = await relayed();
         if (relayFallback) return relayFallback;
-        if (!directAuthenticated) {
-          return {
-            ok: false,
-            error: relayError ?? new Error("Could not verify access to the location directory"),
-          };
-        }
       }
       return { ok: true, stores: (direct.data ?? []).map(rowToStore), source: "direct" };
     }
@@ -1169,7 +1192,7 @@ export async function loadLocationDirectory(): Promise<LocationDirectoryResult> 
  * updates cannot move a row between pages, which avoids the omissions caused
  * by offset windows ordered by mutable updated_at values.
  */
-async function loadCompleteProductCatalogue(): Promise<PagedRead<Row>> {
+async function loadCompleteProductCatalogue(client: typeof supabase): Promise<PagedRead<Row>> {
   type ProductPageQuery = PromiseLike<PageResult<Row>> & {
     gt: (column: string, value: string) => PromiseLike<PageResult<Row>>;
   };
@@ -1185,7 +1208,7 @@ async function loadCompleteProductCatalogue(): Promise<PagedRead<Row>> {
         capped: false,
       };
     }
-    const baseQuery = supabase
+    const baseQuery = client
       .from("products")
       .select("*", total === null ? { count: "exact" } : {})
       .is("deleted_at", null)
@@ -1238,71 +1261,85 @@ export async function loadCloudState(
   if (!hasStaffSession()) {
     throw new Error("No verified cloud staff session is active.");
   }
+  const authenticatedClient = await authenticatedExternalClientSnapshot();
+  if (!authenticatedClient) {
+    throw new Error("The verified cloud staff session is still being restored.");
+  }
   // These reads are independent. Start membership tiers alongside the other
   // slices so a full network round trip is not added to every sign-in.
-  const [tiers, products, priceOverrides, members, sales, promotions, settings, settingFields, stores, shifts] =
-    await Promise.all([
-      supabase.from("membership_tiers").select("id, name").is("deleted_at", null),
-      loadCompleteProductCatalogue(),
-      supabase
-        .from("settings_scoped")
-        .select("scope, scope_id, key, value")
-        .like("key", "product_price:%")
-        .limit(5000),
-      supabase
-        .from("members")
-        .select("*")
-        .is("deleted_at", null)
-        .order("updated_at", { ascending: false })
-        .order("id")
-        .limit(1000),
+  const [
+    tiers,
+    products,
+    priceOverrides,
+    members,
+    sales,
+    promotions,
+    settings,
+    settingFields,
+    stores,
+    shifts,
+  ] = await Promise.all([
+    authenticatedClient.from("membership_tiers").select("id, name").is("deleted_at", null),
+    loadCompleteProductCatalogue(authenticatedClient),
+    authenticatedClient
+      .from("settings_scoped")
+      .select("scope, scope_id, key, value")
+      .like("key", "product_price:%")
+      .limit(5000),
+    authenticatedClient
+      .from("members")
+      .select("*")
+      .is("deleted_at", null)
+      .order("updated_at", { ascending: false })
+      .order("id")
+      .limit(1000),
 
-      (async () => {
-        const read = () => {
-          let query = supabase.from("sales").select(saleColumns());
-          if (storeId) query = query.eq("store_id", storeId);
-          return query.order("created_at", { ascending: false }).limit(500);
+    (async () => {
+      const read = () => {
+        let query = authenticatedClient.from("sales").select(saleColumns());
+        if (storeId) query = query.eq("store_id", storeId);
+        return query.order("created_at", { ascending: false }).limit(500);
+      };
+      const first = await read();
+      if (first.error && isMissingTxnColumn(first.error.message)) {
+        forgetTxnColumn(first.error.message);
+        return await read();
+      }
+      return first;
+    })(),
+    authenticatedClient
+      .from("promotions")
+      .select("*")
+      .is("deleted_at", null)
+      .order("updated_at", { ascending: false })
+      .order("id")
+      .limit(1000),
+
+    authenticatedClient.from("pos_settings").select("*").eq("id", 1).maybeSingle(),
+    (async () => {
+      try {
+        const rows = await routedQuery("settings_scoped", { limit: 5000 });
+        return {
+          data: (rows as Row[]).filter((row) => String(row.key ?? "").startsWith("pos_field:")),
+          error: null,
         };
-        const first = await read();
-        if (first.error && isMissingTxnColumn(first.error.message)) {
-          forgetTxnColumn(first.error.message);
-          return await read();
-        }
-        return first;
-      })(),
-      supabase
-        .from("promotions")
-        .select("*")
-        .is("deleted_at", null)
-        .order("updated_at", { ascending: false })
-        .order("id")
-        .limit(1000),
-
-      supabase.from("pos_settings").select("*").eq("id", 1).maybeSingle(),
-      (async () => {
-        try {
-          const rows = await routedQuery("settings_scoped", { limit: 5000 });
-          return {
-            data: (rows as Row[]).filter((row) => String(row.key ?? "").startsWith("pos_field:")),
-            error: null,
-          };
-        } catch (error) {
-          return { data: [] as Row[], error };
-        }
-      })(),
-      locationTask ?? loadLocationDirectory(),
-      (async (): Promise<{ data: Row[] | null }> => {
-        try {
-          const res = await supabase.rpc(
-            "shift_list_secure" as never,
-            { p_store_id: storeId ?? null, p_limit: 300 } as never,
-          );
-          return { data: (res.data as Row[] | null) ?? null };
-        } catch {
-          return { data: null };
-        }
-      })(),
-    ]);
+      } catch (error) {
+        return { data: [] as Row[], error };
+      }
+    })(),
+    locationTask ?? loadLocationDirectory(),
+    (async (): Promise<{ data: Row[] | null }> => {
+      try {
+        const res = await authenticatedClient.rpc(
+          "shift_list_secure" as never,
+          { p_store_id: storeId ?? null, p_limit: 300 } as never,
+        );
+        return { data: (res.data as Row[] | null) ?? null };
+      } catch {
+        return { data: null };
+      }
+    })(),
+  ]);
 
   const err =
     tiers.error ||
@@ -1396,9 +1433,7 @@ export async function loadCloudSettings(): Promise<AppSettings> {
       (rows as Row[]).filter((row) => String(row.key ?? "").startsWith("pos_field:")),
     ),
   ]);
-  return rowToSettings(
-    applySettingsFields((rows[0] as Row | undefined) ?? null, fields as Row[]),
-  );
+  return rowToSettings(applySettingsFields((rows[0] as Row | undefined) ?? null, fields as Row[]));
 }
 
 /** Fetch one changed catalogue row after a Realtime invalidation. */
@@ -1960,17 +1995,17 @@ export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitT
               ? "shift"
               : /product|inventory/i.test(context)
                 ? "product"
-              : /receiv|purchase|invoice/i.test(context)
-                ? "receiving"
-                : /stock/i.test(context)
-                  ? "stock"
-                  : /transfer/i.test(context)
-                    ? "transfer"
-                    : /booking/i.test(context)
-                      ? "booking"
-                      : /hold|ticket/i.test(context)
-                        ? "held_order"
-                        : "general";
+                : /receiv|purchase|invoice/i.test(context)
+                  ? "receiving"
+                  : /stock/i.test(context)
+                    ? "stock"
+                    : /transfer/i.test(context)
+                      ? "transfer"
+                      : /booking/i.test(context)
+                        ? "booking"
+                        : /hold|ticket/i.test(context)
+                          ? "held_order"
+                          : "general";
       const branchRow = ops
         .flatMap((op): Row[] => {
           if (op.kind === "insert" || op.kind === "upsert") return op.rows as Row[];

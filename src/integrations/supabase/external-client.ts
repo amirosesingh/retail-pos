@@ -141,6 +141,7 @@ type ExternalClientRegistry = {
   memberClient?: ExternalClient;
   clientConfig?: ClientConfig;
   memberClientConfig?: ClientConfig;
+  resetListeners?: Set<() => void>;
 };
 
 // Vite HMR, lazy chunks and Electron renderer reloads can evaluate this module
@@ -153,6 +154,7 @@ const globalClientRegistry = globalThis as typeof globalThis & {
   [CLIENT_REGISTRY_KEY]?: ExternalClientRegistry;
 };
 const clientRegistry = (globalClientRegistry[CLIENT_REGISTRY_KEY] ??= {});
+const resetListeners = (clientRegistry.resetListeners ??= new Set());
 
 const sameConfig = (left: ClientConfig | undefined, right: ClientConfig | undefined) =>
   Boolean(left && right && left.url === right.url && left.key === right.key);
@@ -195,6 +197,30 @@ export function externalClientSnapshot(): ReturnType<typeof createExternalClient
     clientRegistry.clientConfig = currentConfig;
   }
   return clientRegistry.client;
+}
+
+/**
+ * Return the concrete staff client only after GoTrue has restored a bearer
+ * session into that same client instance. The application-level staff flag is
+ * deliberately checked by callers first; this second check closes the short
+ * boot/configuration window where React already knows about a verified user
+ * but a newly-created client would otherwise send the Data API request as
+ * `anon`.
+ */
+export async function authenticatedExternalClientSnapshot(): Promise<ExternalClient | null> {
+  const client = externalClientSnapshot();
+  try {
+    const { data, error } = await client.auth.getSession();
+    return !error && data.session?.access_token ? client : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Re-bind long-lived Auth listeners whenever a tenant client is replaced. */
+export function subscribeExternalClientReset(listener: () => void): () => void {
+  resetListeners.add(listener);
+  return () => resetListeners.delete(listener);
 }
 
 /**
@@ -264,6 +290,15 @@ export function resetExternalClient(): void {
   }
   if (previousMember && previousMember !== clientRegistry.memberClient) {
     retireClient(previousMember);
+  }
+  if (previous && previous !== clientRegistry.client) {
+    for (const listener of resetListeners) {
+      try {
+        listener();
+      } catch {
+        /* one stale UI subscriber must not block the client handover */
+      }
+    }
   }
 }
 

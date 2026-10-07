@@ -9,7 +9,11 @@
  * Kept separate from `db-router` so the data layer can read without importing
  * the write path (and creating an import cycle with `pos-db`).
  */
-import { supabaseExternal } from "@/integrations/supabase/external-client";
+import {
+  authenticatedExternalClientSnapshot,
+  supabaseExternal,
+} from "@/integrations/supabase/external-client";
+import { hasCentralAuthSession } from "@/lib/session-presence";
 import { noteVersions } from "@/lib/row-versions";
 import { readAllPages } from "@/lib/paged-read";
 import { localDb } from "@/core/local-db/local-db";
@@ -34,8 +38,10 @@ type LooseFilter = PromiseLike<{
   range: (from: number, to: number) => LooseFilter;
 };
 
-const from = (table: string) =>
-  (supabaseExternal as unknown as { from: (t: string) => LooseSelect }).from(table);
+const PUBLIC_READ_TABLES = new Set(["public_flags", "coupon_campaigns"]);
+
+const from = (client: unknown, table: string) =>
+  (client as { from: (t: string) => LooseSelect }).from(table);
 
 /**
  * Cloud tables whose stable key is not the conventional `id` column.
@@ -90,19 +96,34 @@ async function runQuery(
   if (effectiveDatabaseMode() === "local" && bridge?.query) {
     // Never grow renderer memory with the size of a table. Callers page large
     // views explicitly; point lookups and configuration reads remain bounded.
-    const result = await bridge.query(table, { ...options, limit: Math.min(options.limit ?? 1000, 2000) });
+    const result = await bridge.query(table, {
+      ...options,
+      limit: Math.min(options.limit ?? 1000, 2000),
+    });
     if (!result.ok) throw new Error(result.error ?? "The local SQL Server read failed.");
     const rows = (result.rows ?? []) as Row[];
     noteVersions(table, rows);
     return { rows, source: "local" };
   }
+  let cloudClient: unknown = supabaseExternal;
+  if (!PUBLIC_READ_TABLES.has(table)) {
+    if (!hasCentralAuthSession()) {
+      throw new Error("No verified cloud staff session is active.");
+    }
+    cloudClient = await authenticatedExternalClientSnapshot();
+    if (!cloudClient) {
+      throw new Error("The verified cloud staff session is still being restored.");
+    }
+  }
   const build = (start: number, end: number) => {
-    let q = from(table).select(options.columns ?? "*", { count: "exact" });
+    let q = from(cloudClient, table).select(options.columns ?? "*", { count: "exact" });
     for (const [k, v] of Object.entries(options.match ?? {})) q = q.eq(k, v);
     if (options.in) q = q.in(options.in.column, options.in.values);
     if (options.cursor) {
       const op = options.orderBy?.ascending === true ? "gt" : "lt";
-      q = q.or(`${options.cursor.column}.${op}.${options.cursor.value},and(${options.cursor.column}.eq.${options.cursor.value},id.${op}.${options.cursor.id})`);
+      q = q.or(
+        `${options.cursor.column}.${op}.${options.cursor.value},and(${options.cursor.column}.eq.${options.cursor.value},id.${op}.${options.cursor.id})`,
+      );
     }
     if (options.orderBy)
       q = q.order(options.orderBy.column, { ascending: options.orderBy.ascending ?? true });

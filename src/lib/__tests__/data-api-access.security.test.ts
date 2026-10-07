@@ -7,6 +7,8 @@ const systemHealth = readFileSync("src/lib/system-health.ts", "utf8");
 const dbHealth = readFileSync("src/lib/db-health.ts", "utf8");
 const featureSchema = readFileSync("src/core/types/feature-schema.ts", "utf8");
 const posDb = readFileSync("src/core/api/pos-db.ts", "utf8");
+const dbQuery = readFileSync("src/core/api/db-query.ts", "utf8");
+const securityAlerts = readFileSync("src/lib/security-alerts.ts", "utf8");
 
 describe("anonymous Data API access", () => {
   it("revokes table and sequence privileges before granting two public read surfaces", () => {
@@ -55,6 +57,10 @@ describe("anonymous Data API access", () => {
     expect(featureSchema).toContain("if (!directAccess)");
     expect(posDb).toContain("if (localDb() && !hasStaffSession())");
     expect(posDb).toContain('throw new Error("No verified cloud staff session is active.")');
+    expect(posDb).toContain("await authenticatedExternalClientSnapshot()");
+    expect(dbQuery).toContain("if (!hasCentralAuthSession())");
+    expect(dbQuery).toContain("await authenticatedExternalClientSnapshot()");
+    expect(securityAlerts).toContain("if (!hasCentralAuthSession()) return []");
   });
 
   it("finishes every fresh install with authenticated core access and a PostgREST reload", () => {
@@ -72,9 +78,7 @@ describe("anonymous Data API access", () => {
       "GRANT SELECT, INSERT, UPDATE ON TABLE public.audit_logs TO authenticated",
     );
     expect(repair).toContain("REVOKE DELETE ON TABLE public.audit_logs FROM authenticated");
-    expect(repair).toContain(
-      "REVOKE ALL ON FUNCTION public.current_app_user() FROM PUBLIC, anon",
-    );
+    expect(repair).toContain("REVOKE ALL ON FUNCTION public.current_app_user() FROM PUBLIC, anon");
     expect(repair).toContain(
       "GRANT EXECUTE ON FUNCTION public.current_app_user() TO authenticated, service_role",
     );

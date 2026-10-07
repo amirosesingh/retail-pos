@@ -12,6 +12,7 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import {
   discardRejectedExternalAuthSession,
+  subscribeExternalClientReset,
   supabaseExternal as supabase,
 } from "@/integrations/supabase/external-client";
 import { type MetaRole } from "@/lib/pos-users";
@@ -259,6 +260,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [rolesReady, setRolesReady] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
   const [authEnabled, setAuthEnabled] = useState(() => !isTerminalApp());
+  const [authClientGeneration, setAuthClientGeneration] = useState(0);
   const [terminalUser, setTerminalUser] = useState<TerminalUser | null>(null);
   const [appUser, setAppUser] = useState<AppUserProfile | null>(null);
   const [sessionState, setSessionState] = useState<SessionState>("signed-out");
@@ -292,6 +294,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* ignore corrupt storage */
     }
   }, []);
+
+  // A device connection profile can replace the tenant client without
+  // remounting this provider. Drop the old proof synchronously and re-run the
+  // Auth bootstrap against the new concrete client; otherwise background
+  // reads can carry only the publishable key and reach RLS as `anon`.
+  useEffect(
+    () =>
+      subscribeExternalClientReset(() => {
+        setCentralSessionVerified(false);
+        setSession(null);
+        setRoles([]);
+        setAppUser(null);
+        setAuthReady(false);
+        setRolesReady(false);
+        setProfileReady(false);
+        setAuthClientGeneration((current) => current + 1);
+      }),
+    [setCentralSessionVerified],
+  );
 
   // A terminal's cloud client must not be touched until its OS vault/Keystore
   // profile has been restored and found complete. Missing configuration is a
@@ -402,7 +423,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false;
       sub.subscription.unsubscribe();
     };
-  }, [authEnabled, setCentralSessionVerified]);
+  }, [authEnabled, authClientGeneration, setCentralSessionVerified]);
 
   // Backend roles for the signed-in account.
   const userId = session?.user?.id ?? null;
@@ -500,62 +521,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persist, staff],
   );
 
-  const login = useCallback(async (email: string, password: string) => {
-    // Terminal credentials are restored asynchronously from DPAPI/Keystore.
-    // Never construct the lazy cloud client until the current saved profile
-    // has replaced any older cloud pair carried by terminal activation.
-    await awaitProfileHydrated();
-    // A missing or half-saved connection is a configuration problem, and
-    // must never be reported as a wrong password.
-    const readiness = await hasRequiredPlatformConfig();
-    const configFailure = failureFromReadiness(readiness);
-    if (configFailure)
-      return {
-        ok: false,
-        code: configFailure,
-        error: loginFailureMessage(configFailure),
-      };
-    // This is an interactive sign-in, not a restored browser session.
-    // Start its idle allowance before Auth publishes SIGNED_IN so the old
-    // user's timestamp cannot race the new account onto the lock screen.
-    markAutoLockActivity();
-    resetStartupTiming();
-    // Check the account after authentication. A pre-login app_users read
-    // sends an old bearer token (or no user token) to a protected table and
-    // produces a noisy 401 before the password is even submitted.
-    // One handler for both worlds: a plain username belongs to a terminal
-    // account and is mapped onto its hidden internal address; anything with
-    // an "@" is used exactly as typed.
-    const address = toLoginAddress(email);
-    // Make a same-account interactive sign-in distinguishable from a replayed
-    // SIGNED_IN event for an unverified restored token.
-    centralIdentityRef.current = null;
-    centralSessionVerifiedRef.current = false;
-    setCentralSessionVerified(false);
-    let data;
-    let error;
-    try {
-      ({ data, error } = await supabase.auth.signInWithPassword({
-        email: address,
-        password,
-      }));
-    } catch (failure) {
-      const code = failureFromAuthError(failure as Error);
-      return { ok: false, code, error: loginFailureMessage(code) };
-    }
-    if (error) {
-      const code = failureFromAuthError(error);
-      return { ok: false, code, error: loginFailureMessage(code) };
-    }
-    markStartupStage("authentication");
-    // The account must resolve to a profile with a role before it is let in.
-    try {
-      const { data: profileRows, error: profileError } = await supabase.rpc("current_app_user");
-      const profile = (Array.isArray(profileRows) ? profileRows[0] : null) as Record<
-        string,
-        unknown
-      > | null;
-      if (profileError || !profile) {
+  const login = useCallback(
+    async (email: string, password: string) => {
+      // Terminal credentials are restored asynchronously from DPAPI/Keystore.
+      // Never construct the lazy cloud client until the current saved profile
+      // has replaced any older cloud pair carried by terminal activation.
+      await awaitProfileHydrated();
+      // A missing or half-saved connection is a configuration problem, and
+      // must never be reported as a wrong password.
+      const readiness = await hasRequiredPlatformConfig();
+      const configFailure = failureFromReadiness(readiness);
+      if (configFailure)
+        return {
+          ok: false,
+          code: configFailure,
+          error: loginFailureMessage(configFailure),
+        };
+      // This is an interactive sign-in, not a restored browser session.
+      // Start its idle allowance before Auth publishes SIGNED_IN so the old
+      // user's timestamp cannot race the new account onto the lock screen.
+      markAutoLockActivity();
+      resetStartupTiming();
+      // Check the account after authentication. A pre-login app_users read
+      // sends an old bearer token (or no user token) to a protected table and
+      // produces a noisy 401 before the password is even submitted.
+      // One handler for both worlds: a plain username belongs to a terminal
+      // account and is mapped onto its hidden internal address; anything with
+      // an "@" is used exactly as typed.
+      const address = toLoginAddress(email);
+      // Make a same-account interactive sign-in distinguishable from a replayed
+      // SIGNED_IN event for an unverified restored token.
+      centralIdentityRef.current = null;
+      centralSessionVerifiedRef.current = false;
+      setCentralSessionVerified(false);
+      let data;
+      let error;
+      try {
+        ({ data, error } = await supabase.auth.signInWithPassword({
+          email: address,
+          password,
+        }));
+      } catch (failure) {
+        const code = failureFromAuthError(failure as Error);
+        return { ok: false, code, error: loginFailureMessage(code) };
+      }
+      if (error) {
+        const code = failureFromAuthError(error);
+        return { ok: false, code, error: loginFailureMessage(code) };
+      }
+      markStartupStage("authentication");
+      // The account must resolve to a profile with a role before it is let in.
+      try {
+        const { data: profileRows, error: profileError } = await supabase.rpc("current_app_user");
+        const profile = (Array.isArray(profileRows) ? profileRows[0] : null) as Record<
+          string,
+          unknown
+        > | null;
+        if (profileError || !profile) {
+          await supabase.auth.signOut({ scope: "local" });
+          return {
+            ok: false,
+            code: "permission-denied" as const,
+            error: loginFailureMessage("permission-denied"),
+          };
+        }
+        if (profile["is_active"] === false) {
+          await supabase.auth.signOut({ scope: "local" });
+          return {
+            ok: false,
+            code: "account-inactive" as const,
+            error: loginFailureMessage("account-inactive"),
+          };
+        }
+      } catch {
         await supabase.auth.signOut({ scope: "local" });
         return {
           ok: false,
@@ -563,48 +601,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           error: loginFailureMessage("permission-denied"),
         };
       }
-      if (profile["is_active"] === false) {
-        await supabase.auth.signOut({ scope: "local" });
-        return {
-          ok: false,
-          code: "account-inactive" as const,
-          error: loginFailureMessage("account-inactive"),
-        };
-      }
-    } catch {
-      await supabase.auth.signOut({ scope: "local" });
-      return {
-        ok: false,
-        code: "permission-denied" as const,
-        error: loginFailureMessage("permission-denied"),
-      };
-    }
 
-    // Whoever signs in on this device trades in the terminal's branch.
-    bindTerminalBranch();
-    // Register this device so it can be listed and reset remotely, and so
-    // it signs itself out once it has been left idle for too long.
-    try {
-      const token = data.session?.access_token;
-      if (token) {
-        const started = await startDeviceSession({
-          data: {
-            kind: "staff",
-            accessToken: token,
-            label: data.user?.email ?? email.trim(),
-            platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
-          },
-        });
-        if (started.ok) {
-          await saveSessionToken(started.token);
-          setSessionIdleMinutes(started.idleMinutes);
+      // Whoever signs in on this device trades in the terminal's branch.
+      bindTerminalBranch();
+      // Register this device so it can be listed and reset remotely, and so
+      // it signs itself out once it has been left idle for too long.
+      try {
+        const token = data.session?.access_token;
+        if (token) {
+          const started = await startDeviceSession({
+            data: {
+              kind: "staff",
+              accessToken: token,
+              label: data.user?.email ?? email.trim(),
+              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+            },
+          });
+          if (started.ok) {
+            await saveSessionToken(started.token);
+            setSessionIdleMinutes(started.idleMinutes);
+          }
         }
+      } catch {
+        /* the account token still works on its own */
       }
-    } catch {
-      /* the account token still works on its own */
-    }
-    return { ok: true };
-  }, [setCentralSessionVerified]);
+      return { ok: true };
+    },
+    [setCentralSessionVerified],
+  );
 
   const cashierLogin = useCallback(
     async (
