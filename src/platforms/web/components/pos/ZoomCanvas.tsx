@@ -2,9 +2,11 @@
  * Zoom surface for the register.
  *
  * The till is laid out fluidly, so instead of clipping the content we give it
- * an inverse size (100 / zoom %) and scale it back down with a GPU transform.
- * Because inverse x zoom is always 100%, the scaled layout fills the viewport
- * exactly and never produces a second scrollbar.
+ * an inverse size (100 / zoom %) and use layout zoom to size it back down.
+ * Unlike a transform, CSS zoom keeps nested scrolling in Chromium's normal
+ * layout/paint path instead of promoting the entire register to one oversized
+ * composited layer. Because inverse x zoom is always 100%, the scaled layout
+ * fills the viewport exactly and never produces a second scrollbar.
  *
  * The zoom level itself is a saved preference (Settings, Display & sizing), so
  * it survives reloads instead of resetting every time the register opens.
@@ -59,9 +61,7 @@ export function ZoomCanvas({ children, className }: { children: ReactNode; class
         style={{
           width: inverse,
           height: inverse,
-          transform: `scale(${scale})`,
-          transformOrigin: "top left",
-          willChange: "transform",
+          zoom: scale,
         }}
       >
         {children}

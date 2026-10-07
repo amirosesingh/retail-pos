@@ -120,6 +120,7 @@ import {
   type SettingSource,
   type SettingTier,
 } from "./branch-settings";
+
 import {
   SECTION_BY_ID,
   getPath,
@@ -145,6 +146,10 @@ import { productCodes } from "./product-lookup";
 import { applyZeroStockLifecycle, applyZeroStockLifecycleToProducts } from "./product-lifecycle";
 import { nextSku, readSkuSettings } from "./sku";
 import { canonicalBranchId, canonicalStockMap, sameBranchId } from "./branch-id";
+
+/** Avoid waking every POS consumer when a database refresh returned the same rows. */
+const hasSameValue = (left: unknown, right: unknown) =>
+  left === right || JSON.stringify(left) === JSON.stringify(right);
 
 const LEGACY_STATE_KEY = "pos-state-v2";
 
@@ -754,13 +759,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const rows = await loadTransfers();
         if (!cancelled) {
           const byId = new Map(rows.map((row) => [row.id, row]));
-          setState((current) => ({
-            ...current,
-            transfers: [
+          setState((current) => {
+            const transfers = [
               ...rows,
               ...current.transfers.filter((row) => !byId.has(row.id)),
-            ],
-          }));
+            ];
+            return hasSameValue(current.transfers, transfers)
+              ? current
+              : { ...current, transfers };
+          });
           warned = false;
         }
       } catch (error) {
@@ -789,12 +796,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const offLocal = localDb()?.onBusinessChanged?.((change) => {
       if (change.kind === "transfer") wake();
     });
-    const interval = window.setInterval(wake, 60_000);
     window.addEventListener("focus", wake);
     window.addEventListener("online", wake);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
       window.removeEventListener("focus", wake);
       window.removeEventListener("online", wake);
       offData();
@@ -836,7 +841,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           !settingsWrites.current.pending &&
           revision === settingsWrites.current.revision
         ) {
-          setScope(next);
+          setScope((current) => (hasSameValue(current, next) ? current : next));
           setConfirmedScopeKey(scopeKey);
         }
       } catch {
@@ -1303,7 +1308,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
           !settingsWrites.current.pending &&
           revision === settingsWrites.current.revision
         )
-          setState((current) => ({ ...current, settings: mergeCloudSettings(settings) }));
+          setState((current) => {
+            const next = mergeCloudSettings(settings);
+            return hasSameValue(current.settings, next)
+              ? current
+              : { ...current, settings: next };
+          });
       } catch {
         /* Keep the last confirmed settings until a later refresh. */
       } finally {
