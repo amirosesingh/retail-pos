@@ -23,6 +23,8 @@ export type ImportRow = {
   category: string;
   stock: number;
   customPoints: number;
+  /** Decimal tax rate (for example 0.05 for 5%); absent uses Settings. */
+  taxRate?: number;
   unit?: string;
   /** Database identity captured during validation, when this is an existing item. */
   existingProductId?: string;
@@ -59,7 +61,8 @@ export type ImportField =
   | "category"
   | "unit"
   | "stock"
-  | "customPoints";
+  | "customPoints"
+  | "taxRate";
 
 export type ImportReviewStatus =
   | "ready"
@@ -83,6 +86,8 @@ export type ImportReviewRow = {
   unit: string;
   stock: number;
   customPoints: number;
+  /** Percentage shown to the operator (for example 5 for 5%). */
+  taxRate: number | null;
   existingProductId?: string;
   existingProduct?: Product;
   status: ImportReviewStatus;
@@ -114,6 +119,7 @@ export const PRODUCT_IMPORT_FIELDS: ReadonlyArray<{
   { key: "unit", label: "Unit", required: false },
   { key: "stock", label: "Quantity", required: false },
   { key: "customPoints", label: "Points", required: false },
+  { key: "taxRate", label: "Tax rate (%)", required: false },
 ] as const;
 
 export const IMPORT_HEADERS = [
@@ -125,6 +131,7 @@ export const IMPORT_HEADERS = [
   "unit",
   "stock_quantity",
   "custom_points",
+  "tax_rate_percent",
 ] as const;
 
 /** Default rows per save. Small enough to stay responsive, large enough to be quick. */
@@ -206,6 +213,7 @@ function validateReviewRow(row: ImportReviewRow): ImportReviewRow {
   if (!row.name.trim()) missingFields.push("name");
   if (row.price === null || row.price <= 0) missingFields.push("price");
   if (row.cost !== null && row.cost < 0) missingFields.push("cost");
+  if (row.taxRate !== null && (row.taxRate < 0 || row.taxRate > 100)) missingFields.push("taxRate");
   if (!Number.isFinite(row.stock) || row.stock < 0 || (row.quantityRequired && row.stock <= 0))
     missingFields.push("stock");
 
@@ -246,6 +254,7 @@ export function resolveReviewConflict(
       if (field === "cost") patch.cost = existing.cost;
       if (field === "category") patch.category = existing.category ?? "";
       if (field === "unit") patch.unit = existing.unit ?? "";
+      if (field === "taxRate") patch.taxRate = existing.taxRate * 100;
     }
   }
   return validateReviewRow({
@@ -295,6 +304,7 @@ export function planImportReview(
     const stock = readNumber(
       field("stock_quantity") ?? field("quantity") ?? field("qty") ?? field("received"),
     );
+    const importedTaxRate = readNumber(field("tax_rate_percent") ?? field("tax_rate"));
     const duplicateLine = key ? seen.get(key) : undefined;
     if (key && duplicateLine === undefined) seen.set(key, line);
 
@@ -306,6 +316,7 @@ export function planImportReview(
       if (importedCategory && !equalText(importedCategory, existing.category))
         conflictFields.push("category");
       if (importedUnit && !equalText(importedUnit, existing.unit)) conflictFields.push("unit");
+      if (!equalNumber(existing.taxRate * 100, importedTaxRate)) conflictFields.push("taxRate");
     }
 
     rows.push(
@@ -320,6 +331,7 @@ export function planImportReview(
         unit: importedUnit || existing?.unit || "",
         stock: Math.max(0, Math.round(stock ?? 0)),
         customPoints: readNumber(field("custom_points")) ?? existing?.customPoints ?? 0,
+        taxRate: importedTaxRate ?? (existing ? existing.taxRate * 100 : null),
         existingProductId: existing?.id,
         existingProduct: existing,
         status: "ready",
@@ -351,6 +363,7 @@ export function reviewRowToImport(row: ImportReviewRow): ImportRow | null {
     category: row.category.trim(),
     stock: row.stock,
     customPoints: row.customPoints,
+    taxRate: row.taxRate === null ? undefined : row.taxRate / 100,
     existing: !!row.existingProductId,
     key: normaliseCode(row.barcode),
     existingProductId: row.existingProductId,
@@ -436,6 +449,10 @@ export function planImport(records: Record<string, unknown>[], catalogue: Produc
       category: String(field("category") ?? "").trim() || "Imported",
       stock: Math.round(stock),
       customPoints: readNumber(field("custom_points")) ?? 0,
+      taxRate: (() => {
+        const percent = readNumber(field("tax_rate_percent") ?? field("tax_rate"));
+        return percent === null ? undefined : Math.min(100, Math.max(0, percent)) / 100;
+      })(),
       existing: byCode.has(code),
       key: code,
     });

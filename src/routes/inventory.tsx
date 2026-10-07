@@ -93,7 +93,7 @@ export const Route = createFileRoute("/inventory")({
   component: Inventory,
 });
 
-const blank = (storeId: string): Product => ({
+const blank = (storeId: string, taxRate = 0): Product => ({
   id: crypto.randomUUID(),
   name: "",
   sku: "",
@@ -105,7 +105,7 @@ const blank = (storeId: string): Product => ({
   ecomVisible: false,
   stockByStore: { [storeId]: 0 },
   reorderLevel: 10,
-  taxRate: 0.05,
+  taxRate,
 });
 
 /** Sentinel for "no value picked" — Radix selects cannot hold an empty value. */
@@ -366,7 +366,15 @@ function Inventory() {
               <Dialog
                 open={!!draft}
                 onOpenChange={(o) => {
-                  setDraft(o ? (draft ?? blank(currentStore.id)) : null);
+                  setDraft(
+                    o
+                      ? (draft ??
+                          blank(
+                            currentStore.id,
+                            state.settings.tax.enabled ? state.settings.tax.rate / 100 : 0,
+                          ))
+                      : null,
+                  );
                   if (!o) setBranchPriceOnly(false);
                 }}
               >
@@ -375,7 +383,12 @@ function Inventory() {
                     <Button
                       onClick={() => {
                         setBranchPriceOnly(false);
-                        setDraft(blank(currentStore.id));
+                        setDraft(
+                          blank(
+                            currentStore.id,
+                            state.settings.tax.enabled ? state.settings.tax.rate / 100 : 0,
+                          ),
+                        );
                       }}
                     >
                       <Plus className="size-4" /> New product
@@ -695,6 +708,24 @@ function Inventory() {
                           value={draft.price}
                           onChange={(e) =>
                             setDraft({ ...draft, price: Number(e.target.value) || 0 })
+                          }
+                        />
+                      </Field>
+                      <Field label="Tax rate (%)">
+                        <Input
+                          disabled={!canPrice || branchPriceOnly}
+                          className="numeric"
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          value={Number((draft.taxRate * 100).toFixed(4))}
+                          onChange={(e) =>
+                            setDraft({
+                              ...draft,
+                              taxRate:
+                                Math.min(100, Math.max(0, Number(e.target.value) || 0)) / 100,
+                            })
                           }
                         />
                       </Field>

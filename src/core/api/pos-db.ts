@@ -1436,10 +1436,34 @@ export async function loadCloudSettings(): Promise<AppSettings> {
   return rowToSettings(applySettingsFields((rows[0] as Row | undefined) ?? null, fields as Row[]));
 }
 
+/**
+ * Fetch changed catalogue rows after a pull/Realtime invalidation.
+ *
+ * A delta page can contain hundreds of products. Keep that as one bounded
+ * `id IN (...)` read instead of turning it into hundreds of simultaneous
+ * one-row requests, which Chromium eventually rejects with
+ * ERR_INSUFFICIENT_RESOURCES.
+ */
+export async function loadCloudProducts(ids: string[]): Promise<Product[]> {
+  const wanted = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  if (!wanted.length) return [];
+  const rows: Row[] = [];
+  for (let start = 0; start < wanted.length; start += 500) {
+    const group = wanted.slice(start, start + 500);
+    rows.push(
+      ...(await routedQuery("products", {
+        match: { deleted_at: null },
+        in: { column: "id", values: group },
+        limit: group.length,
+      })),
+    );
+  }
+  return rows.map((row) => rowToProduct(row));
+}
+
 /** Fetch one changed catalogue row after a Realtime invalidation. */
 export async function loadCloudProduct(id: string): Promise<Product | null> {
-  const rows = await routedQuery("products", { match: { id, deleted_at: null }, limit: 1 });
-  return rows[0] ? rowToProduct(rows[0] as Row) : null;
+  return (await loadCloudProducts([id]))[0] ?? null;
 }
 
 /** Fetch one changed member without re-reading the full member directory. */

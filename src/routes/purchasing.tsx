@@ -69,6 +69,7 @@ import { ReceivingRecordView } from "@/platforms/web/components/pos/ReceivingRec
 import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
 import { subscribeDataChange } from "@/lib/sync-engine";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
+import { IMPORT_HEADERS } from "@/lib/product-import";
 
 /** Sentinel for "no value picked" — Radix selects cannot hold an empty value. */
 const PO_NONE = "__none";
@@ -582,7 +583,7 @@ function Purchasing() {
       ecomVisible: false,
       stockByStore: Object.fromEntries(state.stores.map((s) => [s.id, 0])),
       reorderLevel: 10,
-      taxRate: 0.05,
+      taxRate: state.settings.tax.enabled ? state.settings.tax.rate / 100 : 0,
     });
   }
 
@@ -596,11 +597,28 @@ function Purchasing() {
 
   /** Download a receiving template the buyer can fill in and upload back. */
   function downloadTemplate() {
-    const sheet = XLSX.utils.json_to_sheet([
-      { Barcode: "8901234567890", Name: "Sample item", Cost: 4.5, Price: 7.9, Qty: 12 },
+    const sheet = XLSX.utils.aoa_to_sheet([
+      [...IMPORT_HEADERS],
+      ["8901234567890", "Sample item", 7.9, 4.5, "General", "pcs", 12, 0, 0],
     ]);
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, "Receiving");
+    XLSX.utils.book_append_sheet(
+      book,
+      XLSX.utils.aoa_to_sheet([
+        ["Field", "Required", "What to enter"],
+        ["barcode", "Yes", "Unique barcode or SKU"],
+        ["name", "Yes", "Product name"],
+        ["price", "Yes", "Selling price greater than zero"],
+        ["cost", "No", "Cost price; blank becomes 0"],
+        ["category", "No", "Product category"],
+        ["unit", "No", "Unit of measure"],
+        ["stock_quantity", "Yes", "Quantity received; must be greater than zero"],
+        ["custom_points", "No", "Loyalty points; blank becomes 0"],
+        ["tax_rate_percent", "No", "0 to 100; blank uses enabled Tax Settings, otherwise 0"],
+      ]),
+      "Instructions",
+    );
     XLSX.writeFile(book, "receiving-template.xlsx");
   }
 

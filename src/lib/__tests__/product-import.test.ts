@@ -168,6 +168,23 @@ describe("reviewable product imports", () => {
     expect(receiving.status).toBe("missing_information");
     expect(receiving.missingFields).toContain("stock");
   });
+
+  it("keeps tax at zero when supplied and leaves a blank rate for Settings", () => {
+    const explicit = reviewRowToImport(
+      planImportReview([row({ tax_rate_percent: "0" })], []).rows[0],
+    );
+    const inherited = reviewRowToImport(
+      planImportReview([row({ tax_rate_percent: "" })], []).rows[0],
+    );
+    expect(explicit?.taxRate).toBe(0);
+    expect(inherited?.taxRate).toBeUndefined();
+  });
+
+  it("rejects imported tax percentages outside 0 to 100", () => {
+    const staged = planImportReview([row({ tax_rate_percent: "101" })], []).rows[0];
+    expect(staged.status).toBe("missing_information");
+    expect(staged.missingFields).toContain("taxRate");
+  });
 });
 
 describe("batches", () => {
@@ -189,8 +206,12 @@ describe("batches", () => {
       async (rows) => {
         if (rows.includes(3)) throw new Error("invalid row");
       },
-      (rows) => { saved.push(...rows); },
-      (rows) => { failed.push(...rows); },
+      (rows) => {
+        saved.push(...rows);
+      },
+      (rows) => {
+        failed.push(...rows);
+      },
     );
     expect(saved).toEqual([1, 2, 4]);
     expect(failed).toEqual([3]);
@@ -206,7 +227,9 @@ describe("batches", () => {
         throw Object.assign(new Error("JWT expired"), { status: 401 });
       },
       () => undefined,
-      (rows) => { failed.push(rows); },
+      (rows) => {
+        failed.push(rows);
+      },
     );
     expect(attempts).toEqual([[1, 2, 3, 4]]);
     expect(failed).toEqual([[1, 2, 3, 4]]);
@@ -224,8 +247,12 @@ describe("importFailureReason", () => {
   });
 
   it("classifies authentication, permission, connectivity, and bridge failures as systemic", () => {
-    expect(isSystemicImportFailure(Object.assign(new Error("JWT expired"), { status: 401 }))).toBe(true);
-    expect(isSystemicImportFailure(Object.assign(new Error("permission denied"), { code: "42501" }))).toBe(true);
+    expect(isSystemicImportFailure(Object.assign(new Error("JWT expired"), { status: 401 }))).toBe(
+      true,
+    );
+    expect(
+      isSystemicImportFailure(Object.assign(new Error("permission denied"), { code: "42501" })),
+    ).toBe(true);
     expect(isSystemicImportFailure(new Error("Failed to fetch"))).toBe(true);
     expect(isSystemicImportFailure(new Error("Local transaction storage unavailable"))).toBe(true);
     expect(isSystemicImportFailure(new Error("duplicate key value"))).toBe(false);

@@ -59,7 +59,7 @@ export function setPrintStore(store: Store | null) {
 /** Receipt customizer + tax configuration, pushed in by the app shell. */
 let globalReceiptCfg: ReceiptSettings = defaultReceiptSettings;
 let receiptCfg: ReceiptSettings = defaultReceiptSettings;
-let taxCfg: TaxSettings = { enabled: true, rate: 5, mode: "exclusive" };
+let taxCfg: TaxSettings = { enabled: false, rate: 0, mode: "exclusive" };
 /** Total-rounding rules, so the slip knows whether to show the courtesy line. */
 let roundingCfg: RoundingSettings = roundingOf(undefined);
 
