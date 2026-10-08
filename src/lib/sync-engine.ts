@@ -4,6 +4,7 @@ import { hasRequiredPlatformConfig } from "./platform-config-ready";
 import { hasSignedInIdentity } from "./session-presence";
 import { createSerialChannelReplacer } from "./realtime-channel-replacer";
 
+import { needsIdleCatchup } from "./live-query-tables";
 import { tableSyncAllowed } from "./sync-policy";
 import { canRelay, hasStaffSession, relayOp } from "@/core/api/sync-relay";
 import { preferRelay } from "./pos-auth-route";
@@ -803,23 +804,7 @@ function flushLiveChanges(): void {
     if (["sales", "sale_items", "payment_transactions"].includes(change.table)) {
       announceSalesChange(change.table, change.storeId);
     }
-    if (
-      [
-        "stock_count_drafts", "stock_adjustments", "stock_transfers", "stock_transfer_items", "bookings", "held_orders", "shifts", "shift_sessions", "suppliers", "stores", "product_categories", "uom_units",
-        "products",
-        "product_barcodes",
-        "members",
-        "promotions",
-        "purchase_orders",
-        "purchase_order_items",
-        "app_users",
-        "cashiers",
-        "staff_roles",
-        "user_roles",
-      ].includes(change.table)
-    ) {
-      announceDataChange(change);
-    }
+    announceDataChange(change);
   }
 }
 
@@ -872,13 +857,7 @@ export function startSyncEngine() {
   // Push queued work first, then bring central changes down, then converge the
   // terminal's own database in both directions — one cycle at a time.
   const desktopBridge = localDb();
-  let lastDesktopPullAt: string | null | undefined;
   const applyDesktopStatus = (status: LocalSyncStatus) => {
-    const completedNewPull =
-      lastDesktopPullAt !== undefined &&
-      Boolean(status.lastPullAt) &&
-      status.lastPullAt !== lastDesktopPullAt;
-    lastDesktopPullAt = status.lastPullAt ?? null;
     const batches = status.businessBatches;
     const failedRow = batches?.rows?.find((row) => row.status !== "pending");
     const centralPending =
@@ -897,10 +876,7 @@ export function startSyncEngine() {
       credentialsInvalid: status.credentialsInvalid ?? false,
       cloudConfigured: status.cloudConfigured ?? null,
     });
-    // The Electron worker has now committed its cloud pull into SQL Server.
-    // Re-read cached rules/settings only after that commit, so the running
-    // till cannot keep using the value that preceded the sync cycle.
-    if (completedNewPull) announceSettingsChange("desktop:pull-complete");
+    // Only committed table changes wake readers; an empty pull is not a change.
   };
   const offDesktopBusiness = desktopBridge?.onBusinessChanged?.((event) => {
     const active = activeBranchId();
@@ -920,8 +896,14 @@ export function startSyncEngine() {
     const status = desktopBridge.sync?.getStatus?.() ?? desktopBridge.status();
     void status.then(applyDesktopStatus).catch(() => {});
   }
+  let lastIdleCatchup = Date.now();
   const tick = () => {
-    if (!desktopBridge && document.visibilityState !== "hidden") void runExclusive("timer");
+    if (desktopBridge || document.visibilityState === "hidden") return;
+    // Writes have their own wake-up. An idle client only needs a safety catch-up
+    // for missed socket events, never a full table probe every few seconds.
+    if (!needsIdleCatchup(browserPendingCount(), lastIdleCatchup, Date.now())) return;
+    lastIdleCatchup = Date.now();
+    void runExclusive("timer");
   };
   // Web/Android retain the renderer timer. Electron already has the worker's
   // own interval, so the renderer only wakes it for explicit/live/reconnect

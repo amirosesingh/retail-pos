@@ -688,7 +688,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             ...current.settings,
             receipt: { ...current.settings.receipt, companyName: name },
           } }));
-        });
+        }, true);
         const directory = locationTask ? await locationTask : null;
         if (cancelled) return;
         if (directory?.ok) {
@@ -1289,9 +1289,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
               : loadCloudState().then((cloud) => {
                   setState((current) => applyCloud(current, cloud, pendingSalesRef.current));
                 })
-            : Promise.resolve(localDb()?.sync?.auto?.())
-                .catch(() => undefined)
-                .then(() => loadLocalSales())
+            : loadLocalSales()
                 .then((rows) => {
                   setState((current) =>
                     applySalesSnapshot(current, rows, active, pendingSalesRef.current, true),

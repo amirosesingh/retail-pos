@@ -93,6 +93,7 @@ export function ManagerGateProvider({
 
   const query = useQuery({
     queryKey: ["authorization-rules", storeId ?? ""],
+    meta: { tables: ["authorization_actions", "pos_store_settings"] },
     staleTime: 30_000,
     refetchOnWindowFocus: true,
     queryFn: async () => {

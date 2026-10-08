@@ -1,7 +1,6 @@
 import { readAllPages } from "./paged-read";
 import { localDb } from "@/core/local-db/local-db";
 import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
-import { withDataTask } from "./data-progress";
 /**
  * Group-wide analytics feed. Every figure is aggregated in the database by the
  * reporting views so one page load never pulls every sale line into the till.
@@ -144,7 +143,7 @@ function classify(source: string, sqlFile: string, message: string): BoardIssue 
 }
 
 export function fetchBoard(from: string, to: string): Promise<BoardData> {
-  return withDataTask("Loading sales reports", () => fetchBoardData(from, to));
+  return fetchBoardData(from, to);
 }
 async function fetchBoardData(from: string, to: string): Promise<BoardData> {
   const bridge = localDb();

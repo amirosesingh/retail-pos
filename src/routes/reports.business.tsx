@@ -79,6 +79,7 @@ function BusinessReport() {
   const history = useReportSales(state.sales, reportStoreIds, from, to);
   const arrivals = useQuery({
     queryKey: ["business-report-arrivals", storeId],
+    meta: { tables: ["purchase_orders", "purchase_order_items"] },
     queryFn: () =>
       loadCompleteReceivingHistory(storeId === "all" ? null : storeId, storeId === "all"),
     staleTime: 60_000,

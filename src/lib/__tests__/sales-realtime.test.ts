@@ -20,7 +20,8 @@ describe("sales realtime refresh", () => {
     ]) {
       expect(engine).toContain(`"${table}"`);
     }
-    expect(engine).toContain('announceSettingsChange("desktop:pull-complete")');
+    expect(engine).not.toContain('announceSettingsChange("desktop:pull-complete")');
+    expect(engine).toContain("announceSettingsChange(live.reason, live.storeId, change.table)");
     expect(store).toContain("subscribeSalesChange");
     expect(store).toContain("subscribeSettingsChange");
     expect(store).toContain('"pos_store_settings","settings_scoped","settings_overrides","settings_locks"');

@@ -215,7 +215,9 @@ function recoverLocalDatabase({prepare=true}={}){
   return localDatabaseRecoveryPromise;
 }
 
-const AUTO_SYNC_OK_MS = 5_000;
+// PIN-only tills cannot subscribe to protected cloud tables. Keep a quiet
+// safety pull; local writes and authenticated live events still wake immediately.
+const AUTO_SYNC_OK_MS = 60_000;
 const AUTO_SYNC_RETRY_MS = 60_000;
 const AUTO_VERIFY_MS = 15 * 60_000;
 const SHUTDOWN_SYNC_TIMEOUT_MS = 8_000;

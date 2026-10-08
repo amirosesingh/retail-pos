@@ -100,7 +100,7 @@ function LiveBoard() {
     queryKey: ["analytics-board", from, to],
     queryFn: () => fetchBoard(from, to),
     enabled: allowed,
-    refetchInterval: 60_000,
+    meta: { tables: ["sales", "sale_items", "payment_transactions", "products", "product_categories", "stores"] },
     staleTime: 30_000,
   });
 

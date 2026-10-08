@@ -145,7 +145,8 @@ describe("Electron sales visibility", () => {
 
     expect(store).toContain("const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined, (name) =>");
     expect(store).toContain(".then(() => loadPrimaryState(active ?? undefined))");
-    expect(store).toContain(".then(() => loadLocalSales())");
+    expect(store).toContain(": loadLocalSales()");
+    expect(store).not.toContain(".then(() => loadLocalSales())");
     expect(database).toContain("branch_id: s.storeId");
     expect(sync).toContain("desktopBridge.sync?.auto");
     expect(sync).toContain("desktopBridge?.sync?.subscribe");

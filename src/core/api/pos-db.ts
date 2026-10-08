@@ -1245,7 +1245,8 @@ export async function loadLocationDirectory(): Promise<LocationDirectoryResult> 
  * updates cannot move a row between pages, which avoids the omissions caused
  * by offset windows ordered by mutable updated_at values.
  */
-async function loadCompleteProductCatalogue(client: typeof supabase): Promise<PagedRead<Row>> {
+async function loadCompleteProductCatalogue(client: typeof supabase, showProgress = false): Promise<PagedRead<Row>> {
+  if (!showProgress) return readProductCatalogue(client, () => {});
   const task = beginDataTask("Loading product catalogue");
   try { return await readProductCatalogue(client, task.report); } finally { task.finish(); }
 }
@@ -1301,19 +1302,20 @@ export async function loadCloudState(
   storeId?: string | null,
   locationTask?: Promise<LocationDirectoryResult>,
   onCompanyName?: (name: string) => void,
+  showProgress = false,
 ): Promise<CloudSlice> {
   await hydrateTerminalConfig();
   // A Windows till with no network must not wait for a cloud timeout before
   // loading its durable SQL Server snapshot. Browser and mobile clients have
   // no local bridge, so they continue through the normal online path.
   if (typeof navigator !== "undefined" && !navigator.onLine && localDb())
-    return loadLocalState(new Error("Central database is offline."));
+    return loadLocalState(new Error("Central database is offline."), showProgress);
   // A PIN-only Electron session intentionally has no Supabase Auth JWT. Its
   // durable SQL Server snapshot is the data source; probing protected cloud
   // tables with only the publishable key creates noisy 42501 errors before the
   // normal fallback runs.
   if (localDb() && !hasStaffSession())
-    return loadLocalState(new Error("No direct cloud staff session is active."));
+    return loadLocalState(new Error("No direct cloud staff session is active."), showProgress);
   // Browsers and mobile shells have no local snapshot to fall back to. Do not
   // start a burst of protected table reads from a merely persisted, unverified
   // token while AuthProvider is expiring it.
@@ -1339,7 +1341,7 @@ export async function loadCloudState(
     shifts,
   ] = await Promise.all([
     authenticatedClient.from("membership_tiers").select("id, name").is("deleted_at", null),
-    loadCompleteProductCatalogue(authenticatedClient),
+    loadCompleteProductCatalogue(authenticatedClient, showProgress),
     authenticatedClient
       .from("settings_scoped")
       .select("scope, scope_id, key, value")
@@ -1429,7 +1431,7 @@ export async function loadCloudState(
     // `[]` is a valid authoritative answer and must be allowed through so stale
     // cached branches are removed instead of being restored.
     (!stores.ok ? stores.error : null);
-  if (err) return loadLocalState(err);
+  if (err) return loadLocalState(err, showProgress);
 
   tierIdByName = {};
   tierNameById = {};
@@ -1469,6 +1471,7 @@ export async function loadPrimaryState(
   storeId?: string | null,
   locationTask?: Promise<LocationDirectoryResult>,
   onCompanyName?: (name: string) => void,
+  showProgress = false,
 ): Promise<CloudSlice> {
   const bridge = localDb();
   if (effectiveDatabaseMode() === "local" && bridge?.snapshot) {
@@ -1476,6 +1479,7 @@ export async function loadPrimaryState(
     if (status?.enabled && status.connected && (status.tradingReady ?? status.connected)) {
       return loadLocalState(
         new Error("The connected local SQL Server snapshot could not be read."),
+        showProgress,
       );
     }
     if (status?.enabled && status.tradingReady === false) {
@@ -1486,14 +1490,14 @@ export async function loadPrimaryState(
       // machine; treating EBRANCH as a fatal local-database error deadlocks
       // that recovery screen. RLS remains the authority for this cloud read.
       if (!terminal?.locationId && hasStaffSession()) {
-        return loadCloudState(storeId, locationTask, onCompanyName);
+        return loadCloudState(storeId, locationTask, onCompanyName, showProgress);
       }
       throw new Error(
         "Local SQL Server is enabled but not ready for trading. Open Database & Cloud Connection, restore the connection, and apply the current local database update if requested.",
       );
     }
   }
-  return loadCloudState(storeId, locationTask, onCompanyName);
+  return loadCloudState(storeId, locationTask, onCompanyName, showProgress);
 }
 
 /** Refresh a settings notification without downloading the whole POS state. */
@@ -1572,13 +1576,13 @@ export async function loadCloudPromotion(id: string): Promise<Promotion | null> 
   return rows[0] ? rowToPromotion(rows[0] as Row) : null;
 }
 
-async function loadLocalState(cause: unknown): Promise<CloudSlice> {
+async function loadLocalState(cause: unknown, showProgress = false): Promise<CloudSlice> {
   const bridge = localDb();
   if (!bridge) throw cause;
-  const task = beginDataTask("Loading terminal database");
-  const off = bridge.onReadProgress?.(({ completed }) => task.report(completed));
+  const task = showProgress ? beginDataTask("Loading terminal database") : null;
+  const off = task ? bridge.onReadProgress?.(({ completed }) => task.report(completed)) : undefined;
   let result: Awaited<ReturnType<typeof bridge.snapshot>>;
-  try { result = await bridge.snapshot(); } finally { off?.(); task.finish(); }
+  try { result = await bridge.snapshot(); } finally { off?.(); task?.finish(); }
   if (!result.ok) {
     throw new Error(
       result.error ??
