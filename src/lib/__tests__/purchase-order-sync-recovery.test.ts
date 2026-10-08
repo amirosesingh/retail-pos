@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("@/core/api/pos-relay.server", () => ({
   hasServiceKey: () => true,
@@ -14,6 +16,32 @@ vi.mock("@/core/api/relay-policy.server", () => ({
 }));
 
 describe("purchase order sync recovery", () => {
+  it("renders SQL Server invoice dates after Electron IPC without crashing", async () => {
+    const { toRendererRow } = await import("../../../electron/sync/row-codec.cjs");
+    const raw = {
+      invoice_date: new Date("2026-10-08T00:00:00Z"),
+      invoice_entry_date: new Date("2026-10-08T12:34:56Z"),
+    };
+    expect(() => renderToStaticMarkup(createElement("span", null, raw.invoice_date as never)))
+      .toThrow("Objects are not valid as a React child");
+    const row = toRendererRow({ columns: [
+      { cloudColumn: "invoice_date", sqlServerColumn: "invoice_date", cloudType: "date" },
+      { cloudColumn: "invoice_entry_date", sqlServerColumn: "invoice_entry_date", cloudType: "timestamp with time zone" },
+    ] }, raw);
+    expect(row).toEqual({ invoice_date: "2026-10-08", invoice_entry_date: "2026-10-08T12:34:56.000Z" });
+    expect(renderToStaticMarkup(createElement("span", null, row.invoice_date)))
+      .toBe("<span>2026-10-08</span>");
+    expect(raw.invoice_date).toBeInstanceOf(Date);
+  });
+
+  it("keeps cloud date strings and null dates unchanged", async () => {
+    const { toRendererRow } = await import("../../../electron/sync/row-codec.cjs");
+    const row = { invoice_date: "2026-10-08", invoice_entry_date: null };
+    expect(toRendererRow({ columns: Object.keys(row).map((name) => ({
+      cloudColumn: name, sqlServerColumn: name, cloudType: "date",
+    })) }, row)).toEqual(row);
+  });
+
   it("normalizes SQL Server UUIDs without changing text identifiers", async () => {
     const { toCloudRow } = await import("../../../electron/sync/row-codec.cjs");
     const id = "A611A328-2217-4D77-944A-5F6A637D123B";

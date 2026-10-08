@@ -35,6 +35,17 @@ function toCloudRow(table, row) {
 function toRendererRow(table, row) {
   const result = { ...row };
   for (const column of table.columns) {
+    const valueName = Object.hasOwn(result, column.cloudColumn)
+      ? column.cloudColumn : column.sqlServerColumn;
+    // SQL drivers return native Dates; Electron IPC preserves them. Match
+    // PostgREST's string contract before a screen renders a date as text.
+    if (result[valueName] instanceof Date) {
+      const value = result[valueName];
+      const iso = Number.isNaN(value.valueOf()) ? null : value.toISOString();
+      result[column.cloudColumn] = iso && column.cloudType === "date"
+        ? iso.slice(0, 10) : iso;
+      if (column.cloudColumn !== valueName) delete result[valueName];
+    }
     if (!structured(column)) continue;
     const name = Object.hasOwn(result, column.cloudColumn)
       ? column.cloudColumn : column.sqlServerColumn;
