@@ -23,7 +23,11 @@ The selected beta project has an active location, RLS and authenticated staff-on
 
 ## Deployment dependency and limits
 
-`20261008133703_complete_settings_preferences_and_warehouse_dispatch.sql` is prepared but **not applied**. Automatic approval review rejected applying the persistent permissions and shift/warehouse migration without approval for this exact change. Do not release or merge the dependent application change before migration approval and successful deployment verification.
+`20261008133703_complete_settings_preferences_and_warehouse_dispatch.sql` was applied to beta after the user explicitly approved the exact migration. Live rollback tests confirmed global notification merges, unauthenticated access denial, totals across 1,000 bills, cash fallback for empty payment arrays and a single outbound delivery claim.
+
+A live warehouse test exposed a pre-existing lifecycle trigger error: text `dispatched_at`/`closed_at` values were coalesced with `now()` as timestamptz. Follow-up migration `20261008152237_fix_transfer_lifecycle_timestamp_types.sql` corrects those two defaults while preserving the existing trigger body and permissions. It was applied successfully. Live rollback tests then confirmed primary-before-secondary picking, inactive shelf exclusion and shortage rollback of stock, transfer state and activity logs. All fixtures were rolled back.
+
+Post-migration advisors no longer report mutable voucher-helper search paths. Existing authenticated SECURITY DEFINER API notices and disabled leaked-password protection remain; they are not resolved by this release.
 
 The release is not certified against installed Windows/Android devices, concurrent production SQL workloads or a 100,000-product production dataset. Tests of 10,000-bill aggregate inputs do not establish end-to-end performance at that scale. Personal language changes locale, formatting and document language; a complete translated UI catalog is outside this patch. Native system push delivery is not implemented by the existing push configuration flag. PIN-only terminals recover personal cloud preferences on focus/reconnection; instant cross-device preference delivery is not certified. Existing general-event and shift-summary WhatsApp rules are separate channels; administrators should avoid overlapping delivery rules.
 

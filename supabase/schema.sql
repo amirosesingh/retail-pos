@@ -4043,7 +4043,7 @@ BEGIN
   IF NEW.closed_at IS NOT NULL THEN
     NEW.status := 'CLOSED';
   ELSIF NEW.status = 'CLOSED' THEN
-    NEW.closed_at := COALESCE(NEW.closed_at, now());
+    NEW.closed_at := COALESCE(NEW.closed_at, now()::text);
   ELSE
     NEW.status := 'OPEN';
   END IF;
@@ -11563,8 +11563,8 @@ BEGIN
   END IF;
 
   IF NEW.status = 'dispatched' THEN
-    NEW.dispatched_at := COALESCE(NEW.dispatched_at, now());
-    NEW.closed_at := COALESCE(NEW.closed_at, now());
+    NEW.dispatched_at := COALESCE(NEW.dispatched_at, now()::text);
+    NEW.closed_at := COALESCE(NEW.closed_at, now()::text);
     NEW.fulfilment := (
       SELECT CASE
         WHEN COALESCE(SUM(COALESCE(i.quantity_dispatched, 0)), 0) = 0 THEN 'none'
@@ -12986,8 +12986,8 @@ BEGIN
       RAISE EXCEPTION 'This transfer crosses groups and has no valid approval'
         USING ERRCODE = 'insufficient_privilege';
     END IF;
-    NEW.dispatched_at := COALESCE(NEW.dispatched_at, now());
-    NEW.closed_at := COALESCE(NEW.closed_at, now());
+    NEW.dispatched_at := COALESCE(NEW.dispatched_at, now()::text);
+    NEW.closed_at := COALESCE(NEW.closed_at, now()::text);
     NEW.fulfilment := (
       SELECT CASE
         WHEN COALESCE(SUM(COALESCE(i.quantity_dispatched, 0)), 0) = 0 THEN 'none'
