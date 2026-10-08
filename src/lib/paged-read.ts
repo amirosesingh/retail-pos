@@ -47,7 +47,11 @@ export type PagedRead<T> = {
  */
 async function readPages<T>(
   build: (from: number, to: number, withCount: boolean) => PromiseLike<PageResult<T>>,
-  opts: { pageSize?: number; maxRows?: number; onProgress?: (completed: number, total: number | null) => void } = {},
+  opts: {
+    pageSize?: number;
+    maxRows?: number;
+    onProgress?: (completed: number, total: number | null) => void;
+  } = {},
 ): Promise<PagedRead<T>> {
   const size = Math.max(1, opts.pageSize ?? PAGE);
   const ceiling = Math.max(size, opts.maxRows ?? MAX_ROWS);
@@ -95,9 +99,14 @@ async function readPages<T>(
 
 export async function readAllPages<T>(
   build: (from: number, to: number, withCount: boolean) => PromiseLike<PageResult<T>>,
-  opts: { pageSize?: number; maxRows?: number } = {},
+  opts: { pageSize?: number; maxRows?: number; showProgress?: boolean } = {},
 ): Promise<PagedRead<T>> {
+  // Routine reads and live refreshes never take over the foreground UI.
+  if (!opts.showProgress) return readPages(build, opts);
   const task = beginDataTask("Loading database records");
-  try { return await readPages(build, { ...opts, onProgress: task.report }); }
-  finally { task.finish(); }
+  try {
+    return await readPages(build, { ...opts, onProgress: task.report });
+  } finally {
+    task.finish();
+  }
 }

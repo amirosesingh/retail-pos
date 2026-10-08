@@ -172,7 +172,7 @@ describe("cashier location bootstrap", () => {
       "const terminal = readTerminalConfig() ?? (await hydrateTerminalConfig())",
     );
     expect(db).toContain("if (!terminal?.locationId && hasStaffSession())");
-    expect(db).toContain("return loadCloudState(storeId, locationTask, onCompanyName)");
+    expect(db).toContain("return loadCloudState(storeId, locationTask, onCompanyName, showProgress)");
   });
 
   it("does not accept an anonymous empty store response ahead of a proven relay", () => {

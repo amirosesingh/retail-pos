@@ -1,4 +1,3 @@
-import { withDataTask } from "@/lib/data-progress";
 /**
  * Routed table reads.
  *
@@ -134,7 +133,7 @@ async function runQuery(
       const ascending = options.orderBy.ascending ?? true;
       q = q.order(options.orderBy.column, { ascending });
       for (const column of CLOUD_PRIMARY_ORDER[table] ?? ["id"])
-        if (column !== options.orderBy.column) q = q.order(column, {ascending});
+        if (column !== options.orderBy.column) q = q.order(column, { ascending });
     }
     // Most business tables use `id`; configuration and telemetry tables use
     // natural/composite keys. Apply every primary-key component so offset
@@ -179,7 +178,7 @@ export function routedQueryWithSource(
   const key = readKey(table, options);
   const existing = inFlight.get(key);
   if (existing) return existing;
-  const run = withDataTask(`Loading ${table.replaceAll("_", " ")}`, () => runQuery(table, options)).finally(() => {
+  const run = runQuery(table, options).finally(() => {
     inFlight.delete(key);
   });
   inFlight.set(key, run);

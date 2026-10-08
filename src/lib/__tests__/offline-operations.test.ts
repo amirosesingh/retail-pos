@@ -20,7 +20,7 @@ describe("offline terminal operations", () => {
     expect(recovery).toContain("api?.subscribe(applyState)");
     expect(recovery).toContain("if (next.tradingReady)");
     expect(main).toContain("scheduleAutomaticSync(5_000)");
-    expect(main).toContain("AUTO_SYNC_OK_MS = 5_000");
+    expect(main).toContain("AUTO_SYNC_OK_MS = 60_000");
     expect(main).toContain("scheduleAutomaticSync(250)");
     expect(main).toContain('result.code === "ECHANGEGAP"');
     expect(main).toContain("prepareLocalData({ force: true })");

@@ -1,3 +1,4 @@
+import { queryReadsChangedTables } from "@/lib/live-query-tables";
 import { notifyError } from "@/lib/notify";
 import { subscribeDataChange } from "@/lib/sync-engine";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -299,11 +300,14 @@ function RootComponent() {
   // Coalesce a committed sync page into one active-query refresh.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const off = subscribeDataChange(() => {
+    const tables = new Set<string>();
+    const off = subscribeDataChange((change) => {
+      tables.add(change.table);
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = undefined;
-        void queryClient.invalidateQueries({refetchType:"active"}).catch(cause => notifyError(cause, "Refreshing live data"));
+        const changed = new Set(tables); tables.clear();
+        void queryClient.invalidateQueries({refetchType:"active", predicate: query => queryReadsChangedTables(query.meta, changed)}).catch(cause => notifyError(cause, "Refreshing live data"));
       }, 400);
     });
     return () => { off(); if (timer) clearTimeout(timer); };

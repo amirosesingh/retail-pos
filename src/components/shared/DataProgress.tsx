@@ -13,7 +13,7 @@ export function DataProgress() {
     <div
       role="status"
       aria-live="polite"
-      className="shrink-0 border-b bg-muted/50 px-4 py-2 text-xs"
+      className="pointer-events-none fixed left-1/2 top-2 z-50 w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 rounded-md border bg-background/95 px-4 py-2 text-xs shadow-sm"
     >
       <div className="flex justify-between gap-3">
         <span>
