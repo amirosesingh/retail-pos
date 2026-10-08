@@ -2,7 +2,7 @@
   Retail POS local Microsoft SQL Server schema
   Generated from the migrations loaded by the POS application.
 
-  Application version: 1.4.32
+  Application version: 1.4.33
   Target database: POS_Local
 
   Run this file while connected to the local Microsoft SQL Server instance.
@@ -11521,6 +11521,59 @@ BEGIN
 END;
 
 GO
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+-- Older local installers created products.row_version with DEFAULT (0), while
+-- the synchronized cloud contract starts every row at version 1. Replace only
+-- the default constraint: existing product values and business data are not
+-- rewritten.
+IF OBJECT_ID(N'dbo.products', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.products', N'row_version') IS NOT NULL
+BEGIN
+  DECLARE @products_row_version_default sysname;
+  DECLARE @products_row_version_definition nvarchar(max);
+
+  SELECT
+    @products_row_version_default = dc.name,
+    @products_row_version_definition = dc.definition
+  FROM sys.default_constraints dc
+  JOIN sys.columns c
+    ON c.object_id = dc.parent_object_id
+   AND c.column_id = dc.parent_column_id
+  WHERE dc.parent_object_id = OBJECT_ID(N'dbo.products')
+    AND c.name = N'row_version';
+
+  IF @products_row_version_default IS NOT NULL
+     AND LOWER(
+       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+         @products_row_version_definition,
+         N'(', N''), N')', N''), N' ', N''), NCHAR(9), N''), NCHAR(10), N''), NCHAR(13), N'')
+     ) <> N'1'
+  BEGIN
+    DECLARE @drop_products_row_version_default nvarchar(max) =
+      N'ALTER TABLE dbo.products DROP CONSTRAINT ' + QUOTENAME(@products_row_version_default) + N';';
+    EXEC sys.sp_executesql @drop_products_row_version_default;
+  END;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM sys.default_constraints dc
+    JOIN sys.columns c
+      ON c.object_id = dc.parent_object_id
+     AND c.column_id = dc.parent_column_id
+    WHERE dc.parent_object_id = OBJECT_ID(N'dbo.products')
+      AND c.name = N'row_version'
+  )
+    ALTER TABLE dbo.products
+      ADD CONSTRAINT DF_products_row_version DEFAULT (1) FOR row_version;
+END;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12)
+  INSERT INTO dbo.pos_schema_migrations(version, name, applied_at)
+  VALUES (12, N'012_repair_products_row_version_default', SYSDATETIMEOFFSET());
+
+GO
 
 DECLARE @RequiredTables TABLE ([name] sysname NOT NULL PRIMARY KEY);
 INSERT INTO @RequiredTables ([name]) VALUES
@@ -11605,7 +11658,7 @@ DECLARE @Missing int = @Required - @Present;
 
 SELECT
   DB_NAME() AS database_name,
-  N'1.4.32' AS application_version,
+  N'1.4.33' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -12841,12 +12894,12 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
   THROW 51002, 'Retail POS local database migration history table is missing.', 1;
 
-EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11)
+EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12)
   THROW 51002, ''Retail POS local database migration history is incomplete.'', 1;');
 
 EXEC(N'SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;');
 
-PRINT N'Retail POS 1.4.32: POS_Local installation and validation completed successfully.';
+PRINT N'Retail POS 1.4.33: POS_Local installation and validation completed successfully.';
 GO

@@ -11,7 +11,10 @@ import { LocalDatabaseWizard } from "@/platforms/windows/components/LocalDatabas
 import { checkHealth, cloudDiagnosis } from "@/core/activation/connection-health";
 
 type DatabaseState = {
+  enabled?: boolean;
+  configured?: boolean;
   connected?: boolean;
+  tradingReady?: boolean;
   state?: string;
   detail?: { error?: string; hint?: string; status?: string } | null;
 };
@@ -19,6 +22,7 @@ type DatabaseState = {
 type StartupDatabaseApi = {
   getState(): Promise<DatabaseState>;
   retryStartup(): Promise<DatabaseState>;
+  subscribe(cb: (state: DatabaseState) => void): () => void;
 };
 
 const database = () =>
@@ -38,18 +42,35 @@ function DatabaseStartupPage() {
     () => window.sessionStorage.getItem(LOCAL_DATABASE_SETTINGS_REQUEST) === "1",
   );
   const migrationRequired = state.detail?.status === "migration_required";
+  const applyingMigration = state.detail?.status === "applying_migration";
+  const restoring = state.state === "enabled_connecting" || state.state === "enabled_validating";
 
   useEffect(() => {
     window.sessionStorage.removeItem(LOCAL_DATABASE_SETTINGS_REQUEST);
-    void database()?.getState().then(setState);
+    let live = true;
+    const api = database();
+    const applyState = (next: DatabaseState) => {
+      if (!live) return;
+      setState(next);
+      if (next.tradingReady) {
+        window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
+        void navigate({ to: "/" });
+      }
+    };
+    const unsubscribe = api?.subscribe(applyState);
+    void api?.getState().then(applyState).catch((cause) => {
+      if (live) setError(cause instanceof Error ? cause.message : String(cause));
+    });
     const update = () => setOnline(navigator.onLine);
     window.addEventListener("online", update);
     window.addEventListener("offline", update);
     return () => {
+      live = false;
+      unsubscribe?.();
       window.removeEventListener("online", update);
       window.removeEventListener("offline", update);
     };
-  }, []);
+  }, [navigate]);
 
   const retry = async () => {
     setBusy(true);
@@ -57,7 +78,7 @@ function DatabaseStartupPage() {
     try {
       const next = await database()!.retryStartup();
       setState(next);
-      if (next.connected) {
+      if (next.tradingReady) {
         window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
         await navigate({ to: "/" });
       } else {
@@ -114,12 +135,22 @@ function DatabaseStartupPage() {
           </div>
           <div>
             <h1 className="text-xl font-semibold">
-              {migrationRequired ? "Local database update required" : "Local database is unavailable"}
+              {applyingMigration
+                ? "Updating local database"
+                : restoring
+                  ? "Preparing local database"
+                  : migrationRequired
+                    ? "Local database update required"
+                    : "Local database is unavailable"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {migrationRequired
-                ? "SQL Server is connected, but its POS schema must be updated before local trading resumes."
-                : "Retail tried the saved Microsoft SQL Server connection before opening the terminal."}
+              {applyingMigration
+                ? "Retail is applying the current local database update. Keep this window open; it will continue automatically when the update finishes."
+                : restoring
+                  ? "Retail is checking the saved Microsoft SQL Server connection. This screen remains available while startup completes."
+                  : migrationRequired
+                    ? "SQL Server is connected, but its POS schema must be updated before local trading resumes."
+                    : "Retail tried the saved Microsoft SQL Server connection before opening the terminal."}
             </p>
           </div>
         </div>
@@ -132,13 +163,14 @@ function DatabaseStartupPage() {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <Button disabled={busy} onClick={() => void retry()}>
-            <RefreshCw className={busy ? "size-4 animate-spin" : "size-4"} /> Retry local database
+          <Button disabled={busy || restoring} onClick={() => void retry()}>
+            <RefreshCw className={busy || restoring ? "size-4 animate-spin" : "size-4"} />
+            {restoring ? "Database check in progress" : "Retry local database"}
           </Button>
-          <Button variant="secondary" disabled={busy || !online} onClick={() => void continueOnline()}>
+          <Button variant="secondary" disabled={busy || restoring || !online} onClick={() => void continueOnline()}>
             <Cloud className="size-4" /> Continue with online terminal
           </Button>
-          <Button className="sm:col-span-2" variant="outline" disabled={busy} onClick={() => void openSettings()}>
+          <Button className="sm:col-span-2" variant="outline" disabled={busy || restoring} onClick={() => void openSettings()}>
             <Settings className="size-4" /> Open local SQL database settings
           </Button>
         </div>

@@ -7,13 +7,18 @@ const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = requi
 const bcrypt = require("bcryptjs");
 
 describe("offline terminal operations", () => {
-  it("connects a configured local database before loading the terminal route", () => {
+  it("shows database startup before waiting for a configured local database", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
-    expect(main.indexOf("await databaseService.restore()")).toBeLessThan(
-      main.indexOf("createWindows(initialRoute)"),
+    const startup = main.slice(main.indexOf("app.whenReady().then"));
+    expect(startup.indexOf("createWindows(initialRoute)")).toBeLessThan(
+      startup.indexOf("await databaseService.restore()"),
     );
-    expect(main).toMatch(/!restoredDatabase\.tradingReady\s*\? "\/database-startup"/);
+    expect(startup).toContain('initialDatabase.enabled && initialDatabase.configured');
+    expect(startup).toContain('const initialRoute = initialDatabase.enabled && initialDatabase.configured');
     expect(main).toContain('function createWindows(initialRoute = "/")');
+    const recovery = readFileSync("src/routes/database-startup.tsx", "utf8");
+    expect(recovery).toContain("api?.subscribe(applyState)");
+    expect(recovery).toContain("if (next.tradingReady)");
     expect(main).toContain("scheduleAutomaticSync(5_000)");
     expect(main).toContain("AUTO_SYNC_OK_MS = 15_000");
     expect(main).toContain("scheduleAutomaticSync(250)");
@@ -157,12 +162,16 @@ describe("offline terminal operations", () => {
     expect(main).toContain("automaticSyncQueued = true");
     expect(main).toContain("automaticSyncQueued ? 250");
     expect(main).toContain("SHUTDOWN_SYNC_TIMEOUT_MS = 8_000");
+    expect(main).toContain("SHUTDOWN_RESOURCE_TIMEOUT_MS = 12_000");
+    expect(main).toContain("function settleWithin(");
     expect(main).toContain("async function flushSyncBeforeShutdown()");
     expect(main).toContain("event.preventDefault()");
     const shutdown = main.slice(main.indexOf('app.on("before-quit"'));
     expect(shutdown.indexOf("flushSyncBeforeShutdown()")).toBeLessThan(
-      shutdown.indexOf("await databaseManager.close()"),
+      shutdown.indexOf("settleWithin(() => databaseManager.close())"),
     );
+    expect(shutdown).toContain("settleWithin(() => stopAppServer())");
+    expect(shutdown).toContain("app.exit(0)");
     expect(shutdown).toContain("pending SQL changes remain durable for next launch");
   });
 
@@ -194,6 +203,8 @@ describe("offline terminal operations", () => {
     expect(main).toContain("terminalId:terminal.tokenId??terminal.terminalId??null");
     expect(main).toContain('branchStampedTables=new Set(["audit_logs","shift_sessions","activity_events"');
     expect(main).toContain('verifiedBranchTables=new Set(["audit_logs","shift_sessions"]');
+    expect(main).toContain('aggregateKind==="receiving"&&operation.table==="purchase_orders"');
+    expect(main).toContain("receivingFields.reduce");
     expect(main).toContain('!String(row?.store_id??"").trim()');
     expect(main).toContain("adminSession.branchId()");
     expect(main).toContain('code:"SYNC_BRANCH_FORBIDDEN"');

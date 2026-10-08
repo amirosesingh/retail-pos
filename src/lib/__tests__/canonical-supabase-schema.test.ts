@@ -147,6 +147,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261008123000_align_location_management_permissions.sql",
       "supabase/migrations/20261008124500_harden_terminal_management.sql",
       "supabase/migrations/20261008133000_align_scoped_settings_permissions.sql",
+      "supabase/migrations/20261008143000_canonicalize_terminal_branch_ids.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -188,6 +189,24 @@ describe("canonical Supabase SQL", () => {
       expect(memberApply).not.toContain("membership_revision");
       expect(memberApply).not.toContain("verified_channel");
     }
+  });
+
+  it("canonicalizes SQL-equivalent terminal branch ids without accepting foreign branches", () => {
+    const migration = read(
+      "supabase/migrations/20261008143000_canonicalize_terminal_branch_ids.sql",
+    );
+    expect(migration).toContain("lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id))");
+    expect(migration).toContain("lower(btrim(r->>'branch_id'))=lower(btrim(p_branch_id))");
+    expect(migration).toContain(
+      "r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id",
+    );
+    expect(migration).toContain("WHEN 'purchase_orders' THEN SELECT COALESCE(jsonb_agg");
+    expect(migration).toContain("WHEN 'sales' THEN SELECT COALESCE(jsonb_agg");
+    expect(migration).toContain("WHEN 'shifts' THEN SELECT COALESCE(jsonb_agg");
+    expect(migration).toContain("WHEN 'stock_transfer_items' THEN IF EXISTS");
+    expect(migration).toContain("NOT EXISTS(SELECT 1 FROM public.\"stock_transfers\"");
+    expect(migration).toContain("r->>'key' LIKE 'pos_field:%'");
+    expect(migration).toContain("auth.role()='service_role'");
   });
 
   it("installs the membership directory gateway in migrations and the fresh-project installer", () => {

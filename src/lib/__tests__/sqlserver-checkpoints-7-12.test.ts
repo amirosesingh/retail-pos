@@ -9,7 +9,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
       "utf8",
     );
     const guard = "r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id";
-    expect(schema).toContain("WHEN 'sale_items' THEN IF EXISTS");
+    expect(schema).toContain("WHEN 'sale_items' THEN SELECT COALESCE(jsonb_agg");
     expect(schema).toContain(guard);
     expect(migration).toContain(guard);
     expect(migration).toContain("unexpected sale_items guard; migration stopped safely");
@@ -27,18 +27,18 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(migration).toContain("unexpected sale_items guard; migration stopped safely");
   });
 
-  it("stamps only missing legacy audit branches before enforcing isolation", () => {
+  it("canonicalizes missing or SQL-equivalent audit branches before enforcing isolation", () => {
     const schema = readFileSync("supabase/schema.sql", "utf8");
     const migration = readFileSync(
       "supabase/migrations/20260927085816_normalize_legacy_audit_log_branch.sql",
       "utf8",
     );
-    const stamp = "NULLIF(btrim(r->>'store_id'),'') IS NULL THEN r||jsonb_build_object('store_id',p_branch_id)";
-    const reject = "WHERE r->>'store_id'<>p_branch_id";
+    const stamp = "NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id)";
+    const reject = "WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id";
     expect(schema).toContain(stamp);
     expect(schema).toContain(reject);
-    expect(migration).toContain(stamp);
-    expect(migration).toContain(reject);
+    expect(migration).toContain("NULLIF(btrim(r->>'store_id'),'') IS NULL THEN r||jsonb_build_object('store_id',p_branch_id)");
+    expect(migration).toContain("WHERE r->>'store_id'<>p_branch_id");
     expect(migration).toContain("unexpected audit_logs guard; migration stopped safely");
   });
 
