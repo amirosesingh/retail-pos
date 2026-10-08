@@ -13572,11 +13572,10 @@ $$;
 CREATE OR REPLACE FUNCTION public.settings_scope_manageable(p_scope text, p_scope_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
   SELECT CASE lower(COALESCE(p_scope,''))
-    WHEN 'global' THEN EXISTS (
-      SELECT 1 FROM public.app_users u WHERE u.auth_user_id=auth.uid() AND u.is_active=true AND u.role='admin'
-    )
+    WHEN 'global' THEN public.has_perm('can_access_pos_settings')
     WHEN 'private' THEN p_scope_id=public.settings_private_key()
-    ELSE public.is_supervisor_now() AND public.settings_scope_visible(p_scope,p_scope_id)
+    ELSE public.has_perm('can_access_pos_settings')
+         AND public.settings_scope_visible(p_scope,p_scope_id)
   END
 $$;
 
@@ -13597,6 +13596,23 @@ CREATE POLICY settings_overrides_read ON public.settings_overrides FOR SELECT TO
 CREATE POLICY settings_overrides_write ON public.settings_overrides FOR ALL TO authenticated
   USING (public.settings_scope_manageable(scope,scope_id))
   WITH CHECK (public.settings_scope_manageable(scope,scope_id));
+
+-- Settings writes follow the same granular permission as the application.
+-- Reading remains available to active staff so every till can resolve the
+-- effective business configuration.
+DROP POLICY IF EXISTS "Staff can insert" ON public.pos_settings;
+DROP POLICY IF EXISTS "Staff can update" ON public.pos_settings;
+DROP POLICY IF EXISTS "Staff can delete" ON public.pos_settings;
+CREATE POLICY "Settings managers can insert" ON public.pos_settings
+  FOR INSERT TO authenticated
+  WITH CHECK ((SELECT public.has_perm('can_access_pos_settings')));
+CREATE POLICY "Settings managers can update" ON public.pos_settings
+  FOR UPDATE TO authenticated
+  USING ((SELECT public.has_perm('can_access_pos_settings')))
+  WITH CHECK ((SELECT public.has_perm('can_access_pos_settings')));
+CREATE POLICY "Settings managers can delete" ON public.pos_settings
+  FOR DELETE TO authenticated
+  USING ((SELECT public.has_perm('can_access_pos_settings')));
 
 DROP POLICY IF EXISTS settings_scoped_read ON public.settings_scoped;
 DROP POLICY IF EXISTS "Staff read scoped settings" ON public.settings_scoped;

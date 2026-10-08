@@ -129,7 +129,13 @@ export function SettingsFrame({
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState("");
-  const dirty = JSON.stringify(state.settings) !== snapshot;
+  const settingsJson = JSON.stringify(state.settings);
+  const settingsJsonRef = useRef(settingsJson);
+  settingsJsonRef.current = settingsJson;
+  // A remote refresh in this same scope is a new clean baseline. A local edit
+  // must retain the old baseline so Discard can still restore what was loaded.
+  const localSettingsEdit = useRef(false);
+  const dirty = settingsJson !== snapshot;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
 
@@ -149,9 +155,16 @@ export function SettingsFrame({
   useEffect(() => {
     if (previousScopeSignature.current === scopeSignature) return;
     previousScopeSignature.current = scopeSignature;
-    setSnapshot(JSON.stringify(state.settings));
+    localSettingsEdit.current = false;
+    setSnapshot(settingsJson);
     setSaveError("");
-  }, [scopeSignature, state.settings]);
+  }, [scopeSignature, settingsJson]);
+
+  useEffect(() => {
+    if (localSettingsEdit.current) return;
+    setSnapshot(settingsJson);
+    setSaveError("");
+  }, [settingsJson]);
 
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
@@ -174,7 +187,8 @@ export function SettingsFrame({
     setSaveError("");
     try {
       await saveConfiguredSettings();
-      setSnapshot(JSON.stringify(state.settings));
+      localSettingsEdit.current = false;
+      setSnapshot(settingsJsonRef.current);
       setSavedAt(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
       toast.success("Settings saved");
     } catch (e) {
@@ -187,6 +201,7 @@ export function SettingsFrame({
   };
 
   const discard = () => {
+    localSettingsEdit.current = false;
     updateSettings(JSON.parse(snapshot));
     setSaveError("");
     toast.info("Changes discarded");
@@ -217,21 +232,26 @@ export function SettingsFrame({
       terms: typeof receipt.bookingSlip?.terms === "string" ? receipt.bookingSlip.terms : "" },
   }), [receipt]);
 
+  const editSettings: typeof updateSettings = (patch) => {
+    localSettingsEdit.current = true;
+    updateSettings(patch);
+  };
+
   const setField = <K extends keyof ReceiptOverride>(key: K, value: ReceiptOverride[K]) => {
-    updateSettings({ receipt: { ...receipt, [key]: value } as ReceiptSettings });
+    editSettings({ receipt: { ...receipt, [key]: value } as ReceiptSettings });
   };
 
   const setGlobal = (patch: Partial<ReceiptSettings>) =>
-    updateSettings({ receipt: { ...receipt, ...patch } });
+    editSettings({ receipt: { ...receipt, ...patch } });
 
   const setFont = (scope: keyof ReceiptSettings["fonts"], patch: Partial<FontStyleSettings>) =>
     setGlobal({ fonts: { ...receipt.fonts, [scope]: { ...receipt.fonts[scope], ...patch } } });
 
   const setWhatsApp = (patch: Partial<typeof whatsapp>) =>
-    updateSettings({ whatsapp: { ...whatsapp, ...patch } });
+    editSettings({ whatsapp: { ...whatsapp, ...patch } });
 
   const setPaymentQr = (patch: Partial<typeof paymentQr>) =>
-    updateSettings({ payment: { ...payment, paymentQr: { ...paymentQr, ...patch } } });
+    editSettings({ payment: { ...payment, paymentQr: { ...paymentQr, ...patch } } });
 
   const sample: Sale = useMemo(() => {
     const lines = [
@@ -316,7 +336,7 @@ export function SettingsFrame({
     tax,
     payment,
     whatsapp,
-    updateSettings,
+    updateSettings: editSettings,
     setField,
     setGlobal,
     setFont,
