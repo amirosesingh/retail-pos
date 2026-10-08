@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { usePos } from "@/lib/pos-store";
+import { usePersonalAppearance } from "@/lib/personal-appearance";
+import type { PersonalAppearance } from "@/lib/personal-appearance-schema";
 import { PresetNumber } from "@/components/ui/preset-number";
 import type { DisplayProfile } from "@/lib/display-profile";
 import { Check, Monitor, MonitorCog, Moon, Sun } from "lucide-react";
@@ -50,24 +51,12 @@ export function DisplayScalingSettings({ bare = false }: { bare?: boolean }) {
     palette,
   } = useTheme();
   const accent = useAccent();
-  const { state, updateSettings } = usePos();
-  const saveProfile = (patch: Partial<DisplayProfile>) =>
-    updateSettings({
-      // Submit only the setting that changed. Copying the complete integrations
-      // record made a display click rewrite and audit unrelated configuration,
-      // and allowed the controlled input to be synchronously re-entered while
-      // its original event was still dispatching.
-      integrations: {
-        displayProfile: {
-          ...state.settings.integrations.displayProfile,
-          scale: prefs,
-          theme,
-          palette,
-          accent,
-          ...patch,
-        },
-      } as typeof state.settings.integrations,
-    });
+  const { profile, update, editable, pending } = usePersonalAppearance();
+  const saveProfile = (patch: Partial<DisplayProfile>) => update({
+    ...profile, ...patch,
+    palette: patch.palette ?? profile.palette,
+    accent: patch.accent === undefined ? profile.accent : patch.accent,
+  });
   const setTheme = (value: ThemeChoice) => {
     if (value === theme) return;
     saveProfile({ theme: value });
@@ -97,21 +86,32 @@ export function DisplayScalingSettings({ bare = false }: { bare?: boolean }) {
   const registerZoom = prefs.registerZoom;
 
   return (
-    <section className={bare ? "" : "rounded-lg border border-border bg-card p-5"}>
+    <fieldset disabled={!editable} className={bare ? "" : "rounded-lg border border-border bg-card p-5"}>
       {!bare && (
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <MonitorCog className="size-4 text-primary" /> Display &amp; text size
         </h2>
       )}
       <p className="mt-1 text-xs text-muted-foreground">
-        Applies to the selected settings scope. Buttons never drop below a touch-safe size.
+        Saved only for your user account. Buttons never drop below a touch-safe size.
       </p>
 
+      <p className="mt-2 text-xs text-muted-foreground" role="status">
+        {!editable ? "Your administrator has disabled appearance changes." : pending ? "Saved on this device; central synchronization pending." : "Appearance preferences are up to date."}
+      </p>
+      <div className="mt-4 space-y-1">
+        <Label htmlFor="personal-language">Language for date and time display</Label>
+        <select id="personal-language" className="block rounded-md border bg-background p-2" value={profile.language}
+          onChange={(event) => update({ language: event.target.value as PersonalAppearance["language"] })}>
+          <option value="en">English</option><option value="ms">Bahasa Melayu</option>
+          <option value="zh-Hans">简体中文</option><option value="ta">தமிழ்</option><option value="hi">हिन्दी</option>
+        </select>
+      </div>
       <div className="mt-5 space-y-3">
         <div>
           <Label className="text-sm font-medium">Color theme</Label>
           <p className="text-[11px] text-muted-foreground">
-            Preview and apply one shared palette. Canvas positions and sizes never change.
+            Preview and apply your palette. Canvas positions and sizes never change.
           </p>
         </div>
         <RadioGroup
@@ -392,6 +392,6 @@ export function DisplayScalingSettings({ bare = false }: { bare?: boolean }) {
         </div>
       </div>
       </details>
-    </section>
+    </fieldset>
   );
 }

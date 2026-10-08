@@ -3,13 +3,15 @@
  *
  * When a shift is closed the till builds one summary (sales, payments, cash,
  * discounts, refunds) and stores it centrally so any phone signed in to the
- * same business can show it. Each device chooses its own channels in
+ * same business can show it. Administrators choose shared channels in
  * System & Settings -> Shift alerts.
  */
 import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
 import type { Sale, Shift } from "@/core/types/pos-types";
 import { getPosCallerAuth } from "./pos-caller-auth";
 import { sendWhatsAppBill } from "./whatsapp.functions";
+import { routedQuery } from "@/core/api/db-query";
+import { shiftAlertSettingsSchema } from "./shift-alert-settings-schema";
 import { runOpLive } from "./sync-engine";
 
 export type ShiftSummary = {
@@ -42,33 +44,19 @@ export type ShiftAlertSettings = {
   quietHours: boolean;
 };
 
-const SETTINGS_KEY = "pos.alerts.shift";
-
 export const DEFAULT_ALERT_SETTINGS: ShiftAlertSettings = {
-  inApp: true,
-  whatsapp: false,
-  push: false,
-  recipients: [],
-  quietFrom: "22:00",
-  quietTo: "07:00",
-  quietHours: false,
+  inApp: true, whatsapp: false, push: false, recipients: [], quietFrom: "22:00", quietTo: "07:00", quietHours: false,
 };
-
-export function readAlertSettings(): ShiftAlertSettings {
-  if (typeof window === "undefined") return DEFAULT_ALERT_SETTINGS;
-  try {
-    const raw = window.localStorage.getItem(SETTINGS_KEY);
-    return raw
-      ? { ...DEFAULT_ALERT_SETTINGS, ...(JSON.parse(raw) as Partial<ShiftAlertSettings>) }
-      : DEFAULT_ALERT_SETTINGS;
-  } catch {
-    return DEFAULT_ALERT_SETTINGS;
-  }
+export async function readAlertSettings(): Promise<ShiftAlertSettings> {
+  const rows = await routedQuery("pos_settings", { columns: "notification_settings", match: { id: 1 }, limit: 1 });
+  let config = rows[0]?.notification_settings;
+  if (typeof config === "string") config = JSON.parse(config);
+  const parsed = shiftAlertSettingsSchema.safeParse((config as { shiftAlerts?: unknown } | null)?.shiftAlerts);
+  return parsed.success ? parsed.data : DEFAULT_ALERT_SETTINGS;
 }
-
-export function writeAlertSettings(next: ShiftAlertSettings) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+export async function writeAlertSettings(next: ShiftAlertSettings) {
+  const { saveGlobalShiftAlerts } = await import("./shift-alert-settings.functions");
+  await saveGlobalShiftAlerts({ data: { ...await getPosCallerAuth(), settings: next } });
 }
 
 /** True when the clock sits inside the configured quiet window. */
@@ -258,7 +246,7 @@ export function readSeenSummaries(): string[] {
 export async function dispatchShiftSummary(
   input: Omit<ShiftSummary, "id">,
 ): Promise<string[]> {
-  const settings = readAlertSettings();
+  const settings = await readAlertSettings();
   const quiet = inQuietHours(settings);
   const channels: string[] = [];
   if (settings.inApp) channels.push("in_app");

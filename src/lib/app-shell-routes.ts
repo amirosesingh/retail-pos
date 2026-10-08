@@ -25,3 +25,13 @@ export function isCustomerPublicRoute(pathname: string): boolean {
     pathname.startsWith("/c/")
   );
 }
+
+/** Configuration stays reachable before the first location has been created. */
+export function isLocationSetupRoute(pathname: string): boolean {
+  return (
+    pathname === "/stores" ||
+    pathname.startsWith("/stores/") ||
+    pathname === "/settings" ||
+    pathname.startsWith("/settings/")
+  );
+}

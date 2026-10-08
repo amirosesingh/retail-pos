@@ -62,7 +62,7 @@ export function TransferComposer({
   onSaveDraft?: (result: ComposerResult) => void | Promise<void>;
   onSubmit: (result: ComposerResult) => void | Promise<void>;
 }) {
-  const { state, stores, allStores, currentStore, moveStock } = usePos();
+  const { state, stores, allStores, currentStore } = usePos();
   const others = useMemo(
     () =>
       stores.filter(
@@ -154,17 +154,9 @@ export function TransferComposer({
             return;
           }
         }
-        // Consolidate the picked levels into the sending location so the
-        // dispatch deduction leaves the right shelf empty.
-        if (sourceLevels.length)
-          for (const i of clean) {
-            const p = productOf(i.productId);
-            if (!p) continue;
-            for (const pick of planDeduction(p, allStores, currentStore.id, i.qty).picks) {
-              if (pick.storeId === currentStore.id) continue;
-              await moveStock(i.productId, pick.qty, pick.storeId, currentStore.id);
-            }
-          }
+        // Composition never moves stock. The protected dispatch transaction
+        // locks stock, picks warehouse levels and persists the dispatch together.
+
       }
       await onSubmit(result);
     } catch (error) {

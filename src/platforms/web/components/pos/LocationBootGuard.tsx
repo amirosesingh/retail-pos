@@ -1,3 +1,4 @@
+import { isLocationSetupRoute } from "@/lib/app-shell-routes";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { MapPinOff, RefreshCw } from "lucide-react";
@@ -17,11 +18,11 @@ import { activeLocations } from "@/lib/locations";
  * guesses. Until the database has actually answered it says it is loading.
  */
 export function LocationBootGuard({ children }: { children?: ReactNode }) {
-  const { stores, storesLoaded, loadPhase, retryLoad } = usePos();
+  const { stores, storesLoaded, locationLoadError, loadPhase, retryLoad } = usePos();
   const { isAdmin } = useAuth();
   const { pathname } = useLocation();
 
-  if (activeLocations(stores).length > 0 || pathname.startsWith("/stores")) return <>{children}</>;
+  if (activeLocations(stores).length > 0 || isLocationSetupRoute(pathname)) return <>{children}</>;
 
   // Still waiting on the answer — say so rather than claiming there is nothing.
   if (!storesLoaded && loadPhase !== "failed") return <TillLoader message="Loading locations…" />;
@@ -33,13 +34,18 @@ export function LocationBootGuard({ children }: { children?: ReactNode }) {
           <div className="space-y-1">
             <h1 className="text-lg font-semibold">Could not load locations</h1>
             <p className="text-sm text-muted-foreground">
-              The location list did not come back. Nothing has been changed — try again once the
-              connection settles.
+              {locationLoadError ||
+                "The location list did not come back. Try again once the connection settles."}
             </p>
           </div>
           <Button className="w-full" onClick={retryLoad}>
             <RefreshCw className="mr-1.5 size-4" /> Try again
           </Button>
+          {isAdmin && (
+            <Button asChild variant="outline" className="w-full">
+              <Link to="/settings/database">Check database connection</Link>
+            </Button>
+          )}
         </div>
       </div>
     );

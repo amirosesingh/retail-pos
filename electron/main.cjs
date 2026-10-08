@@ -1196,6 +1196,11 @@ async function commitLocalShiftCashCount(raw) {
       variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now,
     } },
   ];
+  const { shiftSummaryRow } = require("./db/shift-summary.cjs");
+  operations.push({ kind: "insert", table: "shift_notifications", rows: [shiftSummaryRow({
+    id: randomUUID(), shift, totals: expected, branchId, branchName, terminalName,
+    actor, closedAt: shift.closed_at ?? now, countedCash,
+  })] });
   if (varianceStatus !== "NO_VARIANCE") {
     const message = [
       `Cashier: ${actor}`,

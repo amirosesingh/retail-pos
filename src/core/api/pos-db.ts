@@ -1,3 +1,5 @@
+import { readLocalLocationDirectory, resolveLocationDirectory, type LocationDirectoryResult } from "./location-directory";
+export type { LocationDirectoryResult } from "./location-directory";
 import { beginDataTask, withDataTask } from "@/lib/data-progress";
 import {
   authenticatedExternalClientSnapshot,
@@ -1151,8 +1153,6 @@ export async function importSampleData() {
 }
 
 /** Load every cloud-backed slice of the POS state. */
-export type LocationDirectoryResult =
-  { ok: true; stores: Store[]; source: "relay" | "direct" | "local" } | { ok: false; error: Error };
 
 /**
  * Resolve the small location directory independently of catalogue bootstrap.
@@ -1162,11 +1162,16 @@ export type LocationDirectoryResult =
 export async function loadLocationDirectory(): Promise<LocationDirectoryResult> {
   await hydrateTerminalConfig();
   const bridge = localDb();
-  if (bridge?.query && effectiveDatabaseMode() === "local") {
-    const result = await bridge.query("stores", { limit: 2000 });
-    if (!result.ok) return { ok: false, error: new Error(result.error ?? "Could not read local locations.") };
-    return { ok: true, stores: (result.rows ?? []).map(rowToStore), source: "local" };
-  }
+  const terminal = readTerminalConfig();
+  return resolveLocationDirectory(
+    () => readLocalLocationDirectory(bridge, effectiveDatabaseMode() === "local", rowToStore),
+    loadCloudLocationDirectory,
+    terminal?.tokenId ? terminal.locationId : null,
+  );
+}
+
+/** Cloud discovery still requires the existing verified person/terminal proof. */
+async function loadCloudLocationDirectory(): Promise<LocationDirectoryResult> {
   const registered = Boolean(readTerminalConfig()?.tokenId);
   const cashierToken = await loadCashierToken();
   const relayAvailable = canRelay() && (registered || Boolean(cashierToken));
@@ -1388,17 +1393,16 @@ export async function loadCloudState(
           onCompanyName?.(settingsText((result.data as Row).company_name));
         return result;
       }),
-    (async () => {
-      try {
-        const rows = await routedQuery("settings_scoped", { limit: 5000 });
-        return {
-          data: (rows as Row[]).filter((row) => String(row.key ?? "").startsWith("pos_field:")),
-          error: null,
-        };
-      } catch (error) {
-        return { data: [] as Row[], error };
-      }
-    })(),
+    // A cloud snapshot must not route part of its settings through an
+    // unconfigured/unpaired SQL replica during admin recovery.
+    authenticatedClient
+      .from("settings_scoped")
+      .select("scope, scope_id, key, value")
+      .like("key", "pos_field:%")
+      .order("scope")
+      .order("scope_id")
+      .order("key")
+      .limit(5000),
     locationTask ?? loadLocationDirectory(),
     (async (): Promise<{ data: Row[] | null }> => {
       try {
@@ -1476,6 +1480,12 @@ export async function loadPrimaryState(
   const bridge = localDb();
   if (effectiveDatabaseMode() === "local" && bridge?.snapshot) {
     const status = await bridge.database?.getState?.().catch(() => null);
+    // A connected SQL pool is not a paired terminal. An authenticated admin
+    // must be able to discover the cloud directory before choosing a branch.
+    const terminal = readTerminalConfig() ?? (await hydrateTerminalConfig());
+    if (!terminal?.locationId && hasStaffSession()) {
+      return loadCloudState(storeId, locationTask, onCompanyName, showProgress);
+    }
     if (status?.enabled && status.connected && (status.tradingReady ?? status.connected)) {
       return loadLocalState(
         new Error("The connected local SQL Server snapshot could not be read."),
@@ -1483,15 +1493,6 @@ export async function loadPrimaryState(
       );
     }
     if (status?.enabled && status.tradingReady === false) {
-      const terminal = readTerminalConfig() ?? (await hydrateTerminalConfig());
-      // A freshly installed or recovered desktop can have a saved SQL Server
-      // connection before it has a branch identity. An authenticated admin
-      // still needs the central location directory in order to register this
-      // machine; treating EBRANCH as a fatal local-database error deadlocks
-      // that recovery screen. RLS remains the authority for this cloud read.
-      if (!terminal?.locationId && hasStaffSession()) {
-        return loadCloudState(storeId, locationTask, onCompanyName, showProgress);
-      }
       throw new Error(
         "Local SQL Server is enabled but not ready for trading. Open Database & Cloud Connection, restore the connection, and apply the current local database update if requested.",
       );
@@ -1721,11 +1722,11 @@ export async function openShiftOnServer(s: Shift): Promise<Shift | null> {
         p_user_id: s.userId ?? null,
       } as never,
     );
-    if (res.error) return null;
+    if (res.error) throw new Error(res.error.message);
     const row = (Array.isArray(res.data) ? res.data[0] : res.data) as Row | null;
     return row?.id ? rowToShift(row) : null;
-  } catch {
-    return null;
+  } catch (error) {
+    throw error instanceof Error ? error : new Error("The central database could not open the shift.");
   }
 }
 
@@ -2502,7 +2503,10 @@ export const db = {
       onConflict: "scope,scope_id,key",
     };
     const bridge = localDb();
-    if (bridge) {
+    // Before activation there is no local branch authority. Authenticated
+    // global setup remains possible; registered tills continue writing SQL first.
+    const globalSetup = bridge && !readTerminalConfig()?.locationId && hasStaffSession();
+    if (bridge && !globalSetup) {
       await commitOps("Saving settings", [fieldOp, op]);
       return;
     }

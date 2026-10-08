@@ -219,7 +219,11 @@ export function planDeduction(
 ): DeductionPlan {
   if (!Number.isFinite(qty) || qty < 0) throw new Error("Enter a finite, non-negative stock quantity.");
   const want = qty;
-  const order = pickOrder(stores, warehouseId);
+  warehouseId = canonicalBranchId(warehouseId);
+  const live = activeLocations(canonicalLocations(stores));
+  if (!live.some(store => store.id === warehouseId))
+    return { picks: [], taken: 0, shortBy: want };
+  const order = pickOrder(live, warehouseId);
   if (!order.length) {
     const have = stockAtLocation(product, warehouseId);
     const taken = Math.min(have, want);

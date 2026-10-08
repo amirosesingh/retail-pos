@@ -40,6 +40,7 @@ export function useSettingsNav(): SettingsNav {
       SETTINGS_CARDS.filter(
         (c) =>
           visibleRoute(routeOf(c)) &&
+          (!["/settings/notifications", "/settings/shift-alerts"].includes(routeOf(c)) || isAdmin) &&
           (isAdmin ||
             ((routeOf(c) === "/settings/terminals" || routeOf(c) === "/settings/mobile-terminals")
               ? can("can_manage_terminals")

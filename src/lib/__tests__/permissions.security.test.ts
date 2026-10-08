@@ -23,6 +23,7 @@ import { isRouteVisibleFor, withVisibility } from "@/lib/ui-visibility";
  * catches accidental privilege escalation before a release.
  */
 const CASHIER_ALLOWED: PermissionKey[] = [
+  "can_customize_display",
   "can_open_drawer",
   "can_close_drawer",
   "can_open_shift",
@@ -47,6 +48,7 @@ const CASHIER_ALLOWED: PermissionKey[] = [
 ];
 
 const WAREHOUSE_ALLOWED: PermissionKey[] = [
+  "can_customize_display",
   "can_view_inventory",
   "can_add_new_product",
   "can_edit_product_details",
@@ -192,9 +194,9 @@ describe("permission matrix integrity", () => {
     expect(normalizePermissions(undefined, "warehouse")).toEqual(WAREHOUSE_PERMISSIONS);
   });
 
-  it("an empty stored matrix denies everything for limited roles", () => {
+  it("an empty stored matrix denies business permissions while allowing personal appearance", () => {
     const matrix = normalizePermissions({}, "cashier");
-    expect(granted(matrix)).toEqual([]);
+    expect(granted(matrix)).toEqual(["can_customize_display"]);
   });
 });
 describe("permission tags", () => {

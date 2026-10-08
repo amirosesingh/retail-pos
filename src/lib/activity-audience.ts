@@ -19,7 +19,7 @@ const strings = (value: unknown): string[] =>
 
 /** Approval notifications are private; ordinary operational events follow audit access. */
 export function activityVisibleTo(
-  row: { store_id?: unknown; terminal_id?: unknown; meta?: unknown },
+  row: { store_id?: unknown; terminal_id?: unknown; event_type?: unknown; meta?: unknown },
   identity: ActivityAudienceIdentity,
 ): boolean {
   const meta =
@@ -31,7 +31,17 @@ export function activityVisibleTo(
     strings(meta["audience_user_ids"]).length > 0 ||
     strings(meta["audience_roles"]).length > 0 ||
     Boolean(meta["audience_terminal_id"]);
-  if (!targeted) return identity.mayViewGeneralActivity;
+  const rowStore = String(row.store_id ?? "").trim().toLowerCase();
+  const sameBranch = !rowStore || (!!identity.storeId && rowStore === identity.storeId.trim().toLowerCase());
+  if (!targeted) {
+    const type = String(row.event_type ?? "");
+    if (["stock_request_received", "transfer_sent", "transfer_received", "po_finalised"].includes(type))
+      return !!rowStore && sameBranch;
+    const admin = identity.role?.toLowerCase() === "admin";
+    if (["sale_complete", "sale_refund", "sale_void", "shift_open", "shift_close", "shift_cash_variance", "drawer_open", "xreport_print"].includes(type))
+      return admin;
+    return identity.mayViewGeneralActivity && (admin || sameBranch);
+  }
 
   const ids = new Set(identity.userIds.map((value) => value.toLowerCase()).filter(Boolean));
   const exactUsers = strings(meta["audience_user_ids"]);
@@ -43,7 +53,5 @@ export function activityVisibleTo(
     Boolean(terminalTarget) &&
     Boolean(identity.terminalId) &&
     terminalTarget === identity.terminalId!.toLowerCase();
-  const rowStore = String(row.store_id ?? "").trim().toLowerCase();
-  const sameBranch = !rowStore || (!!identity.storeId && rowStore === identity.storeId.trim().toLowerCase());
   return sameBranch && (exactUser || roleMatch || terminalMatch);
 }

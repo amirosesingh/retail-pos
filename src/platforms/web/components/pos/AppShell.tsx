@@ -1,4 +1,7 @@
+import { isLocationSetupRoute } from "@/lib/app-shell-routes";
 import { DataProgress } from "@/components/shared/DataProgress";
+import { usePersonalAppearance, usePersonalAppearanceSync } from "@/lib/personal-appearance";
+import { setPersonalLanguage } from "@/lib/time-zone";
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
 import { Loader2, LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
@@ -167,7 +170,14 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     }
   }, [user, authUserId, terminalUser?.userCode, location.pathname]);
 
-  useDisplayProfile(state.settings.integrations.displayProfile);
+  const appearance = usePersonalAppearance();
+  usePersonalAppearanceSync(appearance.key, appearance.owner);
+  useDisplayProfile(appearance.profile);
+  useEffect(() => {
+    document.documentElement.lang = appearance.profile.language;
+    setPersonalLanguage(appearance.profile.language);
+    return () => { setPersonalLanguage("en"); document.documentElement.lang = "en"; };
+  }, [appearance.profile.language]);
   // Terminal-wide font / control scaling preference.
   useUiScale();
 
@@ -330,7 +340,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   if (!dataReady && !offlineBypass)
     return <TillLoader onContinueOffline={() => setOfflineBypass(true)} />;
   // Nothing can be sold, received or moved without somewhere to book it to.
-  if (!activeLocations(stores).length && !location.pathname.startsWith("/stores"))
+  if (!activeLocations(stores).length && !isLocationSetupRoute(location.pathname))
     return <LocationBootGuard />;
 
   // Anything that needs a hand here: goods on their way in, or notes this

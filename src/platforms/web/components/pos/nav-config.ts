@@ -485,6 +485,7 @@ const NAV_ROUTE_PERMISSIONS: Record<string, PermissionFlag> = Object.fromEntries
 );
 
 export function routePermissionForPath(pathname: string): PermissionFlag | null {
+  if (pathname === "/settings/display") return "can_customize_display";
   const routes = { ...NAV_ROUTE_PERMISSIONS, ...ROUTE_PERMISSION_OVERRIDES };
   const key =
     Object.keys(routes)

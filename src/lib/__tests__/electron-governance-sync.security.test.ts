@@ -123,7 +123,7 @@ describe("Electron supervisor/governance sync relay", () => {
   });
 
   it("permission-gates settings, promotions and suppliers relay writes", async () => {
-    for (const table of ["pos_settings", "promotions", "suppliers"] as const) {
+    for (const table of ["pos_settings", "public_flags", "promotions", "suppliers"] as const) {
       const denied = await safeAuthorizeRelayOp(
         {
           kind: "upsert",
@@ -141,7 +141,7 @@ describe("Electron supervisor/governance sync relay", () => {
       { kind: "upsert", table: "pos_settings", rows: [{ id: "row-1" }], onConflict: "id" },
       { ...cashier, permissions: { can_access_pos_settings: true } },
     );
-    expect(settings.ok).toBe(true);
+    expect(settings.ok).toBe(false);
 
     const promotion = await safeAuthorizeRelayOp(
       { kind: "upsert", table: "promotions", rows: [{ id: "row-1" }], onConflict: "id" },

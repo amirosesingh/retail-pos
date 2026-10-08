@@ -340,6 +340,11 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       );
     const protectedSettingsTables = new Set([
       "pos_settings",
+      "public_flags",
+      "payment_types",
+      "integration_settings",
+      "settings_overrides",
+      "settings_locks",
       "pos_store_settings",
       "authorization_actions",
       "authorization_action_history",
@@ -381,16 +386,19 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         );
       }
       const invalidScope = governanceOperations.some((operation) =>
+        (["public_flags", "payment_types", "integration_settings"].includes(operation.table) && !isAdmin) ||
         ((operation.table === "pos_settings" || operation.table === "settings_scoped") &&
           operation.changes.some((change) =>
             ["D", "DELETE"].includes(String(change.operation ?? "").toUpperCase()))) ||
         operation.rows.some((row) => {
-          if (operation.table === "pos_settings") return Number(row.id) !== 1;
+          if (operation.table === "pos_settings") return !isAdmin || Number(row.id) !== 1;
+          if (["settings_locks", "public_flags", "payment_types", "integration_settings"].includes(operation.table)) return !isAdmin;
+          if (operation.table === "settings_overrides") return false;
           if (operation.table === "settings_scoped") {
             const settingScope = String(row.scope ?? "").toLowerCase();
             const scopeId = String(row.scope_id ?? "");
             return !(
-              (settingScope === "global" && scopeId === "" &&
+              (isAdmin && settingScope === "global" && scopeId === "" &&
                 String(row.key ?? "").startsWith("pos_field:")) ||
               (settingScope === "branch" && scopeId === scope.storeId) ||
               (settingScope === "terminal" && scopeId === scope.terminalId)
@@ -415,6 +423,23 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
           },
           { status: 403 },
         );
+      const { authorizeSettingsMutation } = await import("@/core/api/relay-policy.server");
+      for (const operation of governanceOperations.filter(op => ["settings_overrides", "settings_locks"].includes(op.table))) {
+        if (operation.rows.length) {
+          const authorized = await authorizeSettingsMutation({kind: "upsert", table: operation.table, rows: operation.rows}, scope);
+          if (!authorized.ok) return Response.json(authorized, {status: 403});
+        }
+        for (const change of operation.changes) {
+          if (!["D", "DELETE"].includes(String(change.operation ?? "").toUpperCase())) continue;
+          let key = change.key;
+          if (!key || typeof key !== "object") {
+            try { key = JSON.parse(String(change.entityId ?? change.entity_id ?? "")); }
+            catch { return Response.json({ok: false, code: "PERMISSION_DENIED", error: "A settings deletion needs its complete key."}, {status: 403}); }
+          }
+          const authorized = await authorizeSettingsMutation({kind: "delete", table: operation.table, match: key as Record<string, unknown>}, scope);
+          if (!authorized.ok) return Response.json(authorized, {status: 403});
+        }
+      }
       const actor = scope.staffUserId ?? scope.label;
       if (body.sqlServerBatch?.table === "pos_store_settings")
         body.sqlServerBatch.rows = body.sqlServerBatch.rows.map((row) => ({

@@ -64,7 +64,8 @@ describe("settings save actions", () => {
     const accent = read("src/lib/accent.ts");
 
     expect(display).not.toContain("...state.settings.integrations,");
-    expect(display).toContain("displayProfile:");
+    expect(display).toContain("usePersonalAppearance");
+    expect(display).not.toContain("updateSettings(");
     expect(display).not.toContain("applyTheme(value)");
     expect(display).not.toContain("applyPalette(value)");
     expect(scale).toContain("next.registerZoom === prefs.registerZoom");

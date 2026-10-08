@@ -63,3 +63,21 @@ describe("targeted activity notifications", () => {
     ).toBe(true);
   });
 });
+
+
+describe("branch operations and admin financial notifications", () => {
+  it.each(["stock_request_received", "transfer_received", "transfer_sent", "po_finalised"])("shows %s to branch staff without audit permission", (event_type) => {
+    const row = { event_type, store_id: "branch-a", meta: {} };
+    expect(activityVisibleTo(row, cashier)).toBe(true);
+    expect(activityVisibleTo(row, { ...cashier, storeId: "branch-b" })).toBe(false);
+    expect(activityVisibleTo({ ...row, store_id: null }, cashier)).toBe(false);
+  });
+  it.each(["sale_complete", "shift_close", "shift_open", "shift_cash_variance"])("limits %s to administrators", (event_type) => {
+    const row = { event_type, store_id: "branch-a", meta: {} };
+    expect(activityVisibleTo(row, { ...cashier, role: "manager", mayViewGeneralActivity: true })).toBe(false);
+    expect(activityVisibleTo(row, { ...cashier, role: "admin", mayViewGeneralActivity: true })).toBe(true);
+  });
+  it("does not let audit permission override a private approval audience", () => {
+    expect(activityVisibleTo({ store_id: "branch-a", meta: { audience_user_ids: ["other-person"] } }, { ...cashier, role: "admin", mayViewGeneralActivity: true })).toBe(false);
+  });
+});

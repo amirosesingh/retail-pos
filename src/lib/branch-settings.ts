@@ -7,6 +7,8 @@
  * resolve Terminal > Cluster > Global. Locks are
  * global and stop any scope from overriding a block at all.
  */
+import { authenticatedExternalClientSnapshot } from "@/integrations/supabase/external-client";
+import { localDb } from "@/core/local-db/local-db";
 import { dbRouter } from "@/core/api/db-router";
 import { sectionAllowsTier, type SettingsSectionId } from "./settings-sections";
 
@@ -69,11 +71,26 @@ export async function loadBranchSettings(
     locks: {},
   };
   try {
+    // A new, unpaired Electron installation has no branch-scoped SQL read
+    // authority yet. Its verified cloud session may still read global locks.
+    const cloud = !ids.BRANCH && localDb() ? await authenticatedExternalClientSnapshot() : null;
+    const query: typeof dbRouter.query = cloud
+      ? async (table, options = {}) => {
+          if (table !== "settings_overrides" && table !== "settings_locks")
+            throw new Error("Unsupported settings scope read.");
+          let read = cloud.from(table).select(options.columns ?? "*");
+          for (const [key, value] of Object.entries(options.match ?? {}))
+            read = read.eq(key, value as never);
+          const result = await read.order("section").limit(options.limit ?? 200);
+          if (result.error) throw new Error(result.error.message);
+          return result.data as unknown as Record<string, unknown>[];
+        }
+      : dbRouter.query;
     const reads = await Promise.all([
       ...SETTING_TIERS.map(async (tier) => {
         const scopeId = ids[tier];
         if (!scopeId) return { tier, rows: [] as OverrideRow[] };
-        const rows = await dbRouter.query("settings_overrides", {
+        const rows = await query("settings_overrides", {
           columns: "section,patch",
           match: { scope: tier, scope_id: scopeId },
           orderBy: { column: "section", ascending: true },
@@ -88,7 +105,7 @@ export async function loadBranchSettings(
         if (patch) state.overrides[tier][row.section as SettingsSectionId] = patch;
       }
     }
-    const locks = await dbRouter.query("settings_locks", {
+    const locks = await query("settings_locks", {
       columns: "section,locked",
       orderBy: { column: "section", ascending: true },
       limit: 200,
@@ -110,20 +127,31 @@ export async function saveSectionOverride(
   patch: SectionPatch,
   updatedBy: string,
 ): Promise<void> {
+  if (!sectionAllowsTier(section, tier))
+    throw new Error(`This settings section cannot be stored at ${TIER_LABELS[tier]} scope`);
   if (!scopeId)
     throw new Error(`No ${TIER_LABELS[tier].toLowerCase()} is selected for this terminal`);
-  await dbRouter.upsert(
-    "settings_overrides",
-    {
-      scope: tier,
-      scope_id: scopeId,
-      section,
-      patch: patch as never,
-      updated_by: updatedBy,
-    },
-    "scope,scope_id,section",
-    "Saving a settings override",
-  );
+  if (tier === "CLUSTER") {
+    const { runOpLive } = await import("./sync-engine");
+    await runOpLive("Saving cluster settings", {
+      kind: "upsert",
+      table: "settings_overrides",
+      onConflict: "scope,scope_id,section",
+      rows: [{ scope: tier, scope_id: scopeId, section, patch, updated_by: updatedBy }],
+    });
+  } else
+    await dbRouter.upsert(
+      "settings_overrides",
+      {
+        scope: tier,
+        scope_id: scopeId,
+        section,
+        patch: patch as never,
+        updated_by: updatedBy,
+      },
+      "scope,scope_id,section",
+      "Saving a settings override",
+    );
   const { broadcastSettingsChange } = await import("./sync-engine");
   await broadcastSettingsChange("settings_overrides");
 }
@@ -134,13 +162,21 @@ export async function clearSectionOverride(
   section: SettingsSectionId,
 ): Promise<void> {
   if (!scopeId) return;
-  await dbRouter.write("Clearing a settings override", [
-    {
+  if (tier === "CLUSTER") {
+    const { runOpLive } = await import("./sync-engine");
+    await runOpLive("Clearing cluster settings", {
       kind: "delete",
       table: "settings_overrides",
       match: { scope: tier, scope_id: scopeId, section },
-    },
-  ]);
+    });
+  } else
+    await dbRouter.write("Clearing a settings override", [
+      {
+        kind: "delete",
+        table: "settings_overrides",
+        match: { scope: tier, scope_id: scopeId, section },
+      },
+    ]);
   const { broadcastSettingsChange } = await import("./sync-engine");
   await broadcastSettingsChange("settings_overrides");
 }
@@ -150,12 +186,14 @@ export async function setSectionLock(
   locked: boolean,
   updatedBy: string,
 ): Promise<void> {
-  await dbRouter.upsert(
-    "settings_locks",
-    { section, locked, updated_by: updatedBy },
-    "section",
-    "Locking a settings section",
-  );
+  // Global locks are pull-only in SQL Server; save centrally before mirroring.
+  const { runOpLive } = await import("./sync-engine");
+  await runOpLive("Locking a settings section", {
+    kind: "upsert",
+    table: "settings_locks",
+    onConflict: "section",
+    rows: [{ section, locked, updated_by: updatedBy }],
+  });
   const { broadcastSettingsChange } = await import("./sync-engine");
   await broadcastSettingsChange("settings_locks");
 }
