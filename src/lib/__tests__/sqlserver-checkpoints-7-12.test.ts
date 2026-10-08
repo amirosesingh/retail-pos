@@ -383,6 +383,23 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(push).toHaveBeenNthCalledWith(2, { branchId: "B2" });
   });
 
+  it("names the rejected table when cloud branch validation fails", async () => {
+    const failure = Object.assign(new Error("SYNC_BRANCH_FORBIDDEN"), {
+      code: "P0001", detail: "purchase_orders",
+    });
+    const { SyncCoordinator } = await import("../../../electron/sync/coordinator.cjs");
+    const coordinator = new SyncCoordinator({
+      pushWorker: { reader: {}, run: vi.fn().mockRejectedValue(failure) },
+      pullWorker: { run: vi.fn() },
+    });
+    await expect(coordinator.runNow({ branchId: "B1" })).resolves.toMatchObject({
+      ok: false, code: "P0001", table: "purchase_orders",
+      error: "SYNC_BRANCH_FORBIDDEN (table: purchase_orders)",
+    });
+    expect(coordinator.snapshot().lastError)
+      .toBe("SYNC_BRANCH_FORBIDDEN (table: purchase_orders)");
+  });
+
   it("runs a distinct final catch-up pass and refuses unacknowledged rows", async () => {
     const pendingSummary = vi.fn()
       .mockResolvedValueOnce({ pending: 0, failed: 0 })
