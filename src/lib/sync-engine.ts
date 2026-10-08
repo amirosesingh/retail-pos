@@ -901,7 +901,7 @@ export function startSyncEngine() {
     void status.then(applyDesktopStatus).catch(() => {});
   }
   const tick = () => {
-    if (!desktopBridge) void runExclusive("timer");
+    if (!desktopBridge && document.visibilityState !== "hidden") void runExclusive("timer");
   };
   // Web/Android retain the renderer timer. Electron already has the worker's
   // own interval, so the renderer only wakes it for explicit/live/reconnect
@@ -957,11 +957,15 @@ export function startSyncEngine() {
     }
   });
   const wakeOutbox = () => void runExclusive("local-write");
-  const flushBeforeBackground = () => {
-    if (document.visibilityState === "hidden" && isOnline()) void runExclusive("background");
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "hidden") {
+      if (isOnline()) void runExclusive("background");
+      return;
+    }
+    wake();
   };
   window.addEventListener("pos:browser-outbox-changed", wakeOutbox);
-  document.addEventListener("visibilitychange", flushBeforeBackground);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 
   // Live listener: an account or settings change made anywhere lands in this
   // shop's own database within a second instead of waiting for the timer.
@@ -1060,7 +1064,7 @@ export function startSyncEngine() {
     offDesktopStatus?.();
     offMode();
     window.removeEventListener("pos:browser-outbox-changed", wakeOutbox);
-    document.removeEventListener("visibilitychange", flushBeforeBackground);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
     started = false;
   };
 }

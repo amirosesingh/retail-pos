@@ -198,33 +198,43 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
 
   // Live decisions, with the existing poll kept as reconciliation.
   useEffect(() => {
-    void refreshCentre();
-    const off = subscribeApprovals(() => void refreshCentre());
-    const t = setInterval(() => void refreshCentre(), CENTRE_POLL_MS);
+    const tick = () => {
+      if (document.visibilityState !== "hidden") void refreshCentre();
+    };
+    tick();
+    const off = subscribeApprovals(tick);
+    const t = setInterval(tick, CENTRE_POLL_MS);
     const onCleared = () => setClearedTick((n) => n + 1);
+    document.addEventListener("visibilitychange", tick);
     window.addEventListener("pos:activity-cleared-changed", onCleared);
     return () => {
       off();
       clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
       window.removeEventListener("pos:activity-cleared-changed", onCleared);
     };
   }, [refreshCentre]);
 
   useEffect(() => {
     if (!showActivity) return;
-    void refresh();
-    const off = subscribeActivityEvents(() => void refresh());
+    const tick = () => {
+      if (document.visibilityState !== "hidden") void refresh();
+    };
+    tick();
+    const off = subscribeActivityEvents(tick);
     const t = setInterval(() => {
       // Stop polling a database that has no activity log.
       if (isActivityLogMissing()) {
         clearInterval(t);
         return;
       }
-      void refresh();
+      tick();
     }, POLL_MS);
+    document.addEventListener("visibilitychange", tick);
     return () => {
       off();
       clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
     };
   }, [showActivity, refresh]);
 

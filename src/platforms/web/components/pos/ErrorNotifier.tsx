@@ -25,6 +25,7 @@ export function ErrorNotifier() {
   useEffect(() => {
     let live = true;
     const check = () => {
+      if (document.visibilityState === "hidden") return;
       void hasRequiredPlatformConfig()
         .then((state) => {
           if (live) configured.current = state.ready;
@@ -34,9 +35,11 @@ export function ErrorNotifier() {
     check();
     // Re-check periodically so popups switch back on the moment setup is done.
     const timer = window.setInterval(check, 5000);
+    document.addEventListener("visibilitychange", check);
     return () => {
       live = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", check);
     };
   }, []);
 

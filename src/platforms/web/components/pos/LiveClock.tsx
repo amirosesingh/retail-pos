@@ -23,9 +23,21 @@ export function LiveClock({ className, compact }: { className?: string; compact?
   const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
-    setNow(Date.now());
-    const t = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(t);
+    let timer: number | undefined;
+    const start = () => {
+      if (timer !== undefined) window.clearInterval(timer);
+      timer = undefined;
+      setNow(Date.now());
+      if (document.visibilityState === "visible") {
+        timer = window.setInterval(() => setNow(Date.now()), 1000);
+      }
+    };
+    start();
+    document.addEventListener("visibilitychange", start);
+    return () => {
+      if (timer !== undefined) window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", start);
+    };
   }, []);
 
   if (now === null) return null;

@@ -22,4 +22,21 @@ describe("cashier register performance boundaries", () => {
     expect(store).toContain("hasSameValue(current, next) ? current : next");
     expect(store).toContain("hasSameValue(current.settings, next)");
   });
+
+  it("pauses header and browser sync polling while the app is backgrounded", () => {
+    const clock = read("src/platforms/web/components/pos/LiveClock.tsx");
+    const activity = read("src/platforms/web/components/pos/ActivityBell.tsx");
+    const status = read("src/platforms/web/components/pos/StatusCluster.tsx");
+    const errors = read("src/platforms/web/components/pos/ErrorNotifier.tsx");
+    const sync = read("src/lib/sync-engine.ts");
+
+    for (const source of [clock, activity, status, errors, sync]) {
+      expect(source).toContain("document.visibilityState");
+      expect(source).toContain('document.addEventListener("visibilitychange"');
+      expect(source).toContain('document.removeEventListener("visibilitychange"');
+    }
+    expect(sync).toContain('void runExclusive("background")');
+    expect(sync).toContain("handleVisibilityChange");
+    expect(sync).toContain("wake()");
+  });
 });
