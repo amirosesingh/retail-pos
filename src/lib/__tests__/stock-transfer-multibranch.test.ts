@@ -72,6 +72,8 @@ describe("multi-branch stock transfer contract", () => {
 
     expect(store).toContain('status: saveAsDraft ? "draft"');
     expect(store).toContain("const savedTransfer = (await loadTransfer(transfer.id)) ?? transfer");
+    expect(store).toContain("const durableRequest = await loadTransfer(id)");
+    expect(store).toContain('if (durableRequest.status === "approved") return { success: true }');
     expect(store).toContain('forcedId: stableChildId(before.id, "8", 0)');
     expect(persistence).toContain("previousLineCount - lines.length");
     expect(persistence).toContain('table: "stock_transfer_items",');
@@ -120,7 +122,18 @@ describe("multi-branch stock transfer contract", () => {
       expect(sql).toContain(
         "WHEN v_needs_approval OR NEW.status = 'awaiting_approval' THEN 'awaiting_approval'",
       );
+      const lifecycleStart = sql.indexOf(
+        "CREATE OR REPLACE FUNCTION public.stock_transfers_enforce_lifecycle",
+      );
+      const lifecycle = sql.slice(
+        lifecycleStart,
+        sql.indexOf("$function$;", lifecycleStart) + "$function$;".length,
+      );
+      expect(lifecycle).not.toContain("OR public.has_perm('can_receive_transfer')");
     }
+    expect(schema).toContain(
+      "CREATE TRIGGER stock_transfers_enforce_lifecycle BEFORE INSERT OR UPDATE ON public.stock_transfers",
+    );
   });
 
   it("scopes synchronization to either participating branch rather than a terminal pair", () => {

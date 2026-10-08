@@ -205,6 +205,7 @@ CREATE TABLE IF NOT EXISTS public.bookings (
     note text DEFAULT ''::text NOT NULL,
     cashier text,
     status text DEFAULT 'active'::text NOT NULL,
+    booking_kind text DEFAULT 'standard'::text NOT NULL,
     sale_receipt_no text,
     closed_at timestamp with time zone,
     racket_model text,
@@ -1454,6 +1455,55 @@ ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS dropped_off_at timestamp wi
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS promised_at timestamp with time zone;
 
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS job_status text DEFAULT 'received'::text NOT NULL;
+
+ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS booking_kind text DEFAULT 'standard'::text NOT NULL;
+
+UPDATE public.bookings
+SET booking_kind = 'racket'
+WHERE booking_kind = 'standard'
+  AND (
+    NULLIF(btrim(COALESCE(racket_model, '')), '') IS NOT NULL
+    OR NULLIF(btrim(COALESCE(string_type, '')), '') IS NOT NULL
+    OR tension_main IS NOT NULL OR tension_cross IS NOT NULL
+    OR NULLIF(btrim(COALESCE(grommet_notes, '')), '') IS NOT NULL
+    OR NULLIF(btrim(COALESCE(job_notes, '')), '') IS NOT NULL
+    OR dropped_off_at IS NOT NULL OR promised_at IS NOT NULL
+    OR job_status_by IS NOT NULL OR job_status_at IS NOT NULL
+    OR NULLIF(btrim(COALESCE(tag_id, '')), '') IS NOT NULL
+    OR NULLIF(btrim(COALESCE(string_origin, '')), '') IS NOT NULL
+    OR string_source_product_id IS NOT NULL OR grip_product_id IS NOT NULL
+    OR NULLIF(btrim(COALESCE(technician, '')), '') IS NOT NULL
+  );
+
+ALTER TABLE public.bookings DROP CONSTRAINT IF EXISTS bookings_kind_chk;
+ALTER TABLE public.bookings ADD CONSTRAINT bookings_kind_chk
+  CHECK (booking_kind IN ('standard', 'racket'));
+
+CREATE OR REPLACE FUNCTION public.bookings_derive_kind()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $function$
+BEGIN
+  IF NEW.booking_kind IS DISTINCT FROM 'racket'
+     AND (
+       NULLIF(btrim(COALESCE(NEW.racket_model, '')), '') IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.string_type, '')), '') IS NOT NULL
+       OR NEW.tension_main IS NOT NULL OR NEW.tension_cross IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.grommet_notes, '')), '') IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.job_notes, '')), '') IS NOT NULL
+       OR NEW.dropped_off_at IS NOT NULL OR NEW.promised_at IS NOT NULL
+       OR NEW.job_status_by IS NOT NULL OR NEW.job_status_at IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.tag_id, '')), '') IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.string_origin, '')), '') IS NOT NULL
+       OR NEW.string_source_product_id IS NOT NULL OR NEW.grip_product_id IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.technician, '')), '') IS NOT NULL
+     ) THEN
+    NEW.booking_kind := 'racket';
+  END IF;
+  RETURN NEW;
+END
+$function$;
 
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS job_status_by text;
 
@@ -5591,6 +5641,10 @@ CREATE TRIGGER booking_payments_bump_row_version BEFORE UPDATE ON public.booking
 DROP TRIGGER IF EXISTS bookings_aa_stale_guard ON public.bookings;
 
 CREATE TRIGGER bookings_aa_stale_guard BEFORE UPDATE ON public.bookings FOR EACH ROW EXECUTE FUNCTION public.skip_stale_update();
+
+DROP TRIGGER IF EXISTS bookings_derive_kind ON public.bookings;
+
+CREATE TRIGGER bookings_derive_kind BEFORE INSERT OR UPDATE ON public.bookings FOR EACH ROW EXECUTE FUNCTION public.bookings_derive_kind();
 
 DROP TRIGGER IF EXISTS bookings_bump_row_version ON public.bookings;
 
@@ -11434,8 +11488,7 @@ AS $function$
 DECLARE
   v_needs_approval boolean;
   v_may_approve boolean := public.is_supervisor_now()
-    OR public.has_perm('can_approve_transfer')
-    OR public.has_perm('can_receive_transfer');
+    OR public.has_perm('can_approve_transfer');
 BEGIN
   IF TG_OP = 'INSERT' THEN
     v_needs_approval := public.stock_transfer_approval_required(NEW.from_store_id);
@@ -12793,8 +12846,7 @@ DECLARE
   v_needs_approval boolean;
   v_cross boolean;
   v_may_approve boolean := public.is_supervisor_now()
-    OR public.has_perm('can_approve_transfer')
-    OR public.has_perm('can_receive_transfer');
+    OR public.has_perm('can_approve_transfer');
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.status = 'draft' THEN
@@ -12955,6 +13007,10 @@ BEGIN
   RETURN NEW;
 END;
 $function$;
+
+DROP TRIGGER IF EXISTS stock_transfers_enforce_lifecycle ON public.stock_transfers;
+
+CREATE TRIGGER stock_transfers_enforce_lifecycle BEFORE INSERT OR UPDATE ON public.stock_transfers FOR EACH ROW EXECUTE FUNCTION public.stock_transfers_enforce_lifecycle();
 
 -- Approve routine: enforce the same cross-group rules server-side.
 CREATE OR REPLACE FUNCTION public.stock_transfer_approve(
@@ -13835,9 +13891,9 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."bookings" ("id","ref","store_id","shift_id","customer_name","customer_phone","member_id","service_type_id","service_name","service_fee","payment_timing","lines","subtotal","discount","tax","total","paid","due_date","note","cashier","status","sale_receipt_no","closed_at","racket_model","string_type","tension_main","tension_cross","tension_unit","grommet_notes","job_notes","dropped_off_at","promised_at","job_status","job_status_by","job_status_at","notify_whatsapp","created_at","updated_at","tag_id","intake_note","string_origin","string_source_product_id","grip_product_id","charges","technician","liability_accepted","incident_note","row_version","cancel_reason","cancelled_by","cancelled_at","cancelled_terminal","cancel_money_action","booking_ref")
-  SELECT "id","ref","store_id","shift_id","customer_name","customer_phone","member_id","service_type_id","service_name","service_fee","payment_timing","lines","subtotal","discount","tax","total","paid","due_date","note","cashier","status","sale_receipt_no","closed_at","racket_model","string_type","tension_main","tension_cross","tension_unit","grommet_notes","job_notes","dropped_off_at","promised_at","job_status","job_status_by","job_status_at","notify_whatsapp","created_at","updated_at","tag_id","intake_note","string_origin","string_source_product_id","grip_product_id","charges","technician","liability_accepted","incident_note","row_version","cancel_reason","cancelled_by","cancelled_at","cancelled_terminal","cancel_money_action","booking_ref" FROM jsonb_populate_recordset(NULL::public."bookings", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "ref"=EXCLUDED."ref","store_id"=EXCLUDED."store_id","shift_id"=EXCLUDED."shift_id","customer_name"=EXCLUDED."customer_name","customer_phone"=EXCLUDED."customer_phone","member_id"=EXCLUDED."member_id","service_type_id"=EXCLUDED."service_type_id","service_name"=EXCLUDED."service_name","service_fee"=EXCLUDED."service_fee","payment_timing"=EXCLUDED."payment_timing","lines"=EXCLUDED."lines","subtotal"=EXCLUDED."subtotal","discount"=EXCLUDED."discount","tax"=EXCLUDED."tax","total"=EXCLUDED."total","paid"=EXCLUDED."paid","due_date"=EXCLUDED."due_date","note"=EXCLUDED."note","cashier"=EXCLUDED."cashier","status"=EXCLUDED."status","sale_receipt_no"=EXCLUDED."sale_receipt_no","closed_at"=EXCLUDED."closed_at","racket_model"=EXCLUDED."racket_model","string_type"=EXCLUDED."string_type","tension_main"=EXCLUDED."tension_main","tension_cross"=EXCLUDED."tension_cross","tension_unit"=EXCLUDED."tension_unit","grommet_notes"=EXCLUDED."grommet_notes","job_notes"=EXCLUDED."job_notes","dropped_off_at"=EXCLUDED."dropped_off_at","promised_at"=EXCLUDED."promised_at","job_status"=EXCLUDED."job_status","job_status_by"=EXCLUDED."job_status_by","job_status_at"=EXCLUDED."job_status_at","notify_whatsapp"=EXCLUDED."notify_whatsapp","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","tag_id"=EXCLUDED."tag_id","intake_note"=EXCLUDED."intake_note","string_origin"=EXCLUDED."string_origin","string_source_product_id"=EXCLUDED."string_source_product_id","grip_product_id"=EXCLUDED."grip_product_id","charges"=EXCLUDED."charges","technician"=EXCLUDED."technician","liability_accepted"=EXCLUDED."liability_accepted","incident_note"=EXCLUDED."incident_note","row_version"=EXCLUDED."row_version","cancel_reason"=EXCLUDED."cancel_reason","cancelled_by"=EXCLUDED."cancelled_by","cancelled_at"=EXCLUDED."cancelled_at","cancelled_terminal"=EXCLUDED."cancelled_terminal","cancel_money_action"=EXCLUDED."cancel_money_action","booking_ref"=EXCLUDED."booking_ref" WHERE EXCLUDED."row_version">public."bookings"."row_version";
+  INSERT INTO public."bookings" ("id","ref","store_id","shift_id","customer_name","customer_phone","member_id","service_type_id","service_name","service_fee","payment_timing","lines","subtotal","discount","tax","total","paid","due_date","note","cashier","status","booking_kind","sale_receipt_no","closed_at","racket_model","string_type","tension_main","tension_cross","tension_unit","grommet_notes","job_notes","dropped_off_at","promised_at","job_status","job_status_by","job_status_at","notify_whatsapp","created_at","updated_at","tag_id","intake_note","string_origin","string_source_product_id","grip_product_id","charges","technician","liability_accepted","incident_note","row_version","cancel_reason","cancelled_by","cancelled_at","cancelled_terminal","cancel_money_action","booking_ref")
+  SELECT "id","ref","store_id","shift_id","customer_name","customer_phone","member_id","service_type_id","service_name","service_fee","payment_timing","lines","subtotal","discount","tax","total","paid","due_date","note","cashier","status","booking_kind","sale_receipt_no","closed_at","racket_model","string_type","tension_main","tension_cross","tension_unit","grommet_notes","job_notes","dropped_off_at","promised_at","job_status","job_status_by","job_status_at","notify_whatsapp","created_at","updated_at","tag_id","intake_note","string_origin","string_source_product_id","grip_product_id","charges","technician","liability_accepted","incident_note","row_version","cancel_reason","cancelled_by","cancelled_at","cancelled_terminal","cancel_money_action","booking_ref" FROM jsonb_populate_recordset(NULL::public."bookings", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO UPDATE SET "ref"=EXCLUDED."ref","store_id"=EXCLUDED."store_id","shift_id"=EXCLUDED."shift_id","customer_name"=EXCLUDED."customer_name","customer_phone"=EXCLUDED."customer_phone","member_id"=EXCLUDED."member_id","service_type_id"=EXCLUDED."service_type_id","service_name"=EXCLUDED."service_name","service_fee"=EXCLUDED."service_fee","payment_timing"=EXCLUDED."payment_timing","lines"=EXCLUDED."lines","subtotal"=EXCLUDED."subtotal","discount"=EXCLUDED."discount","tax"=EXCLUDED."tax","total"=EXCLUDED."total","paid"=EXCLUDED."paid","due_date"=EXCLUDED."due_date","note"=EXCLUDED."note","cashier"=EXCLUDED."cashier","status"=EXCLUDED."status","booking_kind"=EXCLUDED."booking_kind","sale_receipt_no"=EXCLUDED."sale_receipt_no","closed_at"=EXCLUDED."closed_at","racket_model"=EXCLUDED."racket_model","string_type"=EXCLUDED."string_type","tension_main"=EXCLUDED."tension_main","tension_cross"=EXCLUDED."tension_cross","tension_unit"=EXCLUDED."tension_unit","grommet_notes"=EXCLUDED."grommet_notes","job_notes"=EXCLUDED."job_notes","dropped_off_at"=EXCLUDED."dropped_off_at","promised_at"=EXCLUDED."promised_at","job_status"=EXCLUDED."job_status","job_status_by"=EXCLUDED."job_status_by","job_status_at"=EXCLUDED."job_status_at","notify_whatsapp"=EXCLUDED."notify_whatsapp","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","tag_id"=EXCLUDED."tag_id","intake_note"=EXCLUDED."intake_note","string_origin"=EXCLUDED."string_origin","string_source_product_id"=EXCLUDED."string_source_product_id","grip_product_id"=EXCLUDED."grip_product_id","charges"=EXCLUDED."charges","technician"=EXCLUDED."technician","liability_accepted"=EXCLUDED."liability_accepted","incident_note"=EXCLUDED."incident_note","row_version"=EXCLUDED."row_version","cancel_reason"=EXCLUDED."cancel_reason","cancelled_by"=EXCLUDED."cancelled_by","cancelled_at"=EXCLUDED."cancelled_at","cancelled_terminal"=EXCLUDED."cancelled_terminal","cancel_money_action"=EXCLUDED."cancel_money_action","booking_ref"=EXCLUDED."booking_ref" WHERE EXCLUDED."row_version">public."bookings"."row_version";
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 

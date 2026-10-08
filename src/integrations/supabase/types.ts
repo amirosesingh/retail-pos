@@ -460,6 +460,7 @@ export type Database = {
       bookings: {
         Row: {
           booking_ref: string | null;
+          booking_kind: string;
           cancel_money_action: string | null;
           cancel_reason: string | null;
           cancelled_at: string | null;
@@ -516,6 +517,7 @@ export type Database = {
         };
         Insert: {
           booking_ref?: string | null;
+          booking_kind?: string;
           cancel_money_action?: string | null;
           cancel_reason?: string | null;
           cancelled_at?: string | null;
@@ -572,6 +574,7 @@ export type Database = {
         };
         Update: {
           booking_ref?: string | null;
+          booking_kind?: string;
           cancel_money_action?: string | null;
           cancel_reason?: string | null;
           cancelled_at?: string | null;

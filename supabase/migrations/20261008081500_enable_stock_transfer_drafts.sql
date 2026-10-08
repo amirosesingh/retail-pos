@@ -10,8 +10,7 @@ DECLARE
   v_needs_approval boolean;
   v_cross boolean;
   v_may_approve boolean := public.is_supervisor_now()
-    OR public.has_perm('can_approve_transfer')
-    OR public.has_perm('can_receive_transfer');
+    OR public.has_perm('can_approve_transfer');
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.status = 'draft' THEN
@@ -160,5 +159,10 @@ BEGIN
   RETURN NEW;
 END;
 $function$;
+
+DROP TRIGGER IF EXISTS stock_transfers_enforce_lifecycle ON public.stock_transfers;
+CREATE TRIGGER stock_transfers_enforce_lifecycle
+BEFORE INSERT OR UPDATE ON public.stock_transfers
+FOR EACH ROW EXECUTE FUNCTION public.stock_transfers_enforce_lifecycle();
 
 NOTIFY pgrst, 'reload schema';

@@ -1212,6 +1212,7 @@ IF OBJECT_ID(N'dbo.bookings', N'U') IS NULL BEGIN CREATE TABLE dbo.[bookings] (
   [note] nvarchar(max) NOT NULL CONSTRAINT [DF_bookings_note] DEFAULT (''),
   [cashier] nvarchar(max) NULL,
   [status] nvarchar(max) NOT NULL CONSTRAINT [DF_bookings_status] DEFAULT ('active'),
+  [booking_kind] nvarchar(max) NOT NULL CONSTRAINT [DF_bookings_booking_kind] DEFAULT ('standard'),
   [sale_receipt_no] nvarchar(max) NULL,
   [closed_at] datetimeoffset(7) NULL,
   [racket_model] nvarchar(max) NULL,
@@ -1431,6 +1432,19 @@ IF OBJECT_ID(N'dbo.bookings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.bookings', 
 IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.bookings') AND name=N'status' AND is_nullable=1) BEGIN
   EXEC sys.sp_executesql N'UPDATE dbo.[bookings] SET [status]=''active'' WHERE [status] IS NULL;';
   ALTER TABLE dbo.[bookings] ALTER COLUMN [status] nvarchar(max) NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.bookings', N'booking_kind') IS NULL ALTER TABLE dbo.[bookings] ADD [booking_kind] nvarchar(max) NULL;
+
+IF OBJECT_ID(N'dbo.bookings', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.bookings', N'booking_kind') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.bookings') AND c.name=N'booking_kind'
+) ALTER TABLE dbo.[bookings] ADD CONSTRAINT [DF_bookings_booking_kind] DEFAULT ('standard') FOR [booking_kind];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.bookings') AND name=N'booking_kind' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[bookings] SET [booking_kind]=''standard'' WHERE [booking_kind] IS NULL;';
+  ALTER TABLE dbo.[bookings] ALTER COLUMN [booking_kind] nvarchar(max) NOT NULL;
 END;
 
 IF COL_LENGTH(N'dbo.bookings', N'sale_receipt_no') IS NULL ALTER TABLE dbo.[bookings] ADD [sale_receipt_no] nvarchar(max) NULL;
@@ -11424,6 +11438,89 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10)
   VALUES (10, N'010_namespace_receiving_draft_numbers', SYSDATETIMEOFFSET());
 
 GO
+SET XACT_ABORT ON;
+
+IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.pos_schema_migrations (
+    version int NOT NULL PRIMARY KEY,
+    name nvarchar(200) NOT NULL,
+    applied_at datetimeoffset(7) NOT NULL DEFAULT SYSDATETIMEOFFSET()
+  );
+END;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11)
+BEGIN
+  BEGIN TRANSACTION;
+
+  IF COL_LENGTH(N'dbo.bookings', N'booking_kind') IS NULL
+  BEGIN
+    ALTER TABLE dbo.bookings
+      ADD booking_kind nvarchar(max) NOT NULL
+        CONSTRAINT DF_bookings_booking_kind DEFAULT (N'standard') WITH VALUES;
+  END;
+
+  -- Legacy job_status is always "received", including for ordinary bookings.
+  -- Repair only rows carrying a genuine racket/job-card signal.
+  EXEC sys.sp_executesql N'
+    UPDATE dbo.bookings
+       SET booking_kind = N''racket''
+     WHERE COALESCE(booking_kind, N''standard'') = N''standard''
+       AND (
+         NULLIF(LTRIM(RTRIM(COALESCE(racket_model, N''''))), N'''') IS NOT NULL
+         OR NULLIF(LTRIM(RTRIM(COALESCE(string_type, N''''))), N'''') IS NOT NULL
+         OR tension_main IS NOT NULL OR tension_cross IS NOT NULL
+         OR NULLIF(LTRIM(RTRIM(COALESCE(grommet_notes, N''''))), N'''') IS NOT NULL
+         OR NULLIF(LTRIM(RTRIM(COALESCE(job_notes, N''''))), N'''') IS NOT NULL
+         OR dropped_off_at IS NOT NULL OR promised_at IS NOT NULL
+         OR job_status_by IS NOT NULL OR job_status_at IS NOT NULL
+         OR NULLIF(LTRIM(RTRIM(COALESCE(tag_id, N''''))), N'''') IS NOT NULL
+         OR NULLIF(LTRIM(RTRIM(COALESCE(string_origin, N''''))), N'''') IS NOT NULL
+         OR string_source_product_id IS NOT NULL OR grip_product_id IS NOT NULL
+         OR NULLIF(LTRIM(RTRIM(COALESCE(technician, N''''))), N'''') IS NOT NULL
+       );';
+
+  IF NOT EXISTS (
+    SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID(N'dbo.bookings')
+      AND name = N'CK_bookings_booking_kind'
+  )
+    ALTER TABLE dbo.bookings WITH CHECK
+      ADD CONSTRAINT CK_bookings_booking_kind
+      CHECK (booking_kind IN (N'standard', N'racket'));
+
+  EXEC sys.sp_executesql N'
+    CREATE OR ALTER TRIGGER dbo.TR_bookings_set_kind
+    ON dbo.bookings
+    AFTER INSERT, UPDATE
+    AS
+    BEGIN
+      SET NOCOUNT ON;
+      UPDATE booking
+         SET booking_kind = N''racket''
+        FROM dbo.bookings booking
+        JOIN inserted incoming ON incoming.id = booking.id
+       WHERE COALESCE(booking.booking_kind, N''standard'') <> N''racket''
+         AND (
+           NULLIF(LTRIM(RTRIM(COALESCE(incoming.racket_model, N''''))), N'''') IS NOT NULL
+           OR NULLIF(LTRIM(RTRIM(COALESCE(incoming.string_type, N''''))), N'''') IS NOT NULL
+           OR incoming.tension_main IS NOT NULL OR incoming.tension_cross IS NOT NULL
+           OR incoming.dropped_off_at IS NOT NULL OR incoming.promised_at IS NOT NULL
+           OR incoming.job_status_by IS NOT NULL OR incoming.job_status_at IS NOT NULL
+           OR NULLIF(LTRIM(RTRIM(COALESCE(incoming.tag_id, N''''))), N'''') IS NOT NULL
+           OR NULLIF(LTRIM(RTRIM(COALESCE(incoming.string_origin, N''''))), N'''') IS NOT NULL
+           OR incoming.string_source_product_id IS NOT NULL OR incoming.grip_product_id IS NOT NULL
+           OR NULLIF(LTRIM(RTRIM(COALESCE(incoming.technician, N''''))), N'''') IS NOT NULL
+         );
+    END;';
+
+  INSERT INTO dbo.pos_schema_migrations(version, name)
+  VALUES (11, N'preserve_booking_kind');
+
+  COMMIT TRANSACTION;
+END;
+
+GO
 
 DECLARE @RequiredTables TABLE ([name] sysname NOT NULL PRIMARY KEY);
 INSERT INTO @RequiredTables ([name]) VALUES
@@ -11693,6 +11790,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'bookings', N'note'),
   (N'bookings', N'cashier'),
   (N'bookings', N'status'),
+  (N'bookings', N'booking_kind'),
   (N'bookings', N'sale_receipt_no'),
   (N'bookings', N'closed_at'),
   (N'bookings', N'racket_model'),
@@ -12526,9 +12624,9 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_action_history', N'action_id'),
   (N'authorization_action_history', N'action_key'),
   (N'authorization_action_history', N'scope_type'),
-  (N'authorization_action_history', N'scope_id'),
-  (N'authorization_action_history', N'row_version');
+  (N'authorization_action_history', N'scope_id');
 INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N'authorization_action_history', N'row_version'),
   (N'authorization_action_history', N'changed_by'),
   (N'authorization_action_history', N'change_source'),
   (N'authorization_action_history', N'change_kind'),
@@ -12743,7 +12841,7 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
   THROW 51002, 'Retail POS local database migration history table is missing.', 1;
 
-EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10)
+EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11)
   THROW 51002, ''Retail POS local database migration history is incomplete.'', 1;');
 
 EXEC(N'SELECT version, name, applied_at

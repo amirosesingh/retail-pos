@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-07T16:55:15.684Z",
+  "generatedAt": "2026-10-08T00:29:18.838Z",
   "tables": [
     {
       "cloudTable": "coupon_campaigns",
@@ -2272,6 +2272,19 @@
           "sqlServerType": "nvarchar(max)",
           "nullable": false,
           "defaultRule": "'active'",
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "booking_kind",
+          "sqlServerColumn": "booking_kind",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": false,
+          "defaultRule": "'standard'",
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,

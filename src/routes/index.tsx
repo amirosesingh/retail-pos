@@ -1486,7 +1486,7 @@ function Register() {
   }
 
   /** Save spec edits made from the cart row back onto the stored booking. */
-  function saveSpecEdits() {
+  async function saveSpecEdits() {
     if (!editBookingId) return;
     const job = {
       racketModel: racketModel.trim() || undefined,
@@ -1501,7 +1501,13 @@ function Register() {
       promisedAt: promisedAt ? new Date(promisedAt).toISOString() : undefined,
       notifyWhatsApp,
     };
-    const updated = updateBookingSpecs(editBookingId, job);
+    let updated;
+    try {
+      updated = await updateBookingSpecs(editBookingId, job);
+    } catch (error) {
+      notifyError(error, "Saving the job card");
+      return;
+    }
     if (!updated) {
       toast.error("That booking is no longer on file");
       return;
@@ -3930,7 +3936,7 @@ function Register() {
                     </label>
                     {jobTag && <Badge variant="outline">Job tag {jobTag}</Badge>}
                     {editBookingId && (
-                      <Button size="sm" onClick={saveSpecEdits}>
+                      <Button size="sm" onClick={() => void saveSpecEdits()}>
                         Save spec changes
                       </Button>
                     )}

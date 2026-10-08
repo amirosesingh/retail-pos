@@ -680,6 +680,7 @@ export const CENTRAL_SCHEMA: CentralTableSchema[] = [
       { name: "note", pgType: "text" },
       { name: "cashier", pgType: "text" },
       { name: "status", pgType: "text" },
+      { name: "booking_kind", pgType: "text" },
       { name: "sale_receipt_no", pgType: "text" },
       { name: "closed_at", pgType: "timestamptz" },
       { name: "racket_model", pgType: "text" },

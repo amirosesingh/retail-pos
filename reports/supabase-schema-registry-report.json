@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-07T16:55:15.684Z",
+  "generatedAt": "2026-10-08T00:29:18.838Z",
   "tableCount": 70,
-  "columnCount": 1188,
+  "columnCount": 1189,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -1105,6 +1105,12 @@
         {
           "name": "status",
           "declaration": "text DEFAULT 'active'::text NOT NULL",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "booking_kind",
+          "declaration": "text DEFAULT 'standard'::text NOT NULL",
           "nullable": false,
           "hasDefault": true
         },

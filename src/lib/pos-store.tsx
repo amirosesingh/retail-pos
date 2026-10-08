@@ -99,7 +99,7 @@ import {
   type RpcResult,
 } from "./stock-transfers";
 import { computeTax } from "@/core/pricing/tax";
-import { commitBooking, deleteBookingRow, loadBookings, saveBookingQuietly } from "./bookings-db";
+import { commitBooking, deleteBookingRow, loadBookings } from "./bookings-db";
 import { trackTransition } from "./status-history";
 import {
   cancelBookingAuthoritative,
@@ -337,7 +337,7 @@ type Ctx = {
     incidentNote?: string,
   ) => Promise<Booking | null>;
   /** Edit the technical specs of an existing racket job before payment. */
-  updateBookingSpecs: (id: string, job: RacketJob) => Booking | null;
+  updateBookingSpecs: (id: string, job: RacketJob) => Promise<Booking | null>;
   addBookingPayment: (
     id: string,
     amount: number,
@@ -1918,7 +1918,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
       : [];
     const booking: Booking = {
       id: crypto.randomUUID(),
-      ref: `BK-${store?.code ?? "R"}-${String(counter).padStart(5, "0")}`,
+      // Keep the readable branch counter, but add entropy so two offline tills
+      // cannot claim the same unique booking reference.
+      ref: `BK-${store?.code ?? "R"}-${String(counter).padStart(5, "0")}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
       storeId: input.storeId,
       shiftId: input.shiftId,
       lines: input.lines,
@@ -1999,37 +2001,29 @@ export function PosProvider({ children }: { children: ReactNode }) {
         clientPaymentId: clientPaymentId ?? payment.id,
         complete: false,
       });
-      let updated: Booking;
-      if (server.ok) {
-        updated = {
-          ...current,
-          paid: server.state.settledPaid,
-          payments: server.state.duplicate ? current.payments : [...current.payments, payment],
-        };
-        setState((s) => ({
-          ...s,
-          bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
-        }));
-      } else {
-        // Offline: queue the payment exactly as the till always has.
-        updated = {
-          ...current,
-          paid: r2(current.paid + payment.amount),
-          payments: [...current.payments, payment],
-        };
-        await commitBooking(updated);
-        setState((s) => ({
-          ...s,
-          bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
-        }));
+      if (!server.ok) {
+        // Electron performs this transaction against SQL Server above. A web
+        // RPC refusal must not be reinterpreted as "offline" and bypass its
+        // permission, overpayment or idempotency checks with a plain upsert.
+        toast.error("Payment was not recorded", { description: server.error });
+        return null;
       }
+      const updated: Booking = {
+        ...current,
+        paid: server.state.settledPaid,
+        payments: server.state.duplicate ? current.payments : [...current.payments, payment],
+      };
+      setState((s) => ({
+        ...s,
+        bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
+      }));
       logger.log("sale_event", "Booking part payment", "bookings", {
         ref: updated.ref,
         amount: payment.amount,
         method,
         paid: updated.paid,
         balance: bookingBalance(updated),
-        authoritative: server.ok,
+        authoritative: true,
       });
       return updated;
     },
@@ -2178,6 +2172,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const deleteBooking = useCallback(async (id: string, reason: string) => {
     const current = stateRef.current.bookings.find((b) => b.id === id);
     if (!current) return;
+    // Do not hide the row until both the payment children and booking have
+    // actually been removed from the active database.
+    await deleteBookingRow(id);
     setState((s) => ({ ...s, bookings: s.bookings.filter((b) => b.id !== id) }));
     logger.log("sale_event", "Booking deleted", "bookings", {
       ref: current.ref,
@@ -2188,7 +2185,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
       total: current.total,
       paid: current.paid,
     });
-    await deleteBookingRow(id).catch(() => undefined);
   }, []);
 
   /**
@@ -2219,11 +2215,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         jobStatusAt: new Date().toISOString(),
         ...(incidentNote ? { incidentNote } : {}),
       };
+      await commitBooking(updated);
       setState((s) => ({
         ...s,
         bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
       }));
-      saveBookingQuietly(updated);
       logger.log("sale_event", "Job card status changed", "bookings", {
         ref: updated.ref,
         status,
@@ -2247,12 +2243,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
   );
 
   /** Rewrite the job card of a booking that has not been collected yet. */
-  const updateBookingSpecs = useCallback((id: string, job: RacketJob) => {
+  const updateBookingSpecs = useCallback(async (id: string, job: RacketJob) => {
     const current = stateRef.current.bookings.find((b) => b.id === id);
     if (!current) return null;
     const updated: Booking = { ...current, job: { ...current.job, ...job } };
+    await commitBooking(updated);
     setState((s) => ({ ...s, bookings: s.bookings.map((b) => (b.id === id ? updated : b)) }));
-    saveBookingQuietly(updated);
     logger.log("sale_event", "Job card specs edited", "bookings", {
       ref: updated.ref,
       racket: updated.job?.racketModel,
@@ -2334,7 +2330,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         jobStatus: current.job ? "collected" : current.jobStatus,
         jobStatusAt: current.job ? new Date().toISOString() : current.jobStatusAt,
       };
-      saveBookingQuietly(updated);
+      await commitBooking(updated);
       setState((s) => ({
         ...s,
         bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
@@ -3590,7 +3586,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const approveTransfer = useCallback(async (id: string, lines?: LineQty[]): Promise<RpcResult> => {
     const before = stateRef.current.transfers.find((x) => x.id === id);
     const existingFulfilment = stateRef.current.transfers.find((x) => x.sourceRequestId === id);
-    if (existingFulfilment) return { success: true };
+    if (existingFulfilment) {
+      // A fulfilment proves a previous approval reached durable storage, but
+      // this till may still hold an awaiting snapshot. Reconcile the request
+      // before treating the retry as complete.
+      const durableRequest = await loadTransfer(id);
+      if (durableRequest) {
+        setState((s) => ({
+          ...s,
+          transfers: s.transfers.map((row) => (row.id === id ? durableRequest : row)),
+        }));
+        if (durableRequest.status === "approved") return { success: true };
+      }
+    }
     const repairingRequest =
       before?.kind === "request" && before.status === "approved" && !existingFulfilment;
     if (!before || (before.status !== "awaiting_approval" && !repairingRequest))

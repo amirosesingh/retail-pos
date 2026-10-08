@@ -31,6 +31,9 @@ const toRow = (b: Booking): Row => ({
   note: b.note ?? "",
   cashier: b.cashier ?? null,
   status: b.status,
+  // job_status has a legacy NOT NULL default, so it cannot reliably tell a
+  // standard reservation from a racket job after a database round trip.
+  booking_kind: b.job ? "racket" : "standard",
   sale_receipt_no: b.saleReceiptNo ?? null,
   closed_at: b.closedAt ?? null,
   racket_model: b.job?.racketModel ?? null,
@@ -62,78 +65,103 @@ const toRow = (b: Booking): Row => ({
   cancel_money_action: b.cancelMoneyAction ?? null,
 });
 
-const rowToBooking = (r: Row, payments: Row[]): Booking => ({
-  id: r.id,
-  ref: r.ref,
-  storeId: r.store_id ?? "",
-  shiftId: r.shift_id ?? "",
-  lines: Array.isArray(r.lines) ? r.lines : [],
-  serviceTypeId: r.service_type_id ?? undefined,
-  serviceName: r.service_name ?? undefined,
-  serviceFee: Number(r.service_fee) || 0,
-  paymentTiming: r.payment_timing ?? undefined,
-  subtotal: Number(r.subtotal) || 0,
-  discount: Number(r.discount) || 0,
-  tax: Number(r.tax) || 0,
-  total: Number(r.total) || 0,
-  paid: Number(r.paid) || 0,
-  // Only settled tenders count as money received.
-  payments: payments
-    .filter((p) => (p.status ?? "settled") === "settled")
-    .map((p) => ({
-      id: p.id,
-      amount: Number(p.amount) || 0,
-      method: p.method,
-      at: p.paid_at ?? p.created_at,
-      cashier: p.cashier ?? "",
-      status: (p.status ?? "settled") as "settled" | "reversed" | "void",
-      reference: p.reference ?? undefined,
-      clientPaymentId: p.client_payment_id ?? undefined,
-      kind: ((p.kind as "payment" | "refund") ?? (Number(p.amount) < 0 ? "refund" : "payment")),
-      refundReason: p.refund_reason ?? undefined,
-      refundsPaymentId: p.refunds_payment_id ?? undefined,
-      changeGiven: Number(p.change_given) || 0,
-    })),
-  dueDate: r.due_date ?? "",
-  memberId: r.member_id ?? null,
-  customerName: r.customer_name ?? "",
-  customerPhone: r.customer_phone ?? "",
-  note: r.note ?? "",
-  cashier: r.cashier ?? "",
-  createdAt: r.created_at,
-  status: r.status,
-  closedAt: r.closed_at ?? undefined,
-  saleReceiptNo: r.sale_receipt_no ?? undefined,
-  jobStatus: (r.job_status as JobStatus) ?? "received",
-  jobStatusBy: r.job_status_by ?? undefined,
-  jobStatusAt: r.job_status_at ?? undefined,
-  tagId: r.tag_id ?? undefined,
-  intakeNote: r.intake_note ?? undefined,
-  stringOrigin: r.string_origin ?? undefined,
-  stringProductId: r.string_source_product_id ?? undefined,
-  gripProductId: r.grip_product_id ?? undefined,
-  charges: Array.isArray(r.charges) ? r.charges : [],
-  liabilityAccepted: !!r.liability_accepted,
-  technician: r.technician ?? undefined,
-  incidentNote: r.incident_note ?? undefined,
-  cancelReason: r.cancel_reason ?? undefined,
-  cancelledBy: r.cancelled_by ?? undefined,
-  cancelledAt: r.cancelled_at ?? undefined,
-  cancelledTerminal: r.cancelled_terminal ?? undefined,
-  cancelMoneyAction: (r.cancel_money_action as Booking["cancelMoneyAction"]) ?? undefined,
-  job: {
-    racketModel: r.racket_model ?? undefined,
-    stringType: r.string_type ?? undefined,
-    tensionMain: r.tension_main == null ? undefined : Number(r.tension_main),
-    tensionCross: r.tension_cross == null ? undefined : Number(r.tension_cross),
-    tensionUnit: (r.tension_unit as "lb" | "kg") ?? "lb",
-    grommetNotes: r.grommet_notes ?? undefined,
-    jobNotes: r.job_notes ?? undefined,
-    droppedOffAt: r.dropped_off_at ?? undefined,
-    promisedAt: r.promised_at ?? undefined,
-    notifyWhatsApp: !!r.notify_whatsapp,
-  },
-});
+const rowToBooking = (r: Row, payments: Row[]): Booking => {
+  const isRacket =
+    r.booking_kind === "racket" ||
+    (!r.booking_kind &&
+      [
+        r.racket_model,
+        r.string_type,
+        r.tension_main,
+        r.tension_cross,
+        r.grommet_notes,
+        r.job_notes,
+        r.dropped_off_at,
+        r.promised_at,
+        r.job_status_by,
+        r.job_status_at,
+        r.tag_id,
+        r.string_origin,
+        r.string_source_product_id,
+        r.grip_product_id,
+        r.technician,
+      ].some((value) => value != null && value !== ""));
+
+  return {
+    id: r.id,
+    ref: r.ref,
+    storeId: r.store_id ?? "",
+    shiftId: r.shift_id ?? "",
+    lines: Array.isArray(r.lines) ? r.lines : [],
+    serviceTypeId: r.service_type_id ?? undefined,
+    serviceName: r.service_name ?? undefined,
+    serviceFee: Number(r.service_fee) || 0,
+    paymentTiming: r.payment_timing ?? undefined,
+    subtotal: Number(r.subtotal) || 0,
+    discount: Number(r.discount) || 0,
+    tax: Number(r.tax) || 0,
+    total: Number(r.total) || 0,
+    paid: Number(r.paid) || 0,
+    // Only settled tenders count as money received.
+    payments: payments
+      .filter((p) => (p.status ?? "settled") === "settled")
+      .map((p) => ({
+        id: p.id,
+        amount: Number(p.amount) || 0,
+        method: p.method,
+        at: p.paid_at ?? p.created_at,
+        cashier: p.cashier ?? "",
+        status: (p.status ?? "settled") as "settled" | "reversed" | "void",
+        reference: p.reference ?? undefined,
+        clientPaymentId: p.client_payment_id ?? undefined,
+        kind: (p.kind as "payment" | "refund") ?? (Number(p.amount) < 0 ? "refund" : "payment"),
+        refundReason: p.refund_reason ?? undefined,
+        refundsPaymentId: p.refunds_payment_id ?? undefined,
+        changeGiven: Number(p.change_given) || 0,
+      })),
+    dueDate: r.due_date ?? "",
+    memberId: r.member_id ?? null,
+    customerName: r.customer_name ?? "",
+    customerPhone: r.customer_phone ?? "",
+    note: r.note ?? "",
+    cashier: r.cashier ?? "",
+    createdAt: r.created_at,
+    status: r.status,
+    closedAt: r.closed_at ?? undefined,
+    saleReceiptNo: r.sale_receipt_no ?? undefined,
+    jobStatus: isRacket ? ((r.job_status as JobStatus) ?? "received") : undefined,
+    jobStatusBy: isRacket ? (r.job_status_by ?? undefined) : undefined,
+    jobStatusAt: isRacket ? (r.job_status_at ?? undefined) : undefined,
+    tagId: r.tag_id ?? undefined,
+    intakeNote: r.intake_note ?? undefined,
+    stringOrigin: r.string_origin ?? undefined,
+    stringProductId: r.string_source_product_id ?? undefined,
+    gripProductId: r.grip_product_id ?? undefined,
+    charges: Array.isArray(r.charges) ? r.charges : [],
+    liabilityAccepted: !!r.liability_accepted,
+    technician: r.technician ?? undefined,
+    incidentNote: r.incident_note ?? undefined,
+    cancelReason: r.cancel_reason ?? undefined,
+    cancelledBy: r.cancelled_by ?? undefined,
+    cancelledAt: r.cancelled_at ?? undefined,
+    cancelledTerminal: r.cancelled_terminal ?? undefined,
+    cancelMoneyAction: (r.cancel_money_action as Booking["cancelMoneyAction"]) ?? undefined,
+    job: isRacket
+      ? {
+          racketModel: r.racket_model ?? undefined,
+          stringType: r.string_type ?? undefined,
+          tensionMain: r.tension_main == null ? undefined : Number(r.tension_main),
+          tensionCross: r.tension_cross == null ? undefined : Number(r.tension_cross),
+          tensionUnit: (r.tension_unit as "lb" | "kg") ?? "lb",
+          grommetNotes: r.grommet_notes ?? undefined,
+          jobNotes: r.job_notes ?? undefined,
+          droppedOffAt: r.dropped_off_at ?? undefined,
+          promisedAt: r.promised_at ?? undefined,
+          notifyWhatsApp: !!r.notify_whatsapp,
+        }
+      : undefined,
+  };
+};
 
 const paymentRows = (b: Booking) =>
   b.payments.map((p) => ({
@@ -196,11 +224,13 @@ export async function loadBookings(): Promise<Booking[]> {
   const payments: Row[] = [];
   const bookingIds = rows.map((r) => String(r.id));
   for (let start = 0; start < bookingIds.length; start += 100) {
-    payments.push(...await routedQuery("booking_payments", {
-      in: { column: "booking_id", values: bookingIds.slice(start, start + 100) },
-      orderBy: { column: "created_at", ascending: true },
-      limit: 2000,
-    }) as Row[]);
+    payments.push(
+      ...((await routedQuery("booking_payments", {
+        in: { column: "booking_id", values: bookingIds.slice(start, start + 100) },
+        orderBy: { column: "created_at", ascending: true },
+        limit: 2000,
+      })) as Row[]),
+    );
   }
   const byBooking = new Map<string, Row[]>();
   for (const p of payments) {
