@@ -121,13 +121,20 @@ function stampVerifiedBranchOperations(operations,branchId,aggregateKind=null){
     const saleFields=aggregateKind==="sale"
       ? (saleBranchFields.get(operation.table)??[]).filter((field)=>supportedColumns.has(field))
       : null;
+    // Receiving is performed by the physical till. Renderer state may still
+    // carry an old branch alias after activation recovery, so the purchase
+    // header always receives the branch verified from the sealed terminal.
+    const receivingFields=aggregateKind==="receiving"&&operation.table==="purchase_orders"
+      ? ["store_id"].filter((field)=>supportedColumns.has(field))
+      : null;
     const verified=verifiedBranchTables.has(operation.table);
     const fillMissing=branchStampedTables.has(operation.table);
     if(operation.kind==="insert"||operation.kind==="upsert"){
       const rows=operation.rows??(operation.values?[operation.values]:[]);
-      if(!rows.length||(!saleFields?.length&&!verified&&!fillMissing))return operation;
+      if(!rows.length||(!saleFields?.length&&!receivingFields?.length&&!verified&&!fillMissing))return operation;
       const stamped=rows.map((row)=>{
         if(saleFields?.length)return saleFields.reduce((next,field)=>({...next,[field]:branchId}),{...row});
+        if(receivingFields?.length)return receivingFields.reduce((next,field)=>({...next,[field]:branchId}),{...row});
         if(!supportedColumns.has("store_id"))return row;
         return verified||!String(row?.store_id??"").trim()?{...row,store_id:branchId}:row;
       });
@@ -268,6 +275,24 @@ function stopAutomaticSync() {
 }
 
 const shutdownDelay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const SHUTDOWN_RESOURCE_TIMEOUT_MS = 12_000;
+
+/**
+ * Native SQL/ODBC and child-process shutdowns can otherwise keep Electron
+ * alive with no windows. The work promise is observed even after the deadline
+ * so a late rejection never becomes an unhandled rejection.
+ */
+function settleWithin(work, timeoutMs = SHUTDOWN_RESOURCE_TIMEOUT_MS) {
+  let timer;
+  const operation = Promise.resolve()
+    .then(work)
+    .then(() => ({ ok: true }), (error) => ({ ok: false, error }));
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ ok: false, timedOut: true }), timeoutMs);
+  });
+  return Promise.race([operation, deadline]).finally(() => clearTimeout(timer));
+}
+
 async function flushSyncBeforeShutdown() {
   const branchId = localBranchId();
   if (!databaseManager.isConnected() || !branchId || syncCoordinator.paused) return { skipped: true };
@@ -462,6 +487,14 @@ let quitting = false;
 const pendingShiftCloseSync = new Set();
 let mandatoryShiftSyncRun = null;
 let allowMainWindowClose = false;
+
+app.on("second-instance", () => {
+  const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+});
 
 
 /** The till reported in, the page painted, or a person is looking at a screen. */
@@ -2075,32 +2108,46 @@ app.whenReady().then(async () => {
     headers["Content-Security-Policy"] = [["default-src 'self' data: blob:", "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:", "connect-src 'self' https: wss: http://127.0.0.1:* http://localhost:*", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'"].join("; ")];
     callback({ responseHeaders: headers });
   });
-  app.on("second-instance", () => { const win = mainWindow ?? BrowserWindow.getAllWindows()[0]; if (!win || win.isDestroyed()) return; if (win.isMinimized()) win.restore(); win.show(); win.focus(); });
   try { storageHygiene.runOnLaunch(app.getPath("userData"), app.getVersion()); } catch (error) { if (DEBUG) console.warn("[pos] storage hygiene skipped:", fail(error).error); }
   registerIpc();
-  const restoredDatabase=await databaseService.restore();
-  await restoreShiftCloseGuard().catch((error) => recordFault("shift-close.guard-restore", error));
   mainTelemetry.start();
   const boot = health.beginBoot();
   if (health.shouldEnterSafeMode(boot)) { safeMode = true; health.beginRecovery(boot.reason ?? "Repeated failed launches"); updater.pause(); recovery.open(); return; }
   try { if (!baseUrl) baseUrl = await startAppServer(); }
   catch (err) { enterSafeMode(err instanceof Error ? err.message : String(err)); return; }
-  // A configured till restores its SQL connection before the terminal route
-  // is loaded. If SQL Server is stopped or unreachable, open the database
-  // recovery screen instead of exposing a register that cannot persist sales.
-  const initialRoute = restoredDatabase.enabled && restoredDatabase.configured && !restoredDatabase.tradingReady
+
+  // Always put a window on screen before touching SQL Server. Validation and
+  // an additive schema repair can legitimately take minutes after an update;
+  // awaiting them first left a healthy Electron process looking invisible and
+  // gave the operator no window to close. A configured till starts on the
+  // recovery-safe route and moves to the register when the state subscription
+  // reports tradingReady.
+  const initialDatabase = databaseService.snapshot();
+  const initialRoute = initialDatabase.enabled && initialDatabase.configured
     ? "/database-startup"
     : "/";
-  createWindows(initialRoute);
-  if(restoredDatabase.state==="enabled_bootstrapping")void prepareLocalData().catch(error=>recordFault("local-data.prepare",error));
-  scheduleAutomaticSync(5_000);
-  updater.start();
   readyWatchdog = setTimeout(() => enterSafeMode("Startup timed out"), 60_000);
+  createWindows(initialRoute);
+  updater.start();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length !== 0) return;
     const database = databaseService.snapshot();
     createWindows(database.enabled && database.configured && !database.tradingReady ? "/database-startup" : "/");
   });
+
+  let restoredDatabase;
+  try {
+    restoredDatabase = await databaseService.restore();
+  } catch (error) {
+    recordFault("database.startup-restore", error);
+    if (!quitting) enterSafeMode("The local database startup check failed unexpectedly");
+    return;
+  }
+  if (quitting || safeMode) return;
+  await restoreShiftCloseGuard().catch((error) => recordFault("shift-close.guard-restore", error));
+  if (restoredDatabase.state === "enabled_bootstrapping")
+    void prepareLocalData().catch((error) => recordFault("local-data.prepare", error));
+  scheduleAutomaticSync(5_000);
 });
 
 let shutdownFlushStarted = false;
@@ -2133,14 +2180,23 @@ app.on("before-quit", (event) => {
     if (result?.timedOut) recordFault("shutdown.sync-timeout", new Error("Final synchronization exceeded 8 seconds; pending SQL changes remain durable for next launch."));
     else if (result?.ok === false) recordFault("shutdown.sync", new Error(result.error ?? "Final synchronization failed; pending SQL changes remain durable for next launch."));
     mainTelemetry.stop();
+    updater.stop();
     closeCustomerDisplay();
-    await databaseManager.close().catch((error) => recordFault("shutdown.database-close", error));
+    const serverStop = await settleWithin(() => stopAppServer());
+    if (serverStop.timedOut) recordFault("shutdown.app-server-timeout", new Error("The local app server did not stop before the shutdown deadline."));
+    else if (!serverStop.ok) recordFault("shutdown.app-server", serverStop.error);
+    const databaseClose = await settleWithin(() => databaseManager.close());
+    if (databaseClose.timedOut) recordFault("shutdown.database-close-timeout", new Error("SQL Server did not close before the shutdown deadline."));
+    else if (!databaseClose.ok) recordFault("shutdown.database-close", databaseClose.error);
     shutdownFlushComplete = true;
-    app.quit();
+    // Cleanup above is bounded and every pending write is durable. app.exit is
+    // intentional here: native ODBC work that began during startup must not
+    // leave a headless Electron process after the operator chose Exit.
+    app.exit(0);
   })();
 });
 app.on("window-all-closed", () => {
   if (recovery.isOpen()) return;
-  markStartupSettled(); updater.stop(); void stopAppServer().catch((error) => recordFault("app-server.stop", error));
+  markStartupSettled();
   if (process.platform !== "darwin") app.quit();
 });

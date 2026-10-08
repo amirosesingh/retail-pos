@@ -152,26 +152,34 @@ describe("Electron sales visibility", () => {
     expect(sync).toContain("desktopBridge.sync?.getStatus");
   });
 
-  it("repairs only missing legacy branch fields before upload", async () => {
+  it("canonicalizes only missing or SQL-equivalent legacy branch fields before upload", async () => {
     const { rowsForBranch } = await import("../../../electron/sync/push-worker.cjs");
     const rows = rowsForBranch("sale_items", [
       { id: "missing", branch_id: null },
       { id: "correct", branch_id: "branch-1" },
+      { id: "case", branch_id: "BRANCH-1" },
+      { id: "space", branch_id: "branch-1 " },
       { id: "wrong", branch_id: "branch-2" },
     ], "branch-1");
 
     expect(rows).toEqual([
       { id: "missing", branch_id: "branch-1" },
       { id: "correct", branch_id: "branch-1" },
+      { id: "case", branch_id: "branch-1" },
+      { id: "space", branch_id: "branch-1" },
       { id: "wrong", branch_id: "branch-2" },
     ]);
     expect(rowsForBranch("audit_logs", [
       { id: "missing", store_id: null },
       { id: "correct", store_id: "branch-1" },
+      { id: "case", store_id: "BRANCH-1" },
+      { id: "space", store_id: "branch-1\t" },
       { id: "wrong", store_id: "branch-2" },
     ], "branch-1")).toEqual([
       { id: "missing", store_id: "branch-1" },
       { id: "correct", store_id: "branch-1" },
+      { id: "case", store_id: "branch-1" },
+      { id: "space", store_id: "branch-1" },
       { id: "wrong", store_id: "branch-2" },
     ]);
     expect(rowsForBranch("sales", [{ id: "sale" }], "branch-1")).toEqual([{ id: "sale" }]);
@@ -181,10 +189,14 @@ describe("Electron sales visibility", () => {
     }, [
       { id: "missing", store_id: null },
       { id: "correct", store_id: "branch-1" },
+      { id: "case", store_id: "BRANCH-1" },
+      { id: "space", store_id: " branch-1 " },
       { id: "wrong", store_id: "branch-2" },
     ], "branch-1")).toEqual([
       { id: "missing", store_id: "branch-1" },
       { id: "correct", store_id: "branch-1" },
+      { id: "case", store_id: "branch-1" },
+      { id: "space", store_id: "branch-1" },
       { id: "wrong", store_id: "branch-2" },
     ]);
     expect(rowsForBranch({
@@ -197,6 +209,60 @@ describe("Electron sales visibility", () => {
       columns: [{ cloudColumn: "id" }, { cloudColumn: "store_id" }],
     }, [{ id: "global-admin", store_id: null }], "branch-1"))
       .toEqual([{ id: "global-admin", store_id: null }]);
+  });
+
+  it("reveals only unowned legacy receiving drafts to the paired till", async () => {
+    const statements: string[] = [];
+    const request = {
+      input: vi.fn(() => request),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        return { recordset: [] };
+      }),
+    };
+    const purchaseOrders = {
+      cloudTable: "purchase_orders",
+      sqlServerTable: "purchase_orders",
+      scope: "branch",
+      columns: [
+        { cloudColumn: "id", sqlServerColumn: "id", primaryKey: true },
+        { cloudColumn: "store_id", sqlServerColumn: "store_id", primaryKey: false },
+      ],
+    };
+    const purchaseItems = {
+      cloudTable: "purchase_order_items",
+      sqlServerTable: "purchase_order_items",
+      scope: "branch",
+      columns: [
+        { cloudColumn: "id", sqlServerColumn: "id", primaryKey: true },
+        {
+          cloudColumn: "po_id",
+          sqlServerColumn: "po_id",
+          primaryKey: false,
+          foreignKey: true,
+          foreignKeyTarget: { table: "purchase_orders", column: "id" },
+        },
+      ],
+    };
+    const { OperationsRepository } = await import(
+      "../../../electron/db/repositories/operations.cjs"
+    );
+    const repository = new OperationsRepository(
+      { pool: { request: () => request } },
+      { tables: [purchaseOrders, purchaseItems] },
+    );
+
+    await repository.query("branch-1", "purchase_orders", { limit: 10 });
+    await repository.query("branch-1", "purchase_order_items", { limit: 10 });
+
+    expect(statements[0]).toContain(
+      "(source.[store_id]=@branch OR NULLIF(source.[store_id],N'') IS NULL)",
+    );
+    expect(statements[1]).toContain("dbo.[purchase_orders] parent");
+    expect(statements[1]).toContain(
+      "(parent.[store_id]=@branch OR NULLIF(parent.[store_id],N'') IS NULL)",
+    );
+    expect(statements.join("\n")).not.toContain("store_id<>@branch");
   });
 
   it("stores the branch on offline sign-in audit rows", async () => {

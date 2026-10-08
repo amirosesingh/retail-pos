@@ -9,7 +9,18 @@ const SERVER_ONLY_TABLES = new Set([
 ]);
 
 const EXCLUDED_COLUMNS = new Map([
-  ["members", new Set(["auth_user_id"])],
+  [
+    "members",
+    new Set([
+      "auth_user_id",
+      "is_verified",
+      "verified_at",
+      "verified_channel",
+      "membership_member_id",
+      "membership_revision",
+      "membership_status",
+    ]),
+  ],
 ]);
 
 function isServerOnlyTable(tableName) {

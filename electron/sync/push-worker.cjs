@@ -20,9 +20,12 @@ function collapseChanges(changes) {
 
 /**
  * Older desktop builds could commit a branch-owned row before its branch
- * column was projected. The local database belongs to one registered branch,
- * so repair only a missing value at the upload boundary. A non-empty mismatch
- * remains rejected as possible cross-branch corruption.
+ * column was projected. SQL Server also compares text identifiers without
+ * case or trailing-space sensitivity under the supported collation, while
+ * PostgreSQL's sync guard compares them exactly. The local database belongs
+ * to one registered branch, so repair a missing or SQL-equivalent value at
+ * the upload boundary. A genuinely different non-empty branch remains
+ * rejected as possible cross-branch corruption.
  */
 function rowsForBranch(table, rows, branchId) {
   const tableName = typeof table === "string" ? table : table?.cloudTable;
@@ -33,9 +36,13 @@ function rowsForBranch(table, rows, branchId) {
       ? columns.has("store_id") ? "store_id" : columns.has("branch_id") ? "branch_id" : null
       : null;
   if (!branchColumn) return rows;
-  return rows.map((row) =>
-    String(row?.[branchColumn] ?? "").trim() ? row : { ...row, [branchColumn]: branchId },
-  );
+  const authoritative = String(branchId ?? "").trim();
+  return rows.map((row) => {
+    const supplied = String(row?.[branchColumn] ?? "").trim();
+    const equivalent =
+      !supplied || supplied.toLocaleLowerCase("en-US") === authoritative.toLocaleLowerCase("en-US");
+    return equivalent ? { ...row, [branchColumn]: authoritative } : row;
+  });
 }
 
 function changeKey(change) {

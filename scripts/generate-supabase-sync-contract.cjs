@@ -89,19 +89,31 @@ function deleteBranchPredicate(table, alias = "x") {
 }
 
 function incomingBranchGuard(table, rows = "p_rows") {
-  if (table.cloudTable === "issued_vouchers")
-    return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'store_id' IS DISTINCT FROM p_branch_id OR COALESCE(r->>'status','')<>'REDEEMED') THEN RAISE EXCEPTION 'SYNC_VOUCHER_TRANSITION_FORBIDDEN'; END IF;`;
   const names = columnNames(table);
+  // SQL Server's supported collation treats case and trailing spaces as equal,
+  // while PostgreSQL's JSON text comparison is exact. Canonicalize only a
+  // missing or SQL-equivalent direct branch value after terminal scope has
+  // been verified. A genuinely different non-empty branch remains rejected.
+  const branchColumn = names.has("store_id")
+    ? "store_id"
+    : names.has("branch_id")
+      ? "branch_id"
+      : null;
+  const canonicalize = branchColumn
+    ? `SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'${branchColumn}'),'') IS NULL OR lower(btrim(r->>'${branchColumn}'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('${branchColumn}',p_branch_id) ELSE r END),'[]'::jsonb) INTO ${rows} FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r; `
+    : "";
+  if (table.cloudTable === "issued_vouchers")
+    return `${canonicalize}IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'store_id' IS DISTINCT FROM p_branch_id OR COALESCE(r->>'status','')<>'REDEEMED') THEN RAISE EXCEPTION 'SYNC_VOUCHER_TRANSITION_FORBIDDEN'; END IF;`;
   if (table.cloudTable === "products")
     return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE NULLIF(r->>'owner_store_id','') IS NOT NULL AND r->>'owner_store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF;`;
-  if (["settings_overrides", "settings_scoped"].includes(table.cloudTable))
+  if (table.cloudTable === "settings_scoped")
+    return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='global' AND r->>'scope_id'='' AND r->>'key' LIKE 'pos_field:%' AND auth.role()='service_role') OR (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO ${rows} FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r;`;
+  if (table.cloudTable === "settings_overrides")
     return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO ${rows} FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r;`;
-  if (table.cloudTable === "audit_logs")
-    return `SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO ${rows} FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;`;
   if (names.has("store_id"))
-    return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;`;
+    return `${canonicalize}IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;`;
   if (names.has("branch_id"))
-    return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;`;
+    return `${canonicalize}IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;`;
   if (names.has("from_store_id") && names.has("to_store_id"))
     return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE p_branch_id<>COALESCE(r->>'from_store_id','') AND p_branch_id<>COALESCE(r->>'to_store_id','')) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;`;
   for (const column of table.columns.filter((item) => item.foreignKey && item.foreignKeyTarget)) {
@@ -197,8 +209,10 @@ GRANT EXECUTE ON FUNCTION public.pos_sync_validate_scope(text,text,text) TO serv
 ];
 
 for (const table of tables) {
-  const columns = table.columns.map((column) => q(column.cloudColumn));
-  const updates = table.columns
+  const omitted = excludedColumns(table.cloudTable);
+  const portableColumns = table.columns.filter((column) => !omitted.has(column.cloudColumn));
+  const columns = portableColumns.map((column) => q(column.cloudColumn));
+  const updates = portableColumns
     .filter(
       (column) =>
         !column.primaryKey &&
@@ -380,6 +394,7 @@ out.push(`CREATE OR REPLACE FUNCTION public.pos_sync_push_batch(p_batch_id uuid,
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $fn$
 DECLARE v_me public.app_users%ROWTYPE; v_count integer:=0; v_hash text:=md5(p_table||COALESCE(p_rows,'[]'::jsonb)::text||COALESCE(p_changes,'[]'::jsonb)::text); v_prior text;
 BEGIN
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('pos-sync-batch:' || p_batch_id::text, 0));
  PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
  PERFORM set_config('pos.source_application','electron',true);
  PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
@@ -400,6 +415,7 @@ out.push(`CREATE OR REPLACE FUNCTION public.pos_sync_push_aggregate(p_batch_id u
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $fn$
 DECLARE v_me public.app_users%ROWTYPE; v_op jsonb; v_table text; v_rows jsonb; v_count integer:=0; v_total integer:=0; v_hash text:=md5(COALESCE(p_operations,'[]'::jsonb)::text); v_prior text;
 BEGIN
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('pos-sync-batch:' || p_batch_id::text, 0));
  PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
  PERFORM set_config('pos.source_application','electron',true);
  PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
@@ -523,6 +539,15 @@ else schema = `${schema.trimEnd()}\n\n${block}\n`;
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 
+const functionSql = (name) => {
+  const marker = `CREATE OR REPLACE FUNCTION public.${name}`;
+  const functionStart = block.indexOf(marker);
+  const functionEnd = block.indexOf("$fn$;", functionStart) + "$fn$;".length;
+  if (functionStart < 0 || functionEnd < "$fn$;".length)
+    throw new Error(`Could not find generated function ${name}`);
+  return block.slice(functionStart, functionEnd);
+};
+
 const migrationIndex = process.argv.indexOf("--migration");
 if (migrationIndex >= 0) {
   const requested = process.argv[migrationIndex + 1];
@@ -559,14 +584,6 @@ if (targetedMigrationIndex >= 0) {
   const migrationsDir = path.join(root, "supabase", "migrations") + path.sep;
   if (!migrationPath.startsWith(migrationsDir) || !fs.existsSync(migrationPath))
     throw new Error("--targeted-migration must name an existing file under supabase/migrations");
-  const functionSql = (name) => {
-    const marker = `CREATE OR REPLACE FUNCTION public.${name}`;
-    const functionStart = block.indexOf(marker);
-    const functionEnd = block.indexOf("$fn$;", functionStart) + "$fn$;".length;
-    if (functionStart < 0 || functionEnd < "$fn$;".length)
-      throw new Error(`Could not find generated function ${name}`);
-    return block.slice(functionStart, functionEnd);
-  };
   const migration = `-- Update only contracts whose portable columns changed. Existing rows are not rewritten.
 ALTER TABLE public.members ADD COLUMN IF NOT EXISTS country_code text;
 ALTER TABLE public.members ADD COLUMN IF NOT EXISTS postal_code text;
@@ -591,6 +608,30 @@ NOTIFY pgrst, 'reload schema';
 `;
   fs.writeFileSync(migrationPath, migration);
   console.log(`Targeted sync repair written to ${path.relative(root, migrationPath)}`);
+}
+
+const pushMigrationIndex = process.argv.indexOf("--push-migration");
+if (pushMigrationIndex >= 0) {
+  const requested = process.argv[pushMigrationIndex + 1];
+  const migrationPath = requested ? path.resolve(root, requested) : "";
+  const migrationsDir = path.join(root, "supabase", "migrations") + path.sep;
+  if (!migrationPath.startsWith(migrationsDir) || !fs.existsSync(migrationPath))
+    throw new Error("--push-migration must name an existing file under supabase/migrations");
+  const migration = `-- Normalize only missing or SQL-equivalent branch ids after the
+-- terminal-to-branch binding has been verified. Foreign branch ids stay blocked.
+${functionSql("pos_sync_push_batch")}
+
+${functionSql("pos_sync_push_aggregate")}
+
+REVOKE ALL ON FUNCTION public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_push_aggregate(uuid,text,text,text,jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_push_aggregate(uuid,text,text,text,jsonb) TO service_role;
+
+NOTIFY pgrst, 'reload schema';
+`;
+  fs.writeFileSync(migrationPath, migration);
+  console.log(`Push migration written to ${path.relative(root, migrationPath)}`);
 }
 
 const pullMigrationIndex = process.argv.indexOf("--pull-migration");

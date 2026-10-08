@@ -236,6 +236,10 @@ describe("SQL Server schema registry", () => {
       "database/sqlserver/migrations/007_repair_scoped_json_values.sql",
       "utf8",
     ).trim();
+    const productRowVersionRepair = readFileSync(
+      "database/sqlserver/migrations/012_repair_products_row_version_default.sql",
+      "utf8",
+    ).trim();
     const pipeline = readFileSync(
       "database/sqlserver/migrations/002_sync_pipeline.sql",
       "utf8",
@@ -252,6 +256,7 @@ describe("SQL Server schema registry", () => {
     expect(normalizedCompleteSql).toContain(normalize(notificationPreferences));
     expect(normalizedCompleteSql).toContain(normalize(companyNameRepair));
     expect(normalizedCompleteSql).toContain(normalize(scopedJsonRepair));
+    expect(normalizedCompleteSql).toContain(normalize(productRowVersionRepair));
     expect(completeSql).toContain("IF DB_ID(N'POS_Local') IS NULL");
     expect(completeSql).toContain("EXEC(N'CREATE DATABASE [POS_Local]')");
     expect(completeSql).toContain("USE [POS_Local]");
@@ -264,6 +269,7 @@ describe("SQL Server schema registry", () => {
     expect(completeSql).toContain("Retail POS local database migration history table is missing.");
     expect(completeSql).toContain("WHERE version = 2");
     expect(completeSql).toContain("WHERE version = 3");
+    expect(completeSql).toContain("WHERE version = 12");
     expect(completeSql).toContain("CK_activity_events_cleared_by_json_array");
     expect(completeSql).toContain("IX_activity_events_store_created");
     const columnInserts = [
@@ -290,7 +296,18 @@ describe("SQL Server schema registry", () => {
     expect(bundle).toContain("Select the configured Retail POS database");
     expect(bundle).toContain("001_initial.sql");
     expect(bundle).toContain("003_activity_notification_preferences.sql");
+    expect(bundle).toContain("012_repair_products_row_version_default.sql");
     expect(bundle).toContain("Current additive schema repair");
+  });
+
+  it("repairs the legacy products row-version default without rewriting product data", () => {
+    const repair = readFileSync(
+      "database/sqlserver/migrations/012_repair_products_row_version_default.sql",
+      "utf8",
+    );
+    expect(repair).toContain("DROP CONSTRAINT");
+    expect(repair).toContain("DEFAULT (1) FOR row_version");
+    expect(repair).not.toMatch(/UPDATE\s+dbo\.products\s+SET/i);
   });
 
   it("uses SQL Server-compatible types for every generated index key", () => {

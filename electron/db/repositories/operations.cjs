@@ -1,5 +1,9 @@
 const { loadRegistry } = require("../schema-registry.cjs");
-const { branchPredicate, settingsScopePredicate } = require("../branch-scope.cjs");
+const {
+  branchPredicate,
+  rendererReadBranchPredicate,
+  settingsScopePredicate,
+} = require("../branch-scope.cjs");
 const { toRendererRow } = require("../../sync/row-codec.cjs");
 
 const MAX_BATCH_ROWS = 2000;
@@ -327,7 +331,8 @@ class OperationsRepository {
       .input("branch", String(branchId))
       .input("terminal", String(terminalId ?? ""));
     const where = [];
-    const scope = settingsScopePredicate(table) ?? this.branchPredicate(table);
+    const scope = settingsScopePredicate(table) ??
+      rendererReadBranchPredicate(this.registry, table);
     if (scope) where.push(scope);
     let parameter = 0;
     for (const [cloudColumn, value] of Object.entries(options.match ?? {})) {

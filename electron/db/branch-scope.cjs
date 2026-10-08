@@ -35,6 +35,45 @@ function branchPredicate(registry, table, alias = "source", seen = new Set()) {
   return null;
 }
 
+/**
+ * Renderer reads may recover purchase orders written by old desktop builds
+ * before store_id was projected. The local database is paired to one branch,
+ * so an unowned receiving row can be shown to that till and claimed on its
+ * next save. A non-empty branch mismatch remains hidden. This relaxed rule is
+ * deliberately read-only; writes and synchronization use branchPredicate().
+ */
+function rendererReadBranchPredicate(registry, table, alias = "source", seen = new Set()) {
+  if (!table || seen.has(table.sqlServerTable)) return null;
+  const nextSeen = new Set(seen).add(table.sqlServerTable);
+  const names = columnNames(table);
+  if (names.has("store_id")) {
+    const owned = `${alias}.[store_id]=@branch`;
+    return table.cloudTable === "purchase_orders"
+      ? `(${owned} OR NULLIF(${alias}.[store_id],N'') IS NULL)`
+      : owned;
+  }
+  if (names.has("branch_id")) return `${alias}.[branch_id]=@branch`;
+  if (names.has("owner_store_id"))
+    return `(NULLIF(${alias}.[owner_store_id],N'') IS NULL OR ${alias}.[owner_store_id]=@branch)`;
+  if (names.has("from_store_id") && names.has("to_store_id"))
+    return `(${alias}.[from_store_id]=@branch OR ${alias}.[to_store_id]=@branch)`;
+  for (const column of table.columns ?? []) {
+    if (!column.foreignKey || !column.foreignKeyTarget) continue;
+    const parent = (registry.tables ?? []).find((candidate) =>
+      candidate.cloudTable === column.foreignKeyTarget.table ||
+      candidate.sqlServerTable === column.foreignKeyTarget.table);
+    if (!parent) continue;
+    const parentFilter = rendererReadBranchPredicate(registry, parent, "parent", nextSeen);
+    if (!parentFilter) continue;
+    const parentColumn = parent.columns.find(
+      (candidate) => candidate.cloudColumn === column.foreignKeyTarget.column,
+    );
+    const parentKey = parentColumn?.sqlServerColumn ?? column.foreignKeyTarget.column;
+    return `EXISTS (SELECT 1 FROM dbo.[${parent.sqlServerTable}] parent WHERE parent.[${parentKey}]=${alias}.[${column.sqlServerColumn}] AND ${parentFilter})`;
+  }
+  return null;
+}
+
 function dateColumn(table) {
   const names = columnNames(table);
   return ["created_at", "paid_at", "occurred_at", "updated_at"].find((name) => names.has(name)) ?? null;
@@ -73,6 +112,7 @@ module.exports = {
   branchPredicate,
   dateColumn,
   governanceScopePredicate,
+  rendererReadBranchPredicate,
   scopedWhere,
   settingsScopePredicate,
 };
