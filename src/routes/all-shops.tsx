@@ -45,11 +45,15 @@ const isToday = (iso: string) => new Date(iso).toDateString() === new Date().toD
 function AllShops() {
   const { state, stores: allStores } = usePos();
   // Branches that keep their stock private are left out of group figures.
-  const hidden = privateStockStores(state.settings);
-  const stores = allStores.filter((s) => !hidden.has(s.id));
+  const hidden = useMemo(() => privateStockStores(state.settings), [state.settings]);
+  const stores = useMemo(
+    () => allStores.filter((store) => !hidden.has(store.id)),
+    [allStores, hidden],
+  );
   const { can, isAdmin } = useAuth();
   const allowed = isAdmin || can("can_view_inventory");
   const showMoney = isAdmin || can("can_view_sales_reports");
+  const canExport = can("can_export_reports");
   const [query, setQuery] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
   const [category, setCategory] = useState("all");
@@ -80,7 +84,11 @@ function AllShops() {
 
   /** Group-wide live performance — administrators only. */
   const live = useMemo(() => {
-    const todays = state.sales.filter((s) => isToday(s.createdAt) && !s.refunded);
+    const visibleStoreIds = new Set(stores.map((store) => store.id));
+    const todays = state.sales.filter(
+      (sale) =>
+        visibleStoreIds.has(sale.storeId) && isToday(sale.createdAt) && !sale.refunded,
+    );
     const financial = profitOf(todays, state.products);
     return {
       revenue: financial.revenue,
@@ -89,7 +97,7 @@ function AllShops() {
       basket: todays.length ? financial.revenue / todays.length : 0,
       feed: [...todays].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 12),
     };
-  }, [state.sales, state.products]);
+  }, [state.sales, state.products, stores]);
 
   const rows = state.products.filter((p) => {
     if (hidden.size > 0 && !stores.some((s2) => productVisibleAt(state.settings, p, s2.id))) return false;
@@ -207,16 +215,23 @@ function AllShops() {
                   <p className="truncate text-sm font-medium">{s.store.name}</p>
                   <p className="text-xs text-muted-foreground">{s.store.code}</p>
                 </div>
-                <Badge variant={s.shift ? "secondary" : "destructive"}>
-                  {s.shift ? "Shift open" : "Closed"}
-                </Badge>
+                {showMoney && (
+                  <Badge variant={s.shift ? "secondary" : "destructive"}>
+                    {s.shift ? "Shift open" : "Closed"}
+                  </Badge>
+                )}
               </div>
               <p className="numeric mt-3 text-xl font-semibold">
                 {showMoney ? money(s.revenue) : "—"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {s.count} bill{s.count === 1 ? "" : "s"} today
-                {showMoney && <> · stock {money(s.stockValue)}</>}
+                {showMoney ? (
+                  <>
+                    {s.count} bill{s.count === 1 ? "" : "s"} today · stock {money(s.stockValue)}
+                  </>
+                ) : (
+                  "Stock quantities only"
+                )}
               </p>
               <p className="mt-1 text-xs text-warning">{s.low} below reorder level</p>
             </div>
@@ -252,9 +267,11 @@ function AllShops() {
           >
             Below reorder level
           </Button>
-          <Button variant="outline" size="sm" onClick={exportCsv}>
-            <Download className="size-4" /> Export CSV
-          </Button>
+          {canExport && (
+            <Button variant="outline" size="sm" onClick={exportCsv}>
+              <Download className="size-4" /> Export CSV
+            </Button>
+          )}
         </div>
 
         <div className="overflow-auto rounded-lg border border-border">

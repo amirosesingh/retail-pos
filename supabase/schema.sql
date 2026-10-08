@@ -12712,12 +12712,12 @@ CREATE POLICY "Staff can read store groups" ON public.store_groups
 
 DROP POLICY IF EXISTS "Supervisors manage store groups" ON public.store_groups;
 CREATE POLICY "Supervisors manage store groups" ON public.store_groups
-  FOR INSERT TO authenticated WITH CHECK (public.is_app_supervisor());
+  FOR INSERT TO authenticated WITH CHECK (public.has_perm('can_manage_locations'));
 
 DROP POLICY IF EXISTS "Supervisors update store groups" ON public.store_groups;
 CREATE POLICY "Supervisors update store groups" ON public.store_groups
-  FOR UPDATE TO authenticated USING (public.is_app_supervisor())
-  WITH CHECK (public.is_app_supervisor());
+  FOR UPDATE TO authenticated USING (public.has_perm('can_manage_locations'))
+  WITH CHECK (public.has_perm('can_manage_locations'));
 
 DROP TRIGGER IF EXISTS store_groups_touch ON public.store_groups;
 CREATE TRIGGER store_groups_touch BEFORE UPDATE ON public.store_groups

@@ -279,6 +279,18 @@ describe("relay authorisation", () => {
     if (!theirs.ok) expect(theirs.code).toBe("STORE_FORBIDDEN");
   });
 
+  it("lets a delegated location manager maintain another branch", async () => {
+    const locationManager: RelayScope = {
+      ...cashier,
+      permissions: { ...cashier.permissions, can_manage_locations: true },
+    };
+    const out = await safeAuthorizeRelayOp(
+      { kind: "upsert", table: "stores", rows: [{ id: "STORE-B", name: "Other" }] },
+      locationManager,
+    );
+    expect(out.ok).toBe(true);
+  });
+
   it("refuses a child row whose parent belongs to another branch", async () => {
     restMock.mockResolvedValue({ ok: true, json: async () => [{ store_id: "STORE-B" }] });
     const out = await safeAuthorizeRelayOp(

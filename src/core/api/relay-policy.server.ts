@@ -719,19 +719,19 @@ function pinToStore(
 class StoreViolation extends Error {}
 
 /**
- * Branch registry rules. Creating or renaming a branch is an administrator's
- * job; a till may at most keep its own branch row up to date.
+ * Branch registry rules. Location managers may maintain the directory; a
+ * till without that permission may at most keep its own branch row up to date.
  */
 function authorizeStores(op: RelayOp, scope: RelayScope): { ok: true; op: RelayOp } | RelayDenial {
-  if (scope.isSupervisor) return { ok: true, op };
+  if (allowed(scope, "can_manage_locations")) return { ok: true, op };
 
   if (op.kind === "delete")
-    return deny("PERMISSION_DENIED", "Only an administrator can remove a branch.");
+    return deny("PERMISSION_DENIED", "Your account cannot remove a branch.");
 
   if (op.kind === "insert" || op.kind === "upsert") {
     const foreign = op.rows.some((row) => String(row["id"] ?? "") !== (scope.storeId ?? ""));
     if (foreign)
-      return deny("STORE_FORBIDDEN", "Only an administrator can add or change other branches.");
+      return deny("STORE_FORBIDDEN", "Your account cannot add or change other branches.");
     return { ok: true, op };
   }
 

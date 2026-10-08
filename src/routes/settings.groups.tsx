@@ -41,7 +41,7 @@ export const Route = createFileRoute("/settings/groups")({
 });
 
 function GroupSettings() {
-  const { isAdmin } = useAuth();
+  const { can, isAdmin } = useAuth();
   const { allStores } = usePos();
   const groups = useStoreGroups();
   const [name, setName] = useState("");
@@ -57,15 +57,15 @@ function GroupSettings() {
   const active = groups.filter((g) => !g.archivedAt);
   const archived = groups.filter((g) => g.archivedAt);
 
-  if (!isAdmin) {
+  if (!isAdmin && !can("can_manage_locations")) {
     return (
       <SettingsShell>
         <div className="mx-auto w-full max-w-7xl p-6">
           <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-center">
             <ShieldAlert className="mx-auto size-6 text-destructive" />
-            <p className="mt-2 font-semibold">Admin only</p>
+            <p className="mt-2 font-semibold">Permission required</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Only the admin account can manage company groups.
+              Your role does not allow location and warehouse management.
             </p>
           </div>
         </div>
