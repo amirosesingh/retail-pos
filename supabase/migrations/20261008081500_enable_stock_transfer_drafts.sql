@@ -1,3 +1,30 @@
+-- Cross-group movements always require approval, even when a branch/global
+-- stock-transfer action is configured for direct execution.
+CREATE OR REPLACE FUNCTION public.stock_transfer_approval_required(_store_id text, _to_store_id text)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT CASE
+    WHEN public.is_cross_group_transfer(_store_id, _to_store_id) THEN true
+    ELSE COALESCE(
+      (
+        SELECT false
+          FROM public.authorization_actions a
+         WHERE a.action_key = 'stock_transfer'
+           AND a.is_enabled
+           AND (
+             (a.scope_type = 'branch' AND a.scope_id = _store_id)
+             OR (a.scope_type = 'global' AND a.scope_id = '')
+           )
+         ORDER BY CASE WHEN a.scope_type = 'branch' THEN 0 ELSE 1 END
+         LIMIT 1
+      ),
+      public.stock_transfer_approval_required(_store_id)
+    )
+  END
+$fn$;
+
 -- Draft stock movements are real persisted notes, but they do not enter the
 -- approval lifecycle until the operator explicitly submits them.
 CREATE OR REPLACE FUNCTION public.stock_transfers_enforce_lifecycle()

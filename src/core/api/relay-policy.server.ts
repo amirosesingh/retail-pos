@@ -90,6 +90,7 @@ const GLOBAL_TABLES = new Set([
   "authorization_actions",
   "pos_settings",
   "promotions",
+  "coupon_campaigns",
   "suppliers",
 ]);
 
@@ -180,6 +181,7 @@ const TABLE_PERMISSIONS: Record<string, { write?: string; remove?: string }> = {
   pos_settings: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
   public_flags: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
   promotions: { write: "can_manage_promotions", remove: "can_manage_promotions" },
+  coupon_campaigns: { write: "can_manage_promotions", remove: "can_manage_promotions" },
   suppliers: { write: "can_receive_purchase_order", remove: "can_receive_purchase_order" },
   settings_scoped: { write: "can_edit_product_price" },
 };

@@ -18,6 +18,12 @@ BEGIN
   IF v_rewritten IS DISTINCT FROM v_definition THEN
     EXECUTE v_rewritten;
   END IF;
+
+  SELECT pg_get_functiondef('public.stock_transfers_enforce_lifecycle()'::regprocedure)
+    INTO v_definition;
+  IF v_definition ILIKE '%can_receive_transfer%' THEN
+    RAISE EXCEPTION 'Transfer approval authority repair did not take effect';
+  END IF;
 END
 $migration$;
 

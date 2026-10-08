@@ -3591,13 +3591,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // this till may still hold an awaiting snapshot. Reconcile the request
       // before treating the retry as complete.
       const durableRequest = await loadTransfer(id);
-      if (durableRequest) {
-        setState((s) => ({
-          ...s,
-          transfers: s.transfers.map((row) => (row.id === id ? durableRequest : row)),
-        }));
-        if (durableRequest.status === "approved") return { success: true };
-      }
+      if (!durableRequest)
+        return {
+          success: false,
+          error: "The saved transfer request could not be verified. Refresh transfers and retry.",
+        };
+      setState((s) => ({
+        ...s,
+        transfers: s.transfers.map((row) => (row.id === id ? durableRequest : row)),
+      }));
+      if (durableRequest.status === "approved") return { success: true };
     }
     const repairingRequest =
       before?.kind === "request" && before.status === "approved" && !existingFulfilment;

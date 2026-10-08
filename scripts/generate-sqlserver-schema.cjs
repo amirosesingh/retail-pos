@@ -45,6 +45,10 @@ const ORGANIZATION_SHARED = new Set([
   "stores",
   "store_groups",
   "coupon_campaigns",
+  // A voucher is issued before a redemption branch is known and may be
+  // presented at any till.  `store_id` records where it was eventually used;
+  // it is not an ownership boundary.
+  "issued_vouchers",
   "payment_types",
   "staff_roles",
   "members",
@@ -106,7 +110,8 @@ const tables = report.tables.map((table, tableIndex) => ({
       : "current",
   insertRule: "idempotent_upsert",
   updateRule: APPEND_ONLY.has(table.name) ? "append_only" : "versioned",
-  deleteRule: APPEND_ONLY.has(table.name) ? "none" : "tombstone",
+  deleteRule:
+    APPEND_ONLY.has(table.name) || table.name === "issued_vouchers" ? "none" : "tombstone",
   conflictRule: /^(?:sales|sale_items|payment_transactions|refunds)/.test(table.name)
     ? "immutable_reversal"
     : APPEND_ONLY.has(table.name)

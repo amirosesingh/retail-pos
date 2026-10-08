@@ -142,6 +142,8 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261008094500_restrict_transfer_approval_authority.sql",
       "supabase/migrations/20261008095500_derive_legacy_booking_kind.sql",
       "supabase/migrations/20261008100500_attach_transfer_lifecycle_guard.sql",
+      "supabase/migrations/20261008113000_harden_coupon_sync_and_redemption.sql",
+      "supabase/migrations/20261008114500_restrict_offline_voucher_transitions.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
