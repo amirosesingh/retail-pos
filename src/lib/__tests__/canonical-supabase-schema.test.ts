@@ -137,6 +137,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261007235104_namespace_receiving_draft_numbers.sql",
       "supabase/migrations/20261008010000_persist_held_approval_fingerprint.sql",
       "supabase/migrations/20261008081500_enable_stock_transfer_drafts.sql",
+      "supabase/migrations/20261008083500_preserve_submitted_transfer_approval.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

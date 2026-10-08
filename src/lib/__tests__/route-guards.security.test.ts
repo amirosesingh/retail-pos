@@ -120,9 +120,12 @@ describe("route guards", () => {
     expect(transfer).toMatch(/const canReceive =[\s\S]{0,180}?can\("can_receive_transfer"\)/);
     expect(transfer).toMatch(/const canVerify =[\s\S]{0,180}?can\("can_receive_transfer"\)/);
     expect(transfer).toMatch(/const canReject =[\s\S]{0,220}?can\("can_approve_transfer"\)/);
-    expect(request).toMatch(
-      /const canReject =[\s\S]{0,240}?can\("can_approve_transfer"\)[\s\S]{0,100}?can\("can_receive_transfer"\)/,
+    expect(request).toMatch(/const canReject =[\s\S]{0,240}?can\("can_approve_transfer"\)/);
+    const requestRejectGate = request.slice(
+      request.indexOf("const canReject ="),
+      request.indexOf("return (", request.indexOf("const canReject =")),
     );
+    expect(requestRejectGate).not.toContain('can("can_receive_transfer")');
   });
 
   /** A missing map entry must fail closed, and access must be decided before

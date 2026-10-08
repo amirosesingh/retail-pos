@@ -42,7 +42,9 @@ describe("business UI persistence acknowledgements", () => {
     expect(store).toContain("const target = await db.commitProduct(stored)");
     expect(store).toContain("const target = await db.commitProducts(updated)");
     expect(store).toContain("await db.commitProduct(merged)");
-    expect(store).toContain("const target = await db.commitMember(member)");
+    expect(store).toContain(
+      'const target = await db.commitMember(member, can("can_edit_member_points"))',
+    );
     expect(store).toContain("await db.deleteMember(id)");
     expect(quickMember).toContain("await upsertMember(member)");
     expect(quickMember).toContain("await upsertMember({ ...verifying, verified: true })");

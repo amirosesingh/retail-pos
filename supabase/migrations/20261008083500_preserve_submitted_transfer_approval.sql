@@ -1,5 +1,6 @@
--- Draft stock movements are real persisted notes, but they do not enter the
--- approval lifecycle until the operator explicitly submits them.
+-- Existing projects already have the draft lifecycle trigger. Replace its
+-- function so a caller that deliberately submits a draft for approval cannot
+-- be silently auto-approved merely because the optional branch rule is off.
 CREATE OR REPLACE FUNCTION public.stock_transfers_enforce_lifecycle()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -57,8 +58,6 @@ BEGIN
 
   IF OLD.status = NEW.status THEN RETURN NEW; END IF;
 
-  -- Submitting a draft chooses the server-authoritative next state. A branch
-  -- cannot bypass an approval rule by sending "approved" in its payload.
   IF OLD.status = 'draft' THEN
     v_needs_approval := public.stock_transfer_approval_required(NEW.from_store_id, NEW.to_store_id);
     NEW.status := CASE

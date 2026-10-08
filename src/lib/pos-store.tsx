@@ -92,6 +92,7 @@ import {
   scopeBetween,
   verifyTransferInDb,
   saveTransfer,
+  loadTransfer,
   loadTransfers,
   setTransferStatus,
   type LineQty,
@@ -3216,7 +3217,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
       updated: { points: member.points, tier: member.tier, phone: member.phone },
       pointsDelta: prev ? member.points - prev.points : member.points,
     });
-    const target = await db.commitMember(member);
+    // Cashiers can enrol and maintain contact details without receiving the
+    // separate privilege that changes centrally governed loyalty balances.
+    const target = await db.commitMember(member, can("can_edit_member_points"));
     setState((s) => ({
       ...s,
       members: s.members.some((m) => m.id === member.id)
@@ -3224,7 +3227,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         : [member, ...s.members],
     }));
     return target;
-  }, []);
+  }, [can]);
 
   const removeMember = useCallback(async (id: string) => {
     const member = stateRef.current.members.find((m) => m.id === id);
@@ -3518,48 +3521,52 @@ export function PosProvider({ children }: { children: ReactNode }) {
       products: stateRef.current.products,
       previousLineCount: previous?.items.length,
     });
+    // The lifecycle trigger owns the submitted status. Read the stored row
+    // back before updating the screen so branch approval rules and the UI can
+    // never disagree after a draft is finalized.
+    const savedTransfer = (await loadTransfer(transfer.id)) ?? transfer;
     setState((s) => ({
       ...s,
       transferCounter,
       transfers: previous
-        ? s.transfers.map((row) => (row.id === transfer.id ? transfer : row))
-        : [transfer, ...s.transfers.filter((row) => row.id !== transfer.id)],
+        ? s.transfers.map((row) => (row.id === savedTransfer.id ? savedTransfer : row))
+        : [savedTransfer, ...s.transfers.filter((row) => row.id !== savedTransfer.id)],
     }));
     logger.log(
       "inventory",
       saveAsDraft ? "Stock movement draft saved" : "Stock transfer created",
       "transfers",
       {
-        transferId: transfer.id,
-        ref: transfer.ref,
-        kind: transfer.kind,
-        fromStoreId: transfer.fromStoreId,
-        toStoreId: transfer.toStoreId,
-        itemCount: transfer.items.length,
-        quantity: transfer.items.reduce((sum, item) => sum + item.qty, 0),
-        status: transfer.status,
+        transferId: savedTransfer.id,
+        ref: savedTransfer.ref,
+        kind: savedTransfer.kind,
+        fromStoreId: savedTransfer.fromStoreId,
+        toStoreId: savedTransfer.toStoreId,
+        itemCount: savedTransfer.items.length,
+        quantity: savedTransfer.items.reduce((sum, item) => sum + item.qty, 0),
+        status: savedTransfer.status,
       },
     );
-    if (!saveAsDraft && transfer.kind === "request") {
-      const requester = stateRef.current.stores.find((x) => x.id === transfer.toStoreId)?.name;
+    if (!saveAsDraft && savedTransfer.kind === "request") {
+      const requester = stateRef.current.stores.find((x) => x.id === savedTransfer.toStoreId)?.name;
       recordActivity({
         type: "stock_request_received",
         severity: "warning",
-        title: `Stock request ${transfer.ref} received`,
-        message: `${requester || "Another branch"} requested ${transfer.items.reduce((sum, item) => sum + item.qty, 0)} unit(s).`,
-        actorName: transfer.createdBy,
-        storeId: transfer.fromStoreId,
+        title: `Stock request ${savedTransfer.ref} received`,
+        message: `${requester || "Another branch"} requested ${savedTransfer.items.reduce((sum, item) => sum + item.qty, 0)} unit(s).`,
+        actorName: savedTransfer.createdBy,
+        storeId: savedTransfer.fromStoreId,
         entityType: "stock_request",
-        entityId: transfer.id,
+        entityId: savedTransfer.id,
         meta: {
-          route: `/requests/${transfer.id}`,
+          route: `/requests/${savedTransfer.id}`,
           audience: "branch_stock_team",
           audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
-          requester_store_id: transfer.toStoreId,
+          requester_store_id: savedTransfer.toStoreId,
         },
       });
     }
-    return transfer;
+    return savedTransfer;
   }, []);
 
   createTransferRef.current = createTransfer;

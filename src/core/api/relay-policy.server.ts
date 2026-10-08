@@ -148,6 +148,7 @@ const COLUMN_PERMISSIONS: Record<string, Record<string, string>> = {
     stock_by_store: "can_adjust_stock",
   },
   members: {
+    tier_id: "can_edit_member_points",
     loyalty_points: "can_edit_member_points",
     total_spent: "can_edit_member_points",
   },

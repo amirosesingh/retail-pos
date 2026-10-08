@@ -319,14 +319,25 @@ const rowToMember = (r: Row, tierName: (id: string | null) => MemberTier): Membe
   updatedAt: r.updated_at ?? undefined,
 });
 
-const memberToRow = (m: Member, tierId: (name: MemberTier) => string | null): Row => ({
+const memberToRow = (
+  m: Member,
+  tierId: (name: MemberTier) => string | null,
+  includeBalances = true,
+): Row => ({
   id: m.id,
   member_code: m.code,
   full_name: m.name,
   phone: m.phone,
-  tier_id: tierId(m.tier),
-  loyalty_points: m.points ?? 0,
-  total_spent: m.totalSpend ?? 0,
+  // A normal cashier may enrol or edit a member without being allowed to
+  // alter loyalty balances or tier. Omitting these columns lets a new row use the
+  // database defaults and preserves the existing values on an upsert.
+  ...(includeBalances
+    ? {
+        tier_id: tierId(m.tier),
+        loyalty_points: m.points ?? 0,
+        total_spent: m.totalSpend ?? 0,
+      }
+    : {}),
   // Membership identity, lifecycle and revision belong to the protected
   // membership gateway. A till may read them but must never echo a stale
   // directory snapshot back into the POS mirror.
@@ -1531,9 +1542,9 @@ export async function searchCloudMembers(term: string, limit = 10): Promise<Memb
     .is("deleted_at", null)
     .or(
       [
-        `name.ilike.${like}`,
+        `full_name.ilike.${like}`,
         `phone.ilike.${like}`,
-        `code.ilike.${like}`,
+        `member_code.ilike.${like}`,
         `email.ilike.${like}`,
       ].join(","),
     )
@@ -2404,8 +2415,16 @@ export const db = {
 
   upsertMember: (m: Member) =>
     queue("Saving member", { kind: "upsert", table: "members", rows: [memberToRow(m, tierId)] }),
+  // Member rows can already be referenced by receipts, bookings and loyalty
+  // history. Remove them from active screens with a tombstone instead of a
+  // physical delete that would either break those links or fail on an FK.
   deleteMember: (id: string) =>
-    queue("Deleting member", { kind: "delete", table: "members", match: { id } }),
+    queue("Archiving member", {
+      kind: "update",
+      table: "members",
+      match: { id },
+      values: { deleted_at: new Date().toISOString() },
+    }),
 
   upsertPromotion: (p: Promotion) =>
     queue("Saving promotion", { kind: "upsert", table: "promotions", rows: [promotionToRow(p)] }),
@@ -2965,9 +2984,13 @@ export const db = {
       : Promise.resolve<CommitTarget>("cloud"),
 
   /** Save a member and wait until it is stored somewhere. */
-  commitMember: (m: Member) =>
+  commitMember: (m: Member, includeBalances = true) =>
     commitOps("Saving member", [
-      { kind: "upsert", table: "members", rows: [memberToRow(m, tierId)] },
+      {
+        kind: "upsert",
+        table: "members",
+        rows: [memberToRow(m, tierId, includeBalances)],
+      },
     ]),
 
   /** Save one product and wait until it is stored somewhere. */

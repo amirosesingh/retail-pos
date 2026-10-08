@@ -12846,7 +12846,10 @@ BEGIN
 
   IF OLD.status = 'draft' THEN
     v_needs_approval := public.stock_transfer_approval_required(NEW.from_store_id, NEW.to_store_id);
-    NEW.status := CASE WHEN v_needs_approval THEN 'awaiting_approval' ELSE 'approved' END;
+    NEW.status := CASE
+      WHEN v_needs_approval OR NEW.status = 'awaiting_approval' THEN 'awaiting_approval'
+      ELSE 'approved'
+    END;
     IF NEW.status = 'approved' THEN
       NEW.approved_by := COALESCE(NEW.approved_by, NEW.created_by);
       NEW.approved_at := COALESCE(NEW.approved_at, now());

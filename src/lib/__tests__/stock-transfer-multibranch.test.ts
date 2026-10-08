@@ -71,6 +71,7 @@ describe("multi-branch stock transfer contract", () => {
     const requestPage = readFileSync("src/routes/requests.new.tsx", "utf8");
 
     expect(store).toContain('status: saveAsDraft ? "draft"');
+    expect(store).toContain("const savedTransfer = (await loadTransfer(transfer.id)) ?? transfer");
     expect(store).toContain('forcedId: stableChildId(before.id, "8", 0)');
     expect(persistence).toContain("previousLineCount - lines.length");
     expect(persistence).toContain('table: "stock_transfer_items",');
@@ -108,12 +109,16 @@ describe("multi-branch stock transfer contract", () => {
       "supabase/migrations/20261008081500_enable_stock_transfer_drafts.sql",
       "utf8",
     );
+    const followUp = readFileSync(
+      "supabase/migrations/20261008083500_preserve_submitted_transfer_approval.sql",
+      "utf8",
+    );
     const schema = readFileSync("supabase/schema.sql", "utf8");
-    for (const sql of [migration, schema]) {
+    for (const sql of [migration, followUp, schema]) {
       expect(sql).toContain("IF NEW.status = 'draft' THEN");
       expect(sql).toContain("IF OLD.status = 'draft' THEN");
       expect(sql).toContain(
-        "NEW.status := CASE WHEN v_needs_approval THEN 'awaiting_approval' ELSE 'approved' END",
+        "WHEN v_needs_approval OR NEW.status = 'awaiting_approval' THEN 'awaiting_approval'",
       );
     }
   });
