@@ -76,7 +76,9 @@ describe("settings save actions", () => {
 
     expect(frame).toContain("localSettingsEdit.current = true");
     expect(frame).toContain("if (localSettingsEdit.current) return");
-    expect(frame).toContain("setSnapshot(settingsJsonRef.current)");
+    expect(frame).toContain("const submittedSettings = settingsJsonRef.current");
+    expect(frame).toContain("if (settingsJsonRef.current === submittedSettings)");
+    expect(frame).toContain("setSnapshot(submittedSettings)");
     expect(frame).toContain("updateSettings: editSettings");
   });
 });

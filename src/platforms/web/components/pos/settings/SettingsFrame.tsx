@@ -131,7 +131,6 @@ export function SettingsFrame({
   const [saveError, setSaveError] = useState("");
   const settingsJson = JSON.stringify(state.settings);
   const settingsJsonRef = useRef(settingsJson);
-  settingsJsonRef.current = settingsJson;
   // A remote refresh in this same scope is a new clean baseline. A local edit
   // must retain the old baseline so Discard can still restore what was loaded.
   const localSettingsEdit = useRef(false);
@@ -161,6 +160,7 @@ export function SettingsFrame({
   }, [scopeSignature, settingsJson]);
 
   useEffect(() => {
+    settingsJsonRef.current = settingsJson;
     if (localSettingsEdit.current) return;
     setSnapshot(settingsJson);
     setSaveError("");
@@ -185,10 +185,17 @@ export function SettingsFrame({
     }
     setSaving(true);
     setSaveError("");
+    const submittedSettings = settingsJsonRef.current;
     try {
       await saveConfiguredSettings();
-      localSettingsEdit.current = false;
-      setSnapshot(settingsJsonRef.current);
+      // An input may change while the database request is in flight. Only the
+      // exact submitted state becomes clean; later edits remain visibly dirty.
+      if (settingsJsonRef.current === submittedSettings) {
+        localSettingsEdit.current = false;
+        setSnapshot(submittedSettings);
+      } else {
+        localSettingsEdit.current = true;
+      }
       setSavedAt(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
       toast.success("Settings saved");
     } catch (e) {
