@@ -139,7 +139,7 @@
     "typescript-eslint": "^8.70.0",
     "vite": "^8.3.0",
     "vitest": "^5.0.3",
-    "wrangler": "^4.142.0"
+    "wrangler": "^4.147.0"
   },
   "version": "1.4.35",
   "build": {
