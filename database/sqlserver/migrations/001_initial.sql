@@ -4816,14 +4816,14 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.purchas
 IF OBJECT_ID(N'dbo.purchase_orders', N'U') IS NULL BEGIN CREATE TABLE dbo.[purchase_orders] (
 
   [id] uniqueidentifier NOT NULL CONSTRAINT [DF_purchase_orders_id] DEFAULT (NEWID()),
-  [po_number] nvarchar(450) NOT NULL,
+  [po_number] nvarchar(128) NOT NULL,
   [supplier_name] nvarchar(max) NULL,
   [operator_name] nvarchar(max) NULL,
   [total_cost] decimal(38,12) NOT NULL CONSTRAINT [DF_purchase_orders_total_cost] DEFAULT (0),
   [total_items_count] int NOT NULL CONSTRAINT [DF_purchase_orders_total_items_count] DEFAULT (0),
   [created_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_purchase_orders_created_at] DEFAULT (SYSDATETIMEOFFSET()),
   [supplier_id] uniqueidentifier NULL,
-  [store_id] nvarchar(450) NULL,
+  [store_id] nvarchar(128) NULL,
   [store_code] nvarchar(max) NULL,
   [invoice_date] date NULL,
   [invoice_entry_date] datetimeoffset(7) NULL CONSTRAINT [DF_purchase_orders_invoice_entry_date] DEFAULT (SYSDATETIMEOFFSET()),
@@ -4855,9 +4855,9 @@ END;
 
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.purchase_orders') AND c.name=N'id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[purchase_orders] ALTER COLUMN [id] uniqueidentifier NOT NULL;
 
-IF COL_LENGTH(N'dbo.purchase_orders', N'po_number') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [po_number] nvarchar(450) NULL;
+IF COL_LENGTH(N'dbo.purchase_orders', N'po_number') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [po_number] nvarchar(128) NULL;
 
-IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.purchase_orders') AND c.name=N'po_number' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[purchase_orders] ALTER COLUMN [po_number] nvarchar(450) NOT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.purchase_orders') AND c.name=N'po_number' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[purchase_orders] ALTER COLUMN [po_number] nvarchar(128) NOT NULL;
 
 IF COL_LENGTH(N'dbo.purchase_orders', N'supplier_name') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [supplier_name] nvarchar(max) NULL;
 
@@ -4906,9 +4906,9 @@ IF COL_LENGTH(N'dbo.purchase_orders', N'supplier_id') IS NULL ALTER TABLE dbo.[p
 
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.purchase_orders') AND c.name=N'supplier_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[purchase_orders] ALTER COLUMN [supplier_id] uniqueidentifier NULL;
 
-IF COL_LENGTH(N'dbo.purchase_orders', N'store_id') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [store_id] nvarchar(450) NULL;
+IF COL_LENGTH(N'dbo.purchase_orders', N'store_id') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [store_id] nvarchar(128) NULL;
 
-IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.purchase_orders') AND c.name=N'store_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[purchase_orders] ALTER COLUMN [store_id] nvarchar(450) NULL;
+IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.purchase_orders') AND c.name=N'store_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[purchase_orders] ALTER COLUMN [store_id] nvarchar(128) NULL;
 
 IF COL_LENGTH(N'dbo.purchase_orders', N'store_code') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [store_code] nvarchar(max) NULL;
 
@@ -4971,7 +4971,7 @@ IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_by') IS NULL ALTER TABLE db
 
 IF COL_LENGTH(N'dbo.purchase_orders', N'pending_edit_at') IS NULL ALTER TABLE dbo.[purchase_orders] ADD [pending_edit_at] datetimeoffset(7) NULL;
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.purchase_orders') AND name=N'UX_purchase_orders_po_number') CREATE UNIQUE INDEX [UX_purchase_orders_po_number] ON dbo.[purchase_orders]([po_number]);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.purchase_orders') AND name=N'UQ_purchase_orders_0') CREATE UNIQUE INDEX [UQ_purchase_orders_0] ON dbo.[purchase_orders]([store_id],[po_number]) WHERE [store_id] IS NOT NULL;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.purchase_orders') AND name=N'IX_purchase_orders_store_id') CREATE INDEX [IX_purchase_orders_store_id] ON dbo.[purchase_orders]([store_id]);
 

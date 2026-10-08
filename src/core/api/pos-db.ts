@@ -1,3 +1,4 @@
+import { beginDataTask, withDataTask } from "@/lib/data-progress";
 import {
   authenticatedExternalClientSnapshot,
   supabaseExternal as supabase,
@@ -1151,7 +1152,7 @@ export async function importSampleData() {
 
 /** Load every cloud-backed slice of the POS state. */
 export type LocationDirectoryResult =
-  { ok: true; stores: Store[]; source: "relay" | "direct" } | { ok: false; error: Error };
+  { ok: true; stores: Store[]; source: "relay" | "direct" | "local" } | { ok: false; error: Error };
 
 /**
  * Resolve the small location directory independently of catalogue bootstrap.
@@ -1160,6 +1161,12 @@ export type LocationDirectoryResult =
  */
 export async function loadLocationDirectory(): Promise<LocationDirectoryResult> {
   await hydrateTerminalConfig();
+  const bridge = localDb();
+  if (bridge?.query && effectiveDatabaseMode() === "local") {
+    const result = await bridge.query("stores", { limit: 2000 });
+    if (!result.ok) return { ok: false, error: new Error(result.error ?? "Could not read local locations.") };
+    return { ok: true, stores: (result.rows ?? []).map(rowToStore), source: "local" };
+  }
   const registered = Boolean(readTerminalConfig()?.tokenId);
   const cashierToken = await loadCashierToken();
   const relayAvailable = canRelay() && (registered || Boolean(cashierToken));
@@ -1239,6 +1246,10 @@ export async function loadLocationDirectory(): Promise<LocationDirectoryResult> 
  * by offset windows ordered by mutable updated_at values.
  */
 async function loadCompleteProductCatalogue(client: typeof supabase): Promise<PagedRead<Row>> {
+  const task = beginDataTask("Loading product catalogue");
+  try { return await readProductCatalogue(client, task.report); } finally { task.finish(); }
+}
+async function readProductCatalogue(client: typeof supabase, report: (completed: number, total: number | null) => void): Promise<PagedRead<Row>> {
   type ProductPageQuery = PromiseLike<PageResult<Row>> & {
     gt: (column: string, value: string) => PromiseLike<PageResult<Row>>;
   };
@@ -1265,6 +1276,7 @@ async function loadCompleteProductCatalogue(client: typeof supabase): Promise<Pa
     if (total === null) total = typeof result.count === "number" ? result.count : null;
     const page = (result.data as Row[] | null) ?? [];
     rows.push(...page);
+    report(rows.length, total);
     // A full final window is still complete when the exact count says we have
     // reached the end (for example exactly 100,000 products).
     if (total !== null && rows.length >= total)
@@ -1563,7 +1575,10 @@ export async function loadCloudPromotion(id: string): Promise<Promotion | null> 
 async function loadLocalState(cause: unknown): Promise<CloudSlice> {
   const bridge = localDb();
   if (!bridge) throw cause;
-  const result = await bridge.snapshot();
+  const task = beginDataTask("Loading terminal database");
+  const off = bridge.onReadProgress?.(({ completed }) => task.report(completed));
+  let result: Awaited<ReturnType<typeof bridge.snapshot>>;
+  try { result = await bridge.snapshot(); } finally { off?.(); task.finish(); }
   if (!result.ok) {
     throw new Error(
       result.error ??
@@ -1599,7 +1614,7 @@ async function loadLocalState(cause: unknown): Promise<CloudSlice> {
 export async function loadLocalSales(): Promise<Sale[]> {
   const bridge = localDb();
   if (!bridge?.snapshot) return [];
-  const result = await bridge.snapshot();
+  const result = await bridge.snapshot({ salesOnly: true });
   if (!result.ok) throw new Error(result.error ?? "Could not read local sales.");
   return (result.sales ?? []).map(rowToSale);
 }
@@ -1624,6 +1639,14 @@ async function localOpenShift(storeId: string): Promise<Shift | null | undefined
     limit: 1,
   });
   return rows[0] ? rowToShift(rows[0] as Row) : null;
+}
+
+export async function loadShiftsByIds(ids: string[]): Promise<Shift[]> {
+  const rows: Row[] = [];
+  for (let start=0; start<ids.length; start+=500) rows.push(...await routedQuery("shifts", {
+    in:{column:"id",values:ids.slice(start,start+500)},limit:500,
+  }));
+  return rows.map(rowToShift);
 }
 
 export async function loadActiveShift(storeId: string): Promise<Shift | null> {
@@ -2023,19 +2046,20 @@ export async function loadReceivingDrafts(storeId: string | null, allStores = fa
  * True when another *finalized* invoice already uses this number. Drafts are
  * ignored: their number is provisional until the order is posted.
  */
-export async function invoiceNumberTaken(invoiceNo: string, exceptId?: string): Promise<boolean> {
+export async function invoiceNumberTaken(invoiceNo: string, exceptId?: string, storeId?: string | null): Promise<boolean> {
   if (effectiveDatabaseMode() === "local" && localDb()?.query) {
     const rows = await routedQuery("purchase_orders", {
-      match: { po_number: invoiceNo },
+      match: { po_number: invoiceNo, ...(storeId ? { store_id: storeId } : {}) },
       limit: 20,
     });
     return rows.some((r) => r.id !== exceptId && (r.status ?? "posted") === "posted");
   }
-  const res = await supabase
+  let query = supabase
     .from("purchase_orders" as never)
     .select("id, status")
-    .eq("po_number", invoiceNo)
-    .limit(20);
+    .eq("po_number", invoiceNo);
+  if (storeId) query = query.eq("store_id", storeId);
+  const res = await query.limit(20);
   if (res.error) return false; // offline: the unique index is still the last word
   return ((res.data as Row[] | null) ?? []).some(
     (r) => r.id !== exceptId && (r.status ?? "posted") === "posted",
@@ -2134,7 +2158,11 @@ async function runBatchLive(context: string, ops: SyncOp[]) {
  * Callers await this before printing, clearing the cart or starting the next
  * action — nothing moves on while the data is still only in memory.
  */
-export async function commitOps(context: string, ops: SyncOp[]): Promise<CommitTarget> {
+export function commitOps(context: string, ops: SyncOp[]): Promise<CommitTarget> {
+  return withDataTask(context, () => commitOpsInternal(context, ops));
+}
+
+async function commitOpsInternal(context: string, ops: SyncOp[]): Promise<CommitTarget> {
   if (!ops.length) return noteCommitTarget("cloud");
   // A packaged or browser till may carry an encrypted tenant override. Never
   // let an early write resolve the client against the build-time tenant first.

@@ -1,3 +1,4 @@
+import { subscribeDataChange } from "./sync-engine";
 /**
  * Held orders shared across routes.
  *
@@ -262,10 +263,12 @@ export function useHeldOrders(storeId?: string): HeldOrder[] {
     };
     void sync();
     const refresh = () => void sync();
+    const offData = subscribeDataChange(change => { if (change.table === "held_orders") refresh(); });
     window.addEventListener(EVENT, refresh);
     window.addEventListener("storage", refresh);
     return () => {
       active = false;
+      offData();
       window.removeEventListener(EVENT, refresh);
       window.removeEventListener("storage", refresh);
     };

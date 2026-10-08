@@ -1,3 +1,4 @@
+import { DataProgress } from "./DataProgress";
 /**
  * The start-up screen of the till, with the connection state written on it.
  *
@@ -99,12 +100,13 @@ export function TillLoader({
         )}
       </div>
 
+      <DataProgress />
       <div className="h-1.5 w-64 overflow-hidden rounded-full bg-muted">
         <div
           className={cn(
             "h-full rounded-full",
             style.bar,
-            tone === "ok" ? "w-full" : tone === "offline" ? "w-1/3" : "w-1/2 animate-pulse",
+            "w-1/2 animate-pulse",
           )}
         />
       </div>

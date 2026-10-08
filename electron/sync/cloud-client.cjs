@@ -133,6 +133,7 @@ class CloudClient {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...payload, ...personProof, terminalToken }),
+      signal: AbortSignal.timeout(30_000),
     });
     const data = await response
       .json()

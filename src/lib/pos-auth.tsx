@@ -1118,7 +1118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ? {
             userIds: [user.staffId, user.email].filter(Boolean),
             role: user.metaRole ?? user.roles[0] ?? user.role,
-            storeId: user.storeId,
+            storeId: activeBranchId(user.storeId),
             terminalId: readTerminalConfig()?.tokenId ?? null,
             mayViewGeneralActivity:
               user.role === "admin" || user.permissions.can_view_audit_trail === true,

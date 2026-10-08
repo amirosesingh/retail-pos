@@ -51,5 +51,5 @@ export function guardNotification(message: string, show: () => void): void {
   }
   void connectivityWarningAllowed().then((allowed) => {
     if (allowed) show();
-  });
+  }).catch(() => show());
 }

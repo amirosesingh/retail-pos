@@ -81,7 +81,7 @@ describe("SQL Server checkpoints 13 through 15", () => {
     );
     expect(cloud).toContain("JSON.stringify({ ...payload, ...personProof, terminalToken })");
     expect(main).toContain(
-      "operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null)",
+      "operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null,",
     );
     expect(operations).toContain("FROM dbo.shifts WHERE store_id=@branch");
     expect(operations).toContain("FROM dbo.sales WHERE store_id=@branch");

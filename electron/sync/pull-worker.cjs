@@ -1,18 +1,20 @@
+const { canonicalEntityKey } = require("./entity-key.cjs");
+const { readPage } = require("./page-policy.cjs");
 const { refreshTable } = require("../jobs/bootstrap.cjs");
 
 class PullWorker {
-  constructor({ connectionManager, cloud, checkpoints, registry, reader, conflicts }) {
+  constructor({ connectionManager, cloud, checkpoints, registry, reader, conflicts, publish = () => {} }) {
     this.connectionManager = connectionManager; this.cloud = cloud; this.checkpoints = checkpoints;
-    this.registry = registry; this.reader = reader; this.conflicts = conflicts;
+    this.registry = registry; this.reader = reader; this.conflicts = conflicts; this.publish = publish;
   }
   async applyTable(transaction, table, changes, branchId) {
     if (!changes.length) return { applied: 0, conflicts: 0 };
     const entityIds = changes.map((change) => String(change.entity_id));
-    const pending = await this.reader.unacknowledged(table, entityIds, transaction);
+    const pending = new Set([...(await this.reader.unacknowledged(table, entityIds, transaction))].map(canonicalEntityKey));
     const safe = [];
     let conflictCount = 0;
     for (const change of changes) {
-      if (!pending.has(String(change.entity_id))) { safe.push(change); continue; }
+      if (!pending.has(canonicalEntityKey(change.entity_id))) { safe.push(change); continue; }
       conflictCount += 1;
       await this.conflicts.record(transaction, {
         entityType: table.sqlServerTable, entityId: String(change.entity_id), branchId,
@@ -62,15 +64,48 @@ class PullWorker {
     // A single legacy settings/audit row can approach 2 MiB. Keep downloads at
     // the database's byte-safe minimum even when a caller asks for a larger
     // upload batch through the coordinator's shared options object.
-    batchSize = 10;
+    batchSize = 100;
     let merged = 0; let conflictCount = 0; let membershipMirrored = 0; let membershipDeferred = false;
+    let checkpoint = await this.checkpoints.get(branchId, "__feed__", "pull");
+    while (true) {
+      const page = await readPage(limit => this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit }),batchSize);
+      const batch = page.batch;
+      batchSize=page.nextLimit;
+      if (!batch.count) break;
+      // Feed pages are ordered by change cursor, not by foreign-key dependency.
+      // A store update can arrive before the page containing its new group.
+      await this.ensureStoreGroups(batch, branchId);
+      const sql = this.connectionManager.sql();
+      const transaction = new sql.Transaction(this.connectionManager.pool);
+      await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
+      try {
+        const ordered = [...this.registry.tables].sort((a, b) => a.dependencyOrder - b.dependencyOrder || a.cloudTable.localeCompare(b.cloudTable));
+        for (const table of ordered) {
+          const result = await this.applyTable(transaction, table, batch.rows.filter((row) => row.table_name === table.cloudTable), branchId);
+          merged += result.applied; conflictCount += result.conflicts;
+        }
+        for (const table of [...ordered].reverse()) {
+          const result = await this.applyTable(transaction, table, batch.tombstones.filter((row) => row.table_name === table.cloudTable), branchId);
+          merged += result.applied; conflictCount += result.conflicts;
+        }
+        await this.checkpoints.save(branchId, "__feed__", "pull", { committed_cursor: batch.cursor }, transaction);
+        await transaction.commit();
+      } catch (error) {
+        await Promise.resolve(transaction.rollback()).catch(() => undefined);
+        throw error;
+      }
+      this.publish({ kind: "general", branchId, source: "cloud", tables: [...new Set([...batch.rows, ...batch.tombstones].map(row => row.table_name))],
+        changes: [...batch.rows, ...batch.tombstones].map(row => ({ table: row.table_name, entityId: row.row_data?.product_id && row.table_name === "product_barcodes" ? row.row_data.product_id : row.row_data?.id ?? (() => { try { return JSON.parse(row.entity_id).id ?? null; } catch { return null; } })() })) });
+      checkpoint = { ...(checkpoint ?? {}), committed_cursor: batch.cursor };
+      batch.rows.length = 0; batch.tombstones.length = 0;
+      if (batch.count < page.limit) break;
+    }
     let membershipCheckpoint = await this.checkpoints.get(branchId, "__membership_directory__", "pull");
     try {
       while (true) {
-        const directory = await this.cloud.membershipDirectory({
-          afterRevision: membershipCheckpoint?.committed_cursor ?? 0,
-          limit: batchSize,
-        });
+        const directory = (await readPage(limit => this.cloud.membershipDirectory({
+          afterRevision: membershipCheckpoint?.committed_cursor ?? 0, limit,
+        }),batchSize)).batch;
         if (!directory?.ok) {
           membershipDeferred = true;
           break;
@@ -97,36 +132,6 @@ class PullWorker {
       // Membership is a separate service. Its outage must never block sales,
       // approvals, staff changes, or the main POS synchronization feed.
       membershipDeferred = true;
-    }
-    let checkpoint = await this.checkpoints.get(branchId, "__feed__", "pull");
-    while (true) {
-      const batch = await this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit: batchSize });
-      if (!batch.count) break;
-      // Feed pages are ordered by change cursor, not by foreign-key dependency.
-      // A store update can arrive before the page containing its new group.
-      await this.ensureStoreGroups(batch, branchId);
-      const sql = this.connectionManager.sql();
-      const transaction = new sql.Transaction(this.connectionManager.pool);
-      await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
-      try {
-        const ordered = [...this.registry.tables].sort((a, b) => a.dependencyOrder - b.dependencyOrder || a.cloudTable.localeCompare(b.cloudTable));
-        for (const table of ordered) {
-          const result = await this.applyTable(transaction, table, batch.rows.filter((row) => row.table_name === table.cloudTable), branchId);
-          merged += result.applied; conflictCount += result.conflicts;
-        }
-        for (const table of [...ordered].reverse()) {
-          const result = await this.applyTable(transaction, table, batch.tombstones.filter((row) => row.table_name === table.cloudTable), branchId);
-          merged += result.applied; conflictCount += result.conflicts;
-        }
-        await this.checkpoints.save(branchId, "__feed__", "pull", { committed_cursor: batch.cursor }, transaction);
-        await transaction.commit();
-      } catch (error) {
-        await Promise.resolve(transaction.rollback()).catch(() => undefined);
-        throw error;
-      }
-      checkpoint = { ...(checkpoint ?? {}), committed_cursor: batch.cursor };
-      batch.rows.length = 0; batch.tombstones.length = 0;
-      if (batch.count < batchSize) break;
     }
     return { merged, conflicts: conflictCount, membershipMirrored, membershipDeferred };
   }

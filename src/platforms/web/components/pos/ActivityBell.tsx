@@ -1,3 +1,4 @@
+import { activeBranchId } from "@/lib/active-branch";
 /**
  * The Approval & Activity Centre in the header.
  *
@@ -153,9 +154,10 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
 
   const refresh = useCallback(async () => {
     if (!showActivity) return;
-    void flushActivityQueue();
+    void flushActivityQueue().catch(() => undefined);
     const list = await listActivityEvents({
       limit: 40,
+      storeId: activeBranchId() ?? undefined,
       from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString(),
     });
     if (isActivityLogMissing()) {
@@ -199,7 +201,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   // Live decisions, with the existing poll kept as reconciliation.
   useEffect(() => {
     const tick = () => {
-      if (document.visibilityState !== "hidden") void refreshCentre();
+      if (document.visibilityState !== "hidden") void refreshCentre().catch(() => undefined);
     };
     tick();
     const off = subscribeApprovals(tick);
@@ -218,7 +220,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   useEffect(() => {
     if (!showActivity) return;
     const tick = () => {
-      if (document.visibilityState !== "hidden") void refresh();
+      if (document.visibilityState !== "hidden") void refresh().catch(() => undefined);
     };
     tick();
     const off = subscribeActivityEvents(tick);

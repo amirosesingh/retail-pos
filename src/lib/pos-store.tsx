@@ -1,3 +1,4 @@
+import { documentOrigin } from "./document-origin";
 import { SettingsWriteQueue } from "./settings-write-queue";
 import {
   createContext,
@@ -51,6 +52,7 @@ import {
   loadPrimaryState,
   loadLocalSales,
   loadCloudMember,
+  loadShiftsByIds,
   loadCloudProducts,
   loadCloudPromotion,
   loadCloudSettings,
@@ -1112,6 +1114,59 @@ export function PosProvider({ children }: { children: ReactNode }) {
     };
   }, [signedIn]);
 
+  useEffect(() => {
+    if (!signedIn) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ids = new Set<string>();
+    const off = subscribeDataChange(change => {
+      if (change.table !== "shifts" || !change.entityId) return;
+      ids.add(change.entityId);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const changed = new Set(ids); ids.clear();
+        void loadShiftsByIds([...changed]).then(rows => {
+          if (!active) return;
+          setState(current => {
+            const byId = new Map(rows.map(row => [row.id,row]));
+            const known = new Set(current.shifts.map(row=>row.id));
+            return {...current,shifts:[...current.shifts.filter(row=>!changed.has(row.id)||byId.has(row.id)).map(row=>byId.get(row.id)??row),...rows.filter(row=>!known.has(row.id))]};
+          });
+        }).catch(cause => { if (active) dbError("Refreshing shifts",cause); });
+      },200);
+    });
+    return () => { active = false; off(); if (timer) clearTimeout(timer); };
+  }, [signedIn]);
+
+  // Reload only changed bookings; local payments also wake their parent balances.
+  useEffect(() => {
+    if (!signedIn) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ids = new Set<string>();
+    let all = false;
+    const off = subscribeDataChange(change => {
+      if (!["bookings","booking_payments"].includes(change.table)) return;
+      if (change.table === "bookings" && change.entityId) ids.add(change.entityId); else all = true;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const changed = new Set(ids); ids.clear(); const reloadAll = all; all = false;
+        void loadBookings(reloadAll ? undefined : [...changed]).then(rows => {
+          if (!active) return;
+          setState(current => {
+            const byId = new Map(rows.map(row => [row.id,row]));
+            const known = new Set(current.bookings.map(row=>row.id));
+            return {...current,bookings:[
+              ...current.bookings.filter(row => !changed.has(row.id) || byId.has(row.id)).map(row => byId.get(row.id) ?? row),
+              ...rows.filter(row => !known.has(row.id)),
+            ]};
+          });
+        }).catch(cause => { if (active) dbError("Refreshing bookings",cause); });
+      },200);
+    });
+    return () => { active = false; off(); if (timer) clearTimeout(timer); };
+  }, [signedIn]);
+
   // Catalogue, member and promotion events carry the changed row identity.
   // Pull only that row so a barcode or price edit never downloads the complete
   // master dataset or interrupts scanning and checkout.
@@ -1140,17 +1195,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
               .then((records) => {
                 const changed = new Set(ids);
                 const byId = new Map(records.map((record) => [record.id, record]));
-                setState((current) => ({
+                setState((current) => {
+                  const known = new Set(current.products.map(product => product.id));
+                  return ({
                   ...current,
                   products: [
                     ...current.products
                       .filter((product) => !changed.has(product.id) || byId.has(product.id))
                       .map((product) => byId.get(product.id) ?? product),
                     ...records.filter(
-                      (record) => !current.products.some((product) => product.id === record.id),
+                      (record) => !known.has(record.id),
                     ),
                   ],
-                }));
+                }); });
               })
               .catch(() => {
                 /* the next reconnect snapshot remains the recovery path */
@@ -1339,7 +1396,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     };
     const unsubscribe = subscribeSettingsChange((change) => {
       if (
-        change.table !== "pos_settings" &&
+        !["pos_settings","pos_store_settings","settings_scoped","settings_overrides","settings_locks"].includes(change.table) &&
         change.reason !== "desktop:pull-complete" &&
         change.reason !== "reconnect" &&
         change.reason !== "realtime:subscribed"
@@ -1920,7 +1977,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       id: crypto.randomUUID(),
       // Keep the readable branch counter, but add entropy so two offline tills
       // cannot claim the same unique booking reference.
-      ref: `BK-${store?.code ?? "R"}-${String(counter).padStart(5, "0")}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+      ref: `BK-${documentOrigin(store?.code ?? store?.id ?? "R")}-${String(counter).padStart(5, "0")}-${crypto.randomUUID().replaceAll("-", "").toUpperCase()}`,
       storeId: input.storeId,
       shiftId: input.shiftId,
       lines: input.lines,
@@ -3120,9 +3177,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
       adjustmentAttemptId?: string | null,
     ): Promise<CommitTarget | null> => {
       const target = storeId ?? stateRef.current.currentStoreId;
+      const productsById = new Map(stateRef.current.products.map((product) => [product.id, product]));
       const changes = entries
         .map((e) => {
-          const product = stateRef.current.products.find((p) => p.id === e.productId);
+          const product = productsById.get(e.productId);
           if (!product) return null;
           const before = stockAt(product, target);
           const counted = Math.max(0, Math.round(e.counted));
@@ -3137,20 +3195,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
       }[];
       if (!changes.length) return Promise.resolve(null);
 
-      for (const c of changes) {
-        logger.log("inventory", "Stock adjusted", "inventory", {
-          productId: c.product.id,
-          name: c.product.name,
-          sku: c.product.sku,
-          storeId: target,
-          reason,
-          note,
-          previousStock: c.before,
-          updatedStock: c.counted,
-          delta: c.delta,
-          costImpact: r2(c.delta * (c.product.cost ?? 0)),
-        });
-      }
       const products = changes.map((c) => ({
         ...c.product,
         stockByStore: { ...c.product.stockByStore, [target]: c.counted },
@@ -3188,6 +3232,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
             : undefined,
         )
         .then((committed) => {
+          // The per-product stock_adjustments are the durable detail trail.
+          // One summary avoids rebuilding the visible audit feed 100,000 times.
+          logger.log("inventory", "Stock count committed", "inventory", {
+            storeId: target, reason, note, draftId: draftId ?? null,
+            productCount: changes.length,
+            costImpact: r2(changes.reduce((sum, change) => sum + change.delta * (change.product.cost ?? 0), 0)),
+          });
           const byId = new Map(changes.map((c) => [c.product.id, c.counted]));
           setState((s) => ({
             ...s,
@@ -3509,7 +3560,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ? (integrations.transferNumbering ?? {})
         : (integrations.requestNumbering ?? {});
     const { nextStockRef } = await import("./stock-ref");
-    if (!transfer.ref) transfer.ref = nextStockRef(numbering, originCode, series);
+    if (!transfer.ref) transfer.ref = await nextStockRef(numbering, originCode, series);
     await saveTransfer({
       transfer,
       from: fromStore,

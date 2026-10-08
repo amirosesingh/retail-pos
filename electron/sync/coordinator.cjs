@@ -1,6 +1,18 @@
+const { AsyncLocalStorage } = require("node:async_hooks");
+const syncLease = new AsyncLocalStorage();
 class SyncCoordinator {
   constructor({ pushWorker, pullWorker, publish = () => {} }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
   snapshot() { return { ...this.status, running:this.running, paused:this.paused }; }
+  async withExclusive(work) {
+    if (syncLease.getStore() === this) return work();
+    const prior = this.exclusiveTail ?? Promise.resolve();
+    let release;
+    this.exclusiveTail = new Promise(resolve => { release = resolve; });
+    await prior.catch(() => undefined);
+    try { return await syncLease.run(this, work); } finally { release(); }
+  }
+  runPush(options) { return this.withExclusive(() => this.pushWorker.run(options)); }
+
   async refresh(branchId) {
     try {
       const reader=this.pushWorker?.reader;
@@ -14,6 +26,7 @@ class SyncCoordinator {
     // Startup restore, the periodic timer and a manual click can converge on
     // the same tick. Share the active result instead of reporting a false
     // synchronization failure to two of those callers.
+    if (syncLease.getStore() === this) return this.runOnce(options);
     if (this.activeRun) {
       const active = this.activeRun;
       if (JSON.stringify(this.activeOptions) === JSON.stringify(options)) return active;
@@ -24,7 +37,7 @@ class SyncCoordinator {
     }
     if (this.paused) return { ok:false, ...this.snapshot(), paused:true, code:"ESYNC_PAUSED", error:"Synchronization is paused." };
     this.activeOptions={ ...options };
-    this.activeRun=this.runOnce(options);
+    this.activeRun=this.withExclusive(() => this.runOnce(options));
     try{return await this.activeRun;}finally{this.activeRun=null;this.activeOptions=null;}
   }
   async runFinal(options = {}) {
@@ -53,9 +66,13 @@ class SyncCoordinator {
     let result;
     try {
       this.status.phase="pushing"; this.publish(this.snapshot());
-      const pushed=await this.pushWorker.run(options); this.status.lastPushAt=new Date().toISOString();
+      let pushError = null; let pushed = {};
+      try { pushed=await this.pushWorker.run(options); this.status.lastPushAt=new Date().toISOString(); }
+      catch(error) { pushError=error; }
+      if (pushError && (pushError.code === "ECHANGEGAP" || [401,403].includes(Number(pushError.status)))) throw pushError;
       this.status.phase="pulling"; this.publish(this.snapshot());
-      const pulled=await this.pullWorker.run(options); this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
+      const pulled=(await this.pullWorker.run(options)) ?? {}; this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
+      if (pushError) throw pushError;
       this.status.phase="idle"; this.status.lastError=null; this.status.credentialsInvalid=false;
       result={ ok:true,...pushed,...pulled };
     } catch(error) {

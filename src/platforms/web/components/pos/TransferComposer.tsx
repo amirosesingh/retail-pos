@@ -89,7 +89,8 @@ export function TransferComposer({
   const submittingRef = useRef(false);
 
   const otherStore = stores.find((s) => s.id === otherStoreId);
-  const productOf = (id: string) => state.products.find((p) => p.id === id) ?? null;
+  const productsById = useMemo(() => new Map(state.products.map(product => [product.id,product])), [state.products]);
+  const productOf = (id: string) => productsById.get(id) ?? null;
   const sourceStoreId = kind === "transfer" ? currentStore.id : otherStoreId;
   const sourceLevels = subWarehouses(allStores, currentStore.id);
   const crossGroup =
@@ -386,12 +387,13 @@ export function TransferComposer({
         onReceivingRows={(rows) => {
           setItems((current) => {
             const merged = current.map((line) => ({ ...line }));
+            const byProduct = new Map(merged.map(line=>[line.productId,line]));
             for (const row of rows) {
               const quantity = normalizeTransferQuantity(row.quantity);
               if (!quantity) continue;
-              const hit = merged.find((line) => line.productId === row.product.id);
+              const hit = byProduct.get(row.product.id);
               if (hit) hit.qty += quantity;
-              else merged.push({ productId: row.product.id, qty: quantity });
+              else { const line = {productId:row.product.id,qty:quantity}; merged.push(line); byProduct.set(line.productId,line); }
             }
             return merged;
           });

@@ -1,5 +1,6 @@
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { BadgeCheck, History, Plus, Printer, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
@@ -62,9 +63,16 @@ function Members() {
   const [verifyMember, setVerifyMember] = useState<Member | null>(null);
   const gateway = useVerificationGateway();
 
-  const rows = state.members.filter((m) =>
-    `${m.name} ${m.code} ${m.phone} ${m.email}`.toLowerCase().includes(query.toLowerCase()),
-  );
+  const search = useDeferredValue(query.trim().toLowerCase());
+  const rows = useMemo(() => state.members.filter(m =>
+    `${m.name} ${m.code} ${m.phone} ${m.email}`.toLowerCase().includes(search)), [state.members, search]);
+  const pager = usePagination(rows);
+  const visitsByMember = useMemo(() => {
+    const visits = new Map<string, number>();
+    for (const sale of state.sales) if (sale.memberId && !sale.refunded)
+      visits.set(sale.memberId, (visits.get(sale.memberId) ?? 0) + 1);
+    return visits;
+  }, [state.sales]);
 
   return (
     <AppShell>
@@ -94,8 +102,8 @@ function Members() {
         </header>
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {rows.map((m) => {
-            const visits = state.sales.filter((s) => s.memberId === m.id && !s.refunded).length;
+          {pager.pageItems.map((m) => {
+            const visits = visitsByMember.get(m.id) ?? 0;
             return (
               <article key={m.id} className="rounded-lg border border-border bg-card p-4">
                 <div className="flex items-start justify-between gap-2">
@@ -176,6 +184,7 @@ function Members() {
             );
           })}
         </div>
+        <TablePagination {...pager} onPage={pager.setPage} onPageSize={pager.setPageSize} label="members" />
       </div>
 
       <MemberHistoryDialog

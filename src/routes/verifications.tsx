@@ -63,17 +63,14 @@ function Verifications() {
 
   const refresh = async () => {
     setBusy(true);
-    const { accessToken, cashierToken } = await getPosCallerAuth();
-    const res = await listMemberVerifications({
-      data: { accessToken, cashierToken, limit: 300 },
-    }).catch(() => ({ ok: false as const, error: "Could not read the log", items: [] }));
-    setBusy(false);
-    if (!res.ok) {
-      setError(res.error ?? "Could not read the log");
-      return;
-    }
-    setError("");
-    setRows(res.items as Row[]);
+    try {
+      const { accessToken, cashierToken } = await getPosCallerAuth();
+      const res = await listMemberVerifications({data:{accessToken,cashierToken,limit:300}});
+      if (!res.ok) { setError(res.error ?? "Could not read the log"); return; }
+      setError(""); setRows(res.items as Row[]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not read the log");
+    } finally { setBusy(false); }
   };
 
   useEffect(() => {

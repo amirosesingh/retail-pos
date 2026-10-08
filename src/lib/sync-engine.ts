@@ -639,7 +639,7 @@ const LIVE_CONTROL_TABLES = [
   "user_roles",
 ] as const;
 
-const ORGANIZATION_LIVE_TABLES = ["staff_roles", "stores", "members", "promotions"] as const;
+const ORGANIZATION_LIVE_TABLES = ["staff_roles", "stores", "members", "promotions", "products", "product_categories", "uom_units", "suppliers"] as const;
 
 /**
  * Realtime is only a wake-up hint; the durable scoped pull remains the source
@@ -659,6 +659,14 @@ const BRANCH_LIVE_TABLES = [
   // the desktop worker so SQL Server becomes a background mirror, never a
   // prerequisite for submitting or deciding the request.
   { table: "authorization_requests", column: "store_id" },
+  { table: "stock_count_drafts", column: "store_id" },
+  { table: "stock_adjustments", column: "store_id" },
+  { table: "bookings", column: "store_id" },
+  { table: "held_orders", column: "store_id" },
+  { table: "shifts", column: "store_id" },
+  { table: "shift_sessions", column: "store_id" },
+  { table: "stock_transfers", column: "from_store_id" },
+  { table: "stock_transfers", column: "to_store_id" },
 ] as const;
 
 export type LiveChange = {
@@ -797,6 +805,7 @@ function flushLiveChanges(): void {
     }
     if (
       [
+        "stock_count_drafts", "stock_adjustments", "stock_transfers", "stock_transfer_items", "bookings", "held_orders", "shifts", "shift_sessions", "suppliers", "stores", "product_categories", "uom_units",
         "products",
         "product_barcodes",
         "members",
@@ -893,6 +902,17 @@ export function startSyncEngine() {
     // till cannot keep using the value that preceded the sync cycle.
     if (completedNewPull) announceSettingsChange("desktop:pull-complete");
   };
+  const offDesktopBusiness = desktopBridge?.onBusinessChanged?.((event) => {
+    const active = activeBranchId();
+    if (event.branchId && active && event.branchId.toLowerCase() !== active.toLowerCase()) return;
+    const changes = event.changes ?? (event.tables ?? []).map(table => ({ table, entityId: null }));
+    for (const change of changes) {
+      const live = { ...change, reason: "desktop:committed", storeId: event.branchId ?? active ?? null };
+      announceDataChange(live);
+      if ((LIVE_SETTINGS_TABLES as readonly string[]).includes(change.table)) announceSettingsChange(live.reason, live.storeId, change.table);
+      if (["sales", "sale_items", "payment_transactions"].includes(change.table)) announceSalesChange(change.table, live.storeId);
+    }
+  });
   const offDesktopStatus =
     desktopBridge?.sync?.subscribe?.(applyDesktopStatus) ??
     desktopBridge?.onStatus?.(applyDesktopStatus);
@@ -1001,7 +1021,10 @@ export function startSyncEngine() {
             ).new ??
               (payload as { old?: Record<string, unknown> }).old ??
               {}) as Record<string, unknown>;
-            const storeId = String(changed.store_id ?? changed.branch_id ?? "").trim() || null;
+            const owner = String(changed.owner_store_id ?? "").trim();
+            const active = activeBranchId();
+            if (owner && active && owner.toLowerCase() !== active.toLowerCase()) return;
+            const storeId = String(changed.store_id ?? changed.branch_id ?? owner ?? "").trim() || null;
             const entityId = String(changed.id ?? "").trim() || null;
             queueLiveChange({ reason: `live:${table}`, table, storeId, entityId });
           });
@@ -1062,6 +1085,7 @@ export function startSyncEngine() {
     authListener.subscription.unsubscribe();
     void liveChannels.stop();
     offDesktopStatus?.();
+    offDesktopBusiness?.();
     offMode();
     window.removeEventListener("pos:browser-outbox-changed", wakeOutbox);
     document.removeEventListener("visibilitychange", handleVisibilityChange);

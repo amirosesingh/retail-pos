@@ -1,3 +1,4 @@
+import { subscribeSalesChange } from "./sync-engine";
 import { useEffect, useMemo, useState } from "react";
 import { loadSalesPage } from "@/core/api/pos-db";
 import type { Sale } from "@/core/types/pos-types";
@@ -27,6 +28,15 @@ export function useReportSales(
       return at >= start && at <= end && (!stores.size || stores.has(sale.storeId));
     });
   }, [seed, storeIds, from, to]);
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const off = subscribeSalesChange(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setRevision(value => value + 1), 400);
+    });
+    return () => { off(); if (timer) clearTimeout(timer); };
+  }, []);
   const [loaded, setLoaded] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -45,8 +55,10 @@ export function useReportSales(
       try {
         const found: Sale[] = [];
         for (const storeId of ids) {
+          if (cancelled) return;
           let cursor: { ts: string; id: string } | null = null;
           for (;;) {
+            if (cancelled) return;
             const page = await loadSalesPage(storeId, cursor, 500);
             for (const sale of page.rows) {
               const at = Date.parse(sale.createdAt);
@@ -68,7 +80,7 @@ export function useReportSales(
     return () => {
       cancelled = true;
     };
-  }, [from, to, storeKey]);
+  }, [from, to, storeKey, revision]);
 
   const sales = useMemo(() => {
     const byId = new Map<string, Sale>();

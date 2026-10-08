@@ -1,3 +1,4 @@
+import { beginDataTask } from "./data-progress";
 /**
  * Full-table reads that are not silently cut short.
  *
@@ -44,9 +45,9 @@ export type PagedRead<T> = {
  * for every window. Only the first window needs an exact count; asking the
  * database to recount the whole table on every page wastes work.
  */
-export async function readAllPages<T>(
+async function readPages<T>(
   build: (from: number, to: number, withCount: boolean) => PromiseLike<PageResult<T>>,
-  opts: { pageSize?: number; maxRows?: number } = {},
+  opts: { pageSize?: number; maxRows?: number; onProgress?: (completed: number, total: number | null) => void } = {},
 ): Promise<PagedRead<T>> {
   const size = Math.max(1, opts.pageSize ?? PAGE);
   const ceiling = Math.max(size, opts.maxRows ?? MAX_ROWS);
@@ -56,6 +57,7 @@ export async function readAllPages<T>(
 
   const rows = [...(first.data ?? [])];
   const total = typeof first.count === "number" ? first.count : null;
+  opts.onProgress?.(rows.length, total);
   if (rows.length < size)
     return { data: rows, error: null, total: total ?? rows.length, capped: false };
 
@@ -71,6 +73,7 @@ export async function readAllPages<T>(
       for (const res of results) {
         if (res.error) return { data: null, error: res.error, total, capped: false };
         rows.push(...(res.data ?? []));
+        opts.onProgress?.(rows.length, total);
       }
     }
     return { data: rows, error: null, total, capped: total > ceiling };
@@ -84,7 +87,17 @@ export async function readAllPages<T>(
     if (res.error) return { data: null, error: res.error, total: null, capped: false };
     const page = res.data ?? [];
     rows.push(...page);
+    opts.onProgress?.(rows.length, null);
     if (page.length < size) return { data: rows, error: null, total: rows.length, capped: false };
     from += size;
   }
+}
+
+export async function readAllPages<T>(
+  build: (from: number, to: number, withCount: boolean) => PromiseLike<PageResult<T>>,
+  opts: { pageSize?: number; maxRows?: number } = {},
+): Promise<PagedRead<T>> {
+  const task = beginDataTask("Loading database records");
+  try { return await readPages(build, { ...opts, onProgress: task.report }); }
+  finally { task.finish(); }
 }

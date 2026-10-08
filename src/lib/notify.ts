@@ -7,7 +7,7 @@
  * toast. Nothing fails silently.
  */
 import { toast } from "sonner";
-import { guardNotification, isConnectivityMessage } from "./notification-guard";
+import { guardNotification } from "./notification-guard";
 import { anyDatabaseReachable } from "@/core/activation/connection-health";
 
 export type NotifyKind = "success" | "info" | "warning" | "error";
@@ -66,6 +66,11 @@ export function classifyError(error: unknown): ErrorCategory {
   const lower = raw.toLowerCase();
   const code = String((error as Failure | null)?.code ?? "").toUpperCase();
   const status = statusOf(error, raw);
+  if (code === "SYNC_BRANCH_FORBIDDEN") return "permission";
+  if (code === "EMEMBER_BALANCE") return "conflict";
+  if (["EBATCH_SIZE", "EOVERSIZED", "ESNAPSHOT_LIMIT", "EREPORT_LIMIT"].includes(code)) return "validation";
+  if (["EDATABASE", "EDATABASE_NOT_READY", "ENOTCONNECTED"].includes(code)) return "database-disconnected";
+  if (["TIMEOUTERROR", "ABORTERROR"].includes(String((error as Failure | null)?.name ?? "").toUpperCase())) return "timeout";
   if (status === 400) return "invalid-request";
   if (status === 401 || code === "PGRST301" || /jwt.*(expired|invalid)|session.*expired/.test(lower)) return "authentication";
   if (status === 403 || code === "42501" || /permission denied|row-level security|forbidden/.test(lower)) return "permission";
@@ -107,6 +112,13 @@ export function describeError(error: unknown, action = "That action"): string {
   const category = classifyError(error);
   const kind = actionKind(action);
 
+  if (code === "SYNC_BRANCH_FORBIDDEN") {
+    const table = (error as Failure | null)?.table;
+    return `${action} was refused because the record does not match this terminal’s branch${table ? ` (${table})` : ""}. Check the terminal’s paired location; pending local changes are retained.`;
+  }
+  if (["EBATCH_SIZE", "EOVERSIZED"].includes(code)) return `${action} exceeds the safe transaction size. Use smaller batches; no successful save was confirmed.`;
+  if (["ESNAPSHOT_LIMIT", "EREPORT_LIMIT"].includes(code)) return `${action} is too large to load safely. Select a shorter date range or a smaller result set.`;
+  if (code === "EMEMBER_BALANCE") return "The member balance changed on another transaction. Reload the member and retry.";
   if (code === "ESQLSERVER_WRITE") {
     const table = (error as Failure | null)?.table;
     const sqlNumber = (error as Failure | null)?.sqlNumber;
@@ -176,7 +188,7 @@ export function showNotification(message: string, kind: NotifyKind = "info", des
     return toast(message, options);
   };
   // A connectivity complaint is only true when nothing at all is reachable.
-  if (kind === "success") return emit();
+  if (kind === "success" || kind === "error") return emit();
   return guardNotification(message, emit);
 }
 
@@ -186,7 +198,8 @@ export function notifyError(error: unknown, action = "That action"): string {
   // that needs a modal the operator has to acknowledge, not a passing toast.
   if ((error as { name?: string } | null)?.name === "AllTargetsFailed") {
     const message = (error as Error).message;
-    // Blocking modal only when both databases really are gone.
+    toast.error(message);
+    // Add a blocking modal only when both databases really are gone.
     void anyDatabaseReachable().then((reachable) => {
       if (reachable || typeof window === "undefined") return;
       window.dispatchEvent(new CustomEvent("pos:db-unreachable", { detail: { message, action } }));
@@ -194,8 +207,7 @@ export function notifyError(error: unknown, action = "That action"): string {
     return message;
   }
   const message = describeError(error, action);
-  if (isConnectivityMessage(message)) guardNotification(message, () => toast.error(message));
-  else showNotification(message, "error");
+  showNotification(message, "error");
   return message;
 }
 

@@ -1,3 +1,4 @@
+import { subscribeDataChange } from "@/lib/sync-engine";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Pencil, Printer, RotateCcw, Users, Vault } from "lucide-react";
@@ -104,9 +105,11 @@ function Shifts() {
       }
     };
     void refresh();
+    const offData = subscribeDataChange(change => { if (change.table === "shift_sessions") void refresh(); });
     const t = window.setInterval(() => void refresh(), 60_000);
     return () => {
       alive = false;
+      offData();
       window.clearInterval(t);
     };
   }, [currentStore.id, activeShift?.id]);

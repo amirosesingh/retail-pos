@@ -36,6 +36,8 @@ const { SyncCoordinator } = require("./sync/coordinator.cjs");
 const { CloudClient } = require("./sync/cloud-client.cjs");
 const { createTelemetry } = require("./telemetry.cjs");
 const { OperationsRepository } = require("./db/repositories/operations.cjs");
+const { readAnalytics } = require("./db/repositories/analytics.cjs");
+const { aggregatePolicy } = require("./db/write-policy.cjs");
 const { AggregateRepository } = require("./db/repositories/aggregates.cjs");
 const { ReceiptRepository } = require("./db/repositories/receipts.cjs");
 const { AuthorizationRulesRepository } = require("./db/repositories/authorization-rules.cjs");
@@ -66,10 +68,10 @@ const changeReader = new ChangeReader(databaseManager, syncRegistry);
 const conflictRepository = new ConflictRepository(databaseManager);
 const syncCoordinator = new SyncCoordinator({
   pushWorker: new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry }),
-  pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository }),
+  pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",state); },
 });
-const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints });
+const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
@@ -213,7 +215,7 @@ function recoverLocalDatabase({prepare=true}={}){
   return localDatabaseRecoveryPromise;
 }
 
-const AUTO_SYNC_OK_MS = 15_000;
+const AUTO_SYNC_OK_MS = 5_000;
 const AUTO_SYNC_RETRY_MS = 60_000;
 const AUTO_VERIFY_MS = 15 * 60_000;
 const SHUTDOWN_SYNC_TIMEOUT_MS = 8_000;
@@ -1669,7 +1671,7 @@ function registerIpc() {
   ipcMain.handle("database:schema-status", () => databaseService.schemaStatus());
   ipcMain.handle("database:backup", (_e, file) => guard.guarded(() => backupService.backup(guard.filePath(file,{name:"backup file",extension:"bak"}))));
   ipcMain.handle("database:restore", (_e, file) => guard.guarded(async () => { const result=await backupService.restore(guard.filePath(file,{name:"backup file",extension:"bak"})); if(result.ok)await databaseService.restore(); return result; }));
-  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const branchId=localBranchId();const identity=adminSession.identity();const operations=stampVerifiedBranchOperations(guard.writeOps(ops,{max:200}),branchId);const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}),operations,{branchId,terminalId:terminal.tokenId??terminal.terminalId,permissions:identity?.permissions??{},enforcePermissions:true});scheduleAutomaticSync(250);return result;}));
+  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const branchId=localBranchId();const identity=adminSession.identity();if(identity?.source==="pos")adminSession.touch();const operations=stampVerifiedBranchOperations(guard.writeOps(ops,{max:200}),branchId);const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}),operations,{branchId,terminalId:terminal.tokenId??terminal.terminalId,permissions:identity?.permissions??{},...aggregatePolicy("general",operations,identity)});publishBusinessChange({kind:"general",branchId,tables:[...new Set(operations.map(operation=>operation.table))],changes:operations.flatMap(op=>(op.rows??[op.match??{}]).map(row=>({table:op.table,entityId:op.table==="product_barcodes"?row.product_id:row.id??null})))});scheduleAutomaticSync(250);return result;}));
   ipcMain.handle("business:save-authorization-rule", (_e, value) => guard.guarded(async () => {
     const identity = adminSession.identity();
     if (!identity || !adminSession.hasPosAuthority() || !adminSession.hasPermission("can_access_pos_settings"))
@@ -1705,19 +1707,21 @@ function registerIpc() {
       // branch. Other supplied mismatches remain rejected below.
       const operations=stampVerifiedBranchOperations(aggregate.operations,branchId,aggregate.kind);
       const terminal=terminalStore.read()??{};
+      adminSession.touch();
       const trustedAggregate={
         ...aggregate,
         operations,
         branchId,
         terminalId:terminal.tokenId??terminal.terminalId??null,
         permissions:adminSession.identity()?.permissions??{},
+        ...aggregatePolicy(aggregate.kind,operations,adminSession.identity()),
         // Automatic sale/payment accrual is governed by the aggregate itself.
         // Direct member administration uses the generic aggregate and must
         // enforce the same add/points permissions as the central relay.
-        enforcePermissions:aggregate.kind==="general",
+        enforcePermissions:true,
       };
       const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
-      publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null});
+      publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null,tables:[...new Set(operations.map(op=>op.table))],changes:operations.flatMap(op=>(op.rows??[op.match??{}]).map(row=>({table:op.table,entityId:op.table==="product_barcodes"?row.product_id:row.id??null})))});
       scheduleAutomaticSync(250);
       return result;
     } catch(error) {
@@ -1725,10 +1729,15 @@ function registerIpc() {
       return {ok:false,code:error?.code??"ESQLSERVER_WRITE",error:error?.message??"The local SQL Server transaction failed.",stage:error?.stage??null,table:error?.table??null,sqlNumber:error?.sqlNumber??null};
     }
   }));
-  ipcMain.handle("business:snapshot", () => guard.guarded(async () => {
+  ipcMain.handle("business:snapshot", (_e, options) => guard.guarded(async () => {
     if(!databaseManager.isConnected())return{ok:false,code:"EDATABASE_NOT_READY",error:"SQL Server setup or connection is not complete yet."};
-    const snapshot = await operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null);
+    const snapshot = await operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
     return { ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) };
+  }));
+  ipcMain.handle("business:analytics", (_e, from, to) => guard.guarded(async () => {
+    if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports"))
+      return { ok: false, code: "PERMISSION_DENIED", error: "Sales report permission is required." };
+    return readAnalytics(databaseManager, localBranchId(), guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }));
   }));
   ipcMain.handle("business:query", (_e, table, options) => guard.guarded(async () => {
     try {
@@ -1784,7 +1793,7 @@ function registerIpc() {
       authorization,
     );
   }));
-  ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(() => { const input=guard.options(value,{name:"refund",max:5}); const terminal=terminalStore.read()??{}; const branch=input.branchId??terminal.locationId??terminal.storeId; return receiptRepository.refund({saleId:guard.uuid(input.saleId,{name:"sale id"}),refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null}); }));
+  ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(async () => { if(!adminSession.hasPosAuthority()||!adminSession.hasPermission("can_process_refund"))return{ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required."};const input=guard.options(value,{name:"refund",max:5}); const terminal=terminalStore.read()??{}; const branch=localBranchId();if(input.branchId&&String(input.branchId)!==String(branch))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The refund must belong to this terminal branch."};const result=await receiptRepository.refund({saleId:guard.uuid(input.saleId,{name:"sale id"}),refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null});publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result; }));
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
   ipcMain.handle("sync:get-status", () => syncCoordinator.refresh(localBranchId()));

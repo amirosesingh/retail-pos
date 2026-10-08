@@ -1,3 +1,4 @@
+import { notifyError } from "@/lib/notify";
 /**
  * Product table for stock paperwork (transfers, requests, receiving).
  *
@@ -55,7 +56,7 @@ export function ProductPicker({
     const t = setTimeout(() => {
       void searchCatalog(needle, products, limit).then((res) => {
         if (alive) setRows(res.products);
-      });
+      }).catch(cause => { if (alive) notifyError(cause, "Searching products"); });
     }, 250);
     return () => {
       alive = false;

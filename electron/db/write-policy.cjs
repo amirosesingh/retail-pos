@@ -1,0 +1,99 @@
+/** Main owns permissions; renderer-selected aggregate labels grant no authority. */
+const KIND_TABLES = {
+  sale: [
+    "sales",
+    "sale_items",
+    "payment_transactions",
+    "item_activity_logs",
+    "products",
+    "members",
+    "stock_movements",
+    "stock_delta_applied",
+    "held_orders",
+    "audit_logs",
+  ],
+  payment: [
+    "sales",
+    "sale_items",
+    "payment_transactions",
+    "members",
+    "bookings",
+    "booking_payments",
+    "audit_logs",
+  ],
+  refund: [
+    "sales",
+    "sale_items",
+    "payment_transactions",
+    "products",
+    "stock_movements",
+    "stock_delta_applied",
+    "audit_logs",
+  ],
+};
+function denied(message) {
+  throw Object.assign(new Error(message), { code: "PERMISSION_DENIED" });
+}
+function aggregatePolicy(kind, operations, identity) {
+  if (!identity || identity.source !== "pos") denied("Sign in to perform this action.");
+  const permissions = identity.permissions ?? {};
+  const tablePermissions = {
+    purchase_orders: "can_receive_purchase_order",
+    purchase_order_items: "can_receive_purchase_order",
+    stock_adjustments: "can_adjust_stock",
+    stock_count_drafts: "can_adjust_stock",
+    suppliers: "can_receive_purchase_order",
+    promotions: "can_manage_promotions",
+    coupon_campaigns: "can_manage_promotions",
+    pos_settings: "can_access_pos_settings",
+    pos_store_settings: "can_access_pos_settings",
+    public_flags: "can_access_pos_settings",
+  };
+  for (const operation of operations) {
+    const permission = tablePermissions[operation.table];
+    if (permission && permissions[permission] !== true) denied(`${permission} is required.`);
+  }
+  const allowed = KIND_TABLES[kind];
+  if (allowed && operations.some((op) => !allowed.includes(op.table)))
+    denied("The transaction contains unrelated tables.");
+  const rows = operations
+    .filter((op) => op.table === "sales" && ["insert", "upsert"].includes(op.kind))
+    .flatMap((op) => op.rows ?? []);
+  const financial = kind === "sale" && rows.length > 0;
+  if (rows.length && kind !== "refund" && permissions.can_process_sale !== true)
+    denied("Sale permission is required.");
+  const required = {
+    receiving: "can_receive_purchase_order",
+    stock: "can_adjust_stock",
+    refund: "can_process_refund",
+  }[kind];
+  if (required && permissions[required] !== true)
+    denied("Permission is required for this transaction.");
+  if (
+    operations.some((op) => op.table === "members") &&
+    !financial &&
+    permissions.can_add_member !== true
+  )
+    denied("Member management permission is required.");
+  const memberAccrual = new Map();
+  for (const sale of financial ? rows : []) {
+    if (!sale.member_id) continue;
+    if (
+      !Number.isFinite(Number(sale.total_amount)) ||
+      Number(sale.total_amount) < 0 ||
+      !Number.isFinite(Number(sale.points_earned ?? 0)) ||
+      Number(sale.points_earned ?? 0) < 0 ||
+      !Number.isFinite(Number(sale.points_redeemed ?? 0)) ||
+      Number(sale.points_redeemed ?? 0) < 0
+    )
+      denied("Invalid member accrual values.");
+    const id = String(sale.member_id).toLowerCase();
+    if (memberAccrual.has(id)) denied("One member accrual is allowed per transaction.");
+    memberAccrual.set(id, {
+      points: Number(sale.points_earned ?? 0) - Number(sale.points_redeemed ?? 0),
+      spent: Number(sale.total_amount),
+    });
+  }
+  return { enforcePermissions: true, memberAccrual };
+}
+module.exports = { aggregatePolicy };

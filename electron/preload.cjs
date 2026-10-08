@@ -19,7 +19,8 @@ contextBridge.exposeInMainWorld("pos", {
   write: (context, op) => invoke("business:write-batch", context, [op]),
   writeBatch: (context, ops) => invoke("business:write-batch", context, ops),
   commitAggregate: (aggregate) => invoke("business:commit-aggregate", aggregate),
-  snapshot: () => invoke("business:snapshot"),
+  snapshot: (options) => invoke("business:snapshot", options),
+  analytics: (from, to) => invoke("business:analytics", from, to),
   query: (table, options) => invoke("business:query", table, options),
   saveAuthorizationRule: (value) => invoke("business:save-authorization-rule", value),
   shiftExpectedTotals: (shiftId) => invoke("business:shift-expected", shiftId),
@@ -28,6 +29,11 @@ contextBridge.exposeInMainWorld("pos", {
   shiftRecount: (value) => invoke("business:shift-recount", value),
   shiftVarianceApprove: (value) => invoke("business:shift-variance-approve", value),
   shiftReconciliationView: (shiftId) => invoke("business:shift-reconciliation-view", shiftId),
+  onReadProgress: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("business:read-progress", handler);
+    return () => ipcRenderer.removeListener("business:read-progress", handler);
+  },
   onBusinessChanged: (cb) => {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("business:changed", handler);

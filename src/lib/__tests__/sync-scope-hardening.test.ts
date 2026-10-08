@@ -380,18 +380,29 @@ describe("scoped SQL Server synchronization", () => {
     )).resolves.toBeUndefined();
   });
 
-  it("reads every page of a local catalogue snapshot in one serializable transaction", async () => {
+  it.each([1, 100_000])("reads a %i-product catalogue without serializable range locks", async (count) => {
     const transaction = { begin: vi.fn(), commit: vi.fn(), rollback: vi.fn() };
-    const query = vi.fn(async (_sql: string) => ({ recordset: [{ id: "P1", deleted_at: null }] }));
+    let offset = 0;
+    let limit = 2000;
+    let yielded = false;
+    const heartbeat = setImmediate(() => { yielded = true; });
+    const query = vi.fn(async (_sql: string) => ({ recordset: Array.from(
+      { length: Math.max(0, Math.min(limit, count - offset)) },
+      (_, index) => ({ id: `P${offset + index + 1}`, deleted_at: null }),
+    ) }));
     const request = {
-      input: vi.fn(() => request),
+      input: vi.fn((name: string, value: number) => {
+        if (name === "offset") offset = value;
+        if (name === "limit") limit = value;
+        return request;
+      }),
       query,
     };
     class Transaction { constructor(_pool: unknown) { return transaction; } }
     class Request { constructor(received: unknown) { expect(received).toBe(transaction); return request; } }
     const manager = {
       pool: {},
-      sql: () => ({ Transaction, Request, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }),
+      sql: () => ({ Transaction, Request, ISOLATION_LEVEL: { READ_COMMITTED: 2 } }),
     };
     const registry = { tables: [{
       cloudTable: "products",
@@ -405,10 +416,13 @@ describe("scoped SQL Server synchronization", () => {
     const { OperationsRepository } = require("../../../electron/db/repositories/operations.cjs");
     const repository = new OperationsRepository(manager, registry);
 
-    await expect(repository.snapshotRows("products", "B1")).resolves.toEqual([
-      { id: "P1", deleted_at: null },
-    ]);
-    expect(transaction.begin).toHaveBeenCalledWith(4);
+    const rows = await repository.snapshotRows("products", "B1");
+    clearImmediate(heartbeat);
+    expect(rows).toHaveLength(count);
+    expect(rows[0]).toEqual({ id: "P1", deleted_at: null });
+    expect(rows.at(-1)?.id).toBe(`P${count}`);
+    if (count > 2000) expect(yielded).toBe(true);
+    expect(transaction.begin).toHaveBeenCalledWith(2);
     expect(transaction.commit).toHaveBeenCalledOnce();
     expect(transaction.rollback).not.toHaveBeenCalled();
     expect(query.mock.calls[0][0]).toContain("deleted_at IS NULL");

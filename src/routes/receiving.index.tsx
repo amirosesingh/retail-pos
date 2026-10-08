@@ -1,3 +1,4 @@
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 /**
  * Goods receiving register.
  *
@@ -60,6 +61,8 @@ function ReceivingIndex() {
         );
   }, [state.transfers, currentStore.id, tab]);
 
+  const pager = usePagination(rows);
+
   return (
     <AppShell>
       <div className="space-y-6 p-6">
@@ -102,7 +105,7 @@ function ReceivingIndex() {
                   </TableCell>
                 </TableRow>
               )}
-              {rows.map((t) => (
+              {pager.pageItems.map((t) => (
                 <TableRow key={t.id}>
                   <TableCell className="font-mono text-xs">{t.ref}</TableCell>
                   <TableCell>{storeName(t.fromStoreId)}</TableCell>
@@ -122,6 +125,7 @@ function ReceivingIndex() {
               ))}
             </TableBody>
           </Table>
+          <TablePagination {...pager} onPage={pager.setPage} onPageSize={pager.setPageSize} label="receivings" />
         </div>
 
         <p className="flex items-center gap-2 text-xs text-muted-foreground">

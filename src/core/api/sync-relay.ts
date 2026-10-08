@@ -1,3 +1,4 @@
+import { fetchWithDeadline } from "@/lib/fetch-deadline";
 /**
  * Client side of the server write relay.
  *
@@ -42,7 +43,7 @@ export async function syncHealthResult(): Promise<SyncHealthResult> {
   const where = origin || (typeof window === "undefined" ? "" : window.location.origin);
   let res: Response;
   try {
-    res = await fetch(serverUrl("/api/public/sync-health"), { cache: "no-store" });
+    res = await fetchWithDeadline(serverUrl("/api/public/sync-health"), { cache: "no-store" });
   } catch (e) {
     return {
       ok: false,
@@ -143,7 +144,7 @@ const syncPath = (): string => (serverOrigin() ? "/api/public/sync" : "/api/v1/p
 /** Push one operation through the relay. */
 export async function relayOp(op: SyncOp): Promise<{ ok: boolean; error?: string; code?: string }> {
   try {
-    const res = await fetch(serverUrl(syncPath()), {
+    const res = await fetchWithDeadline(serverUrl(syncPath()), {
       method: "POST",
       headers: await relayHeaders(),
       body: JSON.stringify({ ...(await credentials()), ops: [op] }),
@@ -181,7 +182,7 @@ export async function relayActiveShift(
   storeId: string,
 ): Promise<{ ok: boolean; row?: Record<string, unknown> | null; error?: string }> {
   try {
-    const res = await fetch(serverUrl(syncPath()), {
+    const res = await fetchWithDeadline(serverUrl(syncPath()), {
       method: "POST",
       headers: await relayHeaders(),
       body: JSON.stringify({ ...(await credentials()), read: { kind: "activeShift", storeId } }),
@@ -208,7 +209,7 @@ export async function relayStores(): Promise<{
   error?: string;
 }> {
   try {
-    const res = await fetch(serverUrl(syncPath()), {
+    const res = await fetchWithDeadline(serverUrl(syncPath()), {
       method: "POST",
       headers: await relayHeaders(),
       body: JSON.stringify({ ...(await credentials()), read: { kind: "stores" } }),
@@ -231,7 +232,7 @@ export async function relayStores(): Promise<{
 /** Quick health probe used by the connection check panel. */
 export async function probeRelay(): Promise<{ ok: boolean; error?: string; code?: string }> {
   try {
-    const res = await fetch(serverUrl(syncPath()), {
+    const res = await fetchWithDeadline(serverUrl(syncPath()), {
       method: "POST",
       headers: await relayHeaders(),
       body: JSON.stringify({

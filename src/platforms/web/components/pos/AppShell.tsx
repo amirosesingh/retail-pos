@@ -1,3 +1,4 @@
+import { DataProgress } from "@/components/shared/DataProgress";
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
 import { Loader2, LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
@@ -434,6 +435,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   return (
     <TooltipProvider delayDuration={250} skipDelayDuration={100} disableHoverableContent>
       <div className="pos-scaled flex h-dvh min-h-dvh flex-col overflow-hidden bg-background text-foreground">
+        <DataProgress />
         <DbConnectionModal />
         <CloudSetupGate />
         {/* Frameless desktop shell: draggable strip under the native window buttons. */}

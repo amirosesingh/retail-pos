@@ -1,3 +1,4 @@
+import { fetchWithDeadline } from "./fetch-deadline";
 /**
  * Where this build should send app-server calls.
  *
@@ -45,5 +46,5 @@ export function serverUrl(path: string): string {
 
 /** `fetch` that lands on a real server even inside the Android shell. */
 export function posFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(serverUrl(path), init);
+  return fetchWithDeadline(serverUrl(path), init);
 }

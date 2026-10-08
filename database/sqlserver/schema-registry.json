@@ -7555,13 +7555,13 @@
           "cloudColumn": "po_number",
           "sqlServerColumn": "po_number",
           "cloudType": "text",
-          "sqlServerType": "nvarchar(450)",
+          "sqlServerType": "nvarchar(128)",
           "nullable": false,
           "defaultRule": null,
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,
-          "unique": true,
+          "unique": false,
           "uniqueGroup": "UQ_purchase_orders_0"
         },
         {
@@ -7649,14 +7649,14 @@
           "cloudColumn": "store_id",
           "sqlServerColumn": "store_id",
           "cloudType": "text",
-          "sqlServerType": "nvarchar(450)",
+          "sqlServerType": "nvarchar(128)",
           "nullable": true,
           "defaultRule": null,
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,
           "unique": false,
-          "uniqueGroup": null
+          "uniqueGroup": "UQ_purchase_orders_0"
         },
         {
           "cloudColumn": "store_code",

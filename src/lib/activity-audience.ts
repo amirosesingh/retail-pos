@@ -43,7 +43,7 @@ export function activityVisibleTo(
     Boolean(terminalTarget) &&
     Boolean(identity.terminalId) &&
     terminalTarget === identity.terminalId!.toLowerCase();
-  const rowStore = String(row.store_id ?? "");
-  const sameBranch = !rowStore || !identity.storeId || rowStore === identity.storeId;
+  const rowStore = String(row.store_id ?? "").trim().toLowerCase();
+  const sameBranch = !rowStore || (!!identity.storeId && rowStore === identity.storeId.trim().toLowerCase());
   return sameBranch && (exactUser || roleMatch || terminalMatch);
 }

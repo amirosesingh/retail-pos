@@ -1,3 +1,5 @@
+import { notifyError } from "@/lib/notify";
+import { subscribeDataChange } from "@/lib/sync-engine";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
@@ -275,7 +277,7 @@ function RootComponent() {
     const recover = () => {
       if (refreshing || connectivity() !== "online") return;
       refreshing = true;
-      void Promise.all([
+      void Promise.allSettled([
         queryClient.resumePausedMutations(),
         queryClient.refetchQueries({ type: "active" }),
         router.invalidate(),
@@ -293,6 +295,19 @@ function RootComponent() {
       window.removeEventListener(APP_RESUME_EVENT, recover);
     };
   }, [queryClient, router]);
+
+  // Coalesce a committed sync page into one active-query refresh.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const off = subscribeDataChange(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        void queryClient.invalidateQueries({refetchType:"active"}).catch(cause => notifyError(cause, "Refreshing live data"));
+      }, 400);
+    });
+    return () => { off(); if (timer) clearTimeout(timer); };
+  }, [queryClient]);
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -349,7 +364,7 @@ function ConnectionProfileBoot({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   useEffect(() => {
     let current = true;
-    void hydrateConnectionProfile().finally(() => {
+    void hydrateConnectionProfile().catch(cause => notifyError(cause, "Restoring database connection")).finally(() => {
       if (current) setReady(true);
     });
     return () => {

@@ -580,7 +580,7 @@ export type PosBridge = {
     bytes?: number;
     rows?: number;
   }>;
-  snapshot: () => Promise<{
+  snapshot: (options?: { salesOnly?: boolean }) => Promise<{
     ok: boolean;
     error?: string;
     products?: LocalSaleRow[];
@@ -655,11 +655,16 @@ export type PosBridge = {
     code?: string;
   }>;
   /** Main-process notification emitted after a durable local aggregate commit. */
+  analytics?: (from: string, to: string) => Promise<{ ok: boolean; error?: string; storeDays?: LocalSaleRow[]; itemDays?: LocalSaleRow[]; bills?: LocalSaleRow[]; directory?: LocalSaleRow[] }>;
+  onReadProgress?: (cb: (progress: { table: string; completed: number }) => void) => () => void;
   onBusinessChanged?: (
     cb: (change: {
       kind: "sale" | "payment" | "refund" | "shift" | "product" | "receiving" | "stock" | "transfer" | "booking" | "held_order" | "general" | "branch";
       branchId?: string | null;
       operationId?: string | null;
+      source?: "local" | "cloud";
+      tables?: string[];
+      changes?: { table: string; entityId?: string | null }[];
     }) => void,
   ) => () => void;
   findReceipt?: (value: string, branchId: string, proof?: { sessionToken?: string; cashierToken?: string; accessToken?: string }) => Promise<{ source: "local" | "cloud"; sale: LocalSaleRow; items?: LocalSaleRow[]; payments?: LocalSaleRow[] } | null>;

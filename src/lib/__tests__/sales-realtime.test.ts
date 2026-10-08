@@ -23,7 +23,7 @@ describe("sales realtime refresh", () => {
     expect(engine).toContain('announceSettingsChange("desktop:pull-complete")');
     expect(store).toContain("subscribeSalesChange");
     expect(store).toContain("subscribeSettingsChange");
-    expect(store).toContain('change.table !== "pos_settings"');
+    expect(store).toContain('"pos_store_settings","settings_scoped","settings_overrides","settings_locks"');
     expect(store).toContain('change.reason !== "desktop:pull-complete"');
     expect(store).toContain("loadSalesPage(active, null, 500)");
     expect(store).toContain("loadCloudSettings()");

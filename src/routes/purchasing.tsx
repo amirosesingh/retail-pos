@@ -411,7 +411,7 @@ function Purchasing() {
     // The reference is minted with the draft row and never regenerated.
     const ref =
       reference ??
-      nextStockRef(
+      await nextStockRef(
         state.settings.integrations.receivingNumbering ?? {},
         currentStore.code || currentStore.id,
         "receiving",
@@ -696,7 +696,7 @@ function Purchasing() {
       const attemptId =
         savedDraft?.id ?? openDraftId ?? finalizeAttempt.current ?? crypto.randomUUID();
       finalizeAttempt.current = attemptId;
-      if (await invoiceNumberTaken(ref, attemptId)) {
+      if (await invoiceNumberTaken(ref, attemptId, receivingBranchId)) {
         toast.error(`Invoice ${ref} already exists`, {
           description: "Open it in the history below to correct it, or use a different number.",
         });
@@ -719,7 +719,7 @@ function Purchasing() {
       const grn =
         savedDraft?.reference ??
         reference ??
-        nextStockRef(
+        await nextStockRef(
           state.settings.integrations.receivingNumbering ?? {},
           currentStore.code || currentStore.id,
           "receiving",
@@ -743,10 +743,11 @@ function Purchasing() {
         );
       else await db.commitReceivingInvoice(invoice, hubId, mayUpdateCataloguePrices);
 
+      const productsById = new Map(state.products.map(product => [product.id, product]));
       const movements = [];
       for (const l of lines) {
         const previousStock = stockAt(
-          state.products.find((p) => p.id === l.productId) ?? ({ stockByStore: {} } as Product),
+          productsById.get(l.productId) ?? ({ stockByStore: {} } as Product),
           hubId,
         );
         // The receiving commit has already applied this movement exactly once.
@@ -844,7 +845,7 @@ function Purchasing() {
     if (!editing.supplier.trim()) return toast.error("Supplier name is required");
     setSavingEdit(true);
     try {
-      if (await invoiceNumberTaken(ref, editing.id)) {
+      if (await invoiceNumberTaken(ref, editing.id, editing.storeId)) {
         toast.error(`Invoice ${ref} is already used by another receiving order`);
         return;
       }
