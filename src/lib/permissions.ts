@@ -109,6 +109,7 @@ export const PERMISSION_GROUPS = [
     label: "System & Administration",
     keys: [
       "can_access_pos_settings",
+      "can_customize_display",
       "can_manage_staff",
       "can_manage_promotions",
       "can_manage_terminals",
@@ -184,6 +185,7 @@ export type PermissionKey =
   | "can_view_audit_trail"
   | "can_export_reports"
   | "can_access_pos_settings"
+  | "can_customize_display"
   | "can_manage_staff"
   | "can_manage_promotions"
   | "can_manage_terminals"
@@ -255,7 +257,8 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_view_dashboard: "View the live dashboard",
   can_view_audit_trail: "View register activity / audit trail",
   can_export_reports: "Export or download report data",
-  can_access_pos_settings: "Access POS settings",
+  can_access_pos_settings: "Edit permitted branch settings (global and cluster: admin only)",
+  can_customize_display: "Customize own theme, language and display size",
   can_manage_staff: "Manage staff & permissions",
   can_manage_promotions: "Edit promotions & coupon rules",
   can_manage_terminals: "Manage terminal activation tokens",
@@ -277,6 +280,7 @@ export const NO_PERMISSIONS: StaffPermissions = build([]);
 
 /** Baseline a brand-new cashier starts with. */
 export const CASHIER_PERMISSIONS: StaffPermissions = build([
+  "can_customize_display",
   "can_open_drawer",
   "can_close_drawer",
   "can_open_shift",
@@ -302,6 +306,7 @@ export const DEFAULT_PERMISSIONS = CASHIER_PERMISSIONS;
 /** Baseline a brand-new warehouse user starts with. Every key stays editable
  *  from the Staff Management permission matrix — nothing is hard-locked. */
 export const WAREHOUSE_PERMISSIONS: StaffPermissions = build([
+  "can_customize_display",
   "can_view_inventory",
   "can_add_new_product",
   "can_edit_product_details",
@@ -375,6 +380,7 @@ export function normalizePermissions(
     const resolved = resolvePermission(key as PermissionFlag);
     if (resolved in base) base[resolved] = !!value;
   }
+  if (!("can_customize_display" in raw)) base.can_customize_display = true;
   // Existing cashier matrices predate the split hold controls. Preserve their
   // current workflow once, while every subsequently saved matrix carries the
   // three independent choices explicitly.
@@ -543,6 +549,7 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
     "cashier-visible": {
       roles: ["cashier", "supervisor", "admin"],
       keys: [
+        "can_customize_display",
         "can_open_drawer",
         "can_close_drawer",
         "can_view_drawer_balance",

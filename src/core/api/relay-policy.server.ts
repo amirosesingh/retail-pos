@@ -89,6 +89,8 @@ const GLOBAL_TABLES = new Set([
   "public_flags",
   "authorization_actions",
   "pos_settings",
+  "settings_overrides",
+  "settings_locks",
   "promotions",
   "coupon_campaigns",
   "suppliers",
@@ -179,6 +181,8 @@ const TABLE_PERMISSIONS: Record<string, { write?: string; remove?: string }> = {
   pos_store_settings: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
   authorization_actions: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
   pos_settings: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
+  settings_overrides: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
+  settings_locks: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
   public_flags: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
   promotions: { write: "can_manage_promotions", remove: "can_manage_promotions" },
   coupon_campaigns: { write: "can_manage_promotions", remove: "can_manage_promotions" },
@@ -486,6 +490,12 @@ export async function authorizeRelayOp(
 
   if (!scope.isSupervisor && !scope.storeId)
     return deny("SCOPE_MISSING", "This till is not assigned to a branch — sign in again.");
+  const settingsAdmin = scope.role === "admin" || scope.roleSlug === "admin";
+  if (["pos_settings", "public_flags"].includes(op.table) && !settingsAdmin)
+    return deny("PERMISSION_DENIED", "Global settings require an administrator.");
+  if (["settings_overrides", "settings_locks"].includes(op.table))
+    return authorizeSettingsMutation(op, scope);
+
 
   if (scope.stale && !scope.isSupervisor)
     return deny(
@@ -591,6 +601,35 @@ export async function authorizeRelayOp(
 
   // Global catalogue rows: no branch to pin, permissions already checked.
   return { ok: true, op };
+}
+
+/** Settings ownership is checked with the proved role and paired branch. */
+export async function authorizeSettingsMutation(op: RelayOp, scope: RelayScope): Promise<{ok: true; op: RelayOp} | RelayDenial> {
+  const admin = scope.role === "admin" || scope.roleSlug === "admin";
+  if (scope.stale) return deny("SCOPE_STALE", "Sign in again to confirm your settings permissions.");
+  if (scope.kind === "terminal" || (!admin && scope.permissions.can_access_pos_settings !== true))
+    return deny("PERMISSION_DENIED", "Branch settings permission is required.");
+  if (op.table === "settings_locks")
+    return admin ? {ok: true, op} : deny("PERMISSION_DENIED", "Only an administrator may change global locks.");
+  if (op.table !== "settings_overrides")
+    return deny("TABLE_FORBIDDEN", "Unsupported settings mutation.");
+  const rows = op.kind === "insert" || op.kind === "upsert" ? op.rows : [{...op.match, ...(op.kind === "update" ? op.values : {})}];
+  for (const row of rows) {
+    const tier = String(row.scope ?? "").toUpperCase();
+    const id = String(row.scope_id ?? "");
+    const section = String(row.section ?? "");
+    if (!["CLUSTER", "BRANCH", "TERMINAL"].includes(tier) || !id || !/^[a-zA-Z0-9_-]+$/.test(section))
+      return deny("PERMISSION_DENIED", "A complete, valid settings scope and section are required.");
+    if (!admin && (tier !== "BRANCH" || id !== scope.storeId))
+      return deny("STORE_FORBIDDEN", "You may only edit this terminal's branch settings.");
+    if (!admin) {
+      const response = await serviceRest(`settings_locks?select=locked&section=eq.${encodeURIComponent(section)}&limit=1`);
+      if (!response.ok) return deny("PERMISSION_DENIED", "Could not verify the administrator settings lock.");
+      const locks = await response.json() as Array<{locked?: boolean}>;
+      if (locks[0]?.locked) return deny("PERMISSION_DENIED", "This setting is locked by an administrator.");
+    }
+  }
+  return {ok: true, op};
 }
 
 /**

@@ -54,6 +54,25 @@ describe("warehouse stock isolation", () => {
     expect(availableAt(product, locations, "hub")).toBe(4.5);
     expect(planDeduction(product, locations, "hub", 5).shortBy).toBe(0.5);
   });
+  it("never picks stock from an archived or missing root warehouse", () => {
+    const archived = locations.map((location) =>
+      location.id === "hub" ? { ...location, active: false } : location,
+    );
+    expect(
+      planDeduction(
+        { ...product, stockByStore: { ...product.stockByStore, hub: 10 } },
+        archived,
+        "hub",
+        2,
+      ),
+    ).toEqual({ picks: [], taken: 0, shortBy: 2 });
+    expect(planDeduction(product, locations, "missing", 2)).toEqual({
+      picks: [],
+      taken: 0,
+      shortBy: 2,
+    });
+  });
+
   it("rejects invalid quantities", () => {
     expect(() => planDeduction(product, locations, "hub", Infinity)).toThrow();
     expect(() => planDeduction(product, locations, "hub", -1)).toThrow();

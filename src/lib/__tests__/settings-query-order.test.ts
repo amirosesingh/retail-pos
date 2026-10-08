@@ -20,6 +20,22 @@ describe("scoped settings reads", () => {
     }
   });
 
+  it("loads global locks without inventing a branch when business tables are empty", async () => {
+    const result = await loadBranchSettings({ CLUSTER: "", BRANCH: "", TERMINAL: "" }, true);
+    expect(result).toEqual({ overrides: { CLUSTER: {}, BRANCH: {}, TERMINAL: {} }, locks: {} });
+    expect(query).toHaveBeenCalledExactlyOnceWith(
+      "settings_locks",
+      expect.objectContaining({ columns: "section,locked" }),
+    );
+  });
+
+  it("does not confirm scope loading when an authoritative read fails", async () => {
+    query.mockRejectedValueOnce(new Error("Settings unavailable"));
+    await expect(
+      loadBranchSettings({ CLUSTER: "", BRANCH: "", TERMINAL: "" }, true),
+    ).rejects.toThrow("Settings unavailable");
+  });
+
   it("decodes JSON settings patches returned by SQL Server", async () => {
     query.mockImplementation(async (table: string, options: { match?: { scope?: string } }) => {
       if (table === "settings_overrides" && options.match?.scope === "BRANCH")
@@ -34,5 +50,8 @@ describe("scoped settings reads", () => {
 it("loads the selected registered terminal as an organizational scope", async () => {
   query.mockReset().mockResolvedValue([]);
   await loadBranchSettings({ CLUSTER: "", BRANCH: "branch-1", TERMINAL: "terminal-1" });
-  expect(query).toHaveBeenCalledWith("settings_overrides", expect.objectContaining({ match: { scope: "TERMINAL", scope_id: "terminal-1" } }));
+  expect(query).toHaveBeenCalledWith(
+    "settings_overrides",
+    expect.objectContaining({ match: { scope: "TERMINAL", scope_id: "terminal-1" } }),
+  );
 });

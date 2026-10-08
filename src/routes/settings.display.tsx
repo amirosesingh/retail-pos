@@ -23,7 +23,10 @@ export const Route = createFileRoute("/settings/display")({
   component: () => (
     <SettingsFrame
       title="Appearance"
-      description="Choose a colorful theme and tune sizing for this screen without changing the POS canvas."
+      description="Your theme, language and display size follow your user account."
+      permission="can_customize_display"
+      showSaveBar={false}
+      allowWhileScopeLoading
     >
       <DisplayScalingSettings bare />
     </SettingsFrame>

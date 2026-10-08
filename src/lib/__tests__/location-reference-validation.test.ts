@@ -21,6 +21,22 @@ describe("location reference validation", () => {
     );
   });
 
+  it("rejects archived parents and descendant cycles", () => {
+    const tree = [
+      { id: "root" },
+      { id: "child", parentId: "root" },
+      { id: "secondary", parentId: "child" },
+      { id: "archived", active: false },
+    ];
+    expect(validateLocationReferences({ id: "root", parentId: "secondary" }, tree, [])).toContain(
+      "cycle",
+    );
+    expect(validateLocationReferences({ id: "root", parentId: "archived" }, tree, [])).toContain(
+      "archived",
+    );
+    expect(validateLocationReferences({ id: "secondary", parentId: "root" }, tree, [])).toBeNull();
+  });
+
   it("rejects missing and self-referencing parents", () => {
     expect(
       validateLocationReferences({ id: "branch-a", parentId: "missing" }, locations, groups),

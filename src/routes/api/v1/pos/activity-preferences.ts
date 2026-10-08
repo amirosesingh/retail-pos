@@ -85,7 +85,7 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
           if (!input.eventId || input.cleared === undefined)
             return reply({ ok: false, error: "Event and clear state are required" }, 400);
           const eventResponse = await serviceRest(
-            `activity_events?id=eq.${encodeURIComponent(input.eventId)}&select=store_id,terminal_id,meta&limit=1`,
+            `activity_events?id=eq.${encodeURIComponent(input.eventId)}&select=store_id,terminal_id,event_type,meta&limit=1`,
           );
           const eventRows = eventResponse.ok
             ? ((await eventResponse.json()) as Record<string, unknown>[])

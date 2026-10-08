@@ -24,7 +24,7 @@ const SAFE_RENDERER_TABLES = new Set([
   "products", "promotions", "public_flags", "purchase_order_items", "purchase_orders", "nav_pins",
   "receiving_items", "receivings", "sale_items", "sales", "settings_locks",
   "settings_overrides", "settings_scoped", "shift_sessions", "shifts",
-  "shift_cash_counts", "shift_close_events", "shift_reconciliations", "shift_variance_alerts",
+  "shift_notifications", "shift_cash_counts", "shift_close_events", "shift_reconciliations", "shift_variance_alerts",
   "stock_adjustments", "stock_count_drafts", "stock_movements",
   "staff_roles", "stock_transfer_items", "stock_transfers", "stores", "suppliers", "terminal_commands", "uom_units",
 ]);
@@ -110,7 +110,7 @@ class OperationsRepository {
           throw Object.assign(new Error("A stock transfer must involve this terminal's branch."), { code: "EWRITE_SCOPE" });
       }
       if (op.table === "pos_settings") {
-        if (scopeContext.enforcePermissions !== true || scopeContext.permissions?.can_access_pos_settings !== true)
+        if (scopeContext.enforcePermissions !== true || scopeContext.permissions?.can_access_pos_settings !== true || scopeContext.isSettingsAdmin !== true)
           throw Object.assign(new Error("POS settings require a verified settings operator."), { code: "EWRITE_SCOPE" });
         if (op.kind === "delete" || (inserting && (op.rows ?? []).some((row) => Number(row.id) !== 1)) ||
             (op.kind === "update" && Number(op.match?.id) !== 1))
@@ -124,8 +124,8 @@ class OperationsRepository {
           const globalField = op.table === "settings_scoped" && scope === "global" &&
             scopeId === "" && String(row.key ?? "").startsWith("pos_field:") &&
             scopeContext.enforcePermissions === true &&
-            scopeContext.permissions?.can_access_pos_settings === true;
-          const allowed = globalField || (scope === "branch" && scopeId === branch) || (scope === "terminal" && terminal && scopeId === terminal);
+            scopeContext.permissions?.can_access_pos_settings === true && scopeContext.isSettingsAdmin === true;
+          const allowed = globalField || (scope === "branch" && scopeId === branch) || (scopeContext.isSettingsAdmin === true && ((scope === "terminal" && terminal && scopeId === terminal) || (scope === "cluster" && scopeId)));
           if (!allowed) throw Object.assign(new Error("A terminal may only write its own branch or terminal settings."), { code: "EWRITE_SCOPE" });
         }
       }
@@ -226,7 +226,51 @@ class OperationsRepository {
       }
     }
   }
+  async assertSettingsPermissions(transaction, op, scope = {}) {
+    if (scope.enforcePermissions !== true) return;
+    const admin = scope.isSettingsAdmin === true;
+    if (["pos_settings", "settings_locks", "public_flags", "payment_types"].includes(op.table) && !admin)
+      throw Object.assign(new Error("Global settings require an administrator."), {code:"PERMISSION_DENIED"});
+    if (!["settings_overrides", "settings_scoped"].includes(op.table)) return;
+    const records = op.rows ?? [{...(op.match ?? {}), ...(op.values ?? {})}];
+    for (const row of records) {
+      const tier = String(row.scope ?? "").toLowerCase();
+      if (!admin && op.table === "settings_scoped" && tier === "global")
+        throw Object.assign(new Error("Global settings require an administrator."), {code:"PERMISSION_DENIED"});
+      if (op.table !== "settings_overrides") continue;
+      if (!admin && (scope.permissions?.can_access_pos_settings !== true || tier !== "branch" || String(row.scope_id ?? "").toLowerCase() !== String(scope.branchId ?? "").toLowerCase()))
+        throw Object.assign(new Error("Only permitted settings for this branch may be changed."), {code:"PERMISSION_DENIED"});
+      if (!admin) {
+        if (!row.section) throw Object.assign(new Error("A settings section is required."), {code:"PERMISSION_DENIED"});
+        const lock = await new (this.connectionManager.sql().Request)(transaction).input("section", row.section)
+          .query("SELECT locked FROM dbo.settings_locks WITH (UPDLOCK,HOLDLOCK) WHERE section=@section;");
+        if (lock.recordset?.[0]?.locked)
+          throw Object.assign(new Error("This setting is locked by an administrator."), {code:"PERMISSION_DENIED"});
+      }
+    }
+  }
+  async assertShiftOpening(transaction, op, scope = {}) {
+    if (op.table !== "shifts" || scope.enforcePermissions !== true) return;
+    if (scope.permissions?.can_open_shift !== true)
+      throw Object.assign(new Error("Opening a shift requires permission."), { code: "PERMISSION_DENIED" });
+    if (!["insert", "upsert"].includes(op.kind))
+      throw Object.assign(new Error("Shift closing must use the protected cash-count workflow."), { code: "PERMISSION_DENIED" });
+    for (const row of op.rows ?? []) {
+      if (row.closed_at != null || row.counted_cash != null || row.closing_float != null ||
+          (row.status != null && row.status !== "OPEN") || (row.state != null && row.state !== "ACTIVE"))
+        throw Object.assign(new Error("Shift closing must use the protected cash-count workflow."), { code: "PERMISSION_DENIED" });
+      if (!Number.isFinite(Number(row.opening_float)) || Number(row.opening_float) < 0)
+        throw Object.assign(new Error("Opening float must be a finite non-negative amount."), { code: "ESHIFT_INPUT" });
+      const current = await new (this.connectionManager.sql().Request)(transaction)
+        .input("branch", scope.branchId)
+        .query("SELECT id FROM dbo.shifts WITH (UPDLOCK,HOLDLOCK) WHERE store_id=@branch AND closed_at IS NULL AND status=N'OPEN';");
+      if (current.recordset?.length)
+        throw Object.assign(new Error("A shift is already open for this branch. Refresh the shift status to continue it."), { code: "ESHIFT_OPEN" });
+    }
+  }
   async applyOperation(transaction, op, scope = {}) {
+    await this.assertSettingsPermissions(transaction, op, scope);
+    await this.assertShiftOpening(transaction, op, scope);
     const { branchId, terminalId } = scope;
     await this.assertMemberPermissions(transaction, op, scope);
     const table = this.tables.get(op.table);
@@ -416,22 +460,25 @@ class OperationsRepository {
       .input("shift", String(shiftId));
     const result = await request.query(`
       SELECT
+        COUNT(s.id) transactions,
+        CAST(COALESCE(SUM(COALESCE(s.discount_amount,0)),0) AS decimal(38,12)) discounts,
+        (SELECT COALESCE(SUM(sr.total_amount),0) FROM dbo.sales sr WHERE sr.store_id=@branch AND sr.shift_id=CONVERT(nvarchar(36),sh.id) AND sr.is_refunded=1) refunds,
         CAST(COALESCE(SUM(CASE WHEN COALESCE(s.is_refunded,0)=0 THEN COALESCE(s.total_amount,0) ELSE 0 END),0) AS decimal(38,12)) total_sales,
         CAST(COALESCE(sh.opening_float,0) + COALESCE(SUM(
           CASE
-            WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' THEN COALESCE(j.cash,0)
+            WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' AND LEN(REPLACE(REPLACE(REPLACE(s.payments,' ',''),CHAR(10),''),CHAR(13),''))>2 THEN COALESCE(j.cash,0)
             WHEN LOWER(COALESCE(s.payment_type,''))='cash' THEN COALESCE(s.total_amount,0)
             ELSE 0
           END),0) AS decimal(38,12)) expected_cash,
         CAST(COALESCE(SUM(
           CASE
-            WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' THEN COALESCE(j.card,0)
+            WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' AND LEN(REPLACE(REPLACE(REPLACE(s.payments,' ',''),CHAR(10),''),CHAR(13),''))>2 THEN COALESCE(j.card,0)
             WHEN LOWER(COALESCE(s.payment_type,''))='card' THEN COALESCE(s.total_amount,0)
             ELSE 0
           END),0) AS decimal(38,12)) expected_card,
         CAST(COALESCE(SUM(
           CASE
-            WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' THEN COALESCE(j.digital,0)
+            WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' AND LEN(REPLACE(REPLACE(REPLACE(s.payments,' ',''),CHAR(10),''),CHAR(13),''))>2 THEN COALESCE(j.digital,0)
             WHEN LOWER(COALESCE(s.payment_type,'')) IN ('wallet','transfer','qr','online','ewallet') THEN COALESCE(s.total_amount,0)
             ELSE 0
           END),0) AS decimal(38,12)) expected_digital
@@ -442,11 +489,11 @@ class OperationsRepository {
           SUM(CASE WHEN LOWER(COALESCE(p.method,''))='cash' THEN COALESCE(p.amount,0) ELSE 0 END) cash,
           SUM(CASE WHEN LOWER(COALESCE(p.method,''))='card' THEN COALESCE(p.amount,0) ELSE 0 END) card,
           SUM(CASE WHEN LOWER(COALESCE(p.method,'')) IN ('wallet','transfer','qr','online','ewallet') THEN COALESCE(p.amount,0) ELSE 0 END) digital
-        FROM OPENJSON(CASE WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' THEN s.payments ELSE N'[]' END)
+        FROM OPENJSON(CASE WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' AND LEN(REPLACE(REPLACE(REPLACE(s.payments,' ',''),CHAR(10),''),CHAR(13),''))>2 THEN s.payments ELSE N'[]' END)
         WITH (method nvarchar(64) '$.method', amount decimal(38,12) '$.amount') p
       ) j
       WHERE sh.id=TRY_CONVERT(uniqueidentifier,@shift) AND sh.store_id=@branch
-      GROUP BY sh.opening_float;
+      GROUP BY sh.id,sh.opening_float;
     `);
     const row = result.recordset?.[0];
     if (!row) throw Object.assign(new Error("That shift does not exist in this branch."), { code: "ESHIFT" });

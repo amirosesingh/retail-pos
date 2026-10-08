@@ -150,6 +150,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261008123000_align_location_management_permissions.sql",
       "supabase/migrations/20261008124500_harden_terminal_management.sql",
       "supabase/migrations/20261008133000_align_scoped_settings_permissions.sql",
+      "supabase/migrations/20261008133703_complete_settings_preferences_and_warehouse_dispatch.sql",
       "supabase/migrations/20261008143000_canonicalize_terminal_branch_ids.sql",
       "supabase/migrations/20261008143001_compare_purchase_order_parent_as_uuid.sql",
       "supabase/reset.sql",

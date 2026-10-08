@@ -92,7 +92,9 @@ export const loadNotificationSettings = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const { requireCallerScope } = await import("./privileged-caller.server");
-      await requireCallerScope(data, { permission: "can_access_pos_settings" });
+      const scope = await requireCallerScope(data);
+      if (scope.kind === "terminal" || (scope.role !== "admin" && scope.roleSlug !== "admin"))
+        throw new Error("Only an administrator can manage global notification settings.");
       const { readNotificationSettings } = await import("./activity-events.server");
       return { ok: true as const, settings: await readNotificationSettings() };
     } catch (error) {
@@ -105,7 +107,9 @@ export const saveNotificationSettings = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const { requireCallerScope } = await import("./privileged-caller.server");
-      await requireCallerScope(data, { permission: "can_access_pos_settings" });
+      const scope = await requireCallerScope(data);
+      if (scope.kind === "terminal" || (scope.role !== "admin" && scope.roleSlug !== "admin"))
+        throw new Error("Only an administrator can manage global notification settings.");
     } catch (error) {
       return { ok: false as const, error: (error as Error).message };
     }

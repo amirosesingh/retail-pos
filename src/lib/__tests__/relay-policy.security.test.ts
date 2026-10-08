@@ -184,7 +184,9 @@ describe("relay authorisation", () => {
       { kind: "upsert", table: "public_flags", rows: [{ key: "member_domain_enabled", enabled: true }] },
       { ...cashier, permissions: { ...cashier.permissions, can_access_pos_settings: true } },
     );
-    expect(allowed.ok).toBe(true);
+    expect(allowed.ok).toBe(false);
+    const adminWrite = await safeAuthorizeRelayOp({ kind: "upsert", table: "public_flags", rows: [{ key: "member_domain_enabled", enabled: true }] }, admin);
+    expect(adminWrite.ok).toBe(true);
   });
 
   it("allows new and idempotent sale upserts but blocks tender changes", async () => {

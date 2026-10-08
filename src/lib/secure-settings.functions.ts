@@ -37,7 +37,7 @@ export const saveSecureSetting = createServerFn({ method: "POST" })
     const { verifyPosStaff, writeSecureSetting } = await import("./secure-settings.server");
     try {
       const caller = await verifyPosStaff(data.accessToken);
-      if (!caller.isAdmin) return { ok: false as const, error: "Admins only" };
+      if (caller.role !== "admin") return { ok: false as const, error: "Admins only" };
       await writeSecureSetting(data.key, data.value, caller.userId);
       return { ok: true as const };
     } catch (e) {
@@ -52,7 +52,7 @@ export const listSecureSettings = createServerFn({ method: "POST" })
     const { verifyPosStaff, listSecureSettingHints } = await import("./secure-settings.server");
     try {
       const caller = await verifyPosStaff(data.accessToken);
-      if (!caller.isAdmin) return { ok: false as const, error: "Admins only", items: [] };
+      if (caller.role !== "admin") return { ok: false as const, error: "Admins only", items: [] };
       return { ok: true as const, items: await listSecureSettingHints() };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message, items: [] };
@@ -66,7 +66,7 @@ export const clearSecureSetting = createServerFn({ method: "POST" })
     const { verifyPosStaff, removeSecureSetting } = await import("./secure-settings.server");
     try {
       const caller = await verifyPosStaff(data.accessToken);
-      if (!caller.isAdmin) return { ok: false as const, error: "Admins only" };
+      if (caller.role !== "admin") return { ok: false as const, error: "Admins only" };
       await removeSecureSetting(data.key);
       return { ok: true as const };
     } catch (e) {

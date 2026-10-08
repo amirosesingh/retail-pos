@@ -257,7 +257,7 @@ describe("scoped SQL Server synchronization", () => {
             values: { section: "tax" },
           },
         ],
-        { branchId: "A", terminalId: "T" },
+        { branchId: "A", terminalId: "T", isSettingsAdmin: true },
       ),
     ).not.toThrow();
   });
@@ -268,12 +268,13 @@ describe("scoped SQL Server synchronization", () => {
       { cloudTable: "pos_settings", sqlServerTable: "pos_settings", columns: [] },
       { cloudTable: "settings_scoped", sqlServerTable: "settings_scoped", columns: [] },
     ] });
-    const scope = { branchId: "A", terminalId: "T", enforcePermissions: true,
+    const scope = { branchId: "A", terminalId: "T", enforcePermissions: true, isSettingsAdmin: true,
       permissions: { can_access_pos_settings: true } };
     const field = { kind: "upsert", table: "settings_scoped", rows: [
       { scope: "GLOBAL", scope_id: "", key: "pos_field:company_name", value: "Business" },
     ] };
     expect(() => repository.assertWriteScope([field], scope)).not.toThrow();
+    expect(() => repository.assertWriteScope([field], { ...scope, isSettingsAdmin: false })).toThrow(/own branch/);
     expect(() => repository.assertWriteScope([field], { ...scope, permissions: {} }))
       .toThrow(/own branch or terminal settings/);
     expect(() => repository.assertWriteScope([{ ...field, rows: [

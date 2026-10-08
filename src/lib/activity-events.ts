@@ -381,7 +381,7 @@ async function listActivityEventPageDirect(
       ...(identity
         ? batch.filter((row) =>
             activityVisibleTo(
-              { store_id: row.storeId, terminal_id: row.terminalName, meta: row.meta },
+              { store_id: row.storeId, terminal_id: row.terminalName, event_type: row.type, meta: row.meta },
               identity,
             ),
           )
@@ -423,7 +423,7 @@ async function listLocalActivityEventPage(filter: ActivityFilter): Promise<Activ
   if (identity)
     rows = rows.filter((row) =>
       activityVisibleTo(
-        { store_id: row.storeId, terminal_id: row.terminalName, meta: row.meta },
+        { store_id: row.storeId, terminal_id: row.terminalName, event_type: row.type, meta: row.meta },
         identity,
       ),
     );

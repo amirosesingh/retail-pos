@@ -8,6 +8,10 @@
 let zone = "";
 let dateOrder: "dmy" | "mdy" | "ymd" = "dmy";
 let hour12 = false;
+let personalLanguage = "en";
+export function setPersonalLanguage(language: string) {
+  personalLanguage = ["en", "ms", "zh-Hans", "ta", "hi"].includes(language) ? language : "en";
+}
 
 /** Common regions offered in settings; "" means "use this computer". */
 export const TIME_ZONES = [
@@ -44,7 +48,7 @@ export function setPosFormats(date: string | undefined, time: string | undefined
 
 /** The locale that renders the chosen date order without inventing one. */
 const localeForOrder = () =>
-  dateOrder === "mdy" ? "en-US" : dateOrder === "ymd" ? "en-CA" : "en-GB";
+  personalLanguage !== "en" ? personalLanguage : dateOrder === "mdy" ? "en-US" : dateOrder === "ymd" ? "en-CA" : "en-GB";
 
 export function posTimeZone(): string {
   return zone;

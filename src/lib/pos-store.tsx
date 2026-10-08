@@ -1,3 +1,5 @@
+import { staffSettingsTarget } from "./settings-edit-policy";
+import { canSelectLocation, verifyTerminalLocation } from "@/core/api/location-directory";
 import { documentOrigin } from "./document-origin";
 import { SettingsWriteQueue } from "./settings-write-queue";
 import {
@@ -279,6 +281,7 @@ type Ctx = {
   loadPhase: LoadPhase;
   /** true only once the location list has actually been answered for */
   storesLoaded: boolean;
+  locationLoadError: string | null;
   /** run the first read again after a stall or failure */
   retryLoad: () => void;
   state: PosState;
@@ -511,7 +514,7 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
     // bound and that branch exists centrally, it wins over anything saved.
     currentStoreId: (() => {
       const bound = activeBranchId(null);
-      if (bound && cloudStores.some((x) => x.id === bound)) return bound;
+      if (bound) return canonicalBranchId(bound);
       if (!cloudStores.length) return s.currentStoreId;
       return cloudStores.find((x) => x.id === s.currentStoreId)?.id ?? cloudStores[0].id;
     })(),
@@ -531,8 +534,8 @@ function applyLocationDirectory(s: PosState, stores: Store[]): PosState {
     ...s,
     stores: canonical,
     currentStoreId:
-      bound && canonical.some((store) => store.id === bound)
-        ? bound
+      bound
+        ? canonicalBranchId(bound)
         : canonical.some((store) => store.id === s.currentStoreId)
           ? s.currentStoreId
           : (canonical[0]?.id ?? s.currentStoreId),
@@ -575,9 +578,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Whether the location list has actually been answered for, so an empty list
   // can be told apart from a list that has not arrived yet.
   const [storesLoaded, setStoresLoaded] = useState(false);
+  const [locationLoadError, setLocationLoadError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const retryLoad = useCallback(() => {
     setStoresLoaded(false);
+    setLocationLoadError(null);
     setLoadPhase("loading");
     setSettingsSnapshotLoaded(false);
     setReloadTick((v) => v + 1);
@@ -689,7 +694,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
             receipt: { ...current.settings.receipt, companyName: name },
           } }));
         }, true);
+        // Observe a fast SQL failure immediately while cloud discovery is pending.
+        void cloudTask.catch(() => undefined);
         const directory = locationTask ? await locationTask : null;
+        if (!cancelled) setLocationLoadError(directory && !directory.ok ? directory.error.message : null);
         if (cancelled) return;
         if (directory?.ok) {
           markStartupStage("location");
@@ -701,6 +709,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
         }
         const loaded = await cloudTask;
         if (cancelled) return;
+        const terminal = readTerminalConfig();
+        const verifiedLocations = verifyTerminalLocation(
+          {ok: true, stores: loaded.stores, source: "local"},
+          terminal?.tokenId ? terminal.locationId : null,
+        );
+        if (!verifiedLocations.ok) {
+          setLocationLoadError(verifiedLocations.error.message);
+          throw verifiedLocations.error;
+        }
         // A cloud-only client cannot proceed without an authoritative branch
         // answer. An Electron till may continue from its durable SQL snapshot
         // while the relay/server is temporarily unavailable.
@@ -837,7 +854,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   // Overrides follow the cluster, branch and selected terminal in context.
   useEffect(() => {
-    if (!signedIn || !state.currentStoreId) return;
+    // Global locks and empty override sets still need confirmation before
+    // editing global settings, even before the first branch is created.
+    if (!signedIn) return;
     let cancelled = false;
     const scopeKey = JSON.stringify(scopeIds);
     if (loadedScopeKey.current !== scopeKey) {
@@ -1499,8 +1518,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, [activeShift, activeShiftAnnouncementBranch]);
 
   const setCurrentStore = useCallback(
-    (id: string) => setState((s) => ({ ...s, currentStoreId: id })),
-    [],
+    (id: string) => {
+      const bound = activeBranchId(null) ?? user?.storeId;
+      if (!canSelectLocation(id, bound, isAdmin)) {
+        toast.error("This terminal stays on its registered branch.");
+        return;
+      }
+      setState((s) => ({ ...s, currentStoreId: canonicalBranchId(id) }));
+    },
+    [isAdmin, user?.storeId],
   );
 
   const upsertStore = useCallback(async (store: Store) => {
@@ -1574,8 +1600,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const openingShiftRef = useRef(false);
   const openShift = useCallback(
     async (cashier: string, openingFloat: number) => {
+      if (!can("can_open_shift")) throw new Error("You do not have permission to open a shift.");
+      if (!Number.isFinite(openingFloat) || openingFloat < 0) throw new Error("Enter a valid non-negative opening float.");
+      if (openingShiftRef.current) throw new Error("The shift is already being opened.");
+      openingShiftRef.current = true;
+      try {
       const terminal = readTerminalConfig();
       // The branch follows the terminal, never the staff record.
       const storeId = requireBranchId(stateRef.current.currentStoreId);
@@ -1663,8 +1695,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setState((s) => ({ ...s, currentStoreId: storeId }));
       }
       return target;
+      } finally { openingShiftRef.current = false; }
     },
-    [user, terminalUser, authUserId],
+    [user, terminalUser, authUserId, can],
   );
 
   const closeShift = useCallback(
@@ -1740,12 +1773,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // Do not let Electron exit until the closing records have either reached
       // the server or been parked durably in the terminal database.
       const summaryWritten = (async () => {
-        const snapshot = stateRef.current;
-        const storeName = branchDisplayName(snapshot.stores, closed.storeId);
-        const { buildShiftSummary, dispatchShiftSummary } = await import("./shift-alerts");
-        await dispatchShiftSummary(buildShiftSummary(closed, snapshot.sales, storeName)).catch(
-          () => null,
-        );
+        const { publishCompleteShiftSummary } = await import("./shift-summary.functions");
+        const { getPosCallerAuth } = await import("./pos-caller-auth");
+        // Electron already stores a complete SQL aggregate in the cash-count
+        // transaction. After the final sync, central SQL can confirm all bills.
+        await publishCompleteShiftSummary({ data: { ...await getPosCallerAuth(), shiftId: closed.id } }).catch(() => null);
       })();
       await Promise.all([transitionWritten, activityWritten, summaryWritten]);
       return closed;
@@ -3404,7 +3436,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         if (JSON.stringify(value) === JSON.stringify(getPath(effective, path))) continue;
         const section = sectionOfPath(path);
         // Strongest tier that already owns this block wins the write.
-        const tier =
+        let staffTier: SettingTier | undefined;
+        if (!isAdmin) {
+          try { staffTier = staffSettingsTarget(section?.id ?? null, can("can_access_pos_settings"), ids.BRANCH, !!(section && scope.locks[section.id])); }
+          catch (error) { toast.error((error as Error).message); return; }
+        }
+        const tier = staffTier ?? (
           section && !scope.locks[section.id]
             ? [...SETTING_TIERS]
                 .reverse()
@@ -3412,7 +3449,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
                   (t) =>
                     sectionAllowsTier(section.id, t) && scope.overrides[t][section.id] && ids[t],
                 )
-            : undefined;
+            : undefined);
         if (section && tier) {
           const bag = byTier.get(tier) ?? new Map<SettingsSectionId, Record<string, unknown>>();
           const base = bag.get(section.id) ?? scope.overrides[tier][section.id] ?? {};
@@ -3445,7 +3482,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [writeGlobalSettings, confirmedScopeKey],
+    [writeGlobalSettings, confirmedScopeKey, isAdmin, can],
   );
   updateSettingsRef.current = updateSettings;
 
@@ -3458,6 +3495,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       scopeId?: string,
     ) => {
       const target = scopeId || scopeIdsRef.current[tier];
+      if (!isAdmin && (tier !== "BRANCH" || !can("can_access_pos_settings") || target !== scopeIdsRef.current.BRANCH))
+        throw new Error("You may only edit your permitted branch settings.");
       const def = SECTION_BY_ID[section];
       if (!def) return;
       if (!sectionAllowsTier(section, tier))
@@ -3505,16 +3544,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
         scopeId: target,
       });
     },
-    [],
+    [isAdmin, can],
   );
 
   const setSectionLocked = useCallback(async (section: SettingsSectionId, locked: boolean) => {
-    setScope((s) => ({ ...s, locks: { ...s.locks, [section]: locked } }));
+    if (!isAdmin) throw new Error("Only an administrator may change global settings locks.");
     await setSectionLock(section, locked, whoRef.current);
+    setScope((s) => ({ ...s, locks: { ...s.locks, [section]: locked } }));
     logger.log("settings", locked ? "Setting locked globally" : "Setting unlocked", "settings", {
       section,
     });
-  }, []);
+  }, [isAdmin]);
 
   /** Lets approveTransfer raise the fulfilling transfer without a cycle. */
   const createTransferRef = useRef<((input: NewTransfer) => Promise<Transfer>) | null>(null);
@@ -4071,6 +4111,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     ready,
     loadPhase,
     storesLoaded,
+    locationLoadError,
     retryLoad,
     state: effectiveState,
     settingsScope: scope,

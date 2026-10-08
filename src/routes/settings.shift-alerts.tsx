@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { useAuth } from "@/lib/pos-auth";
 import { toast } from "sonner";
 import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
@@ -37,14 +38,16 @@ export const Route = createFileRoute("/settings/shift-alerts")({
 });
 
 function ShiftAlertsPage() {
+  const { isAdmin } = useAuth();
+  const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<ShiftAlertSettings>(DEFAULT_ALERT_SETTINGS);
   const [numbers, setNumbers] = useState("");
   const [recent, setRecent] = useState<ShiftSummary[]>([]);
 
   useEffect(() => {
-    const saved = readAlertSettings();
-    setSettings(saved);
-    setNumbers(saved.recipients.join(", "));
+    void readAlertSettings().then((saved) => {
+      setSettings(saved); setNumbers(saved.recipients.join(", "));
+    }).catch(() => toast.error("Global shift notification settings could not be loaded."));
     void listShiftSummaries()
       .then(setRecent)
       .catch(() => setRecent([]));
@@ -52,15 +55,20 @@ function ShiftAlertsPage() {
 
   const set = (patch: Partial<ShiftAlertSettings>) => setSettings((s) => ({ ...s, ...patch }));
 
-  const save = () => {
+  const save = async () => {
+    if (!isAdmin || saving) return;
+    setSaving(true);
+    try {
     const recipients = numbers
       .split(/[,\s]+/)
       .map((n) => n.replace(/\D/g, ""))
       .filter((n) => n.length >= 6);
     const next = { ...settings, recipients };
-    writeAlertSettings(next);
+    await writeAlertSettings(next);
     setSettings(next);
-    toast.success("Shift alert settings saved on this device");
+    toast.success("Global shift alert settings saved");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Settings could not be saved."); }
+    finally { setSaving(false); }
   };
 
   const Row = ({
@@ -85,11 +93,12 @@ function ShiftAlertsPage() {
     </div>
   );
 
+  if (!isAdmin) return <SettingsFrame title="Shift alerts" description="Global notification delivery is managed by administrators." showSaveBar={false}><p>Administrator access is required.</p></SettingsFrame>;
   return (
     <SettingsFrame
       showSaveBar={false}
       title="Shift alerts"
-      description="When a shift is closed the till builds a day summary — total sales, bills, payment split, discounts, refunds and the cash count. Pick how this device receives it."
+      description="When a shift is closed the till builds a day summary — total sales, bills, payment split, discounts, refunds and the cash count. Administrators configure delivery for all platforms."
     >
       <div className="grid gap-3">
         <Row
@@ -149,7 +158,7 @@ function ShiftAlertsPage() {
         </div>
       </div>
 
-      <Button onClick={save} className="w-fit">
+      <Button onClick={() => void save()} disabled={saving} className="w-fit">
         Save
       </Button>
 

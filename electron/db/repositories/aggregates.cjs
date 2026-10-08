@@ -87,6 +87,16 @@ class AggregateRepository {
         return { ok: true, operationId, replayed: true, affected: 0 };
       }
 
+      // Close-start takes the same shift row lock. Once counting begins no
+      // sale can race the database totals used for reconciliation.
+      for (const sale of operations.filter((op) => op.table === "sales" && ["insert", "upsert"].includes(op.kind)).flatMap((op) => op.rows ?? [])) {
+        if (!sale.shift_id) continue;
+        const shift = await new sql.Request(transaction).input("shift", String(sale.shift_id)).input("branch", aggregate.branchId)
+          .query("SELECT state,status,closed_at FROM dbo.shifts WITH (UPDLOCK,HOLDLOCK) WHERE id=TRY_CONVERT(uniqueidentifier,@shift) AND store_id=@branch;");
+        const row = shift.recordset?.[0];
+        if (!row || row.closed_at || row.status !== "OPEN" || (row.state && row.state !== "ACTIVE"))
+          throw Object.assign(new Error("This shift is closing or closed. Refresh the shift status before recording a sale."), { code: "ESHIFT_CLOSED" });
+      }
       let affected = 0;
       for (const operation of operations) {
         stage = "business rows";
@@ -111,6 +121,7 @@ class AggregateRepository {
           terminalId: aggregate.terminalId,
           permissions: aggregate.permissions,
           enforcePermissions: true,
+          isSettingsAdmin: aggregate.isSettingsAdmin === true,
           memberAccrual: aggregate.memberAccrual,
         });
         if (operation.requireMatch && operationAffected !== 1)

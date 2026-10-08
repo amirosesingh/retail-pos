@@ -46,10 +46,10 @@ export async function readNotificationSettings(): Promise<NotificationSettings> 
 }
 
 export async function writeNotificationSettings(value: NotificationSettings): Promise<void> {
-  const res = await serviceRest("pos_settings?id=eq.1", {
-    method: "PATCH",
+  const res = await serviceRest("rpc/save_global_notification_rules", {
+    method: "POST",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ notification_settings: value }),
+    body: JSON.stringify({ p_settings: value }),
   });
   if (!res.ok) throw new Error(await res.text());
 }
@@ -90,13 +90,14 @@ export type EventRecord = {
   whatsapp_error: string | null;
 };
 
-async function sendWhatsApp(to: string, body: string): Promise<string | null> {
+export async function sendWhatsApp(to: string, body: string): Promise<string | null> {
   const { readSecureSetting } = await import("./secure-settings.server");
   const token = (await readSecureSetting("whatsapp_token")) ?? process.env["WHATSAPP_TOKEN"];
   const phoneNumberId = await readSecureSetting("whatsapp_phone_number_id");
   if (!token || !phoneNumberId) return "WhatsApp is not configured";
   const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
     method: "POST",
+    signal: AbortSignal.timeout(10_000),
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       messaging_product: "whatsapp",

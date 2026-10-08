@@ -1,3 +1,4 @@
+import { canEditSettingsScope } from "@/lib/settings-edit-policy";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { listTerminalTokens, type TerminalToken } from "@/core/activation/terminal-tokens";
@@ -103,7 +104,7 @@ export function SectionScope({
     state,
   } = usePos();
   const [compareOpen, setCompareOpen] = useState(false);
-  const { isAdmin } = useAuth();
+  const { isAdmin, can } = useAuth();
   const def = SECTION_BY_ID[section];
   if (!def) return null;
   const allowedTiers = SETTING_TIERS.filter((tier) => sectionAllowsTier(section, tier));
@@ -179,6 +180,7 @@ export function SectionScope({
             className="h-7 text-[11px]"
             disabled={
               settingsScopeLoading ||
+              !canEditSettingsScope(tier, isAdmin, can("can_access_pos_settings"), locked) ||
               (locked && tier !== "GLOBAL") ||
               (tier !== "GLOBAL" && !scopeIds[tier])
             }
