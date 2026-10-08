@@ -12797,6 +12797,21 @@ DECLARE
     OR public.has_perm('can_receive_transfer');
 BEGIN
   IF TG_OP = 'INSERT' THEN
+    IF NEW.status = 'draft' THEN
+      NEW.approved_by := NULL;
+      NEW.approved_at := NULL;
+      NEW.dispatched_by := NULL;
+      NEW.dispatched_at := NULL;
+      NEW.received_by := NULL;
+      NEW.received_at := NULL;
+      NEW.verified_by := NULL;
+      NEW.verified_at := NULL;
+      NEW.posted_at := NULL;
+      NEW.closed_at := NULL;
+      NEW.fulfilment := NULL;
+      RETURN NEW;
+    END IF;
+
     v_needs_approval := public.stock_transfer_approval_required(NEW.from_store_id, NEW.to_store_id);
 
     IF v_needs_approval THEN
@@ -12826,6 +12841,28 @@ BEGIN
   END IF;
 
   IF OLD.status = NEW.status THEN
+    RETURN NEW;
+  END IF;
+
+  IF OLD.status = 'draft' THEN
+    v_needs_approval := public.stock_transfer_approval_required(NEW.from_store_id, NEW.to_store_id);
+    NEW.status := CASE WHEN v_needs_approval THEN 'awaiting_approval' ELSE 'approved' END;
+    IF NEW.status = 'approved' THEN
+      NEW.approved_by := COALESCE(NEW.approved_by, NEW.created_by);
+      NEW.approved_at := COALESCE(NEW.approved_at, now());
+    ELSE
+      NEW.approved_by := NULL;
+      NEW.approved_at := NULL;
+    END IF;
+    NEW.dispatched_by := NULL;
+    NEW.dispatched_at := NULL;
+    NEW.received_by := NULL;
+    NEW.received_at := NULL;
+    NEW.verified_by := NULL;
+    NEW.verified_at := NULL;
+    NEW.posted_at := NULL;
+    NEW.closed_at := NULL;
+    NEW.fulfilment := NULL;
     RETURN NEW;
   END IF;
 

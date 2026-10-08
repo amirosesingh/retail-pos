@@ -89,6 +89,7 @@ import {
   dispatchTransferInDb,
   receiveTransferInDb,
   closeRequestInDb,
+  scopeBetween,
   verifyTransferInDb,
   saveTransfer,
   loadTransfers,
@@ -198,6 +199,12 @@ type NewTransfer = {
   sourceRequestId?: string;
   /** hold the note as "requested" until somebody authorises it */
   needsApproval?: boolean;
+  /** Save or finalize this existing draft instead of creating another row. */
+  draftId?: string;
+  /** Persist the note without submitting it into the approval lifecycle. */
+  saveAsDraft?: boolean;
+  /** Deterministic child id used when a request approval is retried. */
+  forcedId?: string;
 };
 
 export type NewBooking = {
@@ -3466,30 +3473,29 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   const createTransfer = useCallback(async (input: NewTransfer) => {
     const now = new Date().toISOString();
-    const { needsApproval, ...rest } = input;
+    const { needsApproval, draftId, saveAsDraft, forcedId, ...rest } = input;
+    const previous = draftId
+      ? stateRef.current.transfers.find((transfer) => transfer.id === draftId)
+      : undefined;
+    if (draftId && (!previous || previous.status !== "draft" || previous.kind !== input.kind))
+      throw new Error("This stock-movement draft is no longer available to finalize.");
+    const fromStore = stateRef.current.stores.find((store) => store.id === input.fromStoreId);
+    const toStore = stateRef.current.stores.find((store) => store.id === input.toStoreId);
+    const requiresApproval = needsApproval || scopeBetween(fromStore, toStore) === "INTER_GROUP";
     // Nothing moves at creation any more. The note either waits for a
     // supervisor or is pre-approved, and stock only leaves at dispatch.
     const transfer: Transfer = {
       ...rest,
-      id: crypto.randomUUID(),
-      ref: "",
-      status: needsApproval ? "awaiting_approval" : "approved",
-      approvedBy: needsApproval ? undefined : input.createdBy,
-      approvedAt: needsApproval ? undefined : now,
-      createdAt: now,
+      createdBy: previous?.createdBy ?? rest.createdBy,
+      id: draftId ?? forcedId ?? crypto.randomUUID(),
+      ref: previous?.ref ?? "",
+      status: saveAsDraft ? "draft" : requiresApproval ? "awaiting_approval" : "approved",
+      approvedBy: saveAsDraft || requiresApproval ? undefined : input.createdBy,
+      approvedAt: saveAsDraft || requiresApproval ? undefined : now,
+      createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     };
-    logger.log("inventory", "Stock transfer created", "transfers", {
-      transferId: transfer.id,
-      ref: transfer.ref,
-      kind: transfer.kind,
-      fromStoreId: transfer.fromStoreId,
-      toStoreId: transfer.toStoreId,
-      itemCount: transfer.items.length,
-      quantity: transfer.items.reduce((sum, item) => sum + item.qty, 0),
-      status: transfer.status,
-    });
-    const transferCounter = stateRef.current.transferCounter + 1;
+    const transferCounter = stateRef.current.transferCounter + (previous ? 0 : 1);
     const series = input.kind === "transfer" ? "transfer" : "request";
     const originStoreId = input.kind === "transfer" ? input.fromStoreId : input.toStoreId;
     const originCode =
@@ -3504,15 +3510,37 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ? (integrations.transferNumbering ?? {})
         : (integrations.requestNumbering ?? {});
     const { nextStockRef } = await import("./stock-ref");
-    transfer.ref = nextStockRef(numbering, originCode, series);
+    if (!transfer.ref) transfer.ref = nextStockRef(numbering, originCode, series);
     await saveTransfer({
       transfer,
-      from: stateRef.current.stores.find((x) => x.id === transfer.fromStoreId),
-      to: stateRef.current.stores.find((x) => x.id === transfer.toStoreId),
+      from: fromStore,
+      to: toStore,
       products: stateRef.current.products,
+      previousLineCount: previous?.items.length,
     });
-    setState((s) => ({ ...s, transferCounter, transfers: [transfer, ...s.transfers] }));
-    if (transfer.kind === "request") {
+    setState((s) => ({
+      ...s,
+      transferCounter,
+      transfers: previous
+        ? s.transfers.map((row) => (row.id === transfer.id ? transfer : row))
+        : [transfer, ...s.transfers.filter((row) => row.id !== transfer.id)],
+    }));
+    logger.log(
+      "inventory",
+      saveAsDraft ? "Stock movement draft saved" : "Stock transfer created",
+      "transfers",
+      {
+        transferId: transfer.id,
+        ref: transfer.ref,
+        kind: transfer.kind,
+        fromStoreId: transfer.fromStoreId,
+        toStoreId: transfer.toStoreId,
+        itemCount: transfer.items.length,
+        quantity: transfer.items.reduce((sum, item) => sum + item.qty, 0),
+        status: transfer.status,
+      },
+    );
+    if (!saveAsDraft && transfer.kind === "request") {
       const requester = stateRef.current.stores.find((x) => x.id === transfer.toStoreId)?.name;
       recordActivity({
         type: "stock_request_received",
@@ -3554,30 +3582,42 @@ export function PosProvider({ children }: { children: ReactNode }) {
    */
   const approveTransfer = useCallback(async (id: string, lines?: LineQty[]): Promise<RpcResult> => {
     const before = stateRef.current.transfers.find((x) => x.id === id);
-    if (!before || before.status !== "awaiting_approval")
+    const existingFulfilment = stateRef.current.transfers.find((x) => x.sourceRequestId === id);
+    if (existingFulfilment) return { success: true };
+    const repairingRequest =
+      before?.kind === "request" && before.status === "approved" && !existingFulfilment;
+    if (!before || (before.status !== "awaiting_approval" && !repairingRequest))
       return { success: false, error: "Transfer is not awaiting approval." };
-    const allowed = linesFor(before, lines, (i) => i.qty);
-    const persisted = await approveTransferInDb(id, actorRef.current, allowed);
-    if (!persisted.success) return persisted;
+    const allowed = repairingRequest
+      ? before.items.map((item) => ({
+          productId: item.productId,
+          qty: item.approvedQty ?? item.qty,
+        }))
+      : linesFor(before, lines, (i) => i.qty);
+    if (!repairingRequest) {
+      const persisted = await approveTransferInDb(id, actorRef.current, allowed);
+      if (!persisted.success) return persisted;
+    }
 
-    setState((s) => ({
-      ...s,
-      transfers: s.transfers.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              status: "approved",
-              approvedBy: actorRef.current,
-              approvedAt: new Date().toISOString(),
-              items: x.items.map((i) => ({
-                ...i,
-                approvedQty: allowed.find((l) => l.productId === i.productId)?.qty ?? i.qty,
-              })),
-              updatedAt: new Date().toISOString(),
-            }
-          : x,
-      ),
-    }));
+    if (!repairingRequest)
+      setState((s) => ({
+        ...s,
+        transfers: s.transfers.map((x) =>
+          x.id === id
+            ? {
+                ...x,
+                status: "approved",
+                approvedBy: actorRef.current,
+                approvedAt: new Date().toISOString(),
+                items: x.items.map((i) => ({
+                  ...i,
+                  approvedQty: allowed.find((l) => l.productId === i.productId)?.qty ?? i.qty,
+                })),
+                updatedAt: new Date().toISOString(),
+              }
+            : x,
+        ),
+      }));
 
     // A request is paperwork; the goods move on a transfer of its own. The
     // two rows stay joined by sourceRequestId so either page can reach the
@@ -3594,6 +3634,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           createdBy: actorRef.current,
           sourceRequestId: before.id,
           needsApproval: false,
+          forcedId: stableChildId(before.id, "8", 0),
         });
     }
     logger.log("inventory", "Stock transfer approved", "transfers", {

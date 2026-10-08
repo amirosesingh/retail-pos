@@ -5,6 +5,7 @@
  * never more than the step before allowed.
  */
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -76,11 +77,13 @@ export function TransferStepDialog({
 }) {
   const [qty, setQty] = useState<Record<string, number>>({});
   const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!transfer) return;
     setQty(Object.fromEntries(transfer.items.map((i) => [i.productId, ceilingFor(step, i)])));
     setReason("");
+    setBusy(false);
   }, [transfer, step]);
 
   const copy = COPY[step];
@@ -95,8 +98,26 @@ export function TransferStepDialog({
 
   if (!transfer) return null;
 
+  const confirm = async () => {
+    if (busy || needsReason) return;
+    setBusy(true);
+    try {
+      await onConfirm(
+        transfer.items.map((i) => ({
+          productId: i.productId,
+          qty: Math.max(0, Math.min(ceilingFor(step, i), qty[i.productId] ?? 0)),
+        })),
+        reason.trim() || undefined,
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The transfer step could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
@@ -173,22 +194,11 @@ export function TransferStepDialog({
           </p>
         )}
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button
-            disabled={needsReason}
-            onClick={() =>
-              onConfirm(
-                transfer.items.map((i) => ({
-                  productId: i.productId,
-                  qty: Math.max(0, Math.min(ceilingFor(step, i), qty[i.productId] ?? 0)),
-                })),
-                reason.trim() || undefined,
-              )
-            }
-          >
-            {copy.cta}
+          <Button disabled={needsReason || busy} onClick={() => void confirm()}>
+            {busy ? "Saving…" : copy.cta}
             {!isConfirmOnly(step) && (
               <>
                 {" · "}
@@ -215,10 +225,26 @@ export function TransferReasonDialog({
   onClose: () => void;
 }) {
   const [reason, setReason] = useState("");
-  useEffect(() => setReason(""), [transfer]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setReason("");
+    setBusy(false);
+  }, [transfer]);
   if (!transfer) return null;
+
+  const confirm = async () => {
+    if (busy || !reason.trim()) return;
+    setBusy(true);
+    try {
+      await onConfirm(reason.trim());
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The transfer could not be updated.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
@@ -241,15 +267,15 @@ export function TransferReasonDialog({
           />
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             Keep it open
           </Button>
           <Button
             variant="destructive"
-            disabled={!reason.trim()}
-            onClick={() => onConfirm(reason.trim())}
+            disabled={!reason.trim() || busy}
+            onClick={() => void confirm()}
           >
-            {cancelling ? "Cancel transfer" : "Reject"}
+            {busy ? "Saving…" : cancelling ? "Cancel transfer" : "Reject"}
           </Button>
         </DialogFooter>
       </DialogContent>

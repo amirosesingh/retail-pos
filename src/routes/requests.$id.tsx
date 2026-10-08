@@ -89,13 +89,11 @@ function RequestDetail() {
   const canApprove =
     live &&
     mineToApprove &&
-    transfer.status === "awaiting_approval" &&
-    (can("can_approve_transfer") || can("can_receive_transfer"));
+    (transfer.status === "awaiting_approval" ||
+      (transfer.status === "approved" && !fulfillingTransfer)) &&
+    can("can_approve_transfer");
   const canReject =
-    live &&
-    mineToApprove &&
-    transfer.status === "awaiting_approval" &&
-    (can("can_approve_transfer") || can("can_receive_transfer"));
+    live && mineToApprove && transfer.status === "awaiting_approval" && can("can_approve_transfer");
 
   return (
     <AppShell>
@@ -111,7 +109,10 @@ function RequestDetail() {
             <>
               {canApprove && (
                 <Button onClick={() => setApproving(true)}>
-                  <Check className="size-4" /> Approve & raise transfer
+                  <Check className="size-4" />
+                  {transfer.status === "approved"
+                    ? "Finish raising transfer"
+                    : "Approve & raise transfer"}
                 </Button>
               )}
               {canReject && (

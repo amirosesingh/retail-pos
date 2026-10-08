@@ -37,21 +37,23 @@ export function scopeBetween(from: Store | undefined, to: Store | undefined): Tr
  * mid-week may still be holding. "in_transit" was an old name for dispatched.
  */
 const toStatus = (s: string): TransferStatus =>
-  s === "approved"
-    ? "approved"
-    : s === "in_transit" || s === "dispatched"
-      ? "dispatched"
-      : s === "received"
-        ? "received"
-        : s === "completed" || s === "verified"
-          ? "completed"
-          : s === "completed_with_discrepancy"
-            ? "completed_with_discrepancy"
-            : s === "rejected"
-              ? "rejected"
-              : s === "cancelled"
-                ? "cancelled"
-                : "awaiting_approval";
+  s === "draft"
+    ? "draft"
+    : s === "approved"
+      ? "approved"
+      : s === "in_transit" || s === "dispatched"
+        ? "dispatched"
+        : s === "received"
+          ? "received"
+          : s === "completed" || s === "verified"
+            ? "completed"
+            : s === "completed_with_discrepancy"
+              ? "completed_with_discrepancy"
+              : s === "rejected"
+                ? "rejected"
+                : s === "cancelled"
+                  ? "cancelled"
+                  : "awaiting_approval";
 
 const fromStatus = (s: TransferStatus): string => s;
 
@@ -98,7 +100,13 @@ const rowToTransfer = (r: Row, items: Row[]): StoredTransfer => ({
   fulfilment: (() => {
     if (r.fulfilment && typeof r.fulfilment === "object") return r.fulfilment;
     if (typeof r.fulfilment !== "string" || !r.fulfilment.trim()) return undefined;
-    try { return JSON.parse(r.fulfilment); } catch { return undefined; }
+    if (["full", "partial", "none"].includes(r.fulfilment)) return r.fulfilment;
+    try {
+      const legacy = JSON.parse(r.fulfilment);
+      return ["full", "partial", "none"].includes(legacy) ? legacy : undefined;
+    } catch {
+      return undefined;
+    }
   })(),
   createdAt: r.created_at,
   updatedAt: r.updated_at ?? r.created_at,
@@ -170,13 +178,21 @@ export type SaveTransferInput = {
   from: Store | undefined;
   to: Store | undefined;
   products: { id: string; name: string; barcode?: string; sku?: string; cost?: number }[];
+  /** Number of lines in the draft being replaced, so removed rows are deleted. */
+  previousLineCount?: number;
 };
 
 /**
  * Write the note and its lines through the durable gate, so a transfer raised
  * with no connection is stored on the till and pushed up later.
  */
-export async function saveTransfer({ transfer, from, to, products }: SaveTransferInput) {
+export async function saveTransfer({
+  transfer,
+  from,
+  to,
+  products,
+  previousLineCount = 0,
+}: SaveTransferInput) {
   const head = {
     id: transfer.id,
     ref: transfer.ref,
@@ -192,6 +208,10 @@ export async function saveTransfer({ transfer, from, to, products }: SaveTransfe
     source_request_id: transfer.sourceRequestId ?? null,
     note: transfer.note ?? "",
     created_by: transfer.createdBy || null,
+    approved_by: transfer.approvedBy ?? null,
+    approved_at: transfer.approvedAt ?? null,
+    created_at: transfer.createdAt,
+    updated_at: transfer.updatedAt,
   };
   const lines = transfer.items.map((i: TransferItem, index) => {
     const p = products.find((x) => x.id === i.productId);
@@ -208,11 +228,20 @@ export async function saveTransfer({ transfer, from, to, products }: SaveTransfe
       unit_cost: p?.cost ?? 0,
     };
   });
+  const removedLineIds = Array.from(
+    { length: Math.max(0, previousLineCount - lines.length) },
+    (_, offset) => stableChildId(transfer.id, "6", lines.length + offset),
+  );
   return commitOps("Saving transfer", [
     { kind: "upsert", table: "stock_transfers", rows: [head] },
     ...(lines.length
       ? [{ kind: "upsert" as const, table: "stock_transfer_items", rows: lines }]
       : []),
+    ...removedLineIds.map((id) => ({
+      kind: "delete" as const,
+      table: "stock_transfer_items",
+      match: { id, transfer_id: transfer.id },
+    })),
   ]);
 }
 

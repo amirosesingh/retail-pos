@@ -12,19 +12,31 @@ describe("multi-branch stock transfer contract", () => {
   it("restores every page of persisted drafts and their lines", async () => {
     routedQuery.mockReset();
     const firstPage = Array.from({ length: 500 }, (_, index) => ({
-      id: `transfer-${index}`, status: "pending", from_store_id: "branch-a",
-      to_store_id: "branch-b", created_at: "2026-10-07T00:00:00Z",
+      id: `transfer-${index}`,
+      status: "pending",
+      from_store_id: "branch-a",
+      to_store_id: "branch-b",
+      created_at: "2026-10-07T00:00:00Z",
     }));
     routedQuery.mockImplementation(async (table: string, options: { offset?: number }) => {
       if (table === "stock_transfers")
-        return options.offset === 0 ? firstPage : [{ ...firstPage[0], id: "transfer-500" }];
+        return options.offset === 0
+          ? firstPage
+          : [{ ...firstPage[0], id: "transfer-500", status: "draft", fulfilment: "partial" }];
       return [];
     });
     const transfers = await loadTransfers();
     expect(transfers).toHaveLength(501);
-    expect(transfers[500].id).toBe("transfer-500");
+    expect(transfers[500]).toMatchObject({
+      id: "transfer-500",
+      status: "draft",
+      fulfilment: "partial",
+    });
     expect(transfers[0].status).toBe("awaiting_approval");
-    expect(routedQuery).toHaveBeenCalledWith("stock_transfers", expect.objectContaining({ offset: 500 }));
+    expect(routedQuery).toHaveBeenCalledWith(
+      "stock_transfers",
+      expect.objectContaining({ offset: 500 }),
+    );
   });
 
   it("reports a failed transfer read instead of presenting an empty draft list", async () => {
@@ -46,7 +58,27 @@ describe("multi-branch stock transfer contract", () => {
     const source = readFileSync("src/lib/stock-transfers.ts", "utf8");
     expect(source).toContain('id: stableChildId(transfer.id, "6", index)');
     expect(source).toContain('table: "stock_transfer_items", rows: lines');
-    expect(source).not.toContain('table: "stock_transfer_items", match: { transfer_id: transfer.id }');
+    expect(source).not.toContain(
+      'table: "stock_transfer_items", match: { transfer_id: transfer.id }',
+    );
+  });
+
+  it("persists, resumes and finalizes request and transfer drafts without orphaning lines", () => {
+    const store = readFileSync("src/lib/pos-store.tsx", "utf8");
+    const persistence = readFileSync("src/lib/stock-transfers.ts", "utf8");
+    const composer = readFileSync("src/platforms/web/components/pos/TransferComposer.tsx", "utf8");
+    const transferPage = readFileSync("src/routes/transfers.new.tsx", "utf8");
+    const requestPage = readFileSync("src/routes/requests.new.tsx", "utf8");
+
+    expect(store).toContain('status: saveAsDraft ? "draft"');
+    expect(store).toContain('forcedId: stableChildId(before.id, "8", 0)');
+    expect(persistence).toContain("previousLineCount - lines.length");
+    expect(persistence).toContain('table: "stock_transfer_items",');
+    expect(composer).toContain("Save draft");
+    expect(transferPage).toContain("initialDraft={draft}");
+    expect(transferPage).toContain("draftId: draft?.id");
+    expect(requestPage).toContain("initialDraft={draft}");
+    expect(requestPage).toContain("draftId: draft?.id");
   });
 
   it("accepts every current lifecycle state while preserving rolling-upgrade aliases", () => {
@@ -71,6 +103,21 @@ describe("multi-branch stock transfer contract", () => {
     }
   });
 
+  it("keeps drafts outside the approval lifecycle until explicit submission", () => {
+    const migration = readFileSync(
+      "supabase/migrations/20261008081500_enable_stock_transfer_drafts.sql",
+      "utf8",
+    );
+    const schema = readFileSync("supabase/schema.sql", "utf8");
+    for (const sql of [migration, schema]) {
+      expect(sql).toContain("IF NEW.status = 'draft' THEN");
+      expect(sql).toContain("IF OLD.status = 'draft' THEN");
+      expect(sql).toContain(
+        "NEW.status := CASE WHEN v_needs_approval THEN 'awaiting_approval' ELSE 'approved' END",
+      );
+    }
+  });
+
   it("scopes synchronization to either participating branch rather than a terminal pair", () => {
     const schema = readFileSync("supabase/schema.sql", "utf8");
     expect(schema).toContain("p_branch_id IN (x.from_store_id::text,x.to_store_id::text)");
@@ -88,9 +135,7 @@ describe("multi-branch stock transfer contract", () => {
       "DROP FUNCTION IF EXISTS public.stock_transfer_receive(uuid, text, boolean)",
     );
     for (const fn of ["approve", "dispatch", "receive", "verify"]) {
-      expect(migration).toContain(
-        `ALTER FUNCTION public.stock_transfer_${fn}`,
-      );
+      expect(migration).toContain(`ALTER FUNCTION public.stock_transfer_${fn}`);
       expect(migration).toMatch(
         new RegExp(
           `CREATE OR REPLACE FUNCTION public\\.stock_transfer_${fn}[\\s\\S]*?SECURITY DEFINER[\\s\\S]*?SET search_path = ''`,

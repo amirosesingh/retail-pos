@@ -110,6 +110,10 @@ describe("business UI persistence acknowledgements", () => {
     expect(store).toContain("await saveTransfer({");
     expect(store).not.toContain("void dispatchTransferInDb");
     expect(store).not.toContain("void receiveTransferInDb");
+    const dialog = source("src/platforms/web/components/pos/TransferStepDialog.tsx");
+    expect(dialog).toContain("if (busy || needsReason) return");
+    expect(dialog).toContain("await onConfirm(");
+    expect(dialog).toContain("disabled={needsReason || busy}");
     expect(store).toContain('type: "stock_request_received"');
     expect(store).toContain('type: "transfer_sent"');
     expect(store).toContain('type: "transfer_received"');

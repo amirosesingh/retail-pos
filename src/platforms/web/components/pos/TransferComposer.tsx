@@ -35,7 +35,7 @@ import { availableAt, planDeduction, subWarehouses } from "@/lib/locations";
 import { branchPolicy } from "@/lib/branch-policy";
 import { groupOf, normalizeTransferQuantity, scopeBetween } from "@/lib/stock-transfers";
 import { groupName, useStoreGroups } from "@/lib/store-groups";
-import type { TransferItem, TransferKind } from "@/core/types/pos-types";
+import type { Transfer, TransferItem, TransferKind } from "@/core/types/pos-types";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
 
@@ -49,12 +49,17 @@ export function TransferComposer({
   kind,
   submitLabel,
   initialProductIds,
+  initialDraft,
+  onSaveDraft,
   onSubmit,
 }: {
   kind: TransferKind;
   submitLabel: string;
   /** basket handed over from another page, one unit per product */
   initialProductIds?: string[];
+  /** Existing unfinished note being resumed. */
+  initialDraft?: Transfer | null;
+  onSaveDraft?: (result: ComposerResult) => void | Promise<void>;
   onSubmit: (result: ComposerResult) => void | Promise<void>;
 }) {
   const { state, stores, allStores, currentStore, moveStock } = usePos();
@@ -66,11 +71,19 @@ export function TransferComposer({
     [stores, currentStore.id, state.settings],
   );
 
-  const [otherStoreId, setOtherStoreId] = useState(others[0]?.id ?? "");
-  const [items, setItems] = useState<TransferItem[]>(() =>
-    (initialProductIds ?? []).map((productId) => ({ productId, qty: 1 })),
+  const [otherStoreId, setOtherStoreId] = useState(
+    initialDraft
+      ? kind === "transfer"
+        ? initialDraft.toStoreId
+        : initialDraft.fromStoreId
+      : (others[0]?.id ?? ""),
   );
-  const [note, setNote] = useState("");
+  const [items, setItems] = useState<TransferItem[]>(() =>
+    initialDraft?.items.length
+      ? initialDraft.items.map((item) => ({ productId: item.productId, qty: item.qty }))
+      : (initialProductIds ?? []).map((productId) => ({ productId, qty: 1 })),
+  );
+  const [note, setNote] = useState(initialDraft?.note ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const submittingRef = useRef(false);
@@ -92,15 +105,38 @@ export function TransferComposer({
     );
   }
 
-  async function submit() {
-    if (submittingRef.current) return;
+  const cleanResult = (): ComposerResult | null => {
     const clean = items
       .map((i) => ({ productId: i.productId, qty: Math.floor(Number(i.qty) || 0) }))
       .filter((i) => i.qty > 0);
     if (!clean.length || !otherStoreId) {
       toast.error("Add at least one product with a quantity, and pick a store");
-      return;
+      return null;
     }
+    return { otherStoreId, items: clean, note };
+  };
+
+  async function saveDraft() {
+    if (submittingRef.current || !onSaveDraft) return;
+    const result = cleanResult();
+    if (!result) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      await onSaveDraft(result);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The draft could not be saved.");
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }
+
+  async function submit() {
+    if (submittingRef.current) return;
+    const result = cleanResult();
+    if (!result) return;
+    const clean = result.items;
     submittingRef.current = true;
     setSubmitting(true);
     try {
@@ -129,7 +165,7 @@ export function TransferComposer({
             }
           }
       }
-      await onSubmit({ otherStoreId, items: clean, note });
+      await onSubmit(result);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "The stock movement could not be saved.",
@@ -321,7 +357,16 @@ export function TransferComposer({
             onPageSize={linePagination.setPageSize}
           />
 
-          <div className="flex justify-end pt-5">
+          <div className="flex flex-wrap justify-end gap-2 pt-5">
+            {onSaveDraft ? (
+              <Button
+                variant="outline"
+                onClick={() => void saveDraft()}
+                disabled={submitting || !items.length || !otherStoreId}
+              >
+                Save draft
+              </Button>
+            ) : null}
             <Button
               onClick={() => void submit()}
               disabled={submitting || !items.length || !otherStoreId}

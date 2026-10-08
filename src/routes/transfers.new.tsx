@@ -34,6 +34,7 @@ export const Route = createFileRoute("/transfers/new")({
   }),
   validateSearch: (search: Record<string, unknown>) => ({
     items: typeof search.items === "string" ? search.items : undefined,
+    draft: typeof search.draft === "string" ? search.draft : undefined,
   }),
   component: NewTransferPage,
 });
@@ -41,13 +42,20 @@ export const Route = createFileRoute("/transfers/new")({
 function NewTransferPage() {
   const { state, currentStore, activeShift, createTransfer } = usePos();
   const navigate = useNavigate();
-  const { items: prefill } = Route.useSearch();
+  const { items: prefill, draft: draftId } = Route.useSearch();
   const { user } = useAuth();
   const { authorize, rules: authorizationRules } = useManagerGate();
   const transferMode =
     authorizationRules.stock_transfer?.mode ??
     (state.settings.integrations.requireTransferApproval ? "request" : "none");
   const requireApproval = transferMode === "request" || transferMode === "either";
+  const draft = state.transfers.find(
+    (row) =>
+      row.id === draftId &&
+      row.kind === "transfer" &&
+      row.status === "draft" &&
+      row.fromStoreId === currentStore.id,
+  );
 
   return (
     <AppShell>
@@ -64,9 +72,29 @@ function NewTransferPage() {
           }
         />
         <TransferComposer
+          key={draft?.id ?? "new-transfer"}
           initialProductIds={prefill ? prefill.split(",").filter(Boolean) : undefined}
+          initialDraft={draft}
           kind="transfer"
           submitLabel={requireApproval ? "Send for approval" : "Raise transfer"}
+          onSaveDraft={async ({ otherStoreId, items, note }) => {
+            const saved = await createTransfer({
+              kind: "transfer",
+              fromStoreId: currentStore.id,
+              toStoreId: otherStoreId,
+              items,
+              note,
+              createdBy: activeShift?.cashier ?? user?.name ?? "Manager",
+              draftId: draft?.id,
+              saveAsDraft: true,
+            });
+            toast.success(`${saved.ref} saved as draft`);
+            void navigate({
+              to: "/transfers/new",
+              search: { items: undefined, draft: saved.id },
+              replace: true,
+            });
+          }}
           onSubmit={async ({ otherStoreId, items, note }) => {
             const transferKey = [
               currentStore.id,
@@ -115,6 +143,7 @@ function NewTransferPage() {
               note,
               createdBy: activeShift?.cashier ?? "Manager",
               needsApproval: false,
+              draftId: draft?.id,
             });
             toast.success(
               t.status === "awaiting_approval"
