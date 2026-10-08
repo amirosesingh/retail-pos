@@ -89,15 +89,17 @@ import {
   dispatchTransferInDb,
   receiveTransferInDb,
   closeRequestInDb,
+  scopeBetween,
   verifyTransferInDb,
   saveTransfer,
+  loadTransfer,
   loadTransfers,
   setTransferStatus,
   type LineQty,
   type RpcResult,
 } from "./stock-transfers";
 import { computeTax } from "@/core/pricing/tax";
-import { commitBooking, deleteBookingRow, loadBookings, saveBookingQuietly } from "./bookings-db";
+import { commitBooking, deleteBookingRow, loadBookings } from "./bookings-db";
 import { trackTransition } from "./status-history";
 import {
   cancelBookingAuthoritative,
@@ -198,6 +200,12 @@ type NewTransfer = {
   sourceRequestId?: string;
   /** hold the note as "requested" until somebody authorises it */
   needsApproval?: boolean;
+  /** Save or finalize this existing draft instead of creating another row. */
+  draftId?: string;
+  /** Persist the note without submitting it into the approval lifecycle. */
+  saveAsDraft?: boolean;
+  /** Deterministic child id used when a request approval is retried. */
+  forcedId?: string;
 };
 
 export type NewBooking = {
@@ -315,7 +323,12 @@ type Ctx = {
     grantToken?: string | null,
     loadedSale?: Sale,
   ) => Promise<boolean>;
-  changeSalePayment: (saleId: string, method: PaymentMethod, reason?: string) => Promise<boolean>;
+  changeSalePayment: (
+    saleId: string,
+    method: PaymentMethod,
+    reason?: string,
+    loadedSale?: Sale,
+  ) => Promise<boolean>;
   createBooking: (input: NewBooking) => Promise<Booking>;
   setBookingJobStatus: (
     id: string,
@@ -324,7 +337,7 @@ type Ctx = {
     incidentNote?: string,
   ) => Promise<Booking | null>;
   /** Edit the technical specs of an existing racket job before payment. */
-  updateBookingSpecs: (id: string, job: RacketJob) => Booking | null;
+  updateBookingSpecs: (id: string, job: RacketJob) => Promise<Booking | null>;
   addBookingPayment: (
     id: string,
     amount: number,
@@ -388,6 +401,7 @@ type Ctx = {
     draftId?: string | null,
     postedBy?: string | null,
     record?: { lines: unknown[]; totalImpact: number },
+    adjustmentAttemptId?: string | null,
   ) => Promise<CommitTarget | null>;
   upsertMember: (member: Member) => Promise<CommitTarget>;
   removeMember: (id: string) => Promise<void>;
@@ -1904,7 +1918,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
       : [];
     const booking: Booking = {
       id: crypto.randomUUID(),
-      ref: `BK-${store?.code ?? "R"}-${String(counter).padStart(5, "0")}`,
+      // Keep the readable branch counter, but add entropy so two offline tills
+      // cannot claim the same unique booking reference.
+      ref: `BK-${store?.code ?? "R"}-${String(counter).padStart(5, "0")}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
       storeId: input.storeId,
       shiftId: input.shiftId,
       lines: input.lines,
@@ -1985,37 +2001,29 @@ export function PosProvider({ children }: { children: ReactNode }) {
         clientPaymentId: clientPaymentId ?? payment.id,
         complete: false,
       });
-      let updated: Booking;
-      if (server.ok) {
-        updated = {
-          ...current,
-          paid: server.state.settledPaid,
-          payments: server.state.duplicate ? current.payments : [...current.payments, payment],
-        };
-        setState((s) => ({
-          ...s,
-          bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
-        }));
-      } else {
-        // Offline: queue the payment exactly as the till always has.
-        updated = {
-          ...current,
-          paid: r2(current.paid + payment.amount),
-          payments: [...current.payments, payment],
-        };
-        await commitBooking(updated);
-        setState((s) => ({
-          ...s,
-          bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
-        }));
+      if (!server.ok) {
+        // Electron performs this transaction against SQL Server above. A web
+        // RPC refusal must not be reinterpreted as "offline" and bypass its
+        // permission, overpayment or idempotency checks with a plain upsert.
+        toast.error("Payment was not recorded", { description: server.error });
+        return null;
       }
+      const updated: Booking = {
+        ...current,
+        paid: server.state.settledPaid,
+        payments: server.state.duplicate ? current.payments : [...current.payments, payment],
+      };
+      setState((s) => ({
+        ...s,
+        bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
+      }));
       logger.log("sale_event", "Booking part payment", "bookings", {
         ref: updated.ref,
         amount: payment.amount,
         method,
         paid: updated.paid,
         balance: bookingBalance(updated),
-        authoritative: server.ok,
+        authoritative: true,
       });
       return updated;
     },
@@ -2164,6 +2172,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const deleteBooking = useCallback(async (id: string, reason: string) => {
     const current = stateRef.current.bookings.find((b) => b.id === id);
     if (!current) return;
+    // Do not hide the row until both the payment children and booking have
+    // actually been removed from the active database.
+    await deleteBookingRow(id);
     setState((s) => ({ ...s, bookings: s.bookings.filter((b) => b.id !== id) }));
     logger.log("sale_event", "Booking deleted", "bookings", {
       ref: current.ref,
@@ -2174,7 +2185,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
       total: current.total,
       paid: current.paid,
     });
-    await deleteBookingRow(id).catch(() => undefined);
   }, []);
 
   /**
@@ -2205,11 +2215,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         jobStatusAt: new Date().toISOString(),
         ...(incidentNote ? { incidentNote } : {}),
       };
+      await commitBooking(updated);
       setState((s) => ({
         ...s,
         bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
       }));
-      saveBookingQuietly(updated);
       logger.log("sale_event", "Job card status changed", "bookings", {
         ref: updated.ref,
         status,
@@ -2233,12 +2243,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
   );
 
   /** Rewrite the job card of a booking that has not been collected yet. */
-  const updateBookingSpecs = useCallback((id: string, job: RacketJob) => {
+  const updateBookingSpecs = useCallback(async (id: string, job: RacketJob) => {
     const current = stateRef.current.bookings.find((b) => b.id === id);
     if (!current) return null;
     const updated: Booking = { ...current, job: { ...current.job, ...job } };
+    await commitBooking(updated);
     setState((s) => ({ ...s, bookings: s.bookings.map((b) => (b.id === id ? updated : b)) }));
-    saveBookingQuietly(updated);
     logger.log("sale_event", "Job card specs edited", "bookings", {
       ref: updated.ref,
       racket: updated.job?.racketModel,
@@ -2320,7 +2330,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         jobStatus: current.job ? "collected" : current.jobStatus,
         jobStatusAt: current.job ? new Date().toISOString() : current.jobStatusAt,
       };
-      saveBookingQuietly(updated);
+      await commitBooking(updated);
       setState((s) => ({
         ...s,
         bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
@@ -2435,10 +2445,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   /** Correct the tender recorded on a completed bill (e.g. rung up as card). */
   const changeSalePayment = useCallback(
-    async (saleId: string, method: PaymentMethod, reason?: string): Promise<boolean> => {
-      const sale = stateRef.current.sales.find((x) => x.id === saleId);
+    async (
+      saleId: string,
+      method: PaymentMethod,
+      reason?: string,
+      loadedSale?: Sale,
+    ): Promise<boolean> => {
+      // Receipt history is paged. A bill found through exact search or an
+      // older page may not be in the store's small live window, so retain the
+      // verified row supplied by that screen instead of silently doing
+      // nothing after the operator confirms the correction.
+      const sale =
+        loadedSale?.id === saleId
+          ? loadedSale
+          : stateRef.current.sales.find((x) => x.id === saleId);
       if (!sale || sale.method === method) return false;
-      await db.updateSalePayment(saleId, method);
+      await db.updateSalePayment(saleId, method, sale.storeId);
       logger.log("sale_event", "Bill payment method corrected", "receipts", {
         saleId,
         receiptNo: sale.receiptNo,
@@ -2448,6 +2470,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       });
       setState((s) => ({
         ...s,
+        // Historical pages are owned by the receipt screen. Do not inject an
+        // old bill into this newest-first, bounded live-sales window.
         sales: s.sales.map((x) => (x.id === saleId ? { ...x, method } : x)),
       }));
       return true;
@@ -3093,6 +3117,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       draftId?: string | null,
       postedBy?: string | null,
       record?: { lines: unknown[]; totalImpact: number },
+      adjustmentAttemptId?: string | null,
     ): Promise<CommitTarget | null> => {
       const target = storeId ?? stateRef.current.currentStoreId;
       const changes = entries
@@ -3130,7 +3155,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ...c.product,
         stockByStore: { ...c.product.stockByStore, [target]: c.counted },
       }));
-      const adjustments = changes.map((c) => ({
+      // Stable movement ids make a retry safe after a local/cloud timeout. The
+      // product id sort keeps the child index deterministic even if the UI
+      // rows were re-ordered between attempts.
+      const adjustmentChanges = [...changes].sort((a, b) =>
+        a.product.id.localeCompare(b.product.id),
+      );
+      const adjustments = adjustmentChanges.map((c, index) => ({
+        id: adjustmentAttemptId ? stableChildId(adjustmentAttemptId, "7", index) : undefined,
         productId: c.product.id,
         productName: c.product.name,
         sku: c.product.sku ?? null,
@@ -3147,8 +3179,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
         .commitStockAdjustments(
           products,
           adjustments,
-          draftId ? { id: draftId, by: postedBy,
-            record: record ? { ...record, reason, note } : undefined } : undefined,
+          draftId
+            ? {
+                id: draftId,
+                by: postedBy,
+                record: record ? { ...record, reason, note } : undefined,
+              }
+            : undefined,
         )
         .then((committed) => {
           const byId = new Map(changes.map((c) => [c.product.id, c.counted]));
@@ -3176,7 +3213,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
       updated: { points: member.points, tier: member.tier, phone: member.phone },
       pointsDelta: prev ? member.points - prev.points : member.points,
     });
-    const target = await db.commitMember(member);
+    // Cashiers can enrol and maintain contact details without receiving the
+    // separate privilege that changes centrally governed loyalty balances.
+    const target = await db.commitMember(member, can("can_edit_member_points"));
     setState((s) => ({
       ...s,
       members: s.members.some((m) => m.id === member.id)
@@ -3184,7 +3223,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         : [member, ...s.members],
     }));
     return target;
-  }, []);
+  }, [can]);
 
   const removeMember = useCallback(async (id: string) => {
     const member = stateRef.current.members.find((m) => m.id === id);
@@ -3433,30 +3472,29 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   const createTransfer = useCallback(async (input: NewTransfer) => {
     const now = new Date().toISOString();
-    const { needsApproval, ...rest } = input;
+    const { needsApproval, draftId, saveAsDraft, forcedId, ...rest } = input;
+    const previous = draftId
+      ? stateRef.current.transfers.find((transfer) => transfer.id === draftId)
+      : undefined;
+    if (draftId && (!previous || previous.status !== "draft" || previous.kind !== input.kind))
+      throw new Error("This stock-movement draft is no longer available to finalize.");
+    const fromStore = stateRef.current.stores.find((store) => store.id === input.fromStoreId);
+    const toStore = stateRef.current.stores.find((store) => store.id === input.toStoreId);
+    const requiresApproval = needsApproval || scopeBetween(fromStore, toStore) === "INTER_GROUP";
     // Nothing moves at creation any more. The note either waits for a
     // supervisor or is pre-approved, and stock only leaves at dispatch.
     const transfer: Transfer = {
       ...rest,
-      id: crypto.randomUUID(),
-      ref: "",
-      status: needsApproval ? "awaiting_approval" : "approved",
-      approvedBy: needsApproval ? undefined : input.createdBy,
-      approvedAt: needsApproval ? undefined : now,
-      createdAt: now,
+      createdBy: previous?.createdBy ?? rest.createdBy,
+      id: draftId ?? forcedId ?? crypto.randomUUID(),
+      ref: previous?.ref ?? "",
+      status: saveAsDraft ? "draft" : requiresApproval ? "awaiting_approval" : "approved",
+      approvedBy: saveAsDraft || requiresApproval ? undefined : input.createdBy,
+      approvedAt: saveAsDraft || requiresApproval ? undefined : now,
+      createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     };
-    logger.log("inventory", "Stock transfer created", "transfers", {
-      transferId: transfer.id,
-      ref: transfer.ref,
-      kind: transfer.kind,
-      fromStoreId: transfer.fromStoreId,
-      toStoreId: transfer.toStoreId,
-      itemCount: transfer.items.length,
-      quantity: transfer.items.reduce((sum, item) => sum + item.qty, 0),
-      status: transfer.status,
-    });
-    const transferCounter = stateRef.current.transferCounter + 1;
+    const transferCounter = stateRef.current.transferCounter + (previous ? 0 : 1);
     const series = input.kind === "transfer" ? "transfer" : "request";
     const originStoreId = input.kind === "transfer" ? input.fromStoreId : input.toStoreId;
     const originCode =
@@ -3471,34 +3509,60 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ? (integrations.transferNumbering ?? {})
         : (integrations.requestNumbering ?? {});
     const { nextStockRef } = await import("./stock-ref");
-    transfer.ref = nextStockRef(numbering, originCode, series);
+    if (!transfer.ref) transfer.ref = nextStockRef(numbering, originCode, series);
     await saveTransfer({
       transfer,
-      from: stateRef.current.stores.find((x) => x.id === transfer.fromStoreId),
-      to: stateRef.current.stores.find((x) => x.id === transfer.toStoreId),
+      from: fromStore,
+      to: toStore,
       products: stateRef.current.products,
+      previousLineCount: previous?.items.length,
     });
-    setState((s) => ({ ...s, transferCounter, transfers: [transfer, ...s.transfers] }));
-    if (transfer.kind === "request") {
-      const requester = stateRef.current.stores.find((x) => x.id === transfer.toStoreId)?.name;
+    // The lifecycle trigger owns the submitted status. Read the stored row
+    // back before updating the screen so branch approval rules and the UI can
+    // never disagree after a draft is finalized.
+    const savedTransfer = (await loadTransfer(transfer.id)) ?? transfer;
+    setState((s) => ({
+      ...s,
+      transferCounter,
+      transfers: previous
+        ? s.transfers.map((row) => (row.id === savedTransfer.id ? savedTransfer : row))
+        : [savedTransfer, ...s.transfers.filter((row) => row.id !== savedTransfer.id)],
+    }));
+    logger.log(
+      "inventory",
+      saveAsDraft ? "Stock movement draft saved" : "Stock transfer created",
+      "transfers",
+      {
+        transferId: savedTransfer.id,
+        ref: savedTransfer.ref,
+        kind: savedTransfer.kind,
+        fromStoreId: savedTransfer.fromStoreId,
+        toStoreId: savedTransfer.toStoreId,
+        itemCount: savedTransfer.items.length,
+        quantity: savedTransfer.items.reduce((sum, item) => sum + item.qty, 0),
+        status: savedTransfer.status,
+      },
+    );
+    if (!saveAsDraft && savedTransfer.kind === "request") {
+      const requester = stateRef.current.stores.find((x) => x.id === savedTransfer.toStoreId)?.name;
       recordActivity({
         type: "stock_request_received",
         severity: "warning",
-        title: `Stock request ${transfer.ref} received`,
-        message: `${requester || "Another branch"} requested ${transfer.items.reduce((sum, item) => sum + item.qty, 0)} unit(s).`,
-        actorName: transfer.createdBy,
-        storeId: transfer.fromStoreId,
+        title: `Stock request ${savedTransfer.ref} received`,
+        message: `${requester || "Another branch"} requested ${savedTransfer.items.reduce((sum, item) => sum + item.qty, 0)} unit(s).`,
+        actorName: savedTransfer.createdBy,
+        storeId: savedTransfer.fromStoreId,
         entityType: "stock_request",
-        entityId: transfer.id,
+        entityId: savedTransfer.id,
         meta: {
-          route: `/requests/${transfer.id}`,
+          route: `/requests/${savedTransfer.id}`,
           audience: "branch_stock_team",
           audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
-          requester_store_id: transfer.toStoreId,
+          requester_store_id: savedTransfer.toStoreId,
         },
       });
     }
-    return transfer;
+    return savedTransfer;
   }, []);
 
   createTransferRef.current = createTransfer;
@@ -3521,30 +3585,57 @@ export function PosProvider({ children }: { children: ReactNode }) {
    */
   const approveTransfer = useCallback(async (id: string, lines?: LineQty[]): Promise<RpcResult> => {
     const before = stateRef.current.transfers.find((x) => x.id === id);
-    if (!before || before.status !== "awaiting_approval")
+    const existingFulfilment = stateRef.current.transfers.find((x) => x.sourceRequestId === id);
+    if (existingFulfilment) {
+      // A fulfilment proves a previous approval reached durable storage, but
+      // this till may still hold an awaiting snapshot. Reconcile the request
+      // before treating the retry as complete.
+      const durableRequest = await loadTransfer(id);
+      if (!durableRequest)
+        return {
+          success: false,
+          error: "The saved transfer request could not be verified. Refresh transfers and retry.",
+        };
+      setState((s) => ({
+        ...s,
+        transfers: s.transfers.map((row) => (row.id === id ? durableRequest : row)),
+      }));
+      if (durableRequest.status === "approved") return { success: true };
+    }
+    const repairingRequest =
+      before?.kind === "request" && before.status === "approved" && !existingFulfilment;
+    if (!before || (before.status !== "awaiting_approval" && !repairingRequest))
       return { success: false, error: "Transfer is not awaiting approval." };
-    const allowed = linesFor(before, lines, (i) => i.qty);
-    const persisted = await approveTransferInDb(id, actorRef.current, allowed);
-    if (!persisted.success) return persisted;
+    const allowed = repairingRequest
+      ? before.items.map((item) => ({
+          productId: item.productId,
+          qty: item.approvedQty ?? item.qty,
+        }))
+      : linesFor(before, lines, (i) => i.qty);
+    if (!repairingRequest) {
+      const persisted = await approveTransferInDb(id, actorRef.current, allowed);
+      if (!persisted.success) return persisted;
+    }
 
-    setState((s) => ({
-      ...s,
-      transfers: s.transfers.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              status: "approved",
-              approvedBy: actorRef.current,
-              approvedAt: new Date().toISOString(),
-              items: x.items.map((i) => ({
-                ...i,
-                approvedQty: allowed.find((l) => l.productId === i.productId)?.qty ?? i.qty,
-              })),
-              updatedAt: new Date().toISOString(),
-            }
-          : x,
-      ),
-    }));
+    if (!repairingRequest)
+      setState((s) => ({
+        ...s,
+        transfers: s.transfers.map((x) =>
+          x.id === id
+            ? {
+                ...x,
+                status: "approved",
+                approvedBy: actorRef.current,
+                approvedAt: new Date().toISOString(),
+                items: x.items.map((i) => ({
+                  ...i,
+                  approvedQty: allowed.find((l) => l.productId === i.productId)?.qty ?? i.qty,
+                })),
+                updatedAt: new Date().toISOString(),
+              }
+            : x,
+        ),
+      }));
 
     // A request is paperwork; the goods move on a transfer of its own. The
     // two rows stay joined by sourceRequestId so either page can reach the
@@ -3561,6 +3652,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           createdBy: actorRef.current,
           sourceRequestId: before.id,
           needsApproval: false,
+          forcedId: stableChildId(before.id, "8", 0),
         });
     }
     logger.log("inventory", "Stock transfer approved", "transfers", {

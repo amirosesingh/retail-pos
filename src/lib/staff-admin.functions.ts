@@ -124,6 +124,7 @@ export const saveStaffAccount = createServerFn({ method: "POST" })
         branchId: z.string().max(60).nullable().optional(),
         roleSlug: z.string().min(2).max(60),
         baseRole: z.enum(["admin", "manager", "staff"]),
+        permissions: z.record(z.string(), z.boolean()),
         active: z.boolean(),
       })
       .parse(data),
@@ -141,6 +142,7 @@ export const saveStaffAccount = createServerFn({ method: "POST" })
         branchId: data.branchId ?? null,
         roleSlug: data.roleSlug,
         baseRole: data.baseRole,
+        permissions: data.permissions,
         active: data.active,
       });
       await audit({

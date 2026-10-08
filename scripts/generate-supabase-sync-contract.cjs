@@ -40,6 +40,11 @@ const rowJson = (table, alias) => {
   return `to_jsonb(${alias}) - ARRAY[${excluded.map((column) => `'${column}'`).join(",")}]::text[]`;
 };
 
+// These rows carry a store column as redemption/audit metadata, not as their
+// ownership scope. They must reach every branch so a voucher cannot be spent
+// twice simply by moving to another till.
+const ORGANIZATION_WIDE = new Set(["issued_vouchers"]);
+
 function scopedPredicate(table, alias, branchParameter = "p_branch_id", terminalParameter = "p_terminal_id") {
   const scope = table.cloudTable.startsWith("authorization_action") ? "scope_type" : "scope";
   if (!["settings_overrides", "settings_scoped", "authorization_actions", "authorization_action_history"].includes(table.cloudTable)) return null;
@@ -47,6 +52,7 @@ function scopedPredicate(table, alias, branchParameter = "p_branch_id", terminal
 }
 
 function directBranchPredicate(table, alias, parameter = "p_branch_id", terminalParameter = "p_terminal_id") {
+  if (ORGANIZATION_WIDE.has(table.cloudTable)) return null;
   const scoped = scopedPredicate(table, alias, parameter, terminalParameter);
   if (scoped) return scoped;
   const names = columnNames(table);
@@ -83,6 +89,8 @@ function deleteBranchPredicate(table, alias = "x") {
 }
 
 function incomingBranchGuard(table, rows = "p_rows") {
+  if (table.cloudTable === "issued_vouchers")
+    return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'store_id' IS DISTINCT FROM p_branch_id OR COALESCE(r->>'status','')<>'REDEEMED') THEN RAISE EXCEPTION 'SYNC_VOUCHER_TRANSITION_FORBIDDEN'; END IF;`;
   const names = columnNames(table);
   if (table.cloudTable === "products")
     return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE NULLIF(r->>'owner_store_id','') IS NOT NULL AND r->>'owner_store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF;`;
@@ -123,6 +131,8 @@ function dateColumn(table) {
 }
 
 function feedBranches(table) {
+  if (ORGANIZATION_WIDE.has(table.cloudTable))
+    return "SELECT 'global'::text branch_id,NULL::text terminal_id";
   const names = columnNames(table);
   const scope = table.cloudTable.startsWith("authorization_action") ? "scope_type" : "scope";
   if (["settings_overrides", "settings_scoped", "authorization_actions", "authorization_action_history"].includes(table.cloudTable)) {
@@ -233,7 +243,45 @@ for (const table of tables) {
     END IF;
   END LOOP;`
       : "";
-  if (table.cloudTable === "stock_delta_applied") {
+  if (table.cloudTable === "issued_vouchers") {
+    out.push(`CREATE OR REPLACE FUNCTION public.sync_apply_issued_vouchers(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
+DECLARE v_count integer:=0; v_row jsonb; v_existing public.issued_vouchers%ROWTYPE; v_branch text;
+BEGIN
+  SELECT location_id INTO v_branch FROM public.terminal_tokens
+   WHERE id::text=current_setting('pos.sync_terminal',true) AND status IN ('active','used')
+     AND revoked_at IS NULL LIMIT 1;
+  IF NULLIF(v_branch,'') IS NULL THEN RAISE EXCEPTION 'SYNC_TERMINAL_SCOPE_FORBIDDEN'; END IF;
+  FOR v_row IN SELECT value FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) LOOP
+    IF COALESCE(v_row->>'status','')<>'REDEEMED' OR v_row->>'store_id' IS DISTINCT FROM v_branch THEN
+      RAISE EXCEPTION 'SYNC_VOUCHER_TRANSITION_FORBIDDEN';
+    END IF;
+    SELECT * INTO v_existing FROM public.issued_vouchers
+     WHERE id=(v_row->>'id')::uuid FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'SYNC_VOUCHER_UNKNOWN'; END IF;
+    IF v_existing.status='REDEEMED' THEN
+      IF v_existing.store_id IS DISTINCT FROM v_row->>'store_id'
+         OR v_existing.redeemed_sale_id IS DISTINCT FROM v_row->>'redeemed_sale_id' THEN
+        RAISE EXCEPTION 'VOUCHER_ALREADY_REDEEMED';
+      END IF;
+      CONTINUE;
+    END IF;
+    IF v_existing.status<>'ISSUED' OR NOT EXISTS(
+      SELECT 1 FROM public.coupon_campaigns c WHERE c.id=v_existing.campaign_id
+       AND c.is_active AND (c.starts_at IS NULL OR c.starts_at<=now())
+       AND (COALESCE(v_existing.expires_at,c.expires_at) IS NULL
+         OR COALESCE(v_existing.expires_at,c.expires_at)>=now())
+    ) THEN RAISE EXCEPTION 'SYNC_VOUCHER_UNAVAILABLE'; END IF;
+    UPDATE public.issued_vouchers SET status='REDEEMED',
+      redeemed_at=COALESCE((v_row->>'redeemed_at')::timestamptz,now()),
+      redeemed_by=NULLIF(v_row->>'redeemed_by',''),
+      redeemed_sale_id=NULLIF(v_row->>'redeemed_sale_id',''),store_id=v_branch,
+      row_version=GREATEST(v_existing.row_version+1,COALESCE((v_row->>'row_version')::integer,1))
+     WHERE id=v_existing.id;
+    v_count:=v_count+1;
+  END LOOP;
+  RETURN v_count;
+END $fn$;`);
+  } else if (table.cloudTable === "stock_delta_applied") {
     out.push(`CREATE OR REPLACE FUNCTION public.sync_apply_stock_delta_applied(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
 DECLARE v_count integer:=0; v_row jsonb;
 BEGIN FOR v_row IN SELECT value FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) LOOP

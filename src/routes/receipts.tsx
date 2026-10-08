@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Gift, Printer, ReceiptText, Search, ScrollText, Wallet, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
@@ -21,7 +21,13 @@ import { money, usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import { useUserPermissions } from "@/lib/pos-permissions";
 import { logger } from "@/lib/audit-log";
-import { holdCancelledBill } from "@/lib/held-orders";
+import {
+  clearPendingCorrectionHold,
+  holdCancelledBill,
+  loadPendingCorrectionHold,
+  rememberPendingCorrectionHold,
+  type PendingCorrectionHold,
+} from "@/lib/held-orders";
 import {
   printSaleReceipt,
   printShiftReport,
@@ -94,6 +100,10 @@ function ReceiptVault() {
     input: RecordEditHistoryInput;
     persisted: boolean;
   } | null>(null);
+  const [pendingCorrectionHold, setPendingCorrectionHold] = useState<PendingCorrectionHold | null>(
+    null,
+  );
+  const correctionHoldRetries = useRef(new Set<string>());
   const [payOpen, setPayOpen] = useState(false);
   const [payMethod, setPayMethod] = useState<PaymentMethod>("cash");
   const [payReason, setPayReason] = useState("");
@@ -178,6 +188,7 @@ function ReceiptVault() {
 
   const selected: Sale | null = rows.find((s) => s.id === selectedId) ?? rows[0] ?? null;
   const retryingCorrectionAudit = pendingCorrectionAudit?.input.recordId === selected?.id;
+  const retryingCorrectionHold = pendingCorrectionHold?.saleId === selected?.id;
 
   useEffect(() => {
     if (!selected?.id) return;
@@ -190,6 +201,19 @@ function ReceiptVault() {
           if (current?.input.recordId === selected.id && current.persisted) return null;
           return current;
         });
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [selected?.id]);
+
+  useEffect(() => {
+    if (!selected?.id) return;
+    let active = true;
+    void loadPendingCorrectionHold(selected.id)
+      .then((pending) => {
+        if (active) setPendingCorrectionHold(pending);
       })
       .catch(() => undefined);
     return () => {
@@ -254,6 +278,26 @@ function ReceiptVault() {
   }
 
   async function confirmCancel() {
+    if (pendingCorrectionHold && retryingCorrectionHold) {
+      if (correctionHoldRetries.current.has(pendingCorrectionHold.saleId)) return;
+      correctionHoldRetries.current.add(pendingCorrectionHold.saleId);
+      try {
+        await holdCancelledBill(pendingCorrectionHold);
+        await clearPendingCorrectionHold(pendingCorrectionHold.saleId);
+        setPendingCorrectionHold(null);
+        if (!retryingCorrectionAudit) setCancelOpen(false);
+        toast.success(
+          retryingCorrectionAudit
+            ? "The correction draft is now in Holds. Retry its audit entry next."
+            : "The correction draft is now available in Holds.",
+        );
+      } catch (error) {
+        notifyError(error, "The bill is reversed, but preparing its correction draft still failed");
+      } finally {
+        correctionHoldRetries.current.delete(pendingCorrectionHold.saleId);
+      }
+      return;
+    }
     if (pendingCorrectionAudit && retryingCorrectionAudit) {
       const saved = await saveRecordEditHistory(pendingCorrectionAudit.input);
       if (!saved) {
@@ -331,11 +375,22 @@ function ReceiptVault() {
       setOlder((rows) =>
         rows.map((row) => (row.id === selected.id ? { ...row, refunded: true } : row)),
       );
-      holdCancelledBill({
+      const correctionHold = {
+        id: `C-${selected.id}`,
+        saleId: selected.id,
         receiptNo: selected.receiptNo,
         total: selected.total,
         lines: selected.lines,
-      });
+        storeId: selected.storeId,
+      };
+      let holdPrepared = true;
+      try {
+        await holdCancelledBill(correctionHold);
+      } catch {
+        holdPrepared = false;
+        setPendingCorrectionHold(correctionHold);
+        await rememberPendingCorrectionHold(correctionHold).catch(() => undefined);
+      }
       if (cancelMode === "correct") {
         const completedAudit = {
           historyId: crypto.randomUUID(),
@@ -359,13 +414,22 @@ function ReceiptVault() {
           logActivity(selected, reason);
           toast.error(
             retryRemembered
-              ? "The bill was reversed and placed in Holds, but its completed audit entry still needs saving. The retry is secured on this device."
+              ? holdPrepared
+                ? "The bill was reversed and placed in Holds, but its completed audit entry still needs saving. The retry is secured on this device."
+                : "The bill was reversed, but its correction draft and completed audit entry still need retrying. Keep this dialog open."
               : "The bill was reversed, but this device could not preserve the audit retry. Keep this dialog open and retry before leaving.",
           );
           return;
         }
       }
       logActivity(selected, reason);
+      if (!holdPrepared) {
+        toast.error("The bill was reversed, but its correction draft was not prepared", {
+          description:
+            "The reversal is safely recorded. Keep this dialog open and use Retry preparing correction.",
+        });
+        return;
+      }
       setCancelOpen(false);
       toast.success(
         cancelMode === "correct"
@@ -414,8 +478,11 @@ function ReceiptVault() {
     try {
       const before = { paymentMethod: selected.method };
       const after = { paymentMethod: payMethod };
-      const changed = await changeSalePayment(selected.id, payMethod, reason);
+      const changed = await changeSalePayment(selected.id, payMethod, reason, selected);
       if (!changed) return;
+      setOlder((rows) =>
+        rows.map((row) => (row.id === selected.id ? { ...row, method: payMethod } : row)),
+      );
       await saveRecordEditHistory({
         kind: "sale",
         recordId: selected.id,
@@ -622,6 +689,18 @@ function ReceiptVault() {
               </p>
               {isAdmin && (
                 <>
+                  {retryingCorrectionHold && (
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start border-amber-500/60 text-amber-600"
+                      onClick={() => {
+                        setCancelMode("correct");
+                        setCancelOpen(true);
+                      }}
+                    >
+                      <Wrench className="size-4" /> Retry preparing correction
+                    </Button>
+                  )}
                   {retryingCorrectionAudit && (
                     <Button
                       variant="outline"
@@ -715,7 +794,9 @@ function ReceiptVault() {
               Keep bill
             </Button>
             <Button variant="destructive" onClick={confirmCancel}>
-              {retryingCorrectionAudit
+              {retryingCorrectionHold
+                ? "Retry preparing correction"
+                : retryingCorrectionAudit
                 ? "Retry saving completed audit"
                 : cancelMode === "correct"
                   ? "Reverse and prepare correction"

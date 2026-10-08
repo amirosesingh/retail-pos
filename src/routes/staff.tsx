@@ -25,17 +25,17 @@ export const Route = createFileRoute("/staff")({
 });
 
 function StaffManagement() {
-  const { isSupervisor } = useAuth();
+  const { can } = useAuth();
 
-  if (!isSupervisor) {
+  if (!can("can_manage_staff")) {
     return (
       <AppShell>
         <div className="flex min-h-screen items-center justify-center p-6">
           <div className="max-w-sm rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-center">
             <ShieldAlert className="mx-auto size-6 text-destructive" />
-            <h1 className="mt-2 font-semibold">Supervisors only</h1>
+            <h1 className="mt-2 font-semibold">Staff management access required</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Staff accounts are restricted to supervisor and administrator accounts.
+              An administrator must grant this account the staff-management permission.
             </p>
           </div>
         </div>

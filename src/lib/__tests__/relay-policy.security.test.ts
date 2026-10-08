@@ -64,12 +64,55 @@ describe("relay authorisation", () => {
   });
 
   it("blocks a permission-gated column", async () => {
+    restMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ id: "p", selling_price: 10 }],
+    });
     const out = await safeAuthorizeRelayOp(
       { kind: "update", table: "products", values: { selling_price: 1 }, match: { id: "p" } },
       cashier,
     );
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.code).toBe("PERMISSION_DENIED");
+  });
+
+  it("reapplies granular product permissions before service-role writes", async () => {
+    restMock.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          id: "p-1",
+          name: "Original",
+          selling_price: 10,
+          barcode_aliases: [],
+          is_archived: false,
+        },
+      ],
+    });
+
+    const detail = { kind: "upsert" as const, table: "products", rows: [{ id: "p-1", name: "Changed" }] };
+    expect((await safeAuthorizeRelayOp(detail, cashier)).ok).toBe(false);
+    expect(
+      (
+        await safeAuthorizeRelayOp(detail, {
+          ...cashier,
+          permissions: { can_edit_product_details: true },
+        })
+      ).ok,
+    ).toBe(true);
+
+    const create = { kind: "insert" as const, table: "products", rows: [{ id: "p-new", name: "New" }] };
+    restMock.mockResolvedValueOnce({ ok: true, json: async () => [] });
+    expect((await safeAuthorizeRelayOp(create, cashier)).ok).toBe(false);
+    restMock.mockResolvedValueOnce({ ok: true, json: async () => [] });
+    expect(
+      (
+        await safeAuthorizeRelayOp(create, {
+          ...cashier,
+          permissions: { can_add_new_product: true },
+        })
+      ).ok,
+    ).toBe(true);
   });
 
   it("allows only permissioned product-price overrides for the proven branch", async () => {
@@ -234,6 +277,18 @@ describe("relay authorisation", () => {
     );
     expect(theirs.ok).toBe(false);
     if (!theirs.ok) expect(theirs.code).toBe("STORE_FORBIDDEN");
+  });
+
+  it("lets a delegated location manager maintain another branch", async () => {
+    const locationManager: RelayScope = {
+      ...cashier,
+      permissions: { ...cashier.permissions, can_manage_locations: true },
+    };
+    const out = await safeAuthorizeRelayOp(
+      { kind: "upsert", table: "stores", rows: [{ id: "STORE-B", name: "Other" }] },
+      locationManager,
+    );
+    expect(out.ok).toBe(true);
   });
 
   it("refuses a child row whose parent belongs to another branch", async () => {

@@ -22,6 +22,8 @@ import { printMemberStatement } from "@/lib/pos-print";
 import { MemberHistoryDialog } from "@/platforms/web/components/pos/MemberHistoryDialog";
 import { OtpVerificationModal } from "@/platforms/web/components/pos/OtpVerificationModal";
 import { useVerificationGateway } from "@/lib/verification-gateway";
+import { useAuth } from "@/lib/pos-auth";
+import { newMemberCode } from "@/lib/member-code";
 
 export const Route = createFileRoute("/members")({
   head: () => ({
@@ -39,9 +41,9 @@ export const Route = createFileRoute("/members")({
   component: Members,
 });
 
-const blank = (n: number): Member => ({
+const blank = (): Member => ({
   id: crypto.randomUUID(),
-  code: `MB-${1000 + n + 1}`,
+  code: newMemberCode(),
   name: "",
   phone: "",
   email: "",
@@ -53,6 +55,7 @@ const blank = (n: number): Member => ({
 
 function Members() {
   const { state, upsertMember, removeMember } = usePos();
+  const { can } = useAuth();
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Member | null>(null);
   const [historyMember, setHistoryMember] = useState<Member | null>(null);
@@ -84,7 +87,7 @@ function Members() {
                 className="w-56 pl-9"
               />
             </div>
-            <Button onClick={() => setDraft(blank(state.members.length))}>
+            <Button onClick={() => setDraft(blank())}>
               <Plus className="size-4" /> Enroll member
             </Button>
           </div>
@@ -135,16 +138,20 @@ function Members() {
                   {m.phone} · {m.email}
                 </p>
                 <div className="mt-3 flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setHistoryMember(m)}>
-                    <History className="size-4" /> History
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => printMemberStatement(m, state.sales)}
-                  >
-                    <Printer className="size-4" /> Statement
-                  </Button>
+                  {can("can_view_member_history") && (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => setHistoryMember(m)}>
+                        <History className="size-4" /> History
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => printMemberStatement(m, state.sales)}
+                      >
+                        <Printer className="size-4" /> Statement
+                      </Button>
+                    </>
+                  )}
                   {gateway?.active && !m.verified && (
                     <Button size="sm" variant="outline" onClick={() => setVerifyMember(m)}>
                       <ShieldCheck className="size-4" /> Verify
@@ -233,6 +240,7 @@ function Members() {
                 <ThemedSelect
                   ariaLabel="Tier"
                   value={draft.tier}
+                  disabled={!can("can_edit_member_points")}
                   onChange={(v) => setDraft({ ...draft, tier: v as Member["tier"] })}
                   options={[
                     { value: "Bronze", label: "Bronze" },
@@ -246,8 +254,15 @@ function Members() {
                 <Input
                   className="numeric"
                   value={draft.points}
+                  readOnly={!can("can_edit_member_points")}
+                  aria-readonly={!can("can_edit_member_points")}
                   onChange={(e) => setDraft({ ...draft, points: Number(e.target.value) || 0 })}
                 />
+                {!can("can_edit_member_points") && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Loyalty balances require the Edit member points permission.
+                  </p>
+                )}
               </div>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Date of birth</Label>

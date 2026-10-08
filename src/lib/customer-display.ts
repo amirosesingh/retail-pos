@@ -158,6 +158,7 @@ export function closeCustomerDisplay() {
   }
   try {
     window.localStorage.setItem(DISPLAY_SHUTDOWN_KEY, String(message.at));
+    window.localStorage.removeItem(DISPLAY_STORAGE_KEY);
   } catch {
     /* storage blocked */
   }

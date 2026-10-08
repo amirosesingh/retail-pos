@@ -217,7 +217,11 @@ export function StockCountDialog({
   const codeRef = useRef<HTMLInputElement>(null);
   const countRef = useRef<HTMLInputElement>(null);
   const draftCreatedAt = useRef<string | null>(null);
-  const savingRef = useRef<Promise<{ id: string; ref: string | null } | null> | null>(null);
+  const draftIdentityRef = useRef<{ id: string; ref: string | null } | null>(null);
+  const saveTailRef = useRef<Promise<void>>(Promise.resolve());
+  const saveSequenceRef = useRef(0);
+  const sessionRef = useRef(0);
+  const postingAttemptRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const match = useMemo(() => resolveByBarcode(products, code), [products, code]);
@@ -226,11 +230,14 @@ export function StockCountDialog({
   /** Load the dialog for a fresh count, or for the draft being resumed. */
   useEffect(() => {
     if (!open) return;
+    sessionRef.current += 1;
     setCode("");
     setCounted("");
     setErrors([]);
     setTab("count");
     setDirty(false);
+    postingAttemptRef.current =
+      draft?.status === "posted" ? (editGrant?.requestId ?? crypto.randomUUID()) : null;
     if (draft) {
       const saved = parseLines(draft.lines);
       let moved = 0;
@@ -243,6 +250,7 @@ export function StockCountDialog({
       draftCreatedAt.current = draft.created_at ?? new Date().toISOString();
       setDraftId(draft.id);
       setReference(draft.reference ?? null);
+      draftIdentityRef.current = { id: draft.id, ref: draft.reference ?? null };
       setRows(restored);
       setReason((draft.reason as StockAdjustmentReason) ?? "");
       setNote(draft.note ?? "");
@@ -255,6 +263,7 @@ export function StockCountDialog({
       draftCreatedAt.current = null;
       setDraftId(null);
       setReference(null);
+      draftIdentityRef.current = null;
       setRows([]);
       setReason("");
       setNote("");
@@ -266,21 +275,36 @@ export function StockCountDialog({
 
   /**
    * The single write path. Auto-save and the Save draft button both call this,
-   * and the guard makes an overlapping call a no-op, so one counting session
-   * can never leave two rows behind.
+   * and the promise tail serializes overlapping snapshots. Every scan that
+   * lands while SQL/cloud is busy gets a later save instead of being mistaken
+   * for the older in-flight write.
    */
   const persistDraft = useCallback((): Promise<{ id: string; ref: string | null } | null> => {
-    if (savingRef.current) return savingRef.current;
     if (!rows.length && !draftId) return Promise.resolve(null);
-    const run = (async () => {
-      try {
-        let id = draftId;
-        let ref = reference;
-        if (!id) {
-          id = crypto.randomUUID();
-          ref = nextStockRef(numbering, targetStore.code || targetStore.id);
-          draftCreatedAt.current = new Date().toISOString();
-        }
+    let identity = draftIdentityRef.current;
+    if (!identity) {
+      identity = {
+        id: draftId ?? crypto.randomUUID(),
+        ref: reference ?? nextStockRef(numbering, targetStore.code || targetStore.id),
+      };
+      draftIdentityRef.current = identity;
+      draftCreatedAt.current ??= new Date().toISOString();
+      setDraftId(identity.id);
+      setReference(identity.ref);
+    }
+    const { id, ref } = identity;
+    const snapshot = {
+      reason: reason || null,
+      note,
+      lines: rows,
+      totalImpact: rows.reduce((s, r) => s + (r.counted - r.system) * r.cost, 0),
+      createdAt: draftCreatedAt.current ?? new Date().toISOString(),
+    };
+    const sequence = ++saveSequenceRef.current;
+    const session = sessionRef.current;
+    const run = saveTailRef.current
+      .catch(() => undefined)
+      .then(async () => {
         await db.saveStockCountDraft({
           id,
           reference: ref,
@@ -290,23 +314,19 @@ export function StockCountDialog({
           staffId: user?.staffId ?? null,
           staffName: user?.name ?? null,
           status: "draft",
-          reason: reason || null,
-          note,
-          lines: rows,
-          totalImpact: rows.reduce((s, r) => s + (r.counted - r.system) * r.cost, 0),
-          createdAt: draftCreatedAt.current ?? new Date().toISOString(),
+          ...snapshot,
         });
-        setDraftId(id);
-        setReference(ref);
-        setSavedAt(new Date().toISOString());
-        setDirty(false);
-        onChanged();
+        if (session === sessionRef.current) {
+          setSavedAt(new Date().toISOString());
+          if (sequence === saveSequenceRef.current) setDirty(false);
+          onChanged();
+        }
         return { id, ref };
-      } finally {
-        savingRef.current = null;
-      }
-    })();
-    savingRef.current = run;
+      });
+    saveTailRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
     return run;
   }, [rows, reason, note, draftId, reference, numbering, targetStore, user, onChanged]);
 
@@ -337,6 +357,25 @@ export function StockCountDialog({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Stock-count draft could not be saved.");
     }
+  };
+
+  /** A close waits for the newest draft snapshot instead of cancelling it. */
+  const changeOpen = (nextOpen: boolean) => {
+    if (nextOpen || postingRef.current || draft?.status === "posted" || !dirty) {
+      onOpenChange(nextOpen);
+      return;
+    }
+    if (timerRef.current) clearTimeout(timerRef.current);
+    void persistDraft()
+      .then(() => onOpenChange(false))
+      .catch((error) => {
+        setDirty(true);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "The latest stock-count changes could not be saved.",
+        );
+      });
   };
 
   const queue = (productId: string, qty: number) => {
@@ -414,6 +453,10 @@ export function StockCountDialog({
           : null;
       const saved = draft?.status === "posted" ? null : await persistDraft();
       const persistedDraftId = saved?.id ?? draftId;
+      const adjustmentAttemptId =
+        draft?.status === "posted"
+          ? (postingAttemptRef.current ??= editGrant?.requestId ?? crypto.randomUUID())
+          : persistedDraftId;
       await applyStockCount(
         entries,
         reason,
@@ -422,13 +465,14 @@ export function StockCountDialog({
         persistedDraftId,
         user?.name ?? null,
         { lines: rows, totalImpact },
+        adjustmentAttemptId,
       );
       if (before && draftId) {
         const deltas: Record<string, number> = {};
         for (const r of rows) {
           if (r.counted !== r.system) deltas[r.productId] = r.counted - r.system;
         }
-        void saveRecordEditHistory({
+        await saveRecordEditHistory({
           kind: "stock_count",
           recordId: draftId,
           ...(reference ? { reference } : {}),
@@ -488,11 +532,15 @@ export function StockCountDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="max-h-[92vh] w-[min(96vw,1100px)] max-w-none overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            {draft?.status === "posted" ? "Edit posted stock count" : draft ? "Resume stock count" : "New stock count"}
+            {draft?.status === "posted"
+              ? "Edit posted stock count"
+              : draft
+                ? "Resume stock count"
+                : "New stock count"}
             {reference ? <span className="ml-2 font-mono text-sm">{reference}</span> : null}
           </DialogTitle>
           <DialogDescription>

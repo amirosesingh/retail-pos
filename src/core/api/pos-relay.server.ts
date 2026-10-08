@@ -77,6 +77,7 @@ export const RELAY_TABLES = new Set([
   "settings_scoped",
   "public_flags",
   "promotions",
+  "coupon_campaigns",
   "suppliers",
   "authorization_actions",
   "authorization_requests",

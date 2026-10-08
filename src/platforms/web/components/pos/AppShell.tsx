@@ -527,7 +527,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               </header>
 
               {/* Desktop header: system controls and signed-in operator profile. */}
-              <header className="sticky top-0 z-30 hidden shrink-0 items-center gap-3 border-b border-border bg-sidebar px-4 py-2 md:flex">
+              <header className="sticky top-0 z-30 hidden shrink-0 items-center gap-2.5 border-b border-border bg-sidebar px-4 py-1.5 md:flex">
                 <div className="ml-auto" />
                 <span className="hidden xl:inline-flex">
                   <LiveClock />
@@ -566,10 +566,14 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                     location.pathname === "/settings/mobile-terminals";
                   const settingsHome =
                     location.pathname === "/settings" || location.pathname === "/settings/";
+                  const reportsHome =
+                    location.pathname === "/reports" || location.pathname === "/reports/";
                   const allowed = terminalManagement
                     ? can("can_manage_terminals")
                     : settingsHome
                       ? isSupervisor || can("can_access_pos_settings")
+                      : reportsHome
+                        ? can("can_view_sales_reports") || can("can_view_audit_trail")
                       : required === null
                         ? true
                         : required === "unknown"

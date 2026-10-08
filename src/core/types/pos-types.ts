@@ -468,6 +468,7 @@ export type TransferKind = "transfer" | "request";
  * it and the stock went on the destination shelf.
  */
 export type TransferStatus =
+  | "draft"
   | "awaiting_approval"
   | "approved"
   | "dispatched"
@@ -478,6 +479,7 @@ export type TransferStatus =
   | "cancelled";
 
 export const TRANSFER_STATUS_LABELS: Record<TransferStatus, string> = {
+  draft: "draft",
   awaiting_approval: "awaiting approval",
   approved: "approved",
   dispatched: "in transit",

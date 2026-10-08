@@ -277,3 +277,15 @@ it("retires only a removed terminal's own overrides in the database", () => {
     .toHaveLength(2);
   expect(migration).not.toMatch(/DELETE FROM public\.settings_locks/);
 });
+
+it("aligns base and scoped settings writes with the settings permission", () => {
+  const migration = readFileSync(
+    "supabase/migrations/20261008133000_align_scoped_settings_permissions.sql", "utf8",
+  );
+  expect(migration).toContain("WHEN 'global' THEN public.has_perm('can_access_pos_settings')");
+  expect(migration).toContain("AND public.settings_scope_visible(p_scope,p_scope_id)");
+  expect(migration.match(/has_perm\('can_access_pos_settings'\)/g)?.length).toBeGreaterThanOrEqual(6);
+  expect(migration).toContain('DROP POLICY IF EXISTS "Staff can update" ON public.pos_settings');
+  expect(migration).toContain('CREATE POLICY "Settings managers can update"');
+  expect(migration).not.toContain("public.is_supervisor_now() AND public.settings_scope_visible");
+});

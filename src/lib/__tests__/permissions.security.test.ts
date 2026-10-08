@@ -50,6 +50,7 @@ const WAREHOUSE_ALLOWED: PermissionKey[] = [
   "can_view_inventory",
   "can_add_new_product",
   "can_edit_product_details",
+  "can_edit_product_price",
   "can_link_product_barcode",
   "can_archive_product",
   "can_restore_product",

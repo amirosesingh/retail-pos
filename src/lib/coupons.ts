@@ -532,6 +532,9 @@ export async function redeemVoucher(input: {
     if (view.voucher.status === "REDEEMED") throw new Error(friendly.VOUCHER_ALREADY_REDEEMED);
     if (view.voucher.status === "DISABLED") throw new Error(friendly.VOUCHER_DISABLED);
     if (isVoucherExpired(view.voucher, view.campaign)) throw new Error(friendly.VOUCHER_EXPIRED);
+    const status = campaignStatus(view.campaign);
+    if (status === "Scheduled") throw new Error(friendly.CAMPAIGN_NOT_STARTED);
+    if (status === "Off" || status === "Expired") throw new Error(friendly.CAMPAIGN_INACTIVE);
 
     const now = new Date().toISOString();
     await commitOps("Redeeming voucher", [

@@ -120,9 +120,12 @@ describe("route guards", () => {
     expect(transfer).toMatch(/const canReceive =[\s\S]{0,180}?can\("can_receive_transfer"\)/);
     expect(transfer).toMatch(/const canVerify =[\s\S]{0,180}?can\("can_receive_transfer"\)/);
     expect(transfer).toMatch(/const canReject =[\s\S]{0,220}?can\("can_approve_transfer"\)/);
-    expect(request).toMatch(
-      /const canReject =[\s\S]{0,240}?can\("can_approve_transfer"\)[\s\S]{0,100}?can\("can_receive_transfer"\)/,
+    expect(request).toMatch(/const canReject =[\s\S]{0,240}?can\("can_approve_transfer"\)/);
+    const requestRejectGate = request.slice(
+      request.indexOf("const canReject ="),
+      request.indexOf("return (", request.indexOf("const canReject =")),
     );
+    expect(requestRejectGate).not.toContain('can("can_receive_transfer")');
   });
 
   /** A missing map entry must fail closed, and access must be decided before
@@ -150,6 +153,33 @@ describe("route guards", () => {
         entry.includes('flag: "can_view_audit_trail"');
       expect(gated, entry).toBe(true);
     }
+  });
+
+  it("lets audit-only staff open the reports centre without exposing sales reports", () => {
+    expect(APP_SHELL).toContain('location.pathname === "/reports"');
+    expect(APP_SHELL).toMatch(
+      /reportsHome[\s\S]{0,500}?can\("can_view_sales_reports"\) \|\| can\("can_view_audit_trail"\)/,
+    );
+    expect(readFileSync(join(ROUTES_DIR, "reports.index.tsx"), "utf8")).toContain(
+      '<SectionHub groupId="reports" />',
+    );
+  });
+
+  it("permission-gates every report export entry point", () => {
+    const reportKit = readFileSync(
+      join(process.cwd(), "src/platforms/web/components/pos/report-kit.tsx"),
+      "utf8",
+    );
+    const analytics = readFileSync(join(ROUTES_DIR, "analytics.tsx"), "utf8");
+    const notifications = readFileSync(join(ROUTES_DIR, "reports.notifications.tsx"), "utf8");
+
+    expect(reportKit).toContain('can("can_export_reports")');
+    expect(reportKit).toMatch(/onExport && canExport/);
+    expect(analytics).toContain('const canExport = can("can_export_reports")');
+    expect(analytics).toMatch(/\{canExport && \([\s\S]{0,180}?Export CSV/);
+    expect(notifications).toMatch(
+      /\{can\("can_export_reports"\) && \([\s\S]{0,220}?Export CSV/,
+    );
   });
 });
 

@@ -163,6 +163,7 @@ function Inventory() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [blocked, setBlocked] = useState<BlockedDelete[]>([]);
   const [deleting, setDeleting] = useState<string[]>([]);
+  const [bulkSaving, setBulkSaving] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [catFilter, setCatFilter] = useState("all");
   const [groupFilter, setGroupFilter] = useState("all");
@@ -1057,12 +1058,20 @@ function Inventory() {
                   <Button
                     size="sm"
                     variant="outline"
+                    disabled={bulkSaving}
                     onClick={async () => {
                       const name = bulkCategory.trim();
                       if (!name) return toast.error("Type the category to move them to");
-                      await patchProducts(selected, { category: name });
-                      setBulkCategory("");
-                      toast.success(`${selected.length} products moved to ${name}`);
+                      setBulkSaving(true);
+                      try {
+                        await patchProducts(selected, { category: name });
+                        setBulkCategory("");
+                        toast.success(`${selected.length} products moved to ${name}`);
+                      } catch (error) {
+                        notifyError(error, "Updating product categories");
+                      } finally {
+                        setBulkSaving(false);
+                      }
                     }}
                   >
                     Apply category
@@ -1087,6 +1096,8 @@ function Inventory() {
                         `${selected.length} product${selected.length > 1 ? "s" : ""} archived`,
                       );
                       setSelected([]);
+                    } catch (error) {
+                      notifyError(error, "Archiving selected products");
                     } finally {
                       setDeleting([]);
                     }
@@ -1219,6 +1230,8 @@ function Inventory() {
                           try {
                             await archiveProducts([p.id]);
                             toast.success("Product archived");
+                          } catch (error) {
+                            notifyError(error, `Archiving ${p.name}`);
                           } finally {
                             setDeleting((d) => d.filter((id) => id !== p.id));
                           }

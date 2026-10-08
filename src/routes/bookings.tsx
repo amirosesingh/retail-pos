@@ -983,10 +983,16 @@ function BookingsPage() {
               onClick={async () => {
                 const target = removing;
                 if (!target) return;
-                setRemoving(null);
-                await deleteBooking(target.id, removeReason.trim());
-                toast.success(`${target.ref} deleted`);
-                setRemoveReason("");
+                try {
+                  await deleteBooking(target.id, removeReason.trim());
+                  setRemoving(null);
+                  toast.success(`${target.ref} deleted`);
+                  setRemoveReason("");
+                } catch (error) {
+                  toast.error("Booking was not deleted", {
+                    description: error instanceof Error ? error.message : String(error),
+                  });
+                }
               }}
             >
               Delete job

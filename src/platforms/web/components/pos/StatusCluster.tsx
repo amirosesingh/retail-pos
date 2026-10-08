@@ -146,12 +146,17 @@ export function SystemAlertsButton({ className }: { className?: string }) {
 
   useEffect(() => {
     let live = true;
-    const tick = () => void probe().then((r) => live && setChecks(r));
+    const tick = () => {
+      if (document.visibilityState === "hidden") return;
+      void probe().then((r) => live && setChecks(r));
+    };
     tick();
     const t = window.setInterval(tick, 120_000);
+    document.addEventListener("visibilitychange", tick);
     return () => {
       live = false;
       window.clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
     };
   }, [probe]);
 
@@ -166,9 +171,16 @@ export function SystemAlertsButton({ className }: { className?: string }) {
 
   useEffect(() => {
     if (!isAdmin) return;
-    void refreshFindings();
-    const t = setInterval(() => void refreshFindings(), 90_000);
-    return () => clearInterval(t);
+    const tick = () => {
+      if (document.visibilityState !== "hidden") void refreshFindings();
+    };
+    tick();
+    const t = setInterval(tick, 90_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
+    };
   }, [isAdmin, refreshFindings]);
 
   const serviceState = busy && !checks.length ? "checking" : overallState(checks);

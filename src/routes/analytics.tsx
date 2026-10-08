@@ -77,6 +77,7 @@ function LiveBoard() {
   const { allStores } = usePos();
   const { can, isAdmin } = useAuth();
   const allowed = isAdmin || can("can_view_sales_reports");
+  const canExport = can("can_export_reports");
 
   const [from, setFrom] = useState(shift(29));
   const [to, setTo] = useState(isoDay(new Date()));
@@ -237,9 +238,11 @@ function LiveBoard() {
               <RefreshCw className={`mr-2 h-4 w-4 ${query.isFetching ? "animate-spin" : ""}`} />
               Refresh
             </Button>
-            <Button variant="outline" onClick={exportRows}>
-              Export CSV
-            </Button>
+            {canExport && (
+              <Button variant="outline" onClick={exportRows}>
+                Export CSV
+              </Button>
+            )}
           </div>
         </div>
 

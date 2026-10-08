@@ -468,6 +468,7 @@ export { Store };
  * Longest prefix wins so child settings pages may tighten their parent gate.
  */
 const ROUTE_PERMISSION_OVERRIDES: Record<string, PermissionFlag> = {
+  "/settings/groups": "can_manage_locations",
   "/settings/terminals": "can_manage_terminals",
   "/settings/mobile-terminals": "can_manage_terminals",
   "/settings/sessions": "can_manage_terminals",

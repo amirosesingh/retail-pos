@@ -38,7 +38,7 @@ export const saveStoreGroupForCaller = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const { requireCallerScope } = await import("./privileged-caller.server");
-      await requireCallerScope(data, { supervisor: true });
+      await requireCallerScope(data, { permission: "can_manage_locations" });
       const { serviceRest } = await import("@/core/api/pos-relay.server");
       const response = await serviceRest(
         "store_groups?on_conflict=id&select=id,code,name,is_active,archived_at",

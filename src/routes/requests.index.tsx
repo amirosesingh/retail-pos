@@ -85,7 +85,7 @@ function RequestsIndex() {
             </p>
           </div>
           <Button asChild>
-            <Link to="/requests/new" search={{ items: undefined }}>
+            <Link to="/requests/new" search={{ items: undefined, draft: undefined }}>
               <ListPlus className="size-4" />
               New request
             </Link>
@@ -139,10 +139,17 @@ function RequestsIndex() {
                   </TableCell>
                   <TableCell>
                     <Button asChild size="sm" variant="ghost">
-                      <Link to="/requests/$id" params={{ id: t.id }}>
-                        <Eye className="size-4" />
-                        Open
-                      </Link>
+                      {t.status === "draft" ? (
+                        <Link to="/requests/new" search={{ items: undefined, draft: t.id }}>
+                          <Eye className="size-4" />
+                          Resume
+                        </Link>
+                      ) : (
+                        <Link to="/requests/$id" params={{ id: t.id }}>
+                          <Eye className="size-4" />
+                          Open
+                        </Link>
+                      )}
                     </Button>
                   </TableCell>
                 </TableRow>

@@ -10,9 +10,10 @@
  * separate, permission-gated table and are only fetched for staff allowed to
  * see them.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Lock } from "lucide-react";
 import { toast } from "sonner";
+import { notifyError } from "@/lib/notify";
 import {
   Dialog,
   DialogContent,
@@ -63,6 +64,7 @@ export function ShiftCloseDialog({
   const [note, setNote] = useState("");
   const [recountReason, setRecountReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [syncingClose, setSyncingClose] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [serverState, setServerState] = useState<ShiftState | null>(null);
@@ -208,6 +210,22 @@ export function ShiftCloseDialog({
       setStep("review");
     } else {
       setStep("count");
+    }
+  }
+
+  async function runBusy(action: () => Promise<void>, context: string) {
+    // React state updates after the event returns; the ref closes the tiny
+    // double-click window before a second count/recount can reach the server.
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await action();
+    } catch (error) {
+      notifyError(error, context);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   }
 
@@ -372,21 +390,20 @@ export function ShiftCloseDialog({
                     disabled={busy || cashValue === null || !recountReason.trim()}
                     onClick={() => {
                       void (async () => {
-                        setBusy(true);
-                        const res = await submitRecount(
-                          activeShift.id,
-                          counted,
-                          recountReason.trim(),
-                          terminalId,
-                        );
-                        if (!res.ok) {
-                          setBusy(false);
-                          toast.error(res.error);
-                          return;
-                        }
-                        toast.success("Recount recorded — the original count is kept.");
-                        await handleState(res.state);
-                        setBusy(false);
+                        await runBusy(async () => {
+                          const res = await submitRecount(
+                            activeShift.id,
+                            counted,
+                            recountReason.trim(),
+                            terminalId,
+                          );
+                          if (!res.ok) {
+                            toast.error(res.error);
+                            return;
+                          }
+                          toast.success("Recount recorded — the original count is kept.");
+                          await handleState(res.state);
+                        }, "Submitting the authorised recount");
                       })();
                     }}
                   >
@@ -432,21 +449,19 @@ export function ShiftCloseDialog({
                     )
                   )
                     return;
-                  setBusy(true);
-                  const drawer = await openCashDrawer(reason.trim(), activeShift.id);
-                  if (!drawer.ok) {
-                    setBusy(false);
-                    toast.error("The drawer did not open", { description: drawer.error });
-                    return;
-                  }
-                  const res = await startShiftClose(activeShift.id, reason.trim(), terminalId);
-                  if (!res.ok) {
-                    setBusy(false);
-                    toast.error(res.error);
-                    return;
-                  }
-                  await handleState(res.state);
-                  setBusy(false);
+                  await runBusy(async () => {
+                    const drawer = await openCashDrawer(reason.trim(), activeShift.id);
+                    if (!drawer.ok) {
+                      toast.error("The drawer did not open", { description: drawer.error });
+                      return;
+                    }
+                    const res = await startShiftClose(activeShift.id, reason.trim(), terminalId);
+                    if (!res.ok) {
+                      toast.error(res.error);
+                      return;
+                    }
+                    await handleState(res.state);
+                  }, "Starting shift close");
                 })();
               }}
             >
@@ -463,22 +478,21 @@ export function ShiftCloseDialog({
                     toast.error("You do not have permission to submit the cash count.");
                     return;
                   }
-                  setBusy(true);
-                  const res = await submitCashCount(activeShift.id, counted, {
-                    clientKey: `${activeShift.id}:original`,
-                    terminalId,
-                  });
-                  if (!res.ok) {
-                    setBusy(false);
-                    // A parked count is not a failure: the drawer has been
-                    // counted, the server just cannot be told yet.
-                    if (res.queued) toast.success(res.error);
-                    else toast.error(res.error);
-                    return;
-                  }
+                  await runBusy(async () => {
+                    const res = await submitCashCount(activeShift.id, counted, {
+                      clientKey: `${activeShift.id}:original`,
+                      terminalId,
+                    });
+                    if (!res.ok) {
+                      // A parked count is not a failure: the drawer has been
+                      // counted, the server just cannot be told yet.
+                      if (res.queued) toast.success(res.error);
+                      else toast.error(res.error);
+                      return;
+                    }
 
-                  await handleState(res.state);
-                  setBusy(false);
+                    await handleState(res.state);
+                  }, "Submitting the shift cash count");
                 })();
               }}
             >
@@ -491,16 +505,15 @@ export function ShiftCloseDialog({
               disabled={busy}
               onClick={() => {
                 void (async () => {
-                  setBusy(true);
-                  const res = await approveVariance(activeShift.id, note.trim() || undefined);
-                  if (!res.ok) {
-                    setBusy(false);
-                    toast.error(res.error);
-                    return;
-                  }
-                  toast.success("Variance approved");
-                  await handleState(res.state);
-                  setBusy(false);
+                  await runBusy(async () => {
+                    const res = await approveVariance(activeShift.id, note.trim() || undefined);
+                    if (!res.ok) {
+                      toast.error(res.error);
+                      return;
+                    }
+                    toast.success("Variance approved");
+                    await handleState(res.state);
+                  }, "Approving the shift variance");
                 })();
               }}
             >

@@ -23,9 +23,21 @@ export function LiveClock({ className, compact }: { className?: string; compact?
   const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
-    setNow(Date.now());
-    const t = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(t);
+    let timer: number | undefined;
+    const start = () => {
+      if (timer !== undefined) window.clearInterval(timer);
+      timer = undefined;
+      setNow(Date.now());
+      if (document.visibilityState === "visible") {
+        timer = window.setInterval(() => setNow(Date.now()), 1000);
+      }
+    };
+    start();
+    document.addEventListener("visibilitychange", start);
+    return () => {
+      if (timer !== undefined) window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", start);
+    };
   }, []);
 
   if (now === null) return null;
@@ -41,12 +53,12 @@ export function LiveClock({ className, compact }: { className?: string; compact?
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1",
+        "flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-2 px-1.5 py-0.5",
         className,
       )}
       aria-label="Current date and time"
     >
-      <Clock className="size-3.5 shrink-0 text-muted-foreground" />
+      <Clock className="size-3 shrink-0 text-muted-foreground" />
       <span className="numeric text-[11px] leading-tight">
         {!compact && <span className="text-muted-foreground">{date} · </span>}
         <span className="font-semibold">{time}</span>

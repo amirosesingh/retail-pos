@@ -63,11 +63,13 @@ export async function loadApprovalCentre(storeId?: string | null): Promise<Centr
   const meId = res.me?.id ?? "";
   const view = splitRequests(res.requests as AuthorizationRequest[], meId);
   // A ticket parked for a decision becomes pickable again the moment one lands.
+  const readiness: Promise<unknown>[] = [];
   for (const r of [...view.ready, ...view.history]) {
     if (r.status === "pending") continue;
     const heldId = r.heldOrderId ?? heldOrderForRequest(r.id)?.id;
-    if (heldId) markHeldReady(heldId);
+    if (heldId) readiness.push(Promise.resolve(markHeldReady(heldId)).catch(() => undefined));
   }
+  await Promise.all(readiness);
   return { ...view, me: meId };
 }
 

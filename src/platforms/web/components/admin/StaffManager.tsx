@@ -59,7 +59,7 @@ import {
 import { useAuth } from "@/lib/pos-auth";
 import { usePos } from "@/lib/pos-store";
 import { getRolesWithPermissions, type RoleDef } from "@/lib/role-admin";
-import { syncNow } from "@/lib/sync-engine";
+import { broadcastSettingsChange, subscribeDataChange, syncNow } from "@/lib/sync-engine";
 import { isExternalEmail, isInternalAddress } from "@/lib/internal-domains";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { setStaffAuthorizationPin } from "@/lib/authorization-client";
@@ -137,6 +137,20 @@ function generateAuthorizationPin(length = 6): string {
   return digits.join("");
 }
 
+/** Wake every till after a centrally-owned staff record changes. */
+async function propagateStaffChange(reason: string, tables: string[]) {
+  await Promise.all(tables.map((table) => broadcastSettingsChange(table)));
+  // Electron has no browser broadcast path; its durable scoped pull is the
+  // source of truth and must run before the administration action is done.
+  const result = await syncNow(reason);
+  if (!result.ok) {
+    toast.warning("Saved centrally; the local database will retry synchronization", {
+      description: result.error,
+    });
+  }
+  return result;
+}
+
 export function StaffManager() {
   const { stores } = usePos();
   const { authUserId } = useAuth();
@@ -172,6 +186,7 @@ export function StaffManager() {
       });
       if (!res.ok) toast.error(res.error ?? "Could not save the PIN");
       else {
+        await Promise.all([load(), propagateStaffChange("staff approval PIN changed", ["app_users"])]);
         toast.success(`Authorisation PIN set for ${pinFor.full_name}`);
         setPinFor(null);
         setPinValue("");
@@ -234,6 +249,16 @@ export function StaffManager() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(
+    () =>
+      subscribeDataChange((change) => {
+        if (["app_users", "cashiers", "staff_roles", "user_roles"].includes(change.table)) {
+          void load();
+        }
+      }),
+    [load],
+  );
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -325,15 +350,17 @@ export function StaffManager() {
           branchId,
           roleSlug: selectedRole.slug,
           baseRole: selectedRole.baseLevel,
+          permissions: selectedRole.permissions,
           active: form.active,
         });
         toast.success(`${form.displayName.trim()} created — ${branchLabel}`);
       }
       setFormOpen(false);
       setForm({ ...EMPTY });
-      await load();
-      // Push the change to this shop's own database straight away.
-      void syncNow("staff account saved");
+      await Promise.all([
+        load(),
+        propagateStaffChange("staff account saved", ["app_users", "cashiers", "user_roles"]),
+      ]);
     } catch (error) {
       // Lead with the real reason; the generic wording hid every cause.
       toast.error(friendlyError(error), {
@@ -349,7 +376,10 @@ export function StaffManager() {
     try {
       await toggleStaffStatus(row.user_id, active);
       toast.success(active ? "Account activated" : "Account deactivated");
-      await load();
+      await Promise.all([
+        load(),
+        propagateStaffChange("staff account status changed", ["app_users", "cashiers"]),
+      ]);
     } catch (error) {
       toast.error("Account status could not be changed", { description: friendlyError(error) });
     } finally {
@@ -360,30 +390,41 @@ export function StaffManager() {
   const savePermissions = async () => {
     if (!permissionsFor) return;
     setBusy("permissions");
-    const result = await setManagedStaffPermissions({
-      data: {
-        ...(await getPosCallerAuth()),
-        userId: permissionsFor.user_id,
-        permissions: permissionsFor.permissions,
-      },
-    });
-    setBusy("");
-    if (!result.ok) {
-      // Permissions live centrally only; queueing them offline would let two
-      // tills disagree about who may do what, so the change is refused.
-      if (isConnectionError(new Error(result.error))) {
-        setOffline(true);
-        toast.error(ADMIN_OFFLINE_MESSAGE);
+    try {
+      const result = await setManagedStaffPermissions({
+        data: {
+          ...(await getPosCallerAuth()),
+          userId: permissionsFor.user_id,
+          permissions: permissionsFor.permissions,
+        },
+      });
+      if (!result.ok) {
+        // Permissions live centrally only; queueing them offline would let two
+        // tills disagree about who may do what, so the change is refused.
+        if (isConnectionError(new Error(result.error))) {
+          setOffline(true);
+          toast.error(ADMIN_OFFLINE_MESSAGE);
+          return;
+        }
+        notifyError(new Error(result.error), "Could not save permissions");
         return;
       }
-      notifyError(new Error(result.error), "Could not save permissions");
-      return;
+      await propagateStaffChange("staff permissions changed", ["app_users"]);
+      setRows((current) =>
+        current.map((row) => (row.user_id === permissionsFor.user_id ? permissionsFor : row)),
+      );
+      setPermissionsFor(null);
+      toast.success("Permissions updated");
+    } catch (error) {
+      if (isConnectionError(error)) {
+        setOffline(true);
+        toast.error(ADMIN_OFFLINE_MESSAGE);
+      } else {
+        notifyError(error, "Could not save permissions");
+      }
+    } finally {
+      setBusy("");
     }
-    setRows((current) =>
-      current.map((row) => (row.user_id === permissionsFor.user_id ? permissionsFor : row)),
-    );
-    setPermissionsFor(null);
-    toast.success("Permissions updated");
   };
 
   const remove = async () => {
@@ -394,7 +435,10 @@ export function StaffManager() {
       toast.success("Inactive account permanently deleted");
       setDeleteFor(null);
       setConfirmation("");
-      await load();
+      await Promise.all([
+        load(),
+        propagateStaffChange("staff account deleted", ["app_users", "cashiers", "user_roles"]),
+      ]);
     } catch (error) {
       toast.error("Account could not be deleted", { description: friendlyError(error) });
     } finally {

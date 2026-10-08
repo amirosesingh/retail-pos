@@ -30,14 +30,22 @@ export const Route = createFileRoute("/requests/new")({
   }),
   validateSearch: (search: Record<string, unknown>) => ({
     items: typeof search.items === "string" ? search.items : undefined,
+    draft: typeof search.draft === "string" ? search.draft : undefined,
   }),
   component: NewRequest,
 });
 
 function NewRequest() {
-  const { currentStore, activeShift, createTransfer } = usePos();
+  const { state, currentStore, activeShift, createTransfer } = usePos();
   const navigate = useNavigate();
-  const { items: prefill } = Route.useSearch();
+  const { items: prefill, draft: draftId } = Route.useSearch();
+  const draft = state.transfers.find(
+    (row) =>
+      row.id === draftId &&
+      row.kind === "request" &&
+      row.status === "draft" &&
+      row.toStoreId === currentStore.id,
+  );
 
   return (
     <AppShell>
@@ -55,9 +63,30 @@ function NewRequest() {
           }
         />
         <TransferComposer
+          key={draft?.id ?? "new-request"}
           initialProductIds={prefill ? prefill.split(",").filter(Boolean) : undefined}
+          initialDraft={draft}
           kind="request"
           submitLabel="Send request"
+          onSaveDraft={async ({ otherStoreId, items, note }) => {
+            const saved = await createTransfer({
+              kind: "request",
+              fromStoreId: otherStoreId,
+              toStoreId: currentStore.id,
+              items,
+              note,
+              createdBy: activeShift?.cashier ?? "Manager",
+              draftId: draft?.id,
+              saveAsDraft: true,
+              needsApproval: true,
+            });
+            toast.success(`${saved.ref} saved as draft`);
+            void navigate({
+              to: "/requests/new",
+              search: { items: undefined, draft: saved.id },
+              replace: true,
+            });
+          }}
           onSubmit={async ({ otherStoreId, items, note }) => {
             const t = await createTransfer({
               kind: "request",
@@ -67,6 +96,7 @@ function NewRequest() {
               note,
               createdBy: activeShift?.cashier ?? "Manager",
               needsApproval: true,
+              draftId: draft?.id,
             });
             toast.success(`${t.ref} sent for approval`);
             void navigate({ to: "/requests/$id", params: { id: t.id } });

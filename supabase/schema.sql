@@ -205,6 +205,7 @@ CREATE TABLE IF NOT EXISTS public.bookings (
     note text DEFAULT ''::text NOT NULL,
     cashier text,
     status text DEFAULT 'active'::text NOT NULL,
+    booking_kind text DEFAULT 'standard'::text NOT NULL,
     sale_receipt_no text,
     closed_at timestamp with time zone,
     racket_model text,
@@ -1454,6 +1455,55 @@ ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS dropped_off_at timestamp wi
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS promised_at timestamp with time zone;
 
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS job_status text DEFAULT 'received'::text NOT NULL;
+
+ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS booking_kind text DEFAULT 'standard'::text NOT NULL;
+
+UPDATE public.bookings
+SET booking_kind = 'racket'
+WHERE booking_kind = 'standard'
+  AND (
+    NULLIF(btrim(COALESCE(racket_model, '')), '') IS NOT NULL
+    OR NULLIF(btrim(COALESCE(string_type, '')), '') IS NOT NULL
+    OR tension_main IS NOT NULL OR tension_cross IS NOT NULL
+    OR NULLIF(btrim(COALESCE(grommet_notes, '')), '') IS NOT NULL
+    OR NULLIF(btrim(COALESCE(job_notes, '')), '') IS NOT NULL
+    OR dropped_off_at IS NOT NULL OR promised_at IS NOT NULL
+    OR job_status_by IS NOT NULL OR job_status_at IS NOT NULL
+    OR NULLIF(btrim(COALESCE(tag_id, '')), '') IS NOT NULL
+    OR NULLIF(btrim(COALESCE(string_origin, '')), '') IS NOT NULL
+    OR string_source_product_id IS NOT NULL OR grip_product_id IS NOT NULL
+    OR NULLIF(btrim(COALESCE(technician, '')), '') IS NOT NULL
+  );
+
+ALTER TABLE public.bookings DROP CONSTRAINT IF EXISTS bookings_kind_chk;
+ALTER TABLE public.bookings ADD CONSTRAINT bookings_kind_chk
+  CHECK (booking_kind IN ('standard', 'racket'));
+
+CREATE OR REPLACE FUNCTION public.bookings_derive_kind()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $function$
+BEGIN
+  IF NEW.booking_kind IS DISTINCT FROM 'racket'
+     AND (
+       NULLIF(btrim(COALESCE(NEW.racket_model, '')), '') IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.string_type, '')), '') IS NOT NULL
+       OR NEW.tension_main IS NOT NULL OR NEW.tension_cross IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.grommet_notes, '')), '') IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.job_notes, '')), '') IS NOT NULL
+       OR NEW.dropped_off_at IS NOT NULL OR NEW.promised_at IS NOT NULL
+       OR NEW.job_status_by IS NOT NULL OR NEW.job_status_at IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.tag_id, '')), '') IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.string_origin, '')), '') IS NOT NULL
+       OR NEW.string_source_product_id IS NOT NULL OR NEW.grip_product_id IS NOT NULL
+       OR NULLIF(btrim(COALESCE(NEW.technician, '')), '') IS NOT NULL
+     ) THEN
+    NEW.booking_kind := 'racket';
+  END IF;
+  RETURN NEW;
+END
+$function$;
 
 ALTER TABLE public.bookings ADD COLUMN IF NOT EXISTS job_status_by text;
 
@@ -5591,6 +5641,10 @@ CREATE TRIGGER booking_payments_bump_row_version BEFORE UPDATE ON public.booking
 DROP TRIGGER IF EXISTS bookings_aa_stale_guard ON public.bookings;
 
 CREATE TRIGGER bookings_aa_stale_guard BEFORE UPDATE ON public.bookings FOR EACH ROW EXECUTE FUNCTION public.skip_stale_update();
+
+DROP TRIGGER IF EXISTS bookings_derive_kind ON public.bookings;
+
+CREATE TRIGGER bookings_derive_kind BEFORE INSERT OR UPDATE ON public.bookings FOR EACH ROW EXECUTE FUNCTION public.bookings_derive_kind();
 
 DROP TRIGGER IF EXISTS bookings_bump_row_version ON public.bookings;
 
@@ -11434,8 +11488,7 @@ AS $function$
 DECLARE
   v_needs_approval boolean;
   v_may_approve boolean := public.is_supervisor_now()
-    OR public.has_perm('can_approve_transfer')
-    OR public.has_perm('can_receive_transfer');
+    OR public.has_perm('can_approve_transfer');
 BEGIN
   IF TG_OP = 'INSERT' THEN
     v_needs_approval := public.stock_transfer_approval_required(NEW.from_store_id);
@@ -11791,7 +11844,8 @@ CREATE INDEX IF NOT EXISTS authorization_requests_requester_idx
 
 ALTER TABLE public.held_orders
   ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'held',
-  ADD COLUMN IF NOT EXISTS pending_request_id uuid;
+  ADD COLUMN IF NOT EXISTS pending_request_id uuid,
+  ADD COLUMN IF NOT EXISTS approval_snapshot_hash text;
 
 CREATE INDEX IF NOT EXISTS held_orders_status_idx ON public.held_orders (status);
 
@@ -12658,12 +12712,12 @@ CREATE POLICY "Staff can read store groups" ON public.store_groups
 
 DROP POLICY IF EXISTS "Supervisors manage store groups" ON public.store_groups;
 CREATE POLICY "Supervisors manage store groups" ON public.store_groups
-  FOR INSERT TO authenticated WITH CHECK (public.is_app_supervisor());
+  FOR INSERT TO authenticated WITH CHECK (public.has_perm('can_manage_locations'));
 
 DROP POLICY IF EXISTS "Supervisors update store groups" ON public.store_groups;
 CREATE POLICY "Supervisors update store groups" ON public.store_groups
-  FOR UPDATE TO authenticated USING (public.is_app_supervisor())
-  WITH CHECK (public.is_app_supervisor());
+  FOR UPDATE TO authenticated USING (public.has_perm('can_manage_locations'))
+  WITH CHECK (public.has_perm('can_manage_locations'));
 
 DROP TRIGGER IF EXISTS store_groups_touch ON public.store_groups;
 CREATE TRIGGER store_groups_touch BEFORE UPDATE ON public.store_groups
@@ -12723,21 +12777,24 @@ RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT COALESCE(
-    (
-      SELECT false
-        FROM public.authorization_actions a
-       WHERE a.action_key = 'stock_transfer'
-         AND a.is_enabled
-         AND (
-           (a.scope_type = 'branch' AND a.scope_id = _store_id)
-           OR (a.scope_type = 'global' AND a.scope_id = '')
-         )
-       ORDER BY CASE WHEN a.scope_type = 'branch' THEN 0 ELSE 1 END
-       LIMIT 1
-    ),
-    public.stock_transfer_approval_required(_store_id)
-  )
+  SELECT CASE
+    WHEN public.is_cross_group_transfer(_store_id, _to_store_id) THEN true
+    ELSE COALESCE(
+      (
+        SELECT false
+          FROM public.authorization_actions a
+         WHERE a.action_key = 'stock_transfer'
+           AND a.is_enabled
+           AND (
+             (a.scope_type = 'branch' AND a.scope_id = _store_id)
+             OR (a.scope_type = 'global' AND a.scope_id = '')
+           )
+         ORDER BY CASE WHEN a.scope_type = 'branch' THEN 0 ELSE 1 END
+         LIMIT 1
+      ),
+      public.stock_transfer_approval_required(_store_id)
+    )
+  END
 $$;
 
 REVOKE ALL ON FUNCTION public.stock_transfer_approval_required(text, text) FROM PUBLIC, anon;
@@ -12792,10 +12849,24 @@ DECLARE
   v_needs_approval boolean;
   v_cross boolean;
   v_may_approve boolean := public.is_supervisor_now()
-    OR public.has_perm('can_approve_transfer')
-    OR public.has_perm('can_receive_transfer');
+    OR public.has_perm('can_approve_transfer');
 BEGIN
   IF TG_OP = 'INSERT' THEN
+    IF NEW.status = 'draft' THEN
+      NEW.approved_by := NULL;
+      NEW.approved_at := NULL;
+      NEW.dispatched_by := NULL;
+      NEW.dispatched_at := NULL;
+      NEW.received_by := NULL;
+      NEW.received_at := NULL;
+      NEW.verified_by := NULL;
+      NEW.verified_at := NULL;
+      NEW.posted_at := NULL;
+      NEW.closed_at := NULL;
+      NEW.fulfilment := NULL;
+      RETURN NEW;
+    END IF;
+
     v_needs_approval := public.stock_transfer_approval_required(NEW.from_store_id, NEW.to_store_id);
 
     IF v_needs_approval THEN
@@ -12825,6 +12896,31 @@ BEGIN
   END IF;
 
   IF OLD.status = NEW.status THEN
+    RETURN NEW;
+  END IF;
+
+  IF OLD.status = 'draft' THEN
+    v_needs_approval := public.stock_transfer_approval_required(NEW.from_store_id, NEW.to_store_id);
+    NEW.status := CASE
+      WHEN v_needs_approval OR NEW.status = 'awaiting_approval' THEN 'awaiting_approval'
+      ELSE 'approved'
+    END;
+    IF NEW.status = 'approved' THEN
+      NEW.approved_by := COALESCE(NEW.approved_by, NEW.created_by);
+      NEW.approved_at := COALESCE(NEW.approved_at, now());
+    ELSE
+      NEW.approved_by := NULL;
+      NEW.approved_at := NULL;
+    END IF;
+    NEW.dispatched_by := NULL;
+    NEW.dispatched_at := NULL;
+    NEW.received_by := NULL;
+    NEW.received_at := NULL;
+    NEW.verified_by := NULL;
+    NEW.verified_at := NULL;
+    NEW.posted_at := NULL;
+    NEW.closed_at := NULL;
+    NEW.fulfilment := NULL;
     RETURN NEW;
   END IF;
 
@@ -12914,6 +13010,10 @@ BEGIN
   RETURN NEW;
 END;
 $function$;
+
+DROP TRIGGER IF EXISTS stock_transfers_enforce_lifecycle ON public.stock_transfers;
+
+CREATE TRIGGER stock_transfers_enforce_lifecycle BEFORE INSERT OR UPDATE ON public.stock_transfers FOR EACH ROW EXECUTE FUNCTION public.stock_transfers_enforce_lifecycle();
 
 -- Approve routine: enforce the same cross-group rules server-side.
 CREATE OR REPLACE FUNCTION public.stock_transfer_approve(
@@ -13019,26 +13119,72 @@ DROP POLICY IF EXISTS "Staff can read tokens" ON public.terminal_tokens;
 DROP POLICY IF EXISTS "Supervisors can read tokens" ON public.terminal_tokens;
 CREATE POLICY "Supervisors can read tokens"
   ON public.terminal_tokens FOR SELECT TO authenticated
-  USING ((SELECT public.is_app_supervisor()));
+  USING ((SELECT public.has_perm('can_manage_terminals')));
 
 DROP POLICY IF EXISTS "Staff can issue tokens" ON public.terminal_tokens;
 DROP POLICY IF EXISTS "Supervisors can issue tokens" ON public.terminal_tokens;
 CREATE POLICY "Supervisors can issue tokens"
   ON public.terminal_tokens FOR INSERT TO authenticated
-  WITH CHECK ((SELECT public.is_app_supervisor()));
+  WITH CHECK ((SELECT public.has_perm('can_manage_terminals')));
 
 DROP POLICY IF EXISTS "Staff can manage tokens" ON public.terminal_tokens;
 DROP POLICY IF EXISTS "Supervisors can manage tokens" ON public.terminal_tokens;
 CREATE POLICY "Supervisors can manage tokens"
   ON public.terminal_tokens FOR UPDATE TO authenticated
-  USING ((SELECT public.is_app_supervisor()))
-  WITH CHECK ((SELECT public.is_app_supervisor()));
+  USING ((SELECT public.has_perm('can_manage_terminals')))
+  WITH CHECK ((SELECT public.has_perm('can_manage_terminals')));
 
 DROP POLICY IF EXISTS "Staff can delete tokens" ON public.terminal_tokens;
 DROP POLICY IF EXISTS "Supervisors can delete tokens" ON public.terminal_tokens;
 CREATE POLICY "Supervisors can delete tokens"
   ON public.terminal_tokens FOR DELETE TO authenticated
-  USING ((SELECT public.is_app_supervisor()));
+  USING ((SELECT public.has_perm('can_manage_terminals')));
+
+CREATE OR REPLACE FUNCTION public.terminal_token_reissue(
+  p_old_id uuid,
+  p_new_id uuid,
+  p_created_at timestamptz,
+  p_expires_at timestamptz
+) RETURNS public.terminal_tokens
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  old_token public.terminal_tokens%ROWTYPE;
+  new_token public.terminal_tokens%ROWTYPE;
+BEGIN
+  IF NOT public.has_perm('can_manage_terminals') THEN
+    RAISE EXCEPTION 'TERMINAL_MANAGEMENT_FORBIDDEN';
+  END IF;
+  SELECT * INTO old_token
+    FROM public.terminal_tokens
+   WHERE id = p_old_id
+     AND status IN ('active', 'used')
+     AND revoked_at IS NULL
+   FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'TERMINAL_TOKEN_NOT_ACTIVE'; END IF;
+
+  INSERT INTO public.terminal_tokens (
+    id, location_id, location_name, device_name, platform, status,
+    created_at, reissued_at, is_claimed, expires_at
+  ) VALUES (
+    p_new_id, old_token.location_id, old_token.location_name,
+    old_token.device_name, old_token.platform, 'active', p_created_at,
+    p_created_at, false, p_expires_at
+  ) RETURNING * INTO new_token;
+
+  UPDATE public.terminal_tokens
+     SET status = 'revoked', revoked_at = p_created_at, replaced_by = p_new_id
+   WHERE id = p_old_id;
+  RETURN new_token;
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION public.terminal_token_reissue(uuid,uuid,timestamptz,timestamptz)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.terminal_token_reissue(uuid,uuid,timestamptz,timestamptz)
+  TO authenticated, service_role;
 
 -- Consolidated online security/schema change: 20260905072726_c2d95046-07c2-4f23-9fa1-6789dcb3cec6.sql
 REVOKE ALL ON FUNCTION public.product_visible_to_me(text) FROM PUBLIC;
@@ -13426,11 +13572,10 @@ $$;
 CREATE OR REPLACE FUNCTION public.settings_scope_manageable(p_scope text, p_scope_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
   SELECT CASE lower(COALESCE(p_scope,''))
-    WHEN 'global' THEN EXISTS (
-      SELECT 1 FROM public.app_users u WHERE u.auth_user_id=auth.uid() AND u.is_active=true AND u.role='admin'
-    )
+    WHEN 'global' THEN public.has_perm('can_access_pos_settings')
     WHEN 'private' THEN p_scope_id=public.settings_private_key()
-    ELSE public.is_supervisor_now() AND public.settings_scope_visible(p_scope,p_scope_id)
+    ELSE public.has_perm('can_access_pos_settings')
+         AND public.settings_scope_visible(p_scope,p_scope_id)
   END
 $$;
 
@@ -13451,6 +13596,23 @@ CREATE POLICY settings_overrides_read ON public.settings_overrides FOR SELECT TO
 CREATE POLICY settings_overrides_write ON public.settings_overrides FOR ALL TO authenticated
   USING (public.settings_scope_manageable(scope,scope_id))
   WITH CHECK (public.settings_scope_manageable(scope,scope_id));
+
+-- Settings writes follow the same granular permission as the application.
+-- Reading remains available to active staff so every till can resolve the
+-- effective business configuration.
+DROP POLICY IF EXISTS "Staff can insert" ON public.pos_settings;
+DROP POLICY IF EXISTS "Staff can update" ON public.pos_settings;
+DROP POLICY IF EXISTS "Staff can delete" ON public.pos_settings;
+CREATE POLICY "Settings managers can insert" ON public.pos_settings
+  FOR INSERT TO authenticated
+  WITH CHECK ((SELECT public.has_perm('can_access_pos_settings')));
+CREATE POLICY "Settings managers can update" ON public.pos_settings
+  FOR UPDATE TO authenticated
+  USING ((SELECT public.has_perm('can_access_pos_settings')))
+  WITH CHECK ((SELECT public.has_perm('can_access_pos_settings')));
+CREATE POLICY "Settings managers can delete" ON public.pos_settings
+  FOR DELETE TO authenticated
+  USING ((SELECT public.has_perm('can_access_pos_settings')));
 
 DROP POLICY IF EXISTS settings_scoped_read ON public.settings_scoped;
 DROP POLICY IF EXISTS "Staff read scoped settings" ON public.settings_scoped;
@@ -13794,9 +13956,9 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."bookings" ("id","ref","store_id","shift_id","customer_name","customer_phone","member_id","service_type_id","service_name","service_fee","payment_timing","lines","subtotal","discount","tax","total","paid","due_date","note","cashier","status","sale_receipt_no","closed_at","racket_model","string_type","tension_main","tension_cross","tension_unit","grommet_notes","job_notes","dropped_off_at","promised_at","job_status","job_status_by","job_status_at","notify_whatsapp","created_at","updated_at","tag_id","intake_note","string_origin","string_source_product_id","grip_product_id","charges","technician","liability_accepted","incident_note","row_version","cancel_reason","cancelled_by","cancelled_at","cancelled_terminal","cancel_money_action","booking_ref")
-  SELECT "id","ref","store_id","shift_id","customer_name","customer_phone","member_id","service_type_id","service_name","service_fee","payment_timing","lines","subtotal","discount","tax","total","paid","due_date","note","cashier","status","sale_receipt_no","closed_at","racket_model","string_type","tension_main","tension_cross","tension_unit","grommet_notes","job_notes","dropped_off_at","promised_at","job_status","job_status_by","job_status_at","notify_whatsapp","created_at","updated_at","tag_id","intake_note","string_origin","string_source_product_id","grip_product_id","charges","technician","liability_accepted","incident_note","row_version","cancel_reason","cancelled_by","cancelled_at","cancelled_terminal","cancel_money_action","booking_ref" FROM jsonb_populate_recordset(NULL::public."bookings", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "ref"=EXCLUDED."ref","store_id"=EXCLUDED."store_id","shift_id"=EXCLUDED."shift_id","customer_name"=EXCLUDED."customer_name","customer_phone"=EXCLUDED."customer_phone","member_id"=EXCLUDED."member_id","service_type_id"=EXCLUDED."service_type_id","service_name"=EXCLUDED."service_name","service_fee"=EXCLUDED."service_fee","payment_timing"=EXCLUDED."payment_timing","lines"=EXCLUDED."lines","subtotal"=EXCLUDED."subtotal","discount"=EXCLUDED."discount","tax"=EXCLUDED."tax","total"=EXCLUDED."total","paid"=EXCLUDED."paid","due_date"=EXCLUDED."due_date","note"=EXCLUDED."note","cashier"=EXCLUDED."cashier","status"=EXCLUDED."status","sale_receipt_no"=EXCLUDED."sale_receipt_no","closed_at"=EXCLUDED."closed_at","racket_model"=EXCLUDED."racket_model","string_type"=EXCLUDED."string_type","tension_main"=EXCLUDED."tension_main","tension_cross"=EXCLUDED."tension_cross","tension_unit"=EXCLUDED."tension_unit","grommet_notes"=EXCLUDED."grommet_notes","job_notes"=EXCLUDED."job_notes","dropped_off_at"=EXCLUDED."dropped_off_at","promised_at"=EXCLUDED."promised_at","job_status"=EXCLUDED."job_status","job_status_by"=EXCLUDED."job_status_by","job_status_at"=EXCLUDED."job_status_at","notify_whatsapp"=EXCLUDED."notify_whatsapp","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","tag_id"=EXCLUDED."tag_id","intake_note"=EXCLUDED."intake_note","string_origin"=EXCLUDED."string_origin","string_source_product_id"=EXCLUDED."string_source_product_id","grip_product_id"=EXCLUDED."grip_product_id","charges"=EXCLUDED."charges","technician"=EXCLUDED."technician","liability_accepted"=EXCLUDED."liability_accepted","incident_note"=EXCLUDED."incident_note","row_version"=EXCLUDED."row_version","cancel_reason"=EXCLUDED."cancel_reason","cancelled_by"=EXCLUDED."cancelled_by","cancelled_at"=EXCLUDED."cancelled_at","cancelled_terminal"=EXCLUDED."cancelled_terminal","cancel_money_action"=EXCLUDED."cancel_money_action","booking_ref"=EXCLUDED."booking_ref" WHERE EXCLUDED."row_version">public."bookings"."row_version";
+  INSERT INTO public."bookings" ("id","ref","store_id","shift_id","customer_name","customer_phone","member_id","service_type_id","service_name","service_fee","payment_timing","lines","subtotal","discount","tax","total","paid","due_date","note","cashier","status","booking_kind","sale_receipt_no","closed_at","racket_model","string_type","tension_main","tension_cross","tension_unit","grommet_notes","job_notes","dropped_off_at","promised_at","job_status","job_status_by","job_status_at","notify_whatsapp","created_at","updated_at","tag_id","intake_note","string_origin","string_source_product_id","grip_product_id","charges","technician","liability_accepted","incident_note","row_version","cancel_reason","cancelled_by","cancelled_at","cancelled_terminal","cancel_money_action","booking_ref")
+  SELECT "id","ref","store_id","shift_id","customer_name","customer_phone","member_id","service_type_id","service_name","service_fee","payment_timing","lines","subtotal","discount","tax","total","paid","due_date","note","cashier","status","booking_kind","sale_receipt_no","closed_at","racket_model","string_type","tension_main","tension_cross","tension_unit","grommet_notes","job_notes","dropped_off_at","promised_at","job_status","job_status_by","job_status_at","notify_whatsapp","created_at","updated_at","tag_id","intake_note","string_origin","string_source_product_id","grip_product_id","charges","technician","liability_accepted","incident_note","row_version","cancel_reason","cancelled_by","cancelled_at","cancelled_terminal","cancel_money_action","booking_ref" FROM jsonb_populate_recordset(NULL::public."bookings", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO UPDATE SET "ref"=EXCLUDED."ref","store_id"=EXCLUDED."store_id","shift_id"=EXCLUDED."shift_id","customer_name"=EXCLUDED."customer_name","customer_phone"=EXCLUDED."customer_phone","member_id"=EXCLUDED."member_id","service_type_id"=EXCLUDED."service_type_id","service_name"=EXCLUDED."service_name","service_fee"=EXCLUDED."service_fee","payment_timing"=EXCLUDED."payment_timing","lines"=EXCLUDED."lines","subtotal"=EXCLUDED."subtotal","discount"=EXCLUDED."discount","tax"=EXCLUDED."tax","total"=EXCLUDED."total","paid"=EXCLUDED."paid","due_date"=EXCLUDED."due_date","note"=EXCLUDED."note","cashier"=EXCLUDED."cashier","status"=EXCLUDED."status","booking_kind"=EXCLUDED."booking_kind","sale_receipt_no"=EXCLUDED."sale_receipt_no","closed_at"=EXCLUDED."closed_at","racket_model"=EXCLUDED."racket_model","string_type"=EXCLUDED."string_type","tension_main"=EXCLUDED."tension_main","tension_cross"=EXCLUDED."tension_cross","tension_unit"=EXCLUDED."tension_unit","grommet_notes"=EXCLUDED."grommet_notes","job_notes"=EXCLUDED."job_notes","dropped_off_at"=EXCLUDED."dropped_off_at","promised_at"=EXCLUDED."promised_at","job_status"=EXCLUDED."job_status","job_status_by"=EXCLUDED."job_status_by","job_status_at"=EXCLUDED."job_status_at","notify_whatsapp"=EXCLUDED."notify_whatsapp","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","tag_id"=EXCLUDED."tag_id","intake_note"=EXCLUDED."intake_note","string_origin"=EXCLUDED."string_origin","string_source_product_id"=EXCLUDED."string_source_product_id","grip_product_id"=EXCLUDED."grip_product_id","charges"=EXCLUDED."charges","technician"=EXCLUDED."technician","liability_accepted"=EXCLUDED."liability_accepted","incident_note"=EXCLUDED."incident_note","row_version"=EXCLUDED."row_version","cancel_reason"=EXCLUDED."cancel_reason","cancelled_by"=EXCLUDED."cancelled_by","cancelled_at"=EXCLUDED."cancelled_at","cancelled_terminal"=EXCLUDED."cancelled_terminal","cancel_money_action"=EXCLUDED."cancel_money_action","booking_ref"=EXCLUDED."booking_ref" WHERE EXCLUDED."row_version">public."bookings"."row_version";
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 
@@ -13949,9 +14111,9 @@ DECLARE v_count integer; v_row jsonb;
 BEGIN
 
 
-  INSERT INTO public."held_orders" ("id","label","store_id","shift_id","held_by","total","lines","cart_discount","cart_discount_type","exchange_ref","member_id","member_name","coupon","note","cancelled_from","held_at","created_at","updated_at","row_version","status","pending_request_id","bill_no")
-  SELECT "id","label","store_id","shift_id","held_by","total","lines","cart_discount","cart_discount_type","exchange_ref","member_id","member_name","coupon","note","cancelled_from","held_at","created_at","updated_at","row_version","status","pending_request_id","bill_no" FROM jsonb_populate_recordset(NULL::public."held_orders", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "label"=EXCLUDED."label","store_id"=EXCLUDED."store_id","shift_id"=EXCLUDED."shift_id","held_by"=EXCLUDED."held_by","total"=EXCLUDED."total","lines"=EXCLUDED."lines","cart_discount"=EXCLUDED."cart_discount","cart_discount_type"=EXCLUDED."cart_discount_type","exchange_ref"=EXCLUDED."exchange_ref","member_id"=EXCLUDED."member_id","member_name"=EXCLUDED."member_name","coupon"=EXCLUDED."coupon","note"=EXCLUDED."note","cancelled_from"=EXCLUDED."cancelled_from","held_at"=EXCLUDED."held_at","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","row_version"=EXCLUDED."row_version","status"=EXCLUDED."status","pending_request_id"=EXCLUDED."pending_request_id","bill_no"=EXCLUDED."bill_no" WHERE EXCLUDED."row_version">public."held_orders"."row_version";
+  INSERT INTO public."held_orders" ("id","label","store_id","shift_id","held_by","total","lines","cart_discount","cart_discount_type","exchange_ref","member_id","member_name","coupon","note","cancelled_from","held_at","created_at","updated_at","row_version","status","pending_request_id","bill_no","approval_snapshot_hash")
+  SELECT "id","label","store_id","shift_id","held_by","total","lines","cart_discount","cart_discount_type","exchange_ref","member_id","member_name","coupon","note","cancelled_from","held_at","created_at","updated_at","row_version","status","pending_request_id","bill_no","approval_snapshot_hash" FROM jsonb_populate_recordset(NULL::public."held_orders", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO UPDATE SET "label"=EXCLUDED."label","store_id"=EXCLUDED."store_id","shift_id"=EXCLUDED."shift_id","held_by"=EXCLUDED."held_by","total"=EXCLUDED."total","lines"=EXCLUDED."lines","cart_discount"=EXCLUDED."cart_discount","cart_discount_type"=EXCLUDED."cart_discount_type","exchange_ref"=EXCLUDED."exchange_ref","member_id"=EXCLUDED."member_id","member_name"=EXCLUDED."member_name","coupon"=EXCLUDED."coupon","note"=EXCLUDED."note","cancelled_from"=EXCLUDED."cancelled_from","held_at"=EXCLUDED."held_at","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","row_version"=EXCLUDED."row_version","status"=EXCLUDED."status","pending_request_id"=EXCLUDED."pending_request_id","bill_no"=EXCLUDED."bill_no","approval_snapshot_hash"=EXCLUDED."approval_snapshot_hash" WHERE EXCLUDED."row_version">public."held_orders"."row_version";
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
 
@@ -17468,6 +17630,230 @@ GRANT EXECUTE ON FUNCTION public.reserve_product_skus(integer,text,text,text,int
 -- Make the repaired privileges visible to PostgREST immediately after a reset.
 NOTIFY pgrst, 'reload schema';
 
+-- Vouchers are organization-wide.  store_id records the redemption location;
+-- an unredeemed voucher has no branch yet and must still reach every till.
+CREATE OR REPLACE FUNCTION public.sync_feed_issued_vouchers() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+BEGIN
+  INSERT INTO public.sync_change_feed(
+    organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone
+  ) VALUES (
+    'default','global',NULL,'issued_vouchers',
+    CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD.id)::text
+         ELSE jsonb_build_object('id',NEW.id)::text END,
+    lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE'
+  );
+  RETURN NULL;
+END $fn$;
+REVOKE ALL ON FUNCTION public.sync_feed_issued_vouchers() FROM PUBLIC, anon, authenticated;
+
+-- Keep the mature bootstrap/count implementations intact and wrap only the
+-- issued_vouchers case. This avoids regenerating unrelated table contracts.
+DO $bootstrap_wrapper$
+BEGIN
+  IF to_regprocedure('public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)') IS NULL THEN
+    ALTER FUNCTION public.pos_sync_bootstrap(text,text,text,text,text,integer,integer)
+      RENAME TO pos_sync_bootstrap_scoped;
+  END IF;
+END
+$bootstrap_wrapper$;
+CREATE OR REPLACE FUNCTION public.pos_sync_bootstrap(
+  p_organization_id text,p_branch_id text,p_terminal_id text,p_table text,
+  p_after_cursor text DEFAULT NULL,p_history_days integer DEFAULT 90,p_limit integer DEFAULT 500
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE v_rows jsonb:='[]'::jsonb; v_cursor text; v_me public.app_users%ROWTYPE;
+BEGIN
+  IF p_table <> 'issued_vouchers' THEN
+    RETURN public.pos_sync_bootstrap_scoped(
+      p_organization_id,p_branch_id,p_terminal_id,p_table,p_after_cursor,p_history_days,p_limit
+    );
+  END IF;
+  PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+  IF auth.role()<>'service_role' THEN
+    SELECT * INTO v_me FROM public.app_users
+      WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
+    IF v_me.id IS NULL OR NOT (
+      v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)
+    ) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+    IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN
+      RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN';
+    END IF;
+  END IF;
+  SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),
+         max(page.cursor)
+    INTO v_rows,v_cursor
+    FROM (
+      SELECT jsonb_build_object('id',x.id)::text cursor,x row_data
+      FROM public.issued_vouchers x
+      WHERE p_after_cursor IS NULL OR jsonb_build_object('id',x.id)::text>p_after_cursor
+      ORDER BY jsonb_build_object('id',x.id)::text
+      LIMIT LEAST(GREATEST(p_limit,10),2000)
+    ) page;
+  RETURN jsonb_build_object(
+    'rows',v_rows,
+    'cursor',CASE WHEN jsonb_array_length(v_rows)>=LEAST(GREATEST(p_limit,10),2000)
+                  THEN v_cursor ELSE NULL END
+  );
+END $fn$;
+
+DO $counts_wrapper$
+BEGIN
+  IF to_regprocedure('public.pos_sync_counts_scoped(text,text,text,integer)') IS NULL THEN
+    ALTER FUNCTION public.pos_sync_counts(text,text,text,integer) RENAME TO pos_sync_counts_scoped;
+  END IF;
+END
+$counts_wrapper$;
+CREATE OR REPLACE FUNCTION public.pos_sync_counts(
+  p_organization_id text,p_branch_id text,p_terminal_id text,p_history_days integer DEFAULT 90
+) RETURNS TABLE(table_name text,row_count bigint)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+BEGIN
+  RETURN QUERY
+    SELECT scoped.table_name,scoped.row_count
+    FROM public.pos_sync_counts_scoped(
+      p_organization_id,p_branch_id,p_terminal_id,p_history_days
+    ) scoped
+    WHERE scoped.table_name <> 'issued_vouchers'
+    UNION ALL
+    SELECT 'issued_vouchers'::text,count(*)::bigint FROM public.issued_vouchers;
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_bootstrap(text,text,text,text,text,integer,integer) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_counts_scoped(text,text,text,integer) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_counts(text,text,text,integer) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_bootstrap(text,text,text,text,text,integer,integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_counts(text,text,text,integer) TO service_role;
+
+-- Campaign administration is a permission, not merely proof of staff status.
+DROP POLICY IF EXISTS campaigns_staff_insert ON public.coupon_campaigns;
+DROP POLICY IF EXISTS campaigns_staff_update ON public.coupon_campaigns;
+DROP POLICY IF EXISTS campaigns_staff_delete ON public.coupon_campaigns;
+CREATE POLICY campaigns_staff_insert ON public.coupon_campaigns
+  FOR INSERT TO authenticated WITH CHECK ((SELECT public.has_perm('can_manage_promotions')));
+CREATE POLICY campaigns_staff_update ON public.coupon_campaigns
+  FOR UPDATE TO authenticated USING ((SELECT public.has_perm('can_manage_promotions')))
+  WITH CHECK ((SELECT public.has_perm('can_manage_promotions')));
+CREATE POLICY campaigns_staff_delete ON public.coupon_campaigns
+  FOR DELETE TO authenticated USING ((SELECT public.has_perm('can_manage_promotions')));
+
+DROP POLICY IF EXISTS vouchers_staff_insert ON public.issued_vouchers;
+DROP POLICY IF EXISTS vouchers_staff_update ON public.issued_vouchers;
+DROP POLICY IF EXISTS vouchers_staff_delete ON public.issued_vouchers;
+CREATE POLICY vouchers_staff_insert ON public.issued_vouchers
+  FOR INSERT TO authenticated WITH CHECK ((SELECT public.has_perm('can_manage_promotions')));
+CREATE POLICY vouchers_staff_update ON public.issued_vouchers
+  FOR UPDATE TO authenticated USING ((SELECT public.has_perm('can_manage_promotions')))
+  WITH CHECK ((SELECT public.has_perm('can_manage_promotions')));
+CREATE POLICY vouchers_staff_delete ON public.issued_vouchers
+  FOR DELETE TO authenticated USING ((SELECT public.has_perm('can_manage_promotions')));
+
+CREATE OR REPLACE FUNCTION public.coupon_issue_manual(
+  _slug text,_phone text,_full_name text DEFAULT NULL,
+  _expires_at timestamptz DEFAULT NULL,_staff text DEFAULT NULL,
+  _role text DEFAULT NULL,_store text DEFAULT NULL,_ignore_limit boolean DEFAULT false
+) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE _c public.coupon_campaigns; _member uuid; _token text; _held integer;
+BEGIN
+  IF NOT public.has_perm('can_manage_promotions') THEN RAISE EXCEPTION 'PERMISSION_DENIED_PROMOTIONS'; END IF;
+  SELECT * INTO _c FROM public.coupon_campaigns WHERE slug=_slug FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'CAMPAIGN_NOT_FOUND'; END IF;
+  IF NOT _c.is_active THEN RAISE EXCEPTION 'CAMPAIGN_INACTIVE'; END IF;
+  IF _c.starts_at IS NOT NULL AND now()<_c.starts_at THEN RAISE EXCEPTION 'CAMPAIGN_NOT_STARTED'; END IF;
+  IF _c.expires_at IS NOT NULL AND now()>_c.expires_at THEN RAISE EXCEPTION 'CAMPAIGN_EXPIRED'; END IF;
+  IF _c.max_claims IS NOT NULL AND _c.claims_count>=_c.max_claims THEN RAISE EXCEPTION 'CAMPAIGN_FULLY_CLAIMED'; END IF;
+  _member:=public.member_join(_phone,_full_name,NULL);
+  SELECT count(*) INTO _held FROM public.issued_vouchers WHERE campaign_id=_c.id AND member_id=_member;
+  IF NOT _ignore_limit AND _c.max_per_member IS NOT NULL AND _held>=_c.max_per_member THEN
+    PERFORM public.coupon_log('BLOCKED',_c,NULL,_member,_phone,_store,NULL,_staff,_role,NULL,'Manual issue blocked by per-member limit');
+    RAISE EXCEPTION 'MEMBER_LIMIT_REACHED';
+  END IF;
+  _token:=public.voucher_token();
+  INSERT INTO public.issued_vouchers(token_slug,campaign_id,member_id,expires_at,issued_by,issued_source)
+    VALUES(_token,_c.id,_member,_expires_at,_staff,'MANUAL');
+  UPDATE public.coupon_campaigns SET claims_count=claims_count+1 WHERE id=_c.id;
+  PERFORM public.coupon_log('ISSUED_MANUAL',_c,_token,_member,_phone,_store,NULL,_staff,_role,NULL,
+    CASE WHEN _expires_at IS NULL THEN NULL ELSE 'Custom expiry' END);
+  RETURN _token;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.voucher_redeem(
+  _token text,_sale_id text DEFAULT NULL,_store_id text DEFAULT NULL,_staff text DEFAULT NULL
+) RETURNS public.issued_vouchers LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE _v public.issued_vouchers; _c public.coupon_campaigns; _actor record; _deadline timestamptz;
+BEGIN
+  IF NOT public.is_staff(auth.uid()) THEN RAISE EXCEPTION 'Only staff can redeem a voucher'; END IF;
+  SELECT * INTO _actor FROM public.current_app_user();
+  IF _actor.id IS NULL OR NULLIF(btrim(_store_id),'') IS NULL OR NOT (
+    public.is_app_supervisor() OR _actor.store_id IS NULL OR _actor.store_id=_store_id
+  ) THEN RAISE EXCEPTION 'VOUCHER_BRANCH_FORBIDDEN'; END IF;
+  SELECT * INTO _v FROM public.issued_vouchers WHERE token_slug=_token FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'VOUCHER_NOT_FOUND'; END IF;
+  IF _v.status='REDEEMED' THEN RAISE EXCEPTION 'VOUCHER_ALREADY_REDEEMED'; END IF;
+  IF _v.status='DISABLED' THEN RAISE EXCEPTION 'VOUCHER_DISABLED'; END IF;
+  IF _v.status<>'ISSUED' THEN RAISE EXCEPTION 'VOUCHER_EXPIRED'; END IF;
+  SELECT * INTO _c FROM public.coupon_campaigns WHERE id=_v.campaign_id FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'CAMPAIGN_NOT_FOUND'; END IF;
+  IF NOT _c.is_active THEN RAISE EXCEPTION 'CAMPAIGN_INACTIVE'; END IF;
+  IF _c.starts_at IS NOT NULL AND now()<_c.starts_at THEN RAISE EXCEPTION 'CAMPAIGN_NOT_STARTED'; END IF;
+  _deadline:=coalesce(_v.expires_at,_c.expires_at);
+  IF _deadline IS NOT NULL AND now()>_deadline THEN
+    UPDATE public.issued_vouchers SET status='EXPIRED' WHERE id=_v.id;
+    PERFORM public.coupon_log('BLOCKED',_c,_token,_v.member_id,NULL,_store_id,NULL,_staff,NULL,_sale_id,'Expired voucher presented');
+    RAISE EXCEPTION 'VOUCHER_EXPIRED';
+  END IF;
+  UPDATE public.issued_vouchers SET status='REDEEMED',redeemed_at=now(),redeemed_by=_staff,
+    redeemed_sale_id=_sale_id,store_id=_store_id WHERE id=_v.id AND status='ISSUED' RETURNING * INTO _v;
+  IF NOT FOUND THEN RAISE EXCEPTION 'VOUCHER_ALREADY_REDEEMED'; END IF;
+  PERFORM public.coupon_log('REDEEMED',_c,_token,_v.member_id,NULL,_store_id,NULL,_staff,NULL,_sale_id);
+  RETURN _v;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.voucher_set_status(
+  _token text,_status text,_reason text DEFAULT NULL,_staff text DEFAULT NULL,
+  _role text DEFAULT NULL,_store text DEFAULT NULL
+) RETURNS public.issued_vouchers LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE _v public.issued_vouchers; _c public.coupon_campaigns;
+BEGIN
+  IF NOT public.has_perm('can_manage_promotions') THEN RAISE EXCEPTION 'PERMISSION_DENIED_PROMOTIONS'; END IF;
+  IF _status NOT IN ('ISSUED','DISABLED') THEN RAISE EXCEPTION 'VOUCHER_STATUS_INVALID'; END IF;
+  SELECT * INTO _v FROM public.issued_vouchers WHERE token_slug=_token FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'VOUCHER_NOT_FOUND'; END IF;
+  IF _v.status='REDEEMED' THEN RAISE EXCEPTION 'VOUCHER_ALREADY_REDEEMED'; END IF;
+  SELECT * INTO _c FROM public.coupon_campaigns WHERE id=_v.campaign_id;
+  UPDATE public.issued_vouchers SET status=_status,
+    disabled_at=CASE WHEN _status='DISABLED' THEN now() ELSE NULL END,
+    disabled_by=CASE WHEN _status='DISABLED' THEN _staff ELSE NULL END,
+    disable_reason=CASE WHEN _status='DISABLED' THEN _reason ELSE NULL END
+    WHERE id=_v.id RETURNING * INTO _v;
+  PERFORM public.coupon_log(CASE WHEN _status='DISABLED' THEN 'DISABLED' ELSE 'REENABLED' END,
+    _c,_token,_v.member_id,NULL,_store,NULL,_staff,_role,NULL,
+    coalesce(_reason,CASE WHEN _status='DISABLED' THEN 'Disabled from backoffice' ELSE 'Re-enabled from backoffice' END));
+  RETURN _v;
+END $fn$;
+
+NOTIFY pgrst,'reload schema';
+
+-- Final public-schema privilege hardening must remain after every function
+-- definition, including feature-specific sync repairs appended above.
+REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon;
+DO $final_coupon_rpc_hardening$
+DECLARE
+  routine record;
+BEGIN
+  FOR routine IN
+    SELECT p.oid::regprocedure AS signature
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.prosecdef
+  LOOP
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon', routine.signature);
+  END LOOP;
+END
+$final_coupon_rpc_hardening$;
+
+
 -- ---------------------------------------------------------------------------
 -- Public pre-authentication RPC boundary
 -- ---------------------------------------------------------------------------
@@ -17758,3 +18144,89 @@ END
 $final_warehouse_rpc_hardening$;
 
 NOTIFY pgrst, 'reload schema';
+
+-- Offline tills may redeem an existing voucher, but may not mint, re-enable,
+-- reassign or delete organization-wide voucher records through synchronization.
+CREATE OR REPLACE FUNCTION public.sync_apply_issued_vouchers(p_rows jsonb)
+RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
+DECLARE
+  v_count integer:=0;
+  v_row jsonb;
+  v_existing public.issued_vouchers%ROWTYPE;
+  v_branch text;
+BEGIN
+  SELECT location_id INTO v_branch
+    FROM public.terminal_tokens
+   WHERE id::text=current_setting('pos.sync_terminal',true)
+     AND status IN ('active','used') AND revoked_at IS NULL
+   LIMIT 1;
+  IF NULLIF(v_branch,'') IS NULL THEN RAISE EXCEPTION 'SYNC_TERMINAL_SCOPE_FORBIDDEN'; END IF;
+
+  FOR v_row IN SELECT value FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) LOOP
+    IF COALESCE(v_row->>'status','')<>'REDEEMED'
+       OR v_row->>'store_id' IS DISTINCT FROM v_branch THEN
+      RAISE EXCEPTION 'SYNC_VOUCHER_TRANSITION_FORBIDDEN';
+    END IF;
+    SELECT * INTO v_existing FROM public.issued_vouchers
+     WHERE id=(v_row->>'id')::uuid FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'SYNC_VOUCHER_UNKNOWN'; END IF;
+
+    IF v_existing.status='REDEEMED' THEN
+      IF v_existing.store_id IS DISTINCT FROM v_row->>'store_id'
+         OR v_existing.redeemed_sale_id IS DISTINCT FROM v_row->>'redeemed_sale_id' THEN
+        RAISE EXCEPTION 'VOUCHER_ALREADY_REDEEMED';
+      END IF;
+      CONTINUE;
+    END IF;
+
+    IF v_existing.status<>'ISSUED' OR NOT EXISTS(
+      SELECT 1 FROM public.coupon_campaigns c
+       WHERE c.id=v_existing.campaign_id AND c.is_active
+         AND (c.starts_at IS NULL OR c.starts_at<=now())
+         AND (COALESCE(v_existing.expires_at,c.expires_at) IS NULL
+           OR COALESCE(v_existing.expires_at,c.expires_at)>=now())
+    ) THEN RAISE EXCEPTION 'SYNC_VOUCHER_UNAVAILABLE'; END IF;
+
+    UPDATE public.issued_vouchers
+       SET status='REDEEMED',
+           redeemed_at=COALESCE((v_row->>'redeemed_at')::timestamptz,now()),
+           redeemed_by=NULLIF(v_row->>'redeemed_by',''),
+           redeemed_sale_id=NULLIF(v_row->>'redeemed_sale_id',''),
+           store_id=v_branch,
+           row_version=GREATEST(
+             v_existing.row_version+1,COALESCE((v_row->>'row_version')::integer,1)
+           )
+     WHERE id=v_existing.id;
+    v_count:=v_count+1;
+  END LOOP;
+  RETURN v_count;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.sync_delete_issued_vouchers(
+  p_changes jsonb,p_branch_id text,p_terminal_id text
+) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
+BEGIN
+  RETURN 0;
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.sync_apply_issued_vouchers(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sync_delete_issued_vouchers(jsonb,text,text) FROM PUBLIC;
+
+NOTIFY pgrst,'reload schema';
+
+-- Final public-schema privilege hardening after the voucher sync routines.
+REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated;
+DO $final_voucher_sync_hardening$
+DECLARE
+  routine record;
+BEGIN
+  FOR routine IN
+    SELECT p.oid::regprocedure AS signature
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.prosecdef
+  LOOP
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon', routine.signature);
+  END LOOP;
+END
+$final_voucher_sync_hardening$;

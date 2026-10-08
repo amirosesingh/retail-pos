@@ -4,7 +4,7 @@
  * Built-in roles keep their names and can never be removed; custom roles are
  * free to add, edit and delete while nobody holds them.
  */
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -55,6 +55,17 @@ import {
   type RoleDef,
 } from "@/lib/role-admin";
 import { notifyError } from "@/lib/notify";
+import { broadcastSettingsChange, subscribeDataChange, syncNow } from "@/lib/sync-engine";
+
+async function propagateRoleChange(reason: string) {
+  const [, result] = await Promise.all([broadcastSettingsChange("staff_roles"), syncNow(reason)]);
+  if (!result.ok) {
+    toast.warning("Role saved centrally; the local database will retry synchronization", {
+      description: result.error,
+    });
+  }
+  return result;
+}
 
 export function RoleManager() {
   const [roles, setRoles] = useState<RoleDef[]>([]);
@@ -68,7 +79,7 @@ export function RoleManager() {
     () => new Set(PERMISSION_GROUPS.map((group) => group.id)),
   );
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       setRoles(await getRolesWithPermissions());
@@ -77,11 +88,19 @@ export function RoleManager() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
+
+  useEffect(
+    () =>
+      subscribeDataChange((change) => {
+        if (change.table === "staff_roles") void load();
+      }),
+    [load],
+  );
 
   const columns = useMemo(() => roles, [roles]);
 
@@ -91,6 +110,7 @@ export function RoleManager() {
     setSaving(role.slug);
     try {
       await updateRolePermissions(role, next);
+      await propagateRoleChange("staff role permissions changed");
     } catch (e) {
       notifyError(e, "That permission could not be saved");
       void load();
@@ -103,6 +123,7 @@ export function RoleManager() {
     setCreating(true);
     try {
       const role = await createCustomRole(name, rolePermissions(base), base);
+      await propagateRoleChange("staff role created");
       toast.success(`${role.name} created`);
       setOpen(false);
       setName("");
@@ -117,6 +138,7 @@ export function RoleManager() {
   const remove = async (role: RoleDef) => {
     try {
       await deleteCustomRole(role);
+      await propagateRoleChange("staff role deleted");
       toast.success(`${role.name} removed`);
       void load();
     } catch (e) {

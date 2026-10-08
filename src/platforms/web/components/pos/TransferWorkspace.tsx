@@ -26,6 +26,7 @@ import { loadTransfer } from "@/lib/stock-transfers";
 import { TRANSFER_STATUS_LABELS, type Transfer } from "@/core/types/pos-types";
 
 export const statusStyle: Record<string, string> = {
+  draft: "border-muted-foreground/40 text-muted-foreground",
   awaiting_approval: "border-warning/50 text-warning",
   approved: "border-sky-500/50 text-sky-600 dark:text-sky-400",
   dispatched: "border-primary/50 text-primary",

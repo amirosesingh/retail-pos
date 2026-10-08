@@ -58,7 +58,7 @@ export const Route = createFileRoute("/transfers/")({
     if (!search.items) return;
     throw redirect({
       to: search.kind === "request" ? "/requests/new" : "/transfers/new",
-      search: { items: search.items },
+      search: { items: search.items, draft: undefined },
     });
   },
   component: Transfers,
@@ -120,12 +120,12 @@ function Transfers() {
           </div>
           <div className="flex gap-2">
             <Button asChild variant="outline">
-              <Link to="/requests/new" search={{ items: undefined }}>
+              <Link to="/requests/new" search={{ items: undefined, draft: undefined }}>
                 <ArrowLeftRight className="size-4" /> Request stock
               </Link>
             </Button>
             <Button asChild>
-              <Link to="/transfers/new" search={{ items: undefined }}>
+              <Link to="/transfers/new" search={{ items: undefined, draft: undefined }}>
                 <Send className="size-4" /> New transfer
               </Link>
             </Button>
@@ -264,7 +264,14 @@ function Transfers() {
                           </Button>
                         )}
                         <Button asChild size="sm" variant="ghost">
-                          {isRequest ? (
+                          {t.status === "draft" ? (
+                            <Link
+                              to={isRequest ? "/requests/new" : "/transfers/new"}
+                              search={{ items: undefined, draft: t.id }}
+                            >
+                              <Eye className="size-4" /> Resume
+                            </Link>
+                          ) : isRequest ? (
                             <Link to="/requests/$id" params={{ id: t.id }}>
                               <Eye className="size-4" /> Open
                             </Link>

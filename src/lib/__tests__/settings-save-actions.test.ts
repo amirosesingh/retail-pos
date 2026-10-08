@@ -70,6 +70,17 @@ describe("settings save actions", () => {
     expect(scale).toContain("next.registerZoom === prefs.registerZoom");
     expect(accent).toContain("if (next === accent) return");
   });
+
+  it("accepts live settings as a clean baseline without overwriting local edits", () => {
+    const frame = read("src/platforms/web/components/pos/settings/SettingsFrame.tsx");
+
+    expect(frame).toContain("localSettingsEdit.current = true");
+    expect(frame).toContain("if (localSettingsEdit.current) return");
+    expect(frame).toContain("const submittedSettings = settingsJsonRef.current");
+    expect(frame).toContain("if (settingsJsonRef.current === submittedSettings)");
+    expect(frame).toContain("setSnapshot(submittedSettings)");
+    expect(frame).toContain("updateSettings: editSettings");
+  });
 });
 
 describe("shift status privacy", () => {

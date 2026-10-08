@@ -625,6 +625,20 @@ const LIVE_SETTINGS_TABLES = [
   "authorization_actions",
 ] as const;
 
+/**
+ * Control-plane changes contain no row data in the broadcast; they only wake
+ * the authenticated, scoped pull. Include staff identity tables so a global
+ * account or PIN change reaches every activated till instead of depending on
+ * a branch-filtered Postgres Changes event or the next timer tick.
+ */
+const LIVE_CONTROL_TABLES = [
+  ...LIVE_SETTINGS_TABLES,
+  "app_users",
+  "cashiers",
+  "staff_roles",
+  "user_roles",
+] as const;
+
 const ORGANIZATION_LIVE_TABLES = ["staff_roles", "stores", "members", "promotions"] as const;
 
 /**
@@ -676,7 +690,7 @@ const SETTINGS_BROADCAST_TIMEOUT_MS = 1_500;
  */
 export async function broadcastSettingsChange(table: string): Promise<boolean> {
   if (localDb()) return false;
-  if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return false;
+  if (!(LIVE_CONTROL_TABLES as readonly string[]).includes(table)) return false;
   const channel = settingsLiveChannel;
   if (!channel) return false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -789,6 +803,10 @@ function flushLiveChanges(): void {
         "promotions",
         "purchase_orders",
         "purchase_order_items",
+        "app_users",
+        "cashiers",
+        "staff_roles",
+        "user_roles",
       ].includes(change.table)
     ) {
       announceDataChange(change);
@@ -811,7 +829,11 @@ function queueLiveChange(change: LiveChange): void {
  * Failures are retried with growing gaps and every attempt is logged, so a
  * record that never reaches the shop database is visible rather than silent.
  */
-export async function syncNow(reason: string, attempt = 0): Promise<void> {
+export type SyncNowResult =
+  | { ok: true }
+  | { ok: false; error: string; retryScheduled: boolean };
+
+export async function syncNow(reason: string, attempt = 0): Promise<SyncNowResult> {
   try {
     await runExclusive(reason);
     const completed = syncState();
@@ -820,13 +842,15 @@ export async function syncNow(reason: string, attempt = 0): Promise<void> {
     await refreshStaffMirror();
     logSync("push", reason, true, "sent to this shop's database");
     recordSync({ direction: "push", entity: reason, status: "success" });
+    return { ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logSync("push", reason, false, message);
     recordSync({ direction: "push", entity: reason, status: "failed", error: message });
     const delay = RETRY_DELAYS_MS[attempt];
-    if (delay === undefined || typeof window === "undefined") return;
-    window.setTimeout(() => void syncNow(reason, attempt + 1), delay);
+    const retryScheduled = delay !== undefined && typeof window !== "undefined";
+    if (retryScheduled) window.setTimeout(() => void syncNow(reason, attempt + 1), delay);
+    return { ok: false, error: message, retryScheduled };
   }
 }
 
@@ -877,7 +901,7 @@ export function startSyncEngine() {
     void status.then(applyDesktopStatus).catch(() => {});
   }
   const tick = () => {
-    if (!desktopBridge) void runExclusive("timer");
+    if (!desktopBridge && document.visibilityState !== "hidden") void runExclusive("timer");
   };
   // Web/Android retain the renderer timer. Electron already has the worker's
   // own interval, so the renderer only wakes it for explicit/live/reconnect
@@ -933,11 +957,15 @@ export function startSyncEngine() {
     }
   });
   const wakeOutbox = () => void runExclusive("local-write");
-  const flushBeforeBackground = () => {
-    if (document.visibilityState === "hidden" && isOnline()) void runExclusive("background");
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "hidden") {
+      if (isOnline()) void runExclusive("background");
+      return;
+    }
+    wake();
   };
   window.addEventListener("pos:browser-outbox-changed", wakeOutbox);
-  document.addEventListener("visibilitychange", flushBeforeBackground);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 
   // Live listener: an account or settings change made anywhere lands in this
   // shop's own database within a second instead of waiting for the timer.
@@ -958,7 +986,7 @@ export function startSyncEngine() {
       const next = supabaseExternal.channel("pos-live-settings");
       next.on("broadcast", { event: "settings_changed" }, (message) => {
         const table = String((message as { payload?: { table?: unknown } }).payload?.table ?? "");
-        if (!(LIVE_SETTINGS_TABLES as readonly string[]).includes(table)) return;
+        if (!(LIVE_CONTROL_TABLES as readonly string[]).includes(table)) return;
         queueLiveChange({ reason: `broadcast:${table}`, table, storeId: null });
       });
       // Database-change subscriptions require table SELECT privileges. PIN-only
@@ -1036,7 +1064,7 @@ export function startSyncEngine() {
     offDesktopStatus?.();
     offMode();
     window.removeEventListener("pos:browser-outbox-changed", wakeOutbox);
-    document.removeEventListener("visibilitychange", flushBeforeBackground);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
     started = false;
   };
 }

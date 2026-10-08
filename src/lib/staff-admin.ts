@@ -12,7 +12,7 @@ import {
   setStaffAccountActive,
   updateStaffAccount,
 } from "@/lib/staff-admin-client";
-import type { StaffRole } from "@/lib/permissions";
+import type { StaffPermissions, StaffRole } from "@/lib/permissions";
 import { isExternalEmail } from "@/lib/internal-domains";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
@@ -28,6 +28,8 @@ export type StaffAccountInput = {
   branchId?: string | null;
   roleSlug: string;
   baseRole: StaffRole;
+  /** Complete starting matrix from the selected role. */
+  permissions: StaffPermissions;
   active: boolean;
 };
 
@@ -62,6 +64,7 @@ export async function createStaffMember(input: StaffAccountInput): Promise<void>
       branchId: input.branchId ?? null,
       roleSlug: input.roleSlug,
       baseRole: dbBaseRole(input.baseRole),
+      permissions: input.permissions,
       active: input.active,
     },
   });

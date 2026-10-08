@@ -327,8 +327,8 @@ export function TerminalTokens({
             : "Issue one code for each Windows counter PC. Open the POS app on that PC and scan or paste the code to assign it to this location."}
         </p>
         <p className="mt-2 text-xs text-muted-foreground">
-          This registers the device, not a person. Supervisors and administrators issue codes;
-          each staff member signs in with their own account and permissions.
+          This registers the device, not a person. Staff with terminal-management permission issue
+          codes; each staff member signs in with their own account and permissions.
         </p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">

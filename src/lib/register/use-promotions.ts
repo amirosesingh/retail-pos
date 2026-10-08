@@ -11,8 +11,15 @@ import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { logger } from "@/lib/audit-log";
 import { r2 } from "@/core/types/pos-types";
-import { loadMemberVouchers, loadVoucherByToken, voucherValue } from "@/lib/coupons";
+import {
+  campaignStatus,
+  isVoucherExpired,
+  loadMemberVouchers,
+  loadVoucherByToken,
+  voucherValue,
+} from "@/lib/coupons";
 import type { Campaign, VoucherView } from "@/lib/coupons";
+import { isLive } from "@/lib/pos-promotions";
 import type { CartCoupon } from "@/lib/register/use-cart";
 import type { CartLine, Product, Promotion } from "@/core/types/pos-types";
 
@@ -79,7 +86,9 @@ export function usePromotions(deps: PromotionsDeps) {
   async function applyCoupon() {
     const code = couponCode.trim();
     if (!code) return;
-    const rule = promotions.find((p) => p.active && p.name.toLowerCase() === code.toLowerCase() && p.value);
+    const rule = promotions.find(
+      (p) => isLive(p) && p.name.toLowerCase() === code.toLowerCase() && p.value,
+    );
     if (!rule) {
       toast.error(`No active promotion matches “${code}”`);
       return;
@@ -94,7 +103,7 @@ export function usePromotions(deps: PromotionsDeps) {
     if (couponScope === "item") {
       const line = lines[targetIndex]!;
       const unit = rule.valueType === "percent" ? r2((line.price * (rule.value ?? 0)) / 100) : r2(rule.value ?? 0);
-      const value = r2(unit * line.qty);
+      const value = Math.min(r2(line.price * line.qty), r2(unit * line.qty));
       // The coupon lives in its own field so a cashier discount on the same
       // line adds to it instead of replacing it.
       patchLine(targetIndex, {
@@ -125,7 +134,12 @@ export function usePromotions(deps: PromotionsDeps) {
     } else {
       // A bill coupon is its own figure — it never occupies the cashier's
       // bill-discount entry, so the two add up instead of replacing each other.
-      const value = rule.valueType === "percent" ? r2((promoBase * (rule.value ?? 0)) / 100) : r2(rule.value ?? 0);
+      const value = Math.min(
+        promoBase,
+        rule.valueType === "percent"
+          ? r2((promoBase * (rule.value ?? 0)) / 100)
+          : r2(rule.value ?? 0),
+      );
       setCoupon({
         code: rule.name,
         promoId: rule.id,
@@ -170,9 +184,22 @@ export function usePromotions(deps: PromotionsDeps) {
         toast.error("This voucher has already been used");
         return;
       }
+      if (view.voucher.status === "DISABLED") {
+        toast.error("This voucher has been switched off");
+        return;
+      }
       const campaign = view.campaign;
-      if (campaign.expiresAt && new Date() > new Date(campaign.expiresAt)) {
+      if (isVoucherExpired(view.voucher, campaign)) {
         toast.error("This voucher has expired");
+        return;
+      }
+      const status = campaignStatus(campaign);
+      if (status === "Scheduled" || status === "Off" || status === "Expired") {
+        toast.error(
+          status === "Scheduled"
+            ? "This voucher campaign has not started yet"
+            : "This voucher campaign is not active",
+        );
         return;
       }
       if (view.voucher.memberId && members.some((m) => m.id === view.voucher.memberId)) {

@@ -20,6 +20,7 @@ import { OtpVerificationModal } from "@/platforms/web/components/pos/OtpVerifica
 import { usePos } from "@/lib/pos-store";
 import { useVerificationGateway } from "@/lib/verification-gateway";
 import { describeError } from "@/lib/notify";
+import { newMemberCode } from "@/lib/member-code";
 import type { Member } from "@/core/types/pos-types";
 
 const looksNumeric = (v: string) => /^[\d+\s-]+$/.test(v.trim());
@@ -36,7 +37,7 @@ export function QuickMemberDialog({
   prefill?: string;
   onCreated: (member: Member) => void;
 }) {
-  const { state, upsertMember } = usePos();
+  const { upsertMember } = usePos();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -60,7 +61,7 @@ export function QuickMemberDialog({
     }
     const member: Member = {
       id: crypto.randomUUID(),
-      code: `MB-${1000 + state.members.length + 1}`,
+      code: newMemberCode(),
       name: name.trim(),
       phone: phone.trim(),
       email: email.trim(),

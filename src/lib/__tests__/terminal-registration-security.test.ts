@@ -136,6 +136,23 @@ describe("terminal registration trust boundary", () => {
     expect(schema).not.toContain('CREATE POLICY "Terminals can stamp their heartbeat"');
   });
 
+  it("uses the terminal permission and reissues registrations atomically", () => {
+    const activation = source("src/core/activation/terminal-tokens.ts");
+    const migration = source(
+      "supabase/migrations/20261008124500_harden_terminal_management.sql",
+    );
+    const policies = migration.slice(0, migration.indexOf("CREATE OR REPLACE FUNCTION"));
+
+    // SELECT, INSERT and DELETE each need one predicate; UPDATE requires both
+    // USING and WITH CHECK so a manager cannot move a row outside the policy.
+    expect(policies.match(/has_perm\('can_manage_terminals'\)/g)).toHaveLength(5);
+    expect(migration).toContain("FOR UPDATE");
+    expect(migration).toContain("RETURN new_token");
+    expect(activation).toContain('rpc("terminal_token_reissue"');
+    const reissue = activation.slice(activation.indexOf("export async function reissueTerminalToken"));
+    expect(reissue).not.toContain("await insertTokenRow(row)");
+  });
+
   it("never provisions machine credentials from a spoofable device label", () => {
     expect(accountFn).toContain("proofHash: z.string()");
     expect(accountFn).not.toContain("device: z.string()");

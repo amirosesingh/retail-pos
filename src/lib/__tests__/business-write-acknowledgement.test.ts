@@ -37,14 +37,21 @@ describe("business UI persistence acknowledgements", () => {
 
   it("awaits product and member acceptance before changing business state", () => {
     const store = source("src/lib/pos-store.tsx");
+    const inventory = source("src/routes/inventory.tsx");
     const quickMember = source("src/platforms/web/components/pos/QuickMemberDialog.tsx");
     expect(store).toContain("const target = await db.commitProduct(stored)");
     expect(store).toContain("const target = await db.commitProducts(updated)");
     expect(store).toContain("await db.commitProduct(merged)");
-    expect(store).toContain("const target = await db.commitMember(member)");
+    expect(store).toContain(
+      'const target = await db.commitMember(member, can("can_edit_member_points"))',
+    );
     expect(store).toContain("await db.deleteMember(id)");
     expect(quickMember).toContain("await upsertMember(member)");
     expect(quickMember).toContain("await upsertMember({ ...verifying, verified: true })");
+    expect(inventory).toContain('notifyError(error, "Updating product categories")');
+    expect(inventory).toContain('notifyError(error, "Archiving selected products")');
+    expect(inventory).toContain("notifyError(error, `Archiving ${p.name}`)");
+    expect(inventory).toContain("disabled={bulkSaving}");
   });
 
   it("commits bulk-import stock as an idempotent audited movement", () => {
@@ -64,11 +71,19 @@ describe("business UI persistence acknowledgements", () => {
     expect(dialog).toContain("await db.saveStockCountDraft");
     expect(dialog).toContain("await persistDraft()");
     expect(dialog).toContain("await applyStockCount(");
+    expect(dialog).toContain("postingAttemptRef.current ??=");
+    expect(dialog).toContain("await saveRecordEditHistory({");
+    expect(dialog).toContain("const run = saveTailRef.current");
+    expect(dialog).toContain(".catch(() => undefined)");
+    expect(dialog).toContain(".then(() => onOpenChange(false))");
     expect(dialog).toContain("if (postingRef.current) return");
     expect(dialog).toContain("postingRef.current = true");
     expect(dialog).toContain("postingRef.current = false");
     expect(store).toContain(".commitStockAdjustments(");
-    expect(store).toContain("draftId ? { id: draftId, by: postedBy,");
+    expect(store).toContain('stableChildId(adjustmentAttemptId, "7", index)');
+    expect(store).toContain(
+      "draftId\n            ? {\n                id: draftId,\n                by: postedBy,",
+    );
     expect(store).toContain("record: record ? { ...record, reason, note } : undefined");
     expect(dialog).toContain('draft?.status === "posted" ? null : await persistDraft()');
   });
@@ -78,10 +93,11 @@ describe("business UI persistence acknowledgements", () => {
     const purchasing = source("src/routes/purchasing.tsx");
     expect(db).not.toContain("recordPurchaseOrder(");
     expect(db).toContain('commitOps("Saving receiving invoice"');
-    expect(purchasing).toContain("await db.commitReceivingInvoice(invoice, hubId)");
     expect(purchasing).toContain(
-      "await db.updateReceivingInvoice(invoice, draftLineRemovals, hubId)",
+      "await db.commitReceivingInvoice(invoice, hubId, mayUpdateCataloguePrices)",
     );
+    expect(purchasing).toContain("await saveRecordEditHistory({");
+    expect(purchasing).toContain("await db.updateReceivingInvoice(");
   });
 
   it("waits for each transfer transition before success UI", () => {
@@ -96,6 +112,10 @@ describe("business UI persistence acknowledgements", () => {
     expect(store).toContain("await saveTransfer({");
     expect(store).not.toContain("void dispatchTransferInDb");
     expect(store).not.toContain("void receiveTransferInDb");
+    const dialog = source("src/platforms/web/components/pos/TransferStepDialog.tsx");
+    expect(dialog).toContain("if (busy || needsReason) return");
+    expect(dialog).toContain("await onConfirm(");
+    expect(dialog).toContain("disabled={needsReason || busy}");
     expect(store).toContain('type: "stock_request_received"');
     expect(store).toContain('type: "transfer_sent"');
     expect(store).toContain('type: "transfer_received"');
