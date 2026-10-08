@@ -13119,26 +13119,72 @@ DROP POLICY IF EXISTS "Staff can read tokens" ON public.terminal_tokens;
 DROP POLICY IF EXISTS "Supervisors can read tokens" ON public.terminal_tokens;
 CREATE POLICY "Supervisors can read tokens"
   ON public.terminal_tokens FOR SELECT TO authenticated
-  USING ((SELECT public.is_app_supervisor()));
+  USING ((SELECT public.has_perm('can_manage_terminals')));
 
 DROP POLICY IF EXISTS "Staff can issue tokens" ON public.terminal_tokens;
 DROP POLICY IF EXISTS "Supervisors can issue tokens" ON public.terminal_tokens;
 CREATE POLICY "Supervisors can issue tokens"
   ON public.terminal_tokens FOR INSERT TO authenticated
-  WITH CHECK ((SELECT public.is_app_supervisor()));
+  WITH CHECK ((SELECT public.has_perm('can_manage_terminals')));
 
 DROP POLICY IF EXISTS "Staff can manage tokens" ON public.terminal_tokens;
 DROP POLICY IF EXISTS "Supervisors can manage tokens" ON public.terminal_tokens;
 CREATE POLICY "Supervisors can manage tokens"
   ON public.terminal_tokens FOR UPDATE TO authenticated
-  USING ((SELECT public.is_app_supervisor()))
-  WITH CHECK ((SELECT public.is_app_supervisor()));
+  USING ((SELECT public.has_perm('can_manage_terminals')))
+  WITH CHECK ((SELECT public.has_perm('can_manage_terminals')));
 
 DROP POLICY IF EXISTS "Staff can delete tokens" ON public.terminal_tokens;
 DROP POLICY IF EXISTS "Supervisors can delete tokens" ON public.terminal_tokens;
 CREATE POLICY "Supervisors can delete tokens"
   ON public.terminal_tokens FOR DELETE TO authenticated
-  USING ((SELECT public.is_app_supervisor()));
+  USING ((SELECT public.has_perm('can_manage_terminals')));
+
+CREATE OR REPLACE FUNCTION public.terminal_token_reissue(
+  p_old_id uuid,
+  p_new_id uuid,
+  p_created_at timestamptz,
+  p_expires_at timestamptz
+) RETURNS public.terminal_tokens
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  old_token public.terminal_tokens%ROWTYPE;
+  new_token public.terminal_tokens%ROWTYPE;
+BEGIN
+  IF NOT public.has_perm('can_manage_terminals') THEN
+    RAISE EXCEPTION 'TERMINAL_MANAGEMENT_FORBIDDEN';
+  END IF;
+  SELECT * INTO old_token
+    FROM public.terminal_tokens
+   WHERE id = p_old_id
+     AND status IN ('active', 'used')
+     AND revoked_at IS NULL
+   FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'TERMINAL_TOKEN_NOT_ACTIVE'; END IF;
+
+  INSERT INTO public.terminal_tokens (
+    id, location_id, location_name, device_name, platform, status,
+    created_at, reissued_at, is_claimed, expires_at
+  ) VALUES (
+    p_new_id, old_token.location_id, old_token.location_name,
+    old_token.device_name, old_token.platform, 'active', p_created_at,
+    p_created_at, false, p_expires_at
+  ) RETURNING * INTO new_token;
+
+  UPDATE public.terminal_tokens
+     SET status = 'revoked', revoked_at = p_created_at, replaced_by = p_new_id
+   WHERE id = p_old_id;
+  RETURN new_token;
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION public.terminal_token_reissue(uuid,uuid,timestamptz,timestamptz)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.terminal_token_reissue(uuid,uuid,timestamptz,timestamptz)
+  TO authenticated, service_role;
 
 -- Consolidated online security/schema change: 20260905072726_c2d95046-07c2-4f23-9fa1-6789dcb3cec6.sql
 REVOKE ALL ON FUNCTION public.product_visible_to_me(text) FROM PUBLIC;
@@ -17626,11 +17672,11 @@ BEGIN
       FROM public.issued_vouchers x
       WHERE p_after_cursor IS NULL OR jsonb_build_object('id',x.id)::text>p_after_cursor
       ORDER BY jsonb_build_object('id',x.id)::text
-      LIMIT LEAST(GREATEST(p_limit,100),2000)
+      LIMIT LEAST(GREATEST(p_limit,10),2000)
     ) page;
   RETURN jsonb_build_object(
     'rows',v_rows,
-    'cursor',CASE WHEN jsonb_array_length(v_rows)>=LEAST(GREATEST(p_limit,100),2000)
+    'cursor',CASE WHEN jsonb_array_length(v_rows)>=LEAST(GREATEST(p_limit,10),2000)
                   THEN v_cursor ELSE NULL END
   );
 END $fn$;

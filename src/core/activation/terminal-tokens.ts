@@ -331,10 +331,13 @@ export async function issueTerminalToken(input: {
 }
 
 export async function revokeTerminalToken(id: string): Promise<void> {
-  const { error } = await table()
+  const { data, error } = await table()
     .update({ status: "revoked", revoked_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error("That terminal registration no longer exists.");
 }
 
 /**
@@ -348,28 +351,20 @@ export async function reissueTerminalToken(
   const id = crypto.randomUUID();
   const issuedAt = Date.now();
   const now = new Date(issuedAt).toISOString();
-  const row = {
-    id,
-    location_id: token.locationId,
-    location_name: token.locationName,
-    device_name: token.deviceName,
-    platform: token.platform,
-    status: "active" as const,
-    created_at: now,
-    reissued_at: now,
-    is_claimed: false,
-    expires_at: new Date(issuedAt + ACTIVATION_TTL_MS).toISOString(),
-  };
-  await insertTokenRow(row);
-
-  const { error: retireError } = await table()
-    .update({ status: "revoked", revoked_at: now, replaced_by: id })
-    .eq("id", token.id);
-  if (retireError) throw retireError;
+  const expiresAt = new Date(issuedAt + ACTIVATION_TTL_MS).toISOString();
+  const { data, error } = await rpc("terminal_token_reissue", {
+    p_old_id: token.id,
+    p_new_id: id,
+    p_created_at: now,
+    p_expires_at: expiresAt,
+  });
+  if (error) throw error;
+  if (!data) throw new Error("The replacement terminal registration was not returned.");
+  const replacement = rowToToken(data as Record<string, unknown>);
   const membership = publicSupabaseConfig("membership");
 
   return {
-    token: rowToToken(row),
+    token: replacement,
     code: await encryptActivationV1({
       supabaseUrl: supabaseConfig().url,
       supabaseAnonKey: supabaseConfig().key,
