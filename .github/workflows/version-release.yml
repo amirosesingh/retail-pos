@@ -31,7 +31,13 @@ jobs:
         run: |
           git pull --ff-only origin main
           git fetch --tags --force origin
-          version=$(node scripts/bump-version.cjs)
+          version=$(node -p "require('./package.json').version")
+          # Keep a version prepared in the PR. Only advance an already-tagged
+          # version, so the reviewed number is the one both platforms ship.
+          while git rev-parse -q --verify "refs/tags/v$version" >/dev/null; do
+            version=$(node scripts/bump-version.cjs)
+          done
+          node scripts/bump-version.cjs --write
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Commit and tag release version
@@ -44,8 +50,10 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json src/version.ts
-          git commit -m "chore: release $tag [release]"
+          git add package.json package-lock.json src/version.ts database/sqlserver/retail-pos-local-database.sql
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: release $tag [release]"
+          fi
           git tag "$tag"
           # Publish the release commit and its immutable tag in one receive.
           # A split push can advance main and then leave the release untagged

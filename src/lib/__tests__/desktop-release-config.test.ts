@@ -21,6 +21,9 @@ describe("desktop release configuration", () => {
     const bump = read("scripts/bump-version.cjs");
 
     expect(version).toContain("version=$(node scripts/bump-version.cjs)");
+    expect(version).toContain('while git rev-parse -q --verify "refs/tags/v$version"');
+    expect(version).toContain("node scripts/bump-version.cjs --write");
+    expect(version).toContain("database/sqlserver/retail-pos-local-database.sql");
     expect(version).toContain("git fetch --tags --force origin");
     expect(version).toContain("git add package.json package-lock.json src/version.ts");
     expect(version).toContain('git tag "$tag"');
@@ -35,6 +38,7 @@ describe("desktop release configuration", () => {
 
     expect(bump).toContain("package.json is the authoritative application version");
     expect(bump).toContain("syncLockVersion(pkg.version)");
+    expect(bump).toContain("fs.writeFileSync(installerPath, installer)");
 
     expect(desktop).toContain("startsWith(github.ref, 'refs/tags/v')");
     expect(android).toContain("startsWith(github.ref, 'refs/tags/v')");

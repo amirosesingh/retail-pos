@@ -82,7 +82,8 @@ async function includeMissingParents(operations, reader, registry, branchId) {
       .filter((id) => id && !present.has(id));
     if (!ids.length) continue;
     const table = registry.tables.find((item) => item.cloudTable === parentName);
-    const rows = await reader.rows(table, ids.map((id) => ({ key: { id } })), { branchId });
+    const rows = rowsForBranch(table,
+      await reader.rows(table, ids.map((id) => ({ key: { id } })), { branchId }), branchId);
     const found = new Set(rows.filter(belongs).map((row) => String(row.id)));
     if (ids.some((id) => !found.has(id)))
       throw Object.assign(new Error(`${childName} has no ${parentName} parent in this terminal branch.`), {

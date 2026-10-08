@@ -148,9 +148,11 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261008124500_harden_terminal_management.sql",
       "supabase/migrations/20261008133000_align_scoped_settings_permissions.sql",
       "supabase/migrations/20261008143000_canonicalize_terminal_branch_ids.sql",
+      "supabase/migrations/20261008143001_compare_purchase_order_parent_as_uuid.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
+      "supabase/sql/verify_purchase_order_uuid_sync.sql",
     ]);
   });
 

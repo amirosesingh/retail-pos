@@ -194,7 +194,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
         .mockResolvedValueOnce([cached, branch]).mockResolvedValueOnce([]),
       rows: vi.fn(async (table, changes) => table.cloudTable === "purchase_orders"
         ? [{ id: "P1", store_id: null }]
-        : changes.map((change) => ({ ...change.key, value: "1" }))),
+        : changes.map((change: { key: Record<string, string> }) => ({ ...change.key, value: "1" }))),
     };
     const cloud = { pushBatch: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
     const checkpoints = { get: vi.fn().mockResolvedValue(null), save: vi.fn() };

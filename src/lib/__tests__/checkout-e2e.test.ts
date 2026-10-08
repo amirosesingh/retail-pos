@@ -337,6 +337,30 @@ describe("receiving stock ownership", () => {
       },
     ]);
   });
+  it("finalizes a saved desktop draft with its movements in the paired branch", async () => {
+    const { receivingLocation } = await import("../receiving-location");
+    const paired = { id: "branch-1", name: "Branch", code: "B1", address: "", phone: "" };
+    const hub = { ...paired, id: "central", isCentral: true };
+    const destination = receivingLocation([hub, paired], hub, true, paired.id);
+    const invoice = { ...previous, storeId: destination.id };
+    localAggregate.mockReset().mockResolvedValue({ ok: true });
+    await db.saveReceivingDraft(invoice);
+    await db.updateReceivingInvoice(invoice, [], destination.id);
+    const draft = localAggregate.mock.calls[0][0];
+    const posted = localAggregate.mock.calls[1][0];
+    expect(draft.operations.some((op: { table: string }) => op.table === "item_activity_logs")).toBe(false);
+    expect(posted.kind).toBe("receiving");
+    expect(posted.branchId).toBe(paired.id);
+    const header = posted.operations.find((op: { table: string }) => op.table === "purchase_orders");
+    const movement = posted.operations.find((op: { table: string }) => op.table === "item_activity_logs");
+    expect(header.rows[0]).toMatchObject({ id: invoice.id, status: "posted", store_id: paired.id });
+    expect(movement.rows[0]).toMatchObject({ store_id: paired.id, quantity_delta: 4 });
+    // Retrying Finalize reuses the movement id, rather than receiving twice.
+    await db.updateReceivingInvoice(invoice, [], destination.id);
+    const retry = localAggregate.mock.calls[2][0];
+    expect(retry.operations.find((op: { table: string }) => op.table === "item_activity_logs").rows[0].id)
+      .toBe(movement.rows[0].id);
+  });
   it("posts only the correction delta and reuses IDs on retry", () => {
     const next = { ...previous, lines: [{ ...previous.lines[0], qty: 7 }] };
     const attempt = "bbbbbbbb-cccc-4ddd-aeee-ffffffffffff";
