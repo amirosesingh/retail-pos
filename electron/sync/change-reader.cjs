@@ -1,5 +1,5 @@
 const { toCloudRow } = require("./row-codec.cjs");
-const { branchPredicate } = require("../db/branch-scope.cjs");
+const { rendererReadBranchPredicate } = require("../db/branch-scope.cjs");
 
 class ChangeReader {
   constructor(connectionManager, registry = null) {
@@ -48,7 +48,9 @@ class ChangeReader {
       return `(${primary.map((column, part) => { request.input(`k${index}_${part}`, key[column]); return `[${column}]=@k${index}_${part}`; }).join(" AND ")})`;
     });
     const scope = branchId && table.scope === "branch"
-      ? branchPredicate(this.registry, table, "source")
+      // Recover unowned legacy purchase headers (and their children) before
+      // PushWorker stamps the verified branch. Other branches stay excluded.
+      ? rendererReadBranchPredicate(this.registry, table, "source")
       : null;
     if (scope) request.input("branch", String(branchId));
     const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);

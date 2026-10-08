@@ -40,7 +40,8 @@ function branchPredicate(registry, table, alias = "source", seen = new Set()) {
  * before store_id was projected. The local database is paired to one branch,
  * so an unowned receiving row can be shown to that till and claimed on its
  * next save. A non-empty branch mismatch remains hidden. This relaxed rule is
- * deliberately read-only; writes and synchronization use branchPredicate().
+ * deliberately read-only; writes use branchPredicate(). The sync reader also
+ * uses it so PushWorker can stamp an unowned legacy order before uploading it.
  */
 function rendererReadBranchPredicate(registry, table, alias = "source", seen = new Set()) {
   if (!table || seen.has(table.sqlServerTable)) return null;

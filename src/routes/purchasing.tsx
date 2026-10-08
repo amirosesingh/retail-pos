@@ -62,7 +62,10 @@ import {
   useCategories,
 } from "@/lib/catalog-meta";
 import { resolveByBarcode } from "@/lib/product-lookup";
-import { centralHub, locationPath, primarySub, routingTargets } from "@/lib/locations";
+import { locationPath, primarySub, routingTargets } from "@/lib/locations";
+import { receivingLocation } from "@/lib/receiving-location";
+import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
+import { canonicalBranchId } from "@/lib/branch-id";
 import { Badge } from "@/components/ui/badge";
 import { canEditPosted, nextStockRef } from "@/lib/stock-ref";
 import { ReceivingRecordView } from "@/platforms/web/components/pos/ReceivingRecordView";
@@ -186,15 +189,19 @@ function Purchasing() {
   const scanRef = useRef<HTMLInputElement>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>(cachedSuppliers());
   const [importOpen, setImportOpen] = useState(false);
-  /*
-    Central-first receiving. Every delivery lands in the hub, and only a
-    deliberate put-away moves it onto a shop floor or sub-warehouse, so stock
-    is never in two places at once and nothing is silently absorbed.
-  */
-  const hub = useMemo(() => centralHub(allStores) ?? currentStore, [allStores, currentStore]);
+  // Desktop SQL Server owns one paired location. Cloud receiving uses the
+  // nominated hub; desktop receiving and its stock movements stay paired.
+  const localReceiving = effectiveDatabaseMode() === "local";
+  const receivingBranchId = localReceiving
+    ? canonicalBranchId(activeBranchId(currentStore.id))
+    : currentStore.id || activeBranchId(currentStore.id);
+  const hub = useMemo(
+    () => receivingLocation(allStores, currentStore, localReceiving, receivingBranchId),
+    [allStores, currentStore, localReceiving, receivingBranchId],
+  );
   const putAwayTargets = useMemo(
-    () => routingTargets(allStores, currentStore.id).filter((s) => s.id !== hub.id),
-    [allStores, currentStore.id, hub.id],
+    () => routingTargets(allStores, receivingBranchId ?? "").filter((s) => s.id !== hub.id),
+    [allStores, receivingBranchId, hub.id],
   );
   const [pending, setPending] = useState<PutAwayLine[]>([]);
   /** Levels default to the warehouse's primary pick location when there is one. */
@@ -365,8 +372,8 @@ function Purchasing() {
     supplier: supplier.trim(),
     supplierId: suppliers.find((s) => s.name === supplier.trim())?.id ?? null,
     operator: user?.name ?? "—",
-    storeId: currentStore.id || activeBranchId(currentStore.id),
-    storeCode: currentStore.code,
+    storeId: receivingBranchId,
+    storeCode: localReceiving ? hub.code : currentStore.code,
     invoiceDate,
     entryDate: new Date(entryDate).toISOString(),
     totalCost: totals.cost,
@@ -677,7 +684,7 @@ function Purchasing() {
     if (!ref) return toast.error("Invoice number is required");
     if (!supplier.trim()) return toast.error("Supplier name is required");
     if (!lines.length) return toast.error("Scan at least one item into the invoice");
-    if (saving) return;
+    if (saving || finalizingRef.current) return;
 
     finalizingRef.current = true;
     setSaving(true);
@@ -696,10 +703,8 @@ function Purchasing() {
         return;
       }
 
-      // A receiving order must never land without a branch: fall back to the
-      // branch this terminal is bound to when the view has not resolved one.
-      // Stock itself is always posted into the hub, never straight to a floor.
-      const storeId = currentStore.id || activeBranchId(currentStore.id);
+      // The invoice and desktop movement must use the same paired location.
+      const storeId = receivingBranchId;
       if (!storeId) {
         toast.error("This terminal has no branch yet", {
           description: "Activate the terminal or pick a branch before receiving stock.",
@@ -1205,9 +1210,9 @@ function Purchasing() {
                       <Trash2 className="size-4" /> Discard draft
                     </Button>
                   )}
-                  <Button className="h-11" disabled={saving} onClick={() => void finalize()}>
+                  <Button type="button" className="h-11" disabled={saving} aria-busy={saving} onClick={() => void finalize()}>
                     <PackagePlus className="size-4" />{" "}
-                    {saving ? "Saving invoice…" : "Finalize & receive stock"}
+                    {saving ? "Finalizing invoice…" : "Finalize & receive stock"}
                   </Button>
                 </div>
               </div>

@@ -139,6 +139,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261008081500_enable_stock_transfer_drafts.sql",
       "supabase/migrations/20261008083500_preserve_submitted_transfer_approval.sql",
       "supabase/migrations/20261008093000_preserve_booking_kind.sql",
+      "supabase/migrations/20261008093652_compare_purchase_order_parent_as_uuid.sql",
       "supabase/migrations/20261008094500_restrict_transfer_approval_authority.sql",
       "supabase/migrations/20261008095500_derive_legacy_booking_kind.sql",
       "supabase/migrations/20261008100500_attach_transfer_lifecycle_guard.sql",
@@ -151,6 +152,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
+      "supabase/sql/verify_purchase_order_uuid_sync.sql",
     ]);
   });
 

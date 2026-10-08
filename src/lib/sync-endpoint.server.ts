@@ -76,6 +76,7 @@ const bodySchema = z.object({
       operations: z
         .array(
           z.object({
+            deletePhase: z.boolean().optional(),
             table: z
               .string()
               .regex(/^[a-z_][a-z0-9_]*$/)

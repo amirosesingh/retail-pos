@@ -8,6 +8,13 @@ function toCloudRow(table, row) {
   const result = { ...row };
   for (const column of table.columns) {
     const name = column.sqlServerColumn;
+    // SQL Server drivers can return uppercase GUIDs. PostgreSQL emits UUIDs
+    // in lowercase, and sync ownership checks compare JSON identifiers.
+    if (String(column.cloudType ?? "").trim().toLowerCase() === "uuid" &&
+        typeof result[name] === "string") {
+      result[column.cloudColumn] = result[name].toLowerCase();
+      if (column.cloudColumn !== name) delete result[name];
+    }
     if (!structured(column) || typeof result[name] !== "string") continue;
     try { result[column.cloudColumn] = JSON.parse(result[name]); }
     catch {

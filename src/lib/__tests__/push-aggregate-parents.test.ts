@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 const tables = [
-  { cloudTable: "purchase_orders", sqlServerTable: "purchase_orders", dependencyOrder: 1 },
+  { cloudTable: "purchase_orders", sqlServerTable: "purchase_orders", dependencyOrder: 1,
+    scope: "branch", columns: [{ cloudColumn: "store_id", sqlServerColumn: "store_id" }] },
   { cloudTable: "purchase_order_items", sqlServerTable: "purchase_order_items", dependencyOrder: 3 },
 ];
 
@@ -42,6 +43,24 @@ describe("queued receiving aggregate recovery", () => {
     await expect(new PushWorker({ reader, cloud, checkpoints: {}, registry: { tables } })
       .pushAggregates("B1", 100)).rejects.toThrow(/no purchase_orders parent/);
     expect(cloud.pushAggregate).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "", " b1 "])("repairs legacy parent branch %s before a child-only retry", async (store_id) => {
+    const reader = {
+      pendingAggregates: vi.fn().mockResolvedValueOnce([aggregate]).mockResolvedValueOnce([]),
+      rows: vi.fn(async (table: { cloudTable: string }) => table.cloudTable === "purchase_orders"
+        ? [{ id: "order", store_id }]
+        : [{ id: "line", po_id: "order" }]),
+      acknowledgeAggregate: vi.fn(), failAggregate: vi.fn(),
+    };
+    const cloud = { pushAggregate: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
+    const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
+    await new PushWorker({ reader, cloud, checkpoints: {}, registry: { tables } })
+      .pushAggregates("B1", 100);
+    expect(cloud.pushAggregate.mock.calls[0][0].operations[0]).toMatchObject({
+      table: "purchase_orders", rows: [{ id: "order", store_id: "B1" }],
+    });
+    expect(reader.acknowledgeAggregate).toHaveBeenCalledWith(aggregate.aggregateId);
   });
 });
 
