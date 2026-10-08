@@ -1622,15 +1622,13 @@ function registerIpc() {
   ipcMain.handle("database:save-connect", (_e, value) => guard.guarded(async()=>{
     const result=await observedDatabaseOperation("connection","save_connect",() => databaseService.saveAndConnect(guard.databaseProfile(value,{requireDatabase:true})));
     if(!result.ok)return result;
-    try{
-      const synchronization=await prepareLocalData();
-      return{...result,synchronization,state:databaseService.snapshot()};
-    }catch(error){
-      // SQL Server is already validated, connected and saved. Cloud readiness
-      // is reported separately so missing activation or internet never turns a
-      // valid local connection into a failed Save and Connect operation.
-      return{...result,ok:true,synchronization:{ok:false,pending:true,code:error?.code??"ESYNC",message:String(error?.message??error)},state:databaseService.snapshot()};
-    }
+    // SQL Server is already validated, connected and saved. Bootstrap can
+    // include every branch table and must not hold the setup dialog open or
+    // make a healthy port-1433 connection look like a connection timeout.
+    // prepareLocalData owns readiness/error publication and deduplicates with
+    // startup or automatic recovery, so it is safe to continue in background.
+    void prepareLocalData().catch(()=>undefined);
+    return{...result,ok:true,synchronization:{ok:true,pending:true},state:databaseService.snapshot()};
   }));
   ipcMain.handle("database:disconnect", () => databaseService.disconnect());
   ipcMain.handle("database:remove-configuration", () => databaseService.remove());

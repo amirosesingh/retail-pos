@@ -60,6 +60,18 @@ describe("Electron database error recovery", () => {
     expect(repository).toContain("recovered.terminal_id=failed.terminal_id");
   });
 
+  it("returns from Save and Connect while the first branch bootstrap continues", () => {
+    const main = source("electron/main.cjs");
+    const start = main.indexOf('ipcMain.handle("database:save-connect"');
+    const end = main.indexOf('ipcMain.handle("database:disconnect"', start);
+    const handler = main.slice(start, end);
+
+    expect(handler).toContain("databaseService.saveAndConnect");
+    expect(handler).toContain("void prepareLocalData().catch(()=>undefined)");
+    expect(handler).toContain("synchronization:{ok:true,pending:true}");
+    expect(handler).not.toContain("await prepareLocalData()");
+  });
+
   it("persists a safe checkout failure reference for support", () => {
     const checkout = source("src/lib/register/use-checkout.ts");
     const diagnostics = source("electron/diagnostics.cjs");

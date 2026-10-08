@@ -48,7 +48,7 @@ describe("offline terminal operations", () => {
     const preload = readFileSync("electron/preload.cjs", "utf8");
     const dialog = readFileSync("src/platforms/web/components/pos/AuthorizationDialog.tsx", "utf8");
     expect(main).toContain('ipcMain.handle("sync:auto"');
-    expect(main).toContain("synchronization:{ok:false,pending:true");
+    expect(main).toContain("synchronization:{ok:true,pending:true");
     expect(main).toContain('databaseService.markReady({phase:"sync_pending"');
     expect(preload).toContain('auto: () => invoke("sync:auto")');
     expect(preload).toContain('verifyStaffPin: (username, pin) => invoke("staff:verify-pin"');
