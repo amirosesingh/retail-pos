@@ -273,7 +273,7 @@ class PushWorker {
         );
         if (!window.length) break;
         let changes = terminalWritableChanges(
-          table,
+          table.cloudTable,
           window.filter((change) => !change.remote),
           { branchId, terminalId },
         );
@@ -290,7 +290,7 @@ class PushWorker {
         if (requiresSettingsProof && !this.cloud.hasAuthorizationProof?.()) break;
         let live = changes.filter((change) => change.operation !== "D");
         let rows = rowsForBranch(
-          table.cloudTable,
+          table,
           await this.reader.rows(table, live, { branchId }),
           branchId,
         );
