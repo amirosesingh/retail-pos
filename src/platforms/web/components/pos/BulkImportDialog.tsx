@@ -69,6 +69,10 @@ const sourceBarcode = (row: Record<string, unknown>) => {
   return "";
 };
 
+/**
+ * Builds the downloadable import template workbook, marking stock_quantity as
+ * required or optional depending on whether the current import mode needs it.
+ */
 function templateSheet(quantityRequired: boolean) {
   const ws = XLSX.utils.aoa_to_sheet([[...IMPORT_HEADERS], ...TEMPLATE_ROWS]);
   const wb = XLSX.utils.book_new();
@@ -136,6 +140,7 @@ export function BulkImportDialog({
     setBulkUnit("");
   }, []);
 
+  /** Downloads the import template for the active mode, named for that mode. */
   function downloadTemplate(kind: "xlsx" | "csv") {
     const templateMode = mode === "inventory" ? "inventory" : mode;
     XLSX.writeFile(templateSheet(mode !== "inventory"), `${templateMode}-import-template.${kind}`, {

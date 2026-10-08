@@ -134,6 +134,11 @@ class PushWorker {
     }
     throw new Error("The synchronization retry loop ended unexpectedly.");
   }
+  /**
+   * Uploads pending business aggregates for a branch in bounded pages,
+   * deferring aggregates that need authorization proof and repairing
+   * branch-owned rows for the registered table before pushing them.
+   */
   async pushAggregates(branchId, batchSize) {
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
@@ -234,6 +239,11 @@ class PushWorker {
     }
     return pushed;
   }
+  /**
+   * Pushes every registered, non-pull table for a branch: first the
+   * aggregate journal, then each table's change-tracked rows in dependency
+   * order, repairing branch ownership and splitting oversized batches.
+   */
   async run({ branchId, batchSize = 500 }) {
     if (!branchId) throw new Error("A branch is required for synchronization.");
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));

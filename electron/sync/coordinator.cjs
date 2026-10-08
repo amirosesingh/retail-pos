@@ -48,6 +48,11 @@ class SyncCoordinator {
     }
     return { ...result, ...remaining, final:true };
   }
+  /**
+   * Runs one push-then-pull cycle and records the outcome in status. On
+   * failure, the error is tagged with the offending table name (when known)
+   * so callers can surface which table was rejected by the cloud.
+   */
   async runOnce(options = {}) {
     this.running=true;
     let result;
