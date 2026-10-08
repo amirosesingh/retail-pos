@@ -60,7 +60,7 @@ const when = (iso: string) => {
 };
 
 function NotificationsReport() {
-  const { isSupervisor, user } = useAuth();
+  const { can, isSupervisor, user } = useAuth();
   const { stores, state } = usePos();
   const refs = useMemo(
     () => ({ stores, products: state.products, members: state.members, sales: state.sales }),
@@ -204,9 +204,11 @@ function NotificationsReport() {
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={busy}>
             <RefreshCw className={cn("size-4", busy && "animate-spin")} /> Refresh
           </Button>
-          <Button variant="secondary" size="sm" onClick={exportCsv}>
-            <Download className="size-4" /> Export CSV
-          </Button>
+          {can("can_export_reports") && (
+            <Button variant="secondary" size="sm" onClick={exportCsv}>
+              <Download className="size-4" /> Export CSV
+            </Button>
+          )}
         </div>
 
         <div className="rounded-lg border border-border">
