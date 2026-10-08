@@ -252,8 +252,8 @@ function SeriesCard({
               </p>
             </div>
             <Switch
-              checked={cfg.includeBranch !== false}
-              onCheckedChange={(on) => onPatch({ includeBranch: on })}
+              checked={true}
+              disabled
             />
           </div>
         </div>

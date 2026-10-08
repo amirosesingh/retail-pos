@@ -1,3 +1,7 @@
+import { readAllPages } from "./paged-read";
+import { localDb } from "@/core/local-db/local-db";
+import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
+import { withDataTask } from "./data-progress";
 /**
  * Group-wide analytics feed. Every figure is aggregated in the database by the
  * reporting views so one page load never pulls every sale line into the till.
@@ -46,6 +50,8 @@ export type BoardData = {
   storeNames: Record<string, string>;
   /** Current directory rows; excludes names retained only as historical snapshots. */
   liveStoreIds: string[];
+  /** Local SQL contains this terminal branch, not the full group. */
+  localOnly?: boolean;
 };
 
 /** Current branch names win; sale snapshots only retain names for deleted branches. */
@@ -137,31 +143,42 @@ function classify(source: string, sqlFile: string, message: string): BoardIssue 
   };
 }
 
-export async function fetchBoard(from: string, to: string): Promise<BoardData> {
+export function fetchBoard(from: string, to: string): Promise<BoardData> {
+  return withDataTask("Loading sales reports", () => fetchBoardData(from, to));
+}
+async function fetchBoardData(from: string, to: string): Promise<BoardData> {
+  const bridge = localDb();
+  if (effectiveDatabaseMode() === "local" && bridge?.analytics) {
+    const result = await bridge.analytics(from, to);
+    if (!result.ok) throw new Error(result.error ?? "Could not read the local sales report.");
+    const directory = result.directory ?? [];
+    const bills = result.bills ?? [];
+    return {
+      storeDays: (result.storeDays ?? []) as unknown as StoreDayRow[],
+      itemDays: (result.itemDays ?? []) as unknown as ItemDayRow[],
+      bills: bills.map(row => ({ store_id: String(row.store_id), store_name: String(row.store_name_snapshot ?? ""),
+        created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+        total: n(row.total_amount), discount_amount: n(row.discount_amount), coupon_discount: n(row.coupon_discount) })),
+      storeNames: resolveStoreNames(directory.map(row => ({ id: row.id, name: row.name, code: row.code })), bills.map(row => ({ store_id: row.store_id, store_name_snapshot: row.store_name_snapshot }))),
+      liveStoreIds: directory.filter(row => row.is_active !== false).map(row => canonicalBranchId(row.id)),
+      localOnly: true,
+    };
+  }
   const [storeRes, itemRes, billRes, directoryRes] = await Promise.all([
-    supabase
-      .from("v_daily_store_sales")
-      .select(
-        "sale_day, sale_month, store_id, bills, revenue, cost, profit, discount, foc_value, units",
-      )
-      .gte("sale_day", from)
-      .lte("sale_day", to),
-    supabase
-      .from("v_daily_item_sales")
-      .select(
-        "sale_day, store_id, product_id, product_name, units, revenue, cost, profit, product_category",
-      )
-      .gte("sale_day", from)
-      .lte("sale_day", to),
-    supabase
-      .from("sales")
-      .select(
-        "store_id, store_name_snapshot, created_at, total_amount, discount_amount, coupon_discount",
-      )
-      .gte("created_at", from)
-      .lte("created_at", endOfDay(to)),
-    supabase.from("stores").select("id, name, code, is_active"),
+    readAllPages((start,end,count) => supabase.from("v_daily_store_sales")
+      .select("sale_day, sale_month, store_id, bills, revenue, cost, profit, discount, foc_value, units",{count:count ? "exact" : undefined})
+      .gte("sale_day",from).lte("sale_day",to).order("sale_day").order("store_id").range(start,end)),
+    readAllPages((start,end,count) => supabase.from("v_daily_item_sales")
+      .select("sale_day, store_id, product_id, product_name, units, revenue, cost, profit, product_category",{count:count ? "exact" : undefined})
+      .gte("sale_day",from).lte("sale_day",to).order("sale_day").order("store_id").order("product_id").order("product_name").range(start,end)),
+    readAllPages((start,end,count) => supabase.from("sales")
+      .select("store_id, store_name_snapshot, created_at, total_amount, discount_amount, coupon_discount",{count:count ? "exact" : undefined})
+      .gte("created_at",from).lte("created_at",endOfDay(to)).order("created_at").order("id").range(start,end)),
+    readAllPages((start,end,count) => supabase.from("stores")
+      .select("id,name,code,is_active",{count:count ? "exact" : undefined}).order("id").range(start,end)),
   ]);
+  if ([storeRes,itemRes,billRes,directoryRes].some(result => result.capped))
+    throw new BoardError([{source:"analytics",sqlFile:"supabase/schema.sql",kind:"other",detail:"This report is too large. Select a shorter date range.",advice:"Choose a smaller date range."}]);
 
   const issues: BoardIssue[] = [];
   if (storeRes.error)

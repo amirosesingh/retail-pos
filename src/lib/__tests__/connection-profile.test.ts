@@ -346,6 +346,7 @@ describe("connection profile", () => {
     const root = readFileSync("src/routes/__root.tsx", "utf8");
     expect(root).toContain("<ConnectionProfileBoot>");
     expect(root.indexOf("<ConnectionProfileBoot>")).toBeLessThan(root.indexOf("<AuthProvider>"));
-    expect(root).toContain("void hydrateConnectionProfile().finally");
+    expect(root).toContain("void hydrateConnectionProfile().catch");
+    expect(root).toContain("Restoring database connection");
   });
 });

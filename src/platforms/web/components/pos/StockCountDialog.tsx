@@ -217,6 +217,7 @@ export function StockCountDialog({
   const codeRef = useRef<HTMLInputElement>(null);
   const countRef = useRef<HTMLInputElement>(null);
   const draftCreatedAt = useRef<string | null>(null);
+  const draftIdentityPromiseRef = useRef<Promise<{ id: string; ref: string | null }> | null>(null);
   const draftIdentityRef = useRef<{ id: string; ref: string | null } | null>(null);
   const saveTailRef = useRef<Promise<void>>(Promise.resolve());
   const saveSequenceRef = useRef(0);
@@ -279,18 +280,23 @@ export function StockCountDialog({
    * lands while SQL/cloud is busy gets a later save instead of being mistaken
    * for the older in-flight write.
    */
-  const persistDraft = useCallback((): Promise<{ id: string; ref: string | null } | null> => {
+  const persistDraft = useCallback(async (): Promise<{ id: string; ref: string | null } | null> => {
     if (!rows.length && !draftId) return Promise.resolve(null);
     let identity = draftIdentityRef.current;
     if (!identity) {
-      identity = {
-        id: draftId ?? crypto.randomUUID(),
-        ref: reference ?? nextStockRef(numbering, targetStore.code || targetStore.id),
-      };
-      draftIdentityRef.current = identity;
-      draftCreatedAt.current ??= new Date().toISOString();
-      setDraftId(identity.id);
-      setReference(identity.ref);
+      if (!draftIdentityPromiseRef.current) {
+        const id = draftId ?? crypto.randomUUID();
+        draftIdentityPromiseRef.current = (async () => {
+          const ref = reference ?? await nextStockRef(numbering, targetStore.code || targetStore.id);
+          const created = { id, ref };
+          draftIdentityRef.current = created;
+          draftCreatedAt.current ??= new Date().toISOString();
+          setDraftId(id); setReference(ref);
+          return created;
+        })();
+      }
+      try { identity = await draftIdentityPromiseRef.current; }
+      finally { draftIdentityPromiseRef.current = null; }
     }
     const { id, ref } = identity;
     const snapshot = {

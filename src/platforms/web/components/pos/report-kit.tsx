@@ -1,3 +1,5 @@
+import { beginDataTask } from "@/lib/data-progress";
+import { notifyError } from "@/lib/notify";
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { Input } from "@/components/ui/input";
@@ -31,23 +33,27 @@ export const stamp = (iso: string) =>
 
 /** Downloads a report as CSV so it can be opened in Excel. */
 export function downloadCsv(name: string, rows: (string | number)[][]) {
-  const body = rows
-    .map((r) =>
-      r
-        .map((c) => {
-          const raw = String(c ?? "");
-          const v = /^[\t\r\n ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
-          return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-        })
-        .join(","),
-    )
-    .join("\n");
-  const url = URL.createObjectURL(new Blob([body], { type: "text/csv;charset=utf-8" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${name}-${isoDay(new Date())}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  void exportCsv(name, rows).catch(cause => notifyError(cause, "Exporting report"));
+}
+async function exportCsv(name: string, rows: (string | number)[][]) {
+  const task = beginDataTask("Exporting report");
+  try {
+    const parts: string[] = [];
+    for (let start=0; start<rows.length; start+=1000) {
+      const body = rows.slice(start,start+1000).map(r => r.map(c => {
+        const raw = String(c ?? "");
+        const v = /^[\t\r\n ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+        return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+      }).join(",")).join("\n");
+      if (start) parts.push("\n");
+      parts.push(body);
+      task.report(Math.min(start+1000,rows.length),rows.length);
+      await new Promise<void>(resolve => setTimeout(resolve,0));
+    }
+    const url = URL.createObjectURL(new Blob(parts, {type:"text/csv;charset=utf-8"}));
+    const a = document.createElement("a"); a.href=url; a.download=`${name}-${isoDay(new Date())}.csv`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url),30000);
+  } finally { task.finish(); }
 }
 
 export function ReportHeader({

@@ -1,3 +1,4 @@
+import { subscribeDataChange } from "./sync-engine";
 /**
  * Catalogue metadata — categories, sub-categories and units of measure.
  *
@@ -30,11 +31,15 @@ export const DEFAULT_UNITS: UomUnit[] = [
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((l) => l());
 
-function readLocal<T>(key: string, fallback: T): T {
+function readLocal<T extends { id: string; name: string }>(key: string, fallback: T[]): T[] {
   if (!isBrowser()) return fallback;
   try {
     const raw = readBusinessValue(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (!Array.isArray(parsed)) return fallback;
+    return parsed.filter((row): row is T => !!row && typeof row === "object" &&
+      typeof row.id === "string" && typeof row.name === "string" &&
+      (key !== UOM_KEY || typeof row.code === "string"));
   } catch {
     return fallback;
   }
@@ -50,9 +55,9 @@ function writeLocal(key: string, value: unknown) {
   notify();
 }
 
-export const readCategories = () => readLocal<ProductCategory[]>(CAT_KEY, []);
+export const readCategories = () => readLocal<ProductCategory>(CAT_KEY, []);
 export const readUnits = () => {
-  const stored = readLocal<UomUnit[]>(UOM_KEY, []);
+  const stored = readLocal<UomUnit>(UOM_KEY, []);
   return stored.length ? stored : DEFAULT_UNITS;
 };
 
@@ -158,8 +163,13 @@ function useCatalogStore<T>(read: () => T): T {
   useEffect(() => {
     const listener = () => setValue(read());
     listeners.add(listener);
-    void loadCatalogMeta().then(listener);
+    const reload = () => loadCatalogMeta().then(listener).catch(() => { /* Keep validated cached metadata while offline. */ });
+    void reload();
+    const off = subscribeDataChange(change => {
+      if (["product_categories", "uom_units"].includes(change.table)) void reload();
+    });
     return () => {
+      off();
       listeners.delete(listener);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

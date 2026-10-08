@@ -215,22 +215,35 @@ export async function commitBooking(b: Booking): Promise<CommitTarget> {
 }
 
 /** Branch-scoped bookings from the platform's operational database. */
-export async function loadBookings(): Promise<Booking[]> {
-  const rows = await routedQuery("bookings", {
-    orderBy: { column: "created_at", ascending: false },
-    limit: 500,
-  });
+export async function loadBookings(ids?: string[]): Promise<Booking[]> {
+  const rows: Row[] = [];
+  let cursor: { column: string; value: string; id: string } | undefined;
+  for (;;) {
+    const page = await routedQuery("bookings", {
+      ...(ids ? {in:{column:"id",values:ids}} : {}),
+      orderBy: {column:"created_at",ascending:false}, limit:500, ...(cursor ? {cursor} : {}),
+    });
+    rows.push(...page);
+    if (page.length < 500) break;
+    if (rows.length >= 500000) throw new Error("Booking history is too large to load completely.");
+    const last = page.at(-1)!;
+    const next = {column:"created_at",value:String(last.created_at),id:String(last.id)};
+    if (cursor?.value === next.value && cursor.id === next.id) throw new Error("Booking pagination did not advance.");
+    cursor = next;
+  }
   if (!rows.length) return [];
   const payments: Row[] = [];
   const bookingIds = rows.map((r) => String(r.id));
   for (let start = 0; start < bookingIds.length; start += 100) {
-    payments.push(
-      ...((await routedQuery("booking_payments", {
-        in: { column: "booking_id", values: bookingIds.slice(start, start + 100) },
-        orderBy: { column: "created_at", ascending: true },
-        limit: 2000,
-      })) as Row[]),
-    );
+    for (let offset=0; ; offset+=1000) {
+      const page = await routedQuery("booking_payments", {
+        in: {column:"booking_id",values:bookingIds.slice(start,start+100)},
+        orderBy:{column:"created_at",ascending:true},limit:1000,offset,
+      });
+      payments.push(...page);
+      if (page.length < 1000) break;
+      if (payments.length >= 500000) throw new Error("Booking payment history is too large to load completely.");
+    }
   }
   const byBooking = new Map<string, Row[]>();
   for (const p of payments) {

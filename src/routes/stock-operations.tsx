@@ -1,3 +1,4 @@
+import { notifyError } from "@/lib/notify";
 /**
  * Stock Operations — the only place stock quantities change by hand.
  *
@@ -84,7 +85,7 @@ function StockOperationsPage() {
   }, [currentStore.id]);
 
   useEffect(() => {
-    void myServerId().then(setMeId);
+    void myServerId().then(setMeId).catch(error => notifyError(error, "Reading stock count identity"));
   }, []);
 
   const refresh = useCallback(async () => {

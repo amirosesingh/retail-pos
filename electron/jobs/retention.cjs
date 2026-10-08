@@ -23,7 +23,7 @@ async function runRetention({connectionManager,days,context}){
       const sql=connectionManager.sql();const transaction=new sql.Transaction(connectionManager.pool);await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
       try{
       const request=new sql.Request(transaction).input("cutoff",new Date(Date.now()-days*86400000));
-      const result=await request.query(`DELETE TOP (500) target FROM dbo.[${table}] target
+      const result=await request.query(`WITH CHANGE_TRACKING_CONTEXT (0x4C4F43414C) DELETE TOP (500) target FROM dbo.[${table}] target
        WHERE target.[${DATE_COLUMN[table]}]<@cutoff
        ${SAFE_WHERE[table]} AND NOT EXISTS(SELECT 1 FROM dbo.sync_change_journal j WHERE j.entity_type='${table}' AND j.entity_id=CONCAT('{"id":"',CONVERT(nvarchar(36),target.id),'"}') AND j.acknowledged_at IS NULL)
        AND NOT EXISTS(SELECT 1 FROM dbo.sync_conflicts c WHERE c.entity_type='${table}' AND c.entity_id=CONCAT('{"id":"',CONVERT(nvarchar(36),target.id),'"}') AND c.status='unresolved'); SELECT @@ROWCOUNT affected;`);

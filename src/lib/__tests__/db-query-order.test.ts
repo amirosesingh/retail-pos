@@ -62,7 +62,7 @@ describe("routed query ordering", () => {
     auth.restored = true;
   });
 
-  it("does not append id when a composite-key table supplies its own order", async () => {
+  it("uses composite keys as stable ties without appending a nonexistent id", async () => {
     await routedQuery("settings_overrides", {
       columns: "section,patch",
       match: { scope: "CLUSTER", scope_id: "361-degree" },
@@ -70,7 +70,7 @@ describe("routed query ordering", () => {
       limit: 1,
     });
 
-    expect(orders).toEqual(["section"]);
+    expect(orders).toEqual(["section", "scope", "scope_id"]);
   });
 
   it("retains id as the default order for ordinary entity tables", async () => {
@@ -89,6 +89,11 @@ describe("routed query ordering", () => {
 
     expect(orders).toEqual(["scope", "scope_id", "key"]);
     expect(ranges).toEqual([[0, 4999]]);
+  });
+
+  it("adds an id tie-breaker for timestamp cursor reads", async () => {
+    await routedQuery("bookings", {orderBy:{column:"created_at",ascending:false},limit:500});
+    expect(orders).toEqual(["created_at","id"]);
   });
 
   it("honours bounded offsets for large paged reads", async () => {

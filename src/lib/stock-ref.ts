@@ -1,7 +1,9 @@
+import { reserveDocument } from "./document-lock";
+import { documentOrigin } from "./document-origin";
 /**
  * Stock Operations reference numbers.
  *
- *   [PREFIX]-[BRANCH]-[PERIOD]-[SEQUENCE]
+ *   [PREFIX]-[BRANCH]-[PLATFORM]-[DEVICE]-[PERIOD]-[SEQUENCE]
  *   SC-B101-202608-0007
  *
  * Styled after the bill numbering module, but with its own counter so a
@@ -55,30 +57,27 @@ const store = (): Storage | null => {
   }
 };
 
+let memoryCounters: SeqStore = {};
 const readAll = (): SeqStore => {
   const s = store();
-  if (!s) return {};
+  if (!s || (typeof window !== "undefined" && (window as unknown as { pos?: unknown }).pos)) return { ...memoryCounters };
   try {
     const raw = s.getItem(SEQ_KEY);
     const parsed = raw ? (JSON.parse(raw) as SeqStore) : null;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { ...memoryCounters };
   } catch {
     return {};
   }
 };
 
-const writeAll = (value: SeqStore) => {
-  const s = store();
-  if (s) {
-    try {
-      s.setItem(SEQ_KEY, JSON.stringify(value));
-    } catch {
-      /* a full profile must not block counting — the row still gets an id */
-    }
-  }
-  // The till database is the durable home: a cleared browser profile then
-  // cannot restart the run.
-  void writeLocalSetting(SEQ_KEY, JSON.stringify(value)).catch(() => false);
+const writeAll = async (value: SeqStore) => {
+  const native = typeof window !== "undefined" && !!(window as unknown as { pos?: unknown }).pos;
+  const s = native ? null : store();
+  let stored = false;
+  if (s) { s.setItem(SEQ_KEY, JSON.stringify(value)); stored = true; }
+  const durable = await writeLocalSetting(SEQ_KEY, JSON.stringify(value));
+  if (!stored && !durable) throw new Error("The document counter could not be saved. Check database connectivity and retry.");
+  memoryCounters = value;
 };
 
 /** Restore the counter from the till database at start-up. */
@@ -94,7 +93,8 @@ export async function restoreStockRefCounter(): Promise<void> {
     for (const [k, v] of Object.entries(durable)) {
       if (typeof v === "number" && v > (merged[k] ?? 0)) merged[k] = v;
     }
-    s.setItem(SEQ_KEY, JSON.stringify(merged));
+    memoryCounters = merged;
+    if (!(typeof window !== "undefined" && (window as unknown as { pos?: unknown }).pos)) s.setItem(SEQ_KEY, JSON.stringify(merged));
   } catch {
     /* nothing durable to restore */
   }
@@ -118,7 +118,7 @@ const build = (
   series: RefSeries,
 ) => {
   const parts = [clean(cfg.prefix, SERIES_PREFIX[series])];
-  if (cfg.includeBranch !== false) parts.push(clean(branchCode, "BR"));
+  parts.push(documentOrigin(branchCode));
   const period = periodStamp(at, cfg.reset ?? "monthly");
   if (period) parts.push(period);
   parts.push(String(seq).padStart(padOf(cfg), "0"));
@@ -169,18 +169,20 @@ const sequenceFor = (
  * Reserve the next reference for a new draft. Consumes the counter, so it is
  * called exactly once per record — when the draft row is first created.
  */
-export function nextStockRef(
+export async function nextStockRef(
   cfg: StockNumberingSettings,
   branchCode: string,
   series: RefSeries = "stock",
   at: Date = new Date(),
-): string {
-  const key = counterKey(cfg, branchCode, at, series);
-  const all = readAll();
-  const seq = sequenceFor(all, key, legacyStockCounterKey(cfg, branchCode, at, series), cfg);
-  all[key] = seq + 1;
-  writeAll(all);
-  return build(cfg, branchCode, at, seq, series);
+): Promise<string> {
+  return reserveDocument("pos-stock-reference", async () => {
+    const key = counterKey(cfg, branchCode, at, series);
+    const all = readAll();
+    const seq = sequenceFor(all, key, legacyStockCounterKey(cfg, branchCode, at, series), cfg);
+    all[key] = seq + 1;
+    await writeAll(all);
+    return build(cfg, branchCode, at, seq, series);
+  });
 }
 
 /**
@@ -192,7 +194,7 @@ export function bumpStockRef(
   branchCode: string,
   series: RefSeries = "stock",
   at: Date = new Date(),
-): string {
+): Promise<string> {
   return nextStockRef(cfg, branchCode, series, at);
 }
 

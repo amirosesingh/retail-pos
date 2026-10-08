@@ -1,3 +1,4 @@
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
@@ -181,6 +182,8 @@ function BookingsPage() {
           (b.job?.stringType ?? "").toLowerCase().includes(q),
       );
   }, [state.bookings, currentStore.id, kind, tab, query, jobFilter]);
+
+  const pager = usePagination(bookings);
 
   /** Counts for the tab badges, before the search / status lenses apply. */
   const kindCounts = useMemo(() => {
@@ -415,7 +418,7 @@ function BookingsPage() {
           </p>
         ) : (
           <ul className="space-y-3">
-            {bookings.map((b) => {
+            {pager.pageItems.map((b) => {
               const balance = bookingBalance(b);
               const overdue = b.status === "active" && b.dueDate < today;
               const stale =
@@ -657,6 +660,7 @@ function BookingsPage() {
             })}
           </ul>
         )}
+        <TablePagination {...pager} onPage={pager.setPage} onPageSize={pager.setPageSize} label="bookings" />
       </div>
 
       {historyFor ? (

@@ -229,8 +229,7 @@ function LiveBoard() {
             </Link>
             <h1 className="text-2xl font-semibold tracking-tight">Live Business Board</h1>
             <p className="text-sm text-muted-foreground">
-              Every shop combined — categories first, item drilldown, revenue share, margin and what
-              we gave away. Refreshes on its own every minute.
+              {data?.localOnly ? "This terminal’s branch — reports calculated from local SQL Server. Group-wide reports are available on the web." : "Every shop combined — categories, item drilldown, revenue share and margin. Refreshes every minute."}
             </p>
           </div>
           <div className="flex gap-2">

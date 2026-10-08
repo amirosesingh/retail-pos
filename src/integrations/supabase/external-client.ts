@@ -1,3 +1,4 @@
+import { fetchWithDeadline } from "@/lib/fetch-deadline";
 // Client for the user's own Supabase project (not the managed backend).
 // Publishable keys are safe to ship in client code.
 import { createClient } from "@supabase/supabase-js";
@@ -42,8 +43,8 @@ function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string): typeof fetch {
     try {
       const res =
         typeof Request !== "undefined" && input instanceof Request
-          ? await fetch(new Request(input, { ...init, headers }))
-          : await fetch(input, { ...init, headers });
+          ? await fetchWithDeadline(new Request(input, { ...init, headers }))
+          : await fetchWithDeadline(input, { ...init, headers });
       void inspectResponse(res.clone(), hadBearer);
       return res;
     } catch (e) {
@@ -318,9 +319,9 @@ export function createTenantClient(url: string, key: string) {
         }
         headers.set("apikey", key);
         if (typeof Request !== "undefined" && input instanceof Request) {
-          return fetch(new Request(input, { ...init, headers }));
+          return fetchWithDeadline(new Request(input, { ...init, headers }));
         }
-        return fetch(input, { ...init, headers });
+        return fetchWithDeadline(input, { ...init, headers });
       },
     },
     auth: {

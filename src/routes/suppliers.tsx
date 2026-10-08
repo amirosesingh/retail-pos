@@ -1,3 +1,6 @@
+import { notifyError } from "@/lib/notify";
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
+import { subscribeDataChange } from "@/lib/sync-engine";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Pencil, Plus, Trash2, Truck } from "lucide-react";
@@ -62,7 +65,11 @@ function Suppliers() {
   const [draft, setDraft] = useState<Supplier | null>(null);
 
   useEffect(() => {
-    void loadSuppliers().then(setList);
+    let active = true;
+    const reload = () => { void loadSuppliers().then(list => { if (active) setList(list); }).catch(cause => { if (active) notifyError(cause, "Loading suppliers"); }); };
+    reload();
+    const off = subscribeDataChange(change => { if (change.table === "suppliers") reload(); });
+    return () => { active = false; off(); };
   }, []);
 
   const rows = useMemo(
@@ -75,6 +82,8 @@ function Suppliers() {
     [list, query],
   );
 
+  const pager = usePagination(rows);
+
   async function commit() {
     if (!draft) return;
     if (!draft.name.trim()) return toast.error("Supplier name is required");
@@ -85,9 +94,8 @@ function Suppliers() {
       );
       setDraft(null);
       toast.success("Supplier saved");
-    } catch {
-      setList(await loadSuppliers());
-      toast.error("Supplier could not be saved");
+    } catch (cause) {
+      notifyError(cause, "Saving supplier");
     }
   }
 
@@ -136,7 +144,7 @@ function Suppliers() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((s) => (
+              {pager.pageItems.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell className="font-medium">
                     <span className="flex items-center gap-2">
@@ -204,6 +212,7 @@ function Suppliers() {
               )}
             </TableBody>
           </Table>
+          <TablePagination {...pager} onPage={pager.setPage} onPageSize={pager.setPageSize} label="suppliers" />
         </div>
       </div>
 

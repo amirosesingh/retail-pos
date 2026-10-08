@@ -1,3 +1,5 @@
+import { notifyError } from "@/lib/notify";
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 /**
  * Hold tickets — every parked draft in one place.
  *
@@ -73,6 +75,7 @@ function HoldTickets() {
   useEffect(() => {
     let active = true;
     const refresh = async () => {
+      try {
       const centre = await loadApprovalCentre(currentStore.id);
       if (active) {
         setApprovalRequests([
@@ -82,6 +85,7 @@ function HoldTickets() {
           ...centre.history,
         ]);
       }
+      } catch (cause) { if (active) notifyError(cause, "Loading ticket approvals"); }
     };
     void refresh();
     const unsubscribe = subscribeApprovals(() => void refresh());
@@ -97,6 +101,8 @@ function HoldTickets() {
   );
 
   const tickets = held.filter((h) => !h.storeId || h.storeId === currentStore.id);
+
+  const pager = usePagination(tickets);
 
   function reopen(order: HeldOrder) {
     if (!can("can_reopen_held_order")) {
@@ -170,7 +176,7 @@ function HoldTickets() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tickets.map((h) => (
+              {pager.pageItems.map((h) => (
                 <Fragment key={h.id}>
                   <TableRow>
                     <TableCell>
@@ -276,6 +282,7 @@ function HoldTickets() {
               )}
             </TableBody>
           </Table>
+          <TablePagination {...pager} onPage={pager.setPage} onPageSize={pager.setPageSize} label="tickets" />
         </section>
 
         <section className="rounded-lg border border-border bg-card p-4">

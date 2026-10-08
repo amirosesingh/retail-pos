@@ -48,6 +48,11 @@ describe("targeted activity notifications", () => {
     );
   });
 
+  it("rejects a branch-targeted alert when the duty branch is unknown", () => {
+    expect(activityVisibleTo({ store_id: "branch-a", meta: { audience_user_ids: ["cashier-1"] } }, { ...cashier, storeId: null })).toBe(false);
+    expect(activityVisibleTo({ store_id: "BRANCH-A", meta: { audience_user_ids: ["CASHIER-1"] } }, cashier)).toBe(true);
+  });
+
   it("keeps general activity behind audit access", () => {
     expect(activityVisibleTo({ store_id: "branch-a", meta: {} }, cashier)).toBe(false);
     expect(

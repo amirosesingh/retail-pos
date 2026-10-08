@@ -1,3 +1,5 @@
+import { reserveDocument } from "./document-lock";
+import { documentDevice, documentPlatform } from "./document-origin";
 /**
  * One bill numbering scheme for every register.
  *
@@ -10,12 +12,11 @@
  * registered the device. Because every part is device specific, two tills in
  * the same branch can never produce the same number, even offline.
  */
-import { isWindowsShell, isMobileShell } from "@/platform-config/features";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { readLocalSetting, writeLocalSetting } from "@/core/local-db/local-db";
 import { readBusinessValue, writeBusinessValue } from "./business-storage";
 
-export type Platform = "PC" | "MB" | "WB";
+export type Platform = "WIN" | "AND" | "WEB";
 
 /** Everything an admin can change about the numbering, from Settings. */
 export type BillNumberConfig = {
@@ -36,9 +37,7 @@ const TERMINAL_NO_KEY = "pos.bill.terminalNo";
 
 /** Which shell this register runs in. */
 export function currentPlatform(): Platform {
-  if (isWindowsShell()) return "PC";
-  if (isMobileShell()) return "MB";
-  return "WB";
+  return documentPlatform();
 }
 
 const clean = (v: string | null | undefined, fallback: string) =>
@@ -88,17 +87,18 @@ export function billPrefix(
   const branch = clean(config.branchCode || branchCode, "BR");
   const terminal = clean(config.terminalNo, "") || terminalNumber();
   const day = config.resetDaily === false ? "00000000" : dayStamp(at, config.timeZone);
-  return `${branch}-${currentPlatform()}${terminal.slice(0, 2).padStart(2, "0")}-${day}`;
+  return `${branch}-${currentPlatform()}${terminal.slice(0, 2).padStart(2, "0")}-${documentDevice()}-${day}`;
 }
 
 type SeqStore = { prefix: string; next: number };
 
 /** Read the device counter from the approved platform settings store. */
+let memorySequence: SeqStore | null = null;
 const readSeq = (): SeqStore | null => {
   try {
     const raw = readBusinessValue(SEQ_KEY);
     const parsed = raw ? (JSON.parse(raw) as SeqStore) : null;
-    return parsed && typeof parsed.next === "number" ? parsed : null;
+    return parsed && typeof parsed.next === "number" ? parsed : memorySequence;
   } catch {
     return null;
   }
@@ -120,7 +120,8 @@ export class BillNumberReservationError extends Error {
 const writeSeq = (value: SeqStore): boolean => {
   try {
     writeBusinessValue(SEQ_KEY, JSON.stringify(value));
-    return true;
+    memorySequence = value;
+    return typeof window !== "undefined" && !(window as unknown as { pos?: unknown }).pos;
   } catch (err) {
     throw new BillNumberReservationError(
       "This device could not store the bill counter, so the next sale could reuse the same bill number. Free up browser storage and try again.",
@@ -162,6 +163,7 @@ export async function hydrateBillSequence(): Promise<void> {
     const local = readSeq();
     // Whichever source is further ahead wins; the counter never goes backwards.
     if (!local || local.prefix !== stored.prefix || local.next < stored.next) {
+      memorySequence = stored;
       writeBusinessValue(SEQ_KEY, JSON.stringify(stored));
     }
   } catch {
@@ -221,8 +223,11 @@ export async function reserveBillNumber(
   existing: Iterable<string> = [],
   config: BillNumberConfig = {},
 ): Promise<string> {
-  return serialise(async () => {
-    const { prefix, seq, pad, store } = computeNext(branchCode, existing, config);
+  return serialise(() => reserveDocument("pos-bill-number", async () => {
+    let computed: ReturnType<typeof computeNext>;
+    try { computed = computeNext(branchCode, existing, config); }
+    catch (error) { throw new BillNumberReservationError("This device could not reserve its document identity. Check storage and retry.", error); }
+    const { prefix, seq, pad, store } = computed;
     const onDevice = writeSeq(store);
     const durable = await writeSeqDurable(store);
     if (!onDevice && !durable) {
@@ -232,7 +237,7 @@ export async function reserveBillNumber(
     }
 
     return `${prefix}-${String(seq).padStart(pad, "0")}`;
-  });
+  }));
 }
 
 

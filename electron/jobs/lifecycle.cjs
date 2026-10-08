@@ -4,11 +4,11 @@ const { localTableCounts } = require("../sync/reconciliation.cjs");
 const { verifyTables } = require("../sync/verifier.cjs");
 
 class LocalDataLifecycle {
-  constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints}){
-    Object.assign(this,{connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints});
+  constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader}){
+    Object.assign(this,{connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader});
   }
   bootstrapType(historyDays){return `bootstrap_${historyDays}`;}
-  async bootstrap(branchId,historyDays,existing=null){return this.jobManager.run(this.bootstrapType(historyDays),context=>runBootstrap({registry:this.registry,cloud:this.cloud,connectionManager:this.connectionManager,checkpoints:this.checkpoints,branchId,historyDays,context}),existing,{branchId});}
+  async bootstrap(branchId,historyDays,existing=null){return this.jobManager.run(this.bootstrapType(historyDays),context=>runBootstrap({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,checkpoints:this.checkpoints,branchId,historyDays,context}),existing,{branchId});}
   async retain(branchId,historyDays,existing=null){if(historyDays===7300)return{status:"completed",skipped:true};return this.jobManager.run("retention",context=>runRetention({connectionManager:this.connectionManager,days:historyDays,context}),existing,{branchId});}
   async resume(branchId,historyDays){const active=await this.jobRepository.active();if(!active||String(active.branch_id??"")!==String(branchId))return null;if(String(active.job_type).startsWith("bootstrap_"))return this.bootstrap(branchId,Number(String(active.job_type).slice(10))||historyDays,active);if(active.job_type==="retention")return this.retain(branchId,historyDays,active);return null;}
   async recoverChangeTrackingGap(branchId,historyDays,tableName){
@@ -17,9 +17,9 @@ class LocalDataLifecycle {
     // The failed push has already uploaded durable aggregate-journal work. Pull
     // an authoritative branch-scoped snapshot before establishing a new SQL
     // Change Tracking baseline; never advance the checkpoint first.
-    const refreshed=await refreshTable({registry:this.registry,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable});
     const version=await this.connectionManager.pool.request().query("SELECT CHANGE_TRACKING_CURRENT_VERSION() current_version;");
     const currentVersion=Number(version.recordset?.[0]?.current_version??0);
+    const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable});
     await this.checkpoints.save(branchId,table.sqlServerTable,"push",{change_tracking_version:currentVersion});
     return{table:table.sqlServerTable,completed:refreshed.completed,currentVersion};
   }
@@ -27,7 +27,7 @@ class LocalDataLifecycle {
     const recovered=new Set();
     while(true){
       try{
-        const result=await this.syncCoordinator.pushWorker.run({branchId,batchSize:500});
+        const result=await this.syncCoordinator.runPush({branchId,batchSize:500});
         return{result,recovered:[...recovered]};
       }catch(error){
         if(error?.code!=="ECHANGEGAP"||!error?.table)throw error;
@@ -60,7 +60,7 @@ class LocalDataLifecycle {
     }
     // Always repair this small parent table, including databases whose old
     // completed bootstrap marker would otherwise skip newly-added tables.
-    await refreshTable({registry:this.registry,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:"store_groups"});
+    await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:"store_groups"});
     const synced=await this.syncCoordinator.runNow({branchId,batchSize:10});
     if(!synced.ok)throw Object.assign(new Error(synced.error??"Final synchronization failed."),{code:"ESYNC"});
     await this.retain(branchId,historyDays);
@@ -91,7 +91,7 @@ class LocalDataLifecycle {
     if(!requested.length)return this.reconcile(branchId,historyDays);
     const pushed=await this.syncCoordinator.runNow({branchId,batchSize:10});
     if(!pushed.ok)throw Object.assign(new Error(pushed.error??"Synchronization failed before repair."),{code:pushed.code??"ESYNC"});
-    for(const tableName of requested)await refreshTable({registry:this.registry,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName});
+    for(const tableName of requested)await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName});
     const pulled=await this.syncCoordinator.runNow({branchId,batchSize:10});
     if(!pulled.ok)throw Object.assign(new Error(pulled.error??"Synchronization failed after repair."),{code:pulled.code??"ESYNC"});
     return this.reconcile(branchId,historyDays);
@@ -99,10 +99,19 @@ class LocalDataLifecycle {
   async verify(branchId,historyDays=90,tableNames=[]){
     await this.reconcile(branchId,historyDays);
     const counts=new Map((this.syncCoordinator.snapshot().tables??[]).map(table=>[table.table,table]));
-    const report=await verifyTables({connectionManager:this.connectionManager,registry:this.registry,cloud:this.cloud,branchId,historyDays,tableNames,onTable:(_table,tables)=>this.syncCoordinator.recordVerification({comparedAt:new Date().toISOString(),verified:false,tables:tables.map(table=>({...counts.get(table.table),...table}))})});
+    const report=await verifyTables({connectionManager:this.connectionManager,registry:this.registry,reader:this.reader,cloud:this.cloud,branchId,historyDays,tableNames,onTable:(_table,tables)=>this.syncCoordinator.recordVerification({comparedAt:new Date().toISOString(),verified:false,tables:tables.map(table=>({...counts.get(table.table),...table}))})});
     report.tables=report.tables.map(table=>({...counts.get(table.table),...table}));
     this.syncCoordinator.recordVerification({comparedAt:report.verifiedAt,verified:report.verified,tables:report.tables});
     return report;
   }
+}
+// Every lifecycle entry shares the same lease as manual/automatic sync.
+for (const name of ["ensure", "bootstrap", "retain", "repair", "verify", "recoverChangeTrackingGap", "pushWithGapRecovery"]) {
+  const work = LocalDataLifecycle.prototype[name];
+  LocalDataLifecycle.prototype[name] = function(...args) {
+    return this.syncCoordinator.withExclusive
+      ? this.syncCoordinator.withExclusive(() => work.apply(this, args))
+      : work.apply(this, args);
+  };
 }
 module.exports={LocalDataLifecycle};

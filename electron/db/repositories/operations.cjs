@@ -81,7 +81,7 @@ class OperationsRepository {
         throw new Error(`${op.table} is append-only and cannot be changed after insertion.`);
       const allowed = new Set(table.columns.map((column) => column.sqlServerColumn));
       const rows = op.rows ?? (op.values ? [op.values] : []);
-      if (rows.length > MAX_BATCH_ROWS) throw new Error("A batch cannot exceed 2,000 rows.");
+      if (rows.length > MAX_BATCH_ROWS) throw Object.assign(new Error("A batch cannot exceed 2,000 rows."), { code: "EBATCH_SIZE", table: op.table });
       for (const row of rows) {
         if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("Business rows must be objects.");
         for (const key of Object.keys(row)) if (!allowed.has(key)) throw new Error(`Unsupported column for ${op.table}.`);
@@ -150,6 +150,29 @@ class OperationsRepository {
   async assertMemberPermissions(transaction, op, scope = {}) {
     if (op.table !== "members" || scope.enforcePermissions !== true) return;
     const permissions = scope.permissions ?? {};
+    const rows = op.rows ?? (op.values ? [{ ...(op.match ?? {}), ...op.values }] : []);
+    if (scope.memberAccrual?.size && ['insert','upsert'].includes(op.kind)) {
+      for (const row of rows) {
+        const accrual = scope.memberAccrual.get(String(row.id).toLowerCase());
+        if (!accrual) throw Object.assign(new Error("The member is unrelated to this sale."), {code:"PERMISSION_DENIED"});
+        const current = await new (this.connectionManager.sql().Request)(transaction).input('member',row.id)
+          .query('SELECT * FROM dbo.members WITH (UPDLOCK,HOLDLOCK) WHERE id=@member;');
+        const existing=current.recordset?.[0] ? toRendererRow(this.tables.get('members'), current.recordset[0]) : null;
+        if (!existing) throw Object.assign(new Error("Create the member before taking this sale."), {code:"PERMISSION_DENIED"});
+        for (const field of Object.keys(row)) {
+          if (['id','updated_at','row_version','loyalty_points','total_spent'].includes(field)) continue;
+          if ((field === 'tier_id' ? String(row[field] ?? '').toLowerCase() : String(row[field] ?? '')) !==
+              (field === 'tier_id' ? String(existing[field] ?? '').toLowerCase() : String(existing[field] ?? '')))
+            throw Object.assign(new Error("A sale cannot edit member details or tier."), {code:"PERMISSION_DENIED"});
+        }
+        const expectedPoints=Number(existing.loyalty_points ?? 0)+accrual.points;
+        const expectedSpent=Number(existing.total_spent ?? 0)+accrual.spent;
+        if (!Number.isFinite(Number(row.loyalty_points)) || !Number.isFinite(Number(row.total_spent)) || expectedPoints<0 || Math.abs(Number(row.loyalty_points)-expectedPoints)>0.001 ||
+            Math.abs(Number(row.total_spent)-expectedSpent)>0.001)
+          throw Object.assign(new Error("Member balance changed. Reload the member and retry."), {code:"EMEMBER_BALANCE"});
+      }
+      return;
+    }
     if (permissions.can_add_member !== true) {
       throw Object.assign(new Error("Member management permission is required."), {
         code: "PERMISSION_DENIED",
@@ -185,7 +208,6 @@ class OperationsRepository {
       }
       return;
     }
-    const rows = op.rows ?? (op.values ? [{ ...(op.match ?? {}), ...op.values }] : []);
     for (const row of rows) {
       if (!row?.id) continue;
       const current = await new (this.connectionManager.sql().Request)(transaction)
@@ -272,7 +294,7 @@ class OperationsRepository {
   branchPredicate(table, alias = "source", seen = new Set()) {
     return branchPredicate(this.registry, table, alias, seen);
   }
-  async snapshotRows(name, branchId = null) {
+  async snapshotRows(name, branchId = null, onProgress = () => {}) {
     const table = this.tables.get(name);
     if (!table) return [];
     const names = new Set(table.columns.map((column) => column.sqlServerColumn));
@@ -281,7 +303,7 @@ class OperationsRepository {
     if (name === "products") where.push("(NULLIF(owner_store_id,N'') IS NULL OR owner_store_id=@branch)");
     const sql = this.connectionManager.sql();
     const transaction = new sql.Transaction(this.pool());
-    await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
+    await transaction.begin(sql.ISOLATION_LEVEL?.READ_COMMITTED);
     const rows = [];
     try {
       for (let offset = 0; offset <= MAX_SNAPSHOT_ROWS; offset += SNAPSHOT_PAGE_ROWS) {
@@ -299,10 +321,14 @@ class OperationsRepository {
           break;
         }
         rows.push(...pageRows.map((row) => toRendererRow(table, row)));
+        onProgress({ table: name, completed: rows.length });
         if (pageRows.length < SNAPSHOT_PAGE_ROWS) {
           await transaction.commit();
           return rows;
         }
+        // Large catalogues must leave time for IPC and other Main-process work
+        // between SQL pages instead of chaining immediately resolved queries.
+        await new Promise((resolve) => setImmediate(resolve));
       }
       throw Object.assign(new Error(`${name} exceeds the supported 500,000-row terminal snapshot.`), {
         code: "ESNAPSHOT_LIMIT",
@@ -426,14 +452,14 @@ class OperationsRepository {
     if (!row) throw Object.assign(new Error("That shift does not exist in this branch."), { code: "ESHIFT" });
     return { ok: true, ...row };
   }
-  async snapshot(branchId = null, terminalId = null) {
+  async snapshot(branchId = null, terminalId = null, options = {}) {
     // Branch-owned rows are loaded separately with an explicit predicate.
     // The list below contains only shared catalogue/reference data.
-    const names = ["products", "members", "stores", "promotions", "membership_tiers"];
+    const names = options.salesOnly ? [] : ["products", "members", "stores", "promotions", "membership_tiers"];
     const output = {};
     for (const name of names) {
       if (!this.tables.has(name)) continue;
-      output[name === "membership_tiers" ? "tiers" : name] = await this.snapshotRows(name, branchId);
+      output[name === "membership_tiers" ? "tiers" : name] = await this.snapshotRows(name, branchId, options.onProgress);
     }
     if (this.tables.has("settings_scoped") && output.products?.length) {
       const request = this.pool().request()
@@ -471,12 +497,12 @@ class OperationsRepository {
         };
       });
     }
-    if (this.tables.has("pos_settings")) {
+    if (!options.salesOnly && this.tables.has("pos_settings")) {
       const result = await this.pool().request().query("SELECT TOP (1) * FROM dbo.pos_settings ORDER BY id;");
       output.settings = result.recordset?.[0]
         ? toRendererRow(this.tables.get("pos_settings"), result.recordset[0]) : null;
     }
-    if (this.tables.has("settings_scoped")) {
+    if (!options.salesOnly && this.tables.has("settings_scoped")) {
       const table = this.tables.get("settings_scoped");
       const scope = settingsScopePredicate(table);
       const result = await this.pool().request()
@@ -486,7 +512,7 @@ class OperationsRepository {
       output.settingFields = (result.recordset ?? []).map((row) =>
         toRendererRow(table, row));
     }
-    if (this.tables.has("shifts")) {
+    if (!options.salesOnly && this.tables.has("shifts")) {
       const result = branchId
         ? await this.pool().request().input("branch", String(branchId)).query("SELECT TOP (2000) * FROM dbo.shifts WHERE store_id=@branch ORDER BY [id];")
         : { recordset: [] };

@@ -135,14 +135,19 @@ class PushWorker {
       try {
         return await work();
       } catch (error) {
-        if (error?.code === "GOVERNANCE_AUTH_REQUIRED") throw error;
+        const status = Number(error?.status ?? 0);
+        const retryable = status === 408 || status === 429 || status >= 500 ||
+          ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "TimeoutError", "AbortError"].includes(error?.code ?? error?.name) ||
+          error instanceof TypeError || (!status && !error?.code);
+        if (!retryable) throw error;
         if (attempt === 5) throw error;
         await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt, { maxMs: 5000 })));
       }
     }
     throw new Error("The synchronization retry loop ended unexpectedly.");
   }
-  async pushAggregates(branchId, batchSize) {
+  async pushAggregates(branchId, batchSize, isolate = false) {
+    this.pushErrors = []; this.blockedTables = new Set();
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
     const deferred = new Set();
@@ -156,6 +161,10 @@ class PushWorker {
       const aggregates = await this.reader.pendingAggregates(branchId, batchSize, [...deferred]);
       if (!aggregates.length) break;
       for (const aggregate of aggregates) {
+      if (aggregate.changes.some(change => this.blockedTables.has(change.entity_type))) {
+        deferred.add(aggregate.aggregateId); continue;
+      }
+      try {
       const requiresSettingsProof = aggregate.changes.some((change) =>
         protectedSettings.has(change.entity_type) ||
         (change.entity_type === "settings_scoped" && isSharedPosFieldChange(change)));
@@ -198,7 +207,6 @@ class PushWorker {
       try {
         await includeMissingParents(operations, this.reader, this.registry, branchId);
       } catch (error) {
-        await this.reader.failAggregate(aggregate.aggregateId, error);
         throw error;
       }
       if (!operations.length) {
@@ -234,8 +242,15 @@ class PushWorker {
           deferred.add(aggregate.aggregateId);
           continue;
         }
-        await this.reader.failAggregate(aggregate.aggregateId, error);
         throw error;
+      }
+      } catch(error) {
+        error.table ??= aggregate.changes[0]?.entity_type ?? null;
+        await this.reader.failAggregate(aggregate.aggregateId, error);
+        if (!isolate || [401,403].includes(Number(error?.status))) throw error;
+        deferred.add(aggregate.aggregateId);
+        for (const change of aggregate.changes) this.blockedTables.add(change.entity_type);
+        this.pushErrors.push(error);
       }
       }
       if (deferred.size >= 2000) break;
@@ -246,7 +261,7 @@ class PushWorker {
     if (!branchId) throw new Error("A branch is required for synchronization.");
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
     const terminalId = this.cloud.terminalId?.() ?? "";
-    let pushed = await this.pushAggregates(branchId, batchSize);
+    let pushed = await this.pushAggregates(branchId, batchSize, true);
     const governance = new Set([
       "pos_settings",
       "pos_store_settings",
@@ -268,6 +283,11 @@ class PushWorker {
         a.cloudTable.localeCompare(b.cloudTable),
     )) {
       if (table.direction === "pull") continue;
+      if (this.blockedTables.has(table.sqlServerTable) || table.columns.some(column =>
+        column.foreignKeyTarget && this.blockedTables.has(column.foreignKeyTarget.table))) {
+        this.blockedTables.add(table.sqlServerTable); continue;
+      }
+      try {
       if (!table.columns.some((column) => column.primaryKey)) continue;
       // Governance changes remain safely committed in SQL Server until a
       // currently verified settings administrator is available to upload them.
@@ -349,7 +369,13 @@ class PushWorker {
         rows = [];
         live = [];
       }
+      } catch(error) {
+        if (error?.code === "ECHANGEGAP" || [401,403].includes(Number(error?.status))) throw error;
+        this.blockedTables.add(table.sqlServerTable);
+        this.pushErrors.push(Object.assign(error, {table: error.table ?? table.cloudTable}));
+      }
     }
+    if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
     return { pushed };
   }
 }

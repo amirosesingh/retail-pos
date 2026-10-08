@@ -64,7 +64,7 @@ export function cachedSuppliers(): Supplier[] {
   if (typeof window === "undefined") return [];
   try {
     const list = JSON.parse(readBusinessValue(CACHE_KEY) ?? "[]") as Supplier[];
-    return Array.isArray(list) ? list : [];
+    return Array.isArray(list) ? list.filter((row) => row && typeof row.id === "string" && typeof row.name === "string") : [];
   } catch {
     return [];
   }
@@ -73,7 +73,15 @@ export function cachedSuppliers(): Supplier[] {
 /** Central list, newest first. Falls back to the offline cache. */
 export async function loadSuppliers(): Promise<Supplier[]> {
   let rows: Row[];
-  try { rows = await routedQuery("suppliers", { match: { deleted_at: null }, orderBy: { column: "name" }, limit: 2000 }) as Row[]; }
+  try {
+    rows = [];
+    for (let offset=0; ; offset+=1000) {
+      const page = await routedQuery("suppliers", {match:{deleted_at:null},orderBy:{column:"name"},limit:1000,offset}) as Row[];
+      rows.push(...page);
+      if (page.length < 1000) break;
+      if (rows.length >= 500000) throw new Error("The supplier directory is too large to load completely.");
+    }
+  }
   catch { return cachedSuppliers(); }
   const list = rows.map(toSupplier);
   cache(list);
@@ -82,8 +90,8 @@ export async function loadSuppliers(): Promise<Supplier[]> {
 
 export async function saveSupplier(s: Supplier) {
   const list = cachedSuppliers();
-  cache([...list.filter((x) => x.id !== s.id), s].sort((a, b) => a.name.localeCompare(b.name)));
   await commitOps("Saving supplier", [{ kind: "upsert", table: "suppliers", rows: [toRow(s)] }]);
+  cache([...list.filter((x) => x.id !== s.id), s].sort((a, b) => a.name.localeCompare(b.name)));
 }
 
 export async function deleteSupplier(id: string) {

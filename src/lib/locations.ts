@@ -63,7 +63,7 @@ export function canonicalLocations(stores: Store[]): Store[] {
 
 /** Sub-locations nested directly under `id`. */
 export const childrenOf = (stores: Store[], id: string) =>
-  activeLocations(stores).filter((s) => s.parentId === id);
+  activeLocations(canonicalLocations(stores)).filter((s) => s.parentId === canonicalBranchId(id));
 
 /** Locations with no parent — the roots of the tree. */
 export const rootLocations = (stores: Store[]) => {
@@ -85,7 +85,7 @@ export function descendants(stores: Store[], id: string): Store[] {
     out.push(self);
     for (const child of childrenOf(live, nodeId)) walk(child.id);
   };
-  walk(id);
+  walk(canonicalBranchId(id));
   return out;
 }
 
@@ -197,7 +197,7 @@ export function pickOrder(stores: Store[], id: string): Store[] {
   if (!subs.length) return [];
   const primary = primarySub(stores, id);
   const rest = subs.filter((s) => s.id !== primary?.id);
-  const self = stores.find((s) => s.id === id);
+  const self = activeLocations(canonicalLocations(stores)).find((s) => s.id === canonicalBranchId(id));
   return [...(primary ? [primary] : []), ...rest, ...(self ? [self] : [])];
 }
 
@@ -217,7 +217,8 @@ export function planDeduction(
   warehouseId: string,
   qty: number,
 ): DeductionPlan {
-  const want = Math.max(0, Math.floor(qty) || 0);
+  if (!Number.isFinite(qty) || qty < 0) throw new Error("Enter a finite, non-negative stock quantity.");
+  const want = qty;
   const order = pickOrder(stores, warehouseId);
   if (!order.length) {
     const have = stockAtLocation(product, warehouseId);
@@ -245,4 +246,4 @@ export function planDeduction(
 
 /** Units of one product across a warehouse and every level under it. */
 export const availableAt = (product: Product, stores: Store[], id: string) =>
-  descendants(stores, id).reduce((a, s) => a + stockAtLocation(product, s.id), 0);
+  activeLocations(descendants(stores, id)).reduce((a, s) => a + stockAtLocation(product, s.id), 0);

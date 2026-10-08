@@ -139,7 +139,8 @@ type Queued = ActivityEventInput & { clientEventId: string; createdAt: string };
 function readQueue(): Queued[] {
   if (!isBrowser()) return [];
   try {
-    return JSON.parse(readBusinessValue(QUEUE_KEY) ?? "[]") as Queued[];
+    const parsed: unknown = JSON.parse(readBusinessValue(QUEUE_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((row): row is Queued => !!row && typeof row === "object" && typeof row.clientEventId === "string" && typeof row.title === "string" && typeof row.type === "string") : [];
   } catch {
     return [];
   }
@@ -478,7 +479,6 @@ const looksMissing = (error: unknown) => {
     !!candidate &&
     (candidate.code === "PGRST205" ||
       candidate.code === "42P01" ||
-      /activity_events/i.test(candidate.message ?? "") ||
       /schema cache|does not exist/i.test(candidate.message ?? ""))
   );
 };

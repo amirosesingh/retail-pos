@@ -110,7 +110,8 @@ class AggregateRepository {
           branchId: aggregate.branchId,
           terminalId: aggregate.terminalId,
           permissions: aggregate.permissions,
-          enforcePermissions: aggregate.enforcePermissions === true,
+          enforcePermissions: true,
+          memberAccrual: aggregate.memberAccrual,
         });
         if (operation.requireMatch && operationAffected !== 1)
           throw Object.assign(
