@@ -69,7 +69,7 @@ const sourceBarcode = (row: Record<string, unknown>) => {
   return "";
 };
 
-function templateSheet() {
+function templateSheet(quantityRequired: boolean) {
   const ws = XLSX.utils.aoa_to_sheet([[...IMPORT_HEADERS], ...TEMPLATE_ROWS]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Products");
@@ -81,7 +81,13 @@ function templateSheet() {
     ["cost", "No", "Cost price; blank becomes 0"],
     ["category", "No", "Product category"],
     ["unit", "No", "Unit of measure, for example pcs, bag, or kg"],
-    ["stock_quantity", "No*", "Required and greater than zero for receiving imports"],
+    [
+      "stock_quantity",
+      quantityRequired ? "Yes" : "No",
+      quantityRequired
+        ? "Quantity to receive or transfer; must be greater than zero"
+        : "Opening quantity; blank becomes 0",
+    ],
     ["custom_points", "No", "Loyalty points; blank becomes 0"],
     ["tax_rate_percent", "No", "0 to 100; blank uses enabled Tax Settings, otherwise 0"],
   ]);
@@ -131,7 +137,10 @@ export function BulkImportDialog({
   }, []);
 
   function downloadTemplate(kind: "xlsx" | "csv") {
-    XLSX.writeFile(templateSheet(), `inventory-import-template.${kind}`, { bookType: kind });
+    const templateMode = mode === "inventory" ? "inventory" : mode;
+    XLSX.writeFile(templateSheet(mode !== "inventory"), `${templateMode}-import-template.${kind}`, {
+      bookType: kind,
+    });
   }
 
   function downloadReport(o: ImportOutcome) {
@@ -436,9 +445,10 @@ export function BulkImportDialog({
                 </button>
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Required: barcode · name · price. Optional: cost · category · unit · stock_quantity
-                · custom_points · tax_rate_percent. Tax defaults to enabled Tax Settings, otherwise
-                0%.
+                Required: barcode · name · price{mode === "inventory" ? "" : " · stock_quantity"}.
+                Optional: cost · category · unit{mode === "inventory" ? " · stock_quantity" : ""} ·
+                custom_points · tax_rate_percent. Blank numeric optional values become 0; blank tax
+                uses enabled Tax Settings, otherwise 0%.
               </p>
             </>
           )}

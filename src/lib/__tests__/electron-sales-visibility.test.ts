@@ -175,6 +175,28 @@ describe("Electron sales visibility", () => {
       { id: "wrong", store_id: "branch-2" },
     ]);
     expect(rowsForBranch("sales", [{ id: "sale" }], "branch-1")).toEqual([{ id: "sale" }]);
+    expect(rowsForBranch({
+      cloudTable: "purchase_orders", scope: "branch", direction: "bidirectional",
+      columns: [{ cloudColumn: "id" }, { cloudColumn: "store_id" }],
+    }, [
+      { id: "missing", store_id: null },
+      { id: "correct", store_id: "branch-1" },
+      { id: "wrong", store_id: "branch-2" },
+    ], "branch-1")).toEqual([
+      { id: "missing", store_id: "branch-1" },
+      { id: "correct", store_id: "branch-1" },
+      { id: "wrong", store_id: "branch-2" },
+    ]);
+    expect(rowsForBranch({
+      cloudTable: "stock_count_drafts", scope: "branch", direction: "bidirectional",
+      columns: [{ cloudColumn: "id" }, { cloudColumn: "store_id" }],
+    }, [{ id: "draft", store_id: "" }], "branch-1"))
+      .toEqual([{ id: "draft", store_id: "branch-1" }]);
+    expect(rowsForBranch({
+      cloudTable: "app_users", scope: "branch", direction: "pull",
+      columns: [{ cloudColumn: "id" }, { cloudColumn: "store_id" }],
+    }, [{ id: "global-admin", store_id: null }], "branch-1"))
+      .toEqual([{ id: "global-admin", store_id: null }]);
   });
 
   it("stores the branch on offline sign-in audit rows", async () => {

@@ -19,15 +19,19 @@ function collapseChanges(changes) {
 }
 
 /**
- * Older desktop builds wrote sale_items before branch_id was projected and
- * could write audit_logs without the later-added store_id. The aggregate
- * journal already fixes the authoritative branch, so fill only a missing
- * value while preserving a non-empty mismatch for the server to reject as
- * possible cross-branch corruption.
+ * Older desktop builds could commit a branch-owned row before its branch
+ * column was projected. The local database belongs to one registered branch,
+ * so repair only a missing value at the upload boundary. A non-empty mismatch
+ * remains rejected as possible cross-branch corruption.
  */
-function rowsForBranch(tableName, rows, branchId) {
-  const branchColumn =
-    tableName === "sale_items" ? "branch_id" : tableName === "audit_logs" ? "store_id" : null;
+function rowsForBranch(table, rows, branchId) {
+  const tableName = typeof table === "string" ? table : table?.cloudTable;
+  const columns = new Set((typeof table === "string" ? [] : table?.columns ?? []).map((column) => column.cloudColumn));
+  const branchColumn = typeof table === "string"
+    ? tableName === "sale_items" ? "branch_id" : tableName === "audit_logs" ? "store_id" : null
+    : table?.scope === "branch" && table?.direction !== "pull"
+      ? columns.has("store_id") ? "store_id" : columns.has("branch_id") ? "branch_id" : null
+      : null;
   if (!branchColumn) return rows;
   return rows.map((row) =>
     String(row?.[branchColumn] ?? "").trim() ? row : { ...row, [branchColumn]: branchId },
@@ -169,7 +173,7 @@ class PushWorker {
             deletePhase: false,
             changes: live,
             rows: rowsForBranch(
-              table.cloudTable,
+              table,
               await this.reader.rows(table, live, { branchId }),
               branchId,
             ),
@@ -286,7 +290,7 @@ class PushWorker {
         if (requiresSettingsProof && !this.cloud.hasAuthorizationProof?.()) break;
         let live = changes.filter((change) => change.operation !== "D");
         let rows = rowsForBranch(
-          table.cloudTable,
+          table,
           await this.reader.rows(table, live, { branchId }),
           branchId,
         );
@@ -301,7 +305,7 @@ class PushWorker {
           changes = changes.filter((change) => Number(change.version) !== last);
           live = changes.filter((change) => change.operation !== "D");
           rows = rowsForBranch(
-            table.cloudTable,
+            table,
             await this.reader.rows(table, live, { branchId }),
             branchId,
           );

@@ -181,6 +181,40 @@ describe("SQL Server checkpoints 7 through 12", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("repairs normal branch batches while still filtering cached settings rows", async () => {
+    const purchase = { version: 4, operation: "I", remote: false, key: { id: "P1" } };
+    const cached = { version: 5, operation: "I", remote: false,
+      key: { scope: "GLOBAL", scope_id: "", key: "cached" } };
+    const branch = { version: 6, operation: "I", remote: false,
+      key: { scope: "BRANCH", scope_id: "B1", key: "price" } };
+    const reader = {
+      pendingAggregates: vi.fn().mockResolvedValue([]),
+      changedIds: vi.fn()
+        .mockResolvedValueOnce([purchase]).mockResolvedValueOnce([])
+        .mockResolvedValueOnce([cached, branch]).mockResolvedValueOnce([]),
+      rows: vi.fn(async (table, changes) => table.cloudTable === "purchase_orders"
+        ? [{ id: "P1", store_id: null }]
+        : changes.map((change) => ({ ...change.key, value: "1" }))),
+    };
+    const cloud = { pushBatch: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
+    const checkpoints = { get: vi.fn().mockResolvedValue(null), save: vi.fn() };
+    const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
+    await new PushWorker({ reader, cloud, checkpoints, registry: { tables: [
+      { cloudTable: "purchase_orders", sqlServerTable: "purchase_orders", scope: "branch",
+        direction: "bidirectional", dependencyOrder: 0,
+        columns: [{ cloudColumn: "id", primaryKey: true }, { cloudColumn: "store_id" }] },
+      { cloudTable: "settings_scoped", sqlServerTable: "settings_scoped", scope: "branch",
+        direction: "bidirectional", dependencyOrder: 1,
+        columns: [{ cloudColumn: "scope", primaryKey: true }] },
+    ] } }).run({ branchId: "B1" });
+
+    expect(cloud.pushBatch.mock.calls[0][0].rows)
+      .toEqual([{ id: "P1", store_id: "B1" }]);
+    expect(cloud.pushBatch.mock.calls[1][0].changes).toEqual([branch]);
+    expect(cloud.pushBatch.mock.calls[1][0].rows)
+      .toEqual([{ scope: "BRANCH", scope_id: "B1", key: "price", value: "1" }]);
+  });
+
   it("advances past cloud-applied SQL changes without echoing them back to Supabase", async () => {
     const remoteChange = {
       version: 12,
@@ -381,6 +415,23 @@ describe("SQL Server checkpoints 7 through 12", () => {
     await Promise.all([first, second]);
     expect(push).toHaveBeenNthCalledWith(1, { branchId: "B1" });
     expect(push).toHaveBeenNthCalledWith(2, { branchId: "B2" });
+  });
+
+  it("names the rejected table when cloud branch validation fails", async () => {
+    const failure = Object.assign(new Error("SYNC_BRANCH_FORBIDDEN"), {
+      code: "P0001", detail: "purchase_orders",
+    });
+    const { SyncCoordinator } = await import("../../../electron/sync/coordinator.cjs");
+    const coordinator = new SyncCoordinator({
+      pushWorker: { reader: {}, run: vi.fn().mockRejectedValue(failure) },
+      pullWorker: { run: vi.fn() },
+    });
+    await expect(coordinator.runNow({ branchId: "B1" })).resolves.toMatchObject({
+      ok: false, code: "P0001", table: "purchase_orders",
+      error: "SYNC_BRANCH_FORBIDDEN (table: purchase_orders)",
+    });
+    expect(coordinator.snapshot().lastError)
+      .toBe("SYNC_BRANCH_FORBIDDEN (table: purchase_orders)");
   });
 
   it("runs a distinct final catch-up pass and refuses unacknowledged rows", async () => {

@@ -59,11 +59,13 @@ class SyncCoordinator {
       this.status.phase="idle"; this.status.lastError=null; this.status.credentialsInvalid=false;
       result={ ok:true,...pushed,...pulled };
     } catch(error) {
-      this.status.phase="idle"; this.status.lastError=String(error?.message??error);
+      const failedTable=String(error?.table??error?.detail??"").trim();
+      const rawMessage=String(error?.message??error);
+      this.status.phase="idle"; this.status.lastError=failedTable&&!rawMessage.includes(failedTable)?`${rawMessage} (table: ${failedTable})`:rawMessage;
       const code=String(error?.code??"ESYNC");
       const status=Number(error?.status??error?.statusCode??0);
       this.status.credentialsInvalid=status===401||status===403||code==="HTTP_401"||code==="HTTP_403";
-      result={ ok:false,code,error:this.status.lastError };
+      result={ ok:false,code,error:this.status.lastError,table:failedTable||null };
     } finally {
       this.running=false;
       await this.refresh(options.branchId);
