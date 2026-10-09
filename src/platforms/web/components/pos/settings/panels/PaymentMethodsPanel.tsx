@@ -8,7 +8,7 @@
  * they were taken on, so reports stay intact after a tender is retired.
  */
 import { useCallback, useEffect, useState } from "react";
-import { GripVertical, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,9 +18,9 @@ import { Badge } from "@/components/ui/badge";
 import {
   blankPaymentType,
   deletePaymentType,
-  loadPaymentTypes,
+  loadEditablePaymentTypes,
   paymentCodeFrom,
-  savePaymentType,
+  savePaymentTypes,
   type PaymentType,
 } from "@/core/types/payment-types";
 
@@ -32,23 +32,11 @@ export function PaymentMethodsPanel() {
 
   const message = (e: unknown) => (e instanceof Error ? e.message : "Could not reach the database");
 
-  /** Pull the list again after a change. A failed refresh must not wipe or
-   *  silently stale the rows on screen — say so instead. */
-  const refresh = useCallback(async () => {
-    try {
-      setRows(await loadPaymentTypes());
-      return true;
-    } catch (e) {
-      toast.error(`Saved, but the list could not be reloaded: ${message(e)}`);
-      return false;
-    }
-  }, []);
-
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      setRows(await loadPaymentTypes());
+      setRows(await loadEditablePaymentTypes());
     } catch (e) {
       setLoadError(message(e));
       toast.error(`Could not load the payment methods: ${message(e)}`);
@@ -64,12 +52,12 @@ export function PaymentMethodsPanel() {
   const patch = (id: string, p: Partial<PaymentType>) =>
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...p } : r)));
 
-  const save = async (row: PaymentType) => {
+  const save = async () => {
     if (busy) return;
-    setBusy(row.id);
-    let res: Awaited<ReturnType<typeof savePaymentType>>;
+    setBusy("saving");
+    let res: Awaited<ReturnType<typeof savePaymentTypes>>;
     try {
-      res = await savePaymentType(row);
+      res = await savePaymentTypes(rows);
     } catch (e) {
       setBusy(null);
       toast.error(`Could not save the payment method: ${message(e)}`);
@@ -80,8 +68,7 @@ export function PaymentMethodsPanel() {
       toast.error(res.error ?? "Could not save the payment method");
       return;
     }
-    toast.success(`${row.name || "Payment method"} saved`);
-    await refresh();
+    toast.success("Payment methods saved");
   };
 
   const remove = async (row: PaymentType) => {
@@ -103,7 +90,7 @@ export function PaymentMethodsPanel() {
       return;
     }
     toast.success("Payment method deleted");
-    await refresh();
+    setRows(current => current.filter(item => item.id !== row.id));
   };
 
   if (loading) {
@@ -127,18 +114,17 @@ export function PaymentMethodsPanel() {
   }
 
   return (
-    <div className="space-y-3">
+    <fieldset disabled={busy !== null} className="space-y-3">
       {rows.map((row) => (
         <div key={row.id} className="space-y-3 rounded-lg border border-border/60 p-3">
           <div className="flex items-center gap-2">
-            <GripVertical className="size-4 shrink-0 text-muted-foreground" />
             <Input
               value={row.name}
               placeholder="Method name"
               onChange={(e) =>
                 patch(row.id, {
                   name: e.target.value,
-                  code: row.system ? row.code : paymentCodeFrom(e.target.value),
+                  code: row.code || paymentCodeFrom(e.target.value),
                 })
               }
               className="h-9"
@@ -176,9 +162,11 @@ export function PaymentMethodsPanel() {
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Order</Label>
+              <Label className="text-xs text-muted-foreground">Display order</Label>
               <Input
                 value={row.sort}
+                type="number"
+                step={1}
                 inputMode="numeric"
                 onChange={(e) =>
                   patch(row.id, { sort: Number.isFinite(+e.target.value) ? +e.target.value : 0 })
@@ -207,14 +195,7 @@ export function PaymentMethodsPanel() {
                 <Trash2 className="mr-1 size-3.5" /> Delete
               </Button>
             )}
-            <Button size="sm" onClick={() => void save(row)} disabled={busy === row.id}>
-              {busy === row.id ? (
-                <Loader2 className="mr-1 size-3.5 animate-spin" />
-              ) : (
-                <Save className="mr-1 size-3.5" />
-              )}
-              Save
-            </Button>
+
           </div>
         </div>
       ))}
@@ -227,10 +208,17 @@ export function PaymentMethodsPanel() {
       >
         <Plus className="mr-1 size-4" /> Add payment method
       </Button>
+      <Button onClick={() => void save()} disabled={busy !== null}>
+        {busy === "saving" ? <Loader2 className="mr-1 size-4 animate-spin" /> : <Save className="mr-1 size-4" />}
+        Save all payment methods
+      </Button>
+      <p className="text-xs text-muted-foreground">
+        Display order controls the checkout buttons: lower numbers appear first. Use 15 to place a method between 10 and 20.
+      </p>
       <p className="text-xs text-muted-foreground">
         A method marked “needs a serial / voucher number” makes the cashier type the voucher or slip
         reference before the sale can be completed. That reference is stored against the bill.
       </p>
-    </div>
+    </fieldset>
   );
 }

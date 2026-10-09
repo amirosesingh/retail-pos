@@ -156,6 +156,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261008152237_fix_transfer_lifecycle_timestamp_types.sql",
       "supabase/migrations/20261009052645_restore_stocked_products_automatically.sql",
       "supabase/migrations/20261009065040_admin_web_activation_cloud_only.sql",
+      "supabase/migrations/20261009111321_admin_old_pos_exchange.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

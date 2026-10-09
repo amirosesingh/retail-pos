@@ -17,13 +17,13 @@ type TenderDeps = {
   /** Nothing rung up means nothing to charge. */
   hasLines: () => boolean;
   /** Read at the moment the dialog opens, to prefill the cash box. */
-  getTotal: () => number;
+  getTotal: (method: PaymentMethod) => number;
 };
 
 export function useTender(deps: TenderDeps) {
   const [payOpen, setPayOpen] = useState(false);
   const [tendered, setTendered] = useState("");
-  const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [method, updateMethod] = useState<PaymentMethod>("cash");
   const [transferRef, setTransferRef] = useState("");
   /** Serial / voucher number typed for a tender that demands one. */
   const [tenderRef, setTenderRef] = useState("");
@@ -43,10 +43,18 @@ export function useTender(deps: TenderDeps) {
   /** Voucher / coupon tenders cannot complete without their serial number. */
   const needsTenderRef = !!activeTender?.requiresReference && method !== "bank_transfer";
 
+  function setMethod(next: PaymentMethod) {
+    // Update the automatic exact-payment amount, but preserve cash entered by
+    // the operator (for example a 100 note against a smaller bill).
+    setTendered(current => current === Math.max(0, deps.getTotal(method)).toFixed(2)
+      ? Math.max(0, deps.getTotal(next)).toFixed(2) : current);
+    updateMethod(next);
+  }
+
   function openPayment(preset?: PaymentMethod) {
     if (!deps.hasLines() || deps.canProcessSale?.() === false) return;
-    if (preset) setMethod(preset);
-    setTendered(Math.max(0, deps.getTotal()).toFixed(2));
+    if (preset) updateMethod(preset);
+    setTendered(Math.max(0, deps.getTotal(preset ?? method)).toFixed(2));
     setPayOpen(true);
   }
 

@@ -155,20 +155,44 @@ export async function loadPaymentTypes(): Promise<PaymentType[]> {
   }
 }
 
-export async function savePaymentType(t: PaymentType): Promise<PaymentTypeResult> {
-  const name = t.name.trim();
-  if (!name) return { success: false, error: "Give the payment method a name" };
-  const code = (t.code.trim() || paymentCodeFrom(name)).toLowerCase();
-  if (!code) return { success: false, error: "Give the payment method a code" };
+/** Settings must never edit an offline fallback as though it were database data. */
+export async function loadEditablePaymentTypes(): Promise<PaymentType[]> {
+  const rows = await routedQuery("payment_types", {
+    orderBy: { column: "sort_order", ascending: true }, limit: 2000,
+  });
+  if (rows.length) return rows.map(toType).sort(bySort);
+  return FALLBACK_PAYMENT_TYPES.map(row => ({ ...row, id: crypto.randomUUID() }));
+}
+
+export async function savePaymentTypes(types: PaymentType[]): Promise<PaymentTypeResult> {
+  const codes = new Set<string>();
+  const normalized: PaymentType[] = [];
+  for (const t of types) {
+    const name = t.name.trim();
+    if (!name) return { success: false, error: "Give every payment method a name" };
+    const code = (t.code.trim() || paymentCodeFrom(name)).toLowerCase();
+    if (!/^[a-z0-9_]{1,32}$/.test(code))
+      return { success: false, error: `${name}: use a code of up to 32 lowercase letters, numbers or underscores` };
+    if (codes.has(code)) return { success: false, error: `Duplicate payment code: ${code}` };
+    codes.add(code);
+    if (!Number.isInteger(t.sort) || t.sort < -2147483648 || t.sort > 2147483647)
+      return { success: false, error: `${name}: display order must be a whole number between -2147483648 and 2147483647` };
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t.id))
+      return { success: false, error: "Reload payment methods before saving; this list contains temporary identifiers" };
+    normalized.push({ ...t, name, code });
+  }
   try {
-    await commitOps("Saving payment type", [{
-      kind: "upsert", table: "payment_types", rows: [toRow({ ...t, name, code })],
+    await commitOps("Saving payment types", [{
+      kind: "upsert", table: "payment_types", rows: normalized.map(toRow),
     }]);
+    writeCache(normalized.slice().sort(bySort));
     return { success: true };
   } catch (e) {
-    return { success: false, error: describeError(e, "Saving the payment method") };
+    return { success: false, error: describeError(e, "Saving payment methods") };
   }
 }
+
+export const savePaymentType = (t: PaymentType): Promise<PaymentTypeResult> => savePaymentTypes([t]);
 
 export async function deletePaymentType(id: string): Promise<PaymentTypeResult> {
   try {

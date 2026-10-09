@@ -17153,6 +17153,21 @@ BEGIN
         USING ERRCODE = '23514';
     END IF;
 
+    IF left(NEW.original_bill_number, 7) = 'OLDPOS:' THEN
+      IF TG_OP = 'INSERT' OR NEW.original_bill_number IS DISTINCT FROM OLD.original_bill_number THEN
+      IF (SELECT auth.uid()) IS NOT NULL AND NOT public.has_role((SELECT auth.uid()), 'admin'::public.app_role) THEN
+        RAISE EXCEPTION 'Only an administrator can enter an old POS exchange' USING ERRCODE = '42501';
+      END IF;
+      IF (SELECT auth.uid()) IS NULL AND current_user NOT IN ('postgres', 'service_role') THEN
+        RAISE EXCEPTION 'An authorized admin or terminal synchronization is required' USING ERRCODE = '42501';
+      END IF;
+      END IF;
+      IF length(NEW.original_bill_number) <= 7 OR length(NEW.original_bill_number) > 107
+         OR NEW.original_bill_number <> upper(NEW.original_bill_number)
+         OR COALESCE(NEW.total_amount, -1) < 0 OR COALESCE(NEW.exchange_credit, 0) <= 0 THEN
+        RAISE EXCEPTION 'Invalid old POS exchange: add an equal or higher-value replacement' USING ERRCODE = '23514';
+      END IF;
+    ELSE
     SELECT COALESCE(source.is_refunded, false), source.exchanged_to_bill_number
       INTO original_refunded, linked_bill
       FROM public.sales AS source
@@ -17171,6 +17186,7 @@ BEGIN
     IF linked_bill IS NOT NULL AND linked_bill <> NEW.bill_number THEN
       RAISE EXCEPTION 'EXCHANGE_ALREADY_USED: original bill was already exchanged to %', linked_bill
         USING ERRCODE = '23514';
+    END IF;
     END IF;
   ELSIF NULLIF(btrim(COALESCE(NEW.original_bill_number, '')), '') IS NOT NULL THEN
     RAISE EXCEPTION 'EXCHANGE_FLAG_REQUIRED: original bill lineage requires is_exchange'

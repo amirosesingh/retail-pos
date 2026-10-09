@@ -25,7 +25,7 @@ import { db } from "@/core/api/pos-db";
 import { localDb } from "@/core/local-db/local-db";
 import { defaultTradingHours } from "@/lib/pos-seed";
 
-import { applyRounding, roundingOf } from "@/core/pricing/rounding";
+import { applyRounding, roundingOf, roundingPaymentMethod } from "@/core/pricing/rounding";
 import { applyCombo, intakeTotals, newJobTag } from "@/lib/booking-charges";
 import { bookingRulesOf, paymentsLabel, r2, validateTenders } from "@/core/types/pos-types";
 import type {
@@ -104,6 +104,7 @@ export function useCheckout(deps: CheckoutDeps) {
   const { state, recordSale, createBooking } = usePos();
   const [saving, setSaving] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
+  const [changeSale, setChangeSale] = useState<Sale | null>(null);
   /**
    * One attempt id per ticket, kept across retries and cleared only once the
    * bill is stored. It is what lets the till recognise a payment that already
@@ -438,9 +439,7 @@ export function useCheckout(deps: CheckoutDeps) {
      * rounded value is what the ticket is validated, charged and stored on.
      */
     const roundingCfg = state.settings.integrations.rounding;
-    const settleMethod = splitting
-      ? tenders.reduce((a, p) => (p.amount > a.amount ? p : a), tenders[0]!).method
-      : method;
+    const settleMethod = roundingPaymentMethod(method, tenders);
     const rounding = applyRounding(totals.total, roundingCfg, settleMethod);
     const chargeTotal = rounding.total;
     const split = validateTenders(chargeTotal, tenders);
@@ -611,6 +610,9 @@ export function useCheckout(deps: CheckoutDeps) {
     // before starting printer, drawer, messaging or audit side effects: none
     // of those integrations may strand the cashier on a completed ticket.
     setLastSale(sale);
+    if (sale.change > 0 && (sale.method === "cash" || sale.payments?.some(payment => payment.method === "cash"))) {
+      setChangeSale(sale);
+    }
     const customerNumber = member?.phone ?? "";
     deps.setWaNumber(customerNumber);
     let paidDisplay: DisplaySnapshot | null = null;
@@ -708,6 +710,8 @@ export function useCheckout(deps: CheckoutDeps) {
     saving,
     lastSale,
     setLastSale,
+    changeSale,
+    dismissChange: () => setChangeSale(null),
     completeSale,
     bookAndPayLater,
     sendSaleOnWhatsApp,

@@ -38,3 +38,9 @@ describe('cashier sale permissions with no member',()=>{
   expect(fetch).not.toHaveBeenCalled();
  });
 });
+
+it('browser refuses old-POS exchanges for cashiers before calling the database',async()=>{
+ const fetch=vi.fn();vi.stubGlobal('fetch',fetch);
+ const result=await runRelayRpc({kind:'rpc',table:'sales',fn:'pos_sale_commit',args:{_sale:{...sale.rows[0],original_bill_number:'OLDPOS:7'},_member:null}},scope({can_process_sale:true,can_process_exchange:true}));
+ expect(result.ok).toBe(false);expect(fetch).not.toHaveBeenCalled();
+});

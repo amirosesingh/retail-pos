@@ -1,3 +1,5 @@
+import { LegacyExchangeForm } from "@/platforms/web/components/pos/LegacyExchangeForm";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   useCallback,
@@ -19,7 +21,7 @@ import { useCart } from "@/lib/register/use-cart";
 import { useTender } from "@/lib/register/use-tender";
 import { isoDaysFromNow, useBookingIntake } from "@/lib/register/use-booking-intake";
 import { useCheckout } from "@/lib/register/use-checkout";
-import { applyRounding, roundingOf, showsRoundingLine } from "@/core/pricing/rounding";
+import { applyRounding, roundingOf, roundingPaymentMethod, showsRoundingLine } from "@/core/pricing/rounding";
 import { usePromotions } from "@/lib/register/use-promotions";
 import { useExchange } from "@/lib/register/use-exchange";
 import { removeApprovedDiscount, useRegisterHeldOrders } from "@/lib/register/use-held-orders";
@@ -207,7 +209,7 @@ function Register() {
     updateSettings,
   } = usePos();
   useUiScale();
-  const { user, can } = useAuth();
+  const { user, can, isAdmin } = useAuth();
   const { requirePermission } = useUserPermissions();
   const { visible, visibleRoute } = useVisibility();
   /** Server-loaded operational rules. Never read from browser storage. */
@@ -602,7 +604,7 @@ function Register() {
   } = useTender({
     canProcessSale: () => can("can_process_sale"),
     hasLines: () => lines.length > 0,
-    getTotal: () => totals.total,
+    getTotal: (paymentMethod) => applyRounding(totals.total, state.settings.integrations.rounding, paymentMethod).total,
   });
 
   const [waNumber, setWaNumber] = useState("");
@@ -911,7 +913,7 @@ function Register() {
   }, [focId, hasFoc, state.promotions, state.products, setLines]);
   // Total rounding: display and tender validation use the same rounded figure
   // the checkout charges and stores.
-  const rounding = applyRounding(totals.total, state.settings.integrations.rounding, method);
+  const rounding = applyRounding(totals.total, state.settings.integrations.rounding, roundingPaymentMethod(method, tenders));
   const roundedTotal = rounding.total;
   const balanceDue = roundedTotal >= 0 ? roundedTotal : 0;
   const refundDue = roundedTotal < 0 ? r2(-roundedTotal) : 0;
@@ -1222,7 +1224,7 @@ function Register() {
     transferRef: "",
   });
 
-  const { saving, lastSale, completeSale, bookAndPayLater, sendSaleOnWhatsApp } = useCheckout({
+  const { saving, lastSale, changeSale, dismissChange, completeSale, bookAndPayLater, sendSaleOnWhatsApp } = useCheckout({
     getActiveShift: () => activeShift,
     getCurrentStore: () => currentStore,
     getActiveCashier: () => activeCashier,
@@ -3144,6 +3146,24 @@ function Register() {
         </DialogContent>
       </Dialog>
 
+      <AlertDialog open={changeSale !== null}>
+        <AlertDialogContent onEscapeKeyDown={(event) => event.preventDefault()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change for customer</AlertDialogTitle>
+            <AlertDialogDescription>
+              Sale {changeSale?.receiptNo} completed. Give the customer their change before continuing.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <p className="numeric text-center text-4xl font-bold">{money(changeSale?.change ?? 0)}</p>
+          <p className="text-center text-sm text-muted-foreground">
+            Total {money(changeSale?.total ?? 0)} · Received {money(changeSale?.paid ?? 0)}
+          </p>
+          <AlertDialogFooter>
+            <Button onClick={dismissChange}>Change given — Close</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Payment */}
       <Dialog open={payOpen} onOpenChange={setPayOpen}>
         <DialogContent>
@@ -3414,6 +3434,19 @@ function Register() {
             </Button>
           </form>
 
+          {isAdmin && <details className="rounded-md border p-3"><summary className="cursor-pointer font-medium">Old POS exchange · Admin</summary>
+            <LegacyExchangeForm products={state.products} onAdd={async (reference, credits) => {
+              if (!isAdmin) throw new Error("Only an administrator can enter an old POS exchange.");
+              if (!activeShift) throw new Error("Open a shift before processing an exchange.");
+              if (!(await requirePermission("can_process_exchange"))) return;
+              if (state.sales.some(sale => sale.storeId === currentStore.id && sale.exchangeOfReceiptNo === reference))
+                throw new Error("This old POS receipt has already been exchanged at this branch.");
+              setLines(current => [...credits, ...current.filter(line => !line.credit)]);
+              setExchangeRef(reference);
+              setExchangeOpen(false);
+              toast.success("Old POS credit added. Add replacement items, then charge the difference.");
+            }} />
+          </details>}
           {billHit && (
             <div className="space-y-3">
               <p className="numeric text-xs text-muted-foreground">

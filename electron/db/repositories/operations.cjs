@@ -268,7 +268,24 @@ class OperationsRepository {
         throw Object.assign(new Error("A shift is already open for this branch. Refresh the shift status to continue it."), { code: "ESHIFT_OPEN" });
     }
   }
+  async assertLegacyExchange(transaction, op, scope = {}) {
+    if (op.table !== "sales") return;
+    for (const row of op.rows ?? [op.values ?? {}]) {
+      const reference = String(row.original_bill_number ?? "");
+      if (!reference.startsWith("OLDPOS:")) continue;
+      if (scope.enforcePermissions === true && scope.isSettingsAdmin !== true)
+        throw Object.assign(new Error("Only an administrator can enter an old POS exchange."), {code:"PERMISSION_DENIED"});
+      if (!row.id || !row.is_exchange || reference.length <= 7 || reference.length > 107 || reference !== reference.toUpperCase() || !Number.isFinite(Number(row.total_amount)) || Number(row.total_amount) < 0 || !(Number(row.exchange_credit) > 0))
+        throw Object.assign(new Error("Invalid old POS exchange. Add an equal or higher-value replacement."), {code:"EEXCHANGE_STATE"});
+      const duplicate = await new (this.connectionManager.sql().Request)(transaction)
+        .input("reference", reference).input("branch", String(scope.branchId ?? row.store_id ?? "")).input("saleId", row.id)
+        .query("SELECT id FROM dbo.sales WITH (UPDLOCK,HOLDLOCK) WHERE store_id=@branch AND original_bill_number=@reference AND id<>@saleId;");
+      if (duplicate.recordset?.length)
+        throw Object.assign(new Error("This old POS receipt has already been exchanged at this branch."), {code:"EEXCHANGE_STATE"});
+    }
+  }
   async applyOperation(transaction, op, scope = {}) {
+    await this.assertLegacyExchange(transaction, op, scope);
     await this.assertSettingsPermissions(transaction, op, scope);
     await this.assertShiftOpening(transaction, op, scope);
     const { branchId, terminalId } = scope;

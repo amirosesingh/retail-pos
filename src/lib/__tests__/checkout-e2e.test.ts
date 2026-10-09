@@ -108,6 +108,25 @@ describe("checkout commit", () => {
     expect(saleArgs()?.["_movements"]).toHaveLength(1);
   });
 
+  it("records only the old-POS exchange difference and both stock movements", async () => {
+    const exchange = sale({exchangeOfReceiptNo:"OLDPOS:RECEIPT-7", exchangeCredit:70, subtotal:12, total:12, paid:12,
+      lines:[{productId:"returned",name:"Returned",qty:-1,price:70,taxRate:0,discount:0,credit:true},
+        {productId:"replacement",name:"Replacement",qty:1,price:82,taxRate:0,discount:0}]});
+    await db.commitSale(exchange,[],null);
+    const args = saleArgs()!;
+    expect(args._exchange_bill).toBeNull();
+    expect(args._sale).toMatchObject({total_amount:12,paid_amount:12,original_bill_number:"OLDPOS:RECEIPT-7",is_exchange:true});
+    expect(args._movements).toEqual(expect.arrayContaining([
+      expect.objectContaining({product_id:"returned",quantity_delta:1}),
+      expect.objectContaining({product_id:"replacement",quantity_delta:-1})]));
+    platform.offlineFirst = true;
+    setPreferredDatabaseMode("local");
+    await db.commitSale(exchange,[],null);
+    const operations=localAggregate.mock.calls[0][0].operations;
+    expect(operations.filter((op: {table:string;kind:string}) => op.table === "sales")).toHaveLength(1);
+    expect(operations.find((op: {table:string}) => op.table === "sales").rows[0].total_amount).toBe(12);
+  });
+
   it("records one ledger row per tender on a split payment", async () => {
     await db.commitSale(
       sale({

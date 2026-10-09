@@ -5,7 +5,7 @@
  * tax. Line items and tax are never touched: `cartTotals()` stays the single
  * calculation path and this runs on the number it produces.
  */
-import type { PaymentMethod, RoundingSettings } from "@/core/types/pos-types";
+import type { Payment, PaymentMethod, RoundingSettings } from "@/core/types/pos-types";
 
 export const ROUNDING_UNITS = [1, 0.5, 0.1, 0.05, 0.01] as const;
 
@@ -74,4 +74,11 @@ export function showsRoundingLine(
   raw: Partial<RoundingSettings> | undefined,
 ): boolean {
   return !!roundingOf(raw).showOnReceipt && (adjustment ?? 0) < 0;
+}
+
+/** Split checkout uses the largest tender as its headline payment method. */
+export function roundingPaymentMethod(method: PaymentMethod, tenders: Payment[]): PaymentMethod {
+  return tenders.length
+    ? tenders.reduce((largest, tender) => tender.amount > largest.amount ? tender : largest, tenders[0]!).method
+    : method;
 }
