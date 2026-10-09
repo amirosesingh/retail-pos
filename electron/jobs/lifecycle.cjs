@@ -4,8 +4,8 @@ const { localTableCounts } = require("../sync/reconciliation.cjs");
 const { verifyTables } = require("../sync/verifier.cjs");
 
 class LocalDataLifecycle {
-  constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader}){
-    Object.assign(this,{connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader});
+  constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish=()=>{}}){
+    Object.assign(this,{connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish});
   }
   bootstrapType(historyDays){return `bootstrap_${historyDays}`;}
   async bootstrap(branchId,historyDays,existing=null){return this.jobManager.run(this.bootstrapType(historyDays),context=>runBootstrap({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,checkpoints:this.checkpoints,branchId,historyDays,context}),existing,{branchId});}
@@ -44,6 +44,13 @@ class LocalDataLifecycle {
   async ensure({branchId,historyDays=90,force=false}){
     if(!branchId)throw Object.assign(new Error("This terminal needs a branch before local data can be prepared."),{code:"EBRANCH"});
     this.databaseService.transition("enabled_bootstrapping",{phase:"resume"});
+    // Identity must arrive even if an unrelated upload or a large catalogue
+    // delays bootstrap. Also repairs installations with old bootstrap markers.
+    // refreshTable preserves rows with unacknowledged local edits.
+    for(const tableName of ["pos_settings","settings_scoped"]){
+      const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName});
+      if(refreshed.completed)this.publish({kind:"general",branchId,source:"cloud",tables:[tableName]});
+    }
     await this.resume(branchId,historyDays);
     const completed=await this.jobRepository.completed(this.bootstrapType(historyDays),branchId);
     // Upload local changes before refreshing shared reference rows. Older

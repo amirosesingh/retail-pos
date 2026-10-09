@@ -250,7 +250,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
         ],
       },
     });
-    await expect(worker.run({ branchId: "B1" })).resolves.toEqual({ pushed: 0 });
+    await expect(worker.run({ branchId: "B1" })).resolves.toEqual({ pushed: 0, deferredTables: [] });
     expect(reader.rows).not.toHaveBeenCalled();
     expect(cloud.pushBatch).not.toHaveBeenCalled();
     expect(checkpoints.save).toHaveBeenCalledWith("B1", "products", "push", {
@@ -282,7 +282,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
       checkpoints,
       registry: { tables: [{ cloudTable: "sales", sqlServerTable: "sales", dependencyOrder: 0, direction: "bidirectional", scope: "branch", columns: [{ primaryKey: true }] }] },
     });
-    await expect(worker.run({ branchId: "B1", batchSize: 100 })).resolves.toEqual({ pushed: 2 });
+    await expect(worker.run({ branchId: "B1", batchSize: 100 })).resolves.toEqual({ pushed: 2, deferredTables: [] });
     expect(reader.pendingAggregates).toHaveBeenCalledTimes(3);
     expect(cloud.pushAggregate).toHaveBeenCalledTimes(2);
     expect(reader.acknowledgeAggregate).toHaveBeenCalledTimes(2);
@@ -413,8 +413,8 @@ describe("SQL Server checkpoints 7 through 12", () => {
     const second = coordinator.runNow({ branchId: "B2" });
     releasePush();
     await Promise.all([first, second]);
-    expect(push).toHaveBeenNthCalledWith(1, { branchId: "B1" });
-    expect(push).toHaveBeenNthCalledWith(2, { branchId: "B2" });
+    expect(push).toHaveBeenNthCalledWith(1, { branchId: "B1", onProgress: expect.any(Function) });
+    expect(push).toHaveBeenNthCalledWith(2, { branchId: "B2", onProgress: expect.any(Function) });
   });
 
   it("names the rejected table when cloud branch validation fails", async () => {
@@ -451,7 +451,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
       code: "ESYNC_PENDING",
       pending: 1,
     });
-    expect(push).toHaveBeenCalledWith({ branchId: "B1", batchSize: 100, final: true });
+    expect(push).toHaveBeenCalledWith({ branchId: "B1", batchSize: 100, final: true, includeActivity: true, onProgress: expect.any(Function) });
   });
 
   it("keeps an unacknowledged local row and records the cloud conflict", async () => {

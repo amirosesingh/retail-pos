@@ -1,5 +1,6 @@
 const { retryDelay } = require("./retry.cjs");
 const { stableUuid } = require("../db/repositories/aggregates.cjs");
+const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 
 function groupBy(values, key) {
   const groups = new Map();
@@ -16,6 +17,32 @@ function collapseChanges(changes) {
   for (const change of changes)
     latest.set(`${change.entity_type}\u0000${change.entity_id}`, change);
   return [...latest.values()];
+}
+
+// Batch only independent log writes. Sales, payments and mixed transactions
+// retain their original atomic boundary and idempotency key.
+function batchAuditAggregates(aggregates, limit = 100) {
+  const result = [];
+  let group = [];
+  let rows = 0;
+  const flush = () => {
+    if (group.length === 1) result.push(group[0]);
+    else if (group.length) result.push({
+      aggregateId: stableUuid({ auditAggregates: group.map(item => item.aggregateId) }),
+      changes: group.flatMap(item => item.changes),
+      originals: group,
+    });
+    group = []; rows = 0;
+  };
+  for (const aggregate of aggregates) {
+    const audit = aggregate.changes.length > 0 && aggregate.changes.every(change =>
+      ["audit_logs", "activity_events"].includes(change.entity_type) && ["insert", "update"].includes(change.operation));
+    if (!audit || rows + aggregate.changes.length > limit) flush();
+    if (!audit) result.push(aggregate);
+    else { group.push(aggregate); rows += aggregate.changes.length; }
+  }
+  flush();
+  return result;
 }
 
 /**
@@ -146,7 +173,7 @@ class PushWorker {
     }
     throw new Error("The synchronization retry loop ended unexpectedly.");
   }
-  async pushAggregates(branchId, batchSize, isolate = false) {
+  async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true) {
     this.pushErrors = []; this.blockedTables = new Set();
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
@@ -158,11 +185,12 @@ class PushWorker {
     // so a final shift-close sync could report success while later committed
     // sales were still waiting for the next timer tick.
     while (true) {
-      const aggregates = await this.reader.pendingAggregates(branchId, batchSize, [...deferred]);
+      const aggregates = batchAuditAggregates(await this.reader.pendingAggregates(branchId, batchSize, [...deferred], { includeActivity }), batchSize);
       if (!aggregates.length) break;
       for (const aggregate of aggregates) {
+      const originalIds = (aggregate.originals ?? [aggregate]).map(item => item.aggregateId);
       if (aggregate.changes.some(change => this.blockedTables.has(change.entity_type))) {
-        deferred.add(aggregate.aggregateId); continue;
+        originalIds.forEach(id => deferred.add(id)); continue;
       }
       try {
       const requiresSettingsProof = aggregate.changes.some((change) =>
@@ -235,8 +263,9 @@ class PushWorker {
         );
         if (!acknowledged?.ok)
           throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the aggregate.");
-        await this.reader.acknowledgeAggregate(aggregate.aggregateId);
+        for (const id of originalIds) await this.reader.acknowledgeAggregate(id);
         pushed += aggregate.changes.length;
+        onProgress({ direction: "push", table: operations.map(op => op.table).join(", "), completed: aggregate.changes.length });
       } catch (error) {
         if (requiresSettingsProof && error?.code === "GOVERNANCE_AUTH_REQUIRED") {
           deferred.add(aggregate.aggregateId);
@@ -245,10 +274,16 @@ class PushWorker {
         throw error;
       }
       } catch(error) {
+        // Fall back for a payload rejection, not network/auth/database failures.
+        if (aggregate.originals && (error?.code === "EOVERSIZED" ||
+          [400,413,422].includes(Number(error?.status)))) {
+          aggregates.push(...aggregate.originals);
+          continue;
+        }
         error.table ??= aggregate.changes[0]?.entity_type ?? null;
-        await this.reader.failAggregate(aggregate.aggregateId, error);
+        for (const id of originalIds) await this.reader.failAggregate(id, error);
         if (!isolate || [401,403].includes(Number(error?.status))) throw error;
-        deferred.add(aggregate.aggregateId);
+        originalIds.forEach(id => deferred.add(id));
         for (const change of aggregate.changes) this.blockedTables.add(change.entity_type);
         this.pushErrors.push(error);
       }
@@ -257,11 +292,16 @@ class PushWorker {
     }
     return pushed;
   }
-  async run({ branchId, batchSize = 500 }) {
+  async run({ branchId, batchSize = 500, onProgress = () => {}, includeActivity = true }) {
     if (!branchId) throw new Error("A branch is required for synchronization.");
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
     const terminalId = this.cloud.terminalId?.() ?? "";
-    let pushed = await this.pushAggregates(branchId, batchSize, true);
+    let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity);
+    const deferredTables = new Set();
+    // One lookup per pass instead of one SQL round trip for every table.
+    const savedCheckpoints = this.checkpoints.list
+      ? new Map((await this.checkpoints.list(branchId, "push")).map(row => [row.entity_type, row]))
+      : null;
     const governance = new Set([
       "pos_settings",
       "pos_store_settings",
@@ -283,6 +323,7 @@ class PushWorker {
         a.cloudTable.localeCompare(b.cloudTable),
     )) {
       if (table.direction === "pull") continue;
+      if (!includeActivity && ACTIVITY_TABLES.has(table.cloudTable)) continue;
       if (this.blockedTables.has(table.sqlServerTable) || table.columns.some(column =>
         column.foreignKeyTarget && this.blockedTables.has(column.foreignKeyTarget.table))) {
         this.blockedTables.add(table.sqlServerTable); continue;
@@ -291,8 +332,9 @@ class PushWorker {
       if (!table.columns.some((column) => column.primaryKey)) continue;
       // Governance changes remain safely committed in SQL Server until a
       // currently verified settings administrator is available to upload them.
-      if (governance.has(table.cloudTable) && !this.cloud.hasAuthorizationProof?.()) continue;
-      let checkpoint = await this.checkpoints.get(branchId, table.sqlServerTable, "push");
+      let checkpoint = savedCheckpoints
+        ? savedCheckpoints.get(table.sqlServerTable)
+        : await this.checkpoints.get(branchId, table.sqlServerTable, "push");
       while (true) {
         const window = await this.reader.changedIds(
           table,
@@ -315,7 +357,9 @@ class PushWorker {
         }
         const requiresSettingsProof = table.cloudTable === "settings_scoped" &&
           changes.some(isSharedPosFieldChange);
-        if (requiresSettingsProof && !this.cloud.hasAuthorizationProof?.()) break;
+        if ((governance.has(table.cloudTable) || requiresSettingsProof) && !this.cloud.hasAuthorizationProof?.()) {
+          deferredTables.add(table.cloudTable); break;
+        }
         let live = changes.filter((change) => change.operation !== "D");
         let rows = rowsForBranch(
           table,
@@ -355,7 +399,7 @@ class PushWorker {
           );
         } catch (error) {
           if ((governance.has(table.cloudTable) || requiresSettingsProof) &&
-            error?.code === "GOVERNANCE_AUTH_REQUIRED") break;
+            error?.code === "GOVERNANCE_AUTH_REQUIRED") { deferredTables.add(table.cloudTable); break; }
           throw error;
         }
         if (!acknowledged?.ok)
@@ -366,6 +410,7 @@ class PushWorker {
         });
         checkpoint = { ...(checkpoint ?? {}), change_tracking_version: version };
         pushed += changes.length;
+        onProgress({ direction: "push", table: table.cloudTable, completed: changes.length });
         rows = [];
         live = [];
       }
@@ -376,7 +421,7 @@ class PushWorker {
       }
     }
     if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
-    return { pushed };
+    return { pushed, deferredTables:[...deferredTables] };
   }
 }
-module.exports = { PushWorker, collapseChanges, rowsForBranch, terminalWritableChanges };
+module.exports = { PushWorker, collapseChanges, rowsForBranch, terminalWritableChanges, batchAuditAggregates };

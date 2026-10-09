@@ -3,6 +3,8 @@ import { logSync } from "./sync-log";
 import { hasRequiredPlatformConfig } from "./platform-config-ready";
 import { hasSignedInIdentity } from "./session-presence";
 import { createSerialChannelReplacer } from "./realtime-channel-replacer";
+import { createSyncWakeChannels } from "./sync-wake-channels";
+import { readTerminalConfig, subscribeTerminalConfig } from "@/core/activation/terminal-tokens";
 
 import { needsIdleCatchup } from "./live-query-tables";
 import { tableSyncAllowed } from "./sync-policy";
@@ -169,7 +171,7 @@ const describeError = (table: string, error: PostgrestError) => {
       return `Not signed in to the central database, so "${table}" could not be saved. Sign in again (or activate this till) and the queued changes will go through.`;
     }
     if (/permission denied for function/i.test(error.message)) {
-      return `The central database refused a permission check while saving "${table}" (${error.message}). An administrator needs to run supabase/schema.sql once.`;
+      return `The central database refused a permission check while saving "${table}" (${error.message}). An administrator needs to apply the pending POS migrations following docs/database-upgrade.md.`;
     }
     return `The central database's access rules refused to save "${table}" for this account (${error.message}). Check the account's branch assignment and role.`;
   }
@@ -813,7 +815,7 @@ function queueLiveChange(change: LiveChange): void {
     `${change.table}:${change.storeId ?? ""}:${change.entityId ?? ""}`,
     change,
   );
-  if (liveTimer) window.clearTimeout(liveTimer);
+  if (liveTimer) return;
   // One catch-up for a burst of related edits.
   liveTimer = window.setTimeout(flushLiveChanges, 400);
 }
@@ -974,6 +976,13 @@ export function startSyncEngine() {
   // Auth can become ready after this engine starts, so rebuild the channel at
   // that boundary instead of permanently choosing anonymous or staff mode.
   let liveHasStaffSession = hasStaffSession();
+  const syncWakeChannels = desktopBridge ? createSyncWakeChannels(supabaseExternal,
+    table => queueLiveChange({reason:`database-trigger:${table}`,table,storeId:activeBranchId()}),
+    wake,
+  ) : null;
+  const installSyncWake = () => { void syncWakeChannels?.replace(activeBranchId(),readTerminalConfig()?.tokenId ?? null,liveHasStaffSession); };
+  const offTerminalWake = subscribeTerminalConfig(installSyncWake);
+  installSyncWake();
   const liveChannels = createSerialChannelReplacer<ReturnType<typeof supabaseExternal.channel>>({
     remove: (channel) => supabaseExternal.removeChannel(channel),
     onCurrentChange: (channel) => {
@@ -995,7 +1004,7 @@ export function startSyncEngine() {
       // Electron sessions intentionally have no cloud staff JWT, so they rely on
       // durable local SQL synchronization and polling instead of opening invalid
       // anon subscriptions. Authenticated web users retain scoped live wake-ups.
-      if (staffPresent) {
+      if (staffPresent && !desktopBridge) {
         for (const table of ORGANIZATION_LIVE_TABLES) {
           next.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
             const changed = ((
@@ -1054,6 +1063,7 @@ export function startSyncEngine() {
     if (staffPresent === liveHasStaffSession) return;
     liveHasStaffSession = staffPresent;
     installLiveChannel(staffPresent);
+    installSyncWake();
   });
 
   tick();
@@ -1065,6 +1075,8 @@ export function startSyncEngine() {
     if (liveTimer) window.clearTimeout(liveTimer);
     pendingLiveChanges.clear();
     authListener.subscription.unsubscribe();
+    offTerminalWake();
+    void syncWakeChannels?.stop();
     void liveChannels.stop();
     offDesktopStatus?.();
     offDesktopBusiness?.();

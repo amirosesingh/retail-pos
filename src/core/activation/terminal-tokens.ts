@@ -713,16 +713,16 @@ function activationFailureMessage(e: unknown): string {
   }
 
   if (code === "PGRST202" && /terminal_token_claim/.test(message)) {
-    return "This POS database is missing the one-time terminal claim helper. Run supabase/schema.sql on the POS database, then try again.";
+    return "This POS database is missing the one-time terminal claim helper. Apply the pending POS migrations following docs/database-upgrade.md, then try again.";
   }
   if (code === "PGRST202" && /terminal_token_status/.test(message)) {
-    return "This POS database is missing the terminal status helper. Run supabase/schema.sql on the POS database, then try again.";
+    return "This POS database is missing the terminal status helper. Apply the pending POS migrations following docs/database-upgrade.md, then try again.";
   }
   if (code === "PGRST202" && /terminal_token_heartbeat/.test(message)) {
-    return "This POS database is missing the terminal heartbeat helper. Run supabase/schema.sql on the POS database, then try again.";
+    return "This POS database is missing the terminal heartbeat helper. Apply the pending POS migrations following docs/database-upgrade.md, then try again.";
   }
   if (code === "PGRST202") {
-    return "This POS database has an incomplete terminal activation setup. Run supabase/schema.sql on the POS database, then try again.";
+    return "This POS database has an incomplete terminal activation setup. Apply the pending POS migrations following docs/database-upgrade.md, then try again.";
   }
   if (
     e instanceof TypeError ||

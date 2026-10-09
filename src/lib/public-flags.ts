@@ -29,7 +29,7 @@ export const redeemDomainOn = () => cache.redeem;
 
 export async function loadPublicFlags(force = false): Promise<PublicFlags> {
   if (loaded && !force) return cache;
-  if (inflight && !force) return inflight;
+  if (inflight) return inflight;
   inflight = (async () => {
     const data = await routedQuery("public_flags", { columns: "key,enabled", orderBy: { column: "key" }, limit: 100 });
     if (data) {
@@ -40,9 +40,12 @@ export async function loadPublicFlags(force = false): Promise<PublicFlags> {
       loaded = true;
       emit();
     }
-    inflight = null;
     return cache;
-  })();
+  })().catch(() => {
+    // Background flags must not fail startup or cache a rejected promise.
+    // Retain the last known values and allow a later ready-state read to retry.
+    return cache;
+  }).finally(() => { inflight = null; });
   return inflight;
 }
 
@@ -77,13 +80,19 @@ export function usePublicFlags(): { flags: PublicFlags; ready: boolean } {
   const [flags, setFlags] = useState<PublicFlags>(cache);
   const [ready, setReady] = useState(loaded);
   useEffect(() => {
-    listeners.add(setFlags);
-    void loadPublicFlags().then((f) => {
-      setFlags(f);
-      setReady(true);
-    });
+    let active = true;
+    const update = (f: PublicFlags) => { if (active) { setFlags(f); setReady(loaded); } };
+    listeners.add(update);
+    const reload = () => { void loadPublicFlags().then(update); };
+    reload();
+    const database = typeof window === "undefined" ? undefined : (window.pos as unknown as {
+      database?: { subscribe?: (cb: (state: { connected?: boolean }) => void) => () => void };
+    } | undefined)?.database;
+    const unsubscribe = database?.subscribe?.(state => { if (state.connected && !loaded) reload(); });
     return () => {
-      listeners.delete(setFlags);
+      active = false;
+      unsubscribe?.();
+      listeners.delete(update);
     };
   }, []);
   return { flags, ready };

@@ -4,23 +4,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isDesktop, restoreBrandingFromDisk, writeBranding } from "@/lib/branding";
-import { usePosOptional } from "@/lib/pos-store";
 import { onRecoveryScreen } from "@/lib/recovery-route";
 
 /**
- * Shown once per machine right after install: the operator names their business
- * and this till, and every screen and receipt picks that name up.
+ * Name this machine only. Shared company identity arrives from synchronization.
  */
 export function FirstRunSetup({ children }: { children: React.ReactNode }) {
   // Emergency Access must open on a brand-new machine, before anyone has named
   // the shop: naming it is not a prerequisite for repairing the connection.
   const [recovery] = useState(() => onRecoveryScreen());
-  const pos = usePosOptional();
-  const state = pos?.state;
-  const updateSettings = pos?.updateSettings;
   const [needed, setNeeded] = useState(false);
   const [checked, setChecked] = useState(false);
-  const [company, setCompany] = useState("");
   const [terminal, setTerminal] = useState("POS Terminal 01");
 
   useEffect(() => {
@@ -44,12 +38,7 @@ export function FirstRunSetup({ children }: { children: React.ReactNode }) {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          const name = company.trim();
-          if (!name) return;
-          writeBranding({ company: name, terminal: terminal.trim() || "POS Terminal 01", configured: true });
-          if (state && updateSettings) {
-            updateSettings({ receipt: { ...state.settings.receipt, companyName: name } });
-          }
+          writeBranding({ terminal: terminal.trim() || "POS Terminal 01", configured: true });
           setNeeded(false);
         }}
         className="w-full max-w-md space-y-4 rounded-lg border border-border bg-card p-6"
@@ -66,31 +55,23 @@ export function FirstRunSetup({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <div className="space-y-1">
-          <Label htmlFor="company">Company / shop name</Label>
-          <Input
-            id="company"
-            autoFocus
-            value={company}
-            onChange={(e) => setCompany(e.target.value)}
-            placeholder="e.g. Sunrise Mart"
-          />
-          <p className="text-[11px] text-muted-foreground">
-            Printed on every receipt and shown across the app.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Your company name, logo and company details will download automatically
+          after connecting this terminal to your company database.
+        </p>
 
         <div className="space-y-1">
           <Label htmlFor="terminal">Terminal name</Label>
           <Input
             id="terminal"
+            autoFocus
             value={terminal}
             onChange={(e) => setTerminal(e.target.value)}
             placeholder="POS Terminal 01"
           />
         </div>
 
-        <Button type="submit" className="w-full" disabled={!company.trim()}>
+        <Button type="submit" className="w-full">
           Start using the POS
         </Button>
       </form>

@@ -99,10 +99,12 @@ const tsqlIdent = (name: string) => `[${name.replace(/]/g, "]]")}]`;
  * would be unreachable.
  */
 export function buildCloudSql(gaps: SchemaGap[], filename: string, at = new Date()): string {
+  if (gaps.some(gap => gap.missingTable)) throw new Error("Missing cloud tables require the reviewed POS migrations in docs/database-upgrade.md.");
   const lines = [
     `-- ${filename}`,
     `-- Central (cloud) database only. Run this in your Supabase SQL editor.`,
     `-- Generated ${at.toISOString()}`,
+    `begin;`,
     ``,
     `create table if not exists public.schema_migrations (`,
     `  filename text primary key,`,
@@ -140,7 +142,8 @@ export function buildCloudSql(gaps: SchemaGap[], filename: string, at = new Date
       continue;
     }
     for (const column of gap.columns) {
-      const type = gap.types?.[column] ?? "text";
+      const type = gap.types?.[column];
+      if (!type) throw new Error(`No verified cloud type for ${gap.table}.${column}. Use the current POS migration; a type will not be guessed.`);
       lines.push(
         `alter table public.${pgIdent(gap.table)} add column if not exists ${pgIdent(column)} ${type};`,
       );
@@ -152,6 +155,7 @@ export function buildCloudSql(gaps: SchemaGap[], filename: string, at = new Date
     `insert into public.schema_migrations (filename) values ('${filename}')`,
     `  on conflict (filename) do nothing;`,
     `notify pgrst, 'reload schema';`,
+    `commit;`,
     ``,
   );
   return lines.join("\n");
@@ -159,10 +163,16 @@ export function buildCloudSql(gaps: SchemaGap[], filename: string, at = new Date
 
 /** T-SQL body for the local SQL Server gaps. Guarded, additive, idempotent. */
 export function buildLocalSql(gaps: SchemaGap[], filename: string, at = new Date()): string {
+  if (gaps.some(gap => gap.missingTable)) throw new Error("Download the latest database update SQL from Database & Cloud Connection to restore missing tables.");
   const lines = [
     `-- ${filename}`,
     `-- Local PC database only. Run this in your local database client.`,
     `-- Generated ${at.toISOString()}`,
+    `SET XACT_ABORT ON;`,
+    `BEGIN TRY`,
+    `IF DB_NAME() IN (N'master',N'model',N'msdb',N'tempdb') THROW 51003, 'Select the configured POS database.', 1;`,
+    `IF OBJECT_ID(N'dbo.pos_schema_migrations',N'U') IS NULL THROW 51003, 'Use the complete POS installer for an unmanaged database.', 1;`,
+    `BEGIN TRANSACTION;`,
     ``,
     `IF OBJECT_ID('dbo.schema_migrations', 'U') IS NULL`,
     `  CREATE TABLE dbo.schema_migrations (`,
@@ -185,7 +195,8 @@ export function buildLocalSql(gaps: SchemaGap[], filename: string, at = new Date
       continue;
     }
     for (const column of gap.columns) {
-      const type = gap.types?.[column] ?? "NVARCHAR(MAX)";
+      const type = gap.types?.[column];
+      if (!type) throw new Error(`No verified local type for ${gap.table}.${column}. Download the latest database update SQL instead.`);
       lines.push(
         `IF COL_LENGTH('dbo.${gap.table}', '${column}') IS NULL`,
         `  ALTER TABLE dbo.${tsqlIdent(gap.table)} ADD ${tsqlIdent(column)} ${type} NULL;`,
@@ -197,6 +208,12 @@ export function buildLocalSql(gaps: SchemaGap[], filename: string, at = new Date
   lines.push(
     `IF NOT EXISTS (SELECT 1 FROM dbo.schema_migrations WHERE filename = '${filename}')`,
     `  INSERT INTO dbo.schema_migrations (filename) VALUES ('${filename}');`,
+    `COMMIT TRANSACTION;`,
+    `END TRY`,
+    `BEGIN CATCH`,
+    `IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;`,
+    `THROW;`,
+    `END CATCH;`,
     ``,
   );
   return lines.join("\n");

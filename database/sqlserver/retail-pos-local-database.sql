@@ -2,7 +2,7 @@
   Retail POS local Microsoft SQL Server schema
   Generated from the migrations loaded by the POS application.
 
-  Application version: 1.4.38
+  Application version: 1.4.39
   Target database: POS_Local
 
   Run this file while connected to the local Microsoft SQL Server instance.
@@ -20,6 +20,8 @@ GO
 
 USE [POS_Local];
 GO
+
+-- SECTION 1: Domain tables, columns, indexes, store groups and local tracking
 
 -- Generated from supabase/schema.sql. Re-runnable and additive.
 
@@ -2728,12 +2730,6 @@ IF OBJECT_ID(N'dbo.members', N'U') IS NULL BEGIN CREATE TABLE dbo.[members] (
   [created_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_members_created_at] DEFAULT (SYSDATETIMEOFFSET()),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_members_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
   [row_version] int NOT NULL CONSTRAINT [DF_members_row_version] DEFAULT (1),
-  [is_verified] bit NOT NULL CONSTRAINT [DF_members_is_verified] DEFAULT (0),
-  [verified_at] datetimeoffset(7) NULL,
-  [verified_channel] nvarchar(max) NULL,
-  [membership_member_id] uniqueidentifier NULL,
-  [membership_revision] bigint NOT NULL CONSTRAINT [DF_members_membership_revision] DEFAULT (0),
-  [membership_status] nvarchar(max) NOT NULL CONSTRAINT [DF_members_membership_status] DEFAULT ('active'),
   [deleted_at] nvarchar(max) NULL,
   CONSTRAINT [PK_members] PRIMARY KEY ([id])
 
@@ -2845,51 +2841,6 @@ IF OBJECT_ID(N'dbo.members', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.members', N'
 IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.members') AND name=N'row_version' AND is_nullable=1) BEGIN
   EXEC sys.sp_executesql N'UPDATE dbo.[members] SET [row_version]=1 WHERE [row_version] IS NULL;';
   ALTER TABLE dbo.[members] ALTER COLUMN [row_version] int NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.members', N'is_verified') IS NULL ALTER TABLE dbo.[members] ADD [is_verified] bit NULL;
-
-IF OBJECT_ID(N'dbo.members', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.members', N'is_verified') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.members') AND c.name=N'is_verified'
-) ALTER TABLE dbo.[members] ADD CONSTRAINT [DF_members_is_verified] DEFAULT (0) FOR [is_verified];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.members') AND name=N'is_verified' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[members] SET [is_verified]=0 WHERE [is_verified] IS NULL;';
-  ALTER TABLE dbo.[members] ALTER COLUMN [is_verified] bit NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.members', N'verified_at') IS NULL ALTER TABLE dbo.[members] ADD [verified_at] datetimeoffset(7) NULL;
-
-IF COL_LENGTH(N'dbo.members', N'verified_channel') IS NULL ALTER TABLE dbo.[members] ADD [verified_channel] nvarchar(max) NULL;
-
-IF COL_LENGTH(N'dbo.members', N'membership_member_id') IS NULL ALTER TABLE dbo.[members] ADD [membership_member_id] uniqueidentifier NULL;
-
-IF COL_LENGTH(N'dbo.members', N'membership_revision') IS NULL ALTER TABLE dbo.[members] ADD [membership_revision] bigint NULL;
-
-IF OBJECT_ID(N'dbo.members', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.members', N'membership_revision') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.members') AND c.name=N'membership_revision'
-) ALTER TABLE dbo.[members] ADD CONSTRAINT [DF_members_membership_revision] DEFAULT (0) FOR [membership_revision];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.members') AND name=N'membership_revision' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[members] SET [membership_revision]=0 WHERE [membership_revision] IS NULL;';
-  ALTER TABLE dbo.[members] ALTER COLUMN [membership_revision] bigint NOT NULL;
-END;
-
-IF COL_LENGTH(N'dbo.members', N'membership_status') IS NULL ALTER TABLE dbo.[members] ADD [membership_status] nvarchar(max) NULL;
-
-IF OBJECT_ID(N'dbo.members', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.members', N'membership_status') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM sys.default_constraints dc
-  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
-  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.members') AND c.name=N'membership_status'
-) ALTER TABLE dbo.[members] ADD CONSTRAINT [DF_members_membership_status] DEFAULT ('active') FOR [membership_status];
-
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.members') AND name=N'membership_status' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[members] SET [membership_status]=''active'' WHERE [membership_status] IS NULL;';
-  ALTER TABLE dbo.[members] ALTER COLUMN [membership_status] nvarchar(max) NOT NULL;
 END;
 
 IF COL_LENGTH(N'dbo.members', N'deleted_at') IS NULL ALTER TABLE dbo.[members] ADD [deleted_at] nvarchar(max) NULL;
@@ -10411,6 +10362,96 @@ END;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.change_history') AND name=N'IX_change_history_organization_id') CREATE INDEX [IX_change_history_organization_id] ON dbo.[change_history]([organization_id]);
 
+-- Local member verification compatibility (excluded from sync)
+
+IF COL_LENGTH(N'dbo.members', N'is_verified') IS NULL ALTER TABLE dbo.[members] ADD [is_verified] bit NOT NULL CONSTRAINT [DF_members_is_verified] DEFAULT (0) WITH VALUES;
+
+IF COL_LENGTH(N'dbo.members', N'verified_at') IS NULL ALTER TABLE dbo.[members] ADD [verified_at] datetimeoffset(7) NULL;
+
+IF COL_LENGTH(N'dbo.members', N'verified_channel') IS NULL ALTER TABLE dbo.[members] ADD [verified_channel] nvarchar(max) NULL;
+
+GO
+-- Store groups: preserve existing groups and repair missing parents
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+BEGIN TRY
+  BEGIN TRANSACTION;
+
+  IF OBJECT_ID(N'dbo.stores', N'U') IS NULL
+    THROW 51100, 'POS_Local is missing dbo.stores. Run the complete POS_Local schema first.', 1;
+
+  IF OBJECT_ID(N'dbo.store_groups', N'U') IS NULL
+    THROW 51101, 'POS_Local is missing dbo.store_groups. Run the complete POS_Local schema first.', 1;
+
+  /*
+    0x434C4F5544 is the application's CLOUD change-tracking context. These
+    repair rows satisfy local parent references and must not be uploaded as
+    newly-authored local group changes. The next synchronization replaces
+    their display fields with the authoritative Supabase rows.
+  */
+  WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544)
+  MERGE dbo.store_groups WITH (HOLDLOCK) AS target
+  USING (
+    SELECT
+      source_group.id,
+      source_group.code,
+      source_group.name
+    FROM (
+      SELECT
+        CAST(N'default' AS nvarchar(450)) AS id,
+        CAST(N'DEFAULT' AS nvarchar(max)) AS code,
+        CAST(N'Default group' AS nvarchar(max)) AS name
+      UNION ALL
+      SELECT DISTINCT
+        CAST(LTRIM(RTRIM(store_row.group_id)) AS nvarchar(450)) AS id,
+        CAST(LTRIM(RTRIM(store_row.group_id)) AS nvarchar(max)) AS code,
+        CAST(LTRIM(RTRIM(store_row.group_id)) AS nvarchar(max)) AS name
+      FROM dbo.stores AS store_row
+      WHERE NULLIF(LTRIM(RTRIM(store_row.group_id)), N'') IS NOT NULL
+        AND LTRIM(RTRIM(store_row.group_id)) <> N'default'
+    ) AS source_group
+  ) AS source
+  ON target.id = source.id
+  WHEN NOT MATCHED THEN
+    INSERT (id, code, name, is_active, archived_at, created_at, updated_at)
+    VALUES (source.id, source.code, source.name, 1, NULL, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET());
+
+  IF EXISTS (
+    SELECT 1
+    FROM dbo.stores AS store_row
+    LEFT JOIN dbo.store_groups AS group_row ON group_row.id = store_row.group_id
+    WHERE NULLIF(LTRIM(RTRIM(store_row.group_id)), N'') IS NOT NULL
+      AND group_row.id IS NULL
+  )
+    THROW 51102, 'Some stores still reference a missing store group. The transaction was rolled back.', 1;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE parent_object_id = OBJECT_ID(N'dbo.stores')
+      AND name = N'FK_stores_group_id'
+  )
+    ALTER TABLE dbo.stores WITH CHECK
+      ADD CONSTRAINT FK_stores_group_id
+      FOREIGN KEY (group_id) REFERENCES dbo.store_groups(id);
+
+  ALTER TABLE dbo.stores WITH CHECK CHECK CONSTRAINT FK_stores_group_id;
+
+  COMMIT TRANSACTION;
+
+  SELECT
+    N'REPAIRED' AS status,
+    (SELECT COUNT_BIG(*) FROM dbo.store_groups) AS local_store_groups,
+    (SELECT COUNT_BIG(*) FROM dbo.stores WHERE group_id IS NOT NULL) AS stores_with_group;
+END TRY
+BEGIN CATCH
+  IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+  THROW;
+END CATCH;
+GO
+
+
 IF OBJECT_ID(N'dbo.coupon_campaigns',N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.issued_vouchers') AND name=N'FK_issued_vouchers_campaign_id') ALTER TABLE dbo.[issued_vouchers] ADD CONSTRAINT [FK_issued_vouchers_campaign_id] FOREIGN KEY ([campaign_id]) REFERENCES dbo.[coupon_campaigns]([id]);
 
 IF OBJECT_ID(N'dbo.members',N'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.issued_vouchers') AND name=N'FK_issued_vouchers_member_id') ALTER TABLE dbo.[issued_vouchers] ADD CONSTRAINT [FK_issued_vouchers_member_id] FOREIGN KEY ([member_id]) REFERENCES dbo.[members]([id]);
@@ -11007,6 +11048,7 @@ IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL CREATE TABLE dbo.pos_sc
 IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=1) INSERT dbo.pos_schema_migrations(version,name) VALUES(1,N'initial_sqlserver_parity');
 
 GO
+-- SECTION 2: Local upgrade 002_sync_pipeline.sql
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 SET ANSI_PADDING ON;
@@ -11042,6 +11084,7 @@ IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=2)
   VALUES(2,N'sync_pipeline_jobs_bootstrap_retention');
 
 GO
+-- SECTION 2: Local upgrade 003_activity_notification_preferences.sql
 /*
   Durable per-user notification clear/reopen state for existing POS_Local
   databases. Re-runnable, additive, and safe for databases created before the
@@ -11131,6 +11174,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3)
 GO
 
 GO
+-- SECTION 2: Local upgrade 004_repair_terminal_platform_default.sql
 /*
   Repair databases created by an older installer that assigned 'unknown' as
   the terminal platform default. Existing non-null platform values are data
@@ -11198,6 +11242,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4)
 GO
 
 GO
+-- SECTION 2: Local upgrade 005_staff_sql_and_member_directory.sql
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11312,6 +11357,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5)
   VALUES (5, N'staff_sql_and_member_directory');
 
 GO
+-- SECTION 2: Local upgrade 006_allow_missing_company_name.sql
 -- Cloud company_name may be NULL until an administrator enters the business name.
 -- Run in the configured POS_Local database, never in Supabase/PostgreSQL.
 IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL
@@ -11352,6 +11398,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6)
   VALUES (6, N'006_allow_missing_company_name', SYSDATETIMEOFFSET());
 
 GO
+-- SECTION 2: Local upgrade 007_repair_scoped_json_values.sql
 -- Re-run the scoped JSON repair on upgrades where migration 006 was already
 -- recorded but an older Electron build subsequently wrote plain text again.
 IF OBJECT_ID(N'dbo.settings_scoped', N'U') IS NOT NULL
@@ -11365,6 +11412,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7)
   VALUES (7, N'007_repair_scoped_json_values', SYSDATETIMEOFFSET());
 
 GO
+-- SECTION 2: Local upgrade 008_repair_scoped_values_and_company_name.sql
 -- Reassert nullable company_name for local databases that recorded an older
 -- repair, and preserve bare-text scoped settings as valid JSON strings.
 IF OBJECT_ID(N'dbo.pos_settings', N'U') IS NOT NULL
@@ -11408,6 +11456,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8)
   VALUES (8, N'008_repair_scoped_values_and_company_name', SYSDATETIMEOFFSET());
 
 GO
+-- SECTION 2: Local upgrade 009_persist_held_approval_fingerprint.sql
 IF OBJECT_ID(N'dbo.held_orders', N'U') IS NOT NULL
    AND COL_LENGTH(N'dbo.held_orders', N'approval_snapshot_hash') IS NULL
   ALTER TABLE dbo.held_orders ADD approval_snapshot_hash nvarchar(max) NULL;
@@ -11417,6 +11466,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9)
   VALUES (9, N'009_persist_held_approval_fingerprint', SYSDATETIMEOFFSET());
 
 GO
+-- SECTION 2: Local upgrade 010_namespace_receiving_draft_numbers.sql
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
@@ -11438,6 +11488,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10)
   VALUES (10, N'010_namespace_receiving_draft_numbers', SYSDATETIMEOFFSET());
 
 GO
+-- SECTION 2: Local upgrade 011_preserve_booking_kind.sql
 SET XACT_ABORT ON;
 
 IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
@@ -11521,6 +11572,7 @@ BEGIN
 END;
 
 GO
+-- SECTION 2: Local upgrade 012_repair_products_row_version_default.sql
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
@@ -11574,6 +11626,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12)
   VALUES (12, N'012_repair_products_row_version_default', SYSDATETIMEOFFSET());
 
 GO
+-- SECTION 2: Local upgrade 013_scope_purchase_invoice_numbers.sql
 SET XACT_ABORT ON;
 IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=13)
 BEGIN
@@ -11587,6 +11640,8 @@ BEGIN
 END;
 
 GO
+
+-- SECTION 3: Verify all required tables, columns and migration versions
 
 DECLARE @RequiredTables TABLE ([name] sysname NOT NULL PRIMARY KEY);
 INSERT INTO @RequiredTables ([name]) VALUES
@@ -11671,7 +11726,7 @@ DECLARE @Missing int = @Required - @Present;
 
 SELECT
   DB_NAME() AS database_name,
-  N'1.4.38' AS application_version,
+  N'1.4.39' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -12046,12 +12101,6 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'members', N'created_at'),
   (N'members', N'updated_at'),
   (N'members', N'row_version'),
-  (N'members', N'is_verified'),
-  (N'members', N'verified_at'),
-  (N'members', N'verified_channel'),
-  (N'members', N'membership_member_id'),
-  (N'members', N'membership_revision'),
-  (N'members', N'membership_status'),
   (N'members', N'deleted_at'),
   (N'membership_tiers', N'id'),
   (N'membership_tiers', N'name'),
@@ -12690,14 +12739,14 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_action_history', N'action_id'),
   (N'authorization_action_history', N'action_key'),
   (N'authorization_action_history', N'scope_type'),
-  (N'authorization_action_history', N'scope_id');
-INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N'authorization_action_history', N'scope_id'),
   (N'authorization_action_history', N'row_version'),
   (N'authorization_action_history', N'changed_by'),
   (N'authorization_action_history', N'change_source'),
   (N'authorization_action_history', N'change_kind'),
   (N'authorization_action_history', N'snapshot'),
-  (N'authorization_action_history', N'created_at'),
+  (N'authorization_action_history', N'created_at');
+INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_requests', N'id'),
   (N'authorization_requests', N'action_key'),
   (N'authorization_requests', N'requested_by'),
@@ -12880,7 +12929,10 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'change_history', N'source_application'),
   (N'change_history', N'device_id'),
   (N'change_history', N'terminal_id'),
-  (N'change_history', N'server_timestamp');
+  (N'change_history', N'server_timestamp'),
+  (N'members', N'is_verified'),
+  (N'members', N'verified_at'),
+  (N'members', N'verified_channel');
 
 DECLARE @RequiredColumnCount int = (SELECT COUNT(*) FROM @RequiredColumns);
 DECLARE @PresentColumnCount int = (
@@ -12914,5 +12966,5 @@ EXEC(N'SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;');
 
-PRINT N'Retail POS 1.4.38: POS_Local installation and validation completed successfully.';
+PRINT N'Retail POS 1.4.39: POS_Local installation and validation completed successfully.';
 GO

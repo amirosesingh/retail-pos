@@ -221,7 +221,9 @@ export function buildCentralRepairSql(
     "-- Every statement is idempotent: safe to run repeatedly, never drops or rewrites data.",
     "-- Run once in the central project's PostgreSQL SQL editor, then re-check here.",
     "",
+    "begin;",
     ...statements,
+    "commit;",
     "",
   ];
   return { ok: true, sql: lines.join("\n") };

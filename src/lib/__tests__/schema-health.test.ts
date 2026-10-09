@@ -29,6 +29,7 @@ const gap = (over: Partial<SchemaGap> = {}): SchemaGap => ({
   table: "sales",
   columns: ["client_transaction_id"],
   missingTable: false,
+  types: { client_transaction_id: over.environment === "local" ? "uniqueidentifier" : "uuid", seq: "bigint" },
   ...over,
 });
 

@@ -636,8 +636,9 @@ export function LocalDatabaseWizard({
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">
                     Validation is required before saving. If the database is missing or needs an
-                    update, apply the POS migration here; it creates the database when needed and
-                    validates the completed schema.
+                    update, apply the latest bundled POS database script here. It adds missing
+                    schema, skips recorded migrations and validates the result. Back up an existing
+                    database first; incompatible data causes the update to stop for review.
                   </p>
                   <Action
                     title={`Validate ${profile.database || "selected database"}`}
@@ -652,7 +653,7 @@ export function LocalDatabaseWizard({
                         disabled={busy}
                         onClick={() => void exportMigrations()}
                       >
-                        Download migration SQL file
+                        Download latest database update SQL
                       </Button>
                       <Button
                         disabled={busy}

@@ -1,4 +1,6 @@
 import { staffSettingsTarget } from "./settings-edit-policy";
+import { isCompanyIdentityPath } from "./company-identity";
+import { readBranding, writeBranding } from "./branding";
 import { canSelectLocation, verifyTerminalLocation } from "@/core/api/location-directory";
 import { documentOrigin } from "./document-origin";
 import { SettingsWriteQueue } from "./settings-write-queue";
@@ -591,6 +593,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Nothing is fetched from the cloud until a cashier or supervisor session
   // exists — visitors never receive catalogue, member or sales data.
   const signedIn = Boolean(authUserId || terminalUser);
+  useEffect(() => {
+    const name = state.settings.receipt.companyName?.trim();
+    if (name && readBranding().company !== name) writeBranding({ company: name });
+  }, [state.settings.receipt.companyName]);
   const missingCompanyNameNotice = useRef(false);
   useEffect(() => {
     if (!signedIn || !isAdmin || !ready || loadPhase !== "ready" || !settingsSnapshotLoaded) return;
@@ -601,8 +607,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
     }
     if (missingCompanyNameNotice.current) return;
     missingCompanyNameNotice.current = true;
-    toast.warning("Company name is missing", {
-      description: "Enter the business name in Settings → Business identity. Other POS work can continue.",
+    toast.warning("Company details are not loaded", {
+      description: "Company details are not available in this database yet. Check Database & Cloud Connection and synchronization before changing the shared business identity.",
       duration: 10000,
     });
   }, [signedIn, isAdmin, ready, loadPhase, settingsSnapshotLoaded, state.settings.receipt.companyName]);
@@ -1385,8 +1391,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     if (!signedIn) return;
     let cancelled = false;
     let running = false;
+    let queued = false;
     const refresh = async () => {
-      if (running || settingsWrites.current.pending) return;
+      if (running) { queued = true; return; }
+      if (settingsWrites.current.pending) return;
       running = true;
       const revision = settingsWrites.current.revision;
       try {
@@ -1406,6 +1414,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         /* Keep the last confirmed settings until a later refresh. */
       } finally {
         running = false;
+        if (queued && !cancelled) { queued = false; void refresh(); }
       }
     };
     const wake = () => {
@@ -3434,6 +3443,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
       for (const path of patchPaths(patch as Record<string, unknown>)) {
         const value = getPath(patch, path);
         if (JSON.stringify(value) === JSON.stringify(getPath(effective, path))) continue;
+        if (isCompanyIdentityPath(path)) {
+          if (!isAdmin) { toast.error("Only an administrator can change company details shared by all branches."); return; }
+          globalPatch = setPath(globalPatch, path, value);
+          hasGlobal = true;
+          continue;
+        }
         const section = sectionOfPath(path);
         // Strongest tier that already owns this block wins the write.
         let staffTier: SettingTier | undefined;

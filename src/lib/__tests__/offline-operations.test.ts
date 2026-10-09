@@ -20,7 +20,7 @@ describe("offline terminal operations", () => {
     expect(recovery).toContain("api?.subscribe(applyState)");
     expect(recovery).toContain("if (next.tradingReady)");
     expect(main).toContain("scheduleAutomaticSync(5_000)");
-    expect(main).toContain("AUTO_SYNC_OK_MS = 60_000");
+    expect(main).toContain("AUTO_SYNC_OK_MS = ACTIVITY_INTERVAL_MS");
     expect(main).toContain("scheduleAutomaticSync(250)");
     expect(main).toContain('result.code === "ECHANGEGAP"');
     expect(main).toContain("prepareLocalData({ force: true })");
@@ -148,8 +148,8 @@ describe("offline terminal operations", () => {
       main.indexOf('ipcMain.handle("business:commit-aggregate"'),
       main.indexOf('ipcMain.handle("business:snapshot"'),
     );
-    expect(writeHandler).toContain("scheduleAutomaticSync(250)");
-    expect(aggregateHandler).toContain("scheduleAutomaticSync(250)");
+    expect(writeHandler).toContain("scheduleLocalChanges(operations)");
+    expect(aggregateHandler).toContain("scheduleLocalChanges(operations)");
 
     const rendererSync = readFileSync("src/lib/sync-engine.ts", "utf8");
     expect(rendererSync).toContain("subscribeConnectivity");
@@ -161,18 +161,19 @@ describe("offline terminal operations", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
     expect(main).toContain("automaticSyncQueued = true");
     expect(main).toContain("automaticSyncQueued ? 250");
-    expect(main).toContain("SHUTDOWN_SYNC_TIMEOUT_MS = 8_000");
+    expect(main).toContain("SHUTDOWN_SYNC_TIMEOUT_MS = 120_000");
     expect(main).toContain("SHUTDOWN_RESOURCE_TIMEOUT_MS = 12_000");
     expect(main).toContain("function settleWithin(");
     expect(main).toContain("async function flushSyncBeforeShutdown()");
     expect(main).toContain("event.preventDefault()");
     const shutdown = main.slice(main.indexOf('app.on("before-quit"'));
-    expect(shutdown.indexOf("flushSyncBeforeShutdown()")).toBeLessThan(
+    expect(shutdown.indexOf("prepareApplicationClose()")).toBeLessThan(
       shutdown.indexOf("settleWithin(() => databaseManager.close())"),
     );
     expect(shutdown).toContain("settleWithin(() => stopAppServer())");
     expect(shutdown).toContain("app.exit(0)");
-    expect(shutdown).toContain("pending SQL changes remain durable for next launch");
+    expect(shutdown).toContain("if (result?.ok === false)");
+    expect(main).toContain("settleWithin(() => closeWriteBarrier.sealAndDrain(), SHUTDOWN_SYNC_TIMEOUT_MS)");
   });
 
   it("uses a short-lived durable browser outbox for web and Android writes", () => {

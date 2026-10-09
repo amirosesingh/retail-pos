@@ -376,6 +376,7 @@ export type LocalSyncStatus = {
 export type PosBridge = {
   /** Close only the Electron window that sent the request. */
   closeWindow?: () => Promise<unknown>;
+  onBeforeClose?: (flush: () => Promise<void>) => () => void;
   cacheStatus?: () => Promise<{
     ok: boolean;
     totalBytes: number;

@@ -59,7 +59,7 @@ class PullWorker {
       { code: "ESTORE_GROUP_MISSING" },
     );
   }
-  async run({ branchId, batchSize = 500 }) {
+  async run({ branchId, batchSize = 500, onProgress = () => {} }) {
     if (!branchId) throw new Error("A branch is required for synchronization.");
     // A single legacy settings/audit row can approach 2 MiB. Keep downloads at
     // the database's byte-safe minimum even when a caller asks for a larger
@@ -72,6 +72,9 @@ class PullWorker {
       const batch = page.batch;
       batchSize=page.nextLimit;
       if (!batch.count) break;
+      if (!Number.isFinite(Number(batch.cursor)) || Number(batch.cursor) <= Number(checkpoint?.committed_cursor ?? 0))
+        throw Object.assign(new Error("The cloud change cursor did not advance. Download stopped to avoid replaying the same page."), { code: "ESYNC_CURSOR" });
+      const beforePage = merged;
       // Feed pages are ordered by change cursor, not by foreign-key dependency.
       // A store update can arrive before the page containing its new group.
       await this.ensureStoreGroups(batch, branchId);
@@ -97,6 +100,7 @@ class PullWorker {
       this.publish({ kind: "general", branchId, source: "cloud", tables: [...new Set([...batch.rows, ...batch.tombstones].map(row => row.table_name))],
         changes: [...batch.rows, ...batch.tombstones].map(row => ({ table: row.table_name, entityId: row.row_data?.product_id && row.table_name === "product_barcodes" ? row.row_data.product_id : row.row_data?.id ?? (() => { try { return JSON.parse(row.entity_id).id ?? null; } catch { return null; } })() })) });
       checkpoint = { ...(checkpoint ?? {}), committed_cursor: batch.cursor };
+      onProgress({ direction: "pull", table: [...new Set([...batch.rows, ...batch.tombstones].map(row => row.table_name))].join(", "), completed: merged - beforePage });
       batch.rows.length = 0; batch.tombstones.length = 0;
       if (batch.count < page.limit) break;
     }

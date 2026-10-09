@@ -29,7 +29,7 @@ export const Route = createFileRoute("/settings/identity")({
       {
         name: "description",
         content:
-          "Company name, tax and registration numbers, contact details, receipt header and thank-you footer, per branch or globally.",
+          "Company name, logo, tax and registration numbers, contact details and receipt wording shared by every branch.",
       },
       { property: "og:title", content: "Business Identity — Retail" },
       { property: "og:description", content: "Company details printed on every receipt." },
@@ -40,7 +40,7 @@ export const Route = createFileRoute("/settings/identity")({
   component: () => (
     <SettingsFrame
       title="Business identity"
-      description="Company details printed at the top and bottom of every slip."
+      description="Company details shared automatically by all branches and terminals. Administrator changes apply company-wide."
       showPreview
       requireCompanyName
     >
@@ -82,8 +82,9 @@ function IdentityForm() {
     <div className="space-y-3">
       {!(typeof effective.companyName === "string" && effective.companyName.trim()) ? (
         <p role="alert" className="rounded-md border border-amber-500 p-3 text-sm">
-          Company name is missing from the cloud. An administrator must enter it here and save.
-          Other POS work can continue meanwhile.
+          Company details have not loaded here yet. Check Database &amp; Cloud Connection and
+          synchronization first. If the shared company name is still empty after synchronization,
+          an administrator can enter it here and save it for all branches.
         </p>
       ) : null}
       <div className="space-y-1">

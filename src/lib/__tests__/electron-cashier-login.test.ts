@@ -44,7 +44,7 @@ describe("Electron cashier sign in", () => {
     expect(client).toContain("retireClient(previous)");
     expect(client).toContain('Symbol.for("retail-pos.supabase.external-clients.v1")');
     expect(client).toContain("pos-transient-auth-");
-    expect(client).toContain("supabaseFetchFor(key)");
+    expect(client).toContain('supabaseFetchFor(key, configScope === "pos")');
     expect(client).not.toContain("const SUPABASE_PUBLISHABLE_KEY = supabaseConfig().key");
     expect(config).toContain("if (setTerminalSupabaseOverride(res.url, res.key))");
   });

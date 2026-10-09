@@ -4,6 +4,7 @@ import { db } from "@/core/api/pos-db";
 import { hasSignedInIdentity } from "./session-presence";
 import { replayOrder, stamp } from "./activity-journal";
 import { isTerminalApp } from "@/platform-config/platform";
+import { localDb } from "@/core/local-db/local-db";
 
 /**
  * Business-language activity groups.
@@ -334,13 +335,13 @@ const CLOUD_FLUSH_LOCK = "pos-audit-cloud-flush";
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushInFlight: Promise<void> | null = null;
 
-/** Debounced push so fresh activity reaches the cloud within seconds. */
+/** Park desktop activity in SQL promptly; cloud uploads are batched by main. */
 function scheduleFlush() {
   if (typeof window === "undefined" || flushTimer) return;
   flushTimer = setTimeout(() => {
     flushTimer = null;
     void flushBatch();
-  }, 3000);
+  }, localDb() ? 3000 : 120_000);
 }
 
 export type SyncState = {
@@ -364,6 +365,19 @@ function flushBatch(): Promise<void> {
     flushInFlight = null;
   });
   return flushInFlight;
+}
+
+/** Drain the durable renderer journal before the native final-sync barrier. */
+export async function flushPendingAuditLogs(): Promise<void> {
+  if (flushTimer) { clearTimeout(flushTimer); flushTimer=null; }
+  load();
+  for (;;) {
+    const before=logs.filter(row=>!row.synced_to_cloud).length;
+    if (!before) return;
+    await flushBatch();
+    const after=logs.filter(row=>!row.synced_to_cloud).length;
+    if (after>=before) throw new Error(syncState.lastError ?? "Activity logs are waiting for a signed-in connection. Keep the application open and retry.");
+  }
 }
 
 async function flushBatchOnce() {
@@ -439,12 +453,12 @@ async function flushBatchUnderLock() {
   });
 }
 
-/** Ping every 30s: push pending records when online, stay silent when offline. */
+/** Batch activity every two minutes; the close barrier drains it immediately. */
 export function startAuditSync() {
   if (typeof window === "undefined" || syncTimer) return;
   load();
   setSync({ pending: logs.filter((l) => !l.synced_to_cloud).length, online: navigator.onLine });
-  syncTimer = setInterval(() => void flushBatch(), 30_000);
+  syncTimer = setInterval(() => void flushBatch(), localDb() ? 30_000 : 120_000);
   window.addEventListener("online", () => {
     setSync({ online: true });
     void flushBatch();
@@ -569,3 +583,6 @@ export const auditToCsv = (rows: AuditLog[]) => {
   );
   return [head.map(esc).join(","), ...body].join("\n");
 };
+
+// Audit buffers outlive the signed-in app shell, including the login screen.
+if (typeof window !== "undefined") localDb()?.onBeforeClose?.(flushPendingAuditLogs);
