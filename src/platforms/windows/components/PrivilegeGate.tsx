@@ -1,11 +1,10 @@
 /**
- * Asks for an administrator's own username and PIN when the till refuses a
- * privileged action, and stops the register outright when the desktop process
+ * Refreshes the signed-in authority when a call is refused. Only an explicit
+ * maintenance action may ask for an administrator PIN. Stops the register when the desktop process
  * reports that its records or identity can no longer be trusted.
  *
  * The refusal itself is made by the desktop process, not here: this component
- * only turns that refusal into something an operator can act on. It wraps the
- * bridge once, so every existing screen gets the prompt without being changed.
+ * owns the refusal; background work never requests interactive elevation.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -24,6 +23,7 @@ import { useAuth } from "@/lib/pos-auth";
 import { readCredentials } from "@/lib/pos-credentials";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { toast } from "sonner";
+import { canPromptForUnlock } from "../unlock-prompt-policy";
 
 type Ask = {
   message: string;
@@ -64,7 +64,7 @@ export function PrivilegeGate({ children }: { children: React.ReactNode }) {
       if (!active) return;
       await bridge.adoptSession?.(proof, readTerminalConfig());
     };
-    void sync();
+    void sync().catch(() => { /* Offline startup must not open a PIN dialog or reject globally. */ });
     return () => {
       active = false;
     };
@@ -72,7 +72,8 @@ export function PrivilegeGate({ children }: { children: React.ReactNode }) {
 
   /* One prompt at a time, however many calls are refused at once. */
   const requestUnlock = useCallback(
-    async (message: string, requiredLevel?: "admin" | "supervisor"): Promise<boolean> => {
+    async (message: string, requiredLevel?: "admin" | "supervisor", allowPrompt = false): Promise<boolean> => {
+      if (!ready) return false;
       // A live online account gets one immediate server-verified refresh before
       // any local override is requested. This also closes the small launch race
       // between auth hydration and the first protected click.
@@ -80,13 +81,13 @@ export function PrivilegeGate({ children }: { children: React.ReactNode }) {
       // may be carrying older cached permissions; the server re-reads
       // public.app_users before granting desktop database access.
       if (user) {
-        const adopted = await window.sqlAdmin?.adoptSession?.(
+        const adopted = await Promise.resolve().then(async () => window.sqlAdmin?.adoptSession?.(
           await readCredentials(),
           readTerminalConfig(),
-        );
+        )).catch(() => null);
         if (adopted?.ok) {
           if (requiredLevel === "admin" && adopted.level !== "admin") {
-            toast.error("Administrator access required", {
+            if (allowPrompt) toast.error("Administrator access required", {
               description:
                 "Your Supervisor account can use read-only database tools, but cannot make this change.",
             });
@@ -95,6 +96,9 @@ export function PrivilegeGate({ children }: { children: React.ReactNode }) {
           return true;
         }
       }
+      // Permission-specific denials (sale, drawer, sync/settings grants) are
+      // not invitations to elevate a cashier into another user's account.
+      if (!allowPrompt || !requiredLevel) return false;
       if (!asking.current) {
         asking.current = new Promise<boolean>((resolve) => {
           setAsk({
@@ -113,7 +117,7 @@ export function PrivilegeGate({ children }: { children: React.ReactNode }) {
       }
       return asking.current;
     },
-    [user],
+    [ready, user],
   );
 
   useEffect(() => {
@@ -134,7 +138,9 @@ export function PrivilegeGate({ children }: { children: React.ReactNode }) {
       for (const name of BRIDGES) {
         const bridge = win[name];
         if (!bridge) continue;
-        const proxy = wrapBridge(bridge, requestUnlock);
+        const proxy = wrapBridge(bridge, requestUnlock, (call) => canPromptForUnlock(
+          `${name}.${call}`, Boolean(navigator.userActivation?.isActive),
+        ));
         undo.push(registerDesktopBridge(name, proxy));
         try {
           win[name] = proxy as unknown as Record<string, unknown>;
@@ -211,7 +217,7 @@ export function PrivilegeGate({ children }: { children: React.ReactNode }) {
       <Dialog open={Boolean(ask)} onOpenChange={(open) => !open && ask?.resolve(false)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Unlock this terminal</DialogTitle>
+            <DialogTitle>Authorize maintenance action</DialogTitle>
             <DialogDescription>
               {ask?.message ||
                 "This action needs an administrator. Enter your username and PIN to continue."}
