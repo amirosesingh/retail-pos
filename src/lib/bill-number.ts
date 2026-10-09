@@ -9,8 +9,8 @@ import { documentDevice, documentPlatform } from "./document-origin";
  *
  * The branch comes from the store this till trades in, the platform from the
  * shell it runs inside, and the terminal number from the activation that
- * registered the device. Because every part is device specific, two tills in
- * the same branch can never produce the same number, even offline.
+ * registered the device. Assign a different till number to each device in
+ * each branch/platform to avoid overlapping offline number sequences.
  */
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { readLocalSetting, writeLocalSetting } from "@/core/local-db/local-db";
@@ -34,6 +34,23 @@ export type BillNumberConfig = {
 
 const SEQ_KEY = "pos.bill.seq";
 const TERMINAL_NO_KEY = "pos.bill.terminalNo";
+const tillOverrideKey = () => `pos.bill.tillOverride:${documentDevice()}`;
+let localTill: string | null = null;
+
+export function configuredTillNumber(): string | null {
+  return localTill ?? readBusinessValue(tillOverrideKey());
+}
+
+export async function saveTillNumber(value: string): Promise<void> {
+  if (!/^\d{1,2}$/.test(value) || Number(value) < 1)
+    throw new Error("Enter a till number from 01 to 99, unique within this branch and platform.");
+  const normalized = value.padStart(2, "0");
+  const desktop = typeof window !== "undefined" && !!(window as unknown as { pos?: unknown }).pos;
+  if (desktop && !(await writeLocalSetting(tillOverrideKey(), normalized)))
+    throw new Error("Could not save this till number. Check the local database connection.");
+  if (!desktop) writeBusinessValue(tillOverrideKey(), normalized);
+  localTill = normalized;
+}
 
 /** Which shell this register runs in. */
 export function currentPlatform(): Platform {
@@ -85,9 +102,9 @@ export function billPrefix(
   config: BillNumberConfig = {},
 ): string {
   const branch = clean(config.branchCode || branchCode, "BR");
-  const terminal = clean(config.terminalNo, "") || terminalNumber();
+  const terminal = clean(configuredTillNumber() || config.terminalNo, "") || terminalNumber();
   const day = config.resetDaily === false ? "00000000" : dayStamp(at, config.timeZone);
-  return `${branch}-${currentPlatform()}${terminal.slice(0, 2).padStart(2, "0")}-${documentDevice()}-${day}`;
+  return `${branch}-${currentPlatform()}${terminal.slice(0, 2).padStart(2, "0")}-${day}`;
 }
 
 type SeqStore = { prefix: string; next: number };
@@ -151,6 +168,8 @@ const writeSeqDurable = async (value: SeqStore): Promise<boolean> => {
  */
 export async function hydrateBillSequence(): Promise<void> {
   if (typeof window === "undefined") return;
+  const savedTill = await readLocalSetting(tillOverrideKey());
+  if (savedTill && /^\d{2}$/.test(savedTill)) localTill = savedTill;
   const raw = await readLocalSetting(SEQ_KEY);
   if (!raw) {
     const local = readSeq();
@@ -225,7 +244,11 @@ export async function reserveBillNumber(
 ): Promise<string> {
   return serialise(() => reserveDocument("pos-bill-number", async () => {
     let computed: ReturnType<typeof computeNext>;
-    try { computed = computeNext(branchCode, existing, config); }
+    try {
+      const savedTill = await readLocalSetting(tillOverrideKey());
+      if (savedTill && /^\d{2}$/.test(savedTill)) localTill = savedTill;
+      computed = computeNext(branchCode, existing, config);
+    }
     catch (error) { throw new BillNumberReservationError("This device could not reserve its document identity. Check storage and retry.", error); }
     const { prefix, seq, pad, store } = computed;
     const onDevice = writeSeq(store);

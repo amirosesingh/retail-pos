@@ -16,7 +16,7 @@ import { APP_VERSION, useAppUpdates } from "@/lib/app-updates";
 import { useAndroidUpdates } from "@/platforms/mobile/android-updates";
 import { isAndroid, isNative } from "@/platform-config/platform";
 import { MANIFEST_URL } from "@/lib/update-manifest";
-import { usePos } from "@/lib/pos-store";
+
 
 /* ── One UI style tiles ──────────────────────────────────────────────── */
 
@@ -117,12 +117,14 @@ function DesktopUpdateCard() {
     diagnosing,
     diagnosis,
     failureReport,
+    installing,
+    installError,
   } = useAppUpdates();
-  const { activeShift } = usePos();
+
   const [copied, setCopied] = useState(false);
 
   const version = state.version || APP_VERSION;
-  const busy = manifestChecking || state.status === "checking" || state.status === "downloading";
+  const busy = installing || manifestChecking || state.status === "checking" || state.status === "downloading";
 
   const status = manifestChecking
     ? LABELS["checking"]
@@ -229,23 +231,23 @@ function DesktopUpdateCard() {
           Check for updates now
         </Button>
         {supported && state.status === "ready" && (
-          <Button className="touch-target" onClick={() => void install()}>
-            Restart and install
+          <Button className="touch-target" disabled={installing} onClick={() => void install()}>
+            {installing ? "Synchronizing and preparing installation…" : "Restart and install"}
           </Button>
         )}
-        {supported && state.status === "available" && (
+        {supported && (state.status === "available" || (state.status === "error" && !!state.available)) && (
           <>
             <Button
               variant="outline"
               className="touch-target"
+              disabled={busy}
               onClick={() => void download()}
             >
               Download only
             </Button>
             <Button
               className="touch-target"
-              disabled={!!activeShift}
-              title={activeShift ? "Close the active shift before installing an update" : undefined}
+              disabled={busy}
               onClick={() => void downloadAndInstall()}
             >
               Download and install
@@ -289,13 +291,11 @@ function DesktopUpdateCard() {
           </Button>
         )}
       </div>
-
-
+      {installing && <p role="status" className="text-sm">Downloading if needed, then synchronizing pending data before installation. Keep the application open.</p>}
+      {installError && <p role="alert" className="text-sm text-destructive">{installError}</p>}
       <p className="px-1 text-xs text-muted-foreground">
         {supported
-          ? activeShift
-            ? "Download-only is available now. Installation stays blocked until the active shift is closed, so trading is not interrupted."
-            : "Choose download-only to stage the verified installer, or download and install to restart now. Terminal registration and the local database are kept."
+          ? "Download only to stage the update, or download and install to synchronize and restart. Your open shift, logs, terminal registration and local database are preserved."
           : "The browser build always serves the newest files. Downloads here are for the Windows till installer."}
       </p>
     </div>

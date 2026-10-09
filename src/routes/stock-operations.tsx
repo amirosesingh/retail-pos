@@ -7,7 +7,7 @@ import { notifyError } from "@/lib/notify";
  * from the list and closed again without losing the page you were on.
  */
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftRight, ClipboardList, Lock, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -68,6 +68,7 @@ function StockOperationsPage() {
   const [activeCountStoreId, setActiveCountStoreId] = useState(currentStore.id);
   const [records, setRecords] = useState<StockRecordRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const refreshSequence = useRef(0);
   const [readError, setReadError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [branchFilter, setBranchFilter] = useState<string>("current");
@@ -88,17 +89,21 @@ function StockOperationsPage() {
   }, []);
 
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
     setLoading(true);
     try {
       const list = (await db.listStockCountRecords({
         storeId: branchFilter === ALL ? null : currentStore.id,
       })) as unknown as StockRecordRow[];
+      if (sequence !== refreshSequence.current) return;
       setRecords(list);
+      setViewing(current => current ? list.find(row => row.id === current.id) ?? current : null);
       setReadError(null);
     } catch (error) {
+      if (sequence !== refreshSequence.current) return;
       setReadError(error instanceof Error ? error.message : "Stock count records could not be read.");
     } finally {
-      setLoading(false);
+      if (sequence === refreshSequence.current) setLoading(false);
     }
   }, [branchFilter, currentStore.id]);
 

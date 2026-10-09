@@ -108,7 +108,7 @@ export function ReviewTable({
   }
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
-      <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+      <Table managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
         <TableHeader>
           <TableRow>
             <TableHead>SKU</TableHead>
@@ -215,6 +215,7 @@ export function StockCountDialog({
   const [dirty, setDirty] = useState(false);
   const [posting, setPosting] = useState(false);
   const postingRef = useRef(false);
+  const postedRecordsRef = useRef(new Set<string>());
   const codeRef = useRef<HTMLInputElement>(null);
   const countRef = useRef<HTMLInputElement>(null);
   const draftCreatedAt = useRef<string | null>(null);
@@ -312,6 +313,7 @@ export function StockCountDialog({
     const run = saveTailRef.current
       .catch(() => undefined)
       .then(async () => {
+        if (postedRecordsRef.current.has(id)) return { id, ref };
         await db.saveStockCountDraft({
           id,
           reference: ref,
@@ -341,9 +343,11 @@ export function StockCountDialog({
   useEffect(() => {
     if (!open) return;
     if (draft?.status === "posted") return;
+    if (postingRef.current || (draftId && postedRecordsRef.current.has(draftId))) return;
     if (!rows.length && !draftId) return;
     setDirty(true);
     timerRef.current = setTimeout(() => {
+      if (postingRef.current || (draftId && postedRecordsRef.current.has(draftId))) return;
       void persistDraft().catch((error) => {
         setDirty(true);
         toast.error(
@@ -474,6 +478,7 @@ export function StockCountDialog({
         { lines: rows, totalImpact },
         adjustmentAttemptId,
       );
+      if (persistedDraftId) postedRecordsRef.current.add(persistedDraftId);
       if (before && draftId) {
         const deltas: Record<string, number> = {};
         for (const r of rows) {
@@ -538,7 +543,7 @@ export function StockCountDialog({
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogContent className="max-h-[92vh] w-[min(96vw,1100px)] max-w-none overflow-y-auto">
+      <DialogContent className="max-h-[92vh] w-[min(96vw,90rem)] max-w-none overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {draft?.status === "posted"

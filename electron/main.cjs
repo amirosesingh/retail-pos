@@ -2033,26 +2033,24 @@ function registerIpc() {
   ipcMain.handle("update:status", () => updater.status());
   ipcMain.handle("update:check", () => updater.check());
   ipcMain.handle("update:download", () => updater.downloadUpdate());
-  const installUpdateWhenShiftClosed = async (downloadFirst) => {
-    const branchId = localBranchId();
-    if (!branchId) {
-      return { ok: false, code: "EBRANCH", error: "The terminal branch is not configured." };
-    }
-    const shifts = await operationsRepository.query(branchId, "shifts", { match: { closed_at: null }, limit: 1 });
-    // CASH_COUNT_REQUIRED is still an open financial shift. Never let either
-    // install path quit the till until every shift has a durable closed_at.
-    const active = (shifts.rows ?? []).length > 0;
-    if (active) {
-      return {
-        ok: false,
-        code: "EACTIVE_SHIFT",
-        error: "Close the active shift before installing an update.",
-      };
-    }
-    return downloadFirst ? updater.downloadAndInstall() : updater.install();
-  };
-  ipcMain.handle("update:download-install", () => installUpdateWhenShiftClosed(true));
-  ipcMain.handle("update:install", () => installUpdateWhenShiftClosed(false));
+  const installUpdateAfterSync = require("./update-install.cjs").createUpdateInstall({
+    updater,
+    prepare: prepareApplicationClose,
+    allowQuit: () => {
+      // Sync has completed. Do not intercept electron-updater's quit and
+      // replace its installation handoff with the ordinary app.exit path.
+      shutdownFlushComplete = true;
+      allowMainWindowClose = true;
+    },
+    recover: () => {
+      shutdownFlushComplete = false;
+      allowMainWindowClose = false;
+      closePreparation = null;
+      closeWriteBarrier.reopen();
+    },
+  });
+  ipcMain.handle("update:download-install", () => installUpdateAfterSync(true));
+  ipcMain.handle("update:install", () => installUpdateAfterSync(false));
   ipcMain.handle("update:diagnose", () => updater.diagnose());
   ipcMain.handle("update:download-page", () => updater.downloadPage());
   ipcMain.handle("app:version", () => app.getVersion());
@@ -2242,4 +2240,3 @@ app.on("window-all-closed", () => {
   markStartupSettled();
   if (process.platform !== "darwin") app.quit();
 });
-

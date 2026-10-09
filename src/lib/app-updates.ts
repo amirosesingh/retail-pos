@@ -3,6 +3,7 @@
  * bridge, so the hook reports "unavailable" and the UI hides the card.
  */
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { APP_VERSION as GENERATED_VERSION } from "../version";
 import {
   fetchManifest,
@@ -83,6 +84,8 @@ export function useAppUpdates() {
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [manifest, setManifest] = useState<UpdateManifest | null>(null);
   const [manifestChecking, setManifestChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
     const bridge = updateBridge();
@@ -115,9 +118,25 @@ export function useAppUpdates() {
     if (next) setState(next);
   }, []);
 
-  const install = useCallback(async () => {
-    await updateBridge()?.installUpdate();
+  const runInstall = useCallback(async (downloadFirst: boolean) => {
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      const bridge = updateBridge();
+      if (!bridge) throw new Error("Restart and install is available in the Windows application.");
+      const result = await (downloadFirst ? bridge.downloadAndInstallUpdate() : bridge.installUpdate());
+      if (!result?.ok) throw new Error(result?.error || "Installation could not finish. Please retry.");
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setInstallError(message);
+      toast.error("Update not installed", { description: message });
+      return { ok: false, error: message };
+    } finally {
+      setInstalling(false);
+    }
   }, []);
+  const install = useCallback(() => runInstall(false), [runInstall]);
 
   const download = useCallback(async () => {
     const next = await updateBridge()?.downloadUpdate();
@@ -125,9 +144,7 @@ export function useAppUpdates() {
     return next;
   }, []);
 
-  const downloadAndInstall = useCallback(async () => {
-    return updateBridge()?.downloadAndInstallUpdate();
-  }, []);
+  const downloadAndInstall = useCallback(() => runInstall(true), [runInstall]);
 
   const [diagnosis, setDiagnosis] = useState<UpdateDiagnosis | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
@@ -171,6 +188,8 @@ export function useAppUpdates() {
 
   return {
     state,
+    installing,
+    installError,
     supported,
     check,
     install,

@@ -65,6 +65,12 @@ The isolated membership service has its own Supabase project and SQL in `supabas
 
 `supabase/reset.sql` deletes business data. It is never part of installation or upgrade.
 
+### Admin browser activation
+
+For existing cloud databases, apply `supabase/migrations/20261009065040_admin_web_activation_cloud_only.sql` to enable the Admin Web Activation section in terminal settings. Fresh installations include it in `supabase/schema.sql`. The migration adds private tables and an admin-only RPC without rewriting existing business data, and can be rerun safely.
+
+An authenticated admin can issue a short-lived, single-use code and register their own browser. This is optional browser registration and tracking; it does not replace login or grant admin permissions. Revoking a registration signs that enrolled browser out on its next successful status check. Existing login remains available. Activation records and events stay in the private cloud schema and are excluded from the local SQL schema and terminal synchronization.
+
 After database setup, enter the Supabase URL and publishable key through **Settings → Database & Cloud Connection** on devices. The existing vault/Keystore configuration and `supabaseConfig()` resolver remain the connection authority.
 
 Company name, logo, tax/registration numbers, company phone/website and receipt header/footer are shared globally. A fresh Electron installation asks only for its terminal name; setup downloads shared settings before processing other pending uploads or the full catalogue. Old branch/terminal copies of those identity fields no longer override the global identity. Printer and receipt layout preferences remain scoped separately. After installing this application update, reconnect through Database & Cloud Connection to refresh an older terminal's shared settings automatically; no extra SQL migration is required for this identity fix.

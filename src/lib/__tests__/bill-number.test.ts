@@ -22,7 +22,7 @@ describe("bill numbers", () => {
       terminalNo: "3",
       padding: 5,
     });
-    expect(n).toMatch(/^B101-[A-Z]{3}03-[A-F0-9]{32}-\d{8}-00001$/);
+    expect(n).toMatch(/^B101-[A-Z]{3}03-\d{8}-00001$/);
   });
 
   it("keeps counting up within the same day", async () => {

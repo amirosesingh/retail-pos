@@ -1,3 +1,4 @@
+import { recordId } from "@/lib/sale-identity";
 import { readLocalLocationDirectory, resolveLocationDirectory, type LocationDirectoryResult } from "./location-directory";
 export type { LocationDirectoryResult } from "./location-directory";
 import { beginDataTask, withDataTask } from "@/lib/data-progress";
@@ -636,7 +637,7 @@ export const applySettingsFields = (
 };
 
 const rowToShift = (r: Row): Shift => ({
-  id: r.id,
+  id: recordId(r.id),
   storeId: r.store_id ?? "",
   cashier: r.opened_by_name ?? "",
   openedAt: r.opened_at,
@@ -792,16 +793,16 @@ const forgetTxnColumn = (message?: string | null) => {
 };
 
 export const rowToSale = (r: Row): Sale => ({
-  id: r.id,
+  id: recordId(r.id),
   // Historic/imported SQL rows can predate bill numbering. Reports and the
   // register counter require a string; use the stable row id as a visible,
   // deterministic fallback instead of letting `.split()` crash the shell.
   receiptNo: safeReceiptNo(r.bill_number, r.id),
-  clientTxnId: r.client_transaction_id ?? undefined,
+  clientTxnId: r.client_transaction_id ? recordId(r.client_transaction_id) : undefined,
   storeId: r.store_id ?? "",
   storeName: r.store_name_snapshot ?? undefined,
   storeAddress: r.store_address_snapshot ?? undefined,
-  shiftId: r.shift_id ?? "",
+  shiftId: recordId(r.shift_id ?? ""),
   lines: ((r.sale_items ?? []) as Row[]).map((l) => ({
     productId: l.product_id ?? "",
     name: l.product_name,
@@ -3224,6 +3225,7 @@ export const db = {
                   : {}),
               },
               match: { id: postedDraft.id },
+              requireMatch: true,
             },
           ]
         : []),

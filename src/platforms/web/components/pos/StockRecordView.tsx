@@ -23,7 +23,7 @@ export function StockRecordView({
   const lines = parseLines(record?.lines);
   return (
     <Dialog open={!!record} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] w-[min(96vw,1000px)] max-w-none overflow-y-auto">
+      <DialogContent className="max-h-[92vh] w-[min(96vw,90rem)] max-w-none overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <span className="font-mono">{record?.reference || "No reference"}</span>

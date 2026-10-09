@@ -1,11 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { usePos } from "@/lib/pos-store";
-import { billPrefix, currentPlatform, terminalNumber } from "@/lib/bill-number";
+import { billPrefix, currentPlatform, terminalNumber, configuredTillNumber, saveTillNumber } from "@/lib/bill-number";
 import { activeBranchId } from "@/lib/active-branch";
 
 export const Route = createFileRoute("/settings/numbering")({
@@ -33,6 +36,8 @@ function NumberingPage() {
   const { state, updateSettings } = usePos();
   const it = state.settings.integrations;
   const cfg = it.billNumbering ?? {};
+  const [till, setTill] = useState(() => configuredTillNumber() || cfg.terminalNo || terminalNumber());
+  const [savingTill, setSavingTill] = useState(false);
   const branchId = activeBranchId();
   const store = state.stores.find((s) => s.id === branchId) ?? state.stores[0];
   const branchCode = store?.receiptPrefix?.trim() || store?.code || "R";
@@ -46,12 +51,12 @@ function NumberingPage() {
     cfg.branchCode && !/^[A-Za-z0-9]{1,8}$/.test(cfg.branchCode)
       ? "Letters and numbers only, up to 8 characters."
       : "";
-  const tillError = cfg.terminalNo && !/^\d{1,2}$/.test(cfg.terminalNo) ? "One or two digits." : "";
+  const tillError = !/^\d{1,2}$/.test(till) || Number(till) < 1 ? "Enter 01 to 99." : "";
 
   return (
     <SettingsFrame
       title="Bill numbering"
-      description="Every receipt number is branch, till, day and a running number, so two registers can never mint the same bill — even offline."
+      description="Receipt numbers contain branch, platform, till, date and sequence. Assign each device a different till number within its branch and platform."
     >
       <SettingsTabs current="/settings/numbering" />
 
@@ -60,7 +65,7 @@ function NumberingPage() {
           <p className="text-xs text-muted-foreground">Next number on this till</p>
           <p className="font-mono text-lg font-semibold">{sample}</p>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Platform code {currentPlatform()} · till {cfg.terminalNo || terminalNumber()} · date in{" "}
+            Platform code {currentPlatform()} · till {configuredTillNumber() || cfg.terminalNo || terminalNumber()} · date in{" "}
             {it.timeZone || "this device's time zone"}.
           </p>
         </div>
@@ -79,19 +84,25 @@ function NumberingPage() {
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Till number</Label>
+            <Label className="text-xs text-muted-foreground">Till number on this device</Label>
             <Input
               inputMode="numeric"
               pattern="[0-9]*"
-              value={cfg.terminalNo ?? ""}
+              value={till}
               placeholder={terminalNumber()}
               onChange={(e) =>
-                patch({ terminalNo: e.target.value.replace(/\D+/g, "").slice(0, 2) })
+                setTill(e.target.value.replace(/\D+/g, "").slice(0, 2))
               }
             />
             <p className="text-[11px] text-muted-foreground">
-              {tillError || "Leave blank to take it from this device's activation."}
+              {tillError || "Use a different number on each till, for example 01 and 02. Applies to new bills; existing receipts keep their numbers."}
             </p>
+            <Button disabled={savingTill || !!tillError} onClick={async () => {
+              setSavingTill(true);
+              try { await saveTillNumber(till); setTill(till.padStart(2, "0")); toast.success("Till number saved on this device"); }
+              catch (error) { toast.error(error instanceof Error ? error.message : "Could not save till number"); }
+              finally { setSavingTill(false); }
+            }}>{savingTill ? "Saving…" : "Save till number"}</Button>
           </div>
 
           <div className="space-y-1">

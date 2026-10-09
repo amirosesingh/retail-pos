@@ -11,7 +11,7 @@ import { useAppUpdates } from "@/lib/app-updates";
 import { isElectron } from "@/platform-config/platform";
 
 export function DesktopUpdateBanner() {
-  const { state, supported, install } = useAppUpdates();
+  const { state, supported, install, installing, installError } = useAppUpdates();
   const [dismissed, setDismissed] = useState<string | null>(null);
 
   if (!supported || !isElectron()) return null;
@@ -37,12 +37,12 @@ export function DesktopUpdateBanner() {
             : "The update did not go through"}
         </p>
         <p className="truncate text-xs text-muted-foreground">
-          {ready ? "It installs when you restart — your shift is not interrupted." : state.error}
+          {installError || (installing ? "Synchronizing pending data before installation…" : ready ? "Pending data will synchronize before restarting. Your open shift is preserved." : state.error)}
         </p>
       </div>
       {ready ? (
-        <Button size="sm" onClick={() => void install()}>
-          Restart and install
+        <Button size="sm" disabled={installing} onClick={() => void install()}>
+          {installing ? "Preparing installation…" : "Restart and install"}
         </Button>
       ) : (
         <Button size="sm" variant="outline" asChild>
