@@ -154,6 +154,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261008143000_canonicalize_terminal_branch_ids.sql",
       "supabase/migrations/20261008143001_compare_purchase_order_parent_as_uuid.sql",
       "supabase/migrations/20261008152237_fix_transfer_lifecycle_timestamp_types.sql",
+      "supabase/migrations/20261009052645_restore_stocked_products_automatically.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -283,7 +284,7 @@ describe("canonical Supabase SQL", () => {
 
   it("keeps the optional zero-stock catalogue lifecycle in the canonical schema", () => {
     const migration = read(
-      "supabase/migrations/20261002010743_enforce_zero_stock_catalog_lifecycle.sql",
+      "supabase/migrations/20261009052645_restore_stocked_products_automatically.sql",
     );
     const schema = read("supabase/schema.sql");
     for (const sql of [migration, schema]) {
@@ -292,13 +293,12 @@ describe("canonical Supabase SQL", () => {
         "BEFORE INSERT OR UPDATE OF stock_by_store, is_archived ON public.products",
       );
       expect(sql).toContain("FUNCTION public.backfill_zero_stock_catalog_lifecycle()");
-      expect(sql).toContain("AFTER UPDATE OF integration_settings ON public.pos_settings");
+      expect(sql).toContain("AFTER INSERT OR UPDATE OF integration_settings ON public.pos_settings");
       expect(sql).toContain("integration_settings ->> 'autoArchiveZeroStock'");
       expect(sql).toContain("COALESCE(integration_settings ->> 'autoArchiveZeroStock', 'true')");
       expect(sql).toContain("Reconcile products already present");
-      expect(sql).toContain("AND NOT stock_state.has_stock");
-      expect(sql).toContain("SET is_archived = true");
-      expect(sql).not.toContain("SET is_archived = NOT stock_state.has_stock");
+      expect(sql).toContain("NEW.is_archived := net_stock <= 0");
+      expect(sql).toContain("SET is_archived = NOT stock_state.has_stock");
       expect(sql).toContain(
         "REVOKE ALL ON FUNCTION public.apply_zero_stock_catalog_lifecycle() FROM PUBLIC, anon, authenticated",
       );

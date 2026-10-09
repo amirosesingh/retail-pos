@@ -15,8 +15,9 @@ export function hasCompanyStock(product: Pick<Product, "stockByStore">): boolean
  * The matching database trigger persists the same decision centrally.
  */
 export function applyZeroStockLifecycle<T extends Product>(product: T, enabled: boolean): T {
-  if (!enabled || hasCompanyStock(product) || product.archived) return product;
-  return { ...product, archived: true };
+  if (!enabled) return product;
+  const archived = !hasCompanyStock(product);
+  return product.archived === archived ? product : { ...product, archived };
 }
 
 export function applyZeroStockLifecycleToProducts<T extends Product>(

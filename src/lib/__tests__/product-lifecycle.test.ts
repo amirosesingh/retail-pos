@@ -33,13 +33,25 @@ describe("zero-stock catalogue lifecycle", () => {
     expect(applyZeroStockLifecycle(product({ a: 0 }), false).archived).toBe(false);
   });
 
-  it("does not reactivate a deliberately archived product that has stock", () => {
-    expect(applyZeroStockLifecycle(product({ a: 3 }, true), true).archived).toBe(true);
+  it("reactivates stocked products when enabled and leaves manual status alone when disabled", () => {
+    expect(applyZeroStockLifecycle(product({ a: 3 }, true), true).archived).toBe(false);
+    expect(applyZeroStockLifecycle(product({ a: 3 }, true), false).archived).toBe(true);
+  });
+
+  it("follows depletion and replenishment repeatedly without requiring an archive edit", () => {
+    let item = applyZeroStockLifecycle(product({ a: 0 }), true);
+    expect(item.archived).toBe(true);
+    item = applyZeroStockLifecycle({...item, stockByStore:{a:5}}, true);
+    expect(item.archived).toBe(false);
+    item = applyZeroStockLifecycle({...item, stockByStore:{a:0}}, true);
+    expect(item.archived).toBe(true);
+    item = applyZeroStockLifecycle({...item, stockByStore:{a:0,b:2}}, true);
+    expect(item.archived).toBe(false);
   });
 
   it("normalizes a stale initial catalogue snapshot", () => {
     const result = applyZeroStockLifecycleToProducts(
-      [product({ a: 0 }), { ...product({ a: 4 }), id: "p2" }],
+      [product({ a: 0 }), { ...product({ a: 4 }, true), id: "p2" }],
       true,
     );
     expect(result.map((entry) => entry.archived)).toEqual([true, false]);

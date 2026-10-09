@@ -45,6 +45,10 @@ Keep `schema.sql` and the numbered migrations as generator sources and history. 
 
 Migration `014_repair_purchase_order_key_widths.sql` repairs older local databases where `purchase_orders.po_number` and `store_id` remain `nvarchar(450)` instead of `nvarchar(128)`. It is included in the consolidated installer and the Settings update download. It preserves `po_number NOT NULL`, `store_id NULL`, and branch-scoped invoice uniqueness. It checks stored byte lengths under a table lock before resizing and rolls back on failure; it never truncates identifiers. Values exceeding 128 UTF-16 code units stop the upgrade with error 51014 and need review before retrying.
 
+### Automatic archive and reactivation
+
+With Catalogue settings → Automatically archive zero-stock products enabled, net company stock determines status: zero or negative stock is archived, and positive stock is active. Disable this setting to manage archive status manually. Existing stocked products stuck in the archive are repaired by local migration `015_restore_stocked_products_automatically.sql` and cloud migration `20261009052645_restore_stocked_products_automatically.sql`. The local upgrade is included in the consolidated installer and Settings download; apply the cloud migration to existing Supabase installations. The fresh Supabase schema includes the same behavior. Deleted rows are not restored, and malformed stock JSON is left unchanged by database repairs.
+
 Regenerate the local installer after changing the cloud schema or local migrations:
 
 ```powershell

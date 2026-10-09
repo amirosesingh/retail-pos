@@ -59,6 +59,19 @@ test('purchase order width repair guards data before rebuilding scoped indexes',
   assert.doesNotMatch(sql,/\b(?:UPDATE|DELETE|TRUNCATE)\s+dbo\./i);
 });
 
+test('local stock lifecycle repairs stale archive flags and responds to stock and setting changes',()=>{
+  const migration=installerSections().migrations.find(m=>m.version===15);
+  assert.ok(migration);
+  assert.match(migration.sql,/CREATE OR ALTER TRIGGER dbo.products_zero_stock_catalog_lifecycle/);
+  assert.match(migration.sql,/JOIN inserted i ON i.id=p.id/);
+  assert.match(migration.sql,/TRIGGER_NESTLEVEL/);
+  assert.match(migration.sql,/CREATE OR ALTER TRIGGER dbo.pos_settings_zero_stock_catalog_backfill/);
+  assert.match(migration.sql,/CASE WHEN s.quantity>0 THEN 0 ELSE 1 END/);
+  assert.match(migration.sql,/p.deleted_at IS NULL/);
+  assert.match(migration.sql,/SUM\(TRY_CONVERT\(decimal\(38,12\),j\.\[value\]\)\)/);
+  assert.match(migration.sql,/BEGIN CATCH\s+IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;\s+THROW;/);
+});
+
 function connection({applied=true,fail=false,deny=false}={}) {
   const calls=[];let commits=0;let rollbacks=0;
   const pool={request:()=>({input(){return this;},async query(){return {recordset:[{applied}]};},async batch(sql){calls.push(sql);if(deny)throw new Error('Wrong database');}})};
