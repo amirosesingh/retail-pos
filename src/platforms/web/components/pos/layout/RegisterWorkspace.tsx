@@ -129,12 +129,14 @@ function canvasMetrics(canvas: CanvasConfig, view: { width: number; height: numb
 }
 
 export function RegisterWorkspace({
+  canvasNavigation,
   slots,
   terminalKey,
   classic,
   mode,
   onModeChange,
 }: {
+  canvasNavigation?: ReactNode;
   slots: RegisterSlots;
   terminalKey: string;
   /** The untouched factory screen, used whenever no custom layout is saved. */
@@ -227,6 +229,9 @@ export function RegisterWorkspace({
 
   return (
     <div className="relative flex h-full min-h-0 w-full min-w-0 flex-col">
+      {showCanvas && canvasNavigation && (
+        <div className="shrink-0 border-b border-border px-2 py-1">{canvasNavigation}</div>
+      )}
       {(isAdmin || can("can_access_pos_settings")) && layout.loaded && (
         <CustomizeBar
           editing={editing}

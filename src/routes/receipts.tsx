@@ -1,3 +1,4 @@
+import { uniqueSales, sameRecordId } from "@/lib/sale-identity";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Gift, Printer, ReceiptText, Search, ScrollText, Wallet, Wrench } from "lucide-react";
@@ -118,8 +119,8 @@ function ReceiptVault() {
   // Employees only ever see the log of the store they are on duty at.
   const sales = useMemo(() => {
     const live = state.sales.filter((s) => s.storeId === currentStore.id);
-    const seen = new Set(live.map((s) => s.id));
-    return [...live, ...older.filter((s) => !seen.has(s.id))];
+
+    return uniqueSales([...older, ...live]);
   }, [state.sales, currentStore.id, older]);
 
   const loadOlder = async () => {
@@ -166,7 +167,7 @@ function ReceiptVault() {
   };
 
   const scoped = sales.filter((s) => {
-    if (scope === "shift") return activeShift ? s.shiftId === activeShift.id : true;
+    if (scope === "shift") return activeShift ? sameRecordId(s.shiftId, activeShift.id) : false;
     if (scope === "range") {
       const day = new Date(s.createdAt).toLocaleDateString("en-CA");
       if (fromDate && day < fromDate) return false;

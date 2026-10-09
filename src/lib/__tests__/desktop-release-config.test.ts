@@ -71,8 +71,10 @@ describe("desktop release configuration", () => {
     expect(updater).toContain('["latest.yml", `${encodeURIComponent(version)}.yml`]');
     expect(updater).toContain("if (fallbackPromise) return fallbackPromise");
     const main = read("electron/main.cjs");
-    expect(main).toContain('code: "EACTIVE_SHIFT"');
-    expect(main).toContain('match: { closed_at: null }, limit: 1');
+    expect(main).toContain('prepare: prepareApplicationClose');
+    expect(main).not.toContain('code: "EACTIVE_SHIFT"');
+    expect(updater).toContain('disableDifferentialDownload = false');
+    expect(read('.github/workflows/desktop-release.yml')).toContain('--exclude "android/*" --exclude "*.blockmap"');
     expect(main).not.toContain('["", "ACTIVE", "OPEN"].includes(state)');
   });
 

@@ -2,6 +2,7 @@ import { subscribeSalesChange } from "./sync-engine";
 import { useEffect, useMemo, useState } from "react";
 import { loadSalesPage } from "@/core/api/pos-db";
 import type { Sale } from "@/core/types/pos-types";
+import { uniqueSales } from "./sale-identity";
 
 const dayStart = (value: string) => Date.parse(`${value}T00:00:00`);
 const dayEnd = (value: string) => Date.parse(`${value}T23:59:59.999`);
@@ -83,9 +84,7 @@ export function useReportSales(
   }, [from, to, storeKey, revision]);
 
   const sales = useMemo(() => {
-    const byId = new Map<string, Sale>();
-    for (const sale of [...seedRows, ...loaded]) byId.set(sale.id, sale);
-    return [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return uniqueSales([...seedRows, ...loaded]).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [seedRows, loaded]);
 
   return { sales, loading, error };

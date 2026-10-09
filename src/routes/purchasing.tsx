@@ -983,7 +983,7 @@ function Purchasing() {
         </header>
 
         <Dialog open={entryOpen} onOpenChange={setEntryOpen}>
-          <DialogContent className="max-h-[92vh] w-[min(96vw,1200px)] max-w-none overflow-y-auto">
+          <DialogContent className="max-h-[92vh] w-[min(96vw,90rem)] max-w-none overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{openDraftId ? "Resume receiving order" : "Add new stock"}</DialogTitle>
               <DialogDescription>
@@ -1109,7 +1109,7 @@ function Purchasing() {
                 }}
               />
 
-              <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+              <Table managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Barcode</TableHead>
@@ -1366,7 +1366,7 @@ function Purchasing() {
             </div>
           </div>
           <Separator />
-          <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+          <Table managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
             <TableHeader>
               <TableRow>
                 <TableHead>Reference</TableHead>
@@ -1509,7 +1509,7 @@ function Purchasing() {
           }
         }}
       >
-        <DialogContent className="max-h-[88vh] max-w-4xl overflow-y-auto">
+        <DialogContent className="max-h-[92dvh] w-[min(96vw,90rem)] max-w-none overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Correct receiving invoice</DialogTitle>
             <DialogDescription>
@@ -1563,7 +1563,7 @@ function Purchasing() {
                 </p>
               )}
 
-              <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+              <Table managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Item number / SKU</TableHead>

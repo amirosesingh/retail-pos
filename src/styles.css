@@ -733,9 +733,9 @@
   line-height: 1.45;
 }
 
-.pos-scaled button,
+.pos-scaled button:not([role="checkbox"]):not([role="radio"]),
 .pos-scaled [role="button"],
-.pos-scaled input,
+.pos-scaled input:not([type="checkbox"]):not([type="radio"]),
 .pos-scaled select {
   min-height: calc(40px * var(--pos-scale));
 }
@@ -747,17 +747,17 @@
   min-width: calc(28px * var(--pos-scale));
 }
 
-.pos-compact .pos-scaled button,
+.pos-compact .pos-scaled button:not([role="checkbox"]):not([role="radio"]),
 .pos-compact .pos-scaled [role="button"],
-.pos-compact .pos-scaled input,
+.pos-compact .pos-scaled input:not([type="checkbox"]):not([type="radio"]),
 .pos-compact .pos-scaled select {
   min-height: calc(34px * var(--pos-scale));
 }
 
 @media (pointer: coarse) {
-  .pos-scaled button,
+  .pos-scaled button:not([role="checkbox"]):not([role="radio"]),
   .pos-scaled [role="button"],
-  .pos-scaled input {
+  .pos-scaled input:not([type="checkbox"]):not([type="radio"]) {
     min-height: max(44px, calc(40px * var(--pos-scale)));
   }
 }

@@ -155,6 +155,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261008143001_compare_purchase_order_parent_as_uuid.sql",
       "supabase/migrations/20261008152237_fix_transfer_lifecycle_timestamp_types.sql",
       "supabase/migrations/20261009052645_restore_stocked_products_automatically.sql",
+      "supabase/migrations/20261009065040_admin_web_activation_cloud_only.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

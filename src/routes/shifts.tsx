@@ -1,3 +1,4 @@
+import { sameRecordId } from "@/lib/sale-identity";
 import { subscribeDataChange } from "@/lib/sync-engine";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
@@ -117,7 +118,7 @@ function Shifts() {
   const storeSales = state.sales.filter((s) => s.storeId === currentStore.id);
   const storeShifts = state.shifts.filter((s) => s.storeId === currentStore.id);
   const shiftSales = activeShift
-    ? storeSales.filter((s) => s.shiftId === activeShift.id && !s.refunded)
+    ? storeSales.filter((s) => sameRecordId(s.shiftId, activeShift.id) && !s.refunded)
     : [];
   const cashTaken = shiftSales.filter((s) => s.method === "cash").reduce((a, s) => a + s.total, 0);
   const expected = (activeShift?.openingFloat ?? 0) + cashTaken;

@@ -31,7 +31,7 @@ export function ReceivingRecordView({
 
   return (
     <Dialog open={!!record} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[88vh] max-w-4xl overflow-y-auto">
+      <DialogContent className="max-h-[92dvh] w-[min(96vw,90rem)] max-w-none overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="numeric">{record?.reference ?? "Receiving entry"}</DialogTitle>
           <DialogDescription>
@@ -52,7 +52,7 @@ export function ReceivingRecordView({
               <Meta label="Branch" value={record.storeCode ?? "—"} />
             </dl>
 
-            <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+            <Table managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Item number / SKU</TableHead>

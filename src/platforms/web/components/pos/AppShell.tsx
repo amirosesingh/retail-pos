@@ -1,3 +1,4 @@
+import { useAdminWebActivation } from "@/lib/use-admin-web-activation";
 import { isLocationSetupRoute } from "@/lib/app-shell-routes";
 import { DataProgress } from "@/components/shared/DataProgress";
 import { usePersonalAppearance, usePersonalAppearanceSync } from "@/lib/personal-appearance";
@@ -105,6 +106,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function AppShellFrame({ children }: { children: ReactNode }) {
+  useAdminWebActivation();
   useEffect(() => startSyncEngine(), []);
   const { stores, currentStore, setCurrentStore, state, ready: dataReady } = usePos();
   useEffect(() => {

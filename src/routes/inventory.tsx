@@ -170,6 +170,7 @@ function Inventory() {
   const [subFilter, setSubFilter] = useState("all");
   const [bulkCategory, setBulkCategory] = useState("");
   const [advanced, setAdvanced] = useState(false);
+  const [columnControlsTarget, setColumnControlsTarget] = useState<HTMLDivElement | null>(null);
   const [skuFilter, setSkuFilter] = useState("");
   const [stockFilter, setStockFilter] = useState("all");
   const [minPrice, setMinPrice] = useState("");
@@ -332,9 +333,12 @@ function Inventory() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search products"
-                className="w-full pl-9 sm:w-56"
+                className="w-full pl-9 pr-11 sm:w-64"
               />
+              <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2" aria-label="Advanced product filters" title="Advanced filters" onClick={() => setAdvanced(true)}><SlidersHorizontal className="size-4" /></Button>
             </div>
+            <Button variant={showArchived ? "default" : "outline"} onClick={() => { setShowArchived(value => !value); setSelected([]); }}><Archive className="size-4" />{showArchived ? "Showing archived" : "Show archived"}</Button>
+            <div ref={setColumnControlsTarget} className="flex items-center" />
             {canBulk && (
               <Button variant="outline" onClick={() => setImportOpen(true)}>
                 📥 Bulk Import from Excel
@@ -877,32 +881,10 @@ function Inventory() {
           )}
         </section>
 
-        <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border p-3">
-          <div className="space-y-1">
-            <Label className="text-xs">View</Label>
-            <Button
-              size="sm"
-              variant={showArchived ? "default" : "outline"}
-              onClick={() => {
-                setShowArchived((v) => !v);
-                setSelected([]);
-              }}
-            >
-              {showArchived ? "Showing archived" : "Show archived"}
-            </Button>
-          </div>
-          <Button
-            size="sm"
-            variant={advanced ? "default" : "outline"}
-            onClick={() => setAdvanced((value) => !value)}
-          >
-            <SlidersHorizontal className="size-4" /> Advanced filters
-          </Button>
-          <p className="pb-2 text-xs text-muted-foreground">
-            Showing <span className="numeric">{rows.length}</span> of{" "}
-            <span className="numeric">{state.products.length}</span> products
-          </p>
-          {advanced && <div className="basis-full border-t border-border" />}
+        <Dialog open={advanced} onOpenChange={setAdvanced}>
+          <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
+            <DialogHeader><DialogTitle>Filter products</DialogTitle></DialogHeader>
+            <div className="flex flex-wrap gap-4">
           {advanced && (
             <div className="space-y-1">
               <Label className="text-xs">Category</Label>
@@ -1029,7 +1011,9 @@ function Inventory() {
               </Button>
             </>
           )}
-        </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {selected.length > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/5 px-4 py-3">
@@ -1112,7 +1096,7 @@ function Inventory() {
         )}
 
         <div className="rounded-lg border border-border bg-card">
-          <Table>
+          <Table columnControls controlsTarget={columnControlsTarget}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">

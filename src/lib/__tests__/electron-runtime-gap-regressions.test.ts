@@ -12,10 +12,10 @@ describe("Electron runtime regression guards", () => {
     expect(main).toContain("child.exitCode !== null || child.signalCode !== null");
   });
 
-  it("checks directly for any open shift before installing an update", () => {
+  it("synchronizes before updating without closing the open shift", () => {
     const main = source("electron/main.cjs");
-    expect(main).toContain('match: { closed_at: null }, limit: 1');
-    expect(main).toContain('code: "EBRANCH"');
+    expect(main).toContain('prepare: prepareApplicationClose');
+    expect(main).not.toContain('code: "EACTIVE_SHIFT"');
     expect(main).not.toContain('query(localBranchId(), "shifts", { limit: 500 }');
   });
 

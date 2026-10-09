@@ -1,4 +1,5 @@
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { ArrowDown, ArrowUp, ArrowUpDown, ListFilter, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -555,6 +556,8 @@ export function hideTableColumns(nodes: React.ReactNode, hidden: number[]): Reac
 type TableProps = React.HTMLAttributes<HTMLTableElement> & {
   /** Opt-in controls for operational tables; all rows must be supplied. */
   managed?: boolean;
+  columnControls?: boolean;
+  controlsTarget?: HTMLElement | null;
   summaryFormats?: Record<string, (value: number) => string>;
   /** Collapse each row into a labelled card below tablet width. */
   mobileCards?: boolean;
@@ -563,7 +566,7 @@ type TableProps = React.HTMLAttributes<HTMLTableElement> & {
 };
 
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
-  ({ className, children, mobileCards = true, clientDataControls = true, managed = false, summaryFormats = {}, ...props }, ref) => {
+  ({ className, children, mobileCards = true, clientDataControls = true, managed = false, columnControls = false, controlsTarget, summaryFormats = {}, ...props }, ref) => {
     const [hiddenColumns, setHiddenColumns] = React.useState<number[]>([]);
     const internalRef = React.useRef<HTMLTableElement>(null);
     React.useImperativeHandle(ref, () => internalRef.current as HTMLTableElement, []);
@@ -653,7 +656,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
     const pagination = usePagination(managedRows);
     const totals = sumManagedRows(managedRows);
     const pagedContent = managed ? replaceManagedRows(content, pagination.pageItems) : content;
-    const displayedContent = managed ? hideTableColumns(pagedContent, hiddenColumns) : pagedContent;
+    const displayedContent = managed || columnControls ? hideTableColumns(pagedContent, hiddenColumns) : pagedContent;
     const controls = React.useMemo<TableControls>(
       () => ({
         clientDataControls,
@@ -679,14 +682,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
         resizeBy,
       ],
     );
-    return (
-      <TableControlsContext.Provider value={controls}>
-        {managed && <div className="flex flex-wrap items-center justify-between gap-3 border-b p-3">
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-live="polite">
-            <span className="text-muted-foreground">Matching totals · {managedRows.length} rows</span>
-            {Object.entries(totals).map(([label, value]) => <span key={label}>{label}: <strong className="numeric">{summaryFormats[label]?.(value) ?? value.toLocaleString()}</strong></span>)}
-          </div>
-          <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm"><ListFilter className="size-4" /> Columns</Button></DropdownMenuTrigger>
+    const columnMenu = (<DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm"><ListFilter className="size-4" /> Columns</Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
               <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
               {labels.map((label, column) => label && <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} disabled={column === 0 || /^(actions?|open)$/i.test(label)} onSelect={event => event.preventDefault()} onCheckedChange={checked => {
@@ -695,8 +691,17 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
               }}>{label}</DropdownMenuCheckboxItem>)}
               <DropdownMenuSeparator /><DropdownMenuItem onSelect={() => setHiddenColumns([])}>Show all columns</DropdownMenuItem>
             </DropdownMenuContent>
-          </DropdownMenu>
+          </DropdownMenu>);
+    return (
+      <TableControlsContext.Provider value={controls}>
+        {managed && <div className="flex flex-wrap items-center justify-between gap-3 border-b p-3">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-live="polite">
+            <span className="text-muted-foreground">Matching totals · {managedRows.length} rows</span>
+            {Object.entries(totals).map(([label, value]) => <span key={label}>{label}: <strong className="numeric">{summaryFormats[label]?.(value) ?? value.toLocaleString()}</strong></span>)}
+          </div>
+          {columnMenu}
         </div>}
+        {!managed && columnControls && (controlsTarget ? createPortal(columnMenu, controlsTarget) : <div className="flex justify-end p-2">{columnMenu}</div>)}
         <div className="responsive-table-region relative w-full max-w-full overflow-x-auto overscroll-x-contain">
           <table
             ref={internalRef}

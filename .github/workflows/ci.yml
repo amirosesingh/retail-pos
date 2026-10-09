@@ -26,7 +26,7 @@ jobs:
       - name: Permission & route-guard tests
         run: npx vitest run
       - name: Sync, startup and database-upgrade regression tests
-        run: node --test scripts/test-sync-pipeline.cjs scripts/test-startup-cloud.cjs scripts/test-event-sync.cjs scripts/test-company-identity.cjs scripts/test-database-upgrade.cjs
+        run: node --test scripts/test-sync-pipeline.cjs scripts/test-startup-cloud.cjs scripts/test-event-sync.cjs scripts/test-company-identity.cjs scripts/test-database-upgrade.cjs scripts/test-update-install.cjs
       - name: SQL schema and synchronization contract checks
         run: |
           npm run verify:sqlserver-schema

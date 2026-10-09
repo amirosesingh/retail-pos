@@ -1,3 +1,4 @@
+import { uniqueSales } from "./sale-identity";
 import { staffSettingsTarget } from "./settings-edit-policy";
 import { isCompanyIdentityPath } from "./company-identity";
 import { readBranding, writeBranding } from "./branding";
@@ -489,12 +490,12 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
     ),
     members: cloudMembers,
     sales: (() => {
-      if (!pendingSales?.size) return cloudSales;
+      if (!pendingSales?.size) return uniqueSales(cloudSales);
       const incoming = new Set(cloudSales.map((sale) => sale.id));
       const preserved = s.sales.filter(
         (sale) => pendingSales.has(sale.id) && !incoming.has(sale.id),
       );
-      return [...preserved, ...cloudSales]
+      return uniqueSales([...preserved, ...cloudSales])
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(0, 500);
     })(),
@@ -551,7 +552,7 @@ function applySalesSnapshot(
   const otherBranches = current.sales.filter(
     (sale) => sale.storeId !== active && !ids.has(sale.id),
   );
-  const sales = [...pending, ...rows, ...otherBranches]
+  const sales = uniqueSales([...otherBranches, ...pending, ...rows])
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 500);
   return {
@@ -1935,7 +1936,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           counter: Math.max(counter, s.counter + 1),
           products,
           members,
-          sales: [sale, ...tagged],
+          sales: uniqueSales([...tagged, sale]),
         };
       });
       try {

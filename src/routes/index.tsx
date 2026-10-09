@@ -1880,9 +1880,21 @@ function Register() {
     </>
   );
 
+  const workspaceBackButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-auto min-h-9 max-w-full gap-2 rounded-lg bg-background px-3 py-2 text-xs font-medium shadow-sm"
+      onClick={() => void navigate({ to: "/", search: {}, replace: true })}
+    >
+      <ArrowLeft className="size-4 shrink-0" /> Back to workspace
+    </Button>
+  );
+
   const slot_standardProductLookup = (
     <section className="flex h-full min-h-0 flex-col bg-background">
       <div className="space-y-3 border-b border-border p-4">
+        {workspaceBackButton}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="font-semibold">Product lookup</p>
@@ -2738,20 +2750,11 @@ function Register() {
   return (
     <AppShell>
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex shrink-0 items-center border-b border-border bg-background px-2 py-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 rounded-md px-2 text-xs text-muted-foreground"
-            onClick={() => void navigate({ to: "/", search: {}, replace: true })}
-          >
-            <ArrowLeft className="size-4" /> Back to workspace
-          </Button>
-        </div>
         <div className="min-h-0 flex-1">
           <ZoomCanvas>
             <RegisterActionsProvider handlers={registerActionHandlers}>
               <RegisterWorkspace
+                canvasNavigation={workspaceBackButton}
                 terminalKey={terminalKey}
                 mode={state.settings.integrations.sellingLayout}
                 onModeChange={(sellingLayout) =>

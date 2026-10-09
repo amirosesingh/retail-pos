@@ -123,10 +123,9 @@ function load() {
   // installer when the terminal is in the middle of trading.
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
-  // Partial ("delta") downloads make many small ranged requests and are the
-  // most fragile link in the chain on tills behind security software. One
-  // plain file download is slower but far more likely to complete.
-  autoUpdater.disableDifferentialDownload = true;
+  // Reuse unchanged installer blocks; electron-updater falls back to the
+  // full installer if the cache, blockmaps or range requests are unavailable.
+  autoUpdater.disableDifferentialDownload = false;
   // Keep manifests fresh and ask proxies/CDNs not to transform installer bytes.
   // A transformed body is particularly unsafe when a retry resumes by Range.
   autoUpdater.requestHeaders = {
@@ -309,7 +308,7 @@ function install() {
   // in place, so activation, settings and the local database stay put.
   if (state.installerFile && fs.existsSync(state.installerFile)) {
     try {
-      spawn(state.installerFile, ["/S"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+      spawn(state.installerFile, ["--updated", "/S", "--force-run"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
     } catch (err) {
       const raw = String(err?.message || err);
       set({ status: "error", stage: "install", detail: raw, error: "The installer could not be started." });
@@ -319,7 +318,7 @@ function install() {
     return { ok: true };
   }
   if (!autoUpdater) return { ok: false, error: "No update is ready." };
-  setImmediate(() => autoUpdater.quitAndInstall(false, true));
+  setImmediate(() => autoUpdater.quitAndInstall(true, true));
   return { ok: true };
 }
 

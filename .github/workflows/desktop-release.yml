@@ -108,7 +108,9 @@ jobs:
           fi
           rid="${{ steps.meta.outputs.release_id }}"
           aws s3 sync upload "s3://updatelccms/pos-app/releases/$rid" --endpoint-url "$R2_ENDPOINT" --cache-control "public,max-age=31536000,immutable"
-          aws s3 sync upload s3://updatelccms/pos-app/latest --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache" --delete --exclude "android/*"
+          # Keep old versioned blockmaps for terminals updating from older builds.
+          aws s3 sync upload s3://updatelccms/pos-app/latest --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache" --delete --exclude "android/*" --exclude "*.blockmap"
+          aws s3 cp upload s3://updatelccms/pos-app/latest --recursive --endpoint-url "$R2_ENDPOINT" --cache-control "public,max-age=31536000,immutable" --exclude "*" --include "*.blockmap"
           aws s3 cp upload/manifest.json s3://updatelccms/pos-app/manifest.json --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache" --content-type "application/json"
 
 
