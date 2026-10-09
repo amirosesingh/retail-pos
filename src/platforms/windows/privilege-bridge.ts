@@ -29,11 +29,12 @@ const passthrough = (key: string) =>
 
 export function wrapBridge<T extends object>(
   bridge: T,
-  requestUnlock: (message: string, requiredLevel?: "admin" | "supervisor") => Promise<boolean>,
+  requestUnlock: (message: string, requiredLevel?: "admin" | "supervisor", allowPrompt?: boolean) => Promise<boolean>,
+  promptPolicy?: (path: string) => boolean,
 ): T {
   const seen = new WeakMap<object, object>();
 
-  const wrapObject = (source: object): object => {
+  const wrapObject = (source: object, parent = ""): object => {
     const existing = seen.get(source);
     if (existing) return existing;
 
@@ -50,6 +51,7 @@ export function wrapBridge<T extends object>(
     }
 
     for (const key of keys) {
+      const callPath = parent ? `${parent}.${key}` : key;
       let value: unknown;
       try {
         value = (source as Record<string, unknown>)[key];
@@ -57,7 +59,7 @@ export function wrapBridge<T extends object>(
         continue;
       }
       if (value && typeof value === "object") {
-        copy[key] = wrapObject(value);
+        copy[key] = wrapObject(value, callPath);
         continue;
       }
       if (typeof value !== "function" || passthrough(key)) {
@@ -66,9 +68,12 @@ export function wrapBridge<T extends object>(
       }
       const original = (value as (...args: unknown[]) => unknown).bind(source);
       copy[key] = async (...args: unknown[]) => {
+        // Capture intent before IPC awaits; background work cannot gain a
+        // prompt because the operator happens to click something later.
+        const allowPrompt = promptPolicy?.(callPath) ?? false;
         const first = await original(...args);
         if (!isRefusal(first)) return first;
-        const unlocked = await requestUnlock(first.error ?? "", first.requiredLevel);
+        const unlocked = await requestUnlock(first.error ?? "", first.requiredLevel, allowPrompt);
         if (!unlocked) return first;
         return original(...args);
       };
