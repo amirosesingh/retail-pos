@@ -359,9 +359,9 @@ const setSync = (patch: Partial<SyncState>) => {
   syncListeners.forEach((l) => l());
 };
 
-function flushBatch(): Promise<void> {
+function flushBatch(waitForLock = false): Promise<void> {
   if (flushInFlight) return flushInFlight;
-  flushInFlight = flushBatchOnce().finally(() => {
+  flushInFlight = flushBatchOnce(waitForLock).finally(() => {
     flushInFlight = null;
   });
   return flushInFlight;
@@ -380,23 +380,36 @@ export async function flushPendingAuditLogs(): Promise<void> {
     if (state.configured === false) { persist(); return; }
   }
   for (;;) {
-    const before=logs.filter(row=>!row.synced_to_cloud).length;
-    if (!before) return;
-    await flushBatch();
-    const after=logs.filter(row=>!row.synced_to_cloud).length;
-    if (after>=before) throw new Error(syncState.lastError ?? "Activity logs are waiting for a signed-in connection. Keep the application open and retry.");
+    // A background pass may have skipped a held cross-window lock. Wait for
+    // that pass, then perform a real draining pass rather than reuse its no-op.
+    if (flushInFlight) await flushInFlight;
+    const before = new Set(logs.filter(row => !row.synced_to_cloud).map(row => row.id));
+    if (!before.size) return;
+    await flushBatch(true);
+    const remaining = logs.filter(row => !row.synced_to_cloud && before.has(row.id)).length;
+    // New activity can arrive while saving: compare the original IDs, not
+    // total queue lengths, or successful progress can look like a failure.
+    if (remaining >= before.size) throw new Error(syncState.lastError ?? (desktop
+      ? "Activity logs could not be saved to the local database. Check the database connection and retry."
+      : "Activity logs are waiting for a signed-in connection. Keep the application open and retry."));
   }
 }
 
-async function flushBatchOnce() {
+async function flushBatchOnce(waitForLock = false) {
   const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
   if (!locks) return flushBatchUnderLock();
-  await locks.request(CLOUD_FLUSH_LOCK, { mode: "exclusive", ifAvailable: true }, async (lock) => {
+  await locks.request(CLOUD_FLUSH_LOCK, waitForLock
+    ? { mode: "exclusive", signal: AbortSignal.timeout(20_000) }
+    : { mode: "exclusive", ifAvailable: true }, async (lock) => {
     if (!lock) return;
     // Tabs share the same persisted journal. Reload it after acquiring the
     // lock so this tab sees rows another tab has already marked as delivered.
     loaded = false;
     await flushBatchUnderLock();
+  }).catch(error => {
+    if (waitForLock && (error?.name === "TimeoutError" || error?.name === "AbortError"))
+      throw new Error("Another window is still saving activity logs. Please wait a moment and retry.");
+    throw error;
   });
 }
 
