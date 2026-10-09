@@ -35,7 +35,9 @@ jobs:
       - name: Lint
         run: npm run lint
       - name: Typecheck & build
-        run: npm run build
+        run: |
+          npx tsc --noEmit
+          npm run build
       - name: Dependency vulnerability audit
         run: npm audit --audit-level=high
       - name: Report findings to the app
