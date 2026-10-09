@@ -393,6 +393,8 @@ export async function runRelayRpc(
       return { ok: false, code: "PERMISSION_DENIED", error: "You are not allowed to process a sale." };
     }
     const sale = op.args._sale;
+    if (sale && typeof sale === "object" && String((sale as Record<string, unknown>).original_bill_number ?? "").startsWith("OLDPOS:") && scope.role !== "admin" && scope.roleSlug !== "admin")
+      return { ok: false, code: "PERMISSION_DENIED", error: "Only an administrator can enter an old POS exchange." };
     const storeId = sale && typeof sale === "object" ? (sale as Record<string, unknown>).store_id : null;
     if (typeof storeId !== "string" || !storeId) {
       return { ok: false, code: "SCOPE_MISSING", error: "The sale branch is missing." };

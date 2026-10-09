@@ -63,6 +63,9 @@ function aggregatePolicy(kind, operations, identity) {
   const rows = operations
     .filter((op) => op.table === "sales" && ["insert", "upsert"].includes(op.kind))
     .flatMap((op) => op.rows ?? []);
+  const salePayloads = operations.filter(op => op.table === "sales").flatMap(op => op.rows ?? [op.values ?? {}]);
+  if (salePayloads.some(row => String(row.original_bill_number ?? "").startsWith("OLDPOS:")) && identity.level !== "admin")
+    denied("Only an administrator can enter an old POS exchange.");
   const financial = kind === "sale" && rows.length > 0;
   if (rows.length && kind !== "refund" && permissions.can_process_sale !== true)
     denied("Sale permission is required.");

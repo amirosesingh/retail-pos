@@ -1,3 +1,4 @@
+import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "./points-redemption";
 import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE, exchangePolicyError } from "./returns-policy";
 import { uniqueSales } from "./sale-identity";
@@ -1809,7 +1810,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
               candidate.receiptNo === input.exchangeOfReceiptNo && sameBranchId(candidate.storeId, branchId),
           )
         : null;
-      if (input.exchangeOfReceiptNo && !exchangeSource)
+      if (isLegacyExchange(input.exchangeOfReceiptNo) && !isAdmin)
+        throw new Error("Only an administrator can enter an old POS exchange.");
+      if (input.exchangeOfReceiptNo && !exchangeSource && !isLegacyExchange(input.exchangeOfReceiptNo))
         throw Object.assign(
           new Error("The original exchange bill is no longer available in this branch."),
           { code: "EEXCHANGE_STATE" },
@@ -1991,7 +1994,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       }
       return sale;
     },
-    [],
+    [isAdmin],
   );
 
   const createBooking = useCallback(async (input: NewBooking) => {

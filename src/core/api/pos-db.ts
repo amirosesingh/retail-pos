@@ -1,3 +1,4 @@
+import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "@/lib/points-redemption";
 import { recordId } from "@/lib/sale-identity";
 import { readLocalLocationDirectory, resolveLocationDirectory, type LocationDirectoryResult } from "./location-directory";
@@ -2823,7 +2824,7 @@ export const db = {
     const movements = saleActivityRows(sale);
     if (movements.length)
       ops.push({ kind: "upsert", table: "item_activity_logs", rows: movements, onConflict: "id" });
-    if (sale.exchangeOfReceiptNo) {
+    if (sale.exchangeOfReceiptNo && !isLegacyExchange(sale.exchangeOfReceiptNo)) {
       if (!onlineOnly && !sale.exchangeOfSaleId)
         throw Object.assign(
           new Error("The original exchange bill is missing its stable local identifier."),
@@ -2859,7 +2860,7 @@ export const db = {
           _payments: tenders,
           _movements: movements,
           _member: member ? memberToRow(member, tierId) : null,
-          _exchange_bill: sale.exchangeOfReceiptNo ?? null,
+          _exchange_bill: isLegacyExchange(sale.exchangeOfReceiptNo) ? null : sale.exchangeOfReceiptNo ?? null,
         },
       });
       const projections = ops.filter((op) => op.table === "products");

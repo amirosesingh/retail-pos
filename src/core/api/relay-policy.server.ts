@@ -504,6 +504,11 @@ export async function authorizeRelayOp(
     );
 
   const isAdmin = scope.role === "admin" || scope.roleSlug === "admin";
+  if (op.table === "sales" && !isAdmin && scope.kind !== "terminal") {
+    const rows = op.kind === "insert" || op.kind === "upsert" ? op.rows : op.kind === "update" ? [op.values] : [];
+    if (rows.some(row => String(row.original_bill_number ?? "").startsWith("OLDPOS:")))
+      return deny("PERMISSION_DENIED", "Only an administrator can enter an old POS exchange.");
+  }
   if (op.table === "products") {
     const productAccess = await authorizeProductOp(op, scope);
     if (!productAccess.ok) return productAccess;
