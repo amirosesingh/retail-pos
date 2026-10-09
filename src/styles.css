@@ -1011,3 +1011,67 @@
     transition-duration: 1ms;
   }
 }
+
+/* The register reflows against its zoomed workspace, not the browser width.
+   Short windows retain scrolling instead of shrinking the cart to zero. */
+.register-standard-viewport {
+  container-type: inline-size;
+}
+.register-standard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.register-lookup {
+  flex: 0 0 22rem;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+}
+.register-sale {
+  flex: 1 0 auto;
+  min-width: 0;
+  min-height: 36rem;
+}
+.register-sale > * {
+  flex-shrink: 0;
+}
+.register-sale > [data-register-cart] {
+  min-height: 12rem;
+  flex: 1 0 12rem;
+}
+.register-standard > [role="separator"] {
+  display: none;
+}
+@container (min-width: 60rem) {
+  .register-standard {
+    flex-direction: row;
+  }
+  .register-lookup {
+    flex: 0 0 min(var(--lookup-w), 40%);
+    width: min(var(--lookup-w), 40%);
+    border-bottom: 0;
+    overflow: auto;
+  }
+  .register-sale {
+    flex: 1 1 0%;
+    min-height: 0;
+    overflow: auto;
+  }
+  .register-standard > [role="separator"] {
+    display: block;
+  }
+}
+.register-lookup {
+  overflow: auto;
+}
+.register-lookup > section > * {
+  flex-shrink: 0;
+}
+.register-standard button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

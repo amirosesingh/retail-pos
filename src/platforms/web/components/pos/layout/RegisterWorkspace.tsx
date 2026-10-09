@@ -8,6 +8,7 @@
  */
 import {
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -69,6 +70,7 @@ import { FeaturePalette } from "./FeaturePalette";
 import { CustomButtonDialog } from "./CustomButtonDialog";
 import { CustomActionButton } from "./CustomActionButton";
 import { NodeOptionsProvider } from "./node-options";
+import { RegisterZoomFitContext } from "@/lib/register-zoom-context";
 
 export type RegisterSlots = Record<RegisterModuleId, ReactNode>;
 
@@ -193,6 +195,11 @@ export function RegisterWorkspace({
   const showCanvas =
     !!layout.active &&
     (editing || layout.previewing || (effectiveMode === "canvas" && !!layout.saved));
+  const setZoomFit = useContext(RegisterZoomFitContext);
+  useEffect(() => {
+    setZoomFit(!showCanvas);
+    return () => setZoomFit(false);
+  }, [showCanvas, setZoomFit]);
   const canvas = layout.active?.canvas;
   const metrics = useMemo(
     () => (canvas ? canvasMetrics(canvas, { width: view.width, height: view.height }) : null),
@@ -321,7 +328,7 @@ export function RegisterWorkspace({
       />
 
       {!showCanvas ? (
-        <div className="min-h-0 w-full flex-1">{classic}</div>
+        <div className="register-standard-viewport min-h-0 w-full flex-1">{classic}</div>
       ) : (
         <div
           ref={view.ref}

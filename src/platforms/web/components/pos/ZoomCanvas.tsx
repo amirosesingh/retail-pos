@@ -11,7 +11,8 @@
  * The zoom level itself is a saved preference (Settings, Display & sizing), so
  * it survives reloads instead of resetting every time the register opens.
  */
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { RegisterZoomFitContext } from "@/lib/register-zoom-context";
 import {
   REGISTER_ZOOM_MAX,
   REGISTER_ZOOM_MIN,
@@ -26,6 +27,17 @@ export const MAX_ZOOM = REGISTER_ZOOM_MAX;
 
 export function ZoomCanvas({ children, className }: { children: ReactNode; className?: string }) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const [fitWorkspace, setFitWorkspace] = useState(false);
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el || !fitWorkspace) return;
+    const measure = () => setViewport({ width: el.clientWidth, height: el.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [fitWorkspace]);
   const { registerZoom } = useUiScalePrefs();
   const scaleRef = useRef(registerZoom);
   scaleRef.current = registerZoom;
@@ -59,12 +71,14 @@ export function ZoomCanvas({ children, className }: { children: ReactNode; class
     >
       <div
         style={{
-          width: inverse,
-          height: inverse,
+          width: fitWorkspace && viewport.width ? viewport.width / scale : inverse,
+          height: fitWorkspace && viewport.height ? viewport.height / scale : inverse,
           zoom: scale,
         }}
       >
-        {children}
+        <RegisterZoomFitContext.Provider value={setFitWorkspace}>
+          {children}
+        </RegisterZoomFitContext.Provider>
       </div>
     </div>
   );

@@ -1914,7 +1914,7 @@ function Register() {
         </div>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-24 flex-1">
         <div className="space-y-2 p-3">
           {!deferredProductQuery.trim() && recommendedProducts.length > 0 && (
             <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -2782,10 +2782,10 @@ function Register() {
                   receiptToggle: atom_receiptToggle,
                 }}
                 classic={
-                  <div className="pos-scaled flex h-full min-h-0 min-w-0 flex-col overflow-hidden lg:flex-row">
+                  <div className="pos-scaled register-standard">
                     {/* Product lookup stays deliberately smaller than the sale. */}
                     <section
-                      className="flex max-h-[42%] min-h-0 w-full shrink-0 flex-col border-b border-border lg:max-h-none lg:w-[var(--lookup-w)] lg:min-w-[240px] lg:border-b-0"
+                      className="register-lookup flex flex-col border-b border-border"
                       style={{ ["--lookup-w" as string]: `${lookupWidth}px` }}
                     >
                       {slot_standardProductLookup}
@@ -2801,7 +2801,7 @@ function Register() {
                     />
 
                     {/* Current sale owns the remaining width. */}
-                    <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-sidebar">
+                    <section className="register-sale flex flex-col bg-sidebar">
                       {slot_billHeader}
 
                       <div className="border-b border-border px-4 py-3">{slot_memberSearch}</div>
