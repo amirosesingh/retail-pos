@@ -200,7 +200,7 @@ export async function runRelationalHealth(): Promise<RelationalReport> {
           error = null;
         } else {
           throw new Error(
-            "The relationship check is not installed on this database. Run supabase/schema.sql in the SQL editor of the database this device points at to install operational_relational_health().",
+            "The relationship check is not installed on this database. Apply the pending POS migrations following docs/database-upgrade.md to install operational_relational_health().",
           );
         }
       }

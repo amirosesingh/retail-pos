@@ -1,6 +1,15 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
+const beforeCloseCallbacks = new Set();
+ipcRenderer.on("sync:prepare-close", async (_event, nonce) => {
+  try {
+    for (const flush of beforeCloseCallbacks) await flush();
+    ipcRenderer.send("sync:renderer-flushed", {nonce,ok:true});
+  } catch(error) {
+    ipcRenderer.send("sync:renderer-flushed", {nonce,ok:false,error:String(error?.message ?? error)});
+  }
+});
 
 contextBridge.exposeInMainWorld("sqlAdmin", {
   unlock: (username, pin) => invoke("admin:unlock", username, pin),
@@ -16,6 +25,11 @@ contextBridge.exposeInMainWorld("sqlAdmin", {
  * Server; Supabase synchronization stays in the main process background.
  */
 contextBridge.exposeInMainWorld("pos", {
+  onBeforeClose: (flush) => {
+    beforeCloseCallbacks.add(flush);
+    return () => beforeCloseCallbacks.delete(flush);
+  },
+  supabaseRequest: (request) => invoke("cloud:request", request),
   write: (context, op) => invoke("business:write-batch", context, [op]),
   writeBatch: (context, ops) => invoke("business:write-batch", context, ops),
   commitAggregate: (aggregate) => invoke("business:commit-aggregate", aggregate),

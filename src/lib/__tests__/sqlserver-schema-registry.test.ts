@@ -292,12 +292,12 @@ describe("SQL Server schema registry", () => {
   it("exports a guarded selected-database migration bundle for update recovery", async () => {
     const { migrationBundleSql } = await import("../../../electron/db/migrations.cjs");
     const bundle = migrationBundleSql("1.3.288");
-    expect(bundle).toContain("Retail POS local SQL Server migration bundle");
+    expect(bundle).toContain("Retail POS local database update");
     expect(bundle).toContain("Select the configured Retail POS database");
-    expect(bundle).toContain("001_initial.sql");
+    expect(bundle).toContain("retail-pos-local-database.sql");
     expect(bundle).toContain("003_activity_notification_preferences.sql");
     expect(bundle).toContain("012_repair_products_row_version_default.sql");
-    expect(bundle).toContain("Current additive schema repair");
+    expect(bundle).toContain("ROLLBACK TRANSACTION");
   });
 
   it("repairs the legacy products row-version default without rewriting product data", () => {

@@ -1,6 +1,11 @@
 class CheckpointRepository {
   constructor(connectionManager) { this.connectionManager=connectionManager; }
   request(transaction) { return transaction ? transaction.request() : this.connectionManager.pool.request(); }
+  async list(branchId, direction) {
+    const result = await this.connectionManager.pool.request().input("branch", branchId).input("direction", direction)
+      .query("SELECT * FROM dbo.sync_checkpoints WHERE branch_id=@branch AND direction=@direction;");
+    return result.recordset ?? [];
+  }
   async get(branchId, entity, direction) {
     const result=await this.connectionManager.pool.request().input("branch",branchId).input("entity",entity).input("direction",direction).query("SELECT TOP (1) * FROM dbo.sync_checkpoints WHERE branch_id=@branch AND entity_type=@entity AND direction=@direction;");
     return result.recordset?.[0]??null;

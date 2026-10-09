@@ -16,7 +16,7 @@ const asIssues = (error: unknown): BoardIssue[] =>
           kind: "other",
           sqlFile: "supabase/schema.sql",
           detail: error instanceof Error ? error.message : String(error),
-          advice: "Re-run supabase/schema.sql to rebuild the reporting objects.",
+          advice: "Apply the pending reporting migrations using docs/database-upgrade.md. Use the full schema installer only for a fresh project.",
         },
       ];
 

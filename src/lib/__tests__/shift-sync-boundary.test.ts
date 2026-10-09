@@ -19,8 +19,9 @@ describe("shift sync boundaries", () => {
     expect(closing).toContain("sync?.finalizeShiftClose");
     expect(main).toContain('ipcMain.handle("sync:finalize-shift-close"');
     expect(main).toContain("syncCoordinator.runFinal");
-    expect(main).toContain("pendingShiftCloseSync.size > 0");
-    expect(main).toContain("if (mandatory && result?.ok === false)");
+    expect(main).toContain("pendingShiftCloseSync.size");
+    expect(main).toContain("if (result?.ok === false)");
+    expect(main).not.toContain("ok: true, offline: true");
     expect(store).toContain("await Promise.all([transitionWritten, activityWritten, summaryWritten])");
     expect(store.indexOf("await Promise.all([transitionWritten")).toBeLessThan(
       store.indexOf("return closed;"),

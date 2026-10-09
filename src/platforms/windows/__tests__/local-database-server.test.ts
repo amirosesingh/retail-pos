@@ -155,9 +155,9 @@ describe("local SQL Server wizard server step", () => {
     expect(wizard).toContain("Connecting already succeeded");
     expect(wizard).toContain('database: "POS_Local"');
     expect(wizard).toContain("Database name (select existing or create new)");
-    expect(wizard).toContain("creates the database when needed");
+    expect(wizard).toContain("apply the latest bundled POS database script");
     expect(wizard).toContain("await mirrorTerminalConfigToDesktop()");
-    expect(wizard).toContain("Download migration SQL file");
+    expect(wizard).toContain("Download latest database update SQL");
     expect(wizard).toContain("Apply directly and validate again");
     expect(wizard).toContain('title="Save and connect"');
     expect(wizard).toContain("It does not migrate or validate again.");

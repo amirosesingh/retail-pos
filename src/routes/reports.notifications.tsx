@@ -152,9 +152,8 @@ function NotificationsReport() {
       <div className="space-y-4 p-4">
         {missing && (
           <p className="rounded-md border border-border bg-surface-2 p-3 text-xs text-muted-foreground">
-            The activity log is not set up on this database yet. Run{" "}
-            <span className="font-medium">supabase/schema.sql</span> once against your database to
-            start recording events.
+            The activity log needs a database update. Follow the existing-database upgrade
+            instructions in <span className="font-medium">docs/database-upgrade.md</span>.
           </p>
         )}
         <div className="flex flex-wrap items-end gap-3">

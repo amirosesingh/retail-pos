@@ -11,6 +11,7 @@ import { authenticatedExternalClientSnapshot } from "@/integrations/supabase/ext
 import { localDb } from "@/core/local-db/local-db";
 import { dbRouter } from "@/core/api/db-router";
 import { sectionAllowsTier, type SettingsSectionId } from "./settings-sections";
+import { withoutCompanyIdentity } from "./company-identity";
 
 export type SectionPatch = Record<string, unknown>;
 
@@ -215,7 +216,7 @@ export function resolveScopedSettings<T>(
   for (const tier of SETTING_TIERS) {
     for (const key of Object.keys(scope.overrides[tier] ?? {}) as SettingsSectionId[]) {
       if (scope.locks[key] || !sectionAllowsTier(key, tier)) continue;
-      let patch = scope.overrides[tier][key];
+      let patch = withoutCompanyIdentity(scope.overrides[tier][key]);
       if (key === "receiptLayout") {
         // Logo ownership moved to the business identity block. Ignore only
         // the legacy terminal copy while retaining every real layout field.

@@ -396,8 +396,8 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
               </p>
             ) : missing ? (
               <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                The activity log is not set up on this database yet. Run
-                <span className="font-medium"> supabase/schema.sql</span> to switch it on.
+                The activity log needs a database update. Follow
+                <span className="font-medium"> docs/database-upgrade.md</span> for an existing database.
               </p>
             ) : (
               <AnimatedList

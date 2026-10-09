@@ -95,7 +95,8 @@ describe("company name cloud-to-Electron sync", () => {
     const store = read("src/lib/pos-store.tsx");
     const identity = read("src/routes/settings.identity.tsx");
     expect(store).toContain("if (!signedIn || !isAdmin || !ready || loadPhase !== \"ready\" || !settingsSnapshotLoaded) return;");
-    expect(identity).toContain("Company name is missing from the cloud");
+    expect(identity).toContain("Company details have not loaded here yet");
+    expect(identity).not.toContain("Company name is missing from the cloud");
   });
 });
 

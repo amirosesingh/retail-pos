@@ -293,6 +293,27 @@ END;`);
     );
   }
 }
+// The database explorer expects these legacy verification columns locally.
+// They are compatibility fields only: do not add them to the sync registry or
+// allow terminals to upload verification claims to the membership service.
+const memberCompatibilityColumns = [
+  ["is_verified", "bit NOT NULL CONSTRAINT [DF_members_is_verified] DEFAULT (0) WITH VALUES"],
+  ["verified_at", "datetimeoffset(7) NULL"],
+  ["verified_channel", "nvarchar(max) NULL"],
+];
+lines.push("-- Local member verification compatibility (excluded from sync)");
+for (const [name, declaration] of memberCompatibilityColumns) {
+  lines.push(`IF COL_LENGTH(N'dbo.members', N'${name}') IS NULL ALTER TABLE dbo.[members] ADD [${name}] ${declaration};`);
+}
+
+// Repair legacy group references before enforcing the stores foreign key.
+// Keep the existing repair as the source so manual and automatic setup agree.
+const groupRepair = fs.readFileSync(
+  path.join(outputDir, "POS_Local_store_group_sync_repair.sql"), "utf8",
+);
+lines.push("GO\n-- Store groups: preserve existing groups and repair missing parents\n" +
+  groupRepair.slice(groupRepair.indexOf("SET NOCOUNT ON;")));
+
 for (const table of tables) {
   for (const column of table.columns.filter((item) => item.foreignKey && item.foreignKeyTarget)) {
     const target = column.foreignKeyTarget;
@@ -435,6 +456,7 @@ const tableValues = tables.map((table) => `  (N'${table.sqlServerTable}')`).join
 const requiredColumns = tables.flatMap((table) =>
   table.columns.map((column) => [table.sqlServerTable, column.sqlServerColumn]),
 );
+requiredColumns.push(...memberCompatibilityColumns.map(([name]) => ["members", name]));
 const columnInserts = [];
 for (let index = 0; index < requiredColumns.length; index += 1_000) {
   const values = requiredColumns
@@ -514,11 +536,13 @@ PRINT N'Retail POS ${applicationVersion}: POS_Local installation and validation 
 GO`;
 const installer = [
   installerHeader,
+  "-- SECTION 1: Domain tables, columns, indexes, store groups and local tracking",
   lines.join("\n\n").trim(),
   // Each migration is its own T-SQL batch. BEGIN/END does not scope DECLARE,
   // so migrations 006 and 008 otherwise redeclare the same variables.
-  ...supplementalMigrations.map((sql) => `GO\n${sql}`),
+  ...supplementalMigrations.map((sql, index) => `GO\n-- SECTION 2: Local upgrade ${supplementalMigrationFiles[index]}\n${sql}`),
   "GO",
+  "-- SECTION 3: Verify all required tables, columns and migration versions",
   validation,
 ].join("\n\n");
 fs.writeFileSync(path.join(outputDir, "retail-pos-local-database.sql"), `${installer}\n`);

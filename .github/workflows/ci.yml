@@ -25,10 +25,19 @@ jobs:
       - run: npm ci
       - name: Permission & route-guard tests
         run: npx vitest run
+      - name: Sync, startup and database-upgrade regression tests
+        run: node --test scripts/test-sync-pipeline.cjs scripts/test-startup-cloud.cjs scripts/test-event-sync.cjs scripts/test-company-identity.cjs scripts/test-database-upgrade.cjs
+      - name: SQL schema and synchronization contract checks
+        run: |
+          npm run verify:sqlserver-schema
+          npm run verify:sync-registry
+          node scripts/audit-supabase-install-order.cjs
       - name: Lint
         run: npm run lint
       - name: Typecheck & build
-        run: npm run build
+        run: |
+          npx tsc --noEmit
+          npm run build
       - name: Dependency vulnerability audit
         run: npm audit --audit-level=high
       - name: Report findings to the app

@@ -1,5 +1,6 @@
 const { toCloudRow } = require("./row-codec.cjs");
 const { rendererReadBranchPredicate } = require("../db/branch-scope.cjs");
+const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 
 class ChangeReader {
   constructor(connectionManager, registry = null) {
@@ -56,8 +57,8 @@ class ChangeReader {
     const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);
     return (result.recordset ?? []).map((row) => toCloudRow(table, row));
   }
-  async pendingAggregates(branchId, limit = 500, excludeAggregateIds = []) {
-    const request = this.connectionManager.pool.request().input("branch", branchId).input("limit", Math.max(1, Math.min(2000, limit)));
+  async pendingAggregates(branchId, limit = 500, excludeAggregateIds = [], { includeActivity = true } = {}) {
+    const request = this.connectionManager.pool.request().input("branch", branchId).input("limit", Math.max(1, Math.min(2000, limit))).input("include_activity", includeActivity ? 1 : 0);
     const excluded = excludeAggregateIds.slice(0, 2000).map((id, index) => {
       request.input(`excluded${index}`, id);
       return `@excluded${index}`;
@@ -66,6 +67,12 @@ class ChangeReader {
       SELECT TOP (@limit) aggregate_id,MIN(change_id) first_change
       FROM dbo.sync_change_journal
       WHERE branch_id IN (@branch,'global') AND acknowledged_at IS NULL AND aggregate_id IS NOT NULL
+        AND (@include_activity=1 OR EXISTS (
+          SELECT 1 FROM dbo.sync_change_journal business_change
+          WHERE business_change.aggregate_id=sync_change_journal.aggregate_id
+            AND business_change.acknowledged_at IS NULL
+            AND business_change.entity_type NOT IN (${[...ACTIVITY_TABLES].map(name => `'${name}'`).join(",")})
+        ))
         ${excluded.length ? `AND aggregate_id NOT IN (${excluded.join(",")})` : ""}
       GROUP BY aggregate_id ORDER BY MIN(change_id)
     )
@@ -89,12 +96,17 @@ class ChangeReader {
   }
   async pendingSummary(branchId) {
     const result = await this.connectionManager.pool.request().input("branch", branchId).query(`SELECT
+      entity_type,
       SUM(CASE WHEN last_error IS NULL THEN 1 ELSE 0 END) pending,
-      SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) failed
+      SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) failed,
+      MAX(last_error) last_error
       FROM dbo.sync_change_journal
-      WHERE branch_id IN (@branch,'global') AND acknowledged_at IS NULL;`);
-    const row = result.recordset?.[0] ?? {};
-    return { pending: Number(row.pending ?? 0), failed: Number(row.failed ?? 0) };
+      WHERE branch_id IN (@branch,'global') AND acknowledged_at IS NULL
+      GROUP BY entity_type;`);
+    const queuedTables = (result.recordset ?? []).map(row => ({
+      table: row.entity_type, pending:Number(row.pending ?? 0), failed:Number(row.failed ?? 0), error:row.last_error ?? null,
+    }));
+    return { pending:queuedTables.reduce((sum,row)=>sum+row.pending,0), failed:queuedTables.reduce((sum,row)=>sum+row.failed,0), queuedTables };
   }
   async failedAggregates(branchId, limit = 100) {
     const result = await this.connectionManager.pool.request().input("branch", branchId).input("limit", Math.max(1, Math.min(500, limit))).query(`SELECT TOP (@limit)

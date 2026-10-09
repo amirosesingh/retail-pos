@@ -555,7 +555,7 @@ class OperationsRepository {
       const result = await this.pool().request()
         .input("branch", String(branchId ?? ""))
         .input("terminal", String(terminalId ?? ""))
-        .query(`SELECT TOP (200) * FROM dbo.settings_scoped source WHERE [key] LIKE N'pos_field:%' AND ${scope} ORDER BY [key];`);
+        .query(`SELECT TOP (200) * FROM dbo.settings_scoped source WHERE [key] LIKE N'pos_field:%' AND [scope]=N'GLOBAL' AND [scope_id]=N'' AND ${scope} ORDER BY [key];`);
       output.settingFields = (result.recordset ?? []).map((row) =>
         toRendererRow(table, row));
     }

@@ -22,7 +22,7 @@ export function isMissingSchema(error: unknown): boolean {
 }
 
 export const MISSING_SCHEMA_HINT =
-  "This area needs a database update. For a Windows till, open Settings → Database & Cloud Connection → Schema Manager and repair the local SQL Server table. For the central PostgreSQL database, download the central repair SQL there and run it in the external project's SQL editor.";
+  "This area needs a database update. For a Windows till, open Settings → Database & Cloud Connection and apply or download the latest database update SQL. For an existing Supabase database, apply the pending POS migrations following docs/database-upgrade.md; the full schema installer is for a fresh project.";
 
 /**
  * Run a read that depends on an optional table. A missing table yields the

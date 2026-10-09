@@ -605,9 +605,21 @@ export const applySettingsFields = (
   if (!base && !fields?.length) return null;
   const merged: Row = { ...(base ?? { id: 1 }) };
   for (const field of fields ?? []) {
+    // Branch/terminal overrides are resolved separately; they must never
+    // replace the global base depending on query row ordering.
+    if (field.scope != null && String(field.scope).toUpperCase() !== "GLOBAL") continue;
+    if (field.scope_id != null && String(field.scope_id) !== "") continue;
     const rawKey = String(field.key ?? "");
     if (!rawKey.startsWith("pos_field:")) continue;
     const key = rawKey.slice("pos_field:".length);
+    const identityColumn = ["logo_data_url","tax_number","reg_number","phone","website","header_text","footer_text"].includes(key);
+    if (identityColumn && !settingsText(field.value).trim() && settingsText(merged[key]).trim()) {
+      const fieldTime = Date.parse(String(field.updated_at ?? ""));
+      const baseTime = Date.parse(String(base?.updated_at ?? ""));
+      // Keep explicit newer clears, but do not let an older empty field hide
+      // company details that were subsequently saved in the base row.
+      if (Number.isFinite(fieldTime) && Number.isFinite(baseTime) && fieldTime < baseTime) continue;
+    }
     if (key === "company_name") {
       const name =
         typeof field.value === "string"
@@ -1397,8 +1409,10 @@ export async function loadCloudState(
     // unconfigured/unpaired SQL replica during admin recovery.
     authenticatedClient
       .from("settings_scoped")
-      .select("scope, scope_id, key, value")
+      .select("scope, scope_id, key, value, updated_at")
       .like("key", "pos_field:%")
+      .eq("scope", "GLOBAL")
+      .eq("scope_id", "")
       .order("scope")
       .order("scope_id")
       .order("key")
@@ -1505,7 +1519,7 @@ export async function loadPrimaryState(
 export async function loadCloudSettings(): Promise<AppSettings> {
   const [rows, fields] = await Promise.all([
     routedQuery("pos_settings", { match: { id: 1 }, limit: 1 }),
-    routedQuery("settings_scoped", { limit: 5000 }).then((rows) =>
+    routedQuery("settings_scoped", { match: { scope: "GLOBAL", scope_id: "" }, limit: 5000 }).then((rows) =>
       (rows as Row[]).filter((row) => String(row.key ?? "").startsWith("pos_field:")),
     ),
   ]);

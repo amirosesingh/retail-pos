@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-08T00:29:18.838Z",
+  "generatedAt": "2026-10-09T01:04:53.063Z",
   "tableCount": 70,
-  "columnCount": 1189,
+  "columnCount": 1183,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -2372,42 +2372,6 @@
         {
           "name": "row_version",
           "declaration": "integer DEFAULT 1 NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "is_verified",
-          "declaration": "boolean DEFAULT false NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "verified_at",
-          "declaration": "timestamp with time zone",
-          "nullable": true,
-          "hasDefault": false
-        },
-        {
-          "name": "verified_channel",
-          "declaration": "text",
-          "nullable": true,
-          "hasDefault": false
-        },
-        {
-          "name": "membership_member_id",
-          "declaration": "uuid",
-          "nullable": true,
-          "hasDefault": false
-        },
-        {
-          "name": "membership_revision",
-          "declaration": "bigint DEFAULT 0 NOT NULL",
-          "nullable": false,
-          "hasDefault": true
-        },
-        {
-          "name": "membership_status",
-          "declaration": "text DEFAULT 'active'::text NOT NULL",
           "nullable": false,
           "hasDefault": true
         },

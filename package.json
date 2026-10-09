@@ -27,6 +27,11 @@
     "registry:report": "node scripts/supabase-registry-report.cjs",
     "native:rebuild": "electron-rebuild -f -w msnodesqlv8",
     "verify:sqlserver-schema": "node scripts/verify-sqlserver-schema.cjs",
+    "test:sync-pipeline": "node --test scripts/test-sync-pipeline.cjs",
+    "test:startup-cloud": "node --test scripts/test-startup-cloud.cjs",
+    "test:event-sync": "node --test scripts/test-event-sync.cjs",
+    "test:company-identity": "node --test scripts/test-company-identity.cjs",
+    "test:database-upgrade": "node --test scripts/test-database-upgrade.cjs",
     "verify:sync-registry": "node scripts/verify-sync-registry.cjs",
     "audit:sync": "node scripts/generate-sync-audit.cjs",
     "smoke:windows": "node scripts/windows-package-smoke.cjs",
@@ -141,7 +146,7 @@
     "vitest": "^5.0.3",
     "wrangler": "^4.147.0"
   },
-  "version": "1.4.38",
+  "version": "1.4.39",
   "build": {
     "appId": "app.lovable.pos",
     "productName": "Retail",

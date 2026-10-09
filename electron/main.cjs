@@ -34,6 +34,7 @@ const { PullWorker } = require("./sync/pull-worker.cjs");
 const { ConflictRepository } = require("./sync/conflicts.cjs");
 const { SyncCoordinator } = require("./sync/coordinator.cjs");
 const { CloudClient } = require("./sync/cloud-client.cjs");
+const closeWriteBarrier = new (require("./sync/write-barrier.cjs").WriteBarrier)();
 const { createTelemetry } = require("./telemetry.cjs");
 const { OperationsRepository } = require("./db/repositories/operations.cjs");
 const { readAnalytics } = require("./db/repositories/analytics.cjs");
@@ -71,7 +72,7 @@ const syncCoordinator = new SyncCoordinator({
   pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",state); },
 });
-const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader });
+const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
@@ -215,25 +216,27 @@ function recoverLocalDatabase({prepare=true}={}){
   return localDatabaseRecoveryPromise;
 }
 
-// PIN-only tills cannot subscribe to protected cloud tables. Keep a quiet
-// safety pull; local writes and authenticated live events still wake immediately.
-const AUTO_SYNC_OK_MS = 60_000;
+// Local commits and private cloud notifications wake delta sync immediately.
+// The two-minute check flushes activity and recovers missed socket events.
+const { ACTIVITY_INTERVAL_MS, activityOnly } = require("./sync/event-policy.cjs");
+const AUTO_SYNC_OK_MS = ACTIVITY_INTERVAL_MS;
 const AUTO_SYNC_RETRY_MS = 60_000;
 const AUTO_VERIFY_MS = 15 * 60_000;
-const SHUTDOWN_SYNC_TIMEOUT_MS = 8_000;
-let automaticSyncTimer = null;
+const SHUTDOWN_SYNC_TIMEOUT_MS = 120_000;
+const automaticSyncScheduler = require("./sync/scheduler.cjs").createSyncScheduler(runAutomaticSync);
 let automaticSyncQueued = false;
 let lastAutomaticVerification = 0;
 let terminalIdentityPausedSync = false;
+let lastActivityFlush = 0;
+function scheduleLocalChanges(operations) {
+  scheduleAutomaticSync(activityOnly(operations) ? ACTIVITY_INTERVAL_MS : 250);
+}
 function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
   if (quitting) return;
   if (syncCoordinator.running && delay <= 250) automaticSyncQueued = true;
-  if (automaticSyncTimer) clearTimeout(automaticSyncTimer);
-  automaticSyncTimer = setTimeout(() => void runAutomaticSync(), Math.max(250, delay));
-  automaticSyncTimer.unref?.();
+  automaticSyncScheduler.schedule(delay);
 }
 async function runAutomaticSync() {
-  automaticSyncTimer = null;
   const databaseState=databaseService.snapshot();
   if(databaseState.enabled&&databaseState.configured&&!databaseManager.isConnected()){
     const recovered=await recoverLocalDatabase({prepare:false}).catch(error=>{
@@ -255,7 +258,9 @@ async function runAutomaticSync() {
     return;
   }
   automaticSyncQueued = false;
-  let result = await syncCoordinator.runNow({ branchId: localBranchId(), batchSize: 10 });
+  const includeActivity = Date.now() - lastActivityFlush >= ACTIVITY_INTERVAL_MS;
+  let result = await syncCoordinator.runNow({ branchId: localBranchId(), batchSize: 500, includeActivity });
+  if (result.ok && includeActivity) lastActivityFlush = Date.now();
   if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed." });
   if (result.code === "ECHANGEGAP") {
     try {
@@ -271,14 +276,12 @@ async function runAutomaticSync() {
     void localDataLifecycle.reconcile(localBranchId(), Number(databaseConfig.profile()?.retentionDays)||90)
       .catch((error) => recordFault("sync.verify-counts", error));
   }
-  scheduleAutomaticSync(automaticSyncQueued ? 250 : result.ok ? AUTO_SYNC_OK_MS : AUTO_SYNC_RETRY_MS);
+  scheduleAutomaticSync(automaticSyncQueued ? 250 : result.ok ? Math.max(250, AUTO_SYNC_OK_MS - (Date.now() - lastActivityFlush)) : AUTO_SYNC_RETRY_MS);
 }
 function stopAutomaticSync() {
-  if (automaticSyncTimer) clearTimeout(automaticSyncTimer);
-  automaticSyncTimer = null;
+  automaticSyncScheduler.stop();
 }
 
-const shutdownDelay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const SHUTDOWN_RESOURCE_TIMEOUT_MS = 12_000;
 
 /**
@@ -290,7 +293,7 @@ function settleWithin(work, timeoutMs = SHUTDOWN_RESOURCE_TIMEOUT_MS) {
   let timer;
   const operation = Promise.resolve()
     .then(work)
-    .then(() => ({ ok: true }), (error) => ({ ok: false, error }));
+    .then(value => ({ ok: true, value }), (error) => ({ ok: false, error }));
   const deadline = new Promise((resolve) => {
     timer = setTimeout(() => resolve({ ok: false, timedOut: true }), timeoutMs);
   });
@@ -299,22 +302,12 @@ function settleWithin(work, timeoutMs = SHUTDOWN_RESOURCE_TIMEOUT_MS) {
 
 async function flushSyncBeforeShutdown() {
   const branchId = localBranchId();
-  if (!databaseManager.isConnected() || !branchId || syncCoordinator.paused) return { skipped: true };
-  const deadline = Date.now() + SHUTDOWN_SYNC_TIMEOUT_MS;
-  while (syncCoordinator.running && Date.now() < deadline) await shutdownDelay(50);
-  let result = { ok: true, pushed: 0 };
-  do {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0 || syncCoordinator.running) return { ...result, timedOut: true };
-    let timeout;
-    result = await Promise.race([
-      syncCoordinator.runNow({ branchId, batchSize: 10 }),
-      new Promise((resolve) => { timeout = setTimeout(() => resolve({ ok: false, timedOut: true }), remaining); }),
-    ]).finally(() => clearTimeout(timeout));
-    // One run drains every normal change-tracking page. Aggregate journals are
-    // capped at 500 per run, so repeat only when that cap may have been hit.
-  } while (result.ok && Number(result.pushed ?? 0) >= 500);
-  return result;
+  if (!databaseManager.isConnected() || !branchId)
+    return { ok:false, error:"Connect the local database before closing so pending transactions can be checked." };
+  const settled = await settleWithin(() => syncCoordinator.runFinal({branchId,batchSize:500}), SHUTDOWN_SYNC_TIMEOUT_MS);
+  if (settled.timedOut) return {ok:false,timedOut:true,error:"Synchronization is still running. Keep the application open and retry closing when it finishes."};
+  if (!settled.ok) return {ok:false,error:String(settled.error?.message ?? settled.error)};
+  return settled.value;
 }
 
 async function synchronizeClosingShifts(shiftId = null) {
@@ -326,12 +319,9 @@ async function synchronizeClosingShifts(shiftId = null) {
     if (!databaseManager.isConnected() || !branchId)
       return { ok: false, code: "ELOCALDB", error: "The local database is not ready." };
     const healthResult = await syncCloud.health({ timeoutMs: SHUTDOWN_SYNC_TIMEOUT_MS });
-    // Preserve the established offline close behaviour. The durable journal
-    // remains available for the next successful periodic synchronization.
     if (!healthResult.online) {
       const remaining = await changeReader.pendingSummary(branchId);
-      pendingShiftCloseSync.clear();
-      return { ok: true, offline: true, ...remaining };
+      return { ok: false, offline: true, ...remaining, code:"EOFFLINE", error:"The shift is saved locally but has not been acknowledged by the cloud. Reconnect and retry synchronization before closing." };
     }
     if (!healthResult.ready)
       return {
@@ -373,8 +363,8 @@ async function showMandatorySyncFailure(result) {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
   await dialog.showMessageBox(win, {
     type: "error",
-    title: "Shift synchronization incomplete",
-    message: "The shift cannot finish closing while the central server is online and synchronization has failed.",
+    title: "Synchronization incomplete",
+    message: "Synchronization must finish before the application can close.",
     detail: String(result?.error ?? "Retry after checking the synchronization status."),
     buttons: ["Keep application open"],
     defaultId: 0,
@@ -491,6 +481,46 @@ let quitting = false;
 const pendingShiftCloseSync = new Set();
 let mandatoryShiftSyncRun = null;
 let allowMainWindowClose = false;
+let closePreparation = null;
+
+function flushRendererBeforeClose() {
+  const win=mainWindow;
+  if(!win || win.isDestroyed()) return Promise.resolve();
+  const nonce=randomUUID();
+  return new Promise((resolve,reject)=>{
+    const finish=(error)=>{clearTimeout(timer);ipcMain.removeListener("sync:renderer-flushed",reply);error?reject(error):resolve();};
+    const reply=(event,result)=>{
+      if(event.sender!==win.webContents || result?.nonce!==nonce)return;
+      finish(result.ok?null:new Error(String(result.error??"Activity logs could not be saved before closing.")));
+    };
+    const timer=setTimeout(()=>finish(new Error("The application has not finished saving its activity logs. Keep it open and retry closing.")),30_000);
+    ipcMain.on("sync:renderer-flushed",reply);
+    win.webContents.send("sync:prepare-close",nonce);
+  });
+}
+
+function prepareApplicationClose() {
+  if(closePreparation)return closePreparation;
+  closePreparation=(async()=>{
+    // A blank setup screen has no managed business database to synchronize.
+    if(!databaseService.snapshot().configured && !pendingShiftCloseSync.size)return {ok:true,skipped:true};
+    mainWindow?.setEnabled(false);
+    try {
+      await flushRendererBeforeClose();
+      const drained=await settleWithin(() => closeWriteBarrier.sealAndDrain(), SHUTDOWN_SYNC_TIMEOUT_MS);
+      if(!drained.ok)throw new Error("Local writes are still finishing. Keep the application open and retry closing.");
+      const result=await flushSyncBeforeShutdown();
+      if(!result?.ok)throw new Error(result?.error??"Pending data has not been acknowledged by the cloud.");
+      pendingShiftCloseSync.clear();
+      return result;
+    } catch(error) {
+      closeWriteBarrier.reopen();
+      return {ok:false,error:String(error?.message??error)};
+    } finally { if(mainWindow&&!mainWindow.isDestroyed())mainWindow.setEnabled(true); }
+  })();
+  closePreparation.then(result=>{if(!result.ok)closePreparation=null;},()=>{closePreparation=null;});
+  return closePreparation;
+}
 
 app.on("second-instance", () => {
   const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
@@ -795,15 +825,12 @@ function createWindows(initialRoute = "/") {
   mainWindow.on("maximize", sendWindowState);
   mainWindow.on("unmaximize", sendWindowState);
 
-  // The title-bar X must not destroy the last renderer while an online shift
-  // close is waiting for its final acknowledgement. Join the same coordinator
-  // used by the timer, then retry the close only after it succeeds (or after
-  // the established offline path has safely retained the journal).
+  // Keep the renderer alive to flush logs, freeze writes and await cloud ACKs.
   mainWindow.on("close", (event) => {
-    if (allowMainWindowClose || quitting || !pendingShiftCloseSync.size) return;
+    if (allowMainWindowClose || shutdownFlushComplete) return;
     event.preventDefault();
     const closingWindow = mainWindow;
-    void synchronizeClosingShifts().then(async (result) => {
+    void prepareApplicationClose().then(async (result) => {
       if (!result.ok) {
         await showMandatorySyncFailure(result);
         closingWindow?.show();
@@ -1437,6 +1464,7 @@ function authorizationServerUrl() {
 function registerIpc() {
   ipcPrivilege.install(ipcMain, {
     isFirstRun: () => !terminalStore.read(),
+    writeBarrier: closeWriteBarrier,
   });
   ipcMain.handle("admin:status", () => adminSession.status());
   ipcMain.handle("admin:lock", () => { adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
@@ -1652,8 +1680,8 @@ function registerIpc() {
   }));
   ipcMain.handle("database:export-migrations", async()=>{
     const chosen=await dialog.showSaveDialog({
-      title:"Save local SQL Server migration",
-      defaultPath:path.join(app.getPath("downloads"),`Retail POS Local Migration ${app.getVersion()}.sql`),
+      title:"Save latest local SQL Server update",
+      defaultPath:path.join(app.getPath("downloads"),`Retail POS Local Database Update ${app.getVersion()}.sql`),
       filters:[{name:"SQL Server script",extensions:["sql"]}],
       properties:["showOverwriteConfirmation"],
     });
@@ -1678,7 +1706,7 @@ function registerIpc() {
   ipcMain.handle("database:schema-status", () => databaseService.schemaStatus());
   ipcMain.handle("database:backup", (_e, file) => guard.guarded(() => backupService.backup(guard.filePath(file,{name:"backup file",extension:"bak"}))));
   ipcMain.handle("database:restore", (_e, file) => guard.guarded(async () => { const result=await backupService.restore(guard.filePath(file,{name:"backup file",extension:"bak"})); if(result.ok)await databaseService.restore(); return result; }));
-  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const branchId=localBranchId();const identity=adminSession.identity();if(identity?.source==="pos")adminSession.touch();const operations=stampVerifiedBranchOperations(guard.writeOps(ops,{max:200}),branchId);const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}),operations,{branchId,terminalId:terminal.tokenId??terminal.terminalId,permissions:identity?.permissions??{},...aggregatePolicy("general",operations,identity)});publishBusinessChange({kind:"general",branchId,tables:[...new Set(operations.map(operation=>operation.table))],changes:operations.flatMap(op=>(op.rows??[op.match??{}]).map(row=>({table:op.table,entityId:op.table==="product_barcodes"?row.product_id:row.id??null})))});scheduleAutomaticSync(250);return result;}));
+  ipcMain.handle("business:write-batch", (_e, context, ops) => guard.guarded(async() => { const terminal=terminalStore.read()??{};const branchId=localBranchId();const identity=adminSession.identity();if(identity?.source==="pos")adminSession.touch();const operations=stampVerifiedBranchOperations(guard.writeOps(ops,{max:200}),branchId);const result=await operationsRepository.apply(guard.text(context,{name:"operation context",max:160}),operations,{branchId,terminalId:terminal.tokenId??terminal.terminalId,permissions:identity?.permissions??{},...aggregatePolicy("general",operations,identity)});publishBusinessChange({kind:"general",branchId,tables:[...new Set(operations.map(operation=>operation.table))],changes:operations.flatMap(op=>(op.rows??[op.match??{}]).map(row=>({table:op.table,entityId:op.table==="product_barcodes"?row.product_id:row.id??null})))});scheduleLocalChanges(operations);return result;}));
   ipcMain.handle("business:save-authorization-rule", (_e, value) => guard.guarded(async () => {
     const identity = adminSession.identity();
     if (!identity || !adminSession.hasPosAuthority() || !adminSession.hasPermission("can_access_pos_settings"))
@@ -1729,7 +1757,7 @@ function registerIpc() {
       };
       const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null,tables:[...new Set(operations.map(op=>op.table))],changes:operations.flatMap(op=>(op.rows??[op.match??{}]).map(row=>({table:op.table,entityId:op.table==="product_barcodes"?row.product_id:row.id??null})))});
-      scheduleAutomaticSync(250);
+      scheduleLocalChanges(operations);
       return result;
     } catch(error) {
       recordFault("business.commit-aggregate", error);
@@ -1810,7 +1838,7 @@ function registerIpc() {
   ));
   ipcMain.handle("sync:auto", async () => {
     if(!databaseManager.isConnected()||!localBranchId())return{ok:false,skipped:true};
-    return syncCoordinator.runNow({branchId:localBranchId(),batchSize:10});
+    return syncCoordinator.runNow({branchId:localBranchId(),batchSize:500,includeActivity:false});
   });
   ipcMain.handle("sync:pause", () => syncCoordinator.pause());
   ipcMain.handle("sync:resume", () => syncCoordinator.resume());
@@ -2029,6 +2057,7 @@ function registerIpc() {
   ipcMain.handle("update:download-page", () => updater.downloadPage());
   ipcMain.handle("app:version", () => app.getVersion());
   ipcMain.handle("net:get-json", (_e, url) => netHttp.getJson(String(url)));
+  ipcMain.handle("cloud:request", (_e, request) => require("./supabase-http.cjs").supabaseRequest(request, cloudCredentials.read()));
   ipcMain.handle("net:head", (_e, url) => netHttp.head(String(url)));
   ipcMain.handle("net:get-binary", (_e, url) => netHttp.getBinary(String(url)));
 
@@ -2175,15 +2204,14 @@ app.on("before-quit", (event) => {
   shutdownFlushStarted = true;
   quitting = true;
   stopAutomaticSync();
-  const mandatory = pendingShiftCloseSync.size > 0;
   void (async () => {
     let result;
     try {
-      result = mandatory ? await synchronizeClosingShifts() : await flushSyncBeforeShutdown();
+      result = await prepareApplicationClose();
     } catch (error) {
       result = { ok: false, error: String(error?.message ?? error) };
     }
-    if (mandatory && result?.ok === false) {
+    if (result?.ok === false) {
       recordFault("shutdown.shift-sync", new Error(result.error ?? "Mandatory shift synchronization failed."));
       quitting = false;
       shutdownFlushStarted = false;
@@ -2193,8 +2221,6 @@ app.on("before-quit", (event) => {
       mainWindow?.focus();
       return;
     }
-    if (result?.timedOut) recordFault("shutdown.sync-timeout", new Error("Final synchronization exceeded 8 seconds; pending SQL changes remain durable for next launch."));
-    else if (result?.ok === false) recordFault("shutdown.sync", new Error(result.error ?? "Final synchronization failed; pending SQL changes remain durable for next launch."));
     mainTelemetry.stop();
     updater.stop();
     closeCustomerDisplay();
@@ -2216,3 +2242,4 @@ app.on("window-all-closed", () => {
   markStartupSettled();
   if (process.platform !== "darwin") app.quit();
 });
+

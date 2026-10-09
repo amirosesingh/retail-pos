@@ -44,8 +44,9 @@ class SyncCoordinator {
     // A distinct option makes a shift-close request wait for an already
     // running periodic cycle and then perform its own catch-up pass. It never
     // overlaps the active coordinator run.
-    const result=await this.runNow({ ...options, final:true });
+    const result=await this.runNow({ ...options, includeActivity:true, final:true });
     if(!result.ok)return result;
+    if(result.deferredTables?.length)return {...result,ok:false,code:"ESYNC_AUTH_PENDING",error:`Settings changes still need an authorized sign-in: ${result.deferredTables.join(", ")}.`};
     const reader=this.pushWorker?.reader;
     const remaining=reader?.pendingSummary
       ? await reader.pendingSummary(options.branchId)
@@ -63,15 +64,24 @@ class SyncCoordinator {
   }
   async runOnce(options = {}) {
     this.running=true;
+    Object.assign(this.status, { pushed:0, merged:0, currentTable:null, startedAt:new Date().toISOString(), lastError:null });
+    const workerOptions = { ...options, onProgress: progress => {
+      const field = progress.direction === "push" ? "pushed" : "merged";
+      this.status[field] += Number(progress.completed) || 0;
+      this.status.currentTable = progress.table;
+      this.status.lastProgressAt = new Date().toISOString();
+      this.publish(this.snapshot());
+    } };
     let result;
     try {
       this.status.phase="pushing"; this.publish(this.snapshot());
       let pushError = null; let pushed = {};
-      try { pushed=await this.pushWorker.run(options); this.status.lastPushAt=new Date().toISOString(); }
+      try { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString(); }
       catch(error) { pushError=error; }
       if (pushError && (pushError.code === "ECHANGEGAP" || [401,403].includes(Number(pushError.status)))) throw pushError;
-      this.status.phase="pulling"; this.publish(this.snapshot());
-      const pulled=(await this.pullWorker.run(options)) ?? {}; this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
+      this.status.phase="pulling"; this.status.currentTable=null; this.publish(this.snapshot());
+      const pulled=(await this.pullWorker.run(workerOptions)) ?? {}; this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
+      this.status.pushed=Number(pushed.pushed??this.status.pushed); this.status.merged=Number(pulled.merged??this.status.merged);
       if (pushError) throw pushError;
       this.status.phase="idle"; this.status.lastError=null; this.status.credentialsInvalid=false;
       result={ ok:true,...pushed,...pulled };
@@ -85,6 +95,7 @@ class SyncCoordinator {
       result={ ok:false,code,error:this.status.lastError,table:failedTable||null };
     } finally {
       this.running=false;
+      this.status.currentTable=null;
       await this.refresh(options.branchId);
       this.publish(this.snapshot());
     }

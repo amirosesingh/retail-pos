@@ -1,4 +1,5 @@
 import { fetchWithDeadline } from "@/lib/fetch-deadline";
+import { desktopSupabaseFetch } from "@/lib/desktop-supabase-fetch";
 // Client for the user's own Supabase project (not the managed backend).
 // Publishable keys are safe to ship in client code.
 import { createClient } from "@supabase/supabase-js";
@@ -12,7 +13,7 @@ function isNewSupabaseApiKey(value: string): boolean {
 }
 
 // New-format keys are opaque strings, not bearer JWTs — send them as `apikey` only.
-function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string): typeof fetch {
+function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string, useDesktop = true): typeof fetch {
   return async (input, init) => {
     const requestUrl =
       typeof Request !== "undefined" && input instanceof Request ? input.url : String(input);
@@ -40,11 +41,12 @@ function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string): typeof fetch {
     headers.set("apikey", SUPABASE_PUBLISHABLE_KEY);
     // A bearer here means a real user session; only those can "expire".
     const hadBearer = !!headers.get("Authorization");
+    const transport = useDesktop ? desktopSupabaseFetch : fetchWithDeadline;
     try {
       const res =
         typeof Request !== "undefined" && input instanceof Request
-          ? await fetchWithDeadline(new Request(input, { ...init, headers }))
-          : await fetchWithDeadline(input, { ...init, headers });
+          ? await transport(new Request(input, { ...init, headers }))
+          : await transport(input, { ...init, headers });
       void inspectResponse(res.clone(), hadBearer);
       return res;
     } catch (e) {
@@ -124,7 +126,7 @@ function createExternalClient(
     // periodic connection-profile refresh may replace the global resolver;
     // it must not interrupt an in-flight Auth proof before resetExternalClient
     // swaps the whole client atomically.
-    global: { fetch: supabaseFetchFor(key) },
+    global: { fetch: supabaseFetchFor(key, configScope === "pos") },
     auth: {
       storage: persistSession && typeof window !== "undefined" ? externalAuthStorage : undefined,
       storageKey,

@@ -73,6 +73,10 @@ for (const dir of ["dist-desktop", "release"]) {
 }
 
 run(path.join(root, "scripts", "bump-version.cjs"), ["--write"]);
+// Settings downloads and automatic upgrades consume this exact bundled file.
+// Regenerate before packaging so a new application cannot ship stale SQL.
+for (const script of ["supabase-registry-report.cjs", "generate-sqlserver-schema.cjs", "verify-sqlserver-schema.cjs", "verify-sync-registry.cjs", "test-database-upgrade.cjs"])
+  run(path.join(root, "scripts", script), []);
 run(path.join(root, "node_modules", "vite", "bin", "vite.js"), ["build"]);
 
 // Electron loads dist-desktop/server/index.mjs. Some toolchain versions ignore

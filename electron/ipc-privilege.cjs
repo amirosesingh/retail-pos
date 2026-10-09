@@ -140,6 +140,7 @@ const CHANNEL_LEVELS = {
   "update:download-page": OPEN,
 
   "net:get-json": OPEN,
+  "cloud:request": OPEN,
   "net:head": OPEN,
   "net:get-binary": OPEN,
   "window:minimize": OPEN,
@@ -552,12 +553,14 @@ function allowed(channel, args = []) {
  * Wraps `ipcMain.handle` so every channel — the ones registered today and any
  * added later — passes the gate before its body runs.
  */
-function install(ipcMain, { isFirstRun } = {}) {
+function install(ipcMain, { isFirstRun, writeBarrier } = {}) {
   if (typeof isFirstRun === "function") firstRun = isFirstRun;
   const original = ipcMain.handle.bind(ipcMain);
   ipcMain.handle = (channel, listener) =>
     original(channel, (event, ...args) => {
       if (!allowed(channel, args)) return refusal(levelFor(channel, args), channel, args);
+      if (writeBarrier && require("./sync/write-barrier.cjs").BUSINESS_WRITE_CHANNELS.has(channel))
+        return writeBarrier.run(() => listener(event, ...args));
       return listener(event, ...args);
     });
   return ipcMain;
