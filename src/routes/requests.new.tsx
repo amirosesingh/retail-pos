@@ -1,3 +1,4 @@
+import { sameBranchId } from "@/lib/branch-id";
 /**
  * Raise a stock request as a full transaction screen rather than a dialog.
  * The request itself never moves stock: it is the paperwork the supplying
@@ -44,7 +45,7 @@ function NewRequest() {
       row.id === draftId &&
       row.kind === "request" &&
       row.status === "draft" &&
-      row.toStoreId === currentStore.id,
+      sameBranchId(row.toStoreId, currentStore.id),
   );
 
   return (

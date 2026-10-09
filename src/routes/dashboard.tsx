@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useReportSales } from "@/lib/use-report-sales";
 import {
   Bar,
   BarChart,
@@ -64,11 +65,19 @@ function Dashboard() {
   const drawer = useDrawerEvents();
   const thresholds = defaultReviewThresholds;
 
-  const today = posDayKey();
-  const sales = useMemo(
-    () => state.sales.filter((s) => sameBranchId(s.storeId, currentStore.id)),
-    [state.sales, currentStore.id],
-  );
+  const [today, setToday] = useState(() => posDayKey());
+  useEffect(() => {
+    const refresh = () => setToday(posDayKey());
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, []);
+  const storeIds = useMemo(() => [currentStore.id], [currentStore.id]);
+  // Include a boundary day on both sides: report loading uses device-local
+  // midnight, while dashboard buckets use the configured business timezone.
+  const { sales } = useReportSales(state.sales, storeIds,
+    posDayKey(new Date(Date.parse(`${today}T12:00:00`) - 14 * 86_400_000)),
+    posDayKey(new Date(Date.parse(`${today}T12:00:00`) + 86_400_000)));
   const todaySales = sales.filter((s) => posDayKey(s.createdAt) === today);
   const live = todaySales.filter((s) => !s.refunded);
 
@@ -92,7 +101,10 @@ function Dashboard() {
   const daily = useMemo(() => {
     const buckets = new Map<string, number>();
     for (let i = 13; i >= 0; i--) {
-      buckets.set(posDayKey(new Date(Date.now() - i * 86_400_000)), 0);
+      const day = new Date(`${today}T12:00:00`);
+      day.setDate(day.getDate() - i);
+      const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+      buckets.set(key, 0);
     }
     sales
       .filter((s) => !s.refunded)
@@ -104,7 +116,7 @@ function Dashboard() {
       day: day.slice(5),
       total: Number(total.toFixed(2)),
     }));
-  }, [sales]);
+  }, [sales, today]);
 
   /** Transactions per hour today — shows the peak trading window. */
   const hourly = useMemo(() => {
@@ -119,7 +131,7 @@ function Dashboard() {
   const peak = hourly.reduce((a, h) => (h.bills > a.bills ? h : a), hourly[0]!);
 
   const todayDrawer = drawer.filter(
-    (d) => posDayKey(d.at) === today && d.storeId === currentStore.id,
+    (d) => posDayKey(d.at) === today && sameBranchId(d.storeId, currentStore.id),
   );
   const splitSales = live.filter(
     (sale) =>

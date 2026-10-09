@@ -1,3 +1,4 @@
+import { redeemedPoints } from "@/lib/points-redemption";
 import { recordId } from "@/lib/sale-identity";
 import { readLocalLocationDirectory, resolveLocationDirectory, type LocationDirectoryResult } from "./location-directory";
 export type { LocationDirectoryResult } from "./location-directory";
@@ -906,7 +907,7 @@ const saleToRow = (s: Sale): Row => ({
   payment_type: s.method,
   payments: s.payments ?? [],
   points_earned: s.pointsEarned,
-  points_redeemed: s.method === "points" ? s.paid : 0,
+  points_redeemed: redeemedPoints(s),
   is_exchange: !!s.exchangeOfReceiptNo,
   original_bill_number: s.exchangeOfReceiptNo ?? null,
   exchange_credit: s.exchangeCredit ?? 0,

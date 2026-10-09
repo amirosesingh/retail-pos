@@ -8,7 +8,12 @@ const key = (userId: string) => `pos.admin-web:${supabaseConfig().url}:${userId}
 export async function adminActivationRequest<T>(action: string, args: Record<string, string> = {}): Promise<T> {
   if (isTerminalApp()) throw new Error("Admin web activation is available only in the web portal.");
   const { data, error } = await supabaseExternal.rpc("admin_web_activation" as never, { p_action: action, ...args } as never);
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (error.code === "PGRST202") {
+      throw new Error("Admin activation is not installed or the cloud API schema cache is out of date. Apply 20261009065040_admin_web_activation_cloud_only.sql to this portal's Supabase project, then run NOTIFY pgrst, 'reload schema'; and click Refresh.");
+    }
+    throw new Error(error.message);
+  }
   return data as T;
 }
 export function readAdminBrowserProof(userId: string): AdminBrowserProof | null {

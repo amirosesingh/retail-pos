@@ -71,4 +71,5 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.admin_web_activation(text,uuid,text,text,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_web_activation(text,uuid,text,text,text) TO authenticated;
+NOTIFY pgrst, 'reload schema';
 COMMIT;

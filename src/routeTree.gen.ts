@@ -65,6 +65,7 @@ import { Route as RequestsNewRouteImport } from './routes/requests.new'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
 import { Route as SettingsAccessRouteImport } from './routes/settings.access'
 import { Route as SettingsAccountsRouteImport } from './routes/settings.accounts'
+import { Route as SettingsAdminTerminalsRouteImport } from './routes/settings.admin-terminals'
 import { Route as SettingsBookingRulesRouteImport } from './routes/settings.booking-rules'
 import { Route as SettingsBookingSlipRouteImport } from './routes/settings.booking-slip'
 import { Route as SettingsBranchTelemetryRouteImport } from './routes/settings.branch-telemetry'
@@ -405,6 +406,11 @@ const SettingsAccessRoute = SettingsAccessRouteImport.update({
 const SettingsAccountsRoute = SettingsAccountsRouteImport.update({
   id: '/settings/accounts',
   path: '/settings/accounts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsAdminTerminalsRoute = SettingsAdminTerminalsRouteImport.update({
+  id: '/settings/admin-terminals',
+  path: '/settings/admin-terminals',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsBookingRulesRoute = SettingsBookingRulesRouteImport.update({
@@ -770,6 +776,7 @@ export interface FileRoutesByFullPath {
   '/requests/new': typeof RequestsNewRoute
   '/settings/access': typeof SettingsAccessRoute
   '/settings/accounts': typeof SettingsAccountsRoute
+  '/settings/admin-terminals': typeof SettingsAdminTerminalsRoute
   '/settings/booking-rules': typeof SettingsBookingRulesRoute
   '/settings/booking-slip': typeof SettingsBookingSlipRoute
   '/settings/branch-telemetry': typeof SettingsBranchTelemetryRoute
@@ -889,6 +896,7 @@ export interface FileRoutesByTo {
   '/requests/new': typeof RequestsNewRoute
   '/settings/access': typeof SettingsAccessRoute
   '/settings/accounts': typeof SettingsAccountsRoute
+  '/settings/admin-terminals': typeof SettingsAdminTerminalsRoute
   '/settings/booking-rules': typeof SettingsBookingRulesRoute
   '/settings/booking-slip': typeof SettingsBookingSlipRoute
   '/settings/branch-telemetry': typeof SettingsBranchTelemetryRoute
@@ -1009,6 +1017,7 @@ export interface FileRoutesById {
   '/requests/new': typeof RequestsNewRoute
   '/settings/access': typeof SettingsAccessRoute
   '/settings/accounts': typeof SettingsAccountsRoute
+  '/settings/admin-terminals': typeof SettingsAdminTerminalsRoute
   '/settings/booking-rules': typeof SettingsBookingRulesRoute
   '/settings/booking-slip': typeof SettingsBookingSlipRoute
   '/settings/branch-telemetry': typeof SettingsBranchTelemetryRoute
@@ -1130,6 +1139,7 @@ export interface FileRouteTypes {
     | '/requests/new'
     | '/settings/access'
     | '/settings/accounts'
+    | '/settings/admin-terminals'
     | '/settings/booking-rules'
     | '/settings/booking-slip'
     | '/settings/branch-telemetry'
@@ -1249,6 +1259,7 @@ export interface FileRouteTypes {
     | '/requests/new'
     | '/settings/access'
     | '/settings/accounts'
+    | '/settings/admin-terminals'
     | '/settings/booking-rules'
     | '/settings/booking-slip'
     | '/settings/branch-telemetry'
@@ -1368,6 +1379,7 @@ export interface FileRouteTypes {
     | '/requests/new'
     | '/settings/access'
     | '/settings/accounts'
+    | '/settings/admin-terminals'
     | '/settings/booking-rules'
     | '/settings/booking-slip'
     | '/settings/branch-telemetry'
@@ -1488,6 +1500,7 @@ export interface RootRouteChildren {
   RequestsNewRoute: typeof RequestsNewRoute
   SettingsAccessRoute: typeof SettingsAccessRoute
   SettingsAccountsRoute: typeof SettingsAccountsRoute
+  SettingsAdminTerminalsRoute: typeof SettingsAdminTerminalsRoute
   SettingsBookingRulesRoute: typeof SettingsBookingRulesRoute
   SettingsBookingSlipRoute: typeof SettingsBookingSlipRoute
   SettingsBranchTelemetryRoute: typeof SettingsBranchTelemetryRoute
@@ -1946,6 +1959,13 @@ declare module '@tanstack/react-router' {
       path: '/settings/accounts'
       fullPath: '/settings/accounts'
       preLoaderRoute: typeof SettingsAccountsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/admin-terminals': {
+      id: '/settings/admin-terminals'
+      path: '/settings/admin-terminals'
+      fullPath: '/settings/admin-terminals'
+      preLoaderRoute: typeof SettingsAdminTerminalsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/booking-rules': {
@@ -2442,6 +2462,7 @@ const rootRouteChildren: RootRouteChildren = {
   RequestsNewRoute: RequestsNewRoute,
   SettingsAccessRoute: SettingsAccessRoute,
   SettingsAccountsRoute: SettingsAccountsRoute,
+  SettingsAdminTerminalsRoute: SettingsAdminTerminalsRoute,
   SettingsBookingRulesRoute: SettingsBookingRulesRoute,
   SettingsBookingSlipRoute: SettingsBookingSlipRoute,
   SettingsBranchTelemetryRoute: SettingsBranchTelemetryRoute,

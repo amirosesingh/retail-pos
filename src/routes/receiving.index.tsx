@@ -1,3 +1,4 @@
+import { sameBranchId } from "@/lib/branch-id";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 /**
  * Goods receiving register.
@@ -53,7 +54,7 @@ function ReceivingIndex() {
   const storeName = (id: string) => stores.find((s) => s.id === id)?.name ?? "—";
 
   const rows = useMemo(() => {
-    const inbound = state.transfers.filter((t) => t.toStoreId === currentStore.id);
+    const inbound = state.transfers.filter((t) => sameBranchId(t.toStoreId, currentStore.id));
     return tab === "todo"
       ? inbound.filter((t) => t.status === "dispatched" || t.status === "received")
       : inbound.filter(

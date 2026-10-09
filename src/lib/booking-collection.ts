@@ -10,6 +10,7 @@ import { MONEY_TOLERANCE, type PaymentMethod } from "@/core/types/pos-types";
 import { commitOps } from "@/core/api/pos-db";
 import { routedQuery } from "@/core/api/db-query";
 import { localDb } from "@/core/local-db/local-db";
+import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE } from "./returns-policy";
 
 export type BookingBalanceState = {
   total: number;
@@ -193,6 +194,7 @@ export async function refundBookingPayment(input: {
   cashier?: string | null;
   clientPaymentId: string;
 }): Promise<BookingMoneyResult> {
+  if (!CUSTOMER_REFUNDS_ALLOWED) return { ok: false, error: NO_REFUND_MESSAGE };
   try {
     if (localDb()?.writeBatch) {
       const clean = input.reason.trim();
@@ -249,6 +251,7 @@ export async function cancelBookingAuthoritative(input: {
   moneyAction?: "refunded" | "retained" | null;
   clientPaymentId?: string | null;
 }): Promise<{ ok: true; row: Record<string, unknown> } | { ok: false; error: string }> {
+  if (!CUSTOMER_REFUNDS_ALLOWED && input.moneyAction === "refunded") return { ok: false, error: NO_REFUND_MESSAGE };
   try {
     if (localDb()?.writeBatch) {
       const clean = input.reason.trim();

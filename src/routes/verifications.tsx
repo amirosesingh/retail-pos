@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
@@ -61,21 +61,30 @@ function Verifications() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const refresh = async () => {
+  const sequenceRef = useRef(0);
+  const refresh = useCallback(async () => {
+    const sequence = ++sequenceRef.current;
     setBusy(true);
     try {
       const { accessToken, cashierToken } = await getPosCallerAuth();
       const res = await listMemberVerifications({data:{accessToken,cashierToken,limit:300}});
+      if (sequence !== sequenceRef.current) return;
       if (!res.ok) { setError(res.error ?? "Could not read the log"); return; }
       setError(""); setRows(res.items as Row[]);
     } catch (cause) {
+      if (sequence !== sequenceRef.current) return;
       setError(cause instanceof Error ? cause.message : "Could not read the log");
-    } finally { setBusy(false); }
-  };
+    } finally { if (sequence === sequenceRef.current) setBusy(false); }
+  }, []);
 
   useEffect(() => {
+    const sequence = sequenceRef;
     void refresh();
-  }, []);
+    const wake = () => { void refresh(); };
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") wake(); }, 30_000);
+    window.addEventListener("focus", wake);
+    return () => { ++sequence.current; window.clearInterval(timer); window.removeEventListener("focus", wake); };
+  }, [refresh]);
 
   const filtered = rows.filter((r) =>
     `${r.phone ?? ""} ${r.email ?? ""} ${r.channel} ${r.status} ${r.sent_by ?? ""}`

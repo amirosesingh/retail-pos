@@ -1,3 +1,5 @@
+import { CUSTOMER_REFUNDS_ALLOWED } from "@/lib/returns-policy";
+import { sameBranchId } from "@/lib/branch-id";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
@@ -115,9 +117,9 @@ function BookingsPage() {
     return requirePermission("can_cancel_booking");
   };
   const [query, setQuery] = useState("");
-  const [tab, setTab] = useState<Booking["status"] | "all">("active");
+  const [tab, setTab] = useState<Booking["status"] | "all">("all");
   /** Which kind of ticket the counter is looking at. */
-  const [kind, setKind] = useState<"racket" | "standard" | "done">("racket");
+  const [kind, setKind] = useState<"racket" | "standard">("racket");
   /** Extra lens over the racket workflow, on top of the booking status. */
   const [jobFilter, setJobFilter] = useState<JobStatus | "all" | "jobs">("all");
   const [payFor, setPayFor] = useState<Booking | null>(null);
@@ -138,7 +140,7 @@ function BookingsPage() {
   const [cancelReason, setCancelReason] = useState("");
   const [cancelBusy, setCancelBusy] = useState(false);
   /** What happens to money already taken when a paid booking is cancelled. */
-  const [cancelMoney, setCancelMoney] = useState<"refunded" | "retained">("refunded");
+  const [cancelMoney, setCancelMoney] = useState<"refunded" | "retained">("retained");
   /** Handing money back on a booking, capped by the server at what was taken. */
   const [refundFor, setRefundFor] = useState<Booking | null>(null);
   const [historyFor, setHistoryFor] = useState<Booking | null>(null);
@@ -158,19 +160,17 @@ function BookingsPage() {
   const bookings = useMemo(() => {
     const q = query.trim().toLowerCase();
     return state.bookings
-      .filter((b) => b.storeId === currentStore.id)
+      .filter((b) => sameBranchId(b.storeId, currentStore.id))
       .filter((b) =>
-        kind === "done"
-          ? b.status !== "active"
-          : b.status === "active" && (kind === "racket" ? !!b.job : !b.job),
+        kind === "racket" ? !!b.job : !b.job,
       )
-      .filter((b) => (kind !== "done" || tab === "all" ? true : b.status === tab))
+      .filter((b) => (tab === "all" ? true : b.status === tab))
       .filter((b) =>
-        jobFilter === "all"
+        kind !== "racket" || jobFilter === "all"
           ? true
           : jobFilter === "jobs"
             ? !!b.job
-            : (b.jobStatus ?? "received") === jobFilter && !!b.job,
+            : (b.status === "cancelled" ? "cancelled" : b.status === "collected" ? "collected" : b.jobStatus ?? "received") === jobFilter && !!b.job,
       )
       .filter(
         (b) =>
@@ -187,10 +187,10 @@ function BookingsPage() {
 
   /** Counts for the tab badges, before the search / status lenses apply. */
   const kindCounts = useMemo(() => {
-    const mine = state.bookings.filter((b) => b.storeId === currentStore.id);
+    const mine = state.bookings.filter((b) => sameBranchId(b.storeId, currentStore.id));
     return {
-      racket: mine.filter((b) => b.status === "active" && !!b.job).length,
-      standard: mine.filter((b) => b.status === "active" && !b.job).length,
+      racket: mine.filter((b) => !!b.job).length,
+      standard: mine.filter((b) => !b.job).length,
       done: mine.filter((b) => b.status !== "active").length,
     };
   }, [state.bookings, currentStore.id]);
@@ -216,7 +216,7 @@ function BookingsPage() {
   function findByClaim(raw: string) {
     const code = raw.trim().toLowerCase();
     if (!code) return;
-    const hit = state.bookings.find(
+    const hit = state.bookings.filter(b => sameBranchId(b.storeId, currentStore.id)).find(
       (b) =>
         (b.tagId ?? "").toLowerCase() === code ||
         b.ref.toLowerCase() === code ||
@@ -227,6 +227,7 @@ function BookingsPage() {
       return;
     }
     setTab("all");
+    setKind(hit.job ? "racket" : "standard");
     setJobFilter("all");
     setQuery(hit.ref);
     setClaim("");
@@ -245,7 +246,7 @@ function BookingsPage() {
       const check = await readBookingBalance(b.id);
       const due = check.ok ? check.state.outstanding : balance;
       if (!check.ok)
-        toast.warning("Balance could not be verified", { description: check.error });
+        { toast.error("Balance could not be verified", { description: check.error }); return; }
       if (due > 0) {
         toast.error(`Balance of ${money(due)} must be settled before collection`, {
           description: "Collect the balance to hand the racket over.",
@@ -253,6 +254,12 @@ function BookingsPage() {
         void openPay(b, true);
         return;
       }
+      const done = await collectBooking(b.id, 0, "cash", crypto.randomUUID());
+      if (done) {
+        printSaleReceipt(done.sale, memberOf(b), "sale");
+        toast.success(`${b.ref} collected · bill ${done.sale.receiptNo}`);
+      }
+      return;
     }
     const moved = await setBookingJobStatus(b.id, s, user?.name || b.cashier || "Counter");
     if (!moved) return;
@@ -353,14 +360,14 @@ function BookingsPage() {
             [
               ["racket", "Racket jobs", kindCounts.racket],
               ["standard", "Standard bookings", kindCounts.standard],
-              ["done", "Completed / collected", kindCounts.done],
             ] as const
           ).map(([k, label, count]) => (
             <button
               key={k}
               onClick={() => {
                 setKind(k);
-                if (k === "done") setTab("all");
+                setTab("all");
+                setJobFilter("all");
               }}
               className={`rounded-md border px-3 py-1.5 text-xs ${
                 kind === k
@@ -373,9 +380,9 @@ function BookingsPage() {
           ))}
         </div>
 
-        {kind === "done" && (
+        {(
         <div className="flex flex-wrap gap-1">
-          {(["collected", "cancelled", "all"] as const).map((t) => (
+          {(["all", "active", "collected", "cancelled"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -427,7 +434,7 @@ function BookingsPage() {
                 Date.now() - new Date(b.createdAt).getTime() >
                   rules.staleAfterDays * 86_400_000;
               const job = b.job;
-              const jobStatus = (b.jobStatus ?? "received") as JobStatus;
+              const jobStatus: JobStatus = b.status === "cancelled" ? "cancelled" : b.status === "collected" ? "collected" : b.jobStatus ?? "received";
               const hasJob =
                 !!job &&
                 !!(job.racketModel || job.stringType || job.tensionMain || job.promisedAt);
@@ -611,7 +618,7 @@ function BookingsPage() {
                             />
                           </>
                         )}
-                        {b.paid > 0 && b.status !== "cancelled" && (
+                        {CUSTOMER_REFUNDS_ALLOWED && b.paid > 0 && b.status !== "cancelled" && (
                           <ActionButton
                             size="sm"
                             variant="outline"
@@ -706,6 +713,13 @@ function BookingsPage() {
                   return;
                 }
                 if (!(await requirePermission("can_cancel_booking"))) return;
+                if (incidentFor.status === "cancelled") {
+                  const result = await cancelBooking(incidentFor.booking.id, note, null, "retained");
+                  if (!result.ok) { toast.error(result.error); return; }
+                  toast.success(`${incidentFor.booking.ref} cancelled`);
+                  setIncidentFor(null);
+                  return;
+                }
                 const moved = await setBookingJobStatus(
                   incidentFor.booking.id,
                   incidentFor.status,
@@ -815,7 +829,7 @@ function BookingsPage() {
               rows={3}
               value={cancelReason}
               onChange={(e) => setCancelReason(e.target.value)}
-              placeholder="Customer changed their mind and asked for the deposit back."
+              placeholder="Explain why this booking is being cancelled."
             />
             <p className="text-[11px] text-muted-foreground">
               The reason, your name and the time are stored permanently against the booking and
@@ -825,7 +839,7 @@ function BookingsPage() {
               <div className="space-y-2 rounded-md border border-border p-3">
                 <Label>{money(cancelling.paid)} has already been paid — what happens to it?</Label>
                 <div className="flex gap-2">
-                  {(["refunded", "retained"] as const).map((opt) => (
+                  {(["retained"] as const).map((opt) => (
                     <Button
                       key={opt}
                       type="button"
@@ -833,7 +847,7 @@ function BookingsPage() {
                       variant={cancelMoney === opt ? "default" : "outline"}
                       onClick={() => setCancelMoney(opt)}
                     >
-                      {opt === "refunded" ? "Refund the customer" : "Keep as a charge"}
+                      Keep as a charge
                     </Button>
                   ))}
                 </div>

@@ -1,3 +1,4 @@
+import { sameBranchId } from "@/lib/branch-id";
 /**
  * One stock request, in full.
  *
@@ -85,7 +86,7 @@ function RequestDetail() {
     fulfillingTransfer?.items.reduce((a, i) => a + (i.verifiedQty ?? i.dispatchedQty ?? 0), 0) ?? 0;
   const remaining = Math.max(0, requested - fulfilled);
 
-  const mineToApprove = transfer.fromStoreId === currentStore.id;
+  const mineToApprove = sameBranchId(transfer.fromStoreId, currentStore.id);
   const canApprove =
     live &&
     mineToApprove &&

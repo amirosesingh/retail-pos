@@ -471,6 +471,7 @@ const ROUTE_PERMISSION_OVERRIDES: Record<string, PermissionFlag> = {
   "/settings/groups": "can_manage_locations",
   "/settings/terminals": "can_manage_terminals",
   "/settings/mobile-terminals": "can_manage_terminals",
+  "/settings/admin-terminals": "can_manage_terminals",
   "/settings/sessions": "can_manage_terminals",
   "/settings/database": "can_manage_sync_backup",
   "/settings": "can_access_pos_settings",

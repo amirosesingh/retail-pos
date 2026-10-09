@@ -8,7 +8,7 @@
  */
 import { useState } from "react";
 import { toast } from "sonner";
-import { lineUnitDiscount, r2 } from "@/core/types/pos-types";
+import { lineUnitDiscount, lineDiscountTotal, r2 } from "@/core/types/pos-types";
 import type { CartLine, DiscountType, Sale } from "@/core/types/pos-types";
 
 type ExchangeDeps = {
@@ -22,6 +22,16 @@ type ExchangeDeps = {
 };
 
 export const exchangeLineEligible = (line: CartLine) => line.qty > 0 && !line.credit;
+
+/** Preserve the original bill discount instead of crediting the undiscounted price. */
+export function exchangeUnitCredit(sale: Sale, line: CartLine): number {
+  const eligible = sale.lines.filter(exchangeLineEligible);
+  const base = eligible.reduce((sum, item) => sum + item.price * item.qty - lineDiscountTotal(item), 0);
+  const lineDiscount = sale.lines.reduce((sum, item) => sum + lineDiscountTotal(item) * (item.qty < 0 ? -1 : 1), 0);
+  const billDiscount = Math.max(0, sale.discount - lineDiscount);
+  const ratio = base > 0 ? Math.max(0, base - billDiscount) / base : 0;
+  return r2(Math.max(0, line.price - lineUnitDiscount(line)) * ratio);
+}
 
 export function exchangeBlockReason(sale: Sale): string | null {
   if (sale.refunded) return "This bill was refunded and cannot be exchanged.";
@@ -81,6 +91,13 @@ export function useExchange(deps: ExchangeDeps) {
       toast.error(blocked);
       return;
     }
+    if (Object.entries(picks).some(([index, qty]) => {
+      const original = billHit.lines[Number(index)];
+      return !Number.isFinite(qty) || qty < 0 || !original || qty > original.qty;
+    })) {
+      toast.error("Exchange quantity cannot exceed the quantity on the original bill");
+      return;
+    }
     const credits: CartLine[] = Object.entries(picks)
       .filter(([, qty]) => qty > 0)
       .flatMap(([idx, qty]) => {
@@ -89,7 +106,7 @@ export function useExchange(deps: ExchangeDeps) {
         return [{
           productId: src.productId,
           name: src.name,
-          price: r2(src.price - lineUnitDiscount(src)),
+          price: exchangeUnitCredit(billHit, src),
           qty: -qty,
           taxRate: src.taxRate,
           discount: 0,
@@ -101,7 +118,7 @@ export function useExchange(deps: ExchangeDeps) {
       toast.error("Select at least one item to exchange");
       return;
     }
-    setLines((ls) => [...credits, ...ls]);
+    setLines((ls) => [...credits, ...ls.filter(line => !line.credit)]);
     setExchangeRef(billHit.receiptNo);
     setExchangeOpen(false);
     setBillQuery("");

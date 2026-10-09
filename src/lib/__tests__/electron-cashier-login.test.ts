@@ -25,7 +25,7 @@ describe("Electron cashier sign in", () => {
 
   it("reloads the local snapshot when sign-in repairs a token-only branch mirror", () => {
     const store = read("src/lib/pos-store.tsx");
-    expect(store).toContain('if (change.kind === "branch")');
+    expect(store).toContain('if (change.kind === "branch" || change.kind === "refund")');
     expect(store).toContain("setReloadTick((tick) => tick + 1)");
   });
 

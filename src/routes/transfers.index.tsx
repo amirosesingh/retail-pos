@@ -1,3 +1,4 @@
+import { sameBranchId } from "@/lib/branch-id";
 import { useStockTableCosts } from "@/lib/use-stock-table-costs";
 import { transferTableTotals } from "@/lib/stock-table-totals";
 /**
@@ -76,7 +77,7 @@ function Transfers() {
   const mine = useMemo(
     () =>
       state.transfers.filter(
-        (t) => t.fromStoreId === currentStore.id || t.toStoreId === currentStore.id,
+        (t) => sameBranchId(t.fromStoreId, currentStore.id) || sameBranchId(t.toStoreId, currentStore.id),
       ),
     [state.transfers, currentStore.id],
   );
@@ -87,20 +88,20 @@ function Transfers() {
         scopeTab === "all"
           ? true
           : scopeBetween(
-              stores.find((s) => s.id === t.fromStoreId),
-              stores.find((s) => s.id === t.toStoreId),
+              stores.find((s) => sameBranchId(s.id, t.fromStoreId)),
+              stores.find((s) => sameBranchId(s.id, t.toStoreId)),
             ) === scopeTab,
       ),
     [mine, scopeTab, stores],
   );
 
-  const inbound = mine.filter((t) => t.toStoreId === currentStore.id && t.status === "dispatched");
-  const toVerify = mine.filter((t) => t.toStoreId === currentStore.id && t.status === "received");
+  const inbound = mine.filter((t) => sameBranchId(t.toStoreId, currentStore.id) && t.status === "dispatched");
+  const toVerify = mine.filter((t) => sameBranchId(t.toStoreId, currentStore.id) && t.status === "received");
   const toApprove = mine.filter(
-    (t) => t.fromStoreId === currentStore.id && t.status === "awaiting_approval",
+    (t) => sameBranchId(t.fromStoreId, currentStore.id) && t.status === "awaiting_approval",
   );
   const toDispatch = mine.filter(
-    (t) => t.fromStoreId === currentStore.id && t.status === "approved",
+    (t) => sameBranchId(t.fromStoreId, currentStore.id) && t.status === "approved",
   );
 
   function print(t: Transfer) {
@@ -192,7 +193,7 @@ function Transfers() {
                   ? state.transfers.find((row) => row.id === t.sourceRequestId)
                   : null;
                 const needsCount =
-                  t.toStoreId === currentStore.id &&
+                  sameBranchId(t.toStoreId, currentStore.id) &&
                   (t.status === "received" || t.status === "dispatched");
                 return (
                   <TableRow key={t.id} summaryValues={totals}>

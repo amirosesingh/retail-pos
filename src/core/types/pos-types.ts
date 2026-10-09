@@ -613,7 +613,7 @@ export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
   ready: "Ready to collect",
   collected: "Collected",
   damaged: "Frame damaged / snapped",
-  cancelled: "Cancelled / refunded",
+  cancelled: "Cancelled",
 };
 
 export const JOB_STATUS_FLOW: JobStatus[] = ["received", "strung", "ready", "collected"];

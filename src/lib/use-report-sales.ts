@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { loadSalesPage } from "@/core/api/pos-db";
 import type { Sale } from "@/core/types/pos-types";
 import { uniqueSales } from "./sale-identity";
+import { canonicalBranchId } from "./branch-id";
 
 const dayStart = (value: string) => Date.parse(`${value}T00:00:00`);
 const dayEnd = (value: string) => Date.parse(`${value}T23:59:59.999`);
@@ -23,10 +24,10 @@ export function useReportSales(
   const seedRows = useMemo(() => {
     const start = dayStart(from);
     const end = dayEnd(to);
-    const stores = new Set(storeIds.filter(Boolean));
+    const stores = new Set(storeIds.filter(Boolean).map(canonicalBranchId));
     return seed.filter((sale) => {
       const at = Date.parse(sale.createdAt);
-      return at >= start && at <= end && (!stores.size || stores.has(sale.storeId));
+      return at >= start && at <= end && (!stores.size || stores.has(canonicalBranchId(sale.storeId)));
     });
   }, [seed, storeIds, from, to]);
   const [revision, setRevision] = useState(0);
@@ -36,7 +37,10 @@ export function useReportSales(
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => setRevision(value => value + 1), 400);
     });
-    return () => { off(); if (timer) clearTimeout(timer); };
+    const refresh = () => setRevision(value => value + 1);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    return () => { off(); if (timer) clearTimeout(timer); window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh); };
   }, []);
   const [loaded, setLoaded] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(false);
@@ -84,7 +88,8 @@ export function useReportSales(
   }, [from, to, storeKey, revision]);
 
   const sales = useMemo(() => {
-    return uniqueSales([...seedRows, ...loaded]).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    // Live committed state wins over an older page snapshot (for example a refund).
+    return uniqueSales([...loaded, ...seedRows]).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [seedRows, loaded]);
 
   return { sales, loading, error };

@@ -242,6 +242,17 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     keywords: "android tablet qr pairing",
   },
   {
+    id: "admin-terminals",
+    label: "Admin terminal activation",
+    blurb: "Register admin browsers and manage their activation codes.",
+    icon: ShieldCheck,
+    category: "terminal",
+    scope: "company",
+    to: "/settings/admin-terminals",
+    panel: page(() => import("@/routes/settings.admin-terminals")),
+    keywords: "admin web browser activation token revoke",
+  },
+  {
     id: "sessions",
     label: "Active sessions",
     blurb: "Everyone signed in right now, with instant remote sign-out.",

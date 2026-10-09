@@ -1,3 +1,5 @@
+import { redeemedPoints } from "../points-redemption";
+import { exchangePolicyError } from "../returns-policy";
 /**
  * Checkout orchestration.
  *
@@ -422,6 +424,8 @@ export function useCheckout(deps: CheckoutDeps) {
       return;
     }
     const isRefund = totals.total < 0;
+    const policyError = exchangePolicyError(lines, totals.total, exchangeRef);
+    if (policyError) { toast.error(policyError); return; }
     if (!(await deps.requirePermission("can_process_sale"))) return;
     // Permission is rechecked at the irreversible boundary. A held ticket,
     // restored draft, command shortcut or role change must not carry an old
@@ -501,6 +505,11 @@ export function useCheckout(deps: CheckoutDeps) {
               : {}),
           },
         ];
+    const redeemed = redeemedPoints({ method, paid, payments });
+    if (!isRefund && redeemed > 0 && (!member || member.points < redeemed)) {
+      toast.error("Not enough points on this member");
+      return;
+    }
     const headline = payments.reduce((a, p) => (p.amount > a.amount ? p : a), payments[0]!).method;
     rememberBanks(payments.map((p) => p.bankName ?? ""));
     let sale: Sale;

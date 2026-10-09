@@ -1,3 +1,4 @@
+import { sameBranchId } from "@/lib/branch-id";
 import { useStockTableCosts } from "@/lib/use-stock-table-costs";
 import { transferTableTotals } from "@/lib/stock-table-totals";
 /**
@@ -59,10 +60,10 @@ function RequestsIndex() {
     const mine = state.transfers.filter(
       (t) =>
         t.kind === "request" &&
-        (t.fromStoreId === currentStore.id || t.toStoreId === currentStore.id),
+        (sameBranchId(t.fromStoreId, currentStore.id) || sameBranchId(t.toStoreId, currentStore.id)),
     );
-    if (scope === "ours") return mine.filter((t) => t.toStoreId === currentStore.id);
-    if (scope === "theirs") return mine.filter((t) => t.fromStoreId === currentStore.id);
+    if (scope === "ours") return mine.filter((t) => sameBranchId(t.toStoreId, currentStore.id));
+    if (scope === "theirs") return mine.filter((t) => sameBranchId(t.fromStoreId, currentStore.id));
     if (scope === "open")
       return mine.filter((t) => t.status === "awaiting_approval" || t.status === "approved");
     return mine;
