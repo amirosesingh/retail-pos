@@ -270,8 +270,9 @@ function CatalogMetaSettings() {
           <div>
             <p className="font-medium">Automatically archive zero-stock products</p>
             <p className="text-xs text-muted-foreground">
-              Enabled by default. Products with no stock in any branch move out of the active
-              catalogue and cannot be restored until positive stock is received.
+              Enabled by default. Net company stock of zero or less automatically archives a
+              product; positive stock automatically makes it active again. Turn this off to
+              manage archive status manually.
             </p>
           </div>
           <Switch

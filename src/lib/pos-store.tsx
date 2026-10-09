@@ -184,15 +184,8 @@ export const availableAt = (product: Product, storeId: string, bookings: Booking
 const bump = (p: Product, storeId: string, delta: number, lifecycle = false): Product => {
   const canonicalId = canonicalBranchId(storeId);
   const current = canonicalStockMap(p.stockByStore);
-  const hadStock = Object.values(current).some((qty) => qty > 0);
   const stockByStore = { ...current, [canonicalId]: (current[canonicalId] ?? 0) + delta };
-  if (!lifecycle) return { ...p, stockByStore };
-  const hasStock = Object.values(stockByStore).some((qty) => qty > 0);
-  return {
-    ...p,
-    stockByStore,
-    archived: hadStock === hasStock ? p.archived : !hasStock,
-  };
+  return applyZeroStockLifecycle({ ...p, stockByStore }, lifecycle);
 };
 
 type NewTransfer = {
@@ -2985,13 +2978,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const set = new Set(ids);
     const zeroStockLifecycle =
       stateRef.current.settings.integrations.autoArchiveZeroStock !== false;
-    const explicitArchiveState = patch.archived !== undefined;
+    if (zeroStockLifecycle && patch.archived !== undefined) {
+      throw new Error("Archive status is managed automatically from stock. Turn off automatic archiving in Catalogue settings to change it manually.");
+    }
     const updated = stateRef.current.products
       .filter((p) => set.has(p.id))
       .map((p) =>
-        explicitArchiveState
-          ? { ...p, ...patch }
-          : applyZeroStockLifecycle({ ...p, ...patch }, zeroStockLifecycle),
+        applyZeroStockLifecycle({ ...p, ...patch }, zeroStockLifecycle),
       );
     logger.log("inventory_edit", "Products bulk edited", "inventory", {
       count: updated.length,
@@ -3003,9 +2996,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       ...s,
       products: s.products.map((p) =>
         set.has(p.id)
-          ? explicitArchiveState
-            ? { ...p, ...patch }
-            : applyZeroStockLifecycle(
+          ? applyZeroStockLifecycle(
                 { ...p, ...patch },
                 s.settings.integrations.autoArchiveZeroStock !== false,
               )

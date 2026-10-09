@@ -27,11 +27,13 @@ Closing Electron first saves buffered activity, drains accepted local writes and
 
 ## Local SQL Server setup or upgrade
 
-Close the POS application and back up an existing database. Run the whole `database/sqlserver/retail-pos-local-database.sql` in SSMS with an account allowed to create a database and modify its schema. Keep the `GO` batch separators.
+For an **existing local database**, close the POS application, take a backup, select your configured POS database in SSMS, and run the whole `database/sqlserver/retail-pos-local-update.sql`. This generated file uses the same wrapper as Settings downloads. It never switches databases, rejects system and unrelated populated databases, skips recorded migrations, and stops on the first error with rollback of the failing batch. Earlier successful batches remain applied and the update can be rerun. No business rows are deleted. Width repairs reject oversized values instead of truncating them. Archive flags are intentionally repaired according to the automatic archive setting.
+
+For a **fresh POS_Local installation**, run the whole `database/sqlserver/retail-pos-local-database.sql` in SSMS with an account allowed to create a database and modify its schema. Keep the `GO` batch separators.
 
 It creates and selects **POS_Local**, installs the 70 domain tables and local infrastructure, applies all numbered local upgrades, repairs missing store-group parents before enforcing their foreign key, and verifies all 1,183 domain columns, three local member-verification compatibility columns, and migration versions. It also includes change tracking, synchronization state and the local staff/member directory support. Existing group names are preserved; missing group placeholders are refreshed by cloud synchronization.
 
-If your configured local database has another name, replace every `POS_Local` occurrence in a copy of the installer before running it. Then use that same database name in the application's connection settings. This script is for Microsoft SQL Server, not SQLite or Supabase.
+For a different database name, create and select that empty database, then run `retail-pos-local-update.sql`. Use the same database name in the application's connection settings. These scripts are for Microsoft SQL Server, not SQLite or Supabase.
 
 Check every execution error and the final table, column and migration results. A later validation result does not override an earlier failed batch.
 
@@ -44,6 +46,10 @@ Keep `schema.sql` and the numbered migrations as generator sources and history. 
 ### Purchase order column widths
 
 Migration `014_repair_purchase_order_key_widths.sql` repairs older local databases where `purchase_orders.po_number` and `store_id` remain `nvarchar(450)` instead of `nvarchar(128)`. It is included in the consolidated installer and the Settings update download. It preserves `po_number NOT NULL`, `store_id NULL`, and branch-scoped invoice uniqueness. It checks stored byte lengths under a table lock before resizing and rolls back on failure; it never truncates identifiers. Values exceeding 128 UTF-16 code units stop the upgrade with error 51014 and need review before retrying.
+
+### Automatic archive and reactivation
+
+With Catalogue settings → Automatically archive zero-stock products enabled, net company stock determines status: zero or negative stock is archived, and positive stock is active. Disable this setting to manage archive status manually. Existing stocked products stuck in the archive are repaired by local migration `015_restore_stocked_products_automatically.sql` and cloud migration `20261009052645_restore_stocked_products_automatically.sql`. The local upgrade is included in the consolidated installer and Settings download; apply the cloud migration to existing Supabase installations. The fresh Supabase schema includes the same behavior. Deleted rows are not restored, and malformed stock JSON is left unchanged by database repairs.
 
 Regenerate the local installer after changing the cloud schema or local migrations:
 
