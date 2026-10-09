@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: desktop-release
+  group: pos-release
   cancel-in-progress: false
 
 permissions:
@@ -52,10 +52,40 @@ jobs:
             echo "release_id=$tag-$short"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate release branch and version
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+          node scripts/publish-windows-release.cjs --preflight
+
+      - name: Test application and updater
+        run: |
+          npm test
+          node --test scripts/test-update-install.cjs scripts/test-updater.cjs scripts/test-windows-publish.cjs scripts/test-update-history.cjs scripts/test-shutdown-sync.cjs
+
       - name: Build Electron installer
         env:
           POS_UPDATE_URL: ${{ vars.POS_UPDATE_URL }}
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          FORCE_CODE_SIGNING: ${{ secrets.WIN_CSC_LINK != '' }}
         run: npm run desktop:release
+
+      - name: Test packaged startup and secure IPC
+        run: node scripts/electron-runtime-smoke.cjs release/win-unpacked
+
+      - name: Verify Windows publisher signature
+        env:
+          WINDOWS_SIGNING_CONFIGURED: ${{ secrets.WIN_CSC_LINK != '' }}
+        shell: pwsh
+        run: |
+          if ($env:WINDOWS_SIGNING_CONFIGURED -ne 'true') { Write-Output 'Unsigned release explicitly permitted; SHA512 verification remains required.'; exit 0 }
+          $installers = @(Get-ChildItem -LiteralPath release -Filter '*.exe')
+          if ($installers.Count -ne 1) { throw 'Expected one Windows installer.' }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName
+          if ($signature.Status -ne 'Valid') { throw 'The release installer must have a valid Authenticode signature.' }
 
       - name: Write release manifest
         shell: bash
@@ -100,54 +130,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-        run: |
-          set -euo pipefail
-          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$R2_ENDPOINT" ]; then
-            echo "R2 credentials are required for a Windows release. Refusing to publish a release with no updater files."
-            exit 1
-          fi
-          rid="${{ steps.meta.outputs.release_id }}"
-          aws s3 sync upload "s3://updatelccms/pos-app/releases/$rid" --endpoint-url "$R2_ENDPOINT" --cache-control "public,max-age=31536000,immutable"
-          # Keep old versioned blockmaps for terminals updating from older builds.
-          aws s3 sync upload s3://updatelccms/pos-app/latest --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache" --delete --exclude "android/*" --exclude "*.blockmap"
-          aws s3 cp upload s3://updatelccms/pos-app/latest --recursive --endpoint-url "$R2_ENDPOINT" --cache-control "public,max-age=31536000,immutable" --exclude "*" --include "*.blockmap"
-          aws s3 cp upload/manifest.json s3://updatelccms/pos-app/manifest.json --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache" --content-type "application/json"
-
-
-      - name: Remove build scratch left in the bucket by earlier releases
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-        run: |
-          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$R2_ENDPOINT" ]; then exit 0; fi
-          for stray in win-unpacked builder-debug.yml builder-effective-config.yaml .icon-ico .cache; do
-            aws s3 rm "s3://updatelccms/pos-app/$stray" --recursive --endpoint-url "$R2_ENDPOINT" || true
-            aws s3 rm "s3://updatelccms/pos-app/latest/$stray" --recursive --endpoint-url "$R2_ENDPOINT" || true
-          done
-
-      - name: Keep only the five most recent releases
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-        run: |
-          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$R2_ENDPOINT" ]; then exit 0; fi
-          RETAIN=5
-          folders=$(aws s3 ls s3://updatelccms/pos-app/releases/ --endpoint-url "$R2_ENDPOINT" | awk '/PRE/ {print $2}' | sort)
-          total=$(echo "$folders" | grep -c . || true)
-          if [ "$total" -le "$RETAIN" ]; then echo "Nothing to prune ($total kept)."; exit 0; fi
-          echo "$folders" | head -n "$((total - RETAIN))" | while read -r old; do
-            [ -z "$old" ] && continue
-            echo "Removing old release $old"
-            aws s3 rm "s3://updatelccms/pos-app/releases/$old" --recursive --endpoint-url "$R2_ENDPOINT" || true
-          done
+          RELEASE_ID: ${{ steps.meta.outputs.release_id }}
+        run: node scripts/publish-windows-release.cjs
 
       - name: Attach installer to the GitHub release
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -158,4 +142,5 @@ jobs:
             release/*.exe
             release/latest.yml
             release/*.blockmap
-            release/release.json
+            upload/release.json
+            upload/releases.json

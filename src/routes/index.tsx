@@ -600,6 +600,7 @@ function Register() {
     openPayment,
     resetTender,
   } = useTender({
+    canProcessSale: () => can("can_process_sale"),
     hasLines: () => lines.length > 0,
     getTotal: () => totals.total,
   });
@@ -2426,7 +2427,7 @@ function Register() {
     </div>
   );
 
-  const atom_actCharge = (
+  const atom_actCharge = can("can_process_sale") ? (
     <div className="flex h-full min-w-0 items-center">
       <ActionButton
         layout="inline"
@@ -2446,7 +2447,7 @@ function Register() {
         }
       />
     </div>
-  );
+  ) : null;
 
   /** Always on the right panel, cart empty or not. */
   const atom_actBooking = can("can_manage_bookings") ? (
@@ -2559,7 +2560,7 @@ function Register() {
         <Separator />
       </div>
       <div className="h-12">{atom_balanceDue}</div>
-      {visible("register.paymentExecution") && (
+      {visible("register.paymentExecution") && can("can_process_sale") && (
         <div className="h-14 px-4 pt-1">{atom_actCharge}</div>
       )}
       {lastSale && <div className="border-t border-border">{atom_reprintDeck}</div>}
@@ -3300,7 +3301,7 @@ function Register() {
             <Button
               onClick={completeSale}
               disabled={
-                saving ||
+                !can("can_process_sale") || saving ||
                 (refundDue === 0 &&
                   tenders.length > 0 &&
                   !!validateTenders(balanceDue, tenders).error)

@@ -224,7 +224,7 @@ describe("permission tags", () => {
     expect(SUPERVISOR_PERMISSIONS.can_manage_terminals).toBe(true);
     expect(
       normalizePermissions({ can_manage_terminals: false }, "supervisor").can_manage_terminals,
-    ).toBe(true);
+    ).toBe(false);
     expect(SUPERVISOR_PERMISSIONS.can_process_sale).toBe(true);
   });
 

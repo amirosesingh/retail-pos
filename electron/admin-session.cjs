@@ -20,7 +20,11 @@ function hasLevel(required) {
   if (!current) return false;
   return current.level === "admin" || (required === "supervisor" && current.level === "supervisor");
 }
-function hasPermission(permission) { return active()?.permissions?.[permission] === true; }
+function hasPermission(permission) {
+  const permissions = active()?.permissions ?? {};
+  const pages = require("./permission-pages.json").filter(page => page.keys.includes(permission));
+  return permissions[permission] === true && (!pages.length || pages.some(page => permissions[`page:${page.id}`] !== false));
+}
 function hasPosAuthority() { return active()?.source === "pos"; }
 function branchId() { return active()?.branchId ?? null; }
 function touch() { if (active()) session.expiresAt = Date.now() + MAX_IDLE_MS; }

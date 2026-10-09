@@ -100,3 +100,15 @@ describe("wrapBridge", () => {
     expect(wrapped["unlock"]).toBe(unlock);
   });
 });
+
+it("registers a permission-refresh wrapper even when the window bridge property is read-only", async () => {
+  const { registerDesktopBridge, desktopBridge } = await import("../privilege-bridge");
+  let verified = false;
+  const original = Object.freeze({ commitAggregate: async () => verified ? {ok:true} : {ok:false,code:"EPRIVILEGE"} });
+  const fakeWindow = Object.defineProperty({}, "pos", { value:original,writable:false });
+  const wrapped = wrapBridge(original, async () => { verified=true;return true; });
+  const unregister = registerDesktopBridge("pos",wrapped);
+  expect((fakeWindow as {pos:typeof original}).pos).toBe(original);
+  await expect(desktopBridge("pos",original)!.commitAggregate()).resolves.toEqual({ok:true});
+  unregister();expect(desktopBridge("pos",original)).toBe(original);
+});

@@ -32,6 +32,8 @@ jobs:
           npm run verify:sqlserver-schema
           npm run verify:sync-registry
           node scripts/audit-supabase-install-order.cjs
+      - name: Updater lifecycle and release retention checks
+        run: node --test scripts/test-updater.cjs scripts/test-windows-publish.cjs scripts/test-update-history.cjs scripts/test-shutdown-sync.cjs
       - name: Lint
         run: npm run lint
       - name: Typecheck & build

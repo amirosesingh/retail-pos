@@ -306,7 +306,7 @@ export async function resolveRelayScope(caller: {
 export { claimsFromPayload };
 
 const allowed = (scope: RelayScope, flag: string | undefined) =>
-  !flag || scope.isSupervisor || scope.permissions[flag] === true;
+  !flag || scope.role === "admin" || scope.roleSlug === "admin" || scope.permissions[flag] === true;
 
 async function parentStore(child: string, id: unknown): Promise<string | null | undefined> {
   const parent = PARENT_OF[child];
@@ -389,7 +389,7 @@ async function authorizeProductOp(
   op: RelayOp,
   scope: RelayScope,
 ): Promise<{ ok: true; op: RelayOp } | RelayDenial> {
-  if (scope.isSupervisor) return { ok: true, op };
+  if (scope.role === "admin" || scope.roleSlug === "admin") return { ok: true, op };
   if (op.kind === "delete") {
     if (
       scope.permissions.can_bulk_edit_products !== true &&

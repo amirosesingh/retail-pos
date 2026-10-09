@@ -13,6 +13,7 @@ import { activePaymentTypes, usePaymentTypes } from "@/core/types/payment-types"
 import type { Payment, PaymentMethod } from "@/core/types/pos-types";
 
 type TenderDeps = {
+  canProcessSale?: () => boolean;
   /** Nothing rung up means nothing to charge. */
   hasLines: () => boolean;
   /** Read at the moment the dialog opens, to prefill the cash box. */
@@ -43,7 +44,7 @@ export function useTender(deps: TenderDeps) {
   const needsTenderRef = !!activeTender?.requiresReference && method !== "bank_transfer";
 
   function openPayment(preset?: PaymentMethod) {
-    if (!deps.hasLines()) return;
+    if (!deps.hasLines() || deps.canProcessSale?.() === false) return;
     if (preset) setMethod(preset);
     setTendered(Math.max(0, deps.getTotal()).toFixed(2));
     setPayOpen(true);

@@ -58,6 +58,9 @@ export type UpdateDiagnosis = {
 };
 
 type UpdateBridge = {
+  onClosingSync?: (callback: (state: { active: boolean; message?: string }) => void) => () => void;
+  updateHistory?: () => Promise<{ ok: boolean; error?: string; releases: Array<{ version: string; released: string; status: string; notes: string }> }>;
+  onUpdateSafety?: (check: () => boolean) => () => void;
   appVersion: () => Promise<string>;
   updateStatus: () => Promise<UpdateState>;
   checkForUpdates: () => Promise<UpdateState>;

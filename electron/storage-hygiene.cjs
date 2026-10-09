@@ -5,8 +5,7 @@
  *
  *   fresh install  -> nothing remembered
  *   version update -> identity + configuration kept, derived cache dropped
- *   uninstall      -> nothing left behind (handled by the NSIS installer,
- *                     `deleteAppDataOnUninstall`)
+ *   uninstall      -> business data and configuration preserved for recovery
  *
  * Everything the till must remember lives in a short, explicit list. Anything
  * else inside `userData` that matches a cache shape is disposable and is
@@ -43,7 +42,6 @@ const CACHE_DIRS = [
   "crashDumps",
   "component_crx_cache",
   "Dictionaries",
-  "logs",
 ];
 
 const isRequiredEntry = (name) => REQUIRED_ENTRIES.includes(name);

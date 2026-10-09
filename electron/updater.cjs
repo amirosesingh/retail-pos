@@ -16,13 +16,10 @@ const { spawn } = require("node:child_process");
 const { app, BrowserWindow, net } = require("electron");
 const netHttp = require("./net.cjs");
 
-const SIX_HOURS = 6 * 60 * 60 * 1000;
+
 
 /** Update folder used when nothing else is configured or baked in. */
 const DEFAULT_FEED_URL = "https://updatecms.luckycharmsdnbhd.com/pos-app/latest/";
-
-/** How many times a failed check or download is retried before giving up. */
-const ATTEMPTS = 3;
 
 let autoUpdater = null;
 let state = {
@@ -36,12 +33,31 @@ let state = {
   detail: null,
   code: null,
   url: null,
-  /** Installer fetched by the fallback path, run directly on restart. */
-  installerFile: null,
 };
-let timer = null;
+let started = false;
+let checkPromise = null;
+let downloadPromise = null;
+let installing = false;
+let installFailureHandler = () => {};
+const preferencesFile = () => path.join(app.getPath("userData"), "update-preferences.json");
+function preferences() { try { return JSON.parse(fs.readFileSync(preferencesFile(), "utf8")); } catch { return {}; } }
+function savePreferences(patch) {
+  const file = preferencesFile();
+  const temporary = file + ".tmp";
+  fs.writeFileSync(temporary, JSON.stringify({ ...preferences(), ...patch }));
+  fs.renameSync(temporary, file);
+}
+function log(level, ...values) {
+  const line = `${new Date().toISOString()} ${level} ${values.map(value => String(value)).join(" ")}\n`;
+  console[level === "error" ? "error" : "info"]("[updater]", ...values);
+  try {
+    const file = path.join(app.getPath("userData"), "updater.log");
+    if (fs.existsSync(file) && fs.statSync(file).size > 1024 * 1024) fs.renameSync(file, file + ".previous");
+    fs.appendFileSync(file, line);
+  } catch { /* logging never blocks trading */ }
+}
 let paused = false;
-let fallbackPromise = null;
+
 
 function cleanupFallbackInstallers(except = null) {
   let removed = 0;
@@ -66,6 +82,7 @@ function broadcast() {
 }
 
 function set(patch) {
+  if (patch.status && patch.status !== state.status) log("info", patch.status, patch.stage ?? "", patch.available ?? state.available ?? "");
   state = { ...state, ...patch };
   broadcast();
 }
@@ -118,10 +135,9 @@ function load() {
     autoUpdater = null;
     return null;
   }
-  // Checking, downloading and installing are separate operator decisions.
-  // This prevents a background check from consuming bandwidth or staging an
-  // installer when the terminal is in the middle of trading.
+  // The manager owns the automatic download so all callers share one promise.
   autoUpdater.autoDownload = false;
+  autoUpdater.logger = { info: (...args) => log("info", ...args), warn: (...args) => log("warn", ...args), error: (...args) => log("error", ...args), debug: (...args) => log("info", ...args) };
   autoUpdater.autoInstallOnAppQuit = false;
   // Reuse unchanged installer blocks; electron-updater falls back to the
   // full installer if the cache, blockmaps or range requests are unavailable.
@@ -138,81 +154,69 @@ function load() {
     set({ status: "checking", error: null, stage: null, detail: null, code: null }),
   );
   autoUpdater.on("update-not-available", () => set({ status: "current", percent: 0, error: null }));
-  autoUpdater.on("update-available", (info) =>
-    set({ status: "available", percent: 0, available: info?.version ?? null }),
-  );
-  autoUpdater.on("download-progress", (p) => set({ status: "downloading", percent: Math.round(p.percent || 0) }));
+  autoUpdater.on("update-available", (info) => {
+    if (preferences().blockedVersion === info?.version) {
+      set({ status: "unavailable", available: info.version, error: "This version was rolled back. Maintenance approval is required before retrying it." });
+      return;
+    }
+    set({ status: "available", percent: 0, available: info?.version ?? null });
+  });
+  autoUpdater.on("download-progress", (p) => set({ status: "downloading", percent: Math.round(p.percent || 0), transferred: p.transferred, total: p.total }));
   autoUpdater.on("update-downloaded", (info) =>
     set({ status: "ready", percent: 100, available: info?.version ?? null, error: null, stage: null }),
   );
   autoUpdater.on("error", (err) => {
     const raw = String(err?.message || err);
     const { code, friendly } = netHttp.explainNetworkError(raw);
-    const stage = state.status === "downloading" ? "download" : "check";
+    const stage = installing ? "install" : state.status === "downloading" ? "download" : "check";
     set({ status: "error", stage, code, detail: raw, error: friendly });
-    // A download that failed part-way is retried through our own network
-    // layer, which is the path the manifest already uses successfully.
-    if (stage === "download") void fallbackDownload();
+    if (stage === "install") { installing = false; installFailureHandler(); }
+
   });
   return autoUpdater;
 }
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function check() {
+/** One automatic check per launch; explicit Settings retries are coalesced. */
+function check() {
+  if (checkPromise) return checkPromise;
+  if (paused || installing || ["ready", "downloading"].includes(state.status)) return Promise.resolve(state);
   const updater = load();
-  if (!updater) return state;
-  if (paused) return state;
+  if (!updater) return Promise.resolve(state);
   if (!app.isPackaged) {
     set({ status: "unavailable", error: "Updates only run in the installed app." });
-    return state;
+    return Promise.resolve(state);
   }
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+  checkPromise = (async () => {
     try {
       await updater.checkForUpdates();
-      return state;
+      if (state.status === "available") await downloadUpdate();
     } catch (err) {
       const raw = String(err?.message || err);
       const { code, friendly } = netHttp.explainNetworkError(raw);
-      set({
-        status: "error",
-        stage: "check",
-        code,
-        detail: `${raw} (attempt ${attempt} of ${ATTEMPTS})`,
-        error: friendly,
-        url: manifestish(),
-      });
-      if (attempt < ATTEMPTS) await wait(attempt * 2000);
+      set({ status: "error", stage: "check", code, detail: raw, error: friendly, url: manifestish() });
     }
-  }
-  return state;
+    return state;
+  })().finally(() => { checkPromise = null; });
+  return checkPromise;
 }
 
-/** Download and verify the update, but never restart the till. */
-async function downloadUpdate() {
+/** electron-updater owns cache validation, differential download and full fallback. */
+function downloadUpdate() {
+  if (downloadPromise) return downloadPromise;
   const updater = load();
-  if (!updater) return state;
-  if (paused) return state;
-  if (state.status !== "available" && state.status !== "error") return state;
-  try {
-    set({ status: "downloading", percent: 0, error: null, stage: "download" });
-    await updater.downloadUpdate();
-  } catch (err) {
-    const raw = String(err?.message || err);
-    const { code, friendly } = netHttp.explainNetworkError(raw);
-    set({ status: "error", stage: "download", code, detail: raw, error: friendly });
-    await fallbackDownload();
-  }
-  return state;
-}
-
-/** Explicit operator choice: finish the verified download, then install. */
-async function downloadAndInstall() {
-  const downloaded = await downloadUpdate();
-  if (downloaded.status !== "ready") {
-    return { ok: false, error: downloaded.error || "The update did not finish downloading." };
-  }
-  return install();
+  if (!updater || paused || installing || !state.available || !["available", "error"].includes(state.status)) return Promise.resolve(state);
+  downloadPromise = (async () => {
+    try {
+      set({ status: "downloading", percent: 0, error: null, stage: "download" });
+      await updater.downloadUpdate();
+    } catch (err) {
+      const raw = String(err?.message || err);
+      const { code, friendly } = netHttp.explainNetworkError(raw);
+      set({ status: "error", stage: "download", code, detail: raw, error: friendly });
+    }
+    return state;
+  })().finally(() => { downloadPromise = null; });
+  return downloadPromise;
 }
 
 /** The address the check reads, used in error reports and the test button. */
@@ -227,60 +231,6 @@ function manifestish() {
 /** Direct installer address for a version on the configured feed. */
 function installerUrl(version) {
   return version ? rollbackUrl(version) : null;
-}
-
-/**
- * When the bundled downloader cannot finish, fetch the installer ourselves
- * with resume and retries, prove it came from us, and keep it for restart.
- */
-async function fallbackDownload() {
-  if (fallbackPromise) return fallbackPromise;
-  const version = state.available;
-  const url = installerUrl(version);
-  if (!version || !url) return state;
-  fallbackPromise = (async () => {
-    const file = path.join(os.tmpdir(), `pos-update-${version}.exe`);
-    cleanupFallbackInstallers(file);
-    for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
-      set({
-        status: "downloading",
-        percent: 0,
-        error: null,
-        stage: "download",
-        detail: `Retrying the download (${attempt} of ${ATTEMPTS})`,
-        url,
-      });
-      try {
-        await netHttp.downloadTo(url, file, {
-          resume: attempt > 1,
-          onProgress: (percent) => set({ status: "downloading", percent }),
-        });
-        const verified = await verifyInstaller(file, version);
-        if (!verified.ok) {
-          try { fs.rmSync(file, { force: true }); } catch { /* retry opens a fresh file */ }
-          set({ status: "error", stage: "verify", error: verified.error,
-            detail: `${verified.error} (attempt ${attempt} of ${ATTEMPTS})`, url });
-          if (attempt < ATTEMPTS) { await wait(attempt * 3000); continue; }
-          return state;
-        }
-        set({ status: "ready", percent: 100, error: null, stage: null, detail: null,
-          code: null, installerFile: file, available: version });
-        return state;
-      } catch (err) {
-        const raw = err instanceof Error ? err.message : String(err);
-        const { code, friendly } = netHttp.explainNetworkError(raw);
-        set({ status: "error", stage: "download", code, detail: raw, error: friendly, url });
-        if (attempt < ATTEMPTS) await wait(attempt * 3000);
-        else try { fs.rmSync(file, { force: true }); } catch { /* next launch cleans it */ }
-      }
-    }
-    return state;
-  })();
-  try {
-    return await fallbackPromise;
-  } finally {
-    fallbackPromise = null;
-  }
 }
 
 /** Contact the update folder and report exactly what the server answered. */
@@ -303,23 +253,19 @@ async function diagnose() {
 }
 
 function install() {
-  if (state.status !== "ready") return { ok: false, error: "No update is ready." };
-  // Installer fetched by the fallback path: run it directly. NSIS reinstalls
-  // in place, so activation, settings and the local database stay put.
-  if (state.installerFile && fs.existsSync(state.installerFile)) {
-    try {
-      spawn(state.installerFile, ["--updated", "/S", "--force-run"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
-    } catch (err) {
-      const raw = String(err?.message || err);
-      set({ status: "error", stage: "install", detail: raw, error: "The installer could not be started." });
-      return { ok: false, error: "The installer could not be started." };
-    }
-    setTimeout(() => app.quit(), 1500);
+  if (installing) return { ok: true };
+  if (state.status !== "ready" || !autoUpdater) return { ok: false, error: "No update is ready." };
+  installing = true;
+  try {
+    // Supported NSIS lifecycle. Errors emitted synchronously are reflected in state.
+    autoUpdater.quitAndInstall(true, true);
+    if (state.status === "error") throw new Error(state.error);
     return { ok: true };
+  } catch (error) {
+    installing = false;
+    set({ status: "error", stage: "install", error: String(error?.message || error) });
+    return { ok: false, error: state.error };
   }
-  if (!autoUpdater) return { ok: false, error: "No update is ready." };
-  setImmediate(() => autoUpdater.quitAndInstall(true, true));
-  return { ok: true };
 }
 
 /** Address a counter can open in a browser when everything else failed. */
@@ -327,17 +273,13 @@ const downloadPage = () => installerUrl(state.available);
 
 
 function start() {
-  if (paused) return;
-  cleanupFallbackInstallers(state.installerFile);
+  if (paused || started) return;
+  started = true;
   void check();
-  timer = setInterval(() => void check(), SIX_HOURS);
-  if (timer.unref) timer.unref();
 }
 
-function stop() {
-  if (timer) clearInterval(timer);
-  timer = null;
-}
+// No periodic update polling. Downloads remain staged in electron-updater's cache.
+function stop() {}
 
 /** Safe mode calls this so a broken build cannot keep reinstalling itself. */
 function pause() {
@@ -349,7 +291,8 @@ function pause() {
  * A launch that reached the till proves the build works, so automatic updates
  * come back on their own — a single bad start can no longer pause them for ever.
  */
-function resume() {
+function resume(clearBlockedVersion = false) {
+  if (clearBlockedVersion) savePreferences({ blockedVersion: null });
   if (!paused) return { ok: true, resumed: false };
   paused = false;
   set({ status: "idle", error: null });
@@ -403,27 +346,44 @@ function download(url, destination, onProgress) {
 /** Read a small text file off the update feed; null when it is not published. */
 function fetchText(url) {
   return new Promise((resolve) => {
+    let timer;
+    const finish = value => { clearTimeout(timer); resolve(value); };
     try {
       const request = net.request({ url, redirect: "follow" });
+      timer = setTimeout(() => { finish(null); request.abort(); }, 15000);
       request.on("response", (response) => {
         if (response.statusCode !== 200) {
           response.resume?.();
-          resolve(null);
+          finish(null);
           return;
         }
         let body = "";
+        let bytes = 0;
         response.on("data", (chunk) => {
+          bytes += chunk.length;
+          if (bytes > 1024 * 1024) { finish(null); request.abort(); return; }
           body += chunk.toString("utf8");
         });
-        response.on("end", () => resolve(body));
-        response.on("error", () => resolve(null));
+        response.on("end", () => finish(body));
+        response.on("error", () => finish(null));
       });
-      request.on("error", () => resolve(null));
+      request.on("error", () => finish(null));
       request.end();
     } catch {
-      resolve(null);
+      finish(null);
     }
   });
+}
+
+async function history() {
+  try {
+    const target = feed();
+    if (target?.provider !== 'generic') return { ok: false, releases: [], error: 'Release history is unavailable for this feed.' };
+    const base = target.url.replace(/\/+$/, '').replace(/\/latest$/, '');
+    const raw = await fetchText(`${base}/releases.json`);
+    if (!raw) return { ok: false, releases: [], error: 'Release history could not be loaded. Your current version remains available.' };
+    return { ok: true, releases: require('./update-history.cjs').parseHistory(raw) };
+  } catch { return { ok: false, releases: [], error: 'The release history is invalid.' }; }
 }
 
 /**
@@ -480,7 +440,7 @@ function authenticodeSigner(file) {
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          `$s = Get-AuthenticodeSignature -LiteralPath ${JSON.stringify(file)}; ` +
+          `$s = Get-AuthenticodeSignature -LiteralPath ${"'" + file.replaceAll("'", "''") + "'"}; ` +
             `Write-Output ($s.Status.ToString() + '|' + $s.SignerCertificate.Subject)`,
         ],
         { windowsHide: true },
@@ -502,12 +462,9 @@ function authenticodeSigner(file) {
 }
 
 /**
- * Nothing downloaded from the feed is executed until it proves it came from
- * us. A published sha512 is the strongest proof; a valid Authenticode
- * signature (matching POS_UPDATE_PUBLISHER when that is configured) is the
- * fallback. If neither can be established the file is deleted, not run —
- * transport security alone is not enough to justify running an installer
- * silently as the logged-in operator.
+ * Maintenance rollback requires both the published SHA512 and a valid
+ * Authenticode signature matching the configured publisher. Routine updates
+ * use electron-updater's supported verification and installation lifecycle.
  */
 async function verifyInstaller(file, version) {
   const expected = await publishedHash(version);
@@ -521,7 +478,7 @@ async function verifyInstaller(file, version) {
         ok: false,
         error: "The downloaded installer does not match the published release. It was discarded.",
       };
-    return { ok: true, proof: "checksum" };
+    // A checksum proves bytes; Windows must also verify the publisher.
   }
 
   const signature = await authenticodeSigner(file);
@@ -535,8 +492,15 @@ async function verifyInstaller(file, version) {
       ok: false,
       error: `This installer is not validly signed (${signature.status}). It was discarded.`,
     };
+  let publishers = [];
+  try {
+    const config = require("js-yaml").load(fs.readFileSync(path.join(process.resourcesPath, "app-update.yml"), "utf8"));
+    publishers = Array.isArray(config.publisherName) ? config.publisherName : config.publisherName ? [config.publisherName] : [];
+  } catch { /* optional environment pin below */ }
   const publisher = (process.env.POS_UPDATE_PUBLISHER || "").trim();
-  if (publisher && !signature.subject.toLowerCase().includes(publisher.toLowerCase()))
+  if (publisher) publishers = [publisher];
+  if (!publishers.length) return { ok: false, error: "Maintenance rollback requires a configured trusted publisher." };
+  if (!publishers.some(name => signature.subject.split(/,\s*/).some(part => part.toLowerCase() === `cn=${String(name).toLowerCase()}`)))
     return {
       ok: false,
       error: "This installer is signed by an unexpected publisher. It was discarded.",
@@ -550,7 +514,7 @@ async function verifyInstaller(file, version) {
  * activation mirror, settings, local database pointer — is left alone.
  */
 async function rollback(version, onProgress) {
-  if (!version) return { ok: false, error: "No earlier version has been recorded yet." };
+  if (!/^\d+\.\d+\.\d+$/.test(String(version))) return { ok: false, error: "A stable earlier version is required." };
   if (process.platform !== "win32")
     return { ok: false, error: "Roll back is only supported on Windows." };
   const url = rollbackUrl(version);
@@ -571,6 +535,7 @@ async function rollback(version, onProgress) {
     return { ok: false, error: verified.error };
   }
   try {
+    savePreferences({ blockedVersion: app.getVersion() });
     spawn(file, ["/S"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   } catch (err) {
     return { ok: false, error: `Could not start the installer: ${err?.message || err}` };
@@ -581,6 +546,8 @@ async function rollback(version, onProgress) {
 
 
 module.exports = {
+  history,
+  onInstallFailure: (handler) => { installFailureHandler = handler; },
   start,
   stop,
   pause,
@@ -588,7 +555,6 @@ module.exports = {
   isPaused,
   check,
   downloadUpdate,
-  downloadAndInstall,
   install,
   rollback,
   diagnose,

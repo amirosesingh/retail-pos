@@ -12,7 +12,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { APP_VERSION, useAppUpdates } from "@/lib/app-updates";
+import { APP_VERSION, useAppUpdates, updateBridge } from "@/lib/app-updates";
 import { useAndroidUpdates } from "@/platforms/mobile/android-updates";
 import { isAndroid, isNative } from "@/platform-config/platform";
 import { MANIFEST_URL } from "@/lib/update-manifest";
@@ -122,6 +122,16 @@ function DesktopUpdateCard() {
   } = useAppUpdates();
 
   const [copied, setCopied] = useState(false);
+  const [history, setHistory] = useState<Awaited<ReturnType<NonNullable<NonNullable<ReturnType<typeof updateBridge>>["updateHistory"]>>> | null>(null);
+  useEffect(() => {
+    if (!supported) return;
+    let active = true;
+    const read = updateBridge()?.updateHistory;
+    if (read) void read().then(result => { if (active) setHistory(result); }).catch(() => {
+      if (active) setHistory({ ok: false, releases: [], error: "Release history could not be loaded." });
+    });
+    return () => { active = false; };
+  }, [supported]);
 
   const version = state.version || APP_VERSION;
   const busy = installing || manifestChecking || state.status === "checking" || state.status === "downloading";
@@ -138,6 +148,13 @@ function DesktopUpdateCard() {
 
   return (
     <div className="space-y-4">
+      {supported && history && <TileGroup title="Retained Windows releases">
+        {!history.ok && <TileRow label="History unavailable" hint={history.error} />}
+        {history.ok && history.releases.length === 0 && <TileRow label="No retained releases listed yet" />}
+        {history.releases.map(release => <TileRow key={release.version} label={`v${release.version}`}
+          hint={[release.released ? new Date(release.released).toLocaleDateString() : "", release.notes].filter(Boolean).join(" · ")}
+          value={release.version === version ? "Installed" : "Retained"} />)}
+      </TileGroup>}
       <TileGroup title="Version">
         <TileRow
           icon={supported ? <Monitor className="size-4" /> : <Globe className="size-4" />}
@@ -232,7 +249,7 @@ function DesktopUpdateCard() {
         </Button>
         {supported && state.status === "ready" && (
           <Button className="touch-target" disabled={installing} onClick={() => void install()}>
-            {installing ? "Synchronizing and preparing installation…" : "Restart and install"}
+            {installing ? "Synchronizing and preparing installation…" : "Update & Restart"}
           </Button>
         )}
         {supported && (state.status === "available" || (state.status === "error" && !!state.available)) && (
@@ -243,7 +260,7 @@ function DesktopUpdateCard() {
               disabled={busy}
               onClick={() => void download()}
             >
-              Download only
+              Retry download
             </Button>
             <Button
               className="touch-target"
@@ -295,7 +312,7 @@ function DesktopUpdateCard() {
       {installError && <p role="alert" className="text-sm text-destructive">{installError}</p>}
       <p className="px-1 text-xs text-muted-foreground">
         {supported
-          ? "Download only to stage the update, or download and install to synchronize and restart. Your open shift, logs, terminal registration and local database are preserved."
+          ? "Updates download automatically in the background. Choose Update & Restart when ready, or continue working and install on the next safe restart. Your open shift, logs, terminal registration and local database are preserved."
           : "The browser build always serves the newest files. Downloads here are for the Windows till installer."}
       </p>
     </div>

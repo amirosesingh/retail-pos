@@ -1,0 +1,402 @@
+[
+  {
+    "id": "register",
+    "label": "Sales / Register POS",
+    "routes": [
+      "/"
+    ],
+    "keys": [
+      "can_process_sale",
+      "can_give_discount",
+      "can_void_item",
+      "can_process_refund",
+      "can_process_exchange",
+      "can_send_whatsapp_bill",
+      "can_delete_line",
+      "can_reduce_qty",
+      "can_discount_bill",
+      "can_override_price",
+      "can_void_cart",
+      "can_no_sale_open",
+      "can_edit_tenders",
+      "can_apply_member_discount",
+      "can_redeem_points"
+    ]
+  },
+  {
+    "id": "holds",
+    "label": "Held tickets",
+    "routes": [
+      "/holds"
+    ],
+    "keys": [
+      "can_hold_cart",
+      "can_view_held_orders",
+      "can_reopen_held_order",
+      "can_discard_held_order"
+    ]
+  },
+  {
+    "id": "shifts",
+    "label": "Shifts & cash drawer",
+    "routes": [
+      "/shifts"
+    ],
+    "keys": [
+      "can_open_drawer",
+      "can_close_drawer",
+      "can_view_drawer_balance",
+      "can_open_shift",
+      "can_close_shift",
+      "can_bypass_shift_lock",
+      "can_shift_cash_count",
+      "can_shift_expected_cash_view",
+      "can_shift_counted_cash_view",
+      "can_shift_variance_view",
+      "can_shift_financial_summary_view",
+      "can_shift_payment_breakdown_view",
+      "can_shift_closing_history_view",
+      "can_shift_report_reprint",
+      "can_manage_other_shifts",
+      "can_shift_variance_approve",
+      "can_shift_cash_recount"
+    ]
+  },
+  {
+    "id": "receipts",
+    "label": "Bill search & history",
+    "routes": [
+      "/receipts"
+    ],
+    "keys": [
+      "can_reprint_bill"
+    ]
+  },
+  {
+    "id": "bookings",
+    "label": "Bookings & services",
+    "routes": [
+      "/bookings"
+    ],
+    "keys": [
+      "can_manage_bookings",
+      "can_create_booking",
+      "can_collect_booking",
+      "can_cancel_booking"
+    ]
+  },
+  {
+    "id": "pos-general-booking",
+    "label": "Standard bookings",
+    "routes": [
+      "/pos/general-booking"
+    ],
+    "keys": [
+      "can_manage_bookings",
+      "can_create_booking",
+      "can_collect_booking",
+      "can_cancel_booking"
+    ]
+  },
+  {
+    "id": "pos-racket-service",
+    "label": "Racket jobs",
+    "routes": [
+      "/pos/racket-service"
+    ],
+    "keys": [
+      "can_manage_bookings",
+      "can_create_booking",
+      "can_collect_booking",
+      "can_cancel_booking"
+    ]
+  },
+  {
+    "id": "inventory",
+    "label": "Inventory catalogue",
+    "routes": [
+      "/inventory"
+    ],
+    "keys": [
+      "can_view_inventory",
+      "can_edit_product_price",
+      "can_add_new_product",
+      "can_edit_product_details",
+      "can_link_product_barcode",
+      "can_archive_product",
+      "can_restore_product",
+      "can_publish_product",
+      "can_manage_categories",
+      "can_bulk_edit_products",
+      "can_merge_products"
+    ]
+  },
+  {
+    "id": "stock",
+    "label": "Stock operations",
+    "routes": [
+      "/stock-operations"
+    ],
+    "keys": [
+      "can_adjust_stock"
+    ]
+  },
+  {
+    "id": "purchasing",
+    "label": "Purchasing",
+    "routes": [
+      "/purchasing"
+    ],
+    "keys": [
+      "can_receive_purchase_order"
+    ]
+  },
+  {
+    "id": "receiving",
+    "label": "Goods receiving",
+    "routes": [
+      "/receiving"
+    ],
+    "keys": [
+      "can_receive_purchase_order"
+    ]
+  },
+  {
+    "id": "suppliers",
+    "label": "Suppliers",
+    "routes": [
+      "/suppliers"
+    ],
+    "keys": [
+      "can_receive_purchase_order"
+    ]
+  },
+  {
+    "id": "requests",
+    "label": "Stock requests",
+    "routes": [
+      "/requests"
+    ],
+    "keys": [
+      "can_create_transfer",
+      "can_receive_transfer",
+      "can_approve_transfer"
+    ]
+  },
+  {
+    "id": "transfers",
+    "label": "Stock transfers",
+    "routes": [
+      "/transfers"
+    ],
+    "keys": [
+      "can_create_transfer",
+      "can_receive_transfer",
+      "can_approve_transfer"
+    ]
+  },
+  {
+    "id": "approvals",
+    "label": "Pending approvals",
+    "routes": [
+      "/approvals"
+    ],
+    "keys": [
+      "can_create_transfer",
+      "can_receive_transfer",
+      "can_approve_transfer"
+    ]
+  },
+  {
+    "id": "verifications",
+    "label": "Verification log",
+    "routes": [
+      "/verifications"
+    ],
+    "keys": [
+      "can_create_transfer",
+      "can_receive_transfer",
+      "can_approve_transfer"
+    ]
+  },
+  {
+    "id": "members",
+    "label": "Members & loyalty",
+    "routes": [
+      "/members"
+    ],
+    "keys": [
+      "can_add_member",
+      "can_edit_member_points",
+      "can_view_member_history"
+    ]
+  },
+  {
+    "id": "locations",
+    "label": "Locations & warehouses",
+    "routes": [
+      "/stores"
+    ],
+    "keys": [
+      "can_manage_locations"
+    ]
+  },
+  {
+    "id": "all-shops",
+    "label": "All shops",
+    "routes": [
+      "/all-shops"
+    ],
+    "keys": [
+      "can_manage_locations"
+    ]
+  },
+  {
+    "id": "dashboard",
+    "label": "Live dashboard",
+    "routes": [
+      "/dashboard"
+    ],
+    "keys": [
+      "can_view_dashboard"
+    ]
+  },
+  {
+    "id": "analytics",
+    "label": "Analytics",
+    "routes": [
+      "/analytics"
+    ],
+    "keys": [
+      "can_view_dashboard"
+    ]
+  },
+  {
+    "id": "reports",
+    "label": "Reports",
+    "routes": [
+      "/reports"
+    ],
+    "keys": [
+      "can_view_sales_reports",
+      "can_export_reports"
+    ]
+  },
+  {
+    "id": "audit",
+    "label": "Audit & activity",
+    "routes": [
+      "/audit"
+    ],
+    "keys": [
+      "can_view_audit_trail"
+    ]
+  },
+  {
+    "id": "promotions",
+    "label": "Promotions & discounts",
+    "routes": [
+      "/promotions"
+    ],
+    "keys": [
+      "can_manage_promotions"
+    ]
+  },
+  {
+    "id": "coupons",
+    "label": "Coupon campaigns",
+    "routes": [
+      "/coupons"
+    ],
+    "keys": [
+      "can_manage_promotions"
+    ]
+  },
+  {
+    "id": "staff",
+    "label": "Staff & authorization",
+    "routes": [
+      "/staff"
+    ],
+    "keys": [
+      "can_manage_staff"
+    ]
+  },
+  {
+    "id": "admin",
+    "label": "Administration",
+    "routes": [
+      "/admin"
+    ],
+    "keys": [
+      "can_manage_staff"
+    ]
+  },
+  {
+    "id": "terminals",
+    "label": "Windows terminal activation",
+    "routes": [
+      "/settings/terminals"
+    ],
+    "keys": [
+      "can_manage_terminals"
+    ]
+  },
+  {
+    "id": "settings-mobile-terminals",
+    "label": "Mobile terminal activation",
+    "routes": [
+      "/settings/mobile-terminals"
+    ],
+    "keys": [
+      "can_manage_terminals"
+    ]
+  },
+  {
+    "id": "settings-admin-terminals",
+    "label": "Admin web activation",
+    "routes": [
+      "/settings/admin-terminals"
+    ],
+    "keys": [
+      "can_manage_terminals"
+    ]
+  },
+  {
+    "id": "database",
+    "label": "Database & synchronization",
+    "routes": [
+      "/settings/database"
+    ],
+    "keys": [
+      "can_manage_sync_backup"
+    ]
+  },
+  {
+    "id": "settings",
+    "label": "Settings",
+    "routes": [
+      "/settings"
+    ],
+    "keys": [
+      "can_access_pos_settings",
+      "can_customize_display"
+    ]
+  },
+  {
+    "id": "display",
+    "label": "Customer display",
+    "routes": [
+      "/display"
+    ],
+    "keys": []
+  },
+  {
+    "id": "alerts",
+    "label": "Alerts",
+    "routes": [
+      "/alerts"
+    ],
+    "keys": []
+  }
+]

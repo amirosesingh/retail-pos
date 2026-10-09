@@ -1,3 +1,4 @@
+import { effectivePagePermissions } from "@/lib/permission-pages";
 /**
  * Fast path for working out a caller's branch and permissions.
  *
@@ -21,7 +22,7 @@ export function normalisePermissions(raw: unknown): Record<string, boolean> {
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     out[key] = value === true || value === "true";
   }
-  return out;
+  return effectivePagePermissions(out);
 }
 
 const str = (v: unknown): string | null =>

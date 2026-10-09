@@ -371,6 +371,14 @@ function flushBatch(): Promise<void> {
 export async function flushPendingAuditLogs(): Promise<void> {
   if (flushTimer) { clearTimeout(flushTimer); flushTimer=null; }
   load();
+  const desktop = localDb();
+  if (desktop?.database?.getState) {
+    const state = await desktop.database.getState();
+    // Setup/login activity is already durable in the renderer journal. A new
+    // unconfigured terminal must not be trapped waiting for a database it has
+    // never had. Do not mark these entries synced; replay after configuration.
+    if (state.configured === false) { persist(); return; }
+  }
   for (;;) {
     const before=logs.filter(row=>!row.synced_to_cloud).length;
     if (!before) return;
@@ -399,10 +407,11 @@ async function flushBatchUnderLock() {
   // the branch experienced — even after days offline.
   const pending = replayOrder(logs.filter((l) => !l.synced_to_cloud));
   setSync({ online, pending: pending.length });
-  if (!online || !pending.length) return;
+  const desktop = localDb();
+  if ((!online && !desktop) || !pending.length) return;
   // Nobody signed in: the central journal would reject the write anyway.
   // The entries stay queued locally and go up on the next signed-in flush.
-  if (!hasSignedInIdentity()) return;
+  if (!desktop && !hasSignedInIdentity()) return;
 
   // Push in batches to the cloud audit_logs table; failures stay pending.
   const slice = pending.slice(0, BATCH);

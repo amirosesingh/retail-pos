@@ -56,12 +56,14 @@ export type LocalPinResult =
   | { ok: false; reason: string; error: string };
 
 /** Check a PIN against the local database. */
-export async function verifyLocalPin(username: string, pin: string): Promise<LocalPinResult> {
+export async function verifyLocalPin(username: string, pin: string, signIn = false): Promise<LocalPinResult> {
   const bridge = localDb();
   if (!bridge?.verifyStaffPin)
     return { ok: false, reason: "unavailable", error: "No local database on this device" };
   try {
-    const res = await bridge.verifyStaffPin(username, pin);
+    const verify = signIn ? bridge.signInStaffPin : bridge.verifyStaffPin;
+    if (!verify) return { ok: false, reason: "unavailable", error: "Update the desktop application to sign in locally." };
+    const res = await verify(username, pin);
     if (res?.ok && res.staff)
       return {
         ok: true,

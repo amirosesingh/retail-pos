@@ -108,6 +108,7 @@ const CHANNEL_LEVELS = {
   "staff:roster": OPEN,
   "staff:cache-roster": OPEN,
   "staff:verify-pin": OPEN,
+  "staff:sign-in": OPEN,
   "staff:enroll": OPEN,
   // Pre-login bridge: the hosted endpoint still verifies the PIN and applies
   // its central brute-force throttle; Electron merely keeps expected 401s out
@@ -135,6 +136,7 @@ const CHANNEL_LEVELS = {
   "health:collect-diagnostics": OPEN,
   "health:log-connection": OPEN,
   "update:status": OPEN,
+  "update:history": OPEN,
   "update:check": OPEN,
   "update:diagnose": OPEN,
   "update:download-page": OPEN,
@@ -185,9 +187,9 @@ const CHANNEL_LEVELS = {
   "local:rollback": SUPERVISOR,
   "db:set-branch": SUPERVISOR,
   "branding:write": SUPERVISOR,
-  "update:install": SUPERVISOR,
-  "update:download": SUPERVISOR,
-  "update:download-install": SUPERVISOR,
+  "update:install": OPEN,
+  "update:download": OPEN,
+  "update:download-install": OPEN,
   "health:resume-updates": SUPERVISOR,
 
   /* --- admin: backend, company, database, identity, credentials, audit --- */
@@ -385,6 +387,10 @@ function levelFor(channel, args = []) {
 let firstRun = () => false;
 
 function refusal(level, channel, args = []) {
+  if (channel === "business:commit-aggregate") return {
+    ok: false, code: "EPRIVILEGE", stage: "authorize",
+    error: "Your verified POS account does not have permission for this transaction. Sign in again to refresh your permissions, or ask an administrator to review them.",
+  };
   if (channel === "drawer:open") return {
     ok: false,
     code: "EPRIVILEGE",

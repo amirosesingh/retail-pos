@@ -1,3 +1,4 @@
+import { pageForRoute, pageEnabled } from "./permission-pages";
 /**
  * Admin-controlled screen visibility.
  *
@@ -349,8 +350,11 @@ export function useVisibility() {
   const visible = useCallback((key: string) => isVisibleFor(hidden, key, role), [hidden, role]);
 
   const visibleRoute = useCallback(
-    (path: string) => isRouteVisibleFor(hidden, path, role),
-    [hidden, role],
+    (path: string) => {
+      const page = pageForRoute(path);
+      return (isAdmin || !page || pageEnabled(user?.permissions ?? {}, page.id)) && isRouteVisibleFor(hidden, path, role);
+    },
+    [hidden, role, user?.permissions, isAdmin],
   );
 
   const setHidden = useCallback(

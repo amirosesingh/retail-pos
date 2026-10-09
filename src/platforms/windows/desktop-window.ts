@@ -2,6 +2,7 @@
  * Renderer side of the in-window title bar buttons. In the browser build there
  * is no bridge, so the hook reports unsupported and the strip stays hidden.
  */
+import { setUpdateTicketBusy } from "@/lib/update-safety";
 import { useCallback, useEffect, useState } from "react";
 
 type WindowBridge = {
@@ -21,6 +22,7 @@ const bridge = (): WindowBridge | null =>
 let ticketDirty = false;
 export const setTicketDirty = (dirty: boolean) => {
   ticketDirty = dirty;
+  setUpdateTicketBusy(dirty);
 };
 export const isTicketDirty = () => ticketDirty;
 
