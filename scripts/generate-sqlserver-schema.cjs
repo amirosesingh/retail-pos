@@ -546,6 +546,10 @@ const installer = [
   validation,
 ].join("\n\n");
 fs.writeFileSync(path.join(outputDir, "retail-pos-local-database.sql"), `${installer}\n`);
+// Reuse the Settings download wrapper: one guarded, fail-fast batch that
+// upgrades the selected database without the fresh installer's USE statements.
+const { migrationBundleSql } = require("../electron/db/installer-source.cjs");
+fs.writeFileSync(path.join(outputDir, "retail-pos-local-update.sql"), migrationBundleSql(applicationVersion));
 console.log(
   `SQL Server schema: ${tables.length} domain tables, ${tables.reduce((n, t) => n + t.columns.length, 0)} columns`,
 );

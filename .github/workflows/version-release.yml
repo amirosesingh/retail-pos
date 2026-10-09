@@ -50,7 +50,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json src/version.ts database/sqlserver/retail-pos-local-database.sql
+          git add package.json package-lock.json src/version.ts database/sqlserver/retail-pos-local-database.sql database/sqlserver/retail-pos-local-update.sql
           if ! git diff --cached --quiet; then
             git commit -m "chore: release $tag [release]"
           fi

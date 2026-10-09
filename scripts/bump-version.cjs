@@ -63,4 +63,6 @@ const installer = fs.readFileSync(installerPath, "utf8")
   .replace(/N'\d+\.\d+\.\d+' AS application_version/, `N'${pkg.version}' AS application_version`)
   .replace(/PRINT N'Retail POS \d+\.\d+\.\d+:/, `PRINT N'Retail POS ${pkg.version}:`);
 fs.writeFileSync(installerPath, installer);
+const { migrationBundleSql } = require("../electron/db/installer-source.cjs");
+fs.writeFileSync(path.join(root, "database", "sqlserver", "retail-pos-local-update.sql"), migrationBundleSql(pkg.version));
 process.stdout.write(`${pkg.version}\n`);

@@ -27,11 +27,13 @@ Closing Electron first saves buffered activity, drains accepted local writes and
 
 ## Local SQL Server setup or upgrade
 
-Close the POS application and back up an existing database. Run the whole `database/sqlserver/retail-pos-local-database.sql` in SSMS with an account allowed to create a database and modify its schema. Keep the `GO` batch separators.
+For an **existing local database**, close the POS application, take a backup, select your configured POS database in SSMS, and run the whole `database/sqlserver/retail-pos-local-update.sql`. This generated file uses the same wrapper as Settings downloads. It never switches databases, rejects system and unrelated populated databases, skips recorded migrations, and stops on the first error with rollback of the failing batch. Earlier successful batches remain applied and the update can be rerun. No business rows are deleted. Width repairs reject oversized values instead of truncating them. Archive flags are intentionally repaired according to the automatic archive setting.
+
+For a **fresh POS_Local installation**, run the whole `database/sqlserver/retail-pos-local-database.sql` in SSMS with an account allowed to create a database and modify its schema. Keep the `GO` batch separators.
 
 It creates and selects **POS_Local**, installs the 70 domain tables and local infrastructure, applies all numbered local upgrades, repairs missing store-group parents before enforcing their foreign key, and verifies all 1,183 domain columns, three local member-verification compatibility columns, and migration versions. It also includes change tracking, synchronization state and the local staff/member directory support. Existing group names are preserved; missing group placeholders are refreshed by cloud synchronization.
 
-If your configured local database has another name, replace every `POS_Local` occurrence in a copy of the installer before running it. Then use that same database name in the application's connection settings. This script is for Microsoft SQL Server, not SQLite or Supabase.
+For a different database name, create and select that empty database, then run `retail-pos-local-update.sql`. Use the same database name in the application's connection settings. These scripts are for Microsoft SQL Server, not SQLite or Supabase.
 
 Check every execution error and the final table, column and migration results. A later validation result does not override an earlier failed batch.
 

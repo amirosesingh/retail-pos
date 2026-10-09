@@ -116,3 +116,9 @@ test('downloaded update is one fail-fast batch with guarded migrations and no da
   assert.ok(!/^\s*USE\s+/im.test(sql));
   assert.ok(!/\b(?:DELETE FROM|TRUNCATE TABLE|DROP TABLE|DROP COLUMN)\b/i.test(sql));
 });
+
+test('published local update matches the Settings download and latest migrations',()=>{
+  const version=JSON.parse(readFileSync('package.json','utf8')).version;
+  const published=readFileSync('database/sqlserver/retail-pos-local-update.sql','utf8').replaceAll('\r\n','\n');
+  assert.equal(published,migrationBundleSql(version).replaceAll('\r\n','\n'));
+});
