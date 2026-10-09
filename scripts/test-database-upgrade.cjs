@@ -34,6 +34,31 @@ test('canonical installer matches the current generated schema and every migrati
   assert.match(sections.schema,/\[is_verified\] bit/);
 });
 
+test('purchase order width repair guards data before rebuilding scoped indexes',()=>{
+  const sections=installerSections();
+  const repair=sections.migrations.find(m=>m.version===14);
+  assert.ok(repair,'existing installations need a new migration version');
+  const sql=repair.sql;
+  const registry=JSON.parse(readFileSync('database/sqlserver/schema-registry.json','utf8'));
+  const table=registry.tables.find(t=>t.sqlServerTable==='purchase_orders');
+  for(const name of ['po_number','store_id']) {
+    const column=table.columns.find(c=>c.sqlServerColumn===name);
+    assert.equal(column.sqlServerType,'nvarchar(128)');
+    assert.ok(sql.includes(`ALTER COLUMN ${name} ${column.sqlServerType}${column.nullable?' NULL':' NOT NULL'}`));
+    assert.ok(sql.includes(`DATALENGTH(${name})>256`));
+  }
+  assert.match(sql,/WITH \(TABLOCKX, HOLDLOCK\)/);
+  assert.ok(sql.indexOf('THROW 51014')<sql.indexOf('DROP INDEX'));
+  assert.ok(sql.indexOf('BEGIN TRANSACTION')<sql.indexOf('DATALENGTH'));
+  assert.ok(sql.indexOf('DROP INDEX [UQ_purchase_orders_0]')<sql.indexOf('ALTER COLUMN po_number'));
+  assert.match(sql,/CREATE UNIQUE INDEX \[UQ_purchase_orders_0\].*\(\[store_id\],\[po_number\]\) WHERE \[store_id\] IS NOT NULL/);
+  assert.match(sql,/CREATE INDEX \[IX_purchase_orders_store_id\]/);
+  assert.match(sql,/BEGIN CATCH\s+IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;\s+THROW;/);
+  assert.ok(sql.indexOf('INSERT INTO dbo.pos_schema_migrations')>sql.indexOf('CREATE UNIQUE INDEX'));
+  assert.match(sections.validation,/WHERE version = 14/);
+  assert.doesNotMatch(sql,/\b(?:UPDATE|DELETE|TRUNCATE)\s+dbo\./i);
+});
+
 function connection({applied=true,fail=false,deny=false}={}) {
   const calls=[];let commits=0;let rollbacks=0;
   const pool={request:()=>({input(){return this;},async query(){return {recordset:[{applied}]};},async batch(sql){calls.push(sql);if(deny)throw new Error('Wrong database');}})};

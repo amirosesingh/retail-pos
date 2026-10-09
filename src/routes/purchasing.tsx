@@ -71,7 +71,6 @@ import { canEditPosted, nextStockRef } from "@/lib/stock-ref";
 import { ReceivingRecordView } from "@/platforms/web/components/pos/ReceivingRecordView";
 import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
 import { subscribeDataChange } from "@/lib/sync-engine";
-import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { IMPORT_HEADERS } from "@/lib/product-import";
 
 /** Sentinel for "no value picked" — Radix selects cannot hold an empty value. */
@@ -359,7 +358,6 @@ function Purchasing() {
     () => (statusFilter === "all" ? history : history.filter((h) => h.status === statusFilter)),
     [history, statusFilter],
   );
-  const historyPagination = usePagination(visibleHistory);
 
   const buildInvoice = (
     status: "draft" | "posted",
@@ -1111,7 +1109,7 @@ function Purchasing() {
                 }}
               />
 
-              <Table>
+              <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Barcode</TableHead>
@@ -1125,10 +1123,10 @@ function Purchasing() {
                 </TableHeader>
                 <TableBody>
                   {lines.map((l) => (
-                    <TableRow key={l.id}>
+                    <TableRow key={l.id} summaryValues={{ Units: l.qty, Amount: l.qty * l.cost }}>
                       <TableCell className="numeric">{l.barcode}</TableCell>
                       <TableCell className="font-medium">{l.name}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right" data-sort-value={l.cost}>
                         <Input
                           className="numeric h-9 text-right"
                           value={l.cost}
@@ -1138,7 +1136,7 @@ function Purchasing() {
                       <TableCell className="numeric text-right text-muted-foreground">
                         {money(l.price)}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right" data-sort-value={l.qty}>
                         <Input
                           className="numeric h-9 text-right"
                           value={l.qty}
@@ -1368,7 +1366,7 @@ function Purchasing() {
             </div>
           </div>
           <Separator />
-          <Table>
+          <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
             <TableHeader>
               <TableRow>
                 <TableHead>Reference</TableHead>
@@ -1386,8 +1384,8 @@ function Purchasing() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {historyPagination.pageItems.map((h) => (
-                <TableRow key={h.id}>
+              {visibleHistory.map((h) => (
+                <TableRow key={h.id} summaryValues={{ Items: h.lines.length, Units: units(h), Amount: h.totalCost }}>
                   <TableCell className="numeric font-medium">{h.reference ?? "—"}</TableCell>
                   <TableCell>
                     <Badge
@@ -1497,17 +1495,6 @@ function Purchasing() {
               )}
             </TableBody>
           </Table>
-          <TablePagination
-            page={historyPagination.page}
-            pageCount={historyPagination.pageCount}
-            pageSize={historyPagination.pageSize}
-            total={historyPagination.total}
-            from={historyPagination.from}
-            to={historyPagination.to}
-            label="receiving records"
-            onPage={historyPagination.setPage}
-            onPageSize={historyPagination.setPageSize}
-          />
         </section>
       </div>
 
@@ -1576,7 +1563,7 @@ function Purchasing() {
                 </p>
               )}
 
-              <Table>
+              <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Item number / SKU</TableHead>
@@ -1590,8 +1577,8 @@ function Purchasing() {
                 </TableHeader>
                 <TableBody>
                   {editing.lines.map((l, i) => (
-                    <TableRow key={l.id}>
-                      <TableCell>
+                    <TableRow key={l.id} summaryValues={{ Units: l.qty, Amount: l.qty * l.cost }}>
+                      <TableCell data-sort-value={l.sku}>
                         <Input
                           className="numeric h-9"
                           disabled={!mayEditLines}
@@ -1599,7 +1586,7 @@ function Purchasing() {
                           onChange={(e) => patchEditLine(i, { sku: e.target.value })}
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell data-sort-value={l.name}>
                         <Input
                           className="h-9"
                           disabled={!mayEditLines}
@@ -1607,7 +1594,7 @@ function Purchasing() {
                           onChange={(e) => patchEditLine(i, { name: e.target.value })}
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell data-sort-value={l.cost}>
                         <Input
                           className="numeric h-9 text-right"
                           disabled={!mayEditLines}
@@ -1615,7 +1602,7 @@ function Purchasing() {
                           onChange={(e) => patchEditLine(i, { cost: Number(e.target.value) || 0 })}
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell data-sort-value={l.price}>
                         <Input
                           className="numeric h-9 text-right"
                           disabled={!mayEditLines}
@@ -1623,7 +1610,7 @@ function Purchasing() {
                           onChange={(e) => patchEditLine(i, { price: Number(e.target.value) || 0 })}
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell data-sort-value={l.qty}>
                         <Input
                           className="numeric h-9 text-right"
                           disabled={!mayEditLines}

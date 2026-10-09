@@ -108,7 +108,7 @@ export function ReviewTable({
   }
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
-      <Table>
+      <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
         <TableHeader>
           <TableRow>
             <TableHead>SKU</TableHead>
@@ -127,7 +127,7 @@ export function ReviewTable({
           {rows.map((r) => {
             const delta = r.counted - r.system;
             return (
-              <TableRow key={r.productId}>
+              <TableRow key={r.productId} summaryValues={{ System: r.system, Counted: r.counted, Delta: delta, "Net impact": delta * r.cost }}>
                 <TableCell className="numeric">{r.sku || "—"}</TableCell>
                 <TableCell>{r.name}</TableCell>
                 <TableCell className="text-muted-foreground">{r.category || "—"}</TableCell>

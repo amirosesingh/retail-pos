@@ -1,3 +1,5 @@
+import { useStockTableCosts } from "@/lib/use-stock-table-costs";
+import { transferTableTotals } from "@/lib/stock-table-totals";
 /**
  * Shared furniture for the full-page stock request, transfer and receiving
  * workspaces.
@@ -16,12 +18,13 @@ import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableBody,
+  TableFooter,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { usePos, stockAt } from "@/lib/pos-store";
+import { money, usePos, stockAt } from "@/lib/pos-store";
 import { loadTransfer } from "@/lib/stock-transfers";
 import { TRANSFER_STATUS_LABELS, type Transfer } from "@/core/types/pos-types";
 
@@ -157,6 +160,8 @@ export function Panel({
 /** Every quantity a line has picked up, side by side. */
 export function LineLedger({ transfer }: { transfer: Transfer }) {
   const { state } = usePos();
+  const showCosts = useStockTableCosts();
+  const productsById = useMemo(() => new Map(state.products.map(product => [product.id, product])), [state.products]);
   const nameOf = (id: string) => state.products.find((p) => p.id === id)?.name ?? "Unknown item";
   const productOf = (id: string) => state.products.find((p) => p.id === id) ?? null;
   const totals = useMemo(
@@ -174,7 +179,7 @@ export function LineLedger({ transfer }: { transfer: Transfer }) {
   );
 
   return (
-    <Table>
+    <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
       <TableHeader>
         <TableRow>
           <TableHead>Product</TableHead>
@@ -192,7 +197,7 @@ export function LineLedger({ transfer }: { transfer: Transfer }) {
           const settled = i.verifiedQty ?? i.dispatchedQty;
           const shortfall = settled === undefined ? undefined : Math.max(0, i.qty - settled);
           return (
-            <TableRow key={i.productId}>
+            <TableRow key={i.productId} summaryValues={transferTableTotals([i], productsById, showCosts)}>
               <TableCell>
                 <div className="text-sm">{nameOf(i.productId)}</div>
                 <div className="numeric text-[11px] text-muted-foreground">
@@ -214,9 +219,11 @@ export function LineLedger({ transfer }: { transfer: Transfer }) {
             </TableRow>
           );
         })}
+      </TableBody>
+      <TableFooter>
         <TableRow>
           <TableCell className="text-xs uppercase tracking-wide text-muted-foreground">
-            Total
+            Entire document total
           </TableCell>
           <TableCell className="numeric text-right font-semibold">{totals.asked}</TableCell>
           <TableCell className="numeric text-right font-semibold">
@@ -229,7 +236,7 @@ export function LineLedger({ transfer }: { transfer: Transfer }) {
           <TableCell />
           <TableCell />
         </TableRow>
-      </TableBody>
+      </TableFooter>
     </Table>
   );
 }

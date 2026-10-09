@@ -52,7 +52,7 @@ export function ReceivingRecordView({
               <Meta label="Branch" value={record.storeCode ?? "—"} />
             </dl>
 
-            <Table>
+            <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Item number / SKU</TableHead>
@@ -65,7 +65,7 @@ export function ReceivingRecordView({
               </TableHeader>
               <TableBody>
                 {record.lines.map((l) => (
-                  <TableRow key={l.id}>
+                  <TableRow key={l.id} summaryValues={{ Units: l.qty, Amount: l.qty * l.cost }}>
                     <TableCell className="numeric">{l.sku || l.barcode || "—"}</TableCell>
                     <TableCell>{l.name}</TableCell>
                     <TableCell className="numeric text-right">{money(l.cost)}</TableCell>

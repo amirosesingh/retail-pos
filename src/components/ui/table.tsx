@@ -2,6 +2,9 @@ import * as React from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, ListFilter, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 
 type TableSortDirection = "asc" | "desc";
 type TableSortState = { column: number; direction: TableSortDirection } | null;
@@ -55,8 +58,9 @@ const TableFooter = React.forwardRef<
 ));
 TableFooter.displayName = "TableFooter";
 
-const TableRow = React.forwardRef<HTMLTableRowElement, React.HTMLAttributes<HTMLTableRowElement>>(
-  ({ className, ...props }, ref) => (
+type TableRowProps = React.HTMLAttributes<HTMLTableRowElement> & { summaryValues?: Record<string, number> };
+const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
+  ({ className, summaryValues: _summaryValues, ...props }, ref) => (
     <tr
       ref={ref}
       className={cn(
@@ -374,7 +378,8 @@ function compareTableText(left: string, right: string): number {
   return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
 }
 
-function sortTableBodies(node: React.ReactNode, sort: TableSortState): React.ReactNode {
+// eslint-disable-next-line react-refresh/only-export-components -- Pure transforms shared with table regression tests.
+export function sortTableBodies(node: React.ReactNode, sort: TableSortState): React.ReactNode {
   if (!sort || !React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
   if (isTableComponent(node, TableBody, "TableBody")) {
     const groups = React.Children.toArray(node.props.children).map((child, index) => ({
@@ -409,7 +414,8 @@ function sortTableBodies(node: React.ReactNode, sort: TableSortState): React.Rea
   );
 }
 
-function filterTableBodies(node: React.ReactNode, filters: TableFilters): React.ReactNode {
+// eslint-disable-next-line react-refresh/only-export-components -- Pure transforms shared with table regression tests.
+export function filterTableBodies(node: React.ReactNode, filters: TableFilters): React.ReactNode {
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
   if (isTableComponent(node, TableBody, "TableBody")) {
     const active = Object.entries(filters).filter(([, value]) => value.trim());
@@ -486,7 +492,70 @@ function labelTableBodies(node: React.ReactNode, labels: string[]): React.ReactN
   );
 }
 
+/** Single-cell spanning rows are empty/loading messages, not records. */
+// eslint-disable-next-line react-refresh/only-export-components -- Pure transforms shared with table regression tests.
+export function getManagedRows(nodes: React.ReactNode): React.ReactNode[] {
+  const rows: React.ReactNode[] = [];
+  React.Children.forEach(nodes, node => {
+    if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return;
+    if (isTableComponent(node, TableBody, "TableBody")) {
+      React.Children.forEach(node.props.children, row => {
+        const first = firstTableRow(row);
+        if (!first) return;
+        const cells = React.Children.toArray(first.props.children);
+        if (cells.length === 1 && React.isValidElement<{ colSpan?: number }>(cells[0]) && (cells[0].props.colSpan ?? 1) > 1) return;
+        rows.push(row);
+      });
+    } else rows.push(...getManagedRows(node.props.children));
+  });
+  return rows;
+}
+
+// eslint-disable-next-line react-refresh/only-export-components -- Pure transforms shared with table regression tests.
+export function sumManagedRows(rows: React.ReactNode[]): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const row of rows) {
+    const first = firstTableRow(row) as React.ReactElement<TableRowProps> | null;
+    for (const [key, value] of Object.entries(first?.props.summaryValues ?? {})) {
+      if (Number.isFinite(value)) totals[key] = (totals[key] ?? 0) + value;
+    }
+  }
+  return totals;
+}
+
+function replaceManagedRows(nodes: React.ReactNode, rows: React.ReactNode[]): React.ReactNode {
+  return React.Children.map(nodes, node => {
+    if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
+    if (isTableComponent(node, TableBody, "TableBody")) {
+      return getManagedRows(node).length ? React.cloneElement(node, undefined, rows) : node;
+    }
+    return React.cloneElement(node, undefined, replaceManagedRows(node.props.children, rows));
+  });
+}
+
+// eslint-disable-next-line react-refresh/only-export-components -- Pure transforms shared with table regression tests.
+export function hideTableColumns(nodes: React.ReactNode, hidden: number[]): React.ReactNode {
+  if (!hidden.length) return nodes;
+  return React.Children.map(nodes, node => {
+    if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
+    if (isTableComponent(node, TableRow, "TableRow")) {
+      let column = 0;
+      return React.cloneElement(node, undefined, React.Children.map(node.props.children, cell => {
+        if (!React.isValidElement<React.TdHTMLAttributes<HTMLTableCellElement>>(cell)) return cell;
+        const span = Number(cell.props.colSpan ?? 1);
+        const remaining = Array.from({ length: span }, (_, offset) => column + offset).filter(index => !hidden.includes(index)).length;
+        column += span;
+        return React.cloneElement(cell, { colSpan: span > 1 ? Math.max(1, remaining) : undefined, style: { ...cell.props.style, ...(remaining ? {} : { display: "none" }) } });
+      }));
+    }
+    return React.cloneElement(node, undefined, hideTableColumns(node.props.children, hidden));
+  });
+}
+
 type TableProps = React.HTMLAttributes<HTMLTableElement> & {
+  /** Opt-in controls for operational tables; all rows must be supplied. */
+  managed?: boolean;
+  summaryFormats?: Record<string, (value: number) => string>;
   /** Collapse each row into a labelled card below tablet width. */
   mobileCards?: boolean;
   /** Disable page-local sort/filter controls when the caller supplies a server-paged slice. */
@@ -494,7 +563,8 @@ type TableProps = React.HTMLAttributes<HTMLTableElement> & {
 };
 
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
-  ({ className, children, mobileCards = true, clientDataControls = true, ...props }, ref) => {
+  ({ className, children, mobileCards = true, clientDataControls = true, managed = false, summaryFormats = {}, ...props }, ref) => {
+    const [hiddenColumns, setHiddenColumns] = React.useState<number[]>([]);
     const internalRef = React.useRef<HTMLTableElement>(null);
     React.useImperativeHandle(ref, () => internalRef.current as HTMLTableElement, []);
     const [sort, setSort] = React.useState<TableSortState>(null);
@@ -569,6 +639,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
       setFilters({});
       setActiveFilter(null);
       setWidths({});
+      setHiddenColumns([]);
       resizeCleanupRef.current?.();
     }, [labelSignature]);
     const labelled = React.Children.map(children, (child) => labelTableBodies(child, labels));
@@ -578,6 +649,11 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
     const content = clientDataControls
       ? React.Children.map(sorted, (child) => filterTableBodies(child, filters))
       : sorted;
+    const managedRows = managed ? getManagedRows(content) : [];
+    const pagination = usePagination(managedRows);
+    const totals = sumManagedRows(managedRows);
+    const pagedContent = managed ? replaceManagedRows(content, pagination.pageItems) : content;
+    const displayedContent = managed ? hideTableColumns(pagedContent, hiddenColumns) : pagedContent;
     const controls = React.useMemo<TableControls>(
       () => ({
         clientDataControls,
@@ -605,6 +681,22 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
     );
     return (
       <TableControlsContext.Provider value={controls}>
+        {managed && <div className="flex flex-wrap items-center justify-between gap-3 border-b p-3">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-live="polite">
+            <span className="text-muted-foreground">Matching totals · {managedRows.length} rows</span>
+            {Object.entries(totals).map(([label, value]) => <span key={label}>{label}: <strong className="numeric">{summaryFormats[label]?.(value) ?? value.toLocaleString()}</strong></span>)}
+          </div>
+          <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm"><ListFilter className="size-4" /> Columns</Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
+              <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
+              {labels.map((label, column) => label && <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} disabled={column === 0 || /^(actions?|open)$/i.test(label)} onSelect={event => event.preventDefault()} onCheckedChange={checked => {
+                setHiddenColumns(current => checked ? current.filter(value => value !== column) : [...current, column]);
+                if (!checked) { setFilter(column, ""); if (activeFilter === column) setActiveFilter(null); }
+              }}>{label}</DropdownMenuCheckboxItem>)}
+              <DropdownMenuSeparator /><DropdownMenuItem onSelect={() => setHiddenColumns([])}>Show all columns</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>}
         <div className="responsive-table-region relative w-full max-w-full overflow-x-auto overscroll-x-contain">
           <table
             ref={internalRef}
@@ -612,9 +704,10 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
             className={cn("responsive-table w-full caption-bottom text-sm", className)}
             {...props}
           >
-            {content}
+            {displayedContent}
           </table>
         </div>
+        {managed && <TablePagination {...pagination} onPage={pagination.setPage} onPageSize={pagination.setPageSize} label="rows" />}
       </TableControlsContext.Provider>
     );
   },

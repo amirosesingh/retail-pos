@@ -1,3 +1,5 @@
+import { useStockTableCosts } from "@/lib/use-stock-table-costs";
+import { transferTableTotals } from "@/lib/stock-table-totals";
 /**
  * Stock requests register.
  *
@@ -19,9 +21,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { usePos } from "@/lib/pos-store";
+import { money, usePos } from "@/lib/pos-store";
 import { TRANSFER_STATUS_LABELS } from "@/core/types/pos-types";
-import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 
 export const Route = createFileRoute("/requests/")({
   head: () => ({
@@ -48,6 +49,8 @@ type Scope = "all" | "ours" | "theirs" | "open";
 
 function RequestsIndex() {
   const { state, stores, currentStore } = usePos();
+  const showCosts = useStockTableCosts();
+  const productsById = useMemo(() => new Map(state.products.map(product => [product.id, product])), [state.products]);
   const [scope, setScope] = useState<Scope>("all");
 
   const storeName = (id: string) => stores.find((s) => s.id === id)?.name ?? "—";
@@ -64,7 +67,6 @@ function RequestsIndex() {
       return mine.filter((t) => t.status === "awaiting_approval" || t.status === "approved");
     return mine;
   }, [state.transfers, currentStore.id, scope]);
-  const pagination = usePagination(rows);
 
   const tabs: Array<{ id: Scope; label: string }> = [
     { id: "all", label: "All" },
@@ -106,13 +108,16 @@ function RequestsIndex() {
         </div>
 
         <div className="rounded-lg border border-border">
-          <Table>
+          <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
             <TableHeader>
               <TableRow>
                 <TableHead>Reference</TableHead>
                 <TableHead>From</TableHead>
                 <TableHead>To</TableHead>
                 <TableHead className="text-right">Lines</TableHead>
+                <TableHead className="text-right">Requested units</TableHead>
+                <TableHead className="text-right">Sent units</TableHead>
+                {showCosts && <TableHead className="text-right">Requested estimate</TableHead>}
                 <TableHead>Status</TableHead>
                 <TableHead className="w-24" />
               </TableRow>
@@ -121,19 +126,24 @@ function RequestsIndex() {
               {rows.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={showCosts ? 9 : 8}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     No stock requests yet. Raise one with “New request”.
                   </TableCell>
                 </TableRow>
               )}
-              {pagination.pageItems.map((t) => (
-                <TableRow key={t.id}>
+              {rows.map((t) => {
+                const totals = transferTableTotals(t.items, productsById, showCosts);
+                return (
+                <TableRow key={t.id} summaryValues={totals}>
                   <TableCell className="font-mono text-xs">{t.ref}</TableCell>
                   <TableCell>{storeName(t.fromStoreId)}</TableCell>
                   <TableCell>{storeName(t.toStoreId)}</TableCell>
                   <TableCell className="numeric text-right">{t.items.length}</TableCell>
+                  <TableCell className="numeric text-right">{totals.Requested}</TableCell>
+                  <TableCell className="numeric text-right">{totals.Sent}</TableCell>
+                  {showCosts && <TableCell className="numeric text-right">{totals["Unpriced lines"] ? "Cost unavailable" : money(totals["Requested estimate"])}</TableCell>}
                   <TableCell>
                     <Badge variant="outline">{TRANSFER_STATUS_LABELS[t.status]}</Badge>
                   </TableCell>
@@ -153,20 +163,10 @@ function RequestsIndex() {
                     </Button>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
-          <TablePagination
-            page={pagination.page}
-            pageCount={pagination.pageCount}
-            pageSize={pagination.pageSize}
-            total={pagination.total}
-            from={pagination.from}
-            to={pagination.to}
-            label="requests"
-            onPage={pagination.setPage}
-            onPageSize={pagination.setPageSize}
-          />
         </div>
 
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
