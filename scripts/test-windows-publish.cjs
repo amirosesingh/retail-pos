@@ -20,6 +20,22 @@ test('persistent CDN denial is not interpreted as an absent release',async()=>{
 test('range validation still rejects a full response instead of partial content',async()=>{
  await assert.rejects(remote('https://example.invalid/setup.exe',{range:true,fetchImpl:async()=>new Response('x'),sleep:async()=>{}}),/byte ranges/);
 });
+test('authenticated CI fallback verifies the same stored object and cleans temporary bytes',async()=>{
+ const vm=require('node:vm');const output={exports:{}};let downloaded;
+ const wrappedRequire=name=>name==='node:child_process'?{execFileSync:(_bin,args)=>{
+   assert.equal(args[0],'s3api');assert.equal(args[args.indexOf('--key')+1],'pos-app/latest/setup.exe');
+   downloaded=args.at(-3);fs.writeFileSync(downloaded,'x');
+   return JSON.stringify({ContentLength:1,ContentRange:'bytes 0-0/5'});
+ }}:require(name);
+ vm.runInNewContext(fs.readFileSync(require.resolve('./publish-windows-release.cjs'),'utf8'),{
+   require:wrappedRequire,module:output,process:{env:{R2_ENDPOINT:'https://example.invalid',AWS_ACCESS_KEY_ID:'test',AWS_SECRET_ACCESS_KEY:'test'}},
+   URL,Buffer,AbortSignal,fetch,console:{warn(){}},setTimeout,
+ });
+ const result=await output.exports.remote('https://updatecms.luckycharmsdnbhd.com/pos-app/latest/setup.exe',{
+   range:true,fetchImpl:async()=>new Response('blocked',{status:403}),sleep:async()=>{},
+ });
+ assert.equal(result.toString(),'x');assert.equal(fs.existsSync(downloaded),false);
+});
 test('retention orders semantic versions, keeps five plus pinned and recent recovery releases',()=>{
  const old='2025-01-01T00:00:00Z';const now=Date.parse('2026-10-09');
  const releases=['1.4.8','1.4.9','1.4.10','1.4.11','1.4.12','1.4.13','1.4.14'].map(version=>({version,released:old}));
