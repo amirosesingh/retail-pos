@@ -29,7 +29,7 @@ describe("Windows till storage hygiene", () => {
   });
 
   it("classes Chromium scratch folders as disposable", () => {
-    for (const name of ["Cache", "Code Cache", "GPUCache", "Crashpad", "logs"]) {
+    for (const name of ["Cache", "Code Cache", "GPUCache", "Crashpad"]) {
       expect(hygiene.isDisposableCacheDir(name)).toBe(true);
     }
   });
@@ -125,10 +125,10 @@ describe("phone storage hygiene", () => {
   });
 });
 
-describe("uninstall leaves nothing behind", () => {
-  it("the Windows installer removes application data", () => {
+describe("device lifecycle preserves business data", () => {
+  it("the Windows installer preserves application data for recovery", () => {
     const pkg = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"));
-    expect(pkg.build.nsis.deleteAppDataOnUninstall).toBe(true);
+    expect(pkg.build.nsis.deleteAppDataOnUninstall).toBe(false);
   });
 
   it("the Android manifest patcher disables Auto Backup", () => {

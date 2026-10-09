@@ -2,8 +2,12 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
 const beforeCloseCallbacks = new Set();
-ipcRenderer.on("sync:prepare-close", async (_event, nonce) => {
+let updateSafety = null;
+ipcRenderer.on("sync:prepare-close", async (_event, request) => {
+  const nonce = typeof request === "object" ? request.nonce : request;
   try {
+    if (request?.forUpdate && (!updateSafety || !(await updateSafety())))
+      throw new Error("Please finish the current transaction before updating.");
     for (const flush of beforeCloseCallbacks) await flush();
     ipcRenderer.send("sync:renderer-flushed", {nonce,ok:true});
   } catch(error) {
@@ -25,6 +29,10 @@ contextBridge.exposeInMainWorld("sqlAdmin", {
  * Server; Supabase synchronization stays in the main process background.
  */
 contextBridge.exposeInMainWorld("pos", {
+  onUpdateSafety: (check) => {
+    updateSafety = check;
+    return () => { if (updateSafety === check) updateSafety = null; };
+  },
   onBeforeClose: (flush) => {
     beforeCloseCallbacks.add(flush);
     return () => beforeCloseCallbacks.delete(flush);
@@ -100,6 +108,7 @@ contextBridge.exposeInMainWorld("pos", {
   staffRoster: (storeId) => invoke("staff:roster", storeId),
   cacheStaffRoster: (rows) => invoke("staff:cache-roster", rows),
   rememberStaffPin: (username, pin) => invoke("staff:enroll", username, pin),
+  signInStaffPin: (username, pin) => invoke("staff:sign-in", username, pin),
   verifyStaffPin: (username, pin) => invoke("staff:verify-pin", username, pin),
   verifyApprovalPin: (username, pin) => invoke("staff:verify-approval-pin", username, pin),
   cashierLogin: (username, pin) => invoke("auth:cashier-login", { username, pin }),
@@ -115,6 +124,12 @@ contextBridge.exposeInMainWorld("pos", {
   netHead: (url) => invoke("net:head", url),
   netGetBinary: (url) => invoke("net:get-binary", url),
   updateStatus: () => invoke("update:status"),
+  onClosingSync: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("sync:closing", handler);
+    return () => ipcRenderer.removeListener("sync:closing", handler);
+  },
+  updateHistory: () => invoke("update:history"),
   checkForUpdates: () => invoke("update:check"),
   downloadUpdate: () => invoke("update:download"),
   downloadAndInstallUpdate: () => invoke("update:download-install"),

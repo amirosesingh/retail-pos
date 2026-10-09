@@ -32,6 +32,28 @@ if (packageDirectory) {
   const unpackedBinding = path.join(packageDirectory, "resources", "app.asar.unpacked", "node_modules", "msnodesqlv8", "prebuilds", "win32-x64", "msnodesqlv8.node");
   check(fs.existsSync(executable), `packaged executable is missing: ${executable}`);
   check(fs.existsSync(unpackedBinding), `packaged native binding is missing: ${unpackedBinding}`);
+  // File existence alone misses a corrupt ASAR (for example, source files
+  // changing while the archive offsets are being calculated).
+  try {
+    const asar = require("@electron/asar");
+    const { createHash } = require("node:crypto");
+    const archive = path.join(packageDirectory, "resources", "app.asar");
+    for (const entry of asar.listPackage(archive)) {
+      const name = entry.replace(/^[\\/]+/, "");
+      const stat = asar.statFile(archive, name);
+      if (stat.files || stat.link || stat.unpacked) continue;
+      const bytes = asar.extractFile(archive, name);
+      check(bytes.length === stat.size, `ASAR size mismatch: ${name}`);
+      check(stat.integrity?.algorithm === "SHA256" &&
+        createHash("sha256").update(bytes).digest("hex") === stat.integrity.hash,
+      `ASAR integrity mismatch: ${name}`);
+    }
+    const packagedManifest = JSON.parse(asar.extractFile(archive, "package.json").toString("utf8"));
+    check(packagedManifest.version === manifest.version, "packaged version differs from the source manifest");
+    check(packagedManifest.main === manifest.main, "packaged application entry point differs from the source manifest");
+  } catch (error) {
+    failures.push(`cannot validate packaged ASAR: ${error.message}`);
+  }
 }
 
 if (failures.length) {

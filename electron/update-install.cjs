@@ -1,5 +1,5 @@
 /** Coalesce clicks and finish durable synchronization before launching either installer. */
-function createUpdateInstall({ updater, prepare, allowQuit, recover }) {
+function createUpdateInstall({ updater, prepare, allowQuit, recover, isBusy = () => false }) {
   let running = null;
   return function install(downloadFirst) {
     if (running) return running;
@@ -11,7 +11,8 @@ function createUpdateInstall({ updater, prepare, allowQuit, recover }) {
             return { ok: false, error: downloaded.error || "The update did not finish downloading. Retry the download." };
         }
         if (updater.status().status !== "ready") return { ok: false, error: "No update is ready. Check for updates first." };
-        const synced = await prepare();
+        if (isBusy()) return { ok: false, code: "EPOS_BUSY", error: "Please finish the current transaction before updating." };
+        const synced = await prepare(true);
         if (!synced.ok) { recover(); return synced; }
         allowQuit();
         const result = await updater.install();

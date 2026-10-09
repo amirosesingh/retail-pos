@@ -389,7 +389,7 @@ export async function runRelayRpc(
   scope: RelayScope,
 ): Promise<{ ok: boolean; error?: string; code?: string }> {
   if (op.fn === "pos_sale_commit") {
-    if (!scope.isSupervisor && scope.permissions.can_process_sale !== true) {
+    if (scope.role !== "admin" && scope.roleSlug !== "admin" && scope.permissions.can_process_sale !== true) {
       return { ok: false, code: "PERMISSION_DENIED", error: "You are not allowed to process a sale." };
     }
     const sale = op.args._sale;
@@ -408,7 +408,7 @@ export async function runRelayRpc(
   }
   if (op.fn === "shift_cash_count_submit") {
     if (
-      !scope.isSupervisor &&
+      scope.role !== "admin" && scope.roleSlug !== "admin" &&
       scope.permissions.can_shift_cash_count !== true &&
       scope.permissions.can_close_shift !== true
     ) {
@@ -436,7 +436,7 @@ export async function runRelayRpc(
 
   const spec = RELAY_RPCS[op.fn];
   if (!spec) return { ok: false, code: "TABLE_FORBIDDEN", error: `"${op.fn}" cannot be run` };
-  if (!scope.isSupervisor && scope.permissions[spec.permission] !== true)
+  if (scope.role !== "admin" && scope.roleSlug !== "admin" && scope.permissions[spec.permission] !== true)
     return {
       ok: false,
       code: "PERMISSION_DENIED",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-const source = (path: string) => readFileSync(path, "utf8");
+const source = (path: string) => readFileSync(path, "utf8").replaceAll("\r\n", "\n");
 
 describe("business UI persistence acknowledgements", () => {
   it("awaits financial mutations before receipt or refund success", () => {

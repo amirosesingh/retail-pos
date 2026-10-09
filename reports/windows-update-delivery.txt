@@ -1,0 +1,133 @@
+Windows POS update implementation and operations
+9 October 2026
+
+Runtime
+One Electron main-process manager checks once per launch and automatically
+downloads through electron-updater. No recurring update timer remains. The
+renderer uses fixed IPC commands; it cannot supply an installer path. The
+Tomboard notification shows progress and Update & Restart / Later. Later keeps
+the verified download staged and dismisses that prompt for the session.
+Application close uses the same safety and synchronization controller as the
+Update & Restart button. An open shift alone does not prevent updating; active
+checkout, payment, printing, database preparation and writes do. Failed safety
+or synchronization checks keep the application open. Concurrent requests share
+one operation. On the next launch electron-updater revalidates its cached file
+when checking the feed; an offline cached file is not advertised as ready.
+
+Release pipeline
+The existing main -> version-release workflow -> immutable version tag ->
+platform builds strategy remains intact. It advances the version on merge.
+Windows and Android publication share concurrency group pos-release. Android
+publishes only its own feed; Windows owns the shared application manifest.
+Windows verifies SHA512, size and byte-range responses before publishing
+latest/latest.yml last. Failed artifact uploads cannot promote this pointer.
+The history manifest is uploaded before that final pointer and may temporarily
+list an uploaded release if final promotion fails; latest.yml is authoritative.
+Retry the same immutable build or publish a higher version; do not overwrite
+historical binaries. GitHub attachments include the verified history manifest.
+
+Bucket: updatelccms; prefix: pos-app
+Feed: https://updatecms.luckycharmsdnbhd.com/pos-app/latest/
+History: https://updatecms.luckycharmsdnbhd.com/pos-app/releases.json
+Required existing secrets: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT.
+Optional signing secrets: WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD.
+POS_UPDATE_URL is the optional build feed variable. No R2 keys enter the app.
+The user explicitly permits unsigned Windows releases for now. If signing is
+configured, signing and valid Authenticode verification become mandatory.
+Unsigned installers can display Windows publisher warnings. Hash verification
+protects integrity relative to the trusted HTTPS feed; it is not publisher
+identity verification. Existing installations that pin a publisher require a
+release signed by that publisher; do not bypass their signature checks.
+
+Retention
+Keep at least the latest five successful stable Windows releases, plus pinned
+recovery releases and a 30-day download grace period. Preserve old blockmaps.
+Prune only named Windows objects, never whole shared release directories.
+Android archives remain intact. Offline terminals older than the retained
+installer window can use a full download. Settings displays retained versions
+read-only; normal staff cannot choose arbitrary installers or downgrade.
+
+Business data and local SQL
+No permission schema migration is required: page flags use existing permissions
+JSON. Updates preserve userData, settings, logs and external SQL Server data.
+The consolidated database/sqlserver/retail-pos-local-update.sql is for earlier
+schema repairs, not required just for updater/permission changes. Back up first.
+Never downgrade a database merely because application binaries are rolled back.
+
+Recovery and independent-agent migration
+The existing Electron recovery window handles renderer/server startup failures
+only while Electron main can run. It is not an independent Windows agent.
+No Windows service, scheduled task or independent launcher was installed or
+tested. The following migration is separate from the normal updater:
+1. Package a signed per-user launcher/recovery helper in a separate reviewed
+   installer. Explicitly select its installation and startup registration;
+   do not silently create an elevated service or scheduled task.
+2. Use a per-user named mutex, a launch nonce, process identity and a durable
+   health acknowledgement to distinguish a slow startup from a failed launch.
+3. Run once on user launch/logon, never frequent polling. If the POS process or
+   critical-operation marker is active, report diagnostics and do not replace it.
+4. Fetch the fixed HTTPS stable feed, verify size, SHA512 and trusted publisher;
+   stage outside the app directory, then invoke the supported NSIS installer.
+5. Keep a durable installation journal and previous verified installer. Resume
+   interrupted staging; never infer that an absent heartbeat permits killing a
+   live checkout. Require maintenance review before a schema-incompatible rollback.
+6. Test power loss, locked binaries, low disk, failed launch, offline startup and
+   recovery on a disposable Windows VM before enabling the helper in production.
+Until that migration, collect userData diagnostics and use the approved full
+installer for repair with the POS closed. Preserve userData and the SQL database.
+Built-in maintenance rollback requires a trusted signing publisher and remains
+unavailable for unsigned builds; this is not promised as automatic recovery.
+
+Verification matrix (limits are explicit)
+1 Fresh installation: packaged clean-profile launch passed; NSIS fresh install
+  on a disposable Windows VM remains a release acceptance check.
+2 Older-version upgrade: differential reconstruction passed; actual in-place
+  NSIS upgrade/relaunch remains a release acceptance check.
+3 Differential download: real v1.4.44 -> validation v1.4.45 artifact test used
+  24,744,723 bytes including blockmaps versus 143,363,471 full bytes (82.74%
+  saving), with matching reconstructed SHA512. This predates final rebuild;
+  the final rebuilt measurement is recorded in .validation/differential-final.
+4 Full download: full HTTP transfer/hash comparison passed; actual NSIS
+  automatic fallback/install on a Windows VM is not claimed tested.
+5/6 Unregistered/logged out: clean-profile packaged launch and IPC passed;
+  the native updater has no registration/authentication dependency.
+7 Active POS: automated busy-operation safety tests passed, not a physical till.
+8 Download without restart: automated updater lifecycle test passed.
+9 Safe shutdown installation: controller/API tests passed; real NSIS lifecycle
+  (both Update & Restart and Later) remains a Windows VM acceptance check.
+10 Data preservation: storage regression tests passed; live business database
+   migration and installed-session preservation were not exercised here.
+11 Offline: automated check-failure test passed.
+12 Interrupted download: automated failed-download path passed.
+13 Corrupt artifact: checksum rejection tests passed.
+14 Invalid metadata: publication validation tests passed.
+15 R2 upload failure: guards inspected; no production fault injection performed.
+16 Five-version retention: semantic version, pins and grace tests passed.
+17 Concurrent releases: shared workflow group and pruning regression tested;
+   concurrent production jobs were not deliberately injected.
+18 Independent recovery: documented migration only; not installed or tested.
+
+Main changes
+electron/updater.cjs, main.cjs, preload.cjs, update-install.cjs and write-barrier:
+central lifecycle, safe close, secure bridge and maintenance safety.
+electron/update-history.cjs, permission-pages.json, splash.html and app-icon.ico:
+read-only history, shared permission definitions and immediate branded startup.
+DesktopUpdateBanner, AppUpdateSettings and app-updates: interactive update UI.
+StaffManager, permissions, visibility, relay and desktop bridge modules:
+page visibility/action controls and cashier authorization repair.
+publish-windows-release, desktop-release, windows-package-smoke and workflows:
+immutable releases, verification, retention, optional signing and ASAR 4.3.1 fix.
+New updater/history/publication/permission/cashier tests and differential harness.
+No business data files removed. Old timer and custom routine installer path
+were removed from the existing updater rather than adding another manager.
+
+Final amendments: close-sync now retries transient failures three times and
+shows progress plus an explicit Retry sync and close action. Offline/signed-out
+Electron audit logs write through the existing authorized local SQL path.
+Unconfigured setup logs stay queued durably without preventing application exit.
+Final differential measurement: 26,839,856 bytes including blockmaps versus
+143,333,891 full bytes, 81.27% saving, SHA512 verified.
+Packaged UI smoke: Later preserved ready state; Update & Restart installer
+handoff was not confirmed in the stubbed test. Further smoke testing was stopped
+at the user request. Final close-sync amendments have focused automated tests;
+a new packaged test of those amendments was not run locally.

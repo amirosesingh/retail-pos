@@ -6,6 +6,7 @@
  * process. The bridge is absent in web and Android builds; those clients write
  * live to the central database and never queue business data locally.
  */
+import { desktopBridge } from "@/lib/desktop-bridge-registry";
 import type { SyncOp } from "@/lib/sync-outbox";
 import type { ShiftState } from "@/core/types/pos-types";
 
@@ -407,7 +408,7 @@ export type PosBridge = {
     printer?: { deviceName?: string; share?: string };
   }) => Promise<{ ok: boolean; eventId?: string; error?: string; code?: string }>;
   database?: {
-    getState: () => Promise<{ enabled: boolean; connected: boolean; tradingReady?: boolean; state: string }>;
+    getState: () => Promise<{ enabled: boolean; configured?: boolean; connected: boolean; tradingReady?: boolean; state: string }>;
   };
   telemetry?: {
     presence: (value: { sessionStatus: "signed_in" | "idle"; staffName: string | null; staffRole: string | null }) => Promise<{ ok: boolean }>;
@@ -678,6 +679,7 @@ export type PosBridge = {
   /* ---- offline cashier sign-in, backed by the local SQL database ---- */
   staffRoster?: (storeId?: string | null) => Promise<{ ok: boolean; rows: LocalStaffRow[] }>;
   cacheStaffRoster?: (rows: Record<string, unknown>[]) => Promise<{ ok: boolean; written: number }>;
+  signInStaffPin?: PosBridge["verifyStaffPin"];
   verifyStaffPin?: (
     username: string,
     pin: string,
@@ -851,7 +853,7 @@ export async function writeLocalSetting(key: string, value: string | null): Prom
 }
 
 export const localDb = (): PosBridge | null =>
-  typeof window === "undefined" ? null : (window.pos ?? null);
+  typeof window === "undefined" ? null : desktopBridge("pos", window.pos ?? null);
 
 /**
  * Proves the till's own pool can write: one transaction that inserts, reads

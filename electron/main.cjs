@@ -303,11 +303,27 @@ function settleWithin(work, timeoutMs = SHUTDOWN_RESOURCE_TIMEOUT_MS) {
 async function flushSyncBeforeShutdown() {
   const branchId = localBranchId();
   if (!databaseManager.isConnected() || !branchId)
-    return { ok:false, error:"Connect the local database before closing so pending transactions can be checked." };
-  const settled = await settleWithin(() => syncCoordinator.runFinal({branchId,batchSize:500}), SHUTDOWN_SYNC_TIMEOUT_MS);
-  if (settled.timedOut) return {ok:false,timedOut:true,error:"Synchronization is still running. Keep the application open and retry closing when it finishes."};
-  if (!settled.ok) return {ok:false,error:String(settled.error?.message ?? settled.error)};
-  return settled.value;
+    return { ok:false, code:"ELOCALDB", error:"Connect the local database before closing so pending transactions can be checked." };
+  const wasPaused = syncCoordinator.paused;
+  syncCoordinator.resume();
+  try {
+    return await require('./sync/shutdown-sync.cjs').finishShutdownSync({
+      progress: reportCloseProgress,
+      run: async () => {
+        const settled = await settleWithin(() => syncCoordinator.runFinal({branchId,batchSize:500}), SHUTDOWN_SYNC_TIMEOUT_MS);
+        if (settled.timedOut) return {ok:false,timedOut:true,error:"Synchronization is still running. Your data remains saved locally; retry closing when it finishes."};
+        if (!settled.ok) return {ok:false,code:settled.error?.code,error:String(settled.error?.message ?? settled.error)};
+        return settled.value;
+      },
+    });
+  } finally { if (wasPaused) syncCoordinator.pause(); }
+}
+
+function reportCloseProgress(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sync:closing', payload);
+    mainWindow.setProgressBar(payload.active ? 2 : -1);
+  }
 }
 
 async function synchronizeClosingShifts(shiftId = null) {
@@ -361,15 +377,17 @@ async function restoreShiftCloseGuard() {
 
 async function showMandatorySyncFailure(result) {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  await dialog.showMessageBox(win, {
+  const response = await dialog.showMessageBox(win, {
     type: "error",
     title: "Synchronization incomplete",
     message: "Synchronization must finish before the application can close.",
     detail: String(result?.error ?? "Retry after checking the synchronization status."),
-    buttons: ["Keep application open"],
+    buttons: win ? ["Retry sync and close", "Keep application open"] : ["Keep application open"],
     defaultId: 0,
+    cancelId: win ? 1 : 0,
     noLink: true,
   });
+  if (win && response.response === 0) setImmediate(() => { if (!win.isDestroyed()) win.close(); });
 }
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
@@ -482,8 +500,9 @@ const pendingShiftCloseSync = new Set();
 let mandatoryShiftSyncRun = null;
 let allowMainWindowClose = false;
 let closePreparation = null;
+let installUpdateAfterSync = null;
 
-function flushRendererBeforeClose() {
+function flushRendererBeforeClose(forUpdate = false) {
   const win=mainWindow;
   if(!win || win.isDestroyed()) return Promise.resolve();
   const nonce=randomUUID();
@@ -495,18 +514,21 @@ function flushRendererBeforeClose() {
     };
     const timer=setTimeout(()=>finish(new Error("The application has not finished saving its activity logs. Keep it open and retry closing.")),30_000);
     ipcMain.on("sync:renderer-flushed",reply);
-    win.webContents.send("sync:prepare-close",nonce);
+    win.webContents.send("sync:prepare-close",{nonce,forUpdate});
   });
 }
 
-function prepareApplicationClose() {
+function prepareApplicationClose(forUpdate = false) {
   if(closePreparation)return closePreparation;
   closePreparation=(async()=>{
-    // A blank setup screen has no managed business database to synchronize.
-    if(!databaseService.snapshot().configured && !pendingShiftCloseSync.size)return {ok:true,skipped:true};
+
     mainWindow?.setEnabled(false);
+    reportCloseProgress({ active: true, message: 'Saving pending activity and finishing local writes…' });
     try {
-      await flushRendererBeforeClose();
+      if (forUpdate && closeWriteBarrier.active.size) throw new Error("Please finish the current transaction before updating.");
+      await flushRendererBeforeClose(forUpdate);
+      // Even an unregistered window must pass the renderer safety check.
+      if(!databaseService.snapshot().configured && !pendingShiftCloseSync.size)return {ok:true,skipped:true};
       const drained=await settleWithin(() => closeWriteBarrier.sealAndDrain(), SHUTDOWN_SYNC_TIMEOUT_MS);
       if(!drained.ok)throw new Error("Local writes are still finishing. Keep the application open and retry closing.");
       const result=await flushSyncBeforeShutdown();
@@ -516,7 +538,7 @@ function prepareApplicationClose() {
     } catch(error) {
       closeWriteBarrier.reopen();
       return {ok:false,error:String(error?.message??error)};
-    } finally { if(mainWindow&&!mainWindow.isDestroyed())mainWindow.setEnabled(true); }
+    } finally { reportCloseProgress({ active: false }); if(mainWindow&&!mainWindow.isDestroyed())mainWindow.setEnabled(true); }
   })();
   closePreparation.then(result=>{if(!result.ok)closePreparation=null;},()=>{closePreparation=null;});
   return closePreparation;
@@ -830,6 +852,10 @@ function createWindows(initialRoute = "/") {
     if (allowMainWindowClose || shutdownFlushComplete) return;
     event.preventDefault();
     const closingWindow = mainWindow;
+    if (updater.status().status === "ready") {
+      void installUpdateAfterSync(false).then(result => { if (!result.ok) return showMandatorySyncFailure(result); });
+      return;
+    }
     void prepareApplicationClose().then(async (result) => {
       if (!result.ok) {
         await showMandatorySyncFailure(result);
@@ -1865,8 +1891,19 @@ function registerIpc() {
   ipcMain.handle("staff:cache-roster", () => ({ok:true,written:0,source:"sql-sync"}));
   ipcMain.handle("staff:enroll", () => ({ok:true,written:0,source:"sql-sync"}));
   ipcMain.handle("staff:verify-pin", async (_e, username, pin) => {
+    try { return await verifySyncedStaffPin(databaseManager.pool, username, pin, localBranchId()); }
+    catch (error) { return {ok:false,reason:"unavailable",error:String(error?.message??error)}; }
+  });
+  ipcMain.handle("staff:sign-in", async (_e, username, pin) => {
     try {
-      return await verifySyncedStaffPin(databaseManager.pool, username, pin, localBranchId());
+      const result = await verifySyncedStaffPin(databaseManager.pool, username, pin, localBranchId());
+      if (result.ok && result.staff) {
+        const staff = result.staff;
+        const role = staff.role_slug;
+        const level = role === "admin" ? "admin" : ["manager", "supervisor"].includes(role) ? "supervisor" : "staff";
+        adminSession.grant(level, staff.username, staff.permissions ?? {}, "pos", staff.store_id ?? localBranchId());
+      }
+      return result;
     } catch (error) {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
@@ -1931,13 +1968,38 @@ function registerIpc() {
     return { ok: true, health: state, updatesResumed: resumed.resumed };
   });
   ipcMain.handle("health:state", () => ({ ...health.read(), version: app.getVersion(), safeMode }));
-  ipcMain.handle("health:rollback", async () => {
+  let recoveryOperation = null;
+  const safelyRecover = (event, action) => {
+    if (!safeMode || !recovery.isOwn(BrowserWindow.fromWebContents(event.sender)) || event.senderFrame !== event.sender.mainFrame)
+      return { ok: false, error: "Open the recovery window before using this maintenance action." };
+    if (recoveryOperation) return recoveryOperation;
+    recoveryOperation = (async () => {
+      if (closeWriteBarrier.active.size || jobManager.running || localDataPreparePromise)
+        return { ok: false, error: "Please finish the current transaction before updating." };
+      const prepared = await prepareApplicationClose(true);
+      if (!prepared.ok) return prepared;
+      shutdownFlushComplete = true;
+      allowMainWindowClose = true;
+      const result = await action();
+      if (!result?.ok) {
+        shutdownFlushComplete = false; allowMainWindowClose = false;
+        closePreparation = null; closeWriteBarrier.reopen();
+      }
+      return result;
+    })().catch(error => {
+      shutdownFlushComplete = false; allowMainWindowClose = false;
+      closePreparation = null; closeWriteBarrier.reopen();
+      return { ok: false, error: String(error?.message ?? error) };
+    }).finally(() => { recoveryOperation = null; });
+    return recoveryOperation;
+  };
+  ipcMain.handle("health:rollback", (event) => safelyRecover(event, async () => {
     const { lastGoodVersion } = health.read();
     updater.pause();
     return updater.rollback(lastGoodVersion, (percent) => recovery.progress({ percent }));
-  });
-  ipcMain.handle("health:resume-updates", () => { health.reset(); return updater.resume(); });
-  ipcMain.handle("health:retry", () => { health.reset(); app.relaunch(); app.exit(0); });
+  }));
+  ipcMain.handle("health:resume-updates", () => { health.reset(); return updater.resume(true); });
+  ipcMain.handle("health:retry", (event) => safelyRecover(event, async () => { health.reset(); app.relaunch(); app.quit(); return { ok: true }; }));
   ipcMain.handle("health:open-logs", () => shell.openPath(app.getPath("userData")));
   ipcMain.handle("health:collect-diagnostics", () => {
     const result = diagnostics.writeReport({ appVersion: app.getVersion(), storage: "sqlserver-local-first" });
@@ -2030,11 +2092,22 @@ function registerIpc() {
     } catch (err) { return { ok: false, printers: [], error: fail(err).error }; }
   });
 
+  updater.onInstallFailure(() => {
+    shutdownFlushStarted = false;
+    quitting = false;
+    shutdownFlushComplete = false;
+    allowMainWindowClose = false;
+    closePreparation = null;
+    closeWriteBarrier.reopen();
+    mainWindow?.setEnabled(true);
+  });
   ipcMain.handle("update:status", () => updater.status());
+  ipcMain.handle("update:history", () => updater.history());
   ipcMain.handle("update:check", () => updater.check());
   ipcMain.handle("update:download", () => updater.downloadUpdate());
-  const installUpdateAfterSync = require("./update-install.cjs").createUpdateInstall({
+  installUpdateAfterSync = require("./update-install.cjs").createUpdateInstall({
     updater,
+    isBusy: () => closeWriteBarrier.active.size > 0 || Boolean(jobManager.running || localDataPreparePromise) || ["enabled_connecting", "enabled_validating", "enabled_bootstrapping"].includes(databaseService.snapshot().state),
     prepare: prepareApplicationClose,
     allowQuit: () => {
       // Sync has completed. Do not intercept electron-updater's quit and
@@ -2049,8 +2122,11 @@ function registerIpc() {
       closeWriteBarrier.reopen();
     },
   });
-  ipcMain.handle("update:download-install", () => installUpdateAfterSync(true));
-  ipcMain.handle("update:install", () => installUpdateAfterSync(false));
+  const updateFromWindow = (event, download) => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame
+    ? installUpdateAfterSync(download)
+    : {ok:false,error:"Only the POS window can request an update restart."};
+  ipcMain.handle("update:download-install", (event) => updateFromWindow(event, true));
+  ipcMain.handle("update:install", (event) => updateFromWindow(event, false));
   ipcMain.handle("update:diagnose", () => updater.diagnose());
   ipcMain.handle("update:download-page", () => updater.downloadPage());
   ipcMain.handle("app:version", () => app.getVersion());
@@ -2156,8 +2232,11 @@ app.whenReady().then(async () => {
   mainTelemetry.start();
   const boot = health.beginBoot();
   if (health.shouldEnterSafeMode(boot)) { safeMode = true; health.beginRecovery(boot.reason ?? "Repeated failed launches"); updater.pause(); recovery.open(); return; }
+  updater.start();
+  const splash = new BrowserWindow({ width: 360, height: 240, frame: false, resizable: false, show: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  void splash.loadFile(path.join(__dirname, "splash.html"));
   try { if (!baseUrl) baseUrl = await startAppServer(); }
-  catch (err) { enterSafeMode(err instanceof Error ? err.message : String(err)); return; }
+  catch (err) { splash.destroy(); enterSafeMode(err instanceof Error ? err.message : String(err)); return; }
 
   // Always put a window on screen before touching SQL Server. Validation and
   // an additive schema repair can legitimately take minutes after an update;
@@ -2171,7 +2250,8 @@ app.whenReady().then(async () => {
     : "/";
   readyWatchdog = setTimeout(() => enterSafeMode("Startup timed out"), 60_000);
   createWindows(initialRoute);
-  updater.start();
+  mainWindow.webContents.once("did-finish-load", () => { if (!splash.isDestroyed()) splash.destroy(); });
+  mainWindow.once("closed", () => { if (!splash.isDestroyed()) splash.destroy(); });
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length !== 0) return;
     const database = databaseService.snapshot();
@@ -2199,6 +2279,13 @@ app.on("before-quit", (event) => {
   if (shutdownFlushComplete) return;
   event.preventDefault();
   if (shutdownFlushStarted) return;
+  if (updater.status().status === "ready" && installUpdateAfterSync) {
+    shutdownFlushStarted = true;
+    void installUpdateAfterSync(false).then(async result => {
+      if (!result.ok) { shutdownFlushStarted = false; await showMandatorySyncFailure(result); }
+    });
+    return;
+  }
   shutdownFlushStarted = true;
   quitting = true;
   stopAutomaticSync();

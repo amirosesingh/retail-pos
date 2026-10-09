@@ -33,6 +33,7 @@ async function main() {
     }
     process.exitCode = 1;
   }, 90_000);
+  try {
   app = await electron.launch({
     executablePath: packagedExecutable || require("electron"),
     // Codex's managed Windows session cannot launch Chromium's child-process
@@ -46,9 +47,16 @@ async function main() {
       ? { ...process.env, VITE_DEV_SERVER_URL: devServerUrl }
       : { ...process.env, VITE_DEV_SERVER_URL: "" },
   });
-  try {
     phase = "first-window";
-    const window = await app.firstWindow({ timeout: 30_000 });
+    let window;
+    const windowDeadline = Date.now() + 30_000;
+    while (!window && Date.now() < windowDeadline) {
+      for (const candidate of app.windows()) {
+        if (await candidate.evaluate(() => Boolean(window.pos)).catch(() => false)) { window = candidate; break; }
+      }
+      if (!window) await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    if (!window) throw new Error("The POS window did not expose its secure bridge.");
     window.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
@@ -137,13 +145,15 @@ async function main() {
     console.log(JSON.stringify({ ok: true, result, consoleErrors, pageErrors }, null, 2));
     if (consoleErrors.length || pageErrors.length || !result.bridge) process.exitCode = 1;
   } finally {
+    clearTimeout(watchdog);
     phase = "close";
+    if (app) {
     const closed = await Promise.race([
       app.close().then(() => true),
       new Promise((resolve) => setTimeout(() => resolve(false), 10_000)),
     ]);
     if (!closed) app.process().kill();
-    clearTimeout(watchdog);
+    }
   }
 }
 

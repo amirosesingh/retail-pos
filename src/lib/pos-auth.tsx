@@ -740,7 +740,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!verified && unreachable) {
         // Tier 1: the till's own local SQL database.
         const { verifyLocalPin } = await import("@/core/local-db/local-staff");
-        const local = await verifyLocalPin(code, pin);
+        const local = await verifyLocalPin(code, pin, true);
         if (local.ok) {
           signedInOffline = true;
           next = {

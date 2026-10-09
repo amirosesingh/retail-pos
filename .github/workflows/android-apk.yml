@@ -11,7 +11,7 @@ on:
     tags: ["v*"]
 
 concurrency:
-  group: android-release
+  group: pos-release
   cancel-in-progress: false
 
 permissions:
@@ -210,35 +210,14 @@ jobs:
             --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache" --delete
           aws s3 sync latest/android s3://updatelccms/pos-app/android \
             --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache" --delete
-          # Root manifest.json — the single feed every platform reads.
-          aws s3 cp release-assets/manifest.json s3://updatelccms/pos-app/manifest.json \
-            --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache" \
-            --content-type "application/json"
+          # The Windows publisher owns the shared manifest and only promotes it
+          # after verifying the Windows installer. Android publishes its own feed.
           aws s3 cp "s3://updatelccms/pos-app/latest/android/Retail-${{ steps.meta.outputs.version }}.apk" /tmp/published-android.apk \
             --endpoint-url "$R2_ENDPOINT" --no-progress
           cmp "release-assets/Retail-${{ steps.meta.outputs.version }}.apk" /tmp/published-android.apk
 
-      - name: Keep only the five most recent releases
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-        run: |
-          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$R2_ENDPOINT" ]; then exit 0; fi
-          RETAIN=5
-          folders=$(aws s3 ls s3://updatelccms/pos-app/releases/ \
-            --endpoint-url "$R2_ENDPOINT" | awk '/PRE/ {print $2}' | sort)
-          total=$(echo "$folders" | grep -c . || true)
-          if [ "$total" -le "$RETAIN" ]; then echo "Nothing to prune ($total kept)."; exit 0; fi
-          echo "$folders" | head -n "$((total - RETAIN))" | while read -r old; do
-            [ -z "$old" ] && continue
-            echo "Removing old release $old"
-            aws s3 rm "s3://updatelccms/pos-app/releases/$old" --recursive \
-              --endpoint-url "$R2_ENDPOINT" || true
-          done
+      # Windows owns shared release retention. Never recursively prune shared
+      # release directories here: they contain Windows recovery artifacts too.
 
       - name: Attach APK to the GitHub release
         if: ${{ !inputs.app_url && startsWith(github.ref, 'refs/tags/v') }}

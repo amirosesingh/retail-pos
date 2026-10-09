@@ -61,7 +61,7 @@ describe("desktop release configuration", () => {
       expect(workflow).toContain("apkUrl");
       expect(workflow).not.toContain("bundleUrl");
       expect(workflow).toContain("windowsUrl");
-      expect(workflow).toContain("s3://updatelccms/pos-app/manifest.json");
+      expect(workflow + read("scripts/publish-windows-release.cjs")).toMatch(/s3:\/\/updatelccms\/pos-app\/manifest.json|upload\(path.join\(directory, 'manifest.json'\), 'manifest.json'/);
     }
     expect(read(".github/workflows/android-apk.yml")).not.toContain("web-latest.zip");
   });
@@ -69,21 +69,23 @@ describe("desktop release configuration", () => {
   it("can verify the normal installer from latest.yml", () => {
     const updater = read("electron/updater.cjs");
     expect(updater).toContain('["latest.yml", `${encodeURIComponent(version)}.yml`]');
-    expect(updater).toContain("if (fallbackPromise) return fallbackPromise");
+    expect(updater).toContain("if (downloadPromise) return downloadPromise");
+    expect(updater).not.toContain("fallbackDownload");
+    expect(updater).not.toContain("setInterval");
     const main = read("electron/main.cjs");
     expect(main).toContain('prepare: prepareApplicationClose');
     expect(main).not.toContain('code: "EACTIVE_SHIFT"');
     expect(updater).toContain('disableDifferentialDownload = false');
-    expect(read('.github/workflows/desktop-release.yml')).toContain('--exclude "android/*" --exclude "*.blockmap"');
+    expect(read('scripts/publish-windows-release.cjs')).toContain('Keep all small historical blockmaps');
     expect(main).not.toContain('["", "ACTIVE", "OPEN"].includes(state)');
   });
 
-  it("publishes Windows without signing credentials and verifies the Android signer", () => {
+  it("requires signed Windows production releases and verifies the Android signer", () => {
     const desktop = read(".github/workflows/desktop-release.yml");
     const android = read(".github/workflows/android-apk.yml");
-    expect(desktop).not.toContain("WIN_CSC_LINK");
-    expect(desktop).not.toContain("WIN_CSC_KEY_PASSWORD");
-    expect(desktop).not.toContain("Get-AuthenticodeSignature");
+    expect(desktop).toContain("WIN_CSC_LINK");
+    expect(desktop).toContain("WIN_CSC_KEY_PASSWORD");
+    expect(desktop).toContain("Get-AuthenticodeSignature");
     expect(android).toContain("apksigner\" verify --verbose --print-certs");
     expect(android).toContain("APK signer does not match the configured release keystore alias");
   });

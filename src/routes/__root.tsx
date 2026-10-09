@@ -43,7 +43,7 @@ import {
   startConnectivityMonitor,
 } from "@/core/activation/connection-health";
 import { subscribeSyncConfig, syncConfig } from "@/lib/sync-config";
-import { DesktopUpdateBanner } from "@/platforms/windows/components/DesktopUpdateBanner";
+import { DesktopUpdateBanner, DesktopCloseSyncStatus } from "@/platforms/windows/components/DesktopUpdateBanner";
 import { AndroidUpdateBanner } from "@/platforms/mobile/components/AndroidUpdateBanner";
 import { usePublicHostLanding } from "../lib/coupon-hosts";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -354,6 +354,7 @@ function TillRuntime() {
 
             <AndroidUpdateBanner />
             <DesktopUpdateBanner />
+            <DesktopCloseSyncStatus />
             <Toaster position="top-right" closeButton />
             <ErrorNotifier />
           </RulesBridge>

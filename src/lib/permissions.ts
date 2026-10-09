@@ -1,3 +1,4 @@
+import { PERMISSION_PAGES, pageKey, pageAllowsAction, type PagePermissionKey } from "./permission-pages";
 // ============================================================================
 // Granular feature permissions. Stored as a JSONB object on public.app_users.
 // ============================================================================
@@ -267,7 +268,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
 
 export const PERMISSION_KEYS = Object.keys(PERMISSION_LABELS) as PermissionKey[];
 
-export type StaffPermissions = Record<PermissionKey, boolean>;
+export type StaffPermissions = Record<PermissionKey, boolean> & Record<PagePermissionKey, boolean>;
 
 const build = (on: PermissionKey[]): StaffPermissions =>
   PERMISSION_KEYS.reduce((acc, k) => {
@@ -403,7 +404,11 @@ export function normalizePermissions(
   }
   // Terminal registration belongs to supervisors and administrators even when
   // an older stored matrix still carries the former supervisor default (false).
-  if (role === "supervisor") base.can_manage_terminals = true;
+  if (role === "supervisor" && !("can_manage_terminals" in raw)) base.can_manage_terminals = true;
+  for (const page of PERMISSION_PAGES) {
+    const key = pageKey(page.id);
+    if (typeof raw[key] === "boolean") base[key] = raw[key];
+  }
   return base;
 }
 
@@ -439,7 +444,9 @@ const isAdminSubject = (subject: PermissionSubject): boolean => {
 /** Is this person allowed to do `flag`? Legacy flag names are accepted. */
 export function hasPermission(subject: PermissionSubject, flag: PermissionFlag | string): boolean {
   if (isAdminSubject(subject)) return true;
-  return !!matrixOf(subject)[resolvePermission(flag as PermissionFlag)];
+  const matrix = matrixOf(subject);
+  const key = resolvePermission(flag as PermissionFlag);
+  return matrix[key] === true && pageAllowsAction(matrix, key);
 }
 
 /** Allowed to do at least one of these. */

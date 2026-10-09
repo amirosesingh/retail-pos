@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { wrapBridge } from "@/platforms/windows/privilege-bridge";
+import { wrapBridge, registerDesktopBridge } from "@/platforms/windows/privilege-bridge";
 import { onRecoveryScreen } from "@/lib/recovery-route";
 import { useAuth } from "@/lib/pos-auth";
 import { readCredentials } from "@/lib/pos-credentials";
@@ -135,6 +135,7 @@ export function PrivilegeGate({ children }: { children: React.ReactNode }) {
         const bridge = win[name];
         if (!bridge) continue;
         const proxy = wrapBridge(bridge, requestUnlock);
+        undo.push(registerDesktopBridge(name, proxy));
         try {
           win[name] = proxy as unknown as Record<string, unknown>;
           undo.push(() => {

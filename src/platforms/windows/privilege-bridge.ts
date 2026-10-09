@@ -79,3 +79,5 @@ export function wrapBridge<T extends object>(
 
   return wrapObject(bridge) as T;
 }
+
+export { registerDesktopBridge, desktopBridge } from "@/lib/desktop-bridge-registry";

@@ -1,3 +1,4 @@
+import { effectivePagePermissions } from "./permission-pages";
 import { serviceRest } from "@/core/api/pos-relay.server";
 
 type Account = {
@@ -50,7 +51,7 @@ export async function databaseAuthority(identity: {
   return {
     subject: account.user_id,
     level: admin ? "admin" : supervisor ? "supervisor" : "staff",
-    permissions,
+    permissions: effectivePagePermissions(permissions),
     branchId: account.store_id,
   };
 }

@@ -99,8 +99,10 @@ const builderArgs = [
   "--publish",
   "never",
 ];
+if (process.env.FORCE_CODE_SIGNING === "true") builderArgs.push("--config.forceCodeSigning=true");
 const electronRuntime = prepareCachedElectronRuntime();
 if (electronRuntime) builderArgs.push(`--config.electronDist=${electronRuntime}`);
 run(path.join(root, "node_modules", "electron-builder", "cli.js"), builderArgs);
+run(path.join(root, "scripts", "windows-package-smoke.cjs"), [path.join(root, "release", "win-unpacked")]);
 
 console.log("✓ Windows installer ready in release/");

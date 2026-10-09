@@ -6,6 +6,7 @@
  * The delay is set per machine in Settings and is measured in seconds so a
  * busy counter can be locked down very tightly.
  */
+import { beginUpdateOperation } from "./update-safety";
 import { useEffect, useRef } from "react";
 
 const KEY = "pos.autoLock.seconds";
@@ -120,6 +121,7 @@ export function noteOperatorActivity(at = Date.now()): void {
 /** Keep auto-lock out of the unsafe middle of a user-initiated commit. */
 export function beginAutoLockOperation(maxMs = MAX_OPERATION_GRACE_MS): () => void {
   if (typeof window === "undefined") return () => undefined;
+  const finishUpdateOperation = beginUpdateOperation();
   noteOperatorActivity();
   operationGraceUntil = Math.max(operationGraceUntil, Date.now() + Math.max(1, maxMs));
   window.dispatchEvent(new Event(OPERATION_EVENT));
@@ -127,6 +129,7 @@ export function beginAutoLockOperation(maxMs = MAX_OPERATION_GRACE_MS): () => vo
   return () => {
     if (ended) return;
     ended = true;
+    finishUpdateOperation();
     operationGraceUntil = 0;
     window.dispatchEvent(new Event(OPERATION_EVENT));
   };
