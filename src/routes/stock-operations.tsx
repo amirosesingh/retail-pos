@@ -52,7 +52,6 @@ import {
   type StockRecordRow,
 } from "@/platforms/web/components/pos/StockCountDialog";
 import { StockRecordView } from "@/platforms/web/components/pos/StockRecordView";
-import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 
 const ALL = "all";
 
@@ -133,7 +132,6 @@ function StockOperationsPage() {
     () => records.filter((r) => statusFilter === ALL || r.status === statusFilter),
     [records, statusFilter],
   );
-  const pagination = usePagination(visible);
   const activeStores = useMemo(
     () => state.stores.filter((store) => store.active !== false),
     [state.stores],
@@ -304,7 +302,7 @@ function StockOperationsPage() {
               </p>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-border">
-                <Table>
+                <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Reference</TableHead>
@@ -319,8 +317,8 @@ function StockOperationsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pagination.pageItems.map((r) => (
-                      <TableRow key={r.id}>
+                    {visible.map((r) => (
+                      <TableRow key={r.id} summaryValues={{ Items: Number(r.line_count ?? 0), "Net impact": Number(r.total_impact ?? 0) }}>
                         <TableCell className="font-mono">{r.reference || "—"}</TableCell>
                         <TableCell>
                           <Badge
@@ -420,17 +418,6 @@ function StockOperationsPage() {
                     ))}
                   </TableBody>
                 </Table>
-                <TablePagination
-                  page={pagination.page}
-                  pageCount={pagination.pageCount}
-                  pageSize={pagination.pageSize}
-                  total={pagination.total}
-                  from={pagination.from}
-                  to={pagination.to}
-                  label="stock counts"
-                  onPage={pagination.setPage}
-                  onPageSize={pagination.setPageSize}
-                />
               </div>
             )}
           </TabsContent>

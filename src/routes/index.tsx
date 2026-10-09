@@ -88,7 +88,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { availableAt, cartTotals, money, stockAt, usePos } from "@/lib/pos-store";
-import { resolveByBarcode, variantForBarcode } from "@/lib/product-lookup";
+import { variantForBarcode } from "@/lib/product-lookup";
 import { reserveBillNumber } from "@/lib/bill-number";
 import { useAuth } from "@/lib/pos-auth";
 import { productVisibleAt } from "@/lib/branch-policy";
@@ -133,7 +133,7 @@ import {
 import { MemberHistoryDialog } from "@/platforms/web/components/pos/MemberHistoryDialog";
 import { TerminalWorkspaceHome } from "@/platforms/web/components/pos/TerminalWorkspaceHome";
 import { shouldOpenRegister } from "@/lib/terminal-workspace";
-import { searchLocal } from "@/lib/product-search";
+import { searchSellingProducts, sellingCodeMatches } from "@/lib/register/product-search";
 import { frequentRecentProducts } from "@/lib/standard-pos";
 
 export const Route = createFileRoute("/")({
@@ -706,15 +706,14 @@ function Register() {
     () => frequentRecentProducts(visibleProducts, state.sales, currentStore.id, 8),
     [visibleProducts, state.sales, currentStore.id],
   );
-  const standardLookupProducts = useMemo(() => {
+  const [lookupLimit, setLookupLimit] = useState(20);
+  useEffect(() => setLookupLimit(20), [deferredProductQuery, state.currentStoreId]);
+  const allLookupProducts = useMemo(() => {
     const needle = deferredProductQuery.trim();
     if (!needle) return recommendedProducts;
-    return searchLocal(
-      visibleProducts.filter((product) => !product.archived),
-      needle,
-      20,
-    );
+    return searchSellingProducts(visibleProducts, needle);
   }, [deferredProductQuery, recommendedProducts, visibleProducts]);
+  const standardLookupProducts = allLookupProducts.slice(0, lookupLimit);
 
   const member = useMemo(
     () =>
@@ -1129,9 +1128,17 @@ function Register() {
       setOpenShiftOpen(true);
       return;
     }
-    const hit = resolveByBarcode(state.products, code);
+    const matches = sellingCodeMatches(visibleProducts, code);
+    if (matches.length > 1) {
+      toast.error(`Barcode “${code}” belongs to more than one product. Select the correct item and correct the duplicate code in Inventory.`);
+      setQuery(code);
+      setUnknownCode(null);
+      setCatalogOpen(true);
+      return;
+    }
+    const hit = matches[0];
     if (!hit) {
-      toast.error(`No product matches “${code}”`);
+      toast.error(`No active product available at this branch matches “${code}”`);
       // A mis-read or unknown barcode drops the cashier straight into search.
       setQuery(code);
       setUnknownCode(code);
@@ -1934,6 +1941,11 @@ function Register() {
               </span>
             </Button>
           ))}
+          {allLookupProducts.length > standardLookupProducts.length && (
+            <Button variant="outline" className="w-full" onClick={() => setLookupLimit(limit => limit + 20)}>
+              Show more ({standardLookupProducts.length} of {allLookupProducts.length})
+            </Button>
+          )}
           {!standardLookupProducts.length && (
             <div className="px-4 py-10 text-center">
               <PackageSearch className="mx-auto size-8 text-muted-foreground/60" />
@@ -1949,7 +1961,7 @@ function Register() {
 
       <div className="grid shrink-0 gap-2 border-t border-border p-3 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
         <Button variant="outline" disabled={!activeShift} onClick={() => setCatalogOpen(true)}>
-          <PackageSearch className="size-4" /> Advanced search
+          <PackageSearch className="size-4" /> Browse all / Advanced search
         </Button>
         {visible("register.customerDisplay") && (
           <Button variant="outline" onClick={openCustomerDisplay}>
@@ -2865,7 +2877,8 @@ function Register() {
               canCreateProduct={can("can_add_new_product")}
               canLinkBarcode={can("can_link_product_barcode")}
               onAdd={(id) => {
-                addLine(id);
+                const product = visibleProducts.find(candidate => candidate.id === id);
+                addLine(id, product ? variantForBarcode(product, query) : undefined);
                 setCatalogOpen(false);
                 setUnknownCode(null);
                 setQuery("");

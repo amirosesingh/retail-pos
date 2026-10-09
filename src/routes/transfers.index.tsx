@@ -1,3 +1,5 @@
+import { useStockTableCosts } from "@/lib/use-stock-table-costs";
+import { transferTableTotals } from "@/lib/stock-table-totals";
 /**
  * Stock movements log.
  *
@@ -21,12 +23,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { usePos } from "@/lib/pos-store";
+import { money, usePos } from "@/lib/pos-store";
 import { printTransferNote } from "@/lib/pos-print";
 import type { Transfer, TransferKind } from "@/core/types/pos-types";
 import { TRANSFER_STATUS_LABELS } from "@/core/types/pos-types";
 import { fulfilmentLabel, statusStyle } from "@/platforms/web/components/pos/TransferWorkspace";
-import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 
 type TransferSearch = { items?: string; kind?: TransferKind };
 
@@ -66,6 +67,8 @@ export const Route = createFileRoute("/transfers/")({
 
 function Transfers() {
   const { state, stores, currentStore } = usePos();
+  const showCosts = useStockTableCosts();
+  const productsById = useMemo(() => new Map(state.products.map(product => [product.id, product])), [state.products]);
 
   const storeOf = (id: string) => stores.find((s) => s.id === id);
   const productOf = (id: string) => state.products.find((p) => p.id === id) ?? null;
@@ -90,7 +93,6 @@ function Transfers() {
       ),
     [mine, scopeTab, stores],
   );
-  const pagination = usePagination(visible);
 
   const inbound = mine.filter((t) => t.toStoreId === currentStore.id && t.status === "dispatched");
   const toVerify = mine.filter((t) => t.toStoreId === currentStore.id && t.status === "received");
@@ -169,7 +171,7 @@ function Transfers() {
             </div>
           </div>
           <Separator />
-          <Table>
+          <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
             <TableHeader>
               <TableRow>
                 <TableHead>Reference</TableHead>
@@ -177,11 +179,14 @@ function Transfers() {
                 <TableHead className="text-center">Qty</TableHead>
                 <TableHead>Route</TableHead>
                 <TableHead>Status</TableHead>
+                {showCosts && <TableHead className="text-right">Requested estimate</TableHead>}
+                {showCosts && <TableHead className="text-right">Sent estimate</TableHead>}
                 <TableHead className="text-right">Open</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pagination.pageItems.map((t) => {
+              {visible.map((t) => {
+                const totals = transferTableTotals(t.items, productsById, showCosts);
                 const isRequest = t.kind === "request";
                 const sourceRequest = t.sourceRequestId
                   ? state.transfers.find((row) => row.id === t.sourceRequestId)
@@ -190,7 +195,7 @@ function Transfers() {
                   t.toStoreId === currentStore.id &&
                   (t.status === "received" || t.status === "dispatched");
                 return (
-                  <TableRow key={t.id}>
+                  <TableRow key={t.id} summaryValues={totals}>
                     <TableCell className="numeric">
                       {t.ref}
                       <div className="text-[11px] text-muted-foreground">
@@ -254,6 +259,8 @@ function Transfers() {
                         </div>
                       )}
                     </TableCell>
+                    {showCosts && <TableCell className="numeric text-right">{totals["Unpriced lines"] ? "Cost unavailable" : money(totals["Requested estimate"])}</TableCell>}
+                    {showCosts && <TableCell className="numeric text-right">{totals["Unpriced lines"] ? "Cost unavailable" : money(totals["Sent estimate"])}</TableCell>}
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         {needsCount && !isRequest && (
@@ -296,24 +303,13 @@ function Transfers() {
               })}
               {!visible.length && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={showCosts ? 8 : 6} className="py-10 text-center text-muted-foreground">
                     No stock movements for this store yet.
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-          <TablePagination
-            page={pagination.page}
-            pageCount={pagination.pageCount}
-            pageSize={pagination.pageSize}
-            total={pagination.total}
-            from={pagination.from}
-            to={pagination.to}
-            label="movements"
-            onPage={pagination.setPage}
-            onPageSize={pagination.setPageSize}
-          />
         </section>
       </div>
     </AppShell>

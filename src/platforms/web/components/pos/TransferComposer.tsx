@@ -1,3 +1,5 @@
+import { useStockTableCosts } from "@/lib/use-stock-table-costs";
+import { transferTableTotals } from "@/lib/stock-table-totals";
 /**
  * The full-window basket used to raise a stock request or a direct transfer.
  *
@@ -30,13 +32,12 @@ import {
 } from "@/components/ui/table";
 import { ProductPicker } from "@/platforms/web/components/pos/ProductPicker";
 import { Fact, Panel } from "@/platforms/web/components/pos/TransferWorkspace";
-import { stockAt, usePos } from "@/lib/pos-store";
+import { money, stockAt, usePos } from "@/lib/pos-store";
 import { availableAt, planDeduction, subWarehouses } from "@/lib/locations";
 import { branchPolicy } from "@/lib/branch-policy";
 import { groupOf, normalizeTransferQuantity, scopeBetween } from "@/lib/stock-transfers";
 import { groupName, useStoreGroups } from "@/lib/store-groups";
 import type { Transfer, TransferItem, TransferKind } from "@/core/types/pos-types";
-import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
 
 export type ComposerResult = {
@@ -89,6 +90,7 @@ export function TransferComposer({
   const submittingRef = useRef(false);
 
   const otherStore = stores.find((s) => s.id === otherStoreId);
+  const showCosts = useStockTableCosts();
   const productsById = useMemo(() => new Map(state.products.map(product => [product.id,product])), [state.products]);
   const productOf = (id: string) => productsById.get(id) ?? null;
   const sourceStoreId = kind === "transfer" ? currentStore.id : otherStoreId;
@@ -170,7 +172,6 @@ export function TransferComposer({
   }
 
   const totalUnits = items.reduce((a, i) => a + (Number(i.qty) || 0), 0);
-  const linePagination = usePagination(items, 25);
 
   return (
     <div className="space-y-6">
@@ -254,25 +255,26 @@ export function TransferComposer({
               : "What is going in the box, checked against your own shelf."
           }
         >
-          <Table>
+          <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
             <TableHeader>
               <TableRow>
                 <TableHead>Product</TableHead>
                 <TableHead className="text-right">Here</TableHead>
                 <TableHead className="text-right">Source</TableHead>
                 <TableHead className="text-right">Quantity</TableHead>
+                {showCosts && <TableHead className="text-right">Estimated cost</TableHead>}
                 <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {linePagination.pageItems.map((i) => {
+              {items.map((i) => {
                 const p = productOf(i.productId);
                 const plan =
                   kind === "transfer" && p && sourceLevels.length
                     ? planDeduction(p, allStores, currentStore.id, i.qty)
                     : null;
                 return (
-                  <TableRow key={i.productId}>
+                  <TableRow key={i.productId} summaryValues={transferTableTotals([i], productsById, showCosts)}>
                     <TableCell>
                       <div className="text-sm">{p?.name ?? "Unknown item"}</div>
                       <div className="numeric text-[11px] text-muted-foreground">
@@ -296,7 +298,7 @@ export function TransferComposer({
                     <TableCell className="numeric text-right text-muted-foreground">
                       {p && sourceStoreId ? stockAt(p, sourceStoreId) : "—"}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right" data-sort-value={String(i.qty)}>
                       <Input
                         className="numeric ml-auto h-9 w-24 text-right"
                         value={String(i.qty)}
@@ -314,6 +316,7 @@ export function TransferComposer({
                         }
                       />
                     </TableCell>
+                    {showCosts && <TableCell className="numeric text-right" data-sort-value={p ? i.qty * p.cost : undefined}>{p ? money(i.qty * p.cost) : "Cost unavailable"}</TableCell>}
                     <TableCell className="text-right">
                       <Button
                         size="sm"
@@ -331,24 +334,13 @@ export function TransferComposer({
               })}
               {!items.length && (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={showCosts ? 6 : 5} className="py-10 text-center text-muted-foreground">
                     No lines yet — search for a product on the left.
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-          <TablePagination
-            page={linePagination.page}
-            pageCount={linePagination.pageCount}
-            pageSize={linePagination.pageSize}
-            total={linePagination.total}
-            from={linePagination.from}
-            to={linePagination.to}
-            label="lines"
-            onPage={linePagination.setPage}
-            onPageSize={linePagination.setPageSize}
-          />
 
           <div className="flex flex-wrap justify-end gap-2 pt-5">
             {onSaveDraft ? (

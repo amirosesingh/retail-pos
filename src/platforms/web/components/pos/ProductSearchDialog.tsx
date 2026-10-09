@@ -17,8 +17,9 @@ import { money, stockAt } from "@/lib/pos-store";
 import { localTerminalId } from "@/lib/shift-hours";
 import { nextSku, readSkuSettings } from "@/lib/sku";
 import type { Product } from "@/core/types/pos-types";
+import { searchSellingProducts, type ProductSearchField } from "@/lib/register/product-search";
 
-type Field = "all" | "barcode" | "name" | "category" | "code";
+type Field = ProductSearchField;
 
 const FIELDS: { id: Field; label: string }[] = [
   { id: "all", label: "All items" },
@@ -27,26 +28,6 @@ const FIELDS: { id: Field; label: string }[] = [
   { id: "category", label: "Category" },
   { id: "code", label: "Item code / serial" },
 ];
-
-function matches(p: Product, q: string, field: Field) {
-  if (!q) return true;
-  const name = p.name.toLowerCase();
-  const sku = p.sku.toLowerCase();
-  const codes = [p.barcode, ...(p.barcodes ?? [])].join(" ").toLowerCase();
-  const category = `${p.category} ${p.subCategory ?? ""}`.toLowerCase();
-  switch (field) {
-    case "barcode":
-      return codes.includes(q) || sku.includes(q);
-    case "name":
-      return name.includes(q);
-    case "category":
-      return category.includes(q);
-    case "code":
-      return sku.includes(q) || p.id.toLowerCase().includes(q);
-    default:
-      return name.includes(q) || sku.includes(q) || codes.includes(q) || category.includes(q);
-  }
-}
 
 export function ProductSearchDialog({
   open,
@@ -102,10 +83,13 @@ export function ProductSearchDialog({
   }, [open]);
 
   const q = query.trim().toLowerCase();
-  const results = useMemo(
-    () => products.filter((p) => !p.archived && matches(p, q, field)).slice(0, 100),
+  const [resultLimit, setResultLimit] = useState(100);
+  useEffect(() => { setResultLimit(100); setSelected(null); }, [q, field, storeId, open]);
+  const allResults = useMemo(
+    () => searchSellingProducts(products, q, field),
     [products, q, field],
   );
+  const results = allResults.slice(0, resultLimit);
 
   async function linkBarcode() {
     if (!selected || !unknownCode) return;
@@ -302,6 +286,11 @@ export function ProductSearchDialog({
                 <p className="py-10 text-center text-sm text-muted-foreground">
                   No products match “{query}”.
                 </p>
+              )}
+              {allResults.length > results.length && (
+                <Button variant="outline" onClick={() => setResultLimit(limit => limit + 100)}>
+                  Show more ({results.length} of {allResults.length})
+                </Button>
               )}
             </div>
           </ScrollArea>
