@@ -6,6 +6,20 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const yaml = require('js-yaml');
 const {retention,validateRelease}=require('./publish-windows-release.cjs');
+const {remote}=require('./publish-windows-release.cjs');
+test('temporary CDN rejection retries without accepting the error page as metadata',async()=>{
+ let attempts=0;
+ const body=await remote('https://example.invalid/latest.yml',{fetchImpl:async()=>++attempts<3?new Response('blocked',{status:403}):new Response('version: 1.2.3'),sleep:async()=>{}});
+ assert.equal(body.toString(),'version: 1.2.3');assert.equal(attempts,3);
+});
+test('persistent CDN denial is not interpreted as an absent release',async()=>{
+ let attempts=0;
+ await assert.rejects(remote('https://example.invalid/latest.yml',{optional:true,fetchImpl:async()=>{attempts++;return new Response('blocked',{status:403});},sleep:async()=>{}}),/HTTP 403/);
+ assert.equal(attempts,3);
+});
+test('range validation still rejects a full response instead of partial content',async()=>{
+ await assert.rejects(remote('https://example.invalid/setup.exe',{range:true,fetchImpl:async()=>new Response('x'),sleep:async()=>{}}),/byte ranges/);
+});
 test('retention orders semantic versions, keeps five plus pinned and recent recovery releases',()=>{
  const old='2025-01-01T00:00:00Z';const now=Date.parse('2026-10-09');
  const releases=['1.4.8','1.4.9','1.4.10','1.4.11','1.4.12','1.4.13','1.4.14'].map(version=>({version,released:old}));

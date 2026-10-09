@@ -37,10 +37,18 @@ function retention(releases, now = Date.now()) {
   });
   return { retain, remove };
 }
-async function remote(url, { optional = false, range = false } = {}) {
-  const response = await fetch(url, { headers: { 'Cache-Control': 'no-cache', 'Accept-Encoding': 'identity', ...(range ? { Range: 'bytes=0-0' } : {}) }, signal: AbortSignal.timeout(120000) });
+async function remote(url, { optional = false, range = false, fetchImpl = fetch, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  let response;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      response = await fetchImpl(url, { headers: { 'User-Agent': 'Tomboard-POS-Release/1.0', 'Cache-Control': 'no-cache', 'Accept-Encoding': 'identity', ...(range ? { Range: 'bytes=0-0' } : {}) }, signal: AbortSignal.timeout(120000) });
+      if (![403, 408, 429, 500, 502, 503, 504].includes(response.status) || attempt === 2) break;
+      await response.body?.cancel();
+    } catch (error) { if (attempt === 2) throw error; }
+    await sleep(1000 * (attempt + 1));
+  }
   if (optional && response.status === 404) return null;
-  if (!response.ok) throw new Error(`Release endpoint returned HTTP ${response.status}.`);
+  if (!response.ok) throw new Error(`Release endpoint ${new URL(url).pathname} returned HTTP ${response.status} after retries. Check CDN access rules; no release metadata was accepted.`);
   if (range) {
     if (response.status !== 206 || !/^bytes 0-0\/\d+$/.test(response.headers.get('content-range') || '')) throw new Error('Update endpoint does not support byte ranges.');
     const data = Buffer.from(await response.arrayBuffer());
@@ -51,7 +59,16 @@ async function remote(url, { optional = false, range = false } = {}) {
 }
 async function preflight(version) {
   stable(version);
-  const body = await remote(`${PUBLIC}/latest/latest.yml`, { optional: true });
+  // Version authority is the stored object, not a potentially stale or
+  // runner-blocked CDN response. These credentials exist only in release CI.
+  let body;
+  if (process.env.R2_ENDPOINT && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    try { body = aws(['s3','cp',`s3://${BUCKET}/${PREFIX}/latest/latest.yml`,'-','--no-progress']); }
+    catch (error) {
+      if (/NoSuchKey|\(404\)/.test(String(error.stderr ?? ''))) body = null;
+      else throw new Error('Could not read the published version through authenticated R2 access. Check release credentials and bucket access.');
+    }
+  } else body = await remote(`${PUBLIC}/latest/latest.yml`, { optional: true });
   if (body && !semver.gt(version, stable(yaml.load(body.toString()).version))) throw new Error('Release version must be newer than the published stable version.');
 }
 function aws(args) {
@@ -126,7 +143,7 @@ async function publish(directory, version, releaseId) {
   }
   console.log(`Published verified Windows ${version}; retained ${plan.retain.length} releases (five minimum plus recovery/download grace).`);
 }
-module.exports = { validateRelease, retention, preflight, publish };
+module.exports = { validateRelease, retention, preflight, publish, remote };
 if (require.main === module) {
   const version = require('../package.json').version;
   (process.argv.includes('--preflight') ? preflight(version) : publish('upload', version, process.env.RELEASE_ID)).catch(error => { console.error(error.message); process.exitCode = 1; });

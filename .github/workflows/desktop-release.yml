@@ -54,6 +54,11 @@ jobs:
 
       - name: Validate release branch and version
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         shell: bash
         run: |
           git fetch origin main
