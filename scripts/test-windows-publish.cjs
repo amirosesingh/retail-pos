@@ -20,7 +20,7 @@ test('persistent CDN denial is not interpreted as an absent release',async()=>{
 test('range validation still rejects a full response instead of partial content',async()=>{
  await assert.rejects(remote('https://example.invalid/setup.exe',{range:true,fetchImpl:async()=>new Response('x'),sleep:async()=>{}}),/byte ranges/);
 });
-test('authenticated CI fallback verifies the same stored object and cleans temporary bytes',async()=>{
+for (const originOnly of [false,true]) test(`authenticated verification cleans temporary bytes (origin-only: ${originOnly})`,async()=>{
  const vm=require('node:vm');const output={exports:{}};let downloaded;
  const wrappedRequire=name=>name==='node:child_process'?{execFileSync:(_bin,args)=>{
    assert.equal(args[0],'s3api');assert.equal(args[args.indexOf('--key')+1],'pos-app/latest/setup.exe');
@@ -28,13 +28,18 @@ test('authenticated CI fallback verifies the same stored object and cleans tempo
    return JSON.stringify({ContentLength:1,ContentRange:'bytes 0-0/5'});
  }}:require(name);
  vm.runInNewContext(fs.readFileSync(require.resolve('./publish-windows-release.cjs'),'utf8'),{
-   require:wrappedRequire,module:output,process:{env:{R2_ENDPOINT:'https://example.invalid',AWS_ACCESS_KEY_ID:'test',AWS_SECRET_ACCESS_KEY:'test'}},
+   require:wrappedRequire,module:output,process:{env:{R2_VERIFY_ORIGIN:String(originOnly),R2_ENDPOINT:'https://example.invalid',AWS_ACCESS_KEY_ID:'test',AWS_SECRET_ACCESS_KEY:'test'}},
    URL,Buffer,AbortSignal,fetch,console:{warn(){}},setTimeout,
  });
  const result=await output.exports.remote('https://updatecms.luckycharmsdnbhd.com/pos-app/latest/setup.exe',{
-   range:true,fetchImpl:async()=>new Response('blocked',{status:403}),sleep:async()=>{},
+   range:true,fetchImpl:async()=>{assert.equal(originOnly,false,'Origin verification must never probe the public CDN');return new Response('blocked',{status:403});},sleep:async()=>{},
  });
  assert.equal(result.toString(),'x');assert.equal(fs.existsSync(downloaded),false);
+});
+test('workflow numbering mismatch is rejected before any upload',async()=>{
+ const previous=process.env.RELEASE_VERSION;process.env.RELEASE_VERSION='1.4.46';
+ try { await assert.rejects(require('./publish-windows-release.cjs').publish('unused','1.4.47','v1.4.47-abcdef0'),/release number/); }
+ finally { if(previous===undefined)delete process.env.RELEASE_VERSION;else process.env.RELEASE_VERSION=previous; }
 });
 test('retention orders semantic versions, keeps five plus pinned and recent recovery releases',()=>{
  const old='2025-01-01T00:00:00Z';const now=Date.parse('2026-10-09');

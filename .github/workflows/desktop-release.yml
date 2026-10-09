@@ -136,6 +136,10 @@ jobs:
           AWS_DEFAULT_REGION: auto
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           RELEASE_ID: ${{ steps.meta.outputs.release_id }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          # Verify uploaded bytes at R2 origin; public probes before uploading
+          # can cache a 404 for a new numbered installer URL.
+          R2_VERIFY_ORIGIN: "true"
         run: node scripts/publish-windows-release.cjs
 
       - name: Attach installer to the GitHub release
