@@ -194,7 +194,7 @@ let localDatabaseRecoveryPromise=null;
 function recoverLocalDatabase({prepare=true}={}){
   if(localDatabaseRecoveryPromise)return localDatabaseRecoveryPromise;
   localDatabaseRecoveryPromise=(async()=>{
-    const restored=await databaseService.restore();
+    const restored=await databaseService.restore({reuseValidation:!prepare});
     if(!restored.connected||!restored.tradingReady)return restored;
     const branchId=localBranchId();
     if(!branchId)return databaseService.snapshot();

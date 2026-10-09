@@ -25,6 +25,22 @@ import {
 } from "@/core/activation/connection-health";
 
 export function OfflineGate({ children }: { children: ReactNode }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const [state, setState] = useState<Connectivity>(connectivity());
+  const bypass = !isOnlineOnly() || isRecoveryPath(pathname) || onRecoveryScreen();
+  const available = bypass || state === "online";
+  const [mounted, setMounted] = useState(available);
+  useEffect(() => subscribeConnectivity(setState), []);
+  useEffect(() => { if (available) setMounted(true); }, [available]);
+  // Keep providers and unsaved forms mounted across temporary network loss.
+  // Hidden content is unavailable for interaction until connectivity returns.
+  return <>
+    <div hidden={!available} inert={!available} style={{ display: available ? "contents" : "none" }}>{(mounted || available) && children}</div>
+    {!available && <OfflineStatus />}
+  </>;
+}
+
+function OfflineStatus() {
   const live = isOnlineOnly();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // Emergency access repairs the connection this gate is waiting for, so it
@@ -42,7 +58,7 @@ export function OfflineGate({ children }: { children: ReactNode }) {
     };
   }, [recovery]);
 
-  if (!live || recovery) return <>{children}</>;
+  if (!live || recovery) return null;
 
   // Still checking: the cloud icon alone, nothing else on screen.
   if (state === "connecting")
@@ -59,7 +75,7 @@ export function OfflineGate({ children }: { children: ReactNode }) {
       </div>
     );
 
-  if (state === "online") return <>{children}</>;
+  if (state === "online") return null;
 
   const browserOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   const verdict = cloudVerdict();
