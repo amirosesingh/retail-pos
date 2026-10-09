@@ -4,6 +4,7 @@ import type { CartLine, Sale } from "@/core/types/pos-types";
 import {
   exchangeBlockReason,
   exchangeLineEligible,
+  exchangeUnitCredit,
   findExchangeSale,
 } from "@/lib/register/use-exchange";
 
@@ -38,6 +39,11 @@ const sale = (receiptNo: string, over: Partial<Sale> = {}): Sale => ({
 });
 
 describe("exchange workflow safeguards", () => {
+  it("credits the original discounted price, including the bill-level discount", () => {
+    const item = line({ discount: 10 });
+    const original = sale("B-DISCOUNT", { lines:[item], subtotal:100, discount:28, total:72 });
+    expect(exchangeUnitCredit(original, item)).toBe(72);
+  });
   it("prefers an exact bill and refuses an ambiguous partial receipt", () => {
     const sales = [
       sale("LC-PC01-20261004-0001"),

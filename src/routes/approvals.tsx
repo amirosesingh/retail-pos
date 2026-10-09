@@ -6,7 +6,7 @@
  * authenticated. Everything decided here is written to the authorisation log.
  */
 import { createFileRoute } from "@tanstack/react-router";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clock3, Eye, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -158,7 +158,9 @@ function ApprovalsPage() {
   );
   const firstDecided = orderedRows.findIndex((row) => row.status !== "pending");
 
+  const loadSequence = useRef(0);
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
     try {
       const auth = await getPosCallerAuth();
@@ -170,15 +172,17 @@ function ApprovalsPage() {
           status: history ? "all" : "pending",
         },
       });
+      if (sequence !== loadSequence.current) return;
       setError(res.ok ? "" : (res.error ?? ""));
       // A refused reply may carry no list at all; never hand undefined on.
       setRows(Array.isArray(res.requests) ? (res.requests as AuthorizationRequest[]) : []);
       setMe(res.ok ? (res.me ?? null) : null);
     } catch (e) {
+      if (sequence !== loadSequence.current) return;
       setRows([]);
       setError((e as Error).message);
     }
-    setLoading(false);
+    if (sequence === loadSequence.current) setLoading(false);
   }, [storeId, allBranches, history]);
 
   useEffect(() => {

@@ -1,3 +1,5 @@
+import { redeemedPoints } from "./points-redemption";
+import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE, exchangePolicyError } from "./returns-policy";
 import { uniqueSales } from "./sale-identity";
 import { staffSettingsTarget } from "./settings-edit-policy";
 import { isCompanyIdentityPath } from "./company-identity";
@@ -550,7 +552,7 @@ function applySalesSnapshot(
   if (confirmPending) for (const id of ids) pendingSales.delete(id);
   const pending = current.sales.filter((sale) => pendingSales.has(sale.id) && !ids.has(sale.id));
   const otherBranches = current.sales.filter(
-    (sale) => sale.storeId !== active && !ids.has(sale.id),
+    (sale) => !sameBranchId(sale.storeId, active) && !ids.has(sale.id),
   );
   const sales = uniqueSales([...otherBranches, ...pending, ...rows])
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -1212,18 +1214,18 @@ export function PosProvider({ children }: { children: ReactNode }) {
             pendingProductIds.clear();
             void loadCloudProducts(ids)
               .then((records) => {
-                const changed = new Set(ids);
-                const byId = new Map(records.map((record) => [record.id, record]));
+                const changed = new Set(ids.map(canonicalBranchId));
+                const byId = new Map(records.map((record) => [canonicalBranchId(record.id), record]));
                 setState((current) => {
-                  const known = new Set(current.products.map(product => product.id));
+                  const known = new Set(current.products.map(product => canonicalBranchId(product.id)));
                   return ({
                   ...current,
                   products: [
                     ...current.products
-                      .filter((product) => !changed.has(product.id) || byId.has(product.id))
-                      .map((product) => byId.get(product.id) ?? product),
+                      .filter((product) => !changed.has(canonicalBranchId(product.id)) || byId.has(canonicalBranchId(product.id)))
+                      .map((product) => byId.get(canonicalBranchId(product.id)) ?? product),
                     ...records.filter(
-                      (record) => !known.has(record.id),
+                      (record) => !known.has(canonicalBranchId(record.id)),
                     ),
                   ],
                 }); });
@@ -1290,7 +1292,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const unsubscribe = subscribeSalesChange((change) => {
       const active =
         activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
-      if (change.storeId && active && change.storeId !== active) return;
+      if (change.storeId && active && !sameBranchId(change.storeId, active)) return;
       if (timer) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = undefined;
@@ -1360,7 +1362,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       }
     };
     const unsubscribe = bridge.onBusinessChanged((change) => {
-      if (change.kind === "branch") {
+      if (change.kind === "branch" || change.kind === "refund") {
         // First verified login can repair an older activation that stored only
         // the token. Re-run the complete local snapshot now that Main can
         // enforce the correct branch predicate.
@@ -1370,7 +1372,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const active =
         activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
       if (change.kind !== "sale") return;
-      if (change.branchId && active && change.branchId !== active) return;
+      if (change.branchId && active && !sameBranchId(change.branchId, active)) return;
       void refresh();
     });
     return () => {
@@ -1794,6 +1796,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       memberSnapshot?: Member | null,
     ) => {
       const snapshot = stateRef.current;
+      const policyError = exchangePolicyError(input.lines, input.total, input.exchangeOfReceiptNo ?? null);
+      if (policyError) throw new Error(policyError);
       const counter = snapshot.counter + 1;
       // Never write a bill without a branch — the terminal's branch is authoritative.
       const branchId = requireBranchId(input.storeId || snapshot.currentStoreId);
@@ -1802,7 +1806,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const exchangeSource = input.exchangeOfReceiptNo
         ? snapshot.sales.find(
             (candidate) =>
-              candidate.receiptNo === input.exchangeOfReceiptNo && candidate.storeId === branchId,
+              candidate.receiptNo === input.exchangeOfReceiptNo && sameBranchId(candidate.storeId, branchId),
           )
         : null;
       if (input.exchangeOfReceiptNo && !exchangeSource)
@@ -1867,7 +1871,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ? {
             ...member,
             points:
-              member.points + input.pointsEarned - (input.method === "points" ? input.paid : 0),
+              member.points + input.pointsEarned - redeemedPoints(input),
             totalSpend: Number((member.totalSpend + input.total).toFixed(2)),
           }
         : null;
@@ -2131,6 +2135,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       terminal?: string | null,
       moneyAction?: "refunded" | "retained" | null,
     ): Promise<{ ok: true } | { ok: false; error: string }> => {
+      if (!CUSTOMER_REFUNDS_ALLOWED && moneyAction === "refunded") return { ok: false, error: NO_REFUND_MESSAGE };
       const current = stateRef.current.bookings.find((b) => b.id === id);
       if (!current) return { ok: false, error: "Booking not found." };
       if (current.status !== "active")
@@ -2209,6 +2214,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       method: PaymentMethod,
       reason: string,
     ): Promise<{ ok: true; booking: Booking } | { ok: false; error: string }> => {
+      if (!CUSTOMER_REFUNDS_ALLOWED) return { ok: false, error: NO_REFUND_MESSAGE };
       const current = stateRef.current.bookings.find((b) => b.id === id);
       if (!current) return { ok: false, error: "Booking not found." };
       const value = r2(amount);

@@ -1,3 +1,4 @@
+import { sameBranchId } from "@/lib/branch-id";
 /**
  * Receiving workspace — the physical count that puts stock on the shelf.
  *
@@ -127,7 +128,7 @@ function ReceivingWorkspace() {
       </AppShell>
     );
 
-  const mine = transfer.toStoreId === currentStore.id;
+  const mine = sameBranchId(transfer.toStoreId, currentStore.id);
   const allowed = live && mine && can("can_receive_transfer");
   const arrived = transfer.status === "received";
   const inTransit = transfer.status === "dispatched";
@@ -217,7 +218,7 @@ function ReceivingWorkspace() {
         {!mine && (
           <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
             This delivery belongs to another branch — you can read it, but only{" "}
-            {stores.find((s) => s.id === transfer.toStoreId)?.name ?? "the destination"} can count
+            {stores.find((s) => sameBranchId(s.id, transfer.toStoreId))?.name ?? "the destination"} can count
             it in.
           </p>
         )}

@@ -1,3 +1,4 @@
+import { sameBranchId } from "@/lib/branch-id";
 /**
  * Raise a direct transfer — stock this branch is sending to another one with
  * no request behind it. No fake request reference is written: the note simply
@@ -54,7 +55,7 @@ function NewTransferPage() {
       row.id === draftId &&
       row.kind === "transfer" &&
       row.status === "draft" &&
-      row.fromStoreId === currentStore.id,
+      sameBranchId(row.fromStoreId, currentStore.id),
   );
 
   return (

@@ -1,3 +1,4 @@
+import { sameBranchId } from "@/lib/branch-id";
 /**
  * One transfer note, in full: what was asked for, approved, packed and
  * finally counted in. The page is the workspace for the sending branch —
@@ -84,8 +85,8 @@ function TransferDetail() {
   const storeOf = (sid: string) => stores.find((s) => s.id === sid);
   const source = storeOf(transfer.fromStoreId);
   const destination = storeOf(transfer.toStoreId);
-  const sending = transfer.fromStoreId === currentStore.id;
-  const receiving = transfer.toStoreId === currentStore.id;
+  const sending = sameBranchId(transfer.fromStoreId, currentStore.id);
+  const receiving = sameBranchId(transfer.toStoreId, currentStore.id);
   const parentRequest = transfer.sourceRequestId
     ? (state.transfers.find((t) => t.id === transfer.sourceRequestId) ?? null)
     : null;

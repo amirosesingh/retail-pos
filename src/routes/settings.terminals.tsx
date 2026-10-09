@@ -2,7 +2,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { CurrentTerminalPanel } from "@/platforms/web/components/pos/CurrentTerminalPanel";
 import { TerminalTokens } from "@/platforms/web/components/pos/TerminalTokens";
-import { AdminWebActivations } from "@/platforms/web/components/pos/AdminWebActivations";
 
 export const Route = createFileRoute("/settings/terminals")({
   head: () => ({
@@ -33,7 +32,6 @@ export const Route = createFileRoute("/settings/terminals")({
       <div className="space-y-5">
         <CurrentTerminalPanel />
         <TerminalTokens only="pc" />
-        <AdminWebActivations />
       </div>
     </SettingsFrame>
   ),

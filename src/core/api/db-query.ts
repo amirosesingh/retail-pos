@@ -1,3 +1,4 @@
+import { normalizeUuidFields } from "@/lib/uuid-fields";
 /**
  * Routed table reads.
  *
@@ -102,7 +103,7 @@ async function runQuery(
       limit: Math.min(options.limit ?? 1000, 2000),
     });
     if (!result.ok) throw new Error(result.error ?? "The local SQL Server read failed.");
-    const rows = (result.rows ?? []) as Row[];
+    const rows = normalizeUuidFields((result.rows ?? []) as Row[]);
     noteVersions(table, rows);
     return { rows, source: "local" };
   }
@@ -164,8 +165,9 @@ async function runQuery(
   }
   // Remember what version the central copy is on, so a later edit from this
   // till can say which version it was working from.
-  noteVersions(table, data);
-  return { rows: (data as Row[]) ?? [], source: "cloud" };
+  const rows = normalizeUuidFields((data as Row[]) ?? []);
+  noteVersions(table, rows);
+  return { rows, source: "cloud" };
 }
 
 /**

@@ -1,4 +1,12 @@
 import { Link } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
+import { useReportSales } from "@/lib/use-report-sales";
+import { stockAtLocation } from "@/lib/locations";
+
+const localDay = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
 import {
   Activity,
   ArrowLeftRight,
@@ -229,14 +237,18 @@ export function TerminalWorkspaceHome() {
   const visibleActions = ACTIONS[purpose].filter(
     (action) => !action.permission || can(action.permission),
   );
-  const branchSales = state.sales.filter((sale) => sale.storeId === currentStore.id);
-  const todayKey = new Date().toDateString();
-  const todaySales = branchSales.filter(
-    (sale) => new Date(sale.createdAt).toDateString() === todayKey,
-  );
+  const [todayKey, setTodayKey] = useState(localDay);
+  useEffect(() => {
+    const refreshDay = () => setTodayKey(localDay());
+    const timer = window.setInterval(refreshDay, 30_000);
+    window.addEventListener("focus", refreshDay);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", refreshDay); };
+  }, []);
+  const storeIds = useMemo(() => [currentStore.id], [currentStore.id]);
+  const { sales: todaySales, loading, error } = useReportSales(state.sales, storeIds, todayKey, todayKey);
   const todayRevenue = todaySales.reduce((sum, sale) => sum + sale.total, 0);
   const lowStock = state.products.filter(
-    (product) => (product.stockByStore[currentStore.id] ?? 0) <= product.reorderLevel,
+    (product) => stockAtLocation(product, currentStore.id) <= product.reorderLevel,
   ).length;
   const PurposeIcon = detail.icon;
 
@@ -286,7 +298,7 @@ export function TerminalWorkspaceHome() {
               <Metric
                 label="Today's bills"
                 value={String(todaySales.length)}
-                hint="Current branch"
+                hint={error ? "Could not refresh totals" : loading ? "Updating…" : "Current branch"}
               />
             )}
             {can("can_view_sales_reports") && visible("workspace.todayRevenue") && (
@@ -296,7 +308,7 @@ export function TerminalWorkspaceHome() {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
                 })}
-                hint="Completed sales"
+                hint={error ? "Could not refresh totals" : loading ? "Updating…" : "Completed sales"}
               />
             )}
             {can("can_view_inventory") && visible("workspace.lowStock") && (
