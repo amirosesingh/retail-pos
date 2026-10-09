@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ScanBarcode, Trash2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
+import { parseStockCountRow, stockCountTemplate } from "@/lib/stock-count-import";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -513,7 +514,7 @@ export function StockCountDialog({
 
   const importFile = async (file: File) => {
     try {
-      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array", raw: true });
       const sheetName = wb.SheetNames[0];
       if (!sheetName) throw new Error("empty");
       const sheet = wb.Sheets[sheetName];
@@ -521,13 +522,11 @@ export function StockCountDialog({
       const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
       const problems: string[] = [];
       raw.forEach((r, i) => {
-        const key = String(r["barcode"] ?? r["sku"] ?? r["code"] ?? "").trim();
-        const qty = Number(r["counted"] ?? r["quantity"] ?? r["qty"]);
-        if (!key) return problems.push(`Row ${i + 2}: no barcode or SKU`);
+        const parsed = parseStockCountRow(r);
+        if (parsed.error !== undefined) return problems.push(`Row ${i + 2}: ${parsed.error}`);
+        const { key, quantity: qty } = parsed;
         const p = resolveByBarcode(products, key);
         if (!p) return problems.push(`Row ${i + 2}: "${key}" is not in the catalogue`);
-        if (Number.isNaN(qty) || qty < 0)
-          return problems.push(`Row ${i + 2}: invalid counted quantity`);
         queue(p.id, qty);
       });
       setErrors(problems);
@@ -635,6 +634,11 @@ export function StockCountDialog({
           </TabsContent>
 
           <TabsContent value="import" className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => XLSX.writeFile(stockCountTemplate(), "stock-count-template.xlsx")}>Download Excel template</Button>
+              <Button variant="outline" onClick={() => XLSX.writeFile(stockCountTemplate(), "stock-count-template.csv", { bookType: "csv", sheet: "Stock count" })}>Download CSV template</Button>
+            </div>
+            <p className="text-sm text-muted-foreground">Enter either barcode or SKU and a whole counted quantity. Zero is valid; blank counts are rejected. Keep codes formatted as text to preserve leading zeros. Review the imported rows before posting.</p>
             <div
               onDragOver={(e) => {
                 e.preventDefault();
@@ -662,6 +666,7 @@ export function StockCountDialog({
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) void importFile(file);
+                    e.target.value = "";
                   }}
                 />
               </label>

@@ -20,6 +20,7 @@ class DatabaseService {
     this.log = log;
     this.validator = validator; this.migrate = migrate;
     this.validatedProfileKey = null;
+    this.connectedSchemaKey = null;
     this.state = secureConfig.enabled() ? (secureConfig.profile() ? "enabled_connecting" : "enabled_unconfigured") : "disabled";
     this.detail = null; this.lastCheckedAt = null; this.validated = false;
   }
@@ -38,7 +39,7 @@ class DatabaseService {
   }
   async setEnabled(value) {
     this.secureConfig.setEnabled(value === true);
-    if (!value) { await this.manager.close(); this.validated = false; return this.transition("disabled"); }
+    if (!value) { this.connectedSchemaKey = null; await this.manager.close(); this.validated = false; return this.transition("disabled"); }
     if (!this.secureConfig.profile()) return this.transition("enabled_unconfigured");
     return this.restore();
   }
@@ -58,6 +59,7 @@ class DatabaseService {
     return validation;
   }
   async revalidateConnected() {
+    this.connectedSchemaKey = null;
     const profile = this.secureConfig.credentials();
     if (!profile) return this.transition("enabled_unconfigured");
     const validation = await this.validator(this.manager, profile);
@@ -67,14 +69,17 @@ class DatabaseService {
     }
     if (!(this.manager.isConnected?.() ?? this.manager.pool)) await this.manager.open(profile);
     this.validated = true;
+    this.connectedSchemaKey = profileValidationKey(profile);
     this.lastCheckedAt = new Date().toISOString();
     return this.transition("enabled_bootstrapping");
   }
   beginMigration() {
+    this.connectedSchemaKey = null;
     this.validated = false;
     return this.transition("enabled_validating", { status: "applying_migration" });
   }
   migrationFailed(detail) {
+    this.connectedSchemaKey = null;
     this.validated = false;
     return this.transition("enabled_error", { ...detail, status: "migration_required" });
   }
@@ -92,6 +97,7 @@ class DatabaseService {
       this.transition("enabled_connecting");
       await this.manager.open(profile);
       this.validated = true;
+      this.connectedSchemaKey = profileValidationKey(profile);
       const saved = this.secureConfig.save(profile);
       this.validatedProfileKey = null;
       this.lastCheckedAt = new Date().toISOString();
@@ -104,13 +110,25 @@ class DatabaseService {
       return safe;
     }
   }
-  async disconnect() { await this.manager.close(); this.validated = false; return this.transition(this.secureConfig.enabled() ? "enabled_degraded" : "disabled"); }
-  async remove() { await this.manager.close(); this.validated = false; this.secureConfig.remove(); return this.transition("disabled"); }
-  async restore() {
+  async disconnect() { this.connectedSchemaKey = null; await this.manager.close(); this.validated = false; return this.transition(this.secureConfig.enabled() ? "enabled_degraded" : "disabled"); }
+  async remove() { this.connectedSchemaKey = null; await this.manager.close(); this.validated = false; this.secureConfig.remove(); return this.transition("disabled"); }
+  async restore({ reuseValidation = false } = {}) {
     if (!this.secureConfig.enabled()) return this.transition("disabled");
     const profile = this.secureConfig.credentials();
     if (!profile) return this.transition("enabled_unconfigured");
     try {
+      // Only automatic reconnects may reuse this process's successful schema
+      // check. Explicit setup/repair and every app restart still validate.
+      if (reuseValidation && this.connectedSchemaKey === profileValidationKey(profile)) {
+        if (this.snapshot().tradingReady) return this.snapshot();
+        this.validated = false;
+        this.transition("enabled_connecting", { phase: "reconnecting" });
+        await this.manager.open(profile);
+        this.validated = true;
+        this.lastCheckedAt = new Date().toISOString();
+        return this.transition("enabled_ready", { phase: "reconnected" });
+      }
+      this.connectedSchemaKey = null;
       this.validated = false;
       this.transition("enabled_validating");
       let validation = await this.validator(this.manager, profile);
@@ -133,6 +151,7 @@ class DatabaseService {
       this.transition("enabled_connecting");
       await this.manager.open(profile);
       this.validated = true;
+      this.connectedSchemaKey = profileValidationKey(profile);
       this.lastCheckedAt = new Date().toISOString();
       return this.transition("enabled_bootstrapping");
     } catch (error) {
