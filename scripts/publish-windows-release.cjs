@@ -61,6 +61,12 @@ function retention(releases, now = Date.now()) {
   return { retain, remove };
 }
 async function remote(url, { optional = false, range = false, fetchImpl = fetch, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  // Release CI verifies authoritative objects directly. Probing a not-yet
+  // uploaded public URL can cache a 404 and make its post-upload check fail.
+  if (process.env.R2_VERIFY_ORIGIN === 'true') {
+    if (!storageConfigured()) throw new Error('Origin verification requires authenticated R2 credentials.');
+    return readFromStorage(url, { optional, range });
+  }
   let response;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -108,6 +114,8 @@ function upload(file, key, immutable) {
   aws(['s3','cp',file,`s3://${BUCKET}/${PREFIX}/${key}`,'--content-type',contentType(file),'--cache-control',immutable ? 'public,max-age=31536000,immutable' : 'no-cache,no-store,must-revalidate']);
 }
 async function publish(directory, version, releaseId) {
+  if (process.env.RELEASE_VERSION && process.env.RELEASE_VERSION !== version)
+    throw new Error('Workflow release number does not match the application version.');
   const artifacts = validateRelease(directory, version);
   if (!new RegExp(`^v${version.replaceAll('.', '\\.')}-[a-f0-9]{7,40}$`).test(releaseId)) throw new Error('Invalid release identity.');
   const published = await remote(`${PUBLIC}/latest/latest.yml`, { optional: true });
@@ -169,7 +177,7 @@ async function publish(directory, version, releaseId) {
       aws(['s3','rm',`s3://${BUCKET}/${PREFIX}/releases/${old.releaseId}/${file}`]);
     for (const file of [`Retail Setup ${old.version}.exe`, `${old.version}.yml`]) aws(['s3','rm',`s3://${BUCKET}/${PREFIX}/latest/${file}`]);
   }
-  console.log(`Published verified Windows ${version}; retained ${plan.retain.length} releases (five minimum plus recovery/download grace).`);
+  console.log(`Published verified Windows ${version} at ${PREFIX}/releases/${releaseId}; retained ${plan.retain.length} releases (five minimum plus recovery/download grace).`);
 }
 module.exports = { validateRelease, retention, preflight, publish, remote };
 if (require.main === module) {
