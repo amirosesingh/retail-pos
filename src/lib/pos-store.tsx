@@ -2467,7 +2467,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (!authorization.ok) throw new Error(authorization.error);
       // The stable refund id makes a retry idempotent. Nothing visible changes
       // until the authoritative gateway has accepted the refund.
-      await db.refundSale(saleId, `refund:${saleId}`);
+      await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId);
       logger.log("sale_event", "Sale refunded", "receipts", {
         saleId,
         receiptNo: sale.receiptNo,
