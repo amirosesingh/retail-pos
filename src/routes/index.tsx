@@ -69,7 +69,7 @@ import { ProductSearchDialog } from "@/platforms/web/components/pos/ProductSearc
 import { ScanBar } from "@/platforms/web/components/pos/ScanBar";
 import { BookingCartPanel } from "@/platforms/web/components/pos/booking/BookingCartPanel";
 import { QuickMemberDialog } from "@/platforms/web/components/pos/QuickMemberDialog";
-import { RegisterWorkspace } from "@/platforms/web/components/pos/layout/RegisterWorkspace";
+
 import { RegisterActionsProvider, type ActionHandlers } from "@/lib/register-actions";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { ZoomCanvas } from "@/platforms/web/components/pos/ZoomCanvas";
@@ -209,7 +209,6 @@ function Register() {
     currentStore,
     upsertProduct,
     upsertMember,
-    updateSettings,
   } = usePos();
   useUiScale();
   const { user, can, isAdmin } = useAuth();
@@ -1753,49 +1752,6 @@ function Register() {
     setCloseShiftOpen(true);
   };
 
-  const slot_catalog = (
-    <>
-      <CatalogPanel
-        storeName={currentStore.name}
-        shiftOpen={!!activeShift}
-        onOpenCatalog={() => setCatalogOpen(true)}
-        onOpenCustomerDisplay={
-          visible("register.customerDisplay") ? openCustomerDisplay : undefined
-        }
-        onOpenShift={() => setOpenShiftOpen(true)}
-        onCloseShift={visible("register.closeShift") ? closeShiftFromRegister : undefined}
-      />
-    </>
-  );
-
-  const atom_billNumber = (
-    <div className="flex h-full min-w-0 flex-col justify-center px-4 py-2">
-      <p className="truncate text-sm font-semibold">Current Bill</p>
-      <p className="numeric truncate text-[11px] text-muted-foreground">
-        {billNo ? `#${billNo}` : "New bill — scan an item to start"}
-      </p>
-      {appliedApproval && (
-        <p className="truncate text-[10px] font-medium text-success">
-          Approval certificate · {appliedApprovalText}
-        </p>
-      )}
-    </div>
-  );
-
-  const atom_shiftBadge = (
-    <div className="flex h-full min-w-0 items-center px-2">
-      <span
-        className={`min-w-0 truncate rounded-full border px-2 py-1 text-[11px] font-medium ${
-          activeShift
-            ? "border-success/40 bg-success/10 text-success"
-            : "border-destructive/40 bg-destructive/10 text-destructive"
-        }`}
-      >
-        {activeShift ? "Shift open" : "No shift open"}
-      </span>
-    </div>
-  );
-
   const atom_actExchange = visible("register.exchange") ? (
     <div className="flex h-full min-w-0 items-center px-1">
       <ActionButton
@@ -2466,25 +2422,6 @@ function Register() {
   ) : null;
 
   /** Always on the right panel, cart empty or not. */
-  const atom_actBooking = can("can_manage_bookings") ? (
-    <div className="relative flex h-full min-w-0 items-center px-1">
-      {activeBookingCount > 0 && (
-        <Badge className="absolute right-2 top-0 z-10 h-5 min-w-5 justify-center px-1 text-[10px]">
-          {activeBookingCount}
-        </Badge>
-      )}
-      <ActionButton
-        layout="inline"
-        className="h-full w-full"
-        label="Manage Booking"
-        icon={<CalendarClock className="size-4" />}
-        disabled={tillLocked}
-        disabledReason={tillLocked ? lockedReason : undefined}
-        onClick={() => setBookingHubOpen(true)}
-      />
-    </div>
-  ) : null;
-
   const atom_reprintDeck = lastSale ? (
     <div className="flex flex-wrap items-center gap-2 px-3 py-2">
       {can("can_reprint_bill") && (
@@ -2644,42 +2581,6 @@ function Register() {
     </div>
   ) : null;
 
-  const atom_heldList =
-    can("can_view_held_orders") && visibleRoute("/holds") && held.length ? (
-      <div className="space-y-1 px-2 py-1">
-        <div className="flex items-center justify-between">
-          <p className="text-[11px] text-muted-foreground">Held orders</p>
-          <Link
-            to="/holds"
-            className="flex items-center gap-1.5 text-[11px] font-medium text-primary hover:underline"
-          >
-            Held bills
-            <span className="numeric inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold text-primary-foreground">
-              {held.length}
-            </span>
-          </Link>
-        </div>
-        {held.map((h) => (
-          <Button
-            key={h.id}
-            type="button"
-            variant="outline"
-            onClick={() => {
-              if (can("can_reopen_held_order")) void resumeHeld(h.id);
-              else toast.error("Reopen held ticket permission is required");
-            }}
-            className="flex h-auto w-full items-center justify-between rounded-md px-2 py-1.5 text-[11px] font-normal hover:border-primary/60"
-          >
-            <span className="truncate">
-              {h.cancelledFrom ? "↩ " : ""}
-              {h.label}
-            </span>
-            <span className="numeric font-semibold">{money(h.total)}</span>
-          </Button>
-        ))}
-      </div>
-    ) : null;
-
   const atom_actDrawer = (
     <div className="flex h-full min-w-0 items-center px-1">
       <ActionButton
@@ -2700,22 +2601,6 @@ function Register() {
     </div>
   );
 
-  const atom_receiptToggle = (
-    <div className="flex h-full min-w-0 items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
-      <Label htmlFor="live-receipt" className="text-xs leading-tight">
-        Live receipt preview
-        <span className="block text-[11px] font-normal text-muted-foreground">
-          Opens as an overlay
-        </span>
-      </Label>
-      <Switch id="live-receipt" checked={receiptPreview} onCheckedChange={setReceiptPreview} />
-    </div>
-  );
-
-  /**
-   * Every till feature, registered once. Buttons only trigger these — removing
-   * a button from the canvas never unregisters the handler or its hotkey.
-   */
   const registerActionHandlers: ActionHandlers = {
     "cart.focus": () => {
       const cart = document.querySelector<HTMLElement>("[data-register-cart]");
@@ -2770,38 +2655,8 @@ function Register() {
         <div className="min-h-0 flex-1">
           <ZoomCanvas>
             <RegisterActionsProvider handlers={registerActionHandlers}>
-              <RegisterWorkspace
-                canvasNavigation={workspaceBackButton}
-                terminalKey={terminalKey}
-                mode={state.settings.integrations.sellingLayout}
-                onModeChange={(sellingLayout) =>
-                  updateSettings({
-                    integrations: { ...state.settings.integrations, sellingLayout },
-                  })
-                }
-                slots={{
-                  catalog: slot_catalog,
-                  billNumber: atom_billNumber,
-                  shiftBadge: atom_shiftBadge,
-                  actExchange: atom_actExchange,
-                  actClear: atom_actClear,
-                  scanBar: slot_scanBar,
-                  memberSearch: slot_memberSearch,
-                  cartLines: slot_cartLines,
-                  totalsBlock: atom_totalsBlock,
-                  balanceDue: atom_balanceDue,
-                  actCharge: atom_actCharge,
-                  actBooking: atom_actBooking,
-                  reprintDeck: atom_reprintDeck,
-                  actHold: atom_actHold,
-                  actVoid: atom_actVoid,
-                  actCoupon: atom_actCoupon,
-                  actSplit: atom_actSplit,
-                  heldList: atom_heldList,
-                  actDrawer: atom_actDrawer,
-                  receiptToggle: atom_receiptToggle,
-                }}
-                classic={
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="register-standard-viewport min-h-0 w-full flex-1">
                   <div className="pos-scaled register-standard">
                     {/* Product lookup stays deliberately smaller than the sale. */}
                     <section
@@ -2879,8 +2734,8 @@ function Register() {
                       {slot_billFooter}
                     </section>
                   </div>
-                }
-              />
+                </div>
+              </div>
             </RegisterActionsProvider>
             {/* Unknown scans and manual lookups land in the search & add modal. */}
             <ProductSearchDialog

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Boxes, ClipboardCheck, LayoutDashboard, LayoutGrid, Store, Warehouse } from "lucide-react";
-import type { SellingLayout, TerminalPurpose } from "@/core/types/pos-types";
+import { Boxes, ClipboardCheck, LayoutDashboard, Store, Warehouse } from "lucide-react";
+import type { TerminalPurpose } from "@/core/types/pos-types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -49,8 +49,8 @@ function WorkspaceSettings() {
   const { state, updateSettings } = usePos();
   const integrations = state.settings.integrations;
   const purpose = integrations.terminalPurpose ?? "retail";
-  const layout = integrations.sellingLayout ?? "standard";
-  const update = (patch: { terminalPurpose?: TerminalPurpose; sellingLayout?: SellingLayout }) =>
+
+  const update = (patch: { terminalPurpose?: TerminalPurpose }) =>
     updateSettings({ integrations: { ...integrations, ...patch } });
 
   return (
@@ -95,56 +95,6 @@ function WorkspaceSettings() {
                       <span className="block font-medium">{option.label}</span>
                       <span className="mt-1 block text-sm font-normal text-muted-foreground">
                         {option.description}
-                      </span>
-                    </span>
-                  </CardContent>
-                </Card>
-              </Label>
-            ))}
-          </RadioGroup>
-        </section>
-
-        <section className="space-y-3">
-          <div>
-            <h2 className="text-base font-semibold">Selling layout</h2>
-            <p className="text-sm text-muted-foreground">
-              Switching layouts keeps the saved Custom Canvas unchanged.
-            </p>
-          </div>
-          <RadioGroup
-            value={layout}
-            onValueChange={(value) => update({ sellingLayout: value as SellingLayout })}
-            className="grid gap-3 sm:grid-cols-2"
-          >
-            {(
-              [
-                [
-                  "standard",
-                  "Standard POS",
-                  "Responsive three-column register for everyday selling.",
-                ],
-                [
-                  "canvas",
-                  "Custom Canvas",
-                  "Use the saved terminal canvas. Admins can edit it from the register.",
-                ],
-              ] as const
-            ).map(([value, label, description]) => (
-              <Label key={value} htmlFor={`layout-${value}`} className="cursor-pointer">
-                <Card
-                  className={
-                    layout === value
-                      ? "border-primary bg-primary/5"
-                      : "transition-colors hover:border-primary/50"
-                  }
-                >
-                  <CardContent className="flex gap-3 p-4">
-                    <RadioGroupItem id={`layout-${value}`} value={value} className="mt-1" />
-                    <LayoutGrid className="mt-0.5 size-5 shrink-0 text-primary" />
-                    <span>
-                      <span className="block font-medium">{label}</span>
-                      <span className="mt-1 block text-sm font-normal text-muted-foreground">
-                        {description}
                       </span>
                     </span>
                   </CardContent>

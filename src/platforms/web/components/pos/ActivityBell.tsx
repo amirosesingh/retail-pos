@@ -1,16 +1,7 @@
 import { activeBranchId } from "@/lib/active-branch";
-/**
- * The Approval & Activity Centre in the header.
- *
- * One bell for everybody: cashiers see the requests they sent and the
- * decisions that have come back, approvers see what is waiting for them, and
- * supervisors keep the branch activity feed they already had. Clearing an
- * entry only hides it for the person who cleared it — the request, the
- * decision and the audit trail are never touched. Dismissal is local to the
- * current window and is not synchronized to another terminal.
- */
+/** Shared, durable notification acknowledgements; business records remain unchanged. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { Bell, Check, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -19,8 +10,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/pos-auth";
 import {
-  EVENT_LABELS,
-  SEVERITY_TONE,
   flushActivityQueue,
   isActivityLogMissing,
   listActivityEvents,
@@ -33,17 +22,7 @@ import {
   subscribeActivityEvents,
   type ActivityEvent,
 } from "@/lib/activity-events";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  CENTRE_POLL_MS,
-  loadApprovalCentre,
-  subscribeApprovals,
-  type CentreView,
-} from "@/lib/approval-centre";
-import { AUTH_ACTION_LABEL, type AuthorizationRequest } from "@/lib/authorization";
 import { usePosOptional } from "@/lib/pos-store";
-import { useSyncSummary } from "@/lib/sync-summary";
-import { attentionCounts } from "@/lib/needs-attention";
 import { humanizeText } from "@/lib/human-readable";
 
 const POLL_MS = 15_000;
@@ -58,7 +37,7 @@ const when = (iso: string) => {
 
 export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const navigate = useNavigate();
-  const { isSupervisor, user } = useAuth();
+  const { user } = useAuth();
   const pos = usePosOptional();
   const refs = useMemo(
     () => ({
@@ -70,16 +49,16 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     [pos?.stores, pos?.state.products, pos?.state.members, pos?.state.sales],
   );
   const eventText = useCallback((value: string) => humanizeText(value, refs), [refs]);
-  const sync = useSyncSummary();
+
   // Everyone polls the feed. Server and local audience filters return general
   // branch activity to supervisors and private approval notices to recipients.
   const showActivity = true;
   const allowed = true;
-  const [centre, setCentre] = useState<CentreView | null>(null);
+
   const [, setClearedTick] = useState(0);
   const meKey = user?.staffId ?? user?.name ?? "";
   const [rows, setRows] = useState<ActivityEvent[]>([]);
-  const [unread, setUnread] = useState(0);
+  const [, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [missing, setMissing] = useState(false);
   const [clearAllBusy, setClearAllBusy] = useState(false);
@@ -100,7 +79,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         } else {
           toast.dismiss(`activity-${id}`);
           // Reflect the local dismissal immediately. The underlying business
-          // event remains immutable and other terminals keep their own view.
+          // event remains immutable and other terminals receive the acknowledgement.
           setRows((current) =>
             current.map((row) => {
               if (row.id !== id) return row;
@@ -129,7 +108,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
             ? `/requests/${row.entityId}`
             : row.entityType === "stock_transfer" && row.entityId
               ? `/transfers/${row.entityId}`
-              : "");
+              : row.entityType === "sale" || row.type.startsWith("sale_")
+                ? "/receipts"
+                : row.type.startsWith("shift_")
+                  ? "/shifts"
+                  : "/alerts");
       if (!route) return;
       const saved = await clearActivityEntry(meKey, row.id);
       if (!saved) {
@@ -144,19 +127,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     [meKey, navigate],
   );
 
-  const refreshCentre = useCallback(async () => {
-    try {
-      setCentre(await loadApprovalCentre());
-    } catch {
-      /* offline — the poll will pick it up again */
-    }
-  }, []);
-
   const refresh = useCallback(async () => {
     if (!showActivity) return;
     void flushActivityQueue().catch(() => undefined);
     const list = await listActivityEvents({
-      limit: 40,
+      limit: 200,
       storeId: activeBranchId() ?? undefined,
       from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString(),
     });
@@ -167,10 +142,15 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     setRows(list);
     mergeRemoteActivityPreferences(meKey, list);
     const hidden = new Set(clearedIds(meKey));
-    const fresh = unseenEvents(list, meKey).filter((row) => !hidden.has(row.id));
+    const fresh = unseenEvents(list, meKey).filter(
+      (row) => !hidden.has(row.id) && !row.clearedBy.length,
+    );
     setUnread(fresh.length);
     const newlyArrived = activityInitializedRef.current
-      ? list.filter((row) => !announcedIdsRef.current.has(row.id) && !hidden.has(row.id))
+      ? list.filter(
+          (row) =>
+            !announcedIdsRef.current.has(row.id) && !hidden.has(row.id) && !row.clearedBy.length,
+        )
       : [];
     for (const row of list) announcedIdsRef.current.add(row.id);
     activityInitializedRef.current = true;
@@ -198,25 +178,6 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     }
   }, [eventText, meKey, showActivity]);
 
-  // Live decisions, with the existing poll kept as reconciliation.
-  useEffect(() => {
-    const tick = () => {
-      if (document.visibilityState !== "hidden") void refreshCentre().catch(() => undefined);
-    };
-    tick();
-    const off = subscribeApprovals(tick);
-    const t = setInterval(tick, CENTRE_POLL_MS);
-    const onCleared = () => setClearedTick((n) => n + 1);
-    document.addEventListener("visibilitychange", tick);
-    window.addEventListener("pos:activity-cleared-changed", onCleared);
-    return () => {
-      off();
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", tick);
-      window.removeEventListener("pos:activity-cleared-changed", onCleared);
-    };
-  }, [refreshCentre]);
-
   useEffect(() => {
     if (!showActivity) return;
     const tick = () => {
@@ -233,25 +194,23 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       tick();
     }, POLL_MS);
     document.addEventListener("visibilitychange", tick);
+    const onCleared = () => setClearedTick((value) => value + 1);
+    window.addEventListener("pos:activity-cleared-changed", onCleared);
+    window.addEventListener("storage", onCleared);
     return () => {
       off();
       clearInterval(t);
       document.removeEventListener("visibilitychange", tick);
+      window.removeEventListener("pos:activity-cleared-changed", onCleared);
+      window.removeEventListener("storage", onCleared);
     };
   }, [showActivity, refresh]);
 
   const hidden = new Set(clearedIds(meKey));
-  const visibleRows = rows.filter((r) => !hidden.has(r.id));
-  // Unresolved business records never consult notification clear/read preferences.
-  const toDecide = centre?.toDecide ?? [];
-  const waiting = centre?.waiting ?? [];
-  const ready = centre?.ready ?? [];
-  const attention = attentionCounts({
-    approvals: [...toDecide, ...waiting],
-    transfers: isSupervisor ? pos?.state.transfers : [],
-    syncFailures: isSupervisor ? sync.failed : 0,
-  });
-  const badge = unread + attention.total + ready.length;
+  const visibleRows = rows.filter(
+    (r) => !hidden.has(r.id) && !r.clearedBy.length && r.meta["auditOnly"] !== true,
+  );
+  const badge = visibleRows.filter((row) => unseenEvents([row], meKey).length > 0).length;
 
   if (!allowed) return null;
 
@@ -270,7 +229,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         <Button
           variant="ghost"
           size="icon"
-          aria-label={badge ? `Approvals and activity: ${badge} new` : "Approvals and activity"}
+          aria-label={badge ? `Notifications: ${badge} new` : "Notifications"}
           className={cn(
             "relative shrink-0 bg-transparent shadow-none hover:bg-transparent",
             badge ? "text-primary" : "",
@@ -286,262 +245,135 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[min(26rem,calc(100vw-1rem))] p-0">
         <div className="border-b border-border px-3 py-2">
-          <p className="text-sm font-medium">Approvals &amp; activity</p>
-          <p className="text-[11px] text-muted-foreground">
-            Requests waiting on you, decisions on yours, and what is happening in the branch.
-          </p>
+          <p className="text-sm font-medium">Notifications</p>
         </div>
 
-        <div className="grid grid-cols-4 gap-1 border-b border-border px-3 py-2 text-center text-[10px]">
-          <span>
-            <strong>{attention.total}</strong>
-            <br />
-            Needs attention
-          </span>
-          <span>
-            <strong>{attention.approvals}</strong>
-            <br />
-            Approvals
-          </span>
-          <span>
-            <strong>{attention.transfers}</strong>
-            <br />
-            Transfers
-          </span>
-          <span>
-            <strong>{attention.sync}</strong>
-            <br />
-            Sync issues
-          </span>
-        </div>
-        <Tabs
-          defaultValue={attention.approvals ? "attention" : ready.length ? "ready" : "activity"}
-        >
-          <TabsList className="grid w-full grid-cols-4 rounded-none">
-            <TabsTrigger value="attention" className="text-[10px]">
-              Attention{attention.approvals ? ` ${attention.approvals}` : ""}
-            </TabsTrigger>
-            <TabsTrigger value="warning" className="text-[10px]">
-              Warning{waiting.length ? ` ${waiting.length}` : ""}
-            </TabsTrigger>
-            <TabsTrigger value="ready" className="text-[10px]">
-              Ready{ready.length ? ` ${ready.length}` : ""}
-            </TabsTrigger>
-            <TabsTrigger value="activity" className="text-[10px]">
-              Activity
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="attention" className="m-0 max-h-80 overflow-y-auto">
-            <RequestList
-              rows={[...toDecide, ...waiting]}
-              empty="No approvals need attention."
-              actionLabel="Review"
-              onAction={() => setOpen(false)}
-            />
-          </TabsContent>
-
-          <TabsContent value="warning" className="m-0 max-h-80 overflow-y-auto">
-            <RequestList rows={waiting} empty="You have nothing waiting for approval." />
-          </TabsContent>
-
-          <TabsContent value="ready" className="m-0 max-h-80 overflow-y-auto">
-            <RequestList rows={ready} empty="No decisions to pick up." />
-          </TabsContent>
-
-          <TabsContent value="activity" className="m-0 max-h-80 overflow-y-auto">
-            {showActivity && visibleRows.length > 0 && (
-              <div className="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
-                <span className="text-[10px] font-medium text-muted-foreground">
-                  Active notifications
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-2 text-[10px]"
-                  disabled={clearAllBusy}
-                  onClick={() => {
-                    setClearAllBusy(true);
-                    void clearAllActivityEntries(
-                      meKey,
-                      visibleRows.map((row) => row.id),
-                    )
-                      .then(async (saved) => {
-                        if (!saved) {
-                          toast.error(
-                            "Could not clear notifications. Check the connection and try again.",
-                          );
-                          return;
-                        }
-                        setRows((current) =>
-                          current.map((row) =>
-                            visibleRows.some((visible) => visible.id === row.id)
-                              ? { ...row, clearedBy: [...new Set([...row.clearedBy, meKey])] }
-                              : row,
-                          ),
+        <div className="max-h-80 overflow-y-auto">
+          {showActivity && visibleRows.length > 0 && (
+            <div className="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
+              <span className="text-[10px] font-medium text-muted-foreground">
+                Active notifications
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-6 px-2 text-[10px]"
+                disabled={clearAllBusy}
+                onClick={() => {
+                  setClearAllBusy(true);
+                  void clearAllActivityEntries(
+                    meKey,
+                    visibleRows.map((row) => row.id),
+                  )
+                    .then(async (saved) => {
+                      if (!saved) {
+                        toast.error(
+                          "Could not clear notifications. Check the connection and try again.",
                         );
-                        for (const row of visibleRows) toast.dismiss(`activity-${row.id}`);
-                      })
-                      .finally(() => setClearAllBusy(false));
+                        return;
+                      }
+                      setRows((current) =>
+                        current.map((row) =>
+                          visibleRows.some((visible) => visible.id === row.id)
+                            ? { ...row, clearedBy: [...new Set([...row.clearedBy, meKey])] }
+                            : row,
+                        ),
+                      );
+                      for (const row of visibleRows) toast.dismiss(`activity-${row.id}`);
+                    })
+                    .finally(() => setClearAllBusy(false));
+                }}
+              >
+                {clearAllBusy ? "Clearing…" : "Clear all"}
+              </Button>
+            </div>
+          )}
+          {!showActivity ? (
+            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+              The branch activity feed is for supervisors.
+            </p>
+          ) : missing ? (
+            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+              The activity log needs a database update. Follow
+              <span className="font-medium"> docs/database-upgrade.md</span> for an existing
+              database.
+            </p>
+          ) : (
+            <AnimatedList
+              items={visibleRows}
+              getKey={(row) => row.id}
+              empty={
+                <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                  No notifications.
+                </p>
+              }
+              renderItem={(r) => (
+                <div
+                  className={cn(
+                    "activity-notification-row border-b border-border/60 px-3 py-2 last:border-0",
+                    (typeof r.meta["route"] === "string" ||
+                      r.entityType === "authorization_request" ||
+                      r.entityType === "stock_request" ||
+                      r.entityType === "stock_transfer") &&
+                      "cursor-pointer hover:bg-muted/60",
+                  )}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => void openActivity(r)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      void openActivity(r);
+                    }
                   }}
                 >
-                  {clearAllBusy ? "Clearing…" : "Clear all"}
-                </Button>
-              </div>
-            )}
-            {!showActivity ? (
-              <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                The branch activity feed is for supervisors.
-              </p>
-            ) : missing ? (
-              <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                The activity log needs a database update. Follow
-                <span className="font-medium"> docs/database-upgrade.md</span> for an existing database.
-              </p>
-            ) : (
-              <AnimatedList
-                items={visibleRows.slice(0, 12)}
-                getKey={(row) => row.id}
-                empty={
-                  <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                    Nothing has happened yet today.
-                  </p>
-                }
-                renderItem={(r) => (
-                  <div
-                    className={cn(
-                      "activity-notification-row border-b border-border/60 px-3 py-2 last:border-0",
-                      (typeof r.meta["route"] === "string" ||
-                        r.entityType === "authorization_request" ||
-                        r.entityType === "stock_request" ||
-                        r.entityType === "stock_transfer") &&
-                        "cursor-pointer hover:bg-muted/60",
-                    )}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => void openActivity(r)}
-                    onKeyDown={(event) => {
-                      if (event.target !== event.currentTarget) return;
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        void openActivity(r);
-                      }
-                    }}
-                  >
-                    <div className="flex items-start gap-2">
-                      <span
-                        className={cn(
-                          "shrink-0 rounded border px-1.5 py-0.5 text-[9px] uppercase",
-                          SEVERITY_TONE[r.severity],
-                        )}
-                      >
-                        {EVENT_LABELS[r.type] ? r.severity : r.type}
-                      </span>
-                      <p className="min-w-0 text-xs font-medium">{eventText(r.title)}</p>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="ml-auto h-6 touch-manipulation gap-1 px-2 text-[10px] text-muted-foreground"
-                        disabled={preferenceBusy.has(r.id)}
-                        aria-busy={preferenceBusy.has(r.id)}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void updatePreference(
-                            r.id,
-                            () => clearActivityEntry(meKey, r.id),
-                            "Could not clear notification. Check the connection and try again.",
-                          );
-                        }}
-                      >
-                        {preferenceBusy.has(r.id) ? (
-                          <LoaderCircle className="size-3 animate-spin" />
-                        ) : (
-                          <Check className="size-3" />
-                        )}
-                        {preferenceBusy.has(r.id) ? "Saving…" : "Clear"}
-                      </Button>
-                    </div>
-                    {r.message && (
-                      <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
-                        {eventText(r.message)}
-                      </p>
-                    )}
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      {when(r.createdAt)}
-                      {r.actorName ? ` · ${r.actorName}` : ""}
-                      {r.storeId
-                        ? ` · ${pos?.stores.find((store) => store.id === r.storeId)?.name ?? "Unknown branch"}`
-                        : ""}
-                      {r.whatsappStatus === "sent" ? " · WhatsApp sent" : ""}
-                    </p>
+                  <div className="flex items-start gap-2">
+                    <p className="min-w-0 text-xs font-medium">{eventText(r.title)}</p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto h-6 touch-manipulation gap-1 px-2 text-[10px] text-muted-foreground"
+                      disabled={preferenceBusy.has(r.id)}
+                      aria-busy={preferenceBusy.has(r.id)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void updatePreference(
+                          r.id,
+                          () => clearActivityEntry(meKey, r.id),
+                          "Could not clear notification. Check the connection and try again.",
+                        );
+                      }}
+                    >
+                      {preferenceBusy.has(r.id) ? (
+                        <LoaderCircle className="size-3 animate-spin" />
+                      ) : (
+                        <Check className="size-3" />
+                      )}
+                      {preferenceBusy.has(r.id) ? "Saving…" : "Clear"}
+                    </Button>
                   </div>
-                )}
-              />
-            )}
-          </TabsContent>
-        </Tabs>
-
-        <div className="grid grid-cols-2 gap-2 border-t border-border p-2">
-          <Button asChild size="sm" className="text-xs">
-            <Link to="/approvals" onClick={() => setOpen(false)}>
-              Approvals
-            </Link>
-          </Button>
-          <Button asChild size="sm" variant="outline" className="text-xs">
-            <Link to="/alerts" onClick={() => setOpen(false)}>
-              Alerts
-            </Link>
-          </Button>
+                  {r.message && (
+                    <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+                      {eventText(r.message)}
+                    </p>
+                  )}
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    {when(r.createdAt)}
+                    {r.actorName ? ` · ${r.actorName}` : ""}
+                    {r.storeId
+                      ? ` · ${pos?.stores.find((store) => store.id === r.storeId)?.name ?? "Unknown branch"}`
+                      : ""}
+                    {r.whatsappStatus === "sent" ? " · WhatsApp sent" : ""}
+                  </p>
+                </div>
+              )}
+            />
+          )}
         </div>
       </PopoverContent>
     </Popover>
-  );
-}
-
-/** One row per request, in the same shape as an activity entry. */
-function RequestList({
-  rows,
-  empty,
-  actionLabel,
-  onAction,
-}: {
-  rows: AuthorizationRequest[];
-  empty: string;
-  actionLabel?: string;
-  onAction?: () => void;
-}) {
-  if (rows.length === 0) {
-    return <p className="px-3 py-6 text-center text-xs text-muted-foreground">{empty}</p>;
-  }
-  return (
-    <>
-      {rows.map((r) => (
-        <div key={r.id} className="border-b border-border/60 px-3 py-2 last:border-0">
-          <div className="flex items-center gap-2">
-            <p className="min-w-0 flex-1 truncate text-xs font-medium">
-              {AUTH_ACTION_LABEL[r.actionKey] ?? r.actionKey}
-            </p>
-            {actionLabel ? (
-              <Link
-                to="/approvals"
-                onClick={onAction}
-                className="text-[10px] text-primary underline"
-              >
-                {actionLabel}
-              </Link>
-            ) : null}
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">{r.reason || "No reason given"}</p>
-          <p className="mt-1 text-[10px] text-muted-foreground">
-            {when(r.createdAt)} · {r.requestedByName || r.requestedBy}
-            {r.requestedAmount !== null ? ` · asked ${r.requestedAmount.toFixed(2)}` : ""}
-            {r.approvedAmount !== null ? ` · approved ${r.approvedAmount.toFixed(2)}` : ""}
-            {r.snapshot ? ` · ${r.snapshot.lines.length} item(s)` : ""}
-          </p>
-        </div>
-      ))}
-    </>
   );
 }

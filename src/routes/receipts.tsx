@@ -1,5 +1,5 @@
 import { uniqueSales, sameRecordId } from "@/lib/sale-identity";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Gift, Printer, ReceiptText, Search, ScrollText, Wallet, Wrench } from "lucide-react";
 import { toast } from "sonner";
@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { money, usePos } from "@/lib/pos-store";
+import { cartTotals, money, usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import { useUserPermissions } from "@/lib/pos-permissions";
 import { logger } from "@/lib/audit-log";
@@ -27,6 +27,7 @@ import {
   holdCancelledBill,
   loadPendingCorrectionHold,
   rememberPendingCorrectionHold,
+  saleCorrectionContext,
   type PendingCorrectionHold,
 } from "@/lib/held-orders";
 import {
@@ -36,6 +37,7 @@ import {
   shiftReportPreview,
 } from "@/lib/pos-print";
 import type { PaymentMethod, Sale } from "@/core/types/pos-types";
+import { r2, type CartLine, type DiscountType } from "@/core/types/pos-types";
 import { findReceiptExact, loadSalesPage } from "@/core/api/pos-db";
 import type { Cursor } from "@/lib/keyset";
 import {
@@ -83,6 +85,7 @@ const TEMPLATES: { key: Template; label: string; icon: typeof Printer }[] = [
 ];
 
 function ReceiptVault() {
+  const navigate = useNavigate();
   const { state, currentStore, activeShift, refundSale, changeSalePayment } = usePos();
   const { user, can, isAdmin } = useAuth();
   const { requirePermission } = useUserPermissions();
@@ -97,6 +100,12 @@ function ReceiptVault() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelMode, setCancelMode] = useState<"cancel" | "correct">("cancel");
+  const [correctionLines, setCorrectionLines] = useState<CartLine[]>([]);
+  const [correctionDiscount, setCorrectionDiscount] = useState(0);
+  const [correctionDiscountType, setCorrectionDiscountType] = useState<DiscountType>("amount");
+  const [correctionSearch, setCorrectionSearch] = useState("");
+  const cancelling = useRef(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
   const [pendingCorrectionAudit, setPendingCorrectionAudit] = useState<{
     input: RecordEditHistoryInput;
     persisted: boolean;
@@ -274,11 +283,23 @@ function ReceiptVault() {
       return;
     }
     setCancelMode("correct");
+    setCorrectionLines(selected.lines.map(line => ({...line})));
+    setCorrectionDiscount(saleCorrectionContext(selected).cartDiscount);
+    setCorrectionDiscountType("amount");
+    setCorrectionSearch("");
     setCancelReason("");
     setCancelOpen(true);
   }
 
   async function confirmCancel() {
+    if (cancelling.current) return;
+    cancelling.current = true;
+    setCancelBusy(true);
+    try { await performCancel(); }
+    finally { cancelling.current = false; setCancelBusy(false); }
+  }
+
+  async function performCancel() {
     if (pendingCorrectionHold && retryingCorrectionHold) {
       if (correctionHoldRetries.current.has(pendingCorrectionHold.saleId)) return;
       correctionHoldRetries.current.add(pendingCorrectionHold.saleId);
@@ -292,6 +313,7 @@ function ReceiptVault() {
             ? "The correction draft is now in Holds. Retry its audit entry next."
             : "The correction draft is now available in Holds.",
         );
+        if (!retryingCorrectionAudit) await navigate({to:"/",search:{resume:pendingCorrectionHold.id ?? `C-${pendingCorrectionHold.saleId}`,sell:true}});
       } catch (error) {
         notifyError(error, "The bill is reversed, but preparing its correction draft still failed");
       } finally {
@@ -309,9 +331,18 @@ function ReceiptVault() {
       setPendingCorrectionAudit(null);
       setCancelOpen(false);
       toast.success("The completed correction audit entry is now saved.");
+      await navigate({to:"/",search:{resume:`C-${pendingCorrectionAudit.input.recordId}`,sell:true}});
       return;
     }
     if (!selected) return;
+    if (cancelMode === "correct" && (!Number.isFinite(correctionDiscount) || correctionDiscount < 0 || (correctionDiscountType === "percent" && correctionDiscount > 100))) {
+      toast.error("Enter a valid whole-bill discount");
+      return;
+    }
+    if (cancelMode === "correct" && (!correctionLines.length || correctionLines.some(line => !Number.isFinite(line.qty) || line.qty <= 0 || !Number.isFinite(line.discount) || line.discount < 0 || line.discount > (line.discountType === "percent" ? 100 : line.price)))) {
+      toast.error("Check each item's quantity and discount before preparing the correction");
+      return;
+    }
     const reason = cancelReason.trim();
     if (reason.length < 3) {
       toast.error("Type why this bill is being cancelled");
@@ -377,12 +408,15 @@ function ReceiptVault() {
         rows.map((row) => (row.id === selected.id ? { ...row, refunded: true } : row)),
       );
       const correctionHold = {
+        ...saleCorrectionContext(selected),
         id: `C-${selected.id}`,
         saleId: selected.id,
         receiptNo: selected.receiptNo,
-        total: selected.total,
-        lines: selected.lines,
+        total: cancelMode === "correct" ? cartTotals(correctionLines, correctionDiscount, correctionDiscountType, state.settings.tax, selected.couponScope === "bill" ? selected.couponDiscount ?? 0 : 0).total : selected.total,
+        lines: cancelMode === "correct" ? correctionLines : selected.lines,
         storeId: selected.storeId,
+        cartDiscount: cancelMode === "correct" ? correctionDiscount : saleCorrectionContext(selected).cartDiscount,
+        cartDiscountType: cancelMode === "correct" ? correctionDiscountType : "amount" as const,
       };
       let holdPrepared = true;
       try {
@@ -404,6 +438,7 @@ function ReceiptVault() {
           after: {
             ...saleSnapshot,
             refunded: true,
+            correctionDraft: {lines:correctionHold.lines,cartDiscount:correctionHold.cartDiscount,cartDiscountType:correctionHold.cartDiscountType,total:correctionHold.total},
           },
           stockDeltas,
           note: reason,
@@ -437,6 +472,7 @@ function ReceiptVault() {
           ? `Bill ${selected.receiptNo} reversed — open it from Holds, correct it, and complete a replacement receipt`
           : `Bill ${selected.receiptNo} cancelled — the items are waiting on the register's hold list`,
       );
+      if (cancelMode === "correct") await navigate({to:"/",search:{resume:correctionHold.id,sell:true}});
     } catch (error) {
       notifyError(error, "Cancelling the bill");
     }
@@ -763,8 +799,8 @@ function ReceiptVault() {
         </div>
       </div>
 
-      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
-        <DialogContent>
+      <Dialog open={cancelOpen} onOpenChange={open => { if (!cancelBusy) setCancelOpen(open); }}>
+        <DialogContent className={cancelMode === "correct" ? "max-h-[90dvh] overflow-y-auto sm:max-w-3xl" : undefined}>
           <DialogHeader>
             <DialogTitle>
               {cancelMode === "correct" ? "Correct finalized bill" : "Cancel bill"}{" "}
@@ -773,9 +809,40 @@ function ReceiptVault() {
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             {cancelMode === "correct"
-              ? `The original receipt remains immutable and is reversed, its stock is restored at ${currentStore.name}, and its lines are placed in Holds. Correct them there and complete a new replacement receipt. This works even when the original shift is closed.`
+              ? `Add the missing item or adjust quantities and discounts here. The original receipt stays traceable. After reversal, the corrected bill opens automatically for approval and payment. An open shift is required to complete the replacement receipt.`
               : `The items go back into stock at ${currentStore.name} and the receipt is flagged as cancelled. This is recorded against ${user?.name}.`}
           </p>
+          {cancelMode === "correct" && !retryingCorrectionHold && !retryingCorrectionAudit && (
+            <fieldset disabled={cancelBusy} className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="correction-product">Add missing item</Label>
+                <Input id="correction-product" value={correctionSearch} onChange={event => setCorrectionSearch(event.target.value)} placeholder="Search item name, SKU or barcode" />
+                {correctionSearch.trim() && <div className="max-h-36 overflow-y-auto space-y-1">
+                  {state.products.filter(product => `${product.name} ${product.sku} ${product.barcode ?? ""}`.toLowerCase().includes(correctionSearch.trim().toLowerCase())).slice(0,15).map(product => (
+                    <Button key={product.id} variant="outline" className="w-full justify-between" onClick={() => {
+                      setCorrectionLines(lines => [...lines,{productId:product.id,name:product.name,price:product.price,cost:product.cost,qty:1,taxRate:state.settings.tax.rate,discount:0,discountType:"percent"}]);
+                      setCorrectionSearch("");
+                    }}><span>{product.name}</span><span>{money(product.price)}</span></Button>
+                  ))}
+                </div>}
+              </div>
+              {correctionLines.map((line,index) => <div key={index} className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_80px_100px_110px_auto]">
+                <div><p className="text-sm font-medium">{line.name}</p><p className="text-xs text-muted-foreground">{money(line.price)} each</p></div>
+                <div><Label htmlFor={`correction-qty-${index}`}>Qty</Label><Input id={`correction-qty-${index}`} type="number" min="0.001" step="any" value={line.qty} onChange={event => {
+                  const qty = Number(event.target.value);
+                  setCorrectionLines(lines => lines.map((item,i) => i === index ? {...item,qty,couponDiscount:item.couponDiscount && item.qty > 0 ? r2(item.couponDiscount / item.qty * qty) : item.couponDiscount} : item));
+                }} /></div>
+                <div><Label htmlFor={`correction-discount-${index}`}>Discount</Label><Input id={`correction-discount-${index}`} type="number" min="0" step="0.01" value={line.discount} onChange={event => setCorrectionLines(lines => lines.map((item,i) => i === index ? {...item,discount:Number(event.target.value)} : item))} /></div>
+                <div><Label htmlFor={`correction-type-${index}`}>Type</Label><select id={`correction-type-${index}`} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={line.discountType ?? "amount"} onChange={event => setCorrectionLines(lines => lines.map((item,i) => i === index ? {...item,discount:0,discountType:event.target.value as DiscountType} : item))}><option value="percent">Percentage</option><option value="amount">Amount/unit</option></select></div>
+                <Button variant="outline" onClick={() => setCorrectionLines(lines => lines.filter((_,i) => i !== index))}>Remove</Button>
+              </div>)}
+              <div className="flex flex-wrap items-end gap-2">
+                <div><Label htmlFor="correction-bill-discount">Whole-bill discount</Label><Input id="correction-bill-discount" type="number" min="0" step="0.01" value={correctionDiscount} onChange={event => setCorrectionDiscount(Number(event.target.value))} /></div>
+                <select aria-label="Whole-bill discount type" className="h-9 rounded-md border bg-background px-2 text-sm" value={correctionDiscountType} onChange={event => {setCorrectionDiscountType(event.target.value as DiscountType);setCorrectionDiscount(0);}}><option value="amount">Amount</option><option value="percent">Percentage</option></select>
+                <p className="text-sm font-semibold">Corrected total: {money(cartTotals(correctionLines,correctionDiscount,correctionDiscountType,state.settings.tax,selected?.couponScope === "bill" ? selected.couponDiscount ?? 0 : 0).total)}</p>
+              </div>
+            </fieldset>
+          )}
           <div className="space-y-2">
             <Label htmlFor="cancel-reason">Reason (required)</Label>
             <Textarea
@@ -791,11 +858,11 @@ function ReceiptVault() {
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCancelOpen(false)}>
+            <Button variant="outline" disabled={cancelBusy} onClick={() => setCancelOpen(false)}>
               Keep bill
             </Button>
-            <Button variant="destructive" onClick={confirmCancel}>
-              {retryingCorrectionHold
+            <Button variant="destructive" disabled={cancelBusy} onClick={() => void confirmCancel()}>
+              {cancelBusy ? "Preparing…" : retryingCorrectionHold
                 ? "Retry preparing correction"
                 : retryingCorrectionAudit
                 ? "Retry saving completed audit"

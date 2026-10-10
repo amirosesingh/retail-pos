@@ -38,41 +38,41 @@ describe("per-user notification state", () => {
     });
   });
 
-  it("keeps dismissal local to this device profile and isolated between users", async () => {
+  it("persists a clear and shares it with other users on this device", async () => {
     const activity = await import("../activity-events");
     expect(await activity.clearActivityEntry("manager-1", "event-1")).toBe(true);
     expect(activity.isCleared("manager-1", "event-1")).toBe(true);
-    expect(activity.isCleared("manager-2", "event-1")).toBe(false);
-    expect(posFetch).not.toHaveBeenCalled();
+    expect(activity.isCleared("manager-2", "event-1")).toBe(true);
+    expect(posFetch).toHaveBeenCalled();
     expect(values.has("pos.activity.cleared")).toBe(true);
   });
 
-  it("does not import a dismissal made on another device", async () => {
+  it("imports acknowledgements made on another device", async () => {
     const activity = await import("../activity-events");
     const row = {
       id: "event-remote",
       clearedBy: ["MANAGER-1"],
     } as Parameters<typeof activity.mergeRemoteActivityPreferences>[1][number];
     activity.mergeRemoteActivityPreferences("manager-1", [row]);
-    expect(activity.clearedIds("manager-1")).not.toContain("event-remote");
+    expect(activity.clearedIds("manager-1")).toContain("event-remote");
   });
 
-  it("clears every active notification without a database write", async () => {
+  it("clears every visible notification through authenticated persistence", async () => {
     const activity = await import("../activity-events");
     expect(await activity.clearAllActivityEntries("manager-1", ["event-1", "event-2"])).toBe(true);
     expect(activity.clearedIds("manager-1")).toEqual(
       expect.arrayContaining(["event-1", "event-2"]),
     );
-    expect(posFetch).not.toHaveBeenCalled();
+    expect(posFetch).toHaveBeenCalled();
   });
 
-  it("does not require the server to dismiss a notification", async () => {
+  it("waits for the server to acknowledge a clear", async () => {
     const activity = await import("../activity-events");
     expect(await activity.clearActivityEntry("manager-1", "event-2")).toBe(true);
     expect(activity.isCleared("manager-1", "event-2")).toBe(true);
   });
 
-  it("does not commit an Electron dismissal to local SQL", async () => {
+  it("commits an Electron clear to local SQL before hiding it", async () => {
     Object.assign((globalThis as { window: object }).window, { pos: {} });
     localBridge.current = {
       query: vi.fn(async () => ({
@@ -82,7 +82,7 @@ describe("per-user notification state", () => {
     };
     const activity = await import("../activity-events");
     expect(await activity.clearActivityEntry("manager-1", "event-local")).toBe(true);
-    expect(commitOps).not.toHaveBeenCalled();
+    expect(commitOps).toHaveBeenCalledWith("Clearing notification",[expect.objectContaining({table:"activity_events",values:{cleared_by:JSON.stringify(["manager-1"])},requireMatch:true})]);
     expect(posFetch).not.toHaveBeenCalled();
   });
 
@@ -115,6 +115,13 @@ describe("per-user notification state", () => {
     const activity = await import("../activity-events");
     expect(await activity.listActivityEvents()).toEqual([]);
     expect(posFetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps a notification visible when its durable clear fails", async () => {
+    posFetch.mockResolvedValueOnce({ok:false,json:async () => ({ok:false})});
+    const activity = await import("../activity-events");
+    expect(await activity.clearActivityEntry("manager-1","failed-event")).toBe(false);
+    expect(activity.isCleared("manager-2","failed-event")).toBe(false);
   });
 
   it("persists read markers across navigation and login cycles", async () => {
@@ -223,16 +230,16 @@ describe("per-user notification state", () => {
     expect(bell).not.toContain('value="history"');
     const root = readFileSync("src/routes/__root.tsx", "utf8");
     expect(root).toContain('<Toaster position="top-right" closeButton />');
-    expect(bell).toContain('value="attention"');
-    expect(bell).toContain('value="warning"');
-    expect(bell).toContain('value="ready"');
-    expect(bell).toContain('value="activity"');
+    expect(bell).not.toContain('value="attention"');
+    expect(bell).not.toContain('value="warning"');
+    expect(bell).not.toContain('value="ready"');
+    expect(bell).not.toContain('value="activity"');
     expect(styles).toContain("@keyframes activity-row-out");
     expect(styles).toContain('.ui-animated-list-item[data-state="exiting"]');
     expect(styles).toContain("prefers-reduced-motion: reduce");
     expect(report).toContain("Active and history");
     expect(report).toContain("Cleared history");
-    expect(report).toContain("reopenActivityEntry");
+    expect(report).not.toContain("reopenActivityEntry");
     expect(report).toContain("useAnimatedItems");
     expect(report).toContain("ui-animated-table-row");
   });

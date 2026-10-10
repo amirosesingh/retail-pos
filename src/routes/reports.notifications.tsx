@@ -30,7 +30,7 @@ import {
   listActivityEvents,
   markActivitySeen,
   mergeRemoteActivityPreferences,
-  reopenActivityEntry,
+
   toCsv,
   type ActivityEvent,
   type EventSeverity,
@@ -97,7 +97,7 @@ function NotificationsReport() {
   const filtered = useMemo(() => {
     const needle = actor.trim().toLowerCase();
     return rows.filter((row) => {
-      const inHistory = row.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase());
+      const inHistory = row.clearedBy.length > 0;
       if (status === "active" && inHistory) return false;
       if (status === "history" && !inHistory) return false;
       if (!needle) return true;
@@ -107,14 +107,13 @@ function NotificationsReport() {
         row.message.toLowerCase().includes(needle)
       );
     });
-  }, [rows, actor, status, meKey]);
+  }, [rows, actor, status]);
 
   const updatePreference = async (row: ActivityEvent) => {
-    const inHistory = row.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase());
+    const inHistory = row.clearedBy.length > 0;
+    if (inHistory) return;
     setPreferenceBusy(row.id);
-    const saved = inHistory
-      ? await reopenActivityEntry(meKey, row.id)
-      : await clearActivityEntry(meKey, row.id);
+    const saved = await clearActivityEntry(meKey, row.id);
     if (!saved)
       toast.error("Could not update notification history. Check the connection and try again.");
     else await load();
@@ -273,7 +272,7 @@ function NotificationsReport() {
                     </TableCell>
                     <TableCell className="text-xs capitalize">{r.whatsappStatus}</TableCell>
                     <TableCell className="text-xs">
-                      {r.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase())
+                      {r.clearedBy.length > 0
                         ? "History"
                         : "Active"}
                     </TableCell>
@@ -283,20 +282,20 @@ function NotificationsReport() {
                         variant="ghost"
                         size="sm"
                         className="h-7 px-2 text-[10px]"
-                        disabled={preferenceBusy === r.id}
+                        disabled={preferenceBusy === r.id || r.clearedBy.length > 0}
                         onClick={() => void updatePreference(r)}
                       >
                         {preferenceBusy === r.id ? (
                           <LoaderCircle className="size-3 animate-spin" />
-                        ) : r.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase()) ? (
+                        ) : r.clearedBy.length > 0 ? (
                           <RotateCcw className="size-3" />
                         ) : (
                           <Check className="size-3" />
                         )}
                         {preferenceBusy === r.id
                           ? "Saving…"
-                          : r.clearedBy.some((id) => id.toLowerCase() === meKey.toLowerCase())
-                            ? "Reopen"
+                          : r.clearedBy.length > 0
+                            ? "Cleared"
                             : "Clear"}
                       </Button>
                     </TableCell>
