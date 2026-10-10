@@ -57,6 +57,23 @@ class ChangeReader {
     const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);
     return (result.recordset ?? []).map((row) => toCloudRow(table, row));
   }
+  async ticketCompletionParents(tickets, branchId) {
+    const results = [];
+    for (const ticket of tickets.filter(row => row.status === "completed")) {
+      if (ticket.store_id !== branchId) throw new Error("Draft completion belongs to another branch.");
+      const bookingId = String(ticket.note ?? "").startsWith("booking:") ? String(ticket.note).slice(8) : null;
+      const name = bookingId ? "bookings" : "sales";
+      const table = this.tables.get(name);
+      if (!table) throw new Error("Draft completion parent is not registered.");
+      const request = this.connectionManager.pool.request().input("branch", branchId).input("reference", bookingId || ticket.bill_no);
+      const result = await request.query(bookingId
+        ? "SELECT * FROM dbo.bookings WHERE store_id=@branch AND CONVERT(nvarchar(36),id)=@reference;"
+        : "SELECT * FROM dbo.sales WHERE store_id=@branch AND bill_number=@reference;");
+      if (!result.recordset?.length) throw new Error("The completed draft has no saved sale or booking.");
+      results.push({ table: name, rows: result.recordset.map(row => toCloudRow(table, row)) });
+    }
+    return results;
+  }
   async pendingAggregates(branchId, limit = 500, excludeAggregateIds = [], { includeActivity = true } = {}) {
     const request = this.connectionManager.pool.request().input("branch", branchId).input("limit", Math.max(1, Math.min(2000, limit))).input("include_activity", includeActivity ? 1 : 0);
     const excluded = excludeAggregateIds.slice(0, 2000).map((id, index) => {

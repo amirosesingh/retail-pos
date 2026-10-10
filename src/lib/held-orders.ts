@@ -24,6 +24,7 @@ export type HeldOrder = {
   cancelledFrom?: string;
   /** branch the ticket was parked at */
   storeId?: string;
+  shiftId?: string | null;
   /** bill number reserved when the ticket was started */
   billNo?: string;
   /** who parked it */
@@ -41,7 +42,7 @@ export type HeldOrder = {
    * it is waiting for a manager's decision, and "ready" means the decision has
    * arrived and the ticket can be resumed.
    */
-  status?: "held" | "waiting" | "ready";
+  status?: "draft" | "held" | "waiting" | "ready" | "completed" | "cancelled";
   /** the approval request this ticket is bound to, when it is waiting */
   pendingRequestId?: string | null;
   /** fingerprint of the exact ticket reviewed by the approver */
@@ -81,6 +82,7 @@ export function rowToHeldOrder(row: Record<string, unknown>): HeldOrder {
     lines: parseJson<CartLine[]>(row.lines, []),
     heldAt: String(row.held_at ?? new Date().toISOString()),
     storeId: row.store_id == null ? undefined : String(row.store_id),
+    shiftId: row.shift_id == null ? null : String(row.shift_id),
     heldBy: row.held_by == null ? undefined : String(row.held_by),
     billNo: row.bill_no == null ? undefined : String(row.bill_no),
     cartDiscount: Number(row.cart_discount ?? 0),
@@ -91,7 +93,7 @@ export function rowToHeldOrder(row: Record<string, unknown>): HeldOrder {
     coupon: parseJson(row.coupon, null),
     note: String(row.note ?? ""),
     cancelledFrom: row.cancelled_from == null ? undefined : String(row.cancelled_from),
-    status: row.status === "waiting" || row.status === "ready" ? row.status : "held",
+    status: row.status === "draft" || row.status === "completed" || row.status === "cancelled" || row.status === "waiting" || row.status === "ready" ? row.status : "held",
     pendingRequestId: row.pending_request_id == null ? null : String(row.pending_request_id),
     approvalSnapshotHash:
       row.approval_snapshot_hash == null ? null : String(row.approval_snapshot_hash),
@@ -145,6 +147,7 @@ export function persistHeldOrder(order: HeldOrder) {
     id: order.id,
     label: order.label,
     storeId: order.storeId ?? null,
+    shiftId: order.shiftId ?? null,
     heldBy: order.heldBy ?? null,
     billNo: order.billNo ?? null,
     total: order.total,
@@ -241,7 +244,7 @@ export function useHeldOrders(storeId?: string): HeldOrder[] {
     let active = true;
     const sync = async () => {
       let loaded: HeldOrder[] | null = null;
-      if (isElectronRenderer()) {
+      {
         const requestSequence = ++electronReadSequence;
         try {
           // Keep the process-wide cache complete. Branch-filtered reads from
@@ -273,7 +276,7 @@ export function useHeldOrders(storeId?: string): HeldOrder[] {
       window.removeEventListener("storage", refresh);
     };
   }, [storeId]);
-  return storeId ? orders.filter((order) => order.storeId === storeId) : orders;
+  return orders.filter(order => !["completed", "cancelled"].includes(order.status ?? "held") && (!storeId || order.storeId === storeId));
 }
 
 /**

@@ -63,6 +63,7 @@ const CHANNEL_LEVELS = {
   // available to ordinary renderer code.
   "business:write-batch": SUPERVISOR,
   "business:commit-aggregate": OPEN,
+  "business:reserve-bill": OPEN, // verified sale permission checked in allowed()
   "business:snapshot": OPEN,
   "business:query": OPEN,
   "business:save-authorization-rule": OPEN,
@@ -417,6 +418,13 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  if (channel === "business:reserve-bill") {
+    if (adminSession.hasPosAuthority() && adminSession.hasPermission("can_process_sale")) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
+  }
   if (channel === "business:write-batch" && Array.isArray(args[1]) &&
       args[1].some((op) => op?.table === "pos_settings") &&
       args[1].every((op) => ["pos_settings", "settings_scoped"].includes(op?.table))) {
@@ -444,7 +452,7 @@ function allowed(channel, args = []) {
       stock: ["can_adjust_stock"],
       transfer: ["can_create_transfer", "can_receive_transfer", "can_approve_transfer"],
       booking: ["can_create_booking", "can_manage_bookings", "can_cancel_booking"],
-      held_order: ["can_hold_cart"],
+      held_order: ["can_hold_cart", "can_process_sale", "can_reopen_held_order", "can_discard_held_order", "can_void_cart"],
     }[kind];
     if (!adminSession.hasPosAuthority()) return false;
     if (!permissions) {
@@ -463,7 +471,7 @@ function allowed(channel, args = []) {
     return false;
   }
   if (channel === "business:shift-expected") {
-    if (adminSession.hasPosAuthority() && adminSession.hasPermission("can_shift_expected_cash_view")) {
+    if (adminSession.hasPosAuthority() && (adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_shift_expected_cash_view"))) {
       adminSession.touch();
       return true;
     }
@@ -499,9 +507,9 @@ function allowed(channel, args = []) {
     return false;
   }
   if (channel === "business:shift-reconciliation-view") {
-    if (adminSession.hasPosAuthority() && [
+    if (adminSession.hasPosAuthority() && (adminSession.hasLevel(ADMIN) || [
       "can_shift_expected_cash_view", "can_shift_counted_cash_view", "can_shift_variance_view",
-    ].some((permission) => adminSession.hasPermission(permission))) {
+    ].some((permission) => adminSession.hasPermission(permission)))) {
       adminSession.touch();
       return true;
     }

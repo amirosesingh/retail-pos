@@ -1,3 +1,6 @@
+import { db } from "@/core/api/pos-db";
+import { draftTicketId, registerSessionDraft } from "@/lib/session-draft";
+import { documentDevice } from "@/lib/document-origin";
 /**
  * Parked tickets.
  *
@@ -7,11 +10,10 @@
  * the register screen unchanged, including the audit trail.
  */
 import { toast } from "sonner";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { notifyError } from "@/lib/notify";
 import {
   addHeldOrder,
-  removeHeldOrder,
   updateHeldOrder,
   useHeldOrders,
   type HeldOrder,
@@ -35,6 +37,8 @@ type HeldOrdersDeps = {
   coupon: CartCoupon | null;
   billNo: string | null;
   storeId: string;
+  shiftId: string | null;
+  ensureBillNumber: () => Promise<string>;
   cashier: string;
   /** Ticket setters, owned by the register screen. */
   setLines: (ls: CartLine[]) => void;
@@ -77,25 +81,58 @@ type HeldOrdersDeps = {
 export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   const held = useHeldOrders(deps.storeId);
   const latestDeps = useRef(deps);
-  useEffect(() => {
-    latestDeps.current = deps;
-  }, [deps]);
+  latestDeps.current = deps;
   // Route effects can run twice in React development mode, and a fast double
   // click can do the same in production. Claiming is a one-time server write,
   // so collapse concurrent attempts for the same parked ticket.
   const resuming = useRef(new Set<string>());
   const holding = useRef(false);
+  const activeId = useRef<string | null>(null);
+  const released = useRef(new Set<string>());
+  const writes = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueue = useCallback(<T,>(work: () => Promise<T>): Promise<T> => {
+    const next = writes.current.then(work, work);
+    writes.current = next.catch(() => undefined);
+    return next;
+  }, []);
+  const saveDraft = useCallback(async () => {
+    const current = latestDeps.current;
+    if (!current.lines.length || !current.shiftId || (current.billNo && released.current.has(current.billNo))) return;
+    if (!current.billNo) {
+      const bill = await current.ensureBillNumber();
+      current.billNo = bill;
+      current.setBillNo(bill);
+    }
+    const id = activeId.current ?? draftTicketId(current.storeId, current.billNo);
+    activeId.current = id;
+    const cleaned = current.activeApproval ? removeApprovedDiscount(current, current.activeApproval) : current;
+    const order: HeldOrder = {
+      id, label: `Draft ${current.billNo}`, billNo: current.billNo,
+      storeId: current.storeId, shiftId: current.shiftId, heldBy: current.cashier,
+      lines: cleaned.lines, total: current.activeApproval ? current.calculateTotal?.(cleaned.lines, cleaned.cartDiscount, cleaned.cartDiscountType) ?? current.total : current.total,
+      cartDiscount: cleaned.cartDiscount, cartDiscountType: cleaned.cartDiscountType,
+      exchangeRef: current.exchangeRef, memberId: current.memberId, memberName: current.memberName,
+      coupon: current.coupon, heldAt: new Date().toISOString(), status: "draft",
+      note: `draft:${documentDevice()}`,
+    };
+    await enqueue(async () => {
+      if (!released.current.has(order.billNo!)) await addHeldOrder(order);
+    });
+  }, [enqueue]);
 
   /** Park the open ticket with everything on it, so reopening is lossless. */
   async function holdOrder(
     silent = false,
     requestedId?: string,
     pending?: { requestId: string; snapshotHash?: string },
+    sessionDraft = false,
   ) {
     const { lines, total, storeId, memberId, memberName } = deps;
     if (!lines.length || holding.current) return null;
     holding.current = true;
     try {
+      await writes.current;
+      const bill = deps.billNo || await deps.ensureBillNumber();
       const originalSignature = ticketSignature(deps);
       const cleaned = deps.activeApproval
         ? removeApprovedDiscount(
@@ -112,7 +149,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         ? (deps.calculateTotal?.(cleaned.lines, cleaned.cartDiscount, cleaned.cartDiscountType) ??
           total)
         : total;
-      const id = requestedId ?? `H${crypto.randomUUID()}`;
+      const id = activeId.current ?? requestedId ?? draftTicketId(storeId, bill);
       const order: HeldOrder = {
         id,
         label: `${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${snapshot.length} item(s)`,
@@ -120,9 +157,12 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         lines: snapshot,
         heldAt: new Date().toISOString(),
         storeId,
+        shiftId: deps.shiftId,
         heldBy: deps.cashier,
+        ...(sessionDraft ? { note: `session-draft:${documentDevice()}` } : {}),
         cartDiscount: cleaned.cartDiscount,
-        ...(deps.billNo ? { billNo: deps.billNo } : {}),
+        billNo: bill,
+        status: "held",
         cartDiscountType: deps.cartDiscountType,
         exchangeRef: deps.exchangeRef,
         memberId,
@@ -136,7 +176,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
             }
           : {}),
       };
-      await addHeldOrder(order);
+      await enqueue(() => addHeldOrder(order));
       logTicketEvent(TICKET_ACTIONS.held, {
         holdRef: id,
         lines: snapshot.length,
@@ -146,12 +186,14 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         member: memberName,
         items: snapshot.map((l) => ({ name: l.name, qty: l.qty, price: l.price })),
       });
-      if (ticketSignature(latestDeps.current) !== originalSignature) {
+      if (ticketSignature({ ...latestDeps.current, billNo: deps.billNo }) !== originalSignature) {
         toast.warning("Ticket held, but the current cart changed while it was saving", {
           description: "The newer cart was left open. The saved version is available in Holds.",
         });
-        return order;
+        return sessionDraft ? null : order;
       }
+      released.current.add(bill);
+      activeId.current = null;
       latestDeps.current.resetCart("held");
       if (!silent) toast.success("Order held — reopen it from Hold tickets");
       return order;
@@ -171,7 +213,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
    *  permission, and it refuses if the ticket changed or somebody already
    *  used it. */
   async function resumeHeld(id: string) {
-    if (resuming.current.has(id)) return;
+    if (resuming.current.has(id) || (activeId.current === id && deps.lines.length)) return;
     resuming.current.add(id);
     try {
       const order = held.find((h) => h.id === id);
@@ -208,7 +250,9 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
               // If claiming the target approval fails, remove that temporary
               // hold first and put the cashier's original ticket back exactly
               // as it was instead of leaving the register unexpectedly blank.
-              await removeHeldOrder(parked.id);
+              await db.setHeldOrderStatus(parked.id, "draft");
+              activeId.current = parked.id;
+              if (parked.billNo) released.current.delete(parked.billNo);
               deps.onApprovalCleared?.();
               deps.setLines(parked.lines);
               deps.setCartDiscount(parked.cartDiscount ?? 0);
@@ -247,7 +291,9 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         }
       }
       try {
-        await removeHeldOrder(id);
+        await db.setHeldOrderStatus(id, "draft");
+        activeId.current = id;
+        if (order.billNo) released.current.delete(order.billNo);
       } catch (error) {
         if (restoredApproval) {
           await updateHeldOrder(id, {
@@ -299,7 +345,40 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
     }
   }
 
-  return { held, holdOrder, resumeHeld };
+  useEffect(() => () => {
+    void saveDraft().catch(error => notifyError(error, "Saving draft bill"));
+  }, [saveDraft]);
+
+  useEffect(() => {
+    if (!deps.lines.length || !deps.billNo) return;
+    const timer = setTimeout(() => { void saveDraft().catch(error => notifyError(error, "Saving draft bill")); }, 1000);
+    return () => clearTimeout(timer);
+  }, [deps.lines, deps.billNo, deps.total, deps.cartDiscount, deps.cartDiscountType, deps.memberId, deps.coupon, deps.exchangeRef, saveDraft]);
+
+  useEffect(() => registerSessionDraft(async action => {
+    const current = latestDeps.current;
+    if (action === "release") {
+      if (current.billNo) released.current.add(current.billNo);
+      activeId.current = null;
+      return;
+    }
+    if (!current.lines.length) return;
+    if (action === "cancel") {
+      if (current.billNo) released.current.add(current.billNo);
+      const id = activeId.current ?? (current.billNo ? draftTicketId(current.storeId, current.billNo) : null);
+      try { if (id) await enqueue(() => db.removeHeldOrder(id)); }
+      catch (error) { if (current.billNo) released.current.delete(current.billNo); throw error; }
+      activeId.current = null;
+    } else if (action === "hold") {
+      const saved = await holdOrder(true, undefined, undefined, true);
+      if (!saved) throw new Error("The current ticket was not safely held.");
+    } else {
+      await saveDraft();
+      await writes.current;
+      return latestDeps.current.billNo ?? undefined;
+    }
+  }));
+  return { held, holdOrder, resumeHeld, getDraftId: () => activeId.current };
 }
 
 function ticketSignature(deps: Pick<

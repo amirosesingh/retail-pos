@@ -6,6 +6,7 @@ vi.mock("@/platform-config/features", () => ({
   isMobileShell: () => device.platform === "android",
 }));
 vi.mock("@/core/local-db/local-db", () => ({
+  localDb: () => null,
   readLocalSetting: vi.fn(async () => null), writeLocalSetting: vi.fn(async () => true),
 }));
 import { documentOrigin } from "../document-origin";

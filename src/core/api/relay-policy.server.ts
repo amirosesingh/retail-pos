@@ -509,6 +509,20 @@ export async function authorizeRelayOp(
     if (rows.some(row => String(row.original_bill_number ?? "").startsWith("OLDPOS:")))
       return deny("PERMISSION_DENIED", "Only an administrator can enter an old POS exchange.");
   }
+  if (op.table === "held_orders" && !isAdmin && scope.kind !== "terminal") {
+    const rows = op.kind === "insert" || op.kind === "upsert" ? op.rows : op.kind === "update" ? [op.values] : [];
+    if (op.kind === "delete") return deny("PERMISSION_DENIED", "Cancel the held bill instead of deleting it.");
+    for (const row of rows) {
+      const state = row.status ?? "held";
+      const bookingId = String(row.note ?? "").startsWith("booking:") ? String(row.note).slice(8) : null;
+      const bookingConversion = state === "completed" && bookingId && allowed(scope, "can_create_booking") && batchIds?.get("bookings")?.has(bookingId);
+      const permitted = bookingConversion || (state === "cancelled"
+        ? allowed(scope, "can_discard_held_order") || allowed(scope, "can_void_cart")
+        : state === "draft" ? allowed(scope, "can_process_sale") || allowed(scope, "can_reopen_held_order")
+        : allowed(scope, "can_hold_cart") || (String(row.note ?? "").startsWith("session-draft:") && allowed(scope, "can_process_sale")));
+      if (!permitted || (state === "completed" && !bookingConversion)) return deny("PERMISSION_DENIED", "Permission is required for this draft or held bill action.");
+    }
+  }
   if (op.table === "products") {
     const productAccess = await authorizeProductOp(op, scope);
     if (!productAccess.ok) return productAccess;

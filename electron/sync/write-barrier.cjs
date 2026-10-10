@@ -14,7 +14,7 @@ class WriteBarrier {
 }
 const BUSINESS_WRITE_CHANNELS = new Set([
   "print:silent", "print:raw", "drawer:open", "pos:write", "pos:write-batch",
-  "business:write-batch", "business:commit-aggregate", "business:save-authorization-rule",
+  "business:reserve-bill", "business:write-batch", "business:commit-aggregate", "business:save-authorization-rule",
   "business:shift-close-start", "business:shift-close-count", "business:shift-recount",
   "business:shift-variance-approve", "receipts:refund",
 ]);

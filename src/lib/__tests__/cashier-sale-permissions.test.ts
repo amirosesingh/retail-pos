@@ -23,6 +23,17 @@ describe('cashier sale permissions with no member',()=>{
   expect(privilege.allowed('business:commit-aggregate',[{kind:'sale'}])).toBe(false);
   expect(privilege.allowed('pos:connect')).toBe(false);
  });
+ it.each(['admin', 'supervisor', 'staff'])('Electron accepts a granted sale for %s without member or inventory grants', (level) => {
+  session.grant(level, level, {can_process_sale:true}, 'pos', 'branch-a');
+  expect(privilege.allowed('business:commit-aggregate', [{kind:'sale'}])).toBe(true);
+  expect(aggregatePolicy('sale', [sale], session.identity()).enforcePermissions).toBe(true);
+ });
+ it.each(['admin', 'supervisor', 'staff'])('browser and Android accept an authorized %s sale', async (role) => {
+  const fetch=vi.fn(async()=>new Response('{}',{status:200}));vi.stubGlobal('fetch',fetch);
+  const identity = {...scope({can_process_sale:true}), role, roleSlug:role, isSupervisor:role!=='staff'} as RelayScope;
+  const result=await runRelayRpc({kind:'rpc',table:'sales',fn:'pos_sale_commit',args:{_sale:sale.rows[0],_member:null}},identity);
+  expect(result.ok).toBe(true);expect(fetch).toHaveBeenCalledTimes(1);
+ });
  it('browser accepts the granted sale and sends one atomic RPC',async()=>{
   const fetch=vi.fn(async()=>new Response('{}',{status:200}));vi.stubGlobal('fetch',fetch);
   const result=await runRelayRpc({kind:'rpc',table:'sales',fn:'pos_sale_commit',args:{_sale:sale.rows[0],_member:null}},scope({can_process_sale:true}));

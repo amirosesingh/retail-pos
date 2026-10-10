@@ -67,6 +67,7 @@ export function classifyError(error: unknown): ErrorCategory {
   const code = String((error as Failure | null)?.code ?? "").toUpperCase();
   const status = statusOf(error, raw);
   if (["EPRIVILEGE", "PERMISSION_DENIED", "EPERMISSION", "SYNC_BRANCH_FORBIDDEN"].includes(code)) return "permission";
+  if (code === "EBILL_COUNTER") return "database-write";
   if (code === "EMEMBER_BALANCE") return "conflict";
   if (["EBATCH_SIZE", "EOVERSIZED", "ESNAPSHOT_LIMIT", "EREPORT_LIMIT"].includes(code)) return "validation";
   if (["EDATABASE", "EDATABASE_NOT_READY", "ENOTCONNECTED"].includes(code)) return "database-disconnected";
@@ -118,6 +119,7 @@ export function describeError(error: unknown, action = "That action"): string {
   }
   if (["EBATCH_SIZE", "EOVERSIZED"].includes(code)) return `${action} exceeds the safe transaction size. Use smaller batches; no successful save was confirmed.`;
   if (["ESNAPSHOT_LIMIT", "EREPORT_LIMIT"].includes(code)) return `${action} is too large to load safely. Select a shorter date range or a smaller result set.`;
+  if (code === "EBILL_COUNTER") return "The bill number could not be reserved. Check the desktop app update and device storage before retrying. Payment has not been saved.";
   if (code === "EMEMBER_BALANCE") return "The member balance changed on another transaction. Reload the member and retry.";
   if (code === "ESQLSERVER_WRITE") {
     const table = (error as Failure | null)?.table;

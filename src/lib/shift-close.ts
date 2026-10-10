@@ -1,3 +1,4 @@
+import { sameRecordId } from "./sale-identity";
 /**
  * Shared maths and visibility rules for the shift-close (Z report) screen.
  *
@@ -21,29 +22,35 @@ const TENDERS: { method: string; label: string }[] = [
 /** Sales that belong to this shift and were not refunded. */
 export function shiftSalesOf(shift: Shift | null, sales: Sale[]): Sale[] {
   if (!shift) return [];
-  return sales.filter((s) => s.shiftId === shift.id && !s.refunded);
+  return sales.filter((s) => sameRecordId(s.shiftId, shift.id) && !s.refunded);
+}
+
+/** Tender rows may be net single payments or gross split payments. Only
+ * excess over the bill is change, and it comes out of cash, never cards. */
+export function saleTenderAmounts(sale: Sale): Record<string, number> {
+  if (!sale.payments?.length) return { [sale.method.toLowerCase()]: sale.total };
+  const amounts: Record<string, number> = {};
+  for (const payment of sale.payments) {
+    const method = payment.method.toLowerCase();
+    amounts[method] = (amounts[method] ?? 0) + payment.amount;
+  }
+  const paid = Object.values(amounts).reduce((sum, amount) => sum + amount, 0);
+  if ((amounts.cash ?? 0) > 0) amounts.cash = Math.max(0, amounts.cash - Math.max(0, paid - sale.total));
+  return Object.fromEntries(Object.entries(amounts).map(([method, amount]) => [method, Number(amount.toFixed(2))]));
 }
 
 export function tenderTotals(shift: Shift | null, sales: Sale[]): TenderTotal[] {
-  const mine = shiftSalesOf(shift, sales);
-  return TENDERS.map((t) => {
-    const rows = mine.filter((s) => s.method === t.method);
-    return {
-      method: t.method,
-      label: t.label,
-      count: rows.length,
-      value: rows.reduce((a, s) => a + s.total, 0),
-    };
-  });
+  const amounts = shiftSalesOf(shift, sales).map(saleTenderAmounts);
+  const codes = new Set([...TENDERS.map(t => t.method), ...amounts.flatMap(row => Object.keys(row))]);
+  return [...codes].map(method => ({method, label: TENDERS.find(t => t.method === method)?.label ?? method.replace(/_/g, " "),
+    count: amounts.filter(row => (row[method] ?? 0) !== 0).length,
+    value: Number(amounts.reduce((sum, row) => sum + (row[method] ?? 0), 0).toFixed(2)),
+  }));
 }
 
-/** Cash the drawer should hold: opening float plus cash taken this shift. */
+/** Opening float plus net CASH sales in this shift; card/wallet excluded. */
 export function expectedDrawer(shift: Shift | null, sales: Sale[]): number {
-  if (!shift) return 0;
-  const cash = shiftSalesOf(shift, sales)
-    .filter((s) => s.method === "cash")
-    .reduce((a, s) => a + s.total, 0);
-  return shift.openingFloat + cash;
+  return expectedFor(shift, sales, "cash");
 }
 
 /** Net cash taken, derived from what the cashier counted. */
@@ -122,7 +129,7 @@ export function varianceEventId(shiftId: string): string {
 const TENDER_GROUPS = {
   cash: ["cash"],
   card: ["card"],
-  digital: ["wallet", "transfer", "qr", "online", "ewallet"],
+  digital: ["wallet", "bank_transfer", "transfer", "qr", "online", "ewallet"],
 } as const;
 
 export type TenderKey = keyof typeof TENDER_GROUPS;
@@ -130,15 +137,16 @@ export type TenderKey = keyof typeof TENDER_GROUPS;
 /** Net sales taken this shift on one tender group. */
 export function tenderSales(shift: Shift | null, sales: Sale[], tender: TenderKey): number {
   const codes = TENDER_GROUPS[tender] as readonly string[];
-  return shiftSalesOf(shift, sales)
-    .filter((s) => codes.includes(s.method))
-    .reduce((a, s) => a + s.total, 0);
+  return Number(shiftSalesOf(shift, sales).reduce((sum, sale) => {
+    const amounts = saleTenderAmounts(sale);
+    return sum + codes.reduce((value, code) => value + (amounts[code] ?? 0), 0);
+  }, 0).toFixed(2));
 }
 
 /** What each tender should hold: cash carries the opening float, the rest do not. */
 export function expectedFor(shift: Shift | null, sales: Sale[], tender: TenderKey): number {
   const base = tenderSales(shift, sales, tender);
-  return tender === "cash" ? (shift?.openingFloat ?? 0) + base : base;
+  return Number((tender === "cash" ? (shift?.openingFloat ?? 0) + base : base).toFixed(2));
 }
 
 /** What the cashier typed in. A blank card / digital box means "not counted". */

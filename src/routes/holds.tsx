@@ -184,12 +184,13 @@ function HoldTickets() {
                         className="text-left hover:text-primary"
                         onClick={() => setOpenId(openId === h.id ? null : h.id)}
                       >
-                        <span className="block font-medium">{h.label}</span>
+                        <span className="block font-medium">{h.billNo || h.label}</span>
                         <span className="numeric block text-[11px] text-muted-foreground">
                           {when(h.heldAt)}
                         </span>
                       </button>
                       <div className="mt-1 flex flex-wrap gap-1">
+                        <Badge variant="outline">{h.status === "draft" ? "Draft — unpaid" : "Held — unpaid"}</Badge>
                         {h.cancelledFrom && (
                           <Badge variant="outline">Cancelled {h.cancelledFrom}</Badge>
                         )}
@@ -246,7 +247,7 @@ function HoldTickets() {
                           disabled={!can("can_discard_held_order")}
                           onClick={() => void discard(h)}
                         >
-                          <Trash2 className="size-4" />
+                          <Trash2 className="size-4" /> Cancel bill
                         </Button>
                       </div>
                     </TableCell>

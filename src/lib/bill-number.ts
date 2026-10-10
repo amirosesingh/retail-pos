@@ -13,7 +13,7 @@ import { documentDevice, documentPlatform } from "./document-origin";
  * each branch/platform to avoid overlapping offline number sequences.
  */
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
-import { readLocalSetting, writeLocalSetting } from "@/core/local-db/local-db";
+import { localDb, readLocalSetting, writeLocalSetting } from "@/core/local-db/local-db";
 import { readBusinessValue, writeBusinessValue } from "./business-storage";
 
 export type Platform = "WIN" | "AND" | "WEB";
@@ -123,6 +123,7 @@ const readSeq = (): SeqStore | null => {
 
 /** Thrown when a number could not be reserved durably — never hand it out. */
 export class BillNumberReservationError extends Error {
+  readonly code = "EBILL_COUNTER";
   constructor(message: string, readonly cause?: unknown) {
     super(message);
     this.name = "BillNumberReservationError";
@@ -251,6 +252,14 @@ export async function reserveBillNumber(
     }
     catch (error) { throw new BillNumberReservationError("This device could not reserve its document identity. Check storage and retry.", error); }
     const { prefix, seq, pad, store } = computed;
+    const bridge = localDb();
+    if (bridge?.reserveBillCounter) {
+      const reserved = await bridge.reserveBillCounter(prefix, seq);
+      if (!reserved.ok || !Number.isSafeInteger(reserved.sequence) || reserved.sequence! < seq)
+        throw new BillNumberReservationError(reserved.error || "The bill counter could not be saved on this device.");
+      memorySequence = { prefix, next: reserved.sequence! + 1 };
+      return `${prefix}-${String(reserved.sequence).padStart(pad, "0")}`;
+    }
     const onDevice = writeSeq(store);
     const durable = await writeSeqDurable(store);
     if (!onDevice && !durable) {

@@ -673,6 +673,7 @@ export type PosBridge = {
   refundReceipt?: (value: { saleId: string; refundId: string; branchId: string; reason?: string | null }) => Promise<{ ok: boolean; replayed?: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null }>;
   /** Device settings stored in the branch SQL database. */
   getSetting?: (key: string) => Promise<{ ok: boolean; value?: string | null; error?: string }>;
+  reserveBillCounter?: (prefix: string, minimum: number) => Promise<{ ok: boolean; sequence?: number; code?: string; error?: string }>;
   setSetting?: (key: string, value: string | null) => Promise<{ ok: boolean; error?: string }>;
   onStatus: (cb: (s: LocalSyncStatus) => void) => () => void;
 

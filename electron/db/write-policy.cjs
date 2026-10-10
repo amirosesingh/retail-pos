@@ -57,6 +57,19 @@ function aggregatePolicy(kind, operations, identity) {
     const permission = tablePermissions[operation.table];
     if (permission && permissions[permission] !== true) denied(`${permission} is required.`);
   }
+  for (const op of operations.filter(op => op.table === "held_orders")) {
+    for (const row of op.rows ?? [op.values ?? {}]) {
+      const state = row.status ?? "held";
+      const bookingId = String(row.note ?? "").startsWith("booking:") ? String(row.note).slice(8) : null;
+      const bookingConversion = state === "completed" && bookingId && permissions.can_create_booking === true && operations.some(candidate => candidate.table === "bookings" && (candidate.rows ?? []).some(booking => booking.id === bookingId && booking.store_id === op.match?.store_id));
+      const permitted = bookingConversion || (state === "cancelled"
+        ? permissions.can_discard_held_order === true || permissions.can_void_cart === true
+        : state === "draft" ? permissions.can_process_sale === true || permissions.can_reopen_held_order === true
+        : permissions.can_hold_cart === true || (String(row.note ?? "").startsWith("session-draft:") && permissions.can_process_sale === true));
+      if (op.kind === "delete" || !permitted) denied("Permission is required for this draft or held bill action.");
+      if (state === "completed" && !bookingConversion) denied("Only a completed payment may finish a draft bill.");
+    }
+  }
   const allowed = KIND_TABLES[kind];
   if (allowed && operations.some((op) => !allowed.includes(op.table)))
     denied("The transaction contains unrelated tables.");

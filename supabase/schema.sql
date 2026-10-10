@@ -9970,29 +9970,32 @@ CREATE TRIGGER sales_block_closing_shift
 CREATE OR REPLACE FUNCTION public.shift_expected_totals(p_shift uuid)
 RETURNS TABLE (expected_cash numeric, expected_card numeric, expected_digital numeric)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
-DECLARE v_float numeric := 0;
+DECLARE v_float numeric := 0; v_store text;
 BEGIN
-  SELECT coalesce(opening_float, 0) INTO v_float FROM public.shifts WHERE id = p_shift;
+  SELECT coalesce(opening_float,0),store_id INTO v_float,v_store FROM public.shifts WHERE id=p_shift;
+  IF NOT FOUND THEN RAISE EXCEPTION 'That shift no longer exists.'; END IF;
   RETURN QUERY
-  WITH paid AS (
-    SELECT
-      CASE WHEN jsonb_typeof(s.payments) = 'array'
-        THEN coalesce((SELECT sum((p ->> 'amount')::numeric) FROM jsonb_array_elements(s.payments) p
-                        WHERE lower(coalesce(p ->> 'method','')) = 'cash'), 0)
-        WHEN lower(coalesce(s.payment_type,'')) = 'cash' THEN coalesce(s.total_amount, 0) ELSE 0 END AS cash,
-      CASE WHEN jsonb_typeof(s.payments) = 'array'
-        THEN coalesce((SELECT sum((p ->> 'amount')::numeric) FROM jsonb_array_elements(s.payments) p
-                        WHERE lower(coalesce(p ->> 'method','')) = 'card'), 0)
-        WHEN lower(coalesce(s.payment_type,'')) = 'card' THEN coalesce(s.total_amount, 0) ELSE 0 END AS card,
-      CASE WHEN jsonb_typeof(s.payments) = 'array'
-        THEN coalesce((SELECT sum((p ->> 'amount')::numeric) FROM jsonb_array_elements(s.payments) p
-                        WHERE lower(coalesce(p ->> 'method','')) IN ('wallet','transfer','qr','online','ewallet')), 0)
-        WHEN lower(coalesce(s.payment_type,'')) IN ('wallet','transfer','qr','online','ewallet')
-          THEN coalesce(s.total_amount, 0) ELSE 0 END AS digital
+  WITH parts AS (
+    SELECT s.total_amount,
+      CASE WHEN jsonb_typeof(s.payments)='array' THEN jsonb_array_length(s.payments)>0 ELSE false END AS split,
+      lower(coalesce(s.payment_type,'')) AS method,
+      p.cash,p.card,p.digital,p.paid
     FROM public.sales s
-    WHERE s.shift_id = p_shift::text AND coalesce(s.is_refunded, false) = false
+    LEFT JOIN LATERAL (
+      SELECT coalesce(sum((entry->>'amount')::numeric),0) AS paid,
+        coalesce(sum((entry->>'amount')::numeric) FILTER (WHERE lower(entry->>'method')='cash'),0) AS cash,
+        coalesce(sum((entry->>'amount')::numeric) FILTER (WHERE lower(entry->>'method')='card'),0) AS card,
+        coalesce(sum((entry->>'amount')::numeric) FILTER (WHERE lower(entry->>'method') IN ('wallet','bank_transfer','transfer','qr','online','ewallet')),0) AS digital
+      FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.payments)='array' THEN s.payments ELSE '[]'::jsonb END) entry
+    ) p ON true
+    WHERE s.shift_id=p_shift::text AND s.store_id=v_store AND NOT coalesce(s.is_refunded,false)
+  ), net AS (
+    SELECT CASE WHEN split THEN CASE WHEN cash>0 THEN greatest(0,cash-greatest(0,paid-coalesce(total_amount,0))) ELSE cash END
+      WHEN method='cash' THEN coalesce(total_amount,0) ELSE 0 END AS cash,
+      CASE WHEN split THEN card WHEN method='card' THEN coalesce(total_amount,0) ELSE 0 END AS card,
+      CASE WHEN split THEN digital WHEN method IN ('wallet','bank_transfer','transfer','qr','online','ewallet') THEN coalesce(total_amount,0) ELSE 0 END AS digital FROM parts
   )
-  SELECT v_float + coalesce(sum(cash), 0), coalesce(sum(card), 0), coalesce(sum(digital), 0) FROM paid;
+  SELECT round(v_float+coalesce(sum(cash),0),2),round(coalesce(sum(card),0),2),round(coalesce(sum(digital),0),2) FROM net;
 END $$;
 
 REVOKE ALL ON FUNCTION public.shift_expected_totals(uuid) FROM public, anon, authenticated;
@@ -10003,8 +10006,11 @@ CREATE OR REPLACE FUNCTION public.shift_expected_view(p_shift uuid)
 RETURNS TABLE (expected_cash numeric, expected_card numeric, expected_digital numeric)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-  IF NOT public.has_perm('can_shift_expected_cash_view') THEN
+  IF NOT public.has_perm('can_shift_expected_cash_view') AND NOT public.has_role((SELECT auth.uid()), 'admin'::public.app_role) THEN
     RAISE EXCEPTION 'You do not have permission to view expected cash.';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.shifts WHERE id=p_shift AND public.store_visible(store_id)) THEN
+    RAISE EXCEPTION 'That shift does not exist in your branch scope.';
   END IF;
   RETURN QUERY SELECT * FROM public.shift_expected_totals(p_shift);
 END $$;
@@ -10045,7 +10051,9 @@ BEGIN
   IF (
     (v.opened_by_staff_id IS NOT NULL AND v.opened_by_staff_id::text IS DISTINCT FROM v_me.user_id::text)
     OR (v.terminal_id IS NOT NULL AND v.terminal_id IS DISTINCT FROM p_terminal)
-  ) AND NOT public.has_perm('can_manage_other_shifts') THEN
+  ) AND NOT public.has_perm('can_manage_other_shifts')
+    AND NOT public.has_role((SELECT auth.uid()), 'admin'::public.app_role)
+    AND NOT COALESCE((SELECT integration_settings->'allowAnyStaffCloseShift' = 'true'::jsonb FROM public.pos_settings WHERE id=1),false) THEN
     RAISE EXCEPTION 'You do not have permission to close another employee or terminal shift.';
   END IF;
 
@@ -18684,6 +18692,157 @@ REVOKE ALL ON FUNCTION public.admin_web_activation(text,uuid,text,text,text) FRO
 GRANT EXECUTE ON FUNCTION public.admin_web_activation(text,uuid,text,text,text) TO authenticated;
 NOTIFY pgrst, 'reload schema';
 COMMIT;
+
+-- Internal trigger functions need owner access to protected shift rows; direct execution is revoked.
+-- Retain terminal states so delayed draft synchronization cannot resurrect a bill.
+CREATE OR REPLACE FUNCTION public.guard_held_ticket_lifecycle()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE shift_state text;
+BEGIN
+  IF TG_OP='UPDATE' AND OLD.status IN ('completed','cancelled') THEN RETURN NULL; END IF;
+  IF NEW.status='completed' AND NOT EXISTS(SELECT 1 FROM public.sales s WHERE s.store_id=NEW.store_id AND s.bill_number=NEW.bill_no)
+    AND NOT EXISTS(SELECT 1 FROM public.bookings b WHERE NEW.note='booking:' || b.id::text AND b.store_id=NEW.store_id AND b.shift_id=NEW.shift_id) THEN
+    RAISE EXCEPTION 'Only a completed payment may finish a draft bill.';
+  END IF;
+  IF NEW.bill_no IS NOT NULL AND EXISTS(SELECT 1 FROM public.sales s WHERE s.store_id=NEW.store_id AND s.bill_number=NEW.bill_no) THEN
+    NEW.status := 'completed';
+  END IF;
+  IF NEW.status NOT IN ('completed','cancelled') AND NEW.shift_id IS NOT NULL THEN
+    SELECT state INTO shift_state FROM public.shifts WHERE id::text=NEW.shift_id AND store_id=NEW.store_id FOR UPDATE;
+    IF shift_state IS DISTINCT FROM 'ACTIVE' THEN RAISE EXCEPTION 'This shift is closing or closed. The draft cannot be changed.'; END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_held_ticket_lifecycle() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS held_orders_ab_lifecycle ON public.held_orders;
+CREATE TRIGGER held_orders_ab_lifecycle BEFORE INSERT OR UPDATE ON public.held_orders
+FOR EACH ROW EXECUTE FUNCTION public.guard_held_ticket_lifecycle();
+
+CREATE OR REPLACE FUNCTION public.complete_held_ticket_on_sale()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+BEGIN
+  IF EXISTS(SELECT 1 FROM public.held_orders h WHERE h.store_id=NEW.store_id AND h.bill_no=NEW.bill_number AND h.status='cancelled') THEN
+    RAISE EXCEPTION 'This draft bill was cancelled. Start a new bill.';
+  END IF;
+  UPDATE public.held_orders SET status='completed',updated_at=now()
+  WHERE store_id=NEW.store_id AND bill_no=NEW.bill_number AND status NOT IN ('completed','cancelled');
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.complete_held_ticket_on_sale() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS sales_complete_held_ticket ON public.sales;
+DROP TRIGGER IF EXISTS zz_sales_complete_held_ticket ON public.sales;
+CREATE TRIGGER zz_sales_complete_held_ticket AFTER INSERT ON public.sales
+FOR EACH ROW EXECUTE FUNCTION public.complete_held_ticket_on_sale();
+
+CREATE OR REPLACE FUNCTION public.guard_shift_unfinished_tickets()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+BEGIN
+  IF OLD.state='ACTIVE' AND (NEW.state IS DISTINCT FROM 'ACTIVE' OR NEW.closed_at IS NOT NULL) AND EXISTS(
+    SELECT 1 FROM public.held_orders h WHERE h.store_id=NEW.store_id
+      AND (h.shift_id=NEW.id::text OR h.shift_id IS NULL)
+      AND h.status NOT IN ('completed','cancelled')
+  ) THEN RAISE EXCEPTION 'Complete or cancel all draft and held bills before closing this shift.'; END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_shift_unfinished_tickets() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS shifts_unfinished_tickets ON public.shifts;
+CREATE TRIGGER shifts_unfinished_tickets BEFORE UPDATE ON public.shifts
+FOR EACH ROW EXECUTE FUNCTION public.guard_shift_unfinished_tickets();
+CREATE INDEX IF NOT EXISTS held_orders_shift_status_idx ON public.held_orders(store_id,shift_id,status);
+NOTIFY pgrst, 'reload schema';
+
+-- Only temporary, completed holds are removed. Receipts, sold items and tenders remain.
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE TABLE IF NOT EXISTS private.completed_hold_tombstones (
+  held_id text PRIMARY KEY,
+  store_id text NOT NULL,
+  bill_no text NOT NULL,
+  sale_id uuid NOT NULL,
+  deleted_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE private.completed_hold_tombstones ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE private.completed_hold_tombstones FROM PUBLIC, anon, authenticated, service_role;
+CREATE INDEX IF NOT EXISTS completed_hold_tombstones_bill_idx
+  ON private.completed_hold_tombstones(store_id,bill_no);
+
+-- A delayed upload is acknowledged without recreating the temporary record.
+-- Re-emit its deletion so a terminal that previously deferred a tombstone
+-- while it had pending writes receives the deletion again after acknowledgement.
+CREATE OR REPLACE FUNCTION private.prevent_cleaned_hold_replay()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,private AS $$
+DECLARE marker private.completed_hold_tombstones%ROWTYPE;
+BEGIN
+  SELECT * INTO marker FROM private.completed_hold_tombstones t
+  WHERE t.held_id=NEW.id OR (t.store_id=NEW.store_id AND t.bill_no=NEW.bill_no)
+  LIMIT 1;
+  IF FOUND THEN
+    IF marker.store_id IS DISTINCT FROM NEW.store_id THEN
+      RAISE EXCEPTION 'This retired bill belongs to a different branch.';
+    END IF;
+    INSERT INTO public.sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone)
+    VALUES('default',marker.store_id,'held_orders',jsonb_build_object('id',NEW.id)::text,'delete',COALESCE(NEW.row_version,1),true);
+    RETURN NULL;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION private.prevent_cleaned_hold_replay() FROM PUBLIC, anon, authenticated, service_role;
+DROP TRIGGER IF EXISTS held_orders_a_cleanup_tombstone ON public.held_orders;
+CREATE TRIGGER held_orders_a_cleanup_tombstone BEFORE INSERT OR UPDATE ON public.held_orders
+FOR EACH ROW EXECUTE FUNCTION private.prevent_cleaned_hold_replay();
+
+CREATE OR REPLACE FUNCTION private.cleanup_completed_holds()
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,private AS $$
+DECLARE ticket record; removed integer:=0;
+BEGIN
+  -- Serialize cron/manual overlap. Each execution is bounded and resumable.
+  IF NOT pg_try_advisory_xact_lock(17380411,1) THEN RETURN 0; END IF;
+  FOR ticket IN
+    SELECT h.id,h.store_id,h.bill_no,s.id AS sale_id
+    FROM public.held_orders h
+    JOIN public.sales s ON s.store_id=h.store_id AND s.bill_number=h.bill_no
+    WHERE h.status='completed' AND h.updated_at < now()-interval '24 hours'
+      AND jsonb_typeof(h.lines)='array'
+      AND jsonb_array_length(CASE WHEN jsonb_typeof(h.lines)='array' THEN h.lines ELSE '[]'::jsonb END)>0
+      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(h.lines)='array' THEN h.lines ELSE '[]'::jsonb END) line
+        WHERE jsonb_typeof(line->'qty') IS DISTINCT FROM 'number')
+      -- Header-only or partially uploaded item graphs must stay recoverable.
+      AND (SELECT count(*) FROM public.sale_items i WHERE i.sale_id=s.id)>=jsonb_array_length(h.lines)
+      AND NOT EXISTS (
+        SELECT lower(NULLIF(line->>'productId','')) AS product_id,
+               COALESCE(line->>'variantCode','') AS variant,
+               SUM(CASE WHEN jsonb_typeof(line->'qty')='number' THEN (line->>'qty')::numeric END) AS qty
+        FROM jsonb_array_elements(CASE WHEN jsonb_typeof(h.lines)='array' THEN h.lines ELSE '[]'::jsonb END) line GROUP BY 1,2
+        EXCEPT
+        SELECT lower(i.product_id::text),COALESCE(i.variant_code,''),SUM(i.quantity)::numeric
+        FROM public.sale_items i WHERE i.sale_id=s.id GROUP BY 1,2
+      )
+      -- Zero-value exchanges can legitimately have no payment row.
+      AND (GREATEST(s.paid_amount,s.total_amount)=0 OR (
+        (SELECT COALESCE(SUM(p.amount),0) FROM public.payment_transactions p
+          WHERE p.sale_id=s.id AND p.store_id=s.store_id AND p.source_type='sale'
+            AND p.status='completed' AND p.kind IN ('payment','settlement')) >= GREATEST(s.paid_amount,s.total_amount)
+        AND (SELECT count(*) FROM public.payment_transactions p
+          WHERE p.sale_id=s.id AND p.store_id=s.store_id AND p.source_type='sale'
+            AND p.status='completed' AND p.kind IN ('payment','settlement')) >= GREATEST(1,
+          (SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.payments)='array' THEN s.payments ELSE '[]'::jsonb END) tender
+           WHERE COALESCE((tender->>'amount')::numeric,0)<>0))
+      ))
+    ORDER BY h.updated_at,h.id LIMIT 500 FOR UPDATE OF h SKIP LOCKED
+  LOOP
+    INSERT INTO private.completed_hold_tombstones(held_id,store_id,bill_no,sale_id)
+    VALUES(ticket.id,ticket.store_id,ticket.bill_no,ticket.sale_id) ON CONFLICT(held_id) DO NOTHING;
+    -- Existing sync_feed_change emits the deletion to this branch's terminals.
+    DELETE FROM public.held_orders WHERE id=ticket.id AND status='completed';
+    removed:=removed+1;
+  END LOOP;
+  RETURN removed;
+END $$;
+REVOKE ALL ON FUNCTION private.cleanup_completed_holds() FROM PUBLIC, anon, authenticated, service_role;
+CREATE INDEX IF NOT EXISTS held_orders_completed_cleanup_idx ON public.held_orders(updated_at,id)
+  WHERE status='completed';
+
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+SELECT cron.schedule('pos-completed-hold-cleanup','17 * * * *','SELECT private.cleanup_completed_holds();');
 
 -- Final public-schema privilege hardening after release 1.4.38 routine definitions.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC,anon,authenticated;

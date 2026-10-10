@@ -1,3 +1,4 @@
+import { preserveSessionDrafts } from "./session-draft";
 import {
   createContext,
   useCallback,
@@ -959,6 +960,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const endSession = useCallback(
     async (reason: "logged-out" | "locked" | "expired", startedAt = sessionEpoch()) => {
       if (!isCurrentEpoch(startedAt)) return;
+      if (reason !== "expired") {
+        try { await preserveSessionDrafts(); }
+        catch {
+          const { toast } = await import("sonner");
+          toast.error("The unfinished bill could not be saved to Holds. Your cart is still open; retry after checking the connection.");
+          return;
+        }
+        if (!isCurrentEpoch(startedAt)) return;
+      }
       // Quiesce the UI and every cloud background job before revoking tokens.
       // Otherwise timers can send authenticated work at the same instant the
       // logout request invalidates that session, producing a burst of 401/403s.

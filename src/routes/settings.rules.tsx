@@ -75,7 +75,8 @@ function RulesSettings() {
     rowVersion,
   } = usePosRules();
 
-  const { currentStore } = usePos();
+  const { currentStore, configuredGlobalSettings, updateGlobalSettings, saveConfiguredSettings, settingsScopeLoading } = usePos();
+  const [savingClosePolicy, setSavingClosePolicy] = useState(false);
   const { isAdmin, can } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
 
@@ -298,6 +299,16 @@ function RulesSettings() {
         </div>
 
         <SettingsTabs current="/settings/rules" />
+        {isAdmin && <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
+          <div><h2 className="font-semibold">Allow another authorized user to close the shift</h2>
+            <p className="text-sm text-muted-foreground">Company-wide. Any signed-in user with Close shift permission can close a shift in their branch, including one opened by someone else. Both identities are recorded.</p></div>
+          <Switch aria-label="Allow another authorized user to close the shift" checked={configuredGlobalSettings.integrations.allowAnyStaffCloseShift === true} disabled={savingClosePolicy || settingsScopeLoading} onCheckedChange={enabled => {
+            void (async () => {setSavingClosePolicy(true);try {
+              updateGlobalSettings({integrations:{...configuredGlobalSettings.integrations,allowAnyStaffCloseShift:enabled}});
+              await saveConfiguredSettings();toast.success("Shift closing policy saved");
+            } catch(error) {notifyError(error,"Saving shift closing policy");} finally {setSavingClosePolicy(false);}})();
+          }} />
+        </div>}
 
         <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
           <div className="min-w-0">

@@ -15,6 +15,11 @@ class PullWorker {
     let conflictCount = 0;
     for (const change of changes) {
       if (!pending.has(canonicalEntityKey(change.entity_id))) { safe.push(change); continue; }
+      if (table.cloudTable === "held_orders" && change.tombstone) {
+        // Keep the page cursor until the pending write is acknowledged. Otherwise
+        // an idempotent upload retry could swallow the only cleanup tombstone.
+        throw Object.assign(new Error("Held bill cleanup is waiting for its pending upload."), {code:"EHELD_CLEANUP_PENDING"});
+      }
       conflictCount += 1;
       await this.conflicts.record(transaction, {
         entityType: table.sqlServerTable, entityId: String(change.entity_id), branchId,
@@ -59,13 +64,40 @@ class PullWorker {
       { code: "ESTORE_GROUP_MISSING" },
     );
   }
+  async ensureTicketDependencies(batch, branchId) {
+    const completed = batch.rows.filter(row => row.table_name === "held_orders" && row.row_data?.status === "completed").map(row => row.row_data);
+    const closing = batch.rows.filter(row => row.table_name === "shifts" && (row.row_data?.state !== "ACTIVE" || row.row_data?.closed_at)).map(row => String(row.row_data.id));
+    const localTickets = [];
+    for (const id of closing) {
+      const result = await this.connectionManager.pool.request().input("shift", id).input("branch", branchId).query("SELECT id,bill_no,shift_id FROM dbo.held_orders WHERE store_id=@branch AND (shift_id=@shift OR shift_id IS NULL) AND status NOT IN ('completed','cancelled');");
+      localTickets.push(...(result.recordset ?? []));
+    }
+    const bills = new Set([...completed.filter(row => !String(row.note ?? "").startsWith("booking:")), ...localTickets].map(row => row.bill_no).filter(Boolean));
+    const bookings = new Set(completed.filter(row => String(row.note ?? "").startsWith("booking:")).map(row => row.note.slice(8)));
+    const missingBills = new Set();
+    for (const bill of bills) {
+      const result = await this.connectionManager.pool.request().input("bill", bill).input("branch", branchId).query("SELECT id FROM dbo.sales WHERE store_id=@branch AND bill_number=@bill;");
+      if (!result.recordset?.length) missingBills.add(bill);
+    }
+    const refresh = (tableName, rowFilter) => refreshTable({registry:this.registry,cloud:this.cloud,connectionManager:this.connectionManager,reader:this.reader,branchId,historyDays:7300,tableName,rowFilter});
+    if (missingBills.size) await refresh("sales", row => missingBills.has(row.bill_number));
+    for (const id of [...bookings]) {
+      const result = await this.connectionManager.pool.request().input("id", id).input("branch", branchId).query("SELECT id FROM dbo.bookings WHERE store_id=@branch AND CONVERT(nvarchar(36),id)=@id;");
+      if (result.recordset?.length) bookings.delete(id);
+    }
+    if (bookings.size || localTickets.length) await refresh("bookings", row => bookings.has(String(row.id)) || closing.includes(String(row.shift_id)));
+    if (localTickets.length) {
+      const ids = new Set(localTickets.map(row => String(row.id)));
+      await refresh("held_orders", row => ids.has(String(row.id)));
+    }
+  }
   async run({ branchId, batchSize = 500, onProgress = () => {} }) {
     if (!branchId) throw new Error("A branch is required for synchronization.");
     // A single legacy settings/audit row can approach 2 MiB. Keep downloads at
     // the database's byte-safe minimum even when a caller asks for a larger
     // upload batch through the coordinator's shared options object.
     batchSize = 100;
-    let merged = 0; let conflictCount = 0; let membershipMirrored = 0; let membershipDeferred = false;
+    let merged = 0; let conflictCount = 0; let membershipMirrored = 0; let membershipDeferred = false; let deferredHeldDeletion = false;
     let checkpoint = await this.checkpoints.get(branchId, "__feed__", "pull");
     while (true) {
       const page = await readPage(limit => this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit }),batchSize);
@@ -75,9 +107,11 @@ class PullWorker {
       if (!Number.isFinite(Number(batch.cursor)) || Number(batch.cursor) <= Number(checkpoint?.committed_cursor ?? 0))
         throw Object.assign(new Error("The cloud change cursor did not advance. Download stopped to avoid replaying the same page."), { code: "ESYNC_CURSOR" });
       const beforePage = merged;
+      const conflictsBeforePage = conflictCount;
       // Feed pages are ordered by change cursor, not by foreign-key dependency.
       // A store update can arrive before the page containing its new group.
       await this.ensureStoreGroups(batch, branchId);
+      await this.ensureTicketDependencies(batch, branchId);
       const sql = this.connectionManager.sql();
       const transaction = new sql.Transaction(this.connectionManager.pool);
       await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
@@ -95,6 +129,11 @@ class PullWorker {
         await transaction.commit();
       } catch (error) {
         await Promise.resolve(transaction.rollback()).catch(() => undefined);
+        if (error?.code === "EHELD_CLEANUP_PENDING") {
+          merged = beforePage; conflictCount = conflictsBeforePage;
+          deferredHeldDeletion = true;
+          break;
+        }
         throw error;
       }
       this.publish({ kind: "general", branchId, source: "cloud", tables: [...new Set([...batch.rows, ...batch.tombstones].map(row => row.table_name))],
@@ -137,7 +176,7 @@ class PullWorker {
       // approvals, staff changes, or the main POS synchronization feed.
       membershipDeferred = true;
     }
-    return { merged, conflicts: conflictCount, membershipMirrored, membershipDeferred };
+    return { merged, conflicts: conflictCount, membershipMirrored, membershipDeferred, deferredHeldDeletion };
   }
 }
 module.exports = { PullWorker };

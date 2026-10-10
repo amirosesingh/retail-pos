@@ -2848,8 +2848,10 @@ export const db = {
     }
     if (onlineOnly) {
       // One central transaction owns the immutable financial graph, member
-      // effect and stock deltas. Product rows remain a separate projection,
-      // with absolute stock stripped before they are sent.
+      // effect and stock deltas. The database movement trigger also maintains
+      // archive status; checkout must not rewrite catalogue fields afterward.
+      // Such a second write can fail on a cashier's inventory permissions even
+      // though the financial transaction has already succeeded.
       await runOpLive("Saving sale", {
         kind: "rpc",
         table: "sales",
@@ -2863,11 +2865,6 @@ export const db = {
           _exchange_bill: isLegacyExchange(sale.exchangeOfReceiptNo) ? null : sale.exchangeOfReceiptNo ?? null,
         },
       });
-      const projections = ops.filter((op) => op.table === "products");
-      if (projections.length) {
-        const { ops: safeProjections } = withRelativeStock(projections);
-        await runBatchLive("Updating sale projections", safeProjections);
-      }
       return noteCommitTarget("cloud");
     }
     return commitOps("Saving sale", ops);
@@ -2897,6 +2894,19 @@ export const db = {
    */
   async saleAttemptExists(clientTxnId: string): Promise<"yes" | "no" | "unknown"> {
     try {
+      if (effectiveDatabaseMode() === "local") {
+        // A committed Electron sale may not have reached the cloud yet. Never
+        // infer local absence from a cloud read (or a disconnected bridge).
+        const bridge = localDb();
+        if (!bridge?.query) return "unknown";
+        const result = await bridge.query("sales", {
+          columns: "id",
+          match: { client_transaction_id: clientTxnId },
+          limit: 1,
+        });
+        if (!result.ok) return "unknown";
+        return result.rows?.length ? "yes" : "no";
+      }
       const res = await supabase
         .from("sales" as never)
         .select("id")
@@ -3100,6 +3110,7 @@ export const db = {
     id: string;
     label: string;
     storeId: string | null;
+    shiftId?: string | null;
     heldBy: string | null;
     billNo?: string | null;
     total: number;
@@ -3113,7 +3124,7 @@ export const db = {
     note?: string;
     cancelledFrom?: string | null;
     heldAt: string;
-    status?: "held" | "waiting" | "ready";
+    status?: "draft" | "held" | "waiting" | "ready" | "completed" | "cancelled";
     pendingRequestId?: string | null;
     approvalSnapshotHash?: string | null;
   }) =>
@@ -3126,6 +3137,7 @@ export const db = {
             id: row.id,
             label: row.label,
             store_id: row.storeId,
+            shift_id: row.shiftId ?? null,
             held_by: row.heldBy,
             bill_no: row.billNo ?? null,
             total: row.total,
@@ -3149,7 +3161,10 @@ export const db = {
 
   /** Remove a parked ticket once it has been resumed or discarded. */
   removeHeldOrder: (id: string) =>
-    queue("Releasing held ticket", { kind: "delete", table: "held_orders", match: { id } }),
+    commitOps("Cancelling held ticket", [{ kind: "update", table: "held_orders", match: { id }, values: { status: "cancelled" } }]),
+
+  setHeldOrderStatus: (id: string, status: "draft" | "held") =>
+    commitOps("Holding ticket", [{ kind: "update", table: "held_orders", match: { id }, values: { status } }]),
 
   /** Every ticket still parked for this branch, read through the active database route. */
   async listHeldOrders(storeId?: string) {
@@ -3165,7 +3180,7 @@ export const db = {
       rows.push(...page);
       if (page.length < pageSize) break;
     }
-    return rows;
+    return rows.filter(row => !["completed", "cancelled"].includes(String(row.status ?? "held")));
   },
 
   /* ----------------------- stock adjustments ---------------------- */

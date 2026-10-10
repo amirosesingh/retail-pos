@@ -483,7 +483,7 @@ class OperationsRepository {
         CAST(COALESCE(SUM(CASE WHEN COALESCE(s.is_refunded,0)=0 THEN COALESCE(s.total_amount,0) ELSE 0 END),0) AS decimal(38,12)) total_sales,
         CAST(COALESCE(sh.opening_float,0) + COALESCE(SUM(
           CASE
-            WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' AND LEN(REPLACE(REPLACE(REPLACE(s.payments,' ',''),CHAR(10),''),CHAR(13),''))>2 THEN COALESCE(j.cash,0)
+            WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' AND LEN(REPLACE(REPLACE(REPLACE(s.payments,' ',''),CHAR(10),''),CHAR(13),''))>2 THEN CASE WHEN COALESCE(j.cash,0)>0 THEN COALESCE(j.cash,0) - CASE WHEN COALESCE(j.paid,0)>COALESCE(s.total_amount,0) THEN CASE WHEN j.paid-s.total_amount>j.cash THEN j.cash ELSE j.paid-s.total_amount END ELSE 0 END ELSE COALESCE(j.cash,0) END
             WHEN LOWER(COALESCE(s.payment_type,''))='cash' THEN COALESCE(s.total_amount,0)
             ELSE 0
           END),0) AS decimal(38,12)) expected_cash,
@@ -496,16 +496,17 @@ class OperationsRepository {
         CAST(COALESCE(SUM(
           CASE
             WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' AND LEN(REPLACE(REPLACE(REPLACE(s.payments,' ',''),CHAR(10),''),CHAR(13),''))>2 THEN COALESCE(j.digital,0)
-            WHEN LOWER(COALESCE(s.payment_type,'')) IN ('wallet','transfer','qr','online','ewallet') THEN COALESCE(s.total_amount,0)
+            WHEN LOWER(COALESCE(s.payment_type,'')) IN ('wallet','bank_transfer','transfer','qr','online','ewallet') THEN COALESCE(s.total_amount,0)
             ELSE 0
           END),0) AS decimal(38,12)) expected_digital
       FROM dbo.shifts sh
-      LEFT JOIN dbo.sales s ON s.shift_id=CONVERT(nvarchar(36),sh.id) AND COALESCE(s.is_refunded,0)=0
+      LEFT JOIN dbo.sales s ON s.shift_id=CONVERT(nvarchar(36),sh.id) AND s.store_id=sh.store_id AND COALESCE(s.is_refunded,0)=0
       OUTER APPLY (
         SELECT
+          SUM(COALESCE(p.amount,0)) paid,
           SUM(CASE WHEN LOWER(COALESCE(p.method,''))='cash' THEN COALESCE(p.amount,0) ELSE 0 END) cash,
           SUM(CASE WHEN LOWER(COALESCE(p.method,''))='card' THEN COALESCE(p.amount,0) ELSE 0 END) card,
-          SUM(CASE WHEN LOWER(COALESCE(p.method,'')) IN ('wallet','transfer','qr','online','ewallet') THEN COALESCE(p.amount,0) ELSE 0 END) digital
+          SUM(CASE WHEN LOWER(COALESCE(p.method,'')) IN ('wallet','bank_transfer','transfer','qr','online','ewallet') THEN COALESCE(p.amount,0) ELSE 0 END) digital
         FROM OPENJSON(CASE WHEN ISJSON(s.payments)=1 AND LEFT(LTRIM(s.payments),1)='[' AND LEN(REPLACE(REPLACE(REPLACE(s.payments,' ',''),CHAR(10),''),CHAR(13),''))>2 THEN s.payments ELSE N'[]' END)
         WITH (method nvarchar(64) '$.method', amount decimal(38,12) '$.amount') p
       ) j
