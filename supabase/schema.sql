@@ -18844,14 +18844,6 @@ CREATE INDEX IF NOT EXISTS held_orders_completed_cleanup_idx ON public.held_orde
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 SELECT cron.schedule('pos-completed-hold-cleanup','17 * * * *','SELECT private.cleanup_completed_holds();');
 
--- Final public-schema privilege hardening after release 1.4.38 routine definitions.
-ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC,anon,authenticated;
-DO $release_hardening$
-DECLARE routine record;
-BEGIN
-  FOR routine IN SELECT p.oid::regprocedure AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef
-  LOOP EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon',routine.signature); END LOOP;
-END $release_hardening$;
 
 -- Refund branch RPC contract upgrade
 -- Align the existing refund routine with the web and terminal RPC payload.
@@ -18976,3 +18968,12 @@ REVOKE ALL ON FUNCTION public.sale_refund(uuid, jsonb, text, text, text) FROM pu
 GRANT EXECUTE ON FUNCTION public.sale_refund(uuid, jsonb, text, text, text) TO authenticated, service_role;
 NOTIFY pgrst, 'reload schema';
 COMMIT;
+
+-- Final public-schema privilege hardening after release 1.4.38 routine definitions.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC,anon,authenticated;
+DO $release_hardening$
+DECLARE routine record;
+BEGIN
+  FOR routine IN SELECT p.oid::regprocedure AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef
+  LOOP EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon',routine.signature); END LOOP;
+END $release_hardening$;
