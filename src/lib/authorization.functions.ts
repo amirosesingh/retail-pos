@@ -7,6 +7,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { ticketDiscounts, discountApprovalPercent } from "./authorization";
 
 const caller = z.object({
   sessionToken: z.string().min(10).optional(),
@@ -124,6 +125,7 @@ const decideInput = caller.extend({
   note: z.string().max(400).default(""),
   /** the approver may grant a different value than the one asked for */
   approvedAmount: z.number().finite().nullish(),
+  discountDecisions: z.array(z.object({ index: z.number().int().min(-1), value: z.number().finite().nonnegative() })).max(201).optional(),
 });
 
 const idInput = caller.extend({
@@ -593,6 +595,15 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
               error: "An item approval must match one exact item on that bill",
             };
           }
+        } else if (data.payload["discount_scope"] === "ticket") {
+          const discounts = ticketDiscounts(data.payload);
+          if (!discounts.length || discounts.some((entry) => {
+            if (entry.index === -1) return entry.productId !== "";
+            const line = snapshot.lines[entry.index];
+            return !line || line.sku !== entry.productId || line.qty !== entry.qty || line.unitPrice !== entry.price || line.discount !== entry.value;
+          }) || data.requestedAmount !== Math.max(...discounts.map(discountApprovalPercent))) {
+            return { ok: false as const, error: "Discounts must match the exact items on this bill" };
+          }
         } else if (data.payload["discount_scope"] !== "bill") {
           return { ok: false as const, error: "Choose a bill or item discount scope" };
         }
@@ -930,7 +941,20 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
         await loadRuleRows(existing.storeId).catch(() => []),
         existing.storeId,
       );
-      const requestedDecisionAmount = data.approve
+      const requestedDiscounts = ticketDiscounts(existing.payload);
+      let approvedDiscounts = requestedDiscounts;
+      if (data.approve && existing.payload["discount_scope"] === "ticket") {
+        if (!requestedDiscounts.length) return { ok: false as const, error: "This bill has invalid discount details" };
+        const decisions = data.discountDecisions ?? requestedDiscounts.map(entry => ({index: entry.index, value: entry.value}));
+        if (decisions.length !== requestedDiscounts.length || new Set(decisions.map(entry => entry.index)).size !== decisions.length)
+          return { ok: false as const, error: "Decide every discount on the bill once" };
+        approvedDiscounts = requestedDiscounts.map(entry => ({...entry, value: decisions.find(decision => decision.index === entry.index)?.value ?? Number.NaN}));
+        if (approvedDiscounts.some((entry,index) => !Number.isFinite(entry.value) || entry.value > requestedDiscounts[index].value))
+          return { ok: false as const, error: "Each approved discount must be between zero and the requested value" };
+      }
+      const requestedDecisionAmount = data.approve && requestedDiscounts.length
+        ? Math.max(...approvedDiscounts.map(discountApprovalPercent))
+        : data.approve
         ? (data.approvedAmount ?? existing.requestedAmount ?? null)
         : existing.requestedAmount;
       if (!routed) {
@@ -985,7 +1009,7 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
       // The approver may grant a smaller value than the one asked for; the
       // amount stored is the one their session sent, never the till's.
       const approvedAmount = data.approve
-        ? (data.approvedAmount ?? existing.requestedAmount ?? null)
+        ? requestedDecisionAmount
         : null;
       const currentRule = rules[existing.actionKey];
       const usedEscalation =
@@ -1003,7 +1027,8 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
         note: data.note,
         approvedAmount,
         approvedPayload: data.approve
-          ? { ...existing.payload, approved_amount: approvedAmount }
+          ? { ...existing.payload, approved_amount: approvedAmount,
+              ...(requestedDiscounts.length ? {approved_discounts: JSON.stringify(approvedDiscounts)} : {}) }
           : {},
       });
       if (!updated) {

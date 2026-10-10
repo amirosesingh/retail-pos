@@ -1440,36 +1440,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
     };
   }, [signedIn]);
 
-  // Pull sync: embedded tills keep an offline mirror. Realtime applies normal
-  // row changes above; this snapshot runs only after reconnection, when socket
-  // events may have been missed.
-  useEffect(() => {
-    if (effectiveDatabaseMode() === "online" || !signedIn) return;
-    let cancelled = false;
-    const pull = () => {
-      if (typeof navigator !== "undefined" && !navigator.onLine) return;
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      const bridge = localDb();
-      void Promise.resolve(bridge?.sync?.auto?.())
-        .catch(() => undefined)
-        .then(() => loadPrimaryState())
-        .then((cloud) => {
-          if (cancelled) return;
-          // Read the converged SQL Server snapshot. Local unsynced work stays
-          // visible even when the central upload is still being retried.
-          setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
-        })
-        .catch(() => {
-          /* offline or refused — the local copy keeps the till trading */
-        });
-    };
-    window.addEventListener("online", pull);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("online", pull);
-    };
-  }, [signedIn]);
-
   const activeShift = useMemo(() => {
     const branch = activeBranchId(currentStore.id) ?? currentStore.id;
     if (dbShift && dbShift.storeId === branch && !dbShift.closedAt) return dbShift;

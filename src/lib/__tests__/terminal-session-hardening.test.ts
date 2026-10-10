@@ -6,7 +6,8 @@
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { inspectResponse, onSessionExpired } from "../session-expiry";
 
 import {
   __resetSessionEpoch,
@@ -29,6 +30,16 @@ describe("session epoch", () => {
     const started = sessionEpoch();
     bumpSessionEpoch(); // a fresh sign-in lands mid sign-out
     expect(isCurrentEpoch(started)).toBe(false);
+  });
+
+  it("ignores a late token refusal from before the successful login", async () => {
+    const ended = vi.fn();
+    const off = onSessionExpired(ended);
+    const started = sessionEpoch();
+    bumpSessionEpoch();
+    await inspectResponse(new Response('Invalid JWT',{status:401}),true,started);
+    expect(ended).not.toHaveBeenCalled();
+    off();
   });
 
   it("stays harmless when sign-out runs twice", () => {

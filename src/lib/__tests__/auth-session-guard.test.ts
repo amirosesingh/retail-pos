@@ -15,6 +15,44 @@ function auth(overrides: Partial<AuthSessionApi> = {}): AuthSessionApi {
 }
 
 describe("persisted Supabase session validation", () => {
+  it("logout prevents an older encrypted credential save from restoring the token", async () => {
+    const storage = new Map<string,string>();
+    vi.stubGlobal("window",{localStorage:{getItem:(key:string)=>storage.get(key)??null,
+      setItem:(key:string,value:string)=>storage.set(key,value),removeItem:(key:string)=>storage.delete(key)}});
+    const {setDeviceSecret,clearDeviceSecret} = await import("../device-secrets");
+    let finish!: (value: ArrayBuffer) => void;
+    const encryption = vi.spyOn(crypto.subtle,"encrypt").mockImplementationOnce(()=>new Promise<ArrayBuffer>(resolve=>{finish=resolve;}));
+    try {
+      const saving = setDeviceSecret("pos-session-token","old-token");
+      await vi.waitFor(()=>expect(encryption).toHaveBeenCalledOnce());
+      clearDeviceSecret("pos-session-token");
+      finish(new ArrayBuffer(16));
+      await saving;
+      expect(storage.has("pos.secure.pos-session-token")).toBe(false);
+    } finally { encryption.mockRestore();vi.unstubAllGlobals(); }
+  });
+
+  it("concurrent token hydration waits for one read and cannot overwrite a newer login", async () => {
+    const storage = new Map<string,string>();
+    const methods = {getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>storage.set(key,value),removeItem:(key:string)=>storage.delete(key)};
+    vi.stubGlobal("window",{localStorage:methods,sessionStorage:methods});
+    const {setDeviceSecret} = await import("../device-secrets");
+    const {loadSessionToken,saveSessionToken,clearStoredCredentials} = await import("../pos-credentials");
+    await setDeviceSecret("pos-session-token","old-token");
+    let finish!: (value: ArrayBuffer) => void;
+    const decrypt = vi.spyOn(crypto.subtle,"decrypt").mockImplementationOnce(()=>new Promise<ArrayBuffer>(resolve=>{finish=resolve;}));
+    try {
+      const first = loadSessionToken();const second = loadSessionToken();
+      await vi.waitFor(()=>expect(decrypt).toHaveBeenCalledOnce());
+      await saveSessionToken("new-token");
+      finish(new TextEncoder().encode(JSON.stringify("old-token")).buffer);
+      expect(await first).toBe("new-token");expect(await second).toBe("new-token");
+      clearStoredCredentials();
+      expect(await loadSessionToken()).toBeNull();
+      expect(storage.has("pos.secure.pos-session-token")).toBe(false);
+      expect(storage.has("pos.secure.cashier-session")).toBe(false);
+    } finally {decrypt.mockRestore();vi.unstubAllGlobals();}
+  });
   it("rejects a token whose server-side session no longer exists", async () => {
     const api = auth({
       getUser: vi.fn(async () => ({

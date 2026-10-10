@@ -13,6 +13,8 @@ import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import type { SyncOp } from "@/lib/sync-outbox";
 import { centralAuthAccessToken, hasCentralAuthSession } from "@/lib/session-presence";
 
+import { sessionEpoch } from "@/lib/session-epoch";
+
 const credentials = readCredentials;
 
 /** Answer from the server setup probe: presence only, never key material. */
@@ -89,11 +91,11 @@ async function relayHeaders(): Promise<Record<string, string>> {
  * One place that reacts to the relay refusing a caller: a dead token or a
  * deleted branch ends the session, anything else is left to the caller.
  */
-async function inspectRelay(res: Response, body: { code?: string } | null): Promise<void> {
+async function inspectRelay(res: Response, body: { code?: string } | null, startedAt: number): Promise<void> {
   if (res.status !== 401 && res.status !== 403) return;
   const { notifySessionExpired } = await import("@/lib/session-expiry");
   if (body?.code === "SESSION_INVALID" || body?.code === "BRANCH_MISSING" || res.status === 401)
-    notifySessionExpired();
+    notifySessionExpired(startedAt);
 }
 
 /** True when a staff account is signed in to the central database in this browser. */
@@ -143,6 +145,7 @@ const syncPath = (): string => (serverOrigin() ? "/api/public/sync" : "/api/v1/p
 
 /** Push one operation through the relay. */
 export async function relayOp(op: SyncOp): Promise<{ ok: boolean; error?: string; code?: string }> {
+  const startedAt = sessionEpoch();
   try {
     const res = await fetchWithDeadline(serverUrl(syncPath()), {
       method: "POST",
@@ -156,7 +159,7 @@ export async function relayOp(op: SyncOp): Promise<{ ok: boolean; error?: string
       detail?: { table?: string; kind?: string; role?: string | null; branch?: string | null };
       results?: { ok: boolean; error?: string }[];
     } | null;
-    await inspectRelay(res, body);
+    await inspectRelay(res, body, startedAt);
     if (!res.ok) {
       const d = body?.detail;
       const where = d?.table
@@ -181,6 +184,7 @@ export async function relayOp(op: SyncOp): Promise<{ ok: boolean; error?: string
 export async function relayActiveShift(
   storeId: string,
 ): Promise<{ ok: boolean; row?: Record<string, unknown> | null; error?: string }> {
+  const startedAt = sessionEpoch();
   try {
     const res = await fetchWithDeadline(serverUrl(syncPath()), {
       method: "POST",
@@ -193,7 +197,7 @@ export async function relayActiveShift(
       error?: string;
       code?: string;
     } | null;
-    await inspectRelay(res, body);
+    await inspectRelay(res, body, startedAt);
     if (!res.ok || !body?.ok)
       return { ok: false, error: body?.error ?? `Relay refused (${res.status})` };
     return { ok: true, row: body.row ?? null };
@@ -208,6 +212,7 @@ export async function relayStores(): Promise<{
   rows?: Record<string, unknown>[];
   error?: string;
 }> {
+  const startedAt = sessionEpoch();
   try {
     const res = await fetchWithDeadline(serverUrl(syncPath()), {
       method: "POST",
@@ -220,7 +225,7 @@ export async function relayStores(): Promise<{
       error?: string;
       code?: string;
     } | null;
-    await inspectRelay(res, body);
+    await inspectRelay(res, body, startedAt);
     if (!res.ok || !body?.ok)
       return { ok: false, error: body?.error ?? `Relay refused (${res.status})` };
     return { ok: true, rows: body.rows ?? [] };
@@ -231,6 +236,7 @@ export async function relayStores(): Promise<{
 
 /** Quick health probe used by the connection check panel. */
 export async function probeRelay(): Promise<{ ok: boolean; error?: string; code?: string }> {
+  const startedAt = sessionEpoch();
   try {
     const res = await fetchWithDeadline(serverUrl(syncPath()), {
       method: "POST",
@@ -241,7 +247,7 @@ export async function probeRelay(): Promise<{ ok: boolean; error?: string; code?
       }),
     });
     const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
-    await inspectRelay(res, body);
+    await inspectRelay(res, body, startedAt);
     if (res.status === 401)
       return {
         ok: false,

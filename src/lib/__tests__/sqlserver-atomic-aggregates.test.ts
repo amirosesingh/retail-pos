@@ -1,6 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 
 describe("SQL Server aggregate repository", () => {
+  it("retries only confirmed deadlock rollbacks with the same operation", async () => {
+    const { AggregateRepository } = await import("../../../electron/db/repositories/aggregates.cjs");
+    const repository = new AggregateRepository({},{});
+    const aggregate = {operationId:"11111111-1111-4111-8111-111111111111",operations:[]};
+    const write = vi.spyOn(repository,"commitOnce")
+      .mockRejectedValueOnce(Object.assign(new Error("deadlock"),{sqlNumber:1205}))
+      .mockResolvedValueOnce({ok:true});
+    await expect(repository.commit("held_order",aggregate)).resolves.toMatchObject({ok:true});
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(write.mock.calls.every(call=>call[1]===aggregate)).toBe(true);
+    write.mockReset().mockRejectedValue(Object.assign(new Error("timeout"),{code:"ETIMEOUT"}));
+    await expect(repository.commit("held_order",aggregate)).rejects.toThrow("timeout");
+    expect(write).toHaveBeenCalledOnce();
+  });
   it("rolls back fully when any aggregate statement fails", async () => {
     const rollback = vi.fn();
     const commit = vi.fn();

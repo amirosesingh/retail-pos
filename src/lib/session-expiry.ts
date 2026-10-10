@@ -7,6 +7,8 @@
  * out — the till keeps working and only raises a connectivity warning.
  */
 
+import { isCurrentEpoch, sessionEpoch } from "./session-epoch";
+
 type Listener = () => void;
 
 const listeners = new Set<Listener>();
@@ -18,7 +20,8 @@ export function onSessionExpired(cb: Listener): () => void {
 }
 
 /** Fire once per burst — a dead token usually fails several calls at a time. */
-export function notifySessionExpired(): void {
+export function notifySessionExpired(startedAt = sessionEpoch()): void {
+  if (!isCurrentEpoch(startedAt)) return;
   if (announcing) return;
   announcing = true;
   setTimeout(() => {
@@ -76,7 +79,7 @@ export function noteConnectivityIssue(detail?: string): void {
  * Inspect a finished response from the central database. Safe to call with a
  * clone; it never throws.
  */
-export async function inspectResponse(res: Response, hadBearer: boolean): Promise<void> {
+export async function inspectResponse(res: Response, hadBearer: boolean, startedAt = sessionEpoch()): Promise<void> {
   try {
     if (res.status >= 500) {
       noteConnectivityIssue(
@@ -87,7 +90,7 @@ export async function inspectResponse(res: Response, hadBearer: boolean): Promis
     if (res.status !== 401 && res.status !== 403) return;
     if (!hadBearer) return; // an anonymous call being refused is not a dead session
     const body = await res.text().catch(() => "");
-    if (isTokenRejection(res.status, body)) notifySessionExpired();
+    if (isTokenRejection(res.status, body)) notifySessionExpired(startedAt);
   } catch {
     /* diagnostics must never break a request */
   }

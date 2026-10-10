@@ -48,6 +48,7 @@ import {
   MessageCircle,
   PauseCircle,
   Percent,
+  DollarSign,
   TicketPercent,
   Split,
   Wrench,
@@ -115,7 +116,8 @@ import { NO_SALE_REASON_MAX, NO_SALE_REASON_MIN, recordNoSale } from "@/lib/draw
 import { logger } from "@/lib/audit-log";
 import { DiscountPad } from "@/platforms/web/components/pos/DiscountPad";
 import { useManagerGate, type GateRequest } from "@/lib/manager-gate";
-import { authorizationBinding, type AuthPayload } from "@/lib/authorization";
+import { authorizationBinding, discountApprovalPercent, discountNeedsApproval, ticketDiscounts, type TicketDiscount, type AuthPayload } from "@/lib/authorization";
+import { lineDiscountTotal } from "@/core/types/pos-types";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { parsePositiveAmount } from "@/core/pricing/amount";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
@@ -548,7 +550,7 @@ function Register() {
     );
     if (approval.actionKey === "discount_over_limit") {
       setCartDiscount((current) =>
-        approval.approvedPayload["discount_scope"] === "bill" ? 0 : current,
+        approval.approvedPayload["discount_scope"] === "bill" || ticketDiscounts(approval.approvedPayload).some(entry => entry.index === -1) ? 0 : current,
       );
     }
   };
@@ -601,13 +603,52 @@ function Register() {
     tenderOptions,
     activeMethodName,
     needsTenderRef,
-    openPayment,
+    openPayment: openTenderPayment,
     resetTender,
   } = useTender({
     canProcessSale: () => can("can_process_sale"),
     hasLines: () => lines.length > 0,
     getTotal: (paymentMethod) => applyRounding(totals.total, state.settings.integrations.rounding, paymentMethod).total,
   });
+
+  const charging = useRef(false);
+  const openPayment = async (preset?: Parameters<typeof openTenderPayment>[0]) => {
+    if (charging.current || !lines.length || tillLocked || !can("can_process_sale")) return;
+    charging.current = true;
+    try {
+      const discounts: TicketDiscount[] = lines.flatMap((line,index) => {
+        if (!line.discount || line.qty <= 0) return [];
+        const base = Math.max(0, Math.abs(line.price) - Math.abs(line.couponDiscount || 0) / Math.max(1,Math.abs(line.qty)));
+        const entry: TicketDiscount = {index,productId:line.productId,name:line.name,qty:line.qty,price:line.price,
+          type:line.discountType ?? "amount",value:line.discount,base,requiresApproval:false};
+        entry.requiresApproval = discountNeedsApproval(entry,rules.max_cashier_discount_percent,rules.max_cart_discount_amount);
+        return [entry];
+      });
+      if (cartDiscount > 0) {
+        const entry: TicketDiscount = {index:-1,productId:"",name:"Whole bill",qty:1,price:0,
+          type:cartDiscountType,value:cartDiscount,base:Math.max(0,r2(totals.subtotal-totals.lineDiscount)),requiresApproval:false};
+        entry.requiresApproval = discountNeedsApproval(entry,rules.max_cashier_discount_percent,rules.max_cart_discount_amount);
+        discounts.push(entry);
+      }
+      const currentApproval = appliedApprovalRef.current;
+      const snapshot = ticketSnapshot.current();
+      const covered = currentApproval?.actionKey === "discount_over_limit" && snapshot &&
+        currentApproval.appliedSnapshotHash === snapshotFingerprint(snapshot);
+      if (discounts.some(entry => entry.requiresApproval) && !covered) {
+        const grant = await askManager({action:"discount_over_limit",title:"Approve bill discounts",
+          reason:"Review the whole bill and approve the requested discounts before payment.",
+          storeId:currentStore.id,requestedBy:activeCashier,
+          requestedAmount:Math.max(...discounts.map(discountApprovalPercent)),
+          requesterDirectLimit:rules.max_cashier_discount_percent,valueUnit:"percent",
+          payload:{discount_scope:"ticket",requested_discounts:JSON.stringify(discounts)},
+          detail:discounts.map(entry => `${entry.name}: ${entry.type === "percent" ? `${entry.value}%` : money(entry.value)}`).join("; ").slice(0,400),
+        });
+        if (grant === null) return;
+      }
+      openTenderPayment(preset);
+    } catch (error) { notifyError(error,"Opening payment"); }
+    finally { charging.current = false; }
+  };
 
   const [waNumber, setWaNumber] = useState("");
   const [waSending, setWaSending] = useState(false);
@@ -1030,7 +1071,7 @@ function Register() {
             qty: l.qty,
             unitPrice: l.price,
             discount: l.discount ?? 0,
-            lineTotal: r2(l.price * l.qty - (l.discount ?? 0)),
+            lineTotal: r2(l.price * l.qty - Math.sign(l.qty) * lineDiscountTotal(l)),
             priceOverridden: !!l.priceOverridden,
           })),
           subtotal: totals.subtotal,
@@ -2225,7 +2266,7 @@ function Register() {
                         ? `${l.discount}${(l.discountType ?? "amount") === "percent" ? "%" : ""}`
                         : "Add discount"
                     }
-                    icon={<Percent className="size-4" />}
+                    icon={(l.discountType ?? "amount") === "percent" ? <Percent className="size-4" /> : <DollarSign className="size-4" />}
                   />
                   <Button
                     size="sm"
@@ -2324,7 +2365,7 @@ function Register() {
               ? `${cartDiscount}${cartDiscountType === "percent" ? "%" : ""}`
               : "Add discount"
           }
-          icon={<Percent className="size-4" />}
+          icon={cartDiscountType === "percent" ? <Percent className="size-4" /> : <DollarSign className="size-4" />}
         />
       </div>
       {promo.promoDiscount > 0 && (
@@ -4415,10 +4456,6 @@ function Register() {
           void (async () => {
             // Limits come from the database rule set; anything beyond them
             // needs a manager PIN verified on the server.
-            const overLimit =
-              t === "percent"
-                ? v > rules.max_cashier_discount_percent
-                : v > rules.max_cart_discount_amount;
             const stacking =
               !rules.allow_discount_stacking &&
               !!coupon &&
@@ -4431,41 +4468,7 @@ function Register() {
               );
               return;
             }
-            if (overLimit) {
-              const grant = await askManager({
-                action: "discount_over_limit",
-                title: "Discount above cashier limit",
-                reason:
-                  t === "percent"
-                    ? `Your maximum allowed discount is ${rules.max_cashier_discount_percent}%. A ${v}% discount requires approval.`
-                    : `Your maximum allowed discount is ${money(rules.max_cart_discount_amount)}. A ${money(v)} discount requires approval.`,
-                storeId: currentStore.id,
-                requestedBy: activeCashier,
-                requestedAmount: v,
-                requesterDirectLimit:
-                  t === "percent"
-                    ? rules.max_cashier_discount_percent
-                    : rules.max_cart_discount_amount,
-                valueUnit: t === "percent" ? "percent" : "currency",
-                payload: {
-                  discount_type: t,
-                  discount_scope: target === "bill" ? "bill" : "item",
-                  target_product_id:
-                    typeof target === "number" ? (lines[target]?.productId ?? null) : null,
-                  target_index: typeof target === "number" ? target : -1,
-                  allowed_limit:
-                    t === "percent"
-                      ? rules.max_cashier_discount_percent
-                      : rules.max_cart_discount_amount,
-                  requested_value: v,
-                  transaction: billNo ?? `draft-${currentStore.id}`,
-                },
-                detail: `${v}${t === "percent" ? "%" : ""} on ${target === "bill" ? "the bill" : "a line"}`,
-              });
-              // An ungated action is represented by an empty grant token and
-              // is still allowed. Only null means the gate refused or queued it.
-              if (grant === null) return;
-            }
+            // Discounts are entered here; the complete bill is authorised on Charge.
             if (target === "bill") {
               setCartDiscount(v);
               setCartDiscountType(t);

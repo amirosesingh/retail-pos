@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeSnapshot, previewBillAfterDiscount } from "../ticket-snapshot";
 import { applyApprovedDiscount, removeApprovedDiscount } from "../register/use-held-orders";
 import { cartTotals } from "../pos-store";
+import { ticketDiscounts, discountNeedsApproval, type TicketDiscount } from "../authorization";
 
 const held = {
   id: "held-1",
@@ -25,6 +26,33 @@ const held = {
 };
 
 describe("approval bill details", () => {
+  it("checks amount discounts against their equivalent percentage", () => {
+    const entry: TicketDiscount = {index:0,productId:"product-1",name:"Racket",qty:2,price:100,base:100,type:"amount",value:11,requiresApproval:true};
+    expect(discountNeedsApproval(entry,10,100)).toBe(true);
+    expect(discountNeedsApproval({...entry,value:10},10,100)).toBe(false);
+    expect(discountNeedsApproval({...entry,base:50,value:6},10,100)).toBe(true);
+    expect(discountNeedsApproval({...entry,index:-1,qty:1,base:200,value:21},10,100)).toBe(true);
+  });
+
+  it("applies independent item and bill decisions without changing unrequested lines", () => {
+    const entries: TicketDiscount[] = [
+      {index:0,productId:"product-1",name:"Racket",qty:1,price:100,base:100,type:"percent",value:20,requiresApproval:true},
+      {index:1,productId:"product-2",name:"String",qty:2,price:50,base:50,type:"amount",value:10,requiresApproval:true},
+      {index:-1,productId:"",name:"Whole bill",qty:1,price:0,base:160,type:"amount",value:30,requiresApproval:true},
+    ];
+    const order = {...held,cartDiscount:30,cartDiscountType:"amount" as const,lines:[
+      {...held.lines[0],discount:20},
+      {...held.lines[0],productId:"product-2",name:"String",qty:2,price:50,discount:10,discountType:"amount" as const},
+    ]};
+    const payload = {bill_no:held.billNo,discount_scope:"ticket",requested_discounts:JSON.stringify(entries),
+      approved_discounts:JSON.stringify(entries.map((entry,index)=>({...entry,value:[15,0,5][index]})))};
+    const restored = applyApprovedDiscount(order,{requestId:"request-ticket",grantToken:"grant",requestedAmount:20,requesterDirectLimit:10,actionKey:"discount_over_limit",approvedAmount:15,valueUnit:"percent",approvedPayload:payload});
+    expect(restored.lines.map(line=>line.discount)).toEqual([15,0]);
+    expect(restored.cartDiscount).toBe(5);
+    expect(removeApprovedDiscount(restored,{actionKey:"discount_over_limit",approvedPayload:payload}).lines.map(line=>line.discount)).toEqual([0,0]);
+    expect(ticketDiscounts({...payload,requested_discounts:'[{"index":0}]'})).toEqual([]);
+    expect(ticketDiscounts({...payload,requested_discounts:JSON.stringify([entries[0],entries[0]])})).toEqual([]);
+  });
   it("retains the member and cart context needed for a later approval review", () => {
     const snapshot = normalizeSnapshot({
       ticketId: "draft-42",

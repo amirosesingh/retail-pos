@@ -69,8 +69,11 @@ import {
   type StaffRole,
 } from "@/lib/permissions";
 
+let centralSessionCheck: {epoch:number; online:boolean; promise:ReturnType<typeof validateStoredAuthSession>} | null = null;
 async function validateCentralAuthSession(online: boolean) {
-  return validateStoredAuthSession(supabase.auth, {
+  const epoch = sessionEpoch();
+  if (centralSessionCheck?.epoch === epoch && centralSessionCheck.online === online) return centralSessionCheck.promise;
+  const promise = validateStoredAuthSession(supabase.auth, {
     online,
     verifySession: async (current) => {
       const { verifySession } = await import("@/lib/session-verify.functions");
@@ -81,6 +84,9 @@ async function validateCentralAuthSession(online: boolean) {
       return checked.ok ? "verified" : "rejected";
     },
   });
+  centralSessionCheck = {epoch,online,promise};
+  try { return await promise; }
+  finally { if (centralSessionCheck?.promise === promise) centralSessionCheck = null; }
 }
 
 export {
@@ -398,10 +404,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
     void (async () => {
+      const startedAt = sessionEpoch();
       const checked = await validateCentralAuthSession(
         typeof navigator === "undefined" || navigator.onLine !== false,
       );
-      if (!active) return;
+      const independentProof = checked.state === "rejected" ? await readCredentials() : null;
+      if (!active || !isCurrentEpoch(startedAt)) { bootstrapped = true; return; }
       bootstrapped = true;
       const next = checked.session;
       centralIdentityRef.current = next?.user?.id ?? null;
@@ -418,7 +426,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfileReady(false);
       }
       setAuthReady(true);
-      if (checked.state === "rejected") notifySessionExpired();
+      if (checked.state === "rejected" && !independentProof?.sessionToken && !independentProof?.cashierToken) notifySessionExpired(startedAt);
     })();
     return () => {
       active = false;
@@ -840,6 +848,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // PosProvider starts bootstrap as soon as terminalUser exists; publishing
       // it first raced the encrypted credential write and produced an anonymous
       // `stores` request whose RLS-filtered `200 []` looked authoritative.
+      // Retire requests made by the previous person before storing this
+      // verified login; their late rejection must not clear the new tokens.
+      bumpSessionEpoch();
       let desktopRelaySessionReady = false;
       try {
         let cashierToken = verified?.cashierToken ?? "";
@@ -974,6 +985,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // logout request invalidates that session, producing a burst of 401/403s.
       const sessionToken = await loadSessionToken().catch(() => null);
       if (!isCurrentEpoch(startedAt)) return;
+      // In-flight validation belongs to the session being ended. It must not
+      // restore credentials or proof after this local purge.
+      startedAt = bumpSessionEpoch();
       // Stamp the sign-out time on this user's open shift sessions first.
       endShiftSessions({});
       setSessionState(reason === "locked" ? "locked" : reason);
@@ -1002,7 +1016,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // another expected 401/403 and cannot revoke anything further.
         await discardRejectedExternalAuthSession();
       } else {
-        await supabase.auth.signOut({ scope: "local" });
+        const result = await supabase.auth.signOut({ scope: "local" });
+        if (result.error && isCurrentEpoch(startedAt)) await discardRejectedExternalAuthSession();
       }
       // Signing out fires an auth change; anything newer than this teardown
       // wins and the rest is skipped.
@@ -1223,12 +1238,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
       if (checking) return;
       checking = true;
+      const startedAt = sessionEpoch();
       try {
         // Supabase normally refreshes in the background. Mobile operating
         // systems suspend timers, so validate explicitly after a foreground
         // resume; a definite token refusal expires the login, while a network
         // or server failure leaves the user's work and session untouched.
         const authCheck = await validateCentralAuthSession(true);
+        if (!alive || !isCurrentEpoch(startedAt)) return;
         if (authCheck.state === "verified") {
           centralSessionVerifiedRef.current = true;
         } else if (authCheck.state === "rejected" || !authCheck.session) {
@@ -1249,16 +1266,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // session. If that browser token expires, keep the proven POS session
         // and let the server validate its revocable device/cashier proof below.
         if (authCheck.state === "rejected" && !hasIndependentPosProof) {
-          notifySessionExpired();
+          notifySessionExpired(startedAt);
           return;
         }
         if (!creds.cashierToken && !creds.terminalToken && !creds.accessToken) return;
-        const startedAt = sessionEpoch();
         const { verifySession } = await import("@/lib/session-verify.functions");
         const res = await verifySession({ data: creds });
         if (!alive || res.ok || !isCurrentEpoch(startedAt)) return;
         if (res.reason === "revoked" || res.reason === "branch_missing") {
-          notifySessionExpired();
+          notifySessionExpired(startedAt);
         }
       } catch {
         /* a failed check is a connectivity problem, never a sign-out */

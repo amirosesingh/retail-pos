@@ -67,6 +67,19 @@ class AggregateRepository {
   }
 
   async commit(kind, aggregate) {
+    // SQL Server has already rolled back a deadlock victim. Retry the whole
+    // atomic operation with the same receipt, never an individual statement
+    // or an ambiguous connection/commit timeout.
+    for (let attempt = 0; ; attempt += 1) {
+      try { return await this.commitOnce(kind,aggregate); }
+      catch (error) {
+        if (error?.sqlNumber !== 1205 || attempt >= 2) throw error;
+        await new Promise(resolve => setTimeout(resolve,100 * (attempt + 1)));
+      }
+    }
+  }
+
+  async commitOnce(kind, aggregate) {
     if (!AGGREGATE_KINDS.has(kind)) throw new Error("Unsupported aggregate type.");
     const operations = this.operationsRepository.validate(aggregate?.operations);
     const operationId = aggregate?.operationId || stableUuid({ kind, operations });
@@ -160,9 +173,11 @@ class AggregateRepository {
       if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "PERMISSION_DENIED"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
-      const sqlNumber = Number.isFinite(Number(error?.number)) ? Number(error.number) : null;
+      const native = error?.originalError?.info ?? error?.originalError ?? error;
+      const number = error?.number ?? native?.number;
+      const sqlNumber = number != null && Number.isFinite(Number(number)) && Number(number) > 0 ? Number(number) : null;
       const suffix = sqlNumber == null ? "" : ` (SQL Server ${sqlNumber})`;
-      const sqlDetail = String(error?.message ?? "")
+      const sqlDetail = String(native?.message ?? error?.message ?? "")
         .replace(/[\r\n\t]+/g, " ")
         .replace(/\s{2,}/g, " ")
         .slice(0, 500);

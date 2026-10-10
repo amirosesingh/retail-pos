@@ -6,11 +6,13 @@
 import { createMiddleware } from "@tanstack/react-start";
 
 import { isTokenRejection, notifySessionExpired, noteConnectivityIssue } from "./session-expiry";
+import { sessionEpoch } from "./session-epoch";
 
 type MaybeHttpError = { status?: number; statusCode?: number; message?: string };
 
 export const sessionExpiryMiddleware = createMiddleware({ type: "function" }).client(
   async ({ next }) => {
+    const startedAt = sessionEpoch();
     try {
       return await next();
     } catch (error) {
@@ -21,7 +23,7 @@ export const sessionExpiryMiddleware = createMiddleware({ type: "function" }).cl
         noteConnectivityIssue(
           "The server is temporarily unavailable. The till will retry automatically.",
         );
-      else if (status && isTokenRejection(status, message)) notifySessionExpired();
+      else if (status && isTokenRejection(status, message)) notifySessionExpired(startedAt);
       throw error;
     }
   },

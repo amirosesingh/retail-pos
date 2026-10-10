@@ -171,6 +171,10 @@ class PushWorker {
       try {
         return await work();
       } catch (error) {
+        // A full request timeout has already spent the network deadline.
+        // Leave it to the durable scheduler rather than block this pass for
+        // another four deadlines and keep login/focus callers waiting.
+        if (error?.code === "ETIMEDOUT" || ["TimeoutError","AbortError"].includes(error?.name)) throw error;
         const status = Number(error?.status ?? 0);
         const retryable = status === 408 || status === 429 || status >= 500 ||
           ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "TimeoutError", "AbortError"].includes(error?.code ?? error?.name) ||
@@ -267,8 +271,13 @@ class PushWorker {
           code: "EOVERSIZED",
         });
       try {
+        // Journal IDs identify local transactions, but uploads read current
+        // rows. A later pass can therefore have a different payload after an
+        // ambiguous timeout. Bind the cloud receipt to the actual snapshot;
+        // unchanged retries still replay, and newer revisions get a new key.
+        const batchId = stableUuid({ branchId, aggregateId: aggregate.aggregateId, operations });
         const acknowledged = await this.retry(() =>
-          this.cloud.pushAggregate({ batchId: aggregate.aggregateId, branchId, operations }),
+          this.cloud.pushAggregate({ batchId, branchId, operations }),
         );
         if (!acknowledged?.ok)
           throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the aggregate.");
@@ -395,6 +404,7 @@ class PushWorker {
           branchId,
           table: table.cloudTable,
           from: Number(checkpoint?.change_tracking_version ?? 0),
+          rows,
           changes: changes.map((change) => ({
             version: change.version,
             operation: change.operation,

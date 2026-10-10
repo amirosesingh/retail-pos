@@ -34,6 +34,7 @@ import {
   rowToHeldOrder,
   setHeldOrders,
   updateHeldOrder,
+  markHeldReady,
   type HeldOrder,
 } from "@/lib/held-orders";
 
@@ -90,6 +91,20 @@ describe("held order durability", () => {
 
     await expect(removeHeldOrder(order.id)).rejects.toThrow("SQL unavailable");
     expect(readHeldOrders()).toEqual([order]);
+  });
+
+  it("approval polling changes a waiting ticket once and never reopens a completed bill", async () => {
+    database.commitHeldOrder.mockResolvedValue("local");
+    await addHeldOrder({...order,status:"waiting"});
+    database.commitHeldOrder.mockClear();
+    await markHeldReady(order.id);
+    await markHeldReady(order.id);
+    expect(database.commitHeldOrder).toHaveBeenCalledOnce();
+    setHeldOrders(()=>[{...order,status:"completed"}]);
+    database.commitHeldOrder.mockClear();
+    await markHeldReady(order.id);
+    expect(database.commitHeldOrder).not.toHaveBeenCalled();
+    expect(readHeldOrders()[0].status).toBe("completed");
   });
 
   it("decodes SQL JSON fields without crashing on a damaged optional value", () => {

@@ -20,7 +20,7 @@ import {
 } from "@/lib/held-orders";
 import { claimApproval, loadApprovalCentre } from "@/lib/approval-centre";
 import type { TicketSnapshot } from "@/lib/ticket-snapshot";
-import type { AuthPayload } from "@/lib/authorization";
+import { ticketDiscounts, type AuthPayload } from "@/lib/authorization";
 import { TICKET_ACTIONS, logTicketEvent } from "@/lib/ticket-audit";
 import type { CartLine, DiscountType } from "@/core/types/pos-types";
 import type { CartCoupon } from "@/lib/register/use-cart";
@@ -90,6 +90,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   const activeId = useRef<string | null>(null);
   const released = useRef(new Set<string>());
   const writes = useRef<Promise<unknown>>(Promise.resolve());
+  const savedDraft = useRef<string | null>(null);
   const enqueue = useCallback(<T,>(work: () => Promise<T>): Promise<T> => {
     const next = writes.current.then(work, work);
     writes.current = next.catch(() => undefined);
@@ -115,8 +116,12 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       coupon: current.coupon, heldAt: new Date().toISOString(), status: "draft",
       note: `draft:${documentDevice()}`,
     };
+    const signature = JSON.stringify({...order,heldAt:null});
     await enqueue(async () => {
-      if (!released.current.has(order.billNo!)) await addHeldOrder(order);
+      if (!released.current.has(order.billNo!) && savedDraft.current !== signature) {
+        await addHeldOrder(order);
+        savedDraft.current = signature;
+      }
     });
   }, [enqueue]);
 
@@ -310,13 +315,17 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         throw error;
       }
       deps.onApprovalCleared?.();
-      const approvedDiscount = restoredApproval
+      let approvedDiscount = restoredApproval
         ? applyApprovedDiscount(order, restoredApproval)
         : {
             lines: order.lines,
             cartDiscount: order.cartDiscount ?? 0,
             cartDiscountType: order.cartDiscountType ?? ("amount" as DiscountType),
           };
+      if (!restoredApproval && request?.actionKey === "discount_over_limit" && request.payload["discount_scope"] === "ticket") {
+        approvedDiscount = removeApprovedDiscount(approvedDiscount, {actionKey:request.actionKey,
+          approvedPayload:{...request.payload,requested_discounts:JSON.stringify(ticketDiscounts(request.payload).filter(entry => entry.requiresApproval))}});
+      }
       deps.setLines(approvedDiscount.lines);
       deps.setCartDiscount(approvedDiscount.cartDiscount);
       deps.setCartDiscountType(approvedDiscount.cartDiscountType);
@@ -423,6 +432,13 @@ export function removeApprovedDiscount(
 ): ApprovalDiscountState {
   if (grant.actionKey !== "discount_over_limit") return state;
   const payload = grant.approvedPayload;
+  if (payload["discount_scope"] === "ticket") {
+    const discounts = ticketDiscounts(payload);
+    return { ...state,
+      cartDiscount: discounts.some(entry => entry.index === -1) ? 0 : state.cartDiscount,
+      lines: state.lines.map((line,index) => discounts.some(entry => entry.index === index && entry.productId === line.productId) ? {...line,discount:0} : line),
+    };
+  }
   if (payload["discount_scope"] === "bill") {
     return { ...state, cartDiscount: 0 };
   }
@@ -470,6 +486,22 @@ export function applyApprovedDiscount(order: HeldOrder, grant: ClaimedGrant) {
   const payload = grant.approvedPayload;
   const approvedBillNo = String(payload["bill_no"] ?? "");
   if (!order.billNo || approvedBillNo !== order.billNo) return fallback;
+  if (payload["discount_scope"] === "ticket") {
+    const requested = ticketDiscounts(payload);
+    const approved = ticketDiscounts(payload,"approved_discounts");
+    const discounts = approved.length ? approved : requested;
+    if (discounts.some(entry => entry.index >= 0 && (!order.lines[entry.index] ||
+      order.lines[entry.index].productId !== entry.productId || order.lines[entry.index].qty !== entry.qty || order.lines[entry.index].price !== entry.price))) return fallback;
+    const bill = discounts.find(entry => entry.index === -1);
+    return { ...fallback,
+      cartDiscount: bill?.value ?? fallback.cartDiscount,
+      cartDiscountType: bill?.type ?? fallback.cartDiscountType,
+      lines: order.lines.map((line,index) => {
+        const discount = discounts.find(entry => entry.index === index);
+        return discount ? {...line,discount:discount.value,discountType:discount.type} : line;
+      }),
+    };
+  }
   const type: DiscountType =
     payload["discount_type"] === "percent" || grant.valueUnit === "percent" ? "percent" : "amount";
   const value = Math.max(0, Number(grant.approvedAmount) || 0);

@@ -129,12 +129,19 @@ class CloudClient {
       );
     const personProof = governance ? (this.authorizationProof ?? {}) : {};
     const suffix = operation ? `?operation=${encodeURIComponent(operation)}` : "";
-    const response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
+    let response;
+    try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...payload, ...personProof, terminalToken }),
       signal: AbortSignal.timeout(30_000),
-    });
+    }); } catch (error) {
+      if (["TimeoutError","AbortError"].includes(error?.name)) {
+        throw Object.assign(new Error("Cloud synchronization timed out. Local changes remain pending; the next sync will safely retry the same upload."),
+          {code:"ETIMEDOUT",cause:error});
+      }
+      throw error;
+    }
     const data = await response
       .json()
       .catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
