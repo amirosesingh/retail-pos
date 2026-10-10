@@ -159,12 +159,12 @@ describe("held order durability", () => {
     expect(store).toContain("const rows = await db.listHeldOrders()");
     expect(store).toContain("const current = loaded ?? readHeldOrders()");
     expect(store).toContain("order.storeId === storeId");
-    expect(register).toContain("ticketSignature(latestDeps.current) !== originalSignature");
-    expect(register.indexOf("await removeHeldOrder(id)")).toBeGreaterThan(
+    expect(register).toContain("ticketSignature({ ...latestDeps.current, billNo: deps.billNo }) !== originalSignature");
+    expect(register.indexOf('await db.setHeldOrderStatus(id, "draft")')).toBeGreaterThan(
       register.indexOf("const claimed = await claimApproval"),
     );
     expect(register).toContain("The ticket stayed in Holds and needs approval again");
-    expect(register).toContain("await removeHeldOrder(parked.id)");
+    expect(register).toContain('await db.setHeldOrderStatus(parked.id, "draft")');
     expect(register).toContain("deps.setLines(parked.lines)");
     expect(register).toContain("Your open ticket is safely available in Holds");
     expect(register).toContain('status: "waiting" as const');

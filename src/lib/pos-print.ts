@@ -1,3 +1,4 @@
+import { tenderTotals, shiftSalesOf } from "./shift-close";
 import type {
   RoundingSettings,
   Member,
@@ -599,16 +600,12 @@ function shiftBody(
   kind: "xreport" | "zreport",
   access: ShiftReportAccess = fullShiftReportAccess,
 ) {
-  const active = sales.filter((s) => s.shiftId === shift.id && !s.refunded);
-  const byMethod = ["cash", "card", "wallet", "points"].map((m) => ({
-    m,
-    n: active.filter((s) => s.method === m).length,
-    v: active.filter((s) => s.method === m).reduce((a, s) => a + s.total, 0),
-  }));
+  const active = shiftSalesOf(shift, sales);
+  const byMethod = tenderTotals(shift, sales).map(t => ({m:t.method,n:t.count,v:t.value}));
   const gross = active.reduce((a, s) => a + s.total, 0);
   const tax = active.reduce((a, s) => a + s.tax, 0);
   const cash = byMethod.find((b) => b.m === "cash")!.v;
-  const expected = shift.openingFloat + cash;
+  const expected = shift.expectedCash ?? shift.openingFloat + cash;
   const counted = shift.countedCash ?? 0;
   return `${header(kind === "xreport" ? "X REPORT (MID-SHIFT)" : "Z REPORT (SHIFT CLOSE)")}
     <table>

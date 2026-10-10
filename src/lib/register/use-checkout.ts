@@ -1,3 +1,4 @@
+import { flushTicketDrafts } from "@/lib/session-draft";
 import { redeemedPoints } from "../points-redemption";
 import { exchangePolicyError } from "../returns-policy";
 /**
@@ -322,7 +323,8 @@ export function useCheckout(deps: CheckoutDeps) {
             }
           : undefined,
       };
-      booking = await createBooking(newBooking);
+      const draftBillNo = await flushTicketDrafts();
+      booking = await createBooking({ ...newBooking, draftBillNo: draftBillNo || deps.getBillNo() });
     } catch (e) {
       toast.error("Booking was not saved", {
         description: describeError(e, "Saving the booking"),
@@ -405,7 +407,7 @@ export function useCheckout(deps: CheckoutDeps) {
     const voucherToken = deps.getVoucherToken();
     const exchangeRef = deps.getExchangeRef();
     const pointsEarned = deps.getPointsEarned();
-    const billNo = deps.getBillNo();
+    let billNo = deps.getBillNo();
     const method = deps.getMethod();
     const tendered = deps.getTendered();
     const transferRef = deps.getTransferRef();
@@ -514,6 +516,7 @@ export function useCheckout(deps: CheckoutDeps) {
     let sale: Sale;
     try {
       setSaving(true);
+      billNo = (await flushTicketDrafts()) || billNo;
       if (!attemptId.current) attemptId.current = crypto.randomUUID();
       sale = await recordSale(
         {

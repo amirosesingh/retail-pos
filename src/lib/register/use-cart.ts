@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { availableAt, stockAt } from "@/lib/pos-store";
-import { clearCartDraft } from "@/lib/cart-draft";
+import { flushTicketDrafts } from "@/lib/session-draft";
 import { blocksOutOfStockSale } from "@/lib/register/stock-guard";
 import { logger } from "@/lib/audit-log";
 import { TICKET_ACTIONS, logTicketEvent } from "@/lib/ticket-audit";
@@ -145,13 +145,18 @@ export function useCart(deps: CartDeps) {
         storeId: deps.currentStore.id,
       });
     }
+    if (removes && lines.length === 1) {
+      if (!(await deps.requirePermission("can_void_cart"))) return;
+      try { await flushTicketDrafts("cancel"); }
+      catch { toast.error("The draft could not be cancelled. Your item is still in the cart."); return; }
+    }
     setLines((ls) => {
       const next = ls
         .map((l, i) => (i === index ? { ...l, qty: l.credit ? l.qty - delta : l.qty + delta } : l))
         .filter((l) => (l.credit ? l.qty < 0 : l.qty > 0));
       if (!next.length) {
         setBillNo(null);
-        clearCartDraft(deps.currentStore.id);
+        void flushTicketDrafts("release");
       }
       return next;
     });
@@ -169,12 +174,14 @@ export function useCart(deps: CartDeps) {
     deps.onReset?.(reason);
     setCoupon(null);
     setBillNo(null);
-    clearCartDraft(deps.currentStore.id);
+    void flushTicketDrafts("release");
   }
 
   async function clearCart(source: "clear" | "void" = "void") {
     if (lines.length && !(await deps.requirePermission("can_void_cart"))) return;
     if (lines.length) {
+      try { await flushTicketDrafts("cancel"); }
+      catch { toast.error("The draft could not be cancelled. The cart was kept; check the database connection."); return; }
       logTicketEvent(source === "clear" ? TICKET_ACTIONS.cleared : TICKET_ACTIONS.voided, {
         lines: lines.length,
         value: deps.getTotal(),

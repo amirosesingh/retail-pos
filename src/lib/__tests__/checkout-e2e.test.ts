@@ -12,6 +12,7 @@ const platform = vi.hoisted(() => ({ offlineFirst: false }));
 const live = vi.fn();
 const localWrite = vi.fn();
 const localAggregate = vi.fn();
+const localQuery = vi.fn();
 const attemptRows = vi.fn(() => ({ data: [] as unknown[] | null, error: null as unknown }));
 
 vi.mock("@/lib/sync-engine", () => ({
@@ -23,6 +24,7 @@ vi.mock("@/platform-config/features", () => ({
 }));
 vi.mock("@/core/local-db/local-db", () => ({
   localDb: () => ({
+    query: (...a: unknown[]) => localQuery(...a),
     write: (...a: unknown[]) => localWrite(...a),
     writeBatch: (...a: unknown[]) => localWrite(...a),
     commitAggregate: (...a: unknown[]) => localAggregate(...a),
@@ -90,6 +92,7 @@ describe("checkout commit", () => {
     live.mockReset();
     localWrite.mockReset();
     localAggregate.mockReset();
+    localQuery.mockReset();
     attemptRows.mockClear();
     attemptRows.mockReturnValue({ data: [], error: null });
     live.mockResolvedValue(undefined);
@@ -98,6 +101,28 @@ describe("checkout commit", () => {
     setPreferredDatabaseMode("online");
   });
   afterEach(() => setPreferredDatabaseMode("local"));
+
+  it("checks unsynced Electron sales locally, never against cloud absence", async () => {
+    platform.offlineFirst = true;
+    localQuery.mockResolvedValueOnce({ ok: true, rows: [{ id: "sale-1" }] });
+    expect(await db.saleAttemptExists("txn-1")).toBe("yes");
+    expect(localQuery).toHaveBeenCalledWith("sales", {
+      columns: "id", match: { client_transaction_id: "txn-1" }, limit: 1,
+    });
+    localQuery.mockResolvedValueOnce({ ok: true, rows: [] });
+    expect(await db.saleAttemptExists("txn-1")).toBe("no");
+    localQuery.mockResolvedValueOnce({ ok: false, error: "Disconnected" });
+    expect(await db.saleAttemptExists("txn-1")).toBe("unknown");
+    expect(attemptRows).not.toHaveBeenCalled();
+  });
+
+  it("online checkout does not require catalogue-edit permissions after committing payment", async () => {
+    const product: Product = { id: "p1", name: "Racket", sku: "R1", barcode: "10001", category: "Sports", cost: 60, price: 100, reorderLevel: 0, taxRate: 0, stockByStore: { "store-1": 0 }, archived: true };
+    await expect(db.commitSale(sale(), [product], null)).resolves.toBe("cloud");
+    expect(live).toHaveBeenCalledTimes(1);
+    expect(saleArgs()?.["_movements"]).toHaveLength(1);
+    expect(opsSent().some(op => op.table === "products")).toBe(false);
+  });
 
   it("writes bill, lines, tender ledger and stock movement together", async () => {
     await db.commitSale(sale(), [], null);

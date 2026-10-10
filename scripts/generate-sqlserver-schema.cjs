@@ -187,6 +187,8 @@ function dependencyDepth(table, visiting = new Set()) {
   const parents = table.columns
     .map((column) => column.foreignKeyTarget?.table)
     .filter((name) => name && name !== table.cloudTable && tableByName.has(name));
+  // Completed drafts depend on their sale/booking, even though bill_no is a logical key.
+  if (table.cloudTable === "held_orders") parents.push("sales", "bookings", "shifts");
   return parents.length
     ? 1 + Math.max(...parents.map((name) => dependencyDepth(tableByName.get(name), next)))
     : 0;

@@ -1,3 +1,4 @@
+import { draftTicketId } from "@/lib/session-draft";
 import { LegacyExchangeForm } from "@/platforms/web/components/pos/LegacyExchangeForm";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
@@ -123,7 +124,7 @@ import {
   verifyBusinessAuthorization,
 } from "@/lib/authorization-client";
 import { evaluatePromotions, focLine } from "@/lib/pos-promotions";
-import { loadCartDraft, saveCartDraft } from "@/lib/cart-draft";
+
 import { openCashDrawer, printSaleReceipt, saleReceiptPreview } from "@/lib/pos-print";
 import { ShiftCloseDialog } from "@/platforms/web/components/pos/ShiftCloseDialog";
 import {
@@ -225,6 +226,7 @@ function Register() {
    * The open ticket, filled in below once the totals exist. Sending it with a
    * request lets a remote approver decide on what the cashier can see.
    */
+  const currentDraftId = useRef<() => string | null>(() => null);
   const ticketSnapshot = useRef<() => TicketSnapshot | null>(() => null);
   /** Parks the open ticket; filled in once the held-orders hook exists. */
   const parkTicket = useRef<
@@ -388,7 +390,7 @@ function Register() {
       clearAppliedApproval();
     }
     const heldOrderId = snapshot
-      ? `H${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      ? currentDraftId.current() ?? draftTicketId(currentStore.id, snapshot.billNo || snapshot.ticketId)
       : undefined;
     const res = await authorize({
       ...request,
@@ -782,60 +784,28 @@ function Register() {
     };
   }, [bookMemberQuery]);
 
-  /* ── Sticky ticket ──────────────────────────────────────────────────────
-     The open ticket is stored per store so a refresh, a trip to another page
-     or an app restart never silently drops what the cashier rang up. It is
-     only cleared by Clear/Void, a completed payment, or holding/booking. */
-  const draftStore = currentStore.id;
-  const hydratedFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (hydratedFor.current === draftStore) return;
-    if (!state.products.length) return; // wait for the catalogue before validating
-    hydratedFor.current = draftStore;
-    const draft = loadCartDraft(draftStore);
-    if (!draft) return;
-    const known = new Set(state.products.map((p) => p.id));
-    const kept = draft.lines.filter((l) => known.has(l.productId));
-    setLines(kept);
-    setCartDiscount(draft.cartDiscount);
-    setCartDiscountType(draft.cartDiscountType);
-    setExchangeRef(draft.exchangeRef);
-    setMemberId(draft.memberId);
-    setCoupon((draft.coupon as typeof coupon) ?? null);
-    if (draft.billNo) setBillNo(draft.billNo);
-    if (kept.length < draft.lines.length)
-      toast.info("Some items on the saved ticket are no longer in the catalogue");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftStore, state.products.length]);
-
-  useEffect(() => {
-    if (hydratedFor.current !== draftStore) return;
-    saveCartDraft(draftStore, {
-      lines,
-      cartDiscount,
-      cartDiscountType,
-      exchangeRef,
-      memberId,
-      coupon,
-      billNo,
-    });
-  }, [draftStore, lines, cartDiscount, cartDiscountType, exchangeRef, memberId, coupon, billNo]);
-
   /** A bill number is reserved the moment a ticket starts, so the header, the
    *  held record and the printed receipt all carry the same number. */
-  useEffect(() => {
-    if (!lines.length || billNo) return;
-    let cancelled = false;
-    void reserveBillNumber(
+  const billReservation = useRef<Promise<string> | null>(null);
+  function ensureDraftBillNumber() {
+    if (billNo) return Promise.resolve(billNo);
+    if (billReservation.current) return billReservation.current;
+    billReservation.current = reserveBillNumber(
       currentStore.receiptPrefix?.trim() || currentStore.code || "R",
       state.sales.map((s) => s.receiptNo),
       {
         ...(state.settings.integrations.billNumbering ?? {}),
         timeZone: state.settings.integrations.timeZone || undefined,
       },
-    )
+    ).finally(() => { billReservation.current = null; });
+    return billReservation.current;
+  }
+  useEffect(() => {
+    if (!lines.length || billNo) return;
+    let cancelled = false;
+    void ensureDraftBillNumber()
       .then((no) => {
-        if (!cancelled) setBillNo(no);
+        if (!cancelled) setBillNo(current => current ?? no);
       })
       .catch((err) => {
         // Leave the header blank: checkout reserves the number again and will
@@ -972,7 +942,9 @@ function Register() {
     requirePermission,
   });
 
-  const { held, holdOrder, resumeHeld } = useRegisterHeldOrders({
+  const { held, holdOrder, resumeHeld, getDraftId } = useRegisterHeldOrders({
+    shiftId: activeShift?.id ?? null,
+    ensureBillNumber: ensureDraftBillNumber,
     lines,
     total: totals.total,
     cartDiscount,
@@ -1041,6 +1013,7 @@ function Register() {
     },
   });
   // Keep the picture of the open ticket current for anything that needs it.
+  currentDraftId.current = getDraftId;
   ticketSnapshot.current = () =>
     lines.length === 0
       ? null

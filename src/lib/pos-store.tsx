@@ -212,6 +212,7 @@ type NewTransfer = {
 };
 
 export type NewBooking = {
+  draftBillNo?: string | null;
   storeId: string;
   shiftId: string;
   lines: CartLine[];
@@ -1713,7 +1714,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // admin is signed in, who can close from anywhere.
       const here = readTerminalConfig()?.tokenId ?? localTerminalId();
       const sameTerminal = !activeShift.terminalId || activeShift.terminalId === here;
-      if (!sameTerminal && !can("can_manage_other_shifts")) return null;
+      if (!sameTerminal && !isAdmin && !can("can_manage_other_shifts") && !(stateRef.current.settings.integrations.allowAnyStaffCloseShift === true && can("can_close_shift"))) return null;
       const closed: Shift = {
         ...activeShift,
         ...extras,
@@ -1788,7 +1789,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       await Promise.all([transitionWritten, activityWritten, summaryWritten]);
       return closed;
     },
-    [activeShift, user, terminalUser, can],
+    [isAdmin, activeShift, user, terminalUser, can],
   );
 
   const recordSale = useCallback(
@@ -2052,7 +2053,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       jobStatusBy: input.job ? input.cashier : undefined,
       jobStatusAt: input.job ? now : undefined,
     };
-    await commitBooking(booking);
+    await commitBooking(booking, input.draftBillNo);
     setState((s) => ({
       ...s,
       bookingCounter: Math.max(counter, s.bookingCounter + 1),

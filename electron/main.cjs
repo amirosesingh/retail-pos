@@ -1137,7 +1137,11 @@ async function startLocalShiftClose(raw) {
   const differentOperator = Boolean(shift.opened_by_staff_id && actor && String(shift.opened_by_staff_id) !== actor);
   const differentTerminal = Boolean(shift.terminal_id && String(shift.terminal_id) !== terminalId);
   const forced = differentOperator || differentTerminal;
-  if (forced && !adminSession.hasPermission("can_manage_other_shifts"))
+  const policyRows = await operationsRepository.query(branchId, "pos_settings", {match:{id:1},limit:1});
+  const rawPolicy = policyRows.rows?.[0]?.integration_settings;
+  const policy = typeof rawPolicy === "string" ? JSON.parse(rawPolicy) : rawPolicy;
+  const { mayCloseShift } = require("./db/shift-close-policy.cjs");
+  if (!mayCloseShift({differentOperator,differentTerminal,isAdmin:adminSession.hasLevel("admin"),canManageOthers:adminSession.hasPermission("can_manage_other_shifts"),canClose:adminSession.hasPermission("can_close_shift"),allowHandover:policy?.allowAnyStaffCloseShift === true}))
     throw Object.assign(new Error("You do not have permission to close another employee or terminal shift."), { code: "EFORBIDDEN" });
   const now = new Date().toISOString();
   await operationsRepository.apply("Starting shift close", [
@@ -1431,11 +1435,11 @@ async function approveLocalShiftVariance(raw) {
 
 function redactShiftRow(row) {
   const copy = { ...row };
-  if (!adminSession.hasPermission("can_shift_expected_cash_view"))
+  if (!(adminSession.hasLevel("admin") || adminSession.hasPermission("can_shift_expected_cash_view")))
     for (const key of ["expected_cash", "expected_card", "expected_digital"]) delete copy[key];
-  if (!adminSession.hasPermission("can_shift_counted_cash_view"))
+  if (!(adminSession.hasLevel("admin") || adminSession.hasPermission("can_shift_counted_cash_view")))
     for (const key of ["counted_cash", "counted_card", "counted_digital", "final_counted_cash", "closing_float"]) delete copy[key];
-  if (!adminSession.hasPermission("can_shift_variance_view"))
+  if (!(adminSession.hasLevel("admin") || adminSession.hasPermission("can_shift_variance_view")))
     for (const key of ["variance_cash", "variance_card", "variance_digital", "variance_total", "variance_status"]) delete copy[key];
   return copy;
 }
@@ -1447,9 +1451,9 @@ async function localShiftReconciliationView(shiftId) {
     match: { shift_id: guard.uuid(shiftId, { name: "shift id" }) },
     orderBy: { column: "created_at", ascending: false }, limit: 200,
   });
-  const expected = adminSession.hasPermission("can_shift_expected_cash_view");
-  const counted = adminSession.hasPermission("can_shift_counted_cash_view");
-  const variance = adminSession.hasPermission("can_shift_variance_view");
+  const expected = adminSession.hasLevel("admin") || adminSession.hasPermission("can_shift_expected_cash_view");
+  const counted = adminSession.hasLevel("admin") || adminSession.hasPermission("can_shift_counted_cash_view");
+  const variance = adminSession.hasLevel("admin") || adminSession.hasPermission("can_shift_variance_view");
   return { ok: true, rows: (result.rows ?? []).map((row) => ({
     id: row.id, shift_id: row.shift_id, store_id: row.store_id, count_id: row.count_id,
     expected_cash: expected ? row.expected_cash : null,
@@ -2166,6 +2170,8 @@ function registerIpc() {
   ipcMain.handle("config:get", (_e, key) => guard.guarded(() => ({ ok: true, value: configStore.get(guard.key(key)) })));
   ipcMain.handle("config:set", (_e, key, value) => guard.guarded(() => configStore.set(guard.key(key), value)));
   ipcMain.handle("config:reset", () => configStore.reset());
+  ipcMain.handle("business:reserve-bill", (_e, prefix, minimum) =>
+    require("./bill-counter.cjs").reserveBillCounter(configStore, prefix, minimum));
   ipcMain.handle("settings:get", (_e, key) => ({ ok: true, value: configStore.get(`setting:${String(key)}`) }));
   ipcMain.handle("settings:set", (_e, key, value) => configStore.set(`setting:${String(key)}`, value));
 

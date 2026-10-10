@@ -1,3 +1,4 @@
+import { flushTicketDrafts } from "./session-draft";
 /**
  * Client side of the controlled shift-closing workflow.
  *
@@ -79,11 +80,13 @@ async function callState(fn: string, args: Record<string, unknown>): Promise<Shi
 }
 
 /** Step 1 — declare the intent to close, with a mandatory reason. */
-export function startShiftClose(
+export async function startShiftClose(
   shiftId: string,
   reason: string,
   terminalId?: string | null,
 ): Promise<ShiftCloseStep> {
+  try { await flushTicketDrafts(); }
+  catch (error) { return fail(error, "Save or cancel the unfinished bill before closing this shift."); }
   const bridge = localDb();
   const shiftCloseStart = bridge?.shiftCloseStart;
   if (shiftCloseStart) return (async () => {

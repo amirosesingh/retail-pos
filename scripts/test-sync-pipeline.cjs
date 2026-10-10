@@ -149,3 +149,47 @@ test("new PCs bootstrap while registered PCs reuse their completed bootstrap", a
     await lifecycle.ensure({branchId:"B1"});assert.equal(bootstraps,completed?0:1);
   }
 });
+
+test("completed draft upload carries its saved sale before the draft", async () => {
+  let pending=true; let sent;
+  const tables=[{...table,cloudTable:"sales",sqlServerTable:"sales",dependencyOrder:1},{...table,cloudTable:"held_orders",sqlServerTable:"held_orders",dependencyOrder:4}];
+  const worker=new PushWorker({registry:{tables},reader:{
+    pendingAggregates:async()=>pending?[{aggregateId:"draft",changes:[{entity_type:"held_orders",entity_id:'{"id":"draft"}',key:{id:"draft"},operation:"update"}]}]:[],
+    rows:async()=>[{id:"draft",store_id:"B1",bill_no:"BILL-1",status:"completed"}],
+    ticketCompletionParents:async(rows,branch)=>{assert.equal(branch,"B1");assert.equal(rows[0].bill_no,"BILL-1");return [{table:"sales",rows:[{id:"sale",store_id:"B1",bill_number:"BILL-1"}]}];},
+    acknowledgeAggregate:async()=>{pending=false;},failAggregate:async()=>{},
+  },cloud:{pushAggregate:async batch=>{sent=batch;return {ok:true};}}});
+  await worker.pushAggregates("B1",100);
+  assert.deepEqual(sent.operations.map(op=>op.table),["sales","held_orders"]);
+  assert.equal(pending,false);
+});
+
+test("completed draft download fetches its missing sale once before applying the draft", async()=>{
+  const events=[];let present=false;
+  class Transaction {async begin(){} async commit(){} async rollback(){}}
+  const request={input(){return this;},async query(){return {recordset:present?[{id:"sale"}]:[]};}};
+  const sales={...table,cloudTable:"sales",sqlServerTable:"sales"};
+  const worker=new PullWorker({registry:{tables:[sales]},connectionManager:{pool:{request:()=>request},sql:()=>({Transaction})},reader:{unacknowledged:async()=>new Set()},
+    cloud:{bootstrapPage:async({table:target,branchId})=>{assert.equal(branchId,"B1");events.push(target);return {rows:[{id:"sale",store_id:"B1",bill_number:"BILL-1"}],cursor:null};},applyLocalBatch:async()=>{present=true;events.push("saved");}}});
+  const batch={rows:[{table_name:"held_orders",row_data:{id:"draft",store_id:"B1",bill_no:"BILL-1",status:"completed"}}]};
+  await worker.ensureTicketDependencies(batch,"B1");
+  await worker.ensureTicketDependencies(batch,"B1");
+  assert.deepEqual(events,["sales","saved"]);
+});
+
+test("held cleanup waits for pending uploads without losing its pull cursor", async()=>{
+  let pending=true,saved=0;const applied=[];const events=[];
+  class Transaction {async begin(){} async commit(){events.push("commit");} async rollback(){events.push("rollback");}}
+  const held={...table,cloudTable:"held_orders",sqlServerTable:"held_orders"};
+  const worker=new PullWorker({registry:{tables:[held]},connectionManager:{pool:{},sql:()=>({Transaction})},
+    reader:{unacknowledged:async()=>pending?new Set(['{"id":"draft"}']):new Set()},conflicts:{record:async()=>{}},
+    checkpoints:{get:async()=>({committed_cursor:saved}),save:async(_b,_t,_d,patch)=>{saved=patch.committed_cursor;}},
+    cloud:{pullBatch:async()=>({count:1,cursor:1,rows:[],tombstones:[{table_name:"held_orders",entity_id:'{"id":"draft"}',tombstone:true}]}),
+      applyLocalBatch:async(_tx,_table,batch)=>{applied.push(...batch.tombstones);},membershipDirectory:async()=>({ok:true,nextRevision:0,hasMore:false})}});
+  const deferred=await worker.run({branchId:"B1"});
+  assert.equal(deferred.deferredHeldDeletion,true);assert.equal(saved,0);assert.equal(applied.length,0);
+  pending=false;
+  const done=await worker.run({branchId:"B1"});
+  assert.equal(done.deferredHeldDeletion,false);assert.equal(saved,1);assert.equal(applied.length,1);
+  assert.deepEqual(events,["rollback","commit"]);
+});

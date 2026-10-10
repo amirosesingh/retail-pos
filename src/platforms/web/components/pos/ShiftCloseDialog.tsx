@@ -54,7 +54,7 @@ export function ShiftCloseDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { state, activeShift, closeShift } = usePos();
-  const { user, can } = useAuth();
+  const { user, can, isAdmin } = useAuth();
 
   const [step, setStep] = useState<Step>("reason");
   const [reason, setReason] = useState("");
@@ -68,16 +68,18 @@ export function ShiftCloseDialog({
   const [syncingClose, setSyncingClose] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [serverState, setServerState] = useState<ShiftState | null>(null);
+  const [expected, setExpected] = useState<{cash:number;card:number;digital:number} | null>(null);
+  const [expectedError, setExpectedError] = useState("");
   const [recon, setRecon] = useState<ShiftReconciliation | null>(null);
 
-  const mayCount = can("can_shift_cash_count") || can("can_close_shift");
-  const maySeeExpected = can("can_shift_expected_cash_view");
-  const maySeeCounted = can("can_shift_counted_cash_view");
-  const maySeeVariance = can("can_shift_variance_view");
-  const maySeeFinancialSummary = can("can_shift_financial_summary_view");
-  const maySeePaymentBreakdown = can("can_shift_payment_breakdown_view");
-  const mayApprove = can("can_shift_variance_approve");
-  const mayRecount = can("can_shift_cash_recount");
+  const mayCount = isAdmin || can("can_shift_cash_count") || can("can_close_shift");
+  const maySeeExpected = isAdmin || can("can_shift_expected_cash_view");
+  const maySeeCounted = isAdmin || can("can_shift_counted_cash_view");
+  const maySeeVariance = isAdmin || can("can_shift_variance_view");
+  const maySeeFinancialSummary = isAdmin || can("can_shift_financial_summary_view");
+  const maySeePaymentBreakdown = isAdmin || can("can_shift_payment_breakdown_view");
+  const mayApprove = isAdmin || can("can_shift_variance_approve");
+  const mayRecount = isAdmin || can("can_shift_cash_recount");
   const terminalId = readTerminalConfig()?.tokenId ?? localTerminalId();
   const actorId = user?.staffId ?? null;
   const differentOperator = activeShift
@@ -86,8 +88,10 @@ export function ShiftCloseDialog({
       : activeShift.cashier.trim().toLowerCase() !== (user?.name ?? "").trim().toLowerCase()
     : false;
   const differentTerminal = !!activeShift?.terminalId && activeShift.terminalId !== terminalId;
-  const forcedClosure = differentOperator || differentTerminal;
-  const mayForceClose = can("can_manage_other_shifts");
+  const otherClosure = differentOperator || differentTerminal;
+  const allowHandover = state.settings.integrations.allowAnyStaffCloseShift === true && can("can_close_shift");
+  const forcedClosure = otherClosure && !allowHandover;
+  const mayForceClose = isAdmin || can("can_manage_other_shifts");
 
   // Reopening the dialog always starts a fresh walk-through.
   useEffect(() => {
@@ -115,6 +119,31 @@ export function ShiftCloseDialog({
     if (step !== "review" && step !== "done") return;
     void loadReconciliations(activeShift.id).then((rows) => setRecon(rows[0] ?? null));
   }, [open, step, activeShift, maySeeExpected, maySeeCounted, maySeeVariance]);
+
+  useEffect(() => {
+    if (!open || !activeShift || !maySeeExpected) {setExpected(null);return;}
+    let cancelled = false;
+    setExpected(null);setExpectedError("");
+    void (async () => {
+      try {
+        const bridge = localDb();
+        let row;
+        if (bridge?.shiftExpectedTotals) {
+          const result = await bridge.shiftExpectedTotals(activeShift.id);
+          if (!result.ok) throw new Error(result.error || "Could not load drawer totals");
+          row = result;
+        } else {
+          const {supabaseExternal} = await import("@/integrations/supabase/external-client");
+          const result = await supabaseExternal.rpc("shift_expected_view" as never,{p_shift:activeShift.id} as never);
+          if (result.error) throw result.error;
+          row = (Array.isArray(result.data) ? result.data[0] : result.data) as {expected_cash:number;expected_card:number;expected_digital:number} | null;
+          if (!row) throw new Error("Could not load drawer totals");
+        }
+        if (!cancelled) setExpected({cash:Number(row.expected_cash),card:Number(row.expected_card),digital:Number(row.expected_digital)});
+      } catch(error) {if (!cancelled) setExpectedError(error instanceof Error ? error.message : "Could not load drawer totals");}
+    })();
+    return () => {cancelled=true;};
+  },[open,activeShift,step,maySeeExpected,state.sales]);
 
   if (!activeShift) return null;
 
@@ -150,6 +179,7 @@ export function ShiftCloseDialog({
       });
     }
     const closed = await closeShift(cashValue ?? shift.countedCash ?? 0, note.trim(), {
+      ...(expected ? {expectedCash:expected.cash,expectedCard:expected.card,expectedDigital:expected.digital} : {}),
       countedCard: counted.card,
       countedDigital: counted.digital,
     });
@@ -157,12 +187,12 @@ export function ShiftCloseDialog({
       toast.error("The shift close was not accepted.");
       return false;
     }
-    if (forcedClosure) {
+    if (otherClosure) {
       await logSystemAction({
         actorId,
         actorName: user?.name ?? null,
         actorRole: user?.role ?? null,
-        actionType: "SHIFT_FORCE_CLOSED",
+        actionType: forcedClosure ? "SHIFT_FORCE_CLOSED" : "SHIFT_HANDOVER_CLOSED",
         entityAffected: "shifts",
         entityId: shift.id,
         oldValue: {
@@ -261,7 +291,7 @@ export function ShiftCloseDialog({
               )}
               <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                 Once closing starts this terminal stops taking sales on this shift. The count is
-                blind: the till will not show you what the drawer should hold.
+                {maySeeExpected ? "checked against the recorded cash sales and opening float." : "blind: expected totals are hidden for your account."}
               </p>
               <div className="space-y-1">
                 <Label>
@@ -284,13 +314,21 @@ export function ShiftCloseDialog({
 
           {step === "count" && (
             <>
+              {maySeeExpected && <div className="space-y-1 rounded-md border p-3 text-sm">
+                {expected ? <>
+                  <Row label="Opening cash float" value={money(activeShift.openingFloat)} />
+                  <Row label="Net cash sales this shift" value={money(expected.cash-activeShift.openingFloat)} />
+                  <Row label="Total expected cash in drawer (including float)" value={money(expected.cash)} />
+                  <p className="pt-2 text-xs text-muted-foreground">Card {money(expected.card)} · Digital / wallet {money(expected.digital)} — excluded from drawer cash.</p>
+                </> : <p role={expectedError ? "alert" : "status"}>{expectedError || "Loading recorded shift totals…"}</p>}
+              </div>}
               <div className="space-y-1">
                 <Label>Cashier</Label>
                 <Input value={user?.name ?? activeShift.cashier} readOnly disabled />
               </div>
               <div className="space-y-1">
                 <Label>
-                  Total cash in drawer <span className="text-destructive">*</span>
+                  Counted cash in drawer, including float <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   className="numeric h-12 text-xl"
@@ -303,6 +341,7 @@ export function ShiftCloseDialog({
                   <p className="text-[11px] text-destructive">The amount cannot be negative.</p>
                 )}
               </div>
+              <p className="text-xs text-muted-foreground">Count physical cash only, including the opening float. Do not add card or wallet sales. For example: 100 float + 401 cash sales = 501 in the drawer.</p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label>Card terminal total</Label>

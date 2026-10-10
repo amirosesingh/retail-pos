@@ -92,6 +92,15 @@ function isSharedPosFieldChange(change) {
 
 /** A child-only retry must carry its locally owned parent into the same cloud transaction. */
 async function includeMissingParents(operations, reader, registry, branchId) {
+  const completed = (operations.find(op => op.table === "held_orders" && !op.deletePhase)?.rows ?? []).filter(row => row.status === "completed");
+  if (completed.length) {
+    const parents = await reader.ticketCompletionParents(completed, branchId);
+    for (const parent of parents) {
+      const existing = operations.find(op => op.table === parent.table && !op.deletePhase);
+      if (existing) existing.rows.push(...parent.rows.filter(row => !existing.rows.some(saved => saved.id === row.id)));
+      else operations.push({table: parent.table, rows: parent.rows, deletePhase: false, changes: [], dependencyOrder: registry.tables.find(table => table.cloudTable === parent.table).dependencyOrder});
+    }
+  }
   for (const [childName, parentName, foreignKey, belongs] of [
     ["booking_payments", "bookings", "booking_id", (row) => row.store_id === branchId],
     ["payment_transactions", "bookings", "booking_id", (row) => row.store_id === branchId],

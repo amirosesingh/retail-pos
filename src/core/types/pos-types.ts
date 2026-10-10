@@ -1033,6 +1033,8 @@ export type IntegrationSettings = {
   transferNumbering?: import("@/lib/stock-ref").StockNumberingSettings;
   /** Retire products when company-wide stock reaches zero; restore on replenishment. */
   autoArchiveZeroStock?: boolean;
+  /** Any user with Close shift permission may close a shift in their branch. */
+  allowAnyStaffCloseShift?: boolean;
   /** Cash-rounding of the final bill total. */
   rounding?: RoundingSettings;
 };

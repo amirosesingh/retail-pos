@@ -1,3 +1,4 @@
+import { tenderSales } from "@/lib/shift-close";
 import { sameRecordId } from "@/lib/sale-identity";
 import { subscribeDataChange } from "@/lib/sync-engine";
 import { createFileRoute } from "@tanstack/react-router";
@@ -120,7 +121,7 @@ function Shifts() {
   const shiftSales = activeShift
     ? storeSales.filter((s) => sameRecordId(s.shiftId, activeShift.id) && !s.refunded)
     : [];
-  const cashTaken = shiftSales.filter((s) => s.method === "cash").reduce((a, s) => a + s.total, 0);
+  const cashTaken = tenderSales(activeShift, shiftSales, "cash");
   const expected = (activeShift?.openingFloat ?? 0) + cashTaken;
 
   // Terminal-bound close: the PC that opened it, or any manager / admin.
@@ -129,12 +130,13 @@ function Shifts() {
     !activeShift ||
     !activeShift.terminalId ||
     activeShift.terminalId === hereId ||
-    can("can_manage_other_shifts");
+    isAdmin || can("can_manage_other_shifts") ||
+    (state.settings.integrations.allowAnyStaffCloseShift === true && can("can_close_shift"));
   const overdueNow = activeShift ? isShiftOverdue(activeShift, defaultTradingHours) : false;
 
   /* Mid-shift snapshot: supervisors always, cashiers only when switched on. */
   const mayPrintXReport =
-    can("can_shift_financial_summary_view") &&
+    (isAdmin || can("can_shift_financial_summary_view")) &&
     (isAdmin || isSupervisor || rules.enable_cashier_x_report);
   const storeIndex = stores.findIndex((s) => s.id === currentStore.id);
   const storeLabel = `Store ${storeIndex + 1}`;
@@ -254,7 +256,7 @@ function Shifts() {
               <Metric label="Transactions" value={String(shiftSales.length)} />
               <Metric label="Terminal" value={activeShift.terminalName ?? "This PC"} />
               <Metric label="Running for" value={shiftDuration(activeShift)} />
-              {can("can_shift_expected_cash_view") && (
+              {(isAdmin || can("can_shift_expected_cash_view")) && (
                 <Metric label="Expected drawer" value={money(expected)} highlight />
               )}
               {overdueNow && (
@@ -280,11 +282,11 @@ function Shifts() {
                       // Read-only audit snapshot: derived from recorded sales,
                       // never editable, and every print is logged.
                       void printShiftReport(activeShift, storeSales, "xreport", {
-                        financialSummary: can("can_shift_financial_summary_view"),
-                        paymentBreakdown: can("can_shift_payment_breakdown_view"),
-                        expected: can("can_shift_expected_cash_view"),
-                        counted: can("can_shift_counted_cash_view"),
-                        variance: can("can_shift_variance_view"),
+                        financialSummary: (isAdmin || can("can_shift_financial_summary_view")),
+                        paymentBreakdown: (isAdmin || can("can_shift_payment_breakdown_view")),
+                        expected: (isAdmin || can("can_shift_expected_cash_view")),
+                        counted: (isAdmin || can("can_shift_counted_cash_view")),
+                        variance: (isAdmin || can("can_shift_variance_view")),
                       });
                       logSystemAction({
                         actorName: user?.name ?? activeShift.cashier,
@@ -567,7 +569,7 @@ function Shifts() {
           </Table>
         </section>
 
-        {can("can_shift_closing_history_view") && (
+        {(isAdmin || can("can_shift_closing_history_view")) && (
           <section className="rounded-lg border border-border bg-card">
             <h2 className="px-5 py-3 text-sm font-semibold">Shift history</h2>
             <Separator />
@@ -582,10 +584,10 @@ function Shifts() {
                   <TableHead>Terminal</TableHead>
                   <TableHead>Duration</TableHead>
                   <TableHead className="text-right">Float</TableHead>
-                  {can("can_shift_counted_cash_view") && (
+                  {(isAdmin || can("can_shift_counted_cash_view")) && (
                     <TableHead className="text-right">Closing float</TableHead>
                   )}
-                  {can("can_shift_variance_view") && (
+                  {(isAdmin || can("can_shift_variance_view")) && (
                     <TableHead className="text-right">Over / short</TableHead>
                   )}
                   {can("can_shift_report_reprint") && (
@@ -629,14 +631,14 @@ function Shifts() {
                       {shiftDuration(sh)}
                     </TableCell>
                     <TableCell className="numeric text-right">{money(sh.openingFloat)}</TableCell>
-                    {can("can_shift_counted_cash_view") && (
+                    {(isAdmin || can("can_shift_counted_cash_view")) && (
                       <TableCell className="numeric text-right">
                         {(sh.closingFloat ?? sh.countedCash) == null
                           ? "—"
                           : money((sh.closingFloat ?? sh.countedCash) as number)}
                       </TableCell>
                     )}
-                    {can("can_shift_variance_view") && (
+                    {(isAdmin || can("can_shift_variance_view")) && (
                       <TableCell className="numeric text-right">
                         {sh.varianceTotal == null ? (
                           "—"
@@ -662,11 +664,11 @@ function Shifts() {
                           variant="ghost"
                           onClick={() =>
                             void printShiftReport(sh, storeSales, "zreport", {
-                              financialSummary: can("can_shift_financial_summary_view"),
-                              paymentBreakdown: can("can_shift_payment_breakdown_view"),
-                              expected: can("can_shift_expected_cash_view"),
-                              counted: can("can_shift_counted_cash_view"),
-                              variance: can("can_shift_variance_view"),
+                              financialSummary: (isAdmin || can("can_shift_financial_summary_view")),
+                              paymentBreakdown: (isAdmin || can("can_shift_payment_breakdown_view")),
+                              expected: (isAdmin || can("can_shift_expected_cash_view")),
+                              counted: (isAdmin || can("can_shift_counted_cash_view")),
+                              variance: (isAdmin || can("can_shift_variance_view")),
                             })
                           }
                         >

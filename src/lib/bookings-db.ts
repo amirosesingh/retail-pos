@@ -181,7 +181,7 @@ const paymentRows = (b: Booking) =>
   }));
 
 /** Write (or re-write) a booking and its payment history through the durable POS gateway. */
-export async function saveBooking(b: Booking): Promise<CommitTarget> {
+export async function saveBooking(b: Booking, draftBillNo?: string | null): Promise<CommitTarget> {
   const ops: SyncOp[] = [{ kind: "upsert", table: "bookings", rows: [toRow(b)] }];
   if (b.payments.length) {
     ops.push({
@@ -190,6 +190,10 @@ export async function saveBooking(b: Booking): Promise<CommitTarget> {
       rows: paymentRows(b),
     });
   }
+  if (draftBillNo) ops.push({ kind: "update", table: "held_orders",
+    match: { store_id: b.storeId, bill_no: draftBillNo },
+    values: { status: "completed", note: `booking:${b.id}` },
+  });
   return await commitOps("Saving booking", ops);
 }
 
@@ -210,8 +214,8 @@ export async function deleteBookingRow(id: string): Promise<CommitTarget> {
  * Store a booking and only resolve once it is safe: straight to the cloud when
  * the connection is up, otherwise into the offline queue on this device.
  */
-export async function commitBooking(b: Booking): Promise<CommitTarget> {
-  return await saveBooking(b);
+export async function commitBooking(b: Booking, draftBillNo?: string | null): Promise<CommitTarget> {
+  return await saveBooking(b, draftBillNo);
 }
 
 /** Branch-scoped bookings from the platform's operational database. */
