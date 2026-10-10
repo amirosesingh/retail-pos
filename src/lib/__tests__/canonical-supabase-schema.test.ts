@@ -162,6 +162,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261010094756_register_draft_booking_conversion.sql",
       "supabase/migrations/20261010095113_draft_completion_feed_order.sql",
       "supabase/migrations/20261010101541_completed_hold_cleanup.sql",
+      "supabase/migrations/20261010141611_align_sale_refund_branch_contract.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

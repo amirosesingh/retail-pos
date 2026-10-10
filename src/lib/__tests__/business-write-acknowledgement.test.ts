@@ -8,7 +8,7 @@ describe("business UI persistence acknowledgements", () => {
     const store = source("src/lib/pos-store.tsx");
     const receipts = source("src/routes/receipts.tsx");
     const shifts = source("src/routes/shifts.tsx");
-    expect(store).toContain("await db.refundSale(saleId, `refund:${saleId}`)");
+    expect(store).toContain("await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId)");
     expect(store.indexOf("await db.refundSale")).toBeLessThan(
       store.indexOf("sales: s.sales.map((x) => (x.id === saleId"),
     );
