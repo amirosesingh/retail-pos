@@ -1791,7 +1791,7 @@ function registerIpc() {
       return result;
     } catch(error) {
       recordFault("business.commit-aggregate", error);
-      return {ok:false,code:error?.code??"ESQLSERVER_WRITE",error:error?.message??"The local SQL Server transaction failed.",stage:error?.stage??null,table:error?.table??null,sqlNumber:error?.sqlNumber??null};
+      return {ok:false,code:error?.code??"ESQLSERVER_WRITE",error:error?.message??"The local SQL Server transaction failed.",stage:error?.stage??null,table:error?.table??null,sqlNumber:error?.sqlNumber??null,sqlDetail:error?.sqlDetail??null};
     }
   }));
   ipcMain.handle("business:snapshot", (_e, options) => guard.guarded(async () => {

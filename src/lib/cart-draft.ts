@@ -11,6 +11,7 @@
  * empty basket. It is the only business key the phone persists, it never
  * leaves the device, and it is removed as soon as the ticket is settled.
  */
+import { notifyError } from "./notify";
 import type { CartLine, DiscountType } from "@/core/types/pos-types";
 import { readBusinessValue, writeBusinessValue } from "./business-storage";
 
@@ -27,8 +28,8 @@ export type CartDraft = {
 
 const key = (storeId: string) => `pos.cart.draft.${storeId}`;
 
-export function loadCartDraft(storeId: string): CartDraft | null {
-  try {
+export async function loadCartDraft(storeId: string): Promise<CartDraft | null> {
+    await pending;
     const raw = readBusinessValue(key(storeId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<CartDraft>;
@@ -42,27 +43,22 @@ export function loadCartDraft(storeId: string): CartDraft | null {
       coupon: parsed.coupon ?? null,
       billNo: parsed.billNo ?? null,
     };
-  } catch {
-    return null;
-  }
+}
+
+
+// Serialize saves and clears so a slow older save cannot resurrect a paid/held cart.
+let pending: Promise<void> = Promise.resolve();
+function writeDraft(storeId: string, value: string | null) {
+  const work = pending.then(async () => {
+    writeBusinessValue(key(storeId), value);
+  });
+  pending = work.catch(error => { notifyError(error, "Saving the open ticket"); });
 }
 
 export function saveCartDraft(storeId: string, draft: CartDraft) {
-  try {
-    if (!draft.lines.length && !draft.memberId && !draft.exchangeRef) {
-      writeBusinessValue(key(storeId), null);
-      return;
-    }
-    writeBusinessValue(key(storeId), JSON.stringify(draft));
-  } catch {
-    /* storage full or blocked — the ticket still works in memory */
-  }
+  writeDraft(storeId, !draft.lines.length && !draft.memberId && !draft.exchangeRef ? null : JSON.stringify(draft));
 }
 
 export function clearCartDraft(storeId: string) {
-  try {
-    writeBusinessValue(key(storeId), null);
-  } catch {
-    /* ignore */
-  }
+  writeDraft(storeId, null);
 }

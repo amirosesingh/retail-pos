@@ -64,13 +64,44 @@ test("oversized combined logs retry with their original transaction boundaries",
   const f=pushFixture(true);
   assert.equal(await f.worker.pushAggregates("B1",100,true),3);
   assert.equal(f.calls.length,4);assert.equal(f.pending.size,0);
-  assert.deepEqual(f.calls.slice(1).map(row=>row.batchId),["a","b","c"]);
+  assert.deepEqual(f.calls.slice(1).map(row=>row.operations[0].rows[0].id),["a","b","c"]);
+  assert.equal(new Set(f.calls.map(row=>row.batchId)).size,4);
+});
+
+test("ambiguous held-order commit replays unchanged data but uses a new receipt after an edit", async () => {
+  const held = {...table, cloudTable:"held_orders", sqlServerTable:"held_orders"};
+  let pending = true, discount = 10, failAck = true;
+  const receipts = new Map(), calls = [];
+  const change = {entity_type:"held_orders",entity_id:'{"id":"ticket"}',key:{id:"ticket"},operation:"update"};
+  const worker = new PushWorker({registry:{tables:[held]}, reader:{
+    pendingAggregates:async(_b,_l,excluded)=>pending && !excluded.includes("local-id") ? [{aggregateId:"local-id",changes:[change]}] : [],
+    rows:async()=>[{id:"ticket",store_id:"B1",discount,status:"held"}],
+    acknowledgeAggregate:async()=>{if(failAck)throw new Error("local acknowledgement failed");pending=false;},
+    failAggregate:async()=>{},
+  },cloud:{pushAggregate:async batch=>{
+    const payload=JSON.stringify(batch.operations);calls.push(batch.batchId);
+    if(receipts.has(batch.batchId))assert.equal(receipts.get(batch.batchId),payload,"receipt must never identify different data");
+    receipts.set(batch.batchId,payload);return {ok:true};
+  }}});
+  await worker.pushAggregates("B1",100,true);
+  await worker.pushAggregates("B1",100,true);
+  assert.equal(calls[0],calls[1]);
+  discount=15;failAck=false;
+  await worker.pushAggregates("B1",100,true);
+  assert.notEqual(calls[1],calls[2]);assert.equal(pending,false);
 });
 
 test("a rejected upload remains pending and produces no completed progress", async () => {
   const f=pushFixture();f.worker.cloud.pushAggregate=async()=>{throw Object.assign(new Error("Denied"),{status:403});};
   await assert.rejects(f.worker.pushAggregates("B1",100,true,p=>f.progress.push(p)),/Denied/);
   assert.equal(f.pending.size,3);assert.equal(f.progress.length,0);
+});
+
+test("a full cloud timeout leaves the batch pending for the scheduler without five blocking attempts", async () => {
+  const f=pushFixture();let attempts=0;
+  f.worker.cloud.pushAggregate=async()=>{attempts++;throw Object.assign(new Error("timed out"),{code:"ETIMEDOUT"});};
+  await f.worker.pushAggregates("B1",100,true);
+  assert.equal(attempts,1);assert.equal(f.pending.size,3);assert.equal(f.progress.length,0);
 });
 
 test("download uses saved cursor, commits before reporting progress, then resumes there", async () => {

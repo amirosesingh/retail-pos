@@ -7,6 +7,9 @@ import type { Database } from "./types";
 import { supabaseConfig } from "@/lib/external-supabase-config";
 import { inspectResponse, noteConnectivityIssue } from "@/lib/session-expiry";
 import { externalAuthStorage } from "./auth-storage";
+import { sessionEpoch } from "@/lib/session-epoch";
+import { centralAuthAccessToken } from "@/lib/session-presence";
+import { cashierTokenSync, sessionTokenSync } from "@/lib/pos-credentials";
 
 function isNewSupabaseApiKey(value: string): boolean {
   return value.startsWith("sb_publishable_") || value.startsWith("sb_secret_");
@@ -15,6 +18,7 @@ function isNewSupabaseApiKey(value: string): boolean {
 // New-format keys are opaque strings, not bearer JWTs — send them as `apikey` only.
 function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string, useDesktop = true): typeof fetch {
   return async (input, init) => {
+    const startedAt = sessionEpoch();
     const requestUrl =
       typeof Request !== "undefined" && input instanceof Request ? input.url : String(input);
     if (discardRejectedLogout) {
@@ -47,7 +51,11 @@ function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string, useDesktop = true): 
         typeof Request !== "undefined" && input instanceof Request
           ? await transport(new Request(input, { ...init, headers }))
           : await transport(input, { ...init, headers });
-      void inspectResponse(res.clone(), hadBearer);
+      // Secondary Auth failures must not revoke a separately verified PIN
+      // session, nor may a late response revoke a newer sign-in/token.
+      const currentBearer = centralAuthAccessToken();
+      const currentRequest = hadBearer && !!currentBearer && headers.get("Authorization") === `Bearer ${currentBearer}`;
+      if (!cashierTokenSync() && !sessionTokenSync()) void inspectResponse(res.clone(), currentRequest, startedAt);
       return res;
     } catch (e) {
       // Network failure / timeout: warn, never sign out.

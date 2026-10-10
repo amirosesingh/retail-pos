@@ -65,7 +65,7 @@ export async function loadApprovalCentre(storeId?: string | null): Promise<Centr
   // A ticket parked for a decision becomes pickable again the moment one lands.
   const readiness: Promise<unknown>[] = [];
   for (const r of [...view.ready, ...view.history]) {
-    if (r.status === "pending") continue;
+    if (r.status === "pending" || r.consumedAt) continue;
     const heldId = r.heldOrderId ?? heldOrderForRequest(r.id)?.id;
     if (heldId) readiness.push(Promise.resolve(markHeldReady(heldId)).catch(() => undefined));
   }

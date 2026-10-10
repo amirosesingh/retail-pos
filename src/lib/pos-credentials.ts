@@ -25,6 +25,9 @@ let cached: string | null = null;
 let loaded = false;
 let sessionCached: string | null = null;
 let sessionLoaded = false;
+let revision = 0;
+let cashierLoad: Promise<string | null> | null = null;
+let sessionLoad: Promise<string | null> | null = null;
 
 function legacyToken(): string | null {
   try {
@@ -38,18 +41,18 @@ function legacyToken(): string | null {
 export async function loadCashierToken(): Promise<string | null> {
   if (typeof window === "undefined") return null;
   if (loaded) return cached;
-  loaded = true;
-  const stored = await getDeviceSecret<string>(SECRET);
-  if (stored) {
-    cached = stored;
+  if (cashierLoad) return cashierLoad;
+  const started = revision;
+  cashierLoad = (async () => {
+    const stored = await getDeviceSecret<string>(SECRET);
+    if (started !== revision) return cached;
+    const legacy = stored ? null : legacyToken();
+    cached = stored ?? legacy;
+    loaded = true;
+    if (legacy) await setDeviceSecret(SECRET,legacy).catch(() => undefined);
     return cached;
-  }
-  const legacy = legacyToken();
-  if (legacy) {
-    cached = legacy;
-    await setDeviceSecret(SECRET, legacy).catch(() => undefined);
-  }
-  return cached;
+  })().finally(() => { cashierLoad = null; });
+  return cashierLoad;
 }
 
 /** Last known cashier token without waiting on the encrypted store. */
@@ -59,6 +62,7 @@ export function cashierTokenSync(): string | null {
 }
 
 export async function saveCashierToken(token: string): Promise<void> {
+  revision += 1;
   cached = token;
   loaded = true;
   try {
@@ -73,9 +77,14 @@ export async function saveCashierToken(token: string): Promise<void> {
 export async function loadSessionToken(): Promise<string | null> {
   if (typeof window === "undefined") return null;
   if (sessionLoaded) return sessionCached;
-  sessionLoaded = true;
-  sessionCached = (await getDeviceSecret<string>(SESSION_SECRET)) ?? null;
-  return sessionCached;
+  if (sessionLoad) return sessionLoad;
+  const started = revision;
+  sessionLoad = (async () => {
+    const stored = await getDeviceSecret<string>(SESSION_SECRET);
+    if (started === revision) { sessionCached = stored ?? null; sessionLoaded = true; }
+    return sessionCached;
+  })().finally(() => { sessionLoad = null; });
+  return sessionLoad;
 }
 
 /** Last known session token without waiting on the encrypted store. */
@@ -84,6 +93,7 @@ export function sessionTokenSync(): string | null {
 }
 
 export async function saveSessionToken(token: string): Promise<void> {
+  revision += 1;
   sessionCached = token;
   sessionLoaded = true;
   await setDeviceSecret(SESSION_SECRET, token).catch(() => undefined);
@@ -91,6 +101,7 @@ export async function saveSessionToken(token: string): Promise<void> {
 
 /** Wipe every stored credential on this device. */
 export function clearStoredCredentials(): void {
+  revision += 1;
   cached = null;
   loaded = true;
   sessionCached = null;

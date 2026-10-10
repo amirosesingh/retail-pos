@@ -30,6 +30,7 @@ import {
 import {
   approvalReference,
   AUTH_ACTION_LABEL,
+  ticketDiscounts,
   type AuthorizationRequest,
 } from "@/lib/authorization";
 import { subscribeApprovals } from "@/lib/approval-centre";
@@ -142,6 +143,7 @@ function ApprovalsPage() {
   const [note, setNote] = useState<Record<string, string>>({});
   // What the approver is granting, when it differs from what was asked.
   const [amount, setAmount] = useState<Record<string, string>>({});
+  const [discountAmounts, setDiscountAmounts] = useState<Record<string, Record<number, string>>>({});
   const [amountMode, setAmountMode] = useState<Record<string, "total" | "extra">>({});
   const [amountInvalid, setAmountInvalid] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -229,6 +231,13 @@ function ApprovalsPage() {
         return;
       }
       const auth = await getPosCallerAuth();
+      const discounts = ticketDiscounts(row.payload);
+      const discountDecisions = discounts.map(entry => ({index:entry.index,
+        value:Number(discountAmounts[row.id]?.[entry.index] ?? entry.value)}));
+      if (approve && discountDecisions.some((entry,index) => !Number.isFinite(entry.value) || entry.value < 0 || entry.value > discounts[index].value)) {
+        toast.error("Enter an approved discount between zero and the requested value for each item");
+        setBusy(null);return;
+      }
       const res = await decideAuthorizationRequest({
         data: {
           ...auth,
@@ -237,6 +246,7 @@ function ApprovalsPage() {
           note: note[row.id] ?? "",
           // Blank means "as requested"; a number here grants a different value.
           ...(approve && approvedAmount !== null ? { approvedAmount } : {}),
+          ...(approve && discounts.length ? {discountDecisions} : {}),
         },
       });
       if (!res.ok) toast.error(res.error ?? "Could not record the decision");
@@ -492,7 +502,19 @@ function ApprovalsPage() {
                               }
                             />
                           </div>
-                          <div className="space-y-1">
+                          {ticketDiscounts(row.payload).length > 0 ? <div className="space-y-2">
+                            <p className="text-xs font-semibold">Discounts on this bill</p>
+                            {ticketDiscounts(row.payload).map(entry => <div key={entry.index} className="space-y-1">
+                              <Label htmlFor={`discount-${row.id}-${entry.index}`} className="text-xs">
+                                {entry.name} · requested {entry.type === "percent" ? `${entry.value}%` : money(entry.value)}
+                                {entry.index >= 0 ? " per unit" : ""} · {entry.requiresApproval ? "Needs approval" : "Within cashier limit"}
+                              </Label>
+                              <Input id={`discount-${row.id}-${entry.index}`} type="number" min="0" max={entry.value} step="0.01"
+                                value={discountAmounts[row.id]?.[entry.index] ?? String(entry.value)}
+                                onChange={event => setDiscountAmounts(current => ({...current,[row.id]:{...current[row.id],[entry.index]:event.target.value}}))} />
+                              <p className="text-[11px] text-muted-foreground">Enter 0 to reject this discount.</p>
+                            </div>)}
+                          </div> : <div className="space-y-1">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <Label htmlFor={`approval-amount-${row.id}`} className="text-xs">
                                 {(amountMode[row.id] ?? "total") === "extra"
@@ -567,7 +589,7 @@ function ApprovalsPage() {
                               Leave blank to grant the requested total. The extra above the
                               cashier's limit is shown above.
                             </p>
-                          </div>
+                          </div>}
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
                           <Button
@@ -639,6 +661,20 @@ function ApprovalAmountReview({
   draft: string;
   mode: "total" | "extra";
 }) {
+  const requestedDiscounts = ticketDiscounts(row.payload);
+  if (requestedDiscounts.length) {
+    const decisions = ticketDiscounts(row.approvedPayload,"approved_discounts");
+    return <div className="space-y-2 rounded-md border border-border p-3 text-xs">
+      <p className="font-semibold">Bill discount review</p>
+      {requestedDiscounts.map(entry => {
+        const approved = decisions.find(decision => decision.index === entry.index);
+        const format = (value: number) => entry.type === "percent" ? `${value}%` : `$${money(value)}`;
+        return <p key={entry.index}>{entry.name}{entry.index >= 0 ? ` × ${entry.qty}` : ""} · requested {format(entry.value)}
+          {entry.type === "amount" && entry.index >= 0 ? " per unit" : ""}
+          {approved ? ` · ${approved.value === 0 ? "Rejected" : `Approved ${format(approved.value)}`}` : entry.requiresApproval ? " · Needs approval" : " · Within cashier limit"}</p>;
+      })}
+    </div>;
+  }
   const typed = draft.trim() === "" ? null : Number(draft);
   const entered =
     typed === null

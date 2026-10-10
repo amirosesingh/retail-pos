@@ -177,6 +177,10 @@ export async function updateHeldOrder(id: string, patch: Partial<HeldOrder>) {
     if (row) current = rowToHeldOrder(row as Record<string, unknown>);
   }
   if (!current) return;
+  // Approval polling may repeat a decision long after payment. Only a
+  // waiting ticket can become ready; never reopen a completed/cancelled bill.
+  if (patch.status === "ready" && current.status !== "waiting") return;
+  if (Object.entries(patch).every(([key,value]) => Object.is(current[key as keyof HeldOrder],value))) return;
   const updated = { ...current, ...patch };
   await persistHeldOrder(updated);
   setHeldOrders((orders) =>

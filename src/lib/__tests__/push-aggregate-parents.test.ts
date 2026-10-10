@@ -85,7 +85,7 @@ describe("queued global settings while a cashier is signed in", () => {
       { cloudTable: "sales", sqlServerTable: "sales", dependencyOrder: 2 },
     ] } }).pushAggregates("B1", 100);
     expect(cloud.pushAggregate).toHaveBeenCalledTimes(1);
-    expect(cloud.pushAggregate.mock.calls[0][0].batchId).toBe("sale-1");
+    expect(cloud.pushAggregate.mock.calls[0][0].operations).toEqual([expect.objectContaining({ table: "sales", rows: [{ id: "sale", store_id: "B1" }] })]);
     expect(reader.acknowledgeAggregate).toHaveBeenCalledWith("sale-1");
     expect(reader.acknowledgeAggregate).not.toHaveBeenCalledWith("settings-1");
   });

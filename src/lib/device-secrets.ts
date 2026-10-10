@@ -8,6 +8,7 @@
  */
 const KEY_NAME = "pos.device.key";
 const PREFIX = "pos.secure.";
+const revisions = new Map<string, number>();
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -54,6 +55,8 @@ const deviceKey = () => {
 /** Seal a value under a name. Nothing readable reaches browser storage. */
 export async function setDeviceSecret(name: string, value: unknown): Promise<void> {
   if (typeof window === "undefined") return;
+  const revision = (revisions.get(name) ?? 0) + 1;
+  revisions.set(name,revision);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const cipher = new Uint8Array(
     await subtle().encrypt(
@@ -65,7 +68,7 @@ export async function setDeviceSecret(name: string, value: unknown): Promise<voi
   const packed = new Uint8Array(iv.length + cipher.length);
   packed.set(iv, 0);
   packed.set(cipher, iv.length);
-  window.localStorage.setItem(PREFIX + name, toB64(packed));
+  if (revisions.get(name) === revision) window.localStorage.setItem(PREFIX + name, toB64(packed));
 }
 
 /** Read a sealed value back, or null when it is absent or unreadable. */
@@ -87,8 +90,9 @@ export async function getDeviceSecret<T>(name: string): Promise<T | null> {
 }
 
 export function clearDeviceSecret(name: string): void {
+  revisions.set(name,(revisions.get(name) ?? 0) + 1);
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(PREFIX + name);
+  try { window.localStorage.removeItem(PREFIX + name); } catch { /* storage unavailable */ }
 }
 
 let macPromise: Promise<CryptoKey> | null = null;

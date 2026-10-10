@@ -636,6 +636,36 @@ export function canDecideRequestAmount(
 export type PayloadValue = string | number | boolean | null;
 export type AuthPayload = Record<string, PayloadValue>;
 
+export type TicketDiscount = {
+  index: number; productId: string; name: string; qty: number; price: number;
+  type: "percent" | "amount"; value: number; base: number; requiresApproval: boolean;
+};
+
+/** Keep the existing flat approval payload contract, including old single-item requests. */
+export function ticketDiscounts(payload: AuthPayload, field = "requested_discounts"): TicketDiscount[] {
+  if (typeof payload[field] !== "string") return [];
+  try {
+    const values: unknown = JSON.parse(payload[field]);
+    if (!Array.isArray(values) || values.length > 201) return [];
+    const valid = values.every((entry) => entry && Number.isInteger(entry.index) && entry.index >= -1 &&
+      typeof entry.productId === "string" && typeof entry.name === "string" &&
+      [entry.qty,entry.price,entry.value,entry.base].every(Number.isFinite) &&
+      entry.value >= 0 && entry.base >= 0 && ["percent","amount"].includes(entry.type) &&
+      entry.value <= (entry.type === "percent" ? 100 : entry.base) &&
+      typeof entry.requiresApproval === "boolean");
+    return valid && new Set(values.map(entry => entry.index)).size === values.length ? values : [];
+  } catch { return []; }
+}
+
+export function discountApprovalPercent(entry: TicketDiscount): number {
+  return entry.type === "percent" ? entry.value : entry.base > 0 ? entry.value / entry.base * 100 : 0;
+}
+
+export function discountNeedsApproval(entry: TicketDiscount, percentLimit: number, amountLimit: number): boolean {
+  return discountApprovalPercent(entry) > percentLimit ||
+    (entry.type === "amount" && entry.value * Math.abs(entry.qty) > amountLimit);
+}
+
 /** Stable binding carried by a signed grant and checked again by the mutation. */
 export function authorizationBinding(payload: AuthPayload = {}, snapshotHash = ""): string {
   const material =

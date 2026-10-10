@@ -438,16 +438,16 @@ export type PosBridge = {
     subscribe?: (cb: (status: LocalSyncStatus) => void) => () => void;
   };
   /** Persist one operation to local SQL Server. Resolves once committed. */
-  write: (context: string, op: SyncOp) => Promise<{ ok: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null }>;
+  write: (context: string, op: SyncOp) => Promise<{ ok: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
   /** Persist a related operation set in one SQL transaction. */
-  writeBatch?: (context: string, ops: SyncOp[]) => Promise<{ ok: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null }>;
+  writeBatch?: (context: string, ops: SyncOp[]) => Promise<{ ok: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
   /** Commit a complete workflow and its metadata exactly once. */
   commitAggregate?: (aggregate: {
     kind: "sale" | "payment" | "refund" | "shift" | "product" | "receiving" | "stock" | "transfer" | "booking" | "held_order" | "general" | "branch";
     operationId?: string;
     branchId?: string;
     operations: SyncOp[];
-  }) => Promise<{ ok: boolean; replayed?: boolean; operationId?: string; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null }>;
+  }) => Promise<{ ok: boolean; replayed?: boolean; operationId?: string; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
   connect: (
     config: LocalDbConfig,
     cloud?: CloudBridgeConfig,
@@ -670,7 +670,7 @@ export type PosBridge = {
     }) => void,
   ) => () => void;
   findReceipt?: (value: string, branchId: string, proof?: { sessionToken?: string; cashierToken?: string; accessToken?: string }) => Promise<{ source: "local" | "cloud"; sale: LocalSaleRow; items?: LocalSaleRow[]; payments?: LocalSaleRow[] } | null>;
-  refundReceipt?: (value: { saleId: string; refundId: string; branchId: string; reason?: string | null }) => Promise<{ ok: boolean; replayed?: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null }>;
+  refundReceipt?: (value: { saleId: string; refundId: string; branchId: string; reason?: string | null }) => Promise<{ ok: boolean; replayed?: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
   /** Device settings stored in the branch SQL database. */
   getSetting?: (key: string) => Promise<{ ok: boolean; value?: string | null; error?: string }>;
   reserveBillCounter?: (prefix: string, minimum: number) => Promise<{ ok: boolean; sequence?: number; code?: string; error?: string }>;

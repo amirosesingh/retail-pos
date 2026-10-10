@@ -2271,6 +2271,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[]): Promise<Commit
           stage: stored.stage,
           table: stored.table,
           sqlNumber: stored.sqlNumber,
+          sqlDetail: stored.sqlDetail,
         });
       }
       return noteCommitTarget("local");
