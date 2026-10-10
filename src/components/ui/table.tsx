@@ -1,6 +1,6 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { ArrowDown, ArrowUp, ArrowUpDown, ListFilter, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, Tickets, Shapes, CalendarClock, WalletCards, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
@@ -32,7 +32,7 @@ const TableHeader = React.forwardRef<
   React.HTMLAttributes<HTMLTableSectionElement>
 >(({ className, children, ...props }, ref) => {
   return (
-    <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props}>
+    <thead ref={ref} className={cn("bg-category-1/10 [&_tr]:border-b", className)} {...props}>
       {assignHeaderColumns(children)}
     </thead>
   );
@@ -65,7 +65,7 @@ const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
     <tr
       ref={ref}
       className={cn(
-        "border-b transition-colors duration-[var(--motion-fast)] hover:bg-muted/50 data-[state=selected]:bg-muted",
+        "border-b border-border/60 transition-colors duration-[var(--motion-fast)] hover:bg-category-2/5 data-[state=selected]:bg-category-1/15",
         className,
       )}
       {...props}
@@ -84,6 +84,8 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
     const controls = React.useContext(TableControlsContext);
     const column = props["data-table-column"] ?? 0;
     const label = plainText(children);
+    const HeaderIcon = /receipt|invoice|bill no/i.test(label) ? Tickets : /product|item/i.test(label) ? Shapes : /date|created|time/i.test(label) ? CalendarClock : /total|amount|price|cost/i.test(label) ? WalletCards : null;
+    const heading = HeaderIcon ? <span className="inline-flex items-center gap-1.5"><HeaderIcon strokeWidth={1.75} aria-hidden="true" className="size-3.5 shrink-0 text-category-1" />{children}</span> : children;
     const sortable =
       controls &&
       props["data-sortable"] !== false &&
@@ -101,7 +103,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
       <th
         ref={ref}
         className={cn(
-          "h-10 px-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+          "h-11 px-3 text-left align-middle text-xs font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
           sortable && "relative",
           className,
         )}
@@ -131,7 +133,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
                     aria-label={`${label}, ${direction ? `sorted ${direction}` : "not sorted"}. Sort ${direction === "asc" ? "descending" : "ascending"}`}
                     onClick={() => controls.toggleSort(column)}
                   >
-                    <span className="truncate">{children}</span>
+                    <span className="truncate">{heading}</span>
                     <Icon
                       aria-hidden="true"
                       className={cn(
@@ -153,12 +155,12 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
                       controls.setActiveFilter(controls.activeFilter === column ? null : column)
                     }
                   >
-                    <ListFilter className="size-3.5" />
+                    <Columns3 className="size-3.5" />
                   </button>
                 </>
               ) : (
                 <span className={cn("min-h-8 flex-1 px-1 leading-8", rightAligned && "text-right")}>
-                  {children}
+                  {heading}
                 </span>
               )}
             </div>
@@ -203,7 +205,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
             />
           </div>
         ) : (
-          children
+          heading
         )}
       </th>
     );
@@ -218,7 +220,7 @@ const TableCell = React.forwardRef<
   <td
     ref={ref}
     className={cn(
-      "p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+      "px-3 py-3 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
       className,
     )}
     {...props}
@@ -682,7 +684,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
         resizeBy,
       ],
     );
-    const columnMenu = (<DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm"><ListFilter className="size-4" /> Columns</Button></DropdownMenuTrigger>
+    const columnMenu = (<DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm"><Columns3 className="size-4" /> Columns</Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
               <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
               {labels.map((label, column) => label && <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} disabled={column === 0 || /^(actions?|open)$/i.test(label)} onSelect={event => event.preventDefault()} onCheckedChange={checked => {
@@ -694,14 +696,14 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
           </DropdownMenu>);
     return (
       <TableControlsContext.Provider value={controls}>
-        {managed && <div className="flex flex-wrap items-center justify-between gap-3 border-b p-3">
+        {managed && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-category-2/5 px-4 py-3">
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-live="polite">
             <span className="text-muted-foreground">Matching totals · {managedRows.length} rows</span>
             {Object.entries(totals).map(([label, value]) => <span key={label}>{label}: <strong className="numeric">{summaryFormats[label]?.(value) ?? value.toLocaleString()}</strong></span>)}
           </div>
           {columnMenu}
         </div>}
-        {!managed && columnControls && (controlsTarget ? createPortal(columnMenu, controlsTarget) : <div className="flex justify-end p-2">{columnMenu}</div>)}
+        {!managed && columnControls && (controlsTarget ? createPortal(columnMenu, controlsTarget) : <div className="flex justify-end px-3 py-2">{columnMenu}</div>)}
         <div className="responsive-table-region relative w-full max-w-full overflow-x-auto overscroll-x-contain">
           <table
             ref={internalRef}

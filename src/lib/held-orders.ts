@@ -9,7 +9,7 @@ import { subscribeDataChange } from "./sync-engine";
  */
 import { useEffect, useState } from "react";
 
-import type { CartLine } from "@/core/types/pos-types";
+import { lineDiscountTotal, r2, type CartLine, type Sale } from "@/core/types/pos-types";
 import { db } from "@/core/api/pos-db";
 import { readBusinessValue, writeBusinessValue } from "./business-storage";
 import { clearDeviceSecret, getDeviceSecret, setDeviceSecret } from "./device-secrets";
@@ -112,6 +112,13 @@ export function readHeldOrders(): HeldOrder[] {
   }
 }
 
+/** Deep links may arrive before the Holds hook's first database read finishes. */
+export async function loadHeldOrder(id: string): Promise<HeldOrder | undefined> {
+  const cached = readHeldOrders().find(order => order.id === id);
+  const order = cached ?? (await db.listHeldOrders()).map(row => rowToHeldOrder(row as Record<string, unknown>)).find(order => order.id === id);
+  return order && !["completed", "cancelled"].includes(order.status ?? "held") ? order : undefined;
+}
+
 function write(orders: HeldOrder[]) {
   if (typeof window === "undefined") return;
   if (isElectronRenderer()) electronOrders = orders;
@@ -191,12 +198,31 @@ export async function updateHeldOrder(id: string, patch: Partial<HeldOrder>) {
 }
 
 /** Park a cancelled bill so the till can correct and re-ring it. */
+export function saleCorrectionContext(sale: Sale) {
+  const lineDiscount = sale.lines.reduce((sum,line) => sum + lineDiscountTotal(line) * (line.qty < 0 ? -1 : 1),0);
+  const billCoupon = sale.couponScope === "bill" ? sale.couponDiscount ?? 0 : 0;
+  return {
+    cartDiscount: r2(Math.max(0,sale.discount-lineDiscount-billCoupon)),
+    cartDiscountType: "amount" as const,
+    memberId: sale.memberId,
+    coupon: sale.couponCode ? {
+      code:sale.couponCode,promoId:sale.couponPromoId ?? "",scope:sale.couponScope ?? "bill",
+      discount:sale.couponDiscount ?? 0,appliedAt:sale.createdAt,name:sale.couponName,remaining:sale.couponRemaining,
+      productId:sale.couponScope === "item" ? sale.lines.find(line => line.couponCode === sale.couponCode)?.productId : undefined,
+    } : null,
+  };
+}
+
 export function holdCancelledBill(input: {
   id?: string;
   receiptNo: string;
   total: number;
   lines: CartLine[];
   storeId: string;
+  cartDiscount?: number;
+  cartDiscountType?: "amount" | "percent";
+  memberId?: string | null;
+  coupon?: unknown;
 }): Promise<HeldOrder> {
   const order: HeldOrder = {
     id: input.id ?? `C${crypto.randomUUID()}`,
@@ -206,6 +232,10 @@ export function holdCancelledBill(input: {
     heldAt: new Date().toISOString(),
     cancelledFrom: input.receiptNo,
     storeId: input.storeId,
+    cartDiscount: input.cartDiscount ?? 0,
+    cartDiscountType: input.cartDiscountType ?? "amount",
+    memberId: input.memberId ?? null,
+    coupon: input.coupon ?? null,
   };
   return addHeldOrder(order).then(() => order);
 }

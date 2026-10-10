@@ -376,6 +376,7 @@ function AlertsHistory() {
                 />
                 <Detail label="Terminal" value={selected.terminalName || "This terminal"} />
                 <Detail label="Delivery status" value={selected.whatsappStatus} />
+                <Detail label="Cleared by" value={selected.clearedBy.join(", ") || "Not cleared"} />
               </dl>
             </div>
           )}

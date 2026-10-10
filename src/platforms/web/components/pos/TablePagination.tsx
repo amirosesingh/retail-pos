@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { ArrowLeft, ArrowRight, SkipBack, SkipForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -73,7 +73,7 @@ export function TablePagination({
 }: Props) {
   const fmt = (n: number) => n.toLocaleString();
   return (
-    <div className="flex flex-col items-stretch gap-3 border-t border-border px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-4">
+    <div className="flex flex-col items-stretch gap-3 border-t border-border/60 bg-category-2/5 px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-4">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <span>Rows per page</span>
         <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
@@ -97,46 +97,46 @@ export function TablePagination({
       <div className="flex items-center justify-center gap-1">
         <Button
           size="icon"
-          variant="outline"
-          className="size-8"
+          variant="ghost"
+          className="size-9 rounded-lg text-category-1 hover:bg-category-1/10"
           aria-label="First page"
           disabled={page <= 1}
           onClick={() => onPage(1)}
         >
-          <ChevronsLeft className="size-4" />
+          <SkipBack strokeWidth={1.75} className="size-4" />
         </Button>
         <Button
           size="icon"
-          variant="outline"
-          className="size-8"
+          variant="ghost"
+          className="size-9 rounded-lg text-category-1 hover:bg-category-1/10"
           aria-label="Previous page"
           disabled={page <= 1}
           onClick={() => onPage(page - 1)}
         >
-          <ChevronLeft className="size-4" />
+          <ArrowLeft strokeWidth={1.75} className="size-4" />
         </Button>
         <span className="numeric px-2 text-sm">
           Page {page} of {pageCount}
         </span>
         <Button
           size="icon"
-          variant="outline"
-          className="size-8"
+          variant="ghost"
+          className="size-9 rounded-lg text-category-1 hover:bg-category-1/10"
           aria-label="Next page"
           disabled={page >= pageCount}
           onClick={() => onPage(page + 1)}
         >
-          <ChevronRight className="size-4" />
+          <ArrowRight strokeWidth={1.75} className="size-4" />
         </Button>
         <Button
           size="icon"
-          variant="outline"
-          className="size-8"
+          variant="ghost"
+          className="size-9 rounded-lg text-category-1 hover:bg-category-1/10"
           aria-label="Last page"
           disabled={page >= pageCount}
           onClick={() => onPage(pageCount)}
         >
-          <ChevronsRight className="size-4" />
+          <SkipForward strokeWidth={1.75} className="size-4" />
         </Button>
       </div>
     </div>

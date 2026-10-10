@@ -27,7 +27,7 @@ export const MAX_ZOOM = REGISTER_ZOOM_MAX;
 
 export function ZoomCanvas({ children, className }: { children: ReactNode; className?: string }) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  const [fitWorkspace, setFitWorkspace] = useState(false);
+  const [fitWorkspace, setFitWorkspace] = useState(true);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   useEffect(() => {
     const el = viewportRef.current;

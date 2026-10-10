@@ -485,7 +485,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {/* Mobile top bar + slide-out drawer */}
-              <header className="pt-safe sticky top-0 z-30 flex shrink-0 items-center gap-2 border-b border-border bg-sidebar px-3 pb-2 md:hidden">
+              <header className="pt-safe sticky top-0 z-30 flex shrink-0 items-center gap-2 border-b border-category-1/20 bg-category-1/5 px-3 pb-2 md:hidden">
                 <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
                   <SheetTrigger asChild>
                     <Button
@@ -541,7 +541,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               </header>
 
               {/* Desktop header: system controls and signed-in operator profile. */}
-              <header className="sticky top-0 z-30 hidden shrink-0 items-center gap-2.5 border-b border-border bg-sidebar px-4 py-1.5 md:flex">
+              <header className="sticky top-0 z-30 hidden shrink-0 items-center gap-3 border-b border-category-1/20 bg-category-1/5 px-4 py-2 md:flex">
                 <div className="ml-auto" />
                 <span className="hidden xl:inline-flex">
                   <LiveClock />

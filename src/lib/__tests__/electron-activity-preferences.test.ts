@@ -4,14 +4,14 @@ import { describe, expect, it } from "vitest";
 const source = (file: string) => readFileSync(file, "utf8");
 
 describe("Electron activity preferences", () => {
-  it("keeps notification dismissal local to the current device profile", () => {
+  it("persists notification dismissal in the operator database", () => {
     const activity = source("src/lib/activity-events.ts");
 
     expect(activity).toContain("listActivityEventPageDirect");
     expect(activity).toContain('supabaseExternal.from("activity_events")');
     expect(activity).toContain("window.localStorage.setItem(CLEARED_KEY");
     expect(activity).not.toContain("async function syncClearedEntry");
-    expect(activity).not.toContain('supabaseExternal.rpc("set_activity_event_cleared"');
+    expect(activity).toContain('supabaseExternal.rpc("set_activity_event_cleared"');
     expect(activity).not.toContain("Saving notification preference");
   });
 

@@ -35,6 +35,9 @@ import {
   setHeldOrders,
   updateHeldOrder,
   markHeldReady,
+  holdCancelledBill,
+  loadHeldOrder,
+  saleCorrectionContext,
   type HeldOrder,
 } from "@/lib/held-orders";
 
@@ -66,6 +69,23 @@ describe("held order durability", () => {
       removeEventListener: vi.fn(),
     });
     setHeldOrders(() => []);
+  });
+
+  it("loads a correction deep link before the shared cache is ready", async () => {
+    setHeldOrders(() => []);
+    database.listHeldOrders.mockResolvedValue([{id:"correction",store_id:"branch-1",lines:order.lines,status:"held",total:12}]);
+    expect(await loadHeldOrder("correction")).toMatchObject({id:"correction",storeId:"branch-1"});
+    database.listHeldOrders.mockResolvedValue([{id:"completed",status:"completed"}]);
+    expect(await loadHeldOrder("completed")).toBeUndefined();
+  });
+
+  it("preserves correction discounts, member and coupon without counting coupon money twice", async () => {
+    const sale = {discount:25,memberId:"member",couponCode:"SAVE",couponPromoId:"promo",couponScope:"bill",couponDiscount:5,createdAt:order.heldAt,lines:[{...order.lines[0],price:100,discount:10,discountType:"percent"}]} as import("@/core/types/pos-types").Sale;
+    const context = saleCorrectionContext(sale);
+    expect(context.cartDiscount).toBe(10);
+    const prepared = await holdCancelledBill({id:"correction-context",receiptNo:"R1",lines:sale.lines,storeId:"branch-1",total:75,...context});
+    expect(prepared).toMatchObject({cartDiscount:10,cartDiscountType:"amount",memberId:"member",coupon:{code:"SAVE",discount:5},lines:sale.lines});
+    expect(database.commitHeldOrder).toHaveBeenCalledWith(expect.objectContaining({cartDiscount:10,memberId:"member",coupon:context.coupon}));
   });
 
   it("does not show a ticket until the database confirms the hold", async () => {

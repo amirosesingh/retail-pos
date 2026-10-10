@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { notifyError } from "@/lib/notify";
 import {
   addHeldOrder,
+  loadHeldOrder,
   updateHeldOrder,
   useHeldOrders,
   type HeldOrder,
@@ -221,8 +222,8 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
     if (resuming.current.has(id) || (activeId.current === id && deps.lines.length)) return;
     resuming.current.add(id);
     try {
-      const order = held.find((h) => h.id === id);
-      if (!order) return;
+      const order = held.find((h) => h.id === id) ?? await loadHeldOrder(id);
+      if (!order) { toast.error("This held ticket is no longer available"); return; }
       if (order.storeId !== deps.storeId) {
         toast.error("That held ticket belongs to another branch");
         return;

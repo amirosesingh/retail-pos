@@ -62,7 +62,7 @@ export type ActivityEvent = {
   meta: Record<string, unknown>;
   whatsappStatus: string;
   createdAt: string;
-  /** Legacy server markers retained for report compatibility; live dismissal is local. */
+  /** Durable identities that acknowledged this notification; retained in alert history. */
   clearedBy: string[];
 };
 
@@ -657,9 +657,9 @@ export function toCsv(rows: ActivityEvent[]): string {
 /* ------------------------------------------------------- cleared entries */
 
 /**
- * Clearing an entry hides it for the person who cleared it. The event, the
- * approval request and the authorisation log are untouched — anything cleared
- * can be reopened from the Cleared tab.
+ * Clearing an entry acknowledges it for every recipient. The event, the
+ * approval request and the authorisation log remain unchanged. Clears are
+ * persisted before the shared delivery cache hides the notification.
  */
 const CLEARED_KEY = "pos.activity.cleared";
 
@@ -686,24 +686,61 @@ function writeClearedMap(map: ClearedMap) {
   window.dispatchEvent(new CustomEvent("pos:activity-cleared-changed"));
 }
 
-export const clearedIds = (userId: string): string[] => readClearedMap()[who(userId)] ?? [];
+export const clearedIds = (userId: string): string[] => [...new Set([...(readClearedMap()["shared"] ?? []),...(readClearedMap()[who(userId)] ?? [])])];
 
 /**
- * Dismissal is intentionally local to this browser profile. Approval records
- * and audit events remain durable, while another till keeps its own view.
+ * Dismissal is shared across recipients and synchronized devices. Approval records
+ * and audit events remain durable.
  */
-export function mergeRemoteActivityPreferences(_userId: string, _rows: ActivityEvent[]) {}
+export function mergeRemoteActivityPreferences(_userId: string, rows: ActivityEvent[]) {
+  const map = readClearedMap();
+  const previous = map["shared"] ?? [];
+  map["shared"] = [...new Set([...previous,...rows.filter(row => row.clearedBy.length > 0).map(row => row.id)])];
+  if (map["shared"].length === previous.length) return;
+  writeClearedMap(map);
+}
+
+async function saveNotificationClear(userId: string, id: string): Promise<boolean> {
+  if (!userId || !id) return false;
+  try {
+    const bridge = localDb();
+    if (bridge?.query) {
+      const result = await bridge.query("activity_events",{match:{id},limit:1});
+      if (!result.ok || !result.rows?.[0]) return false;
+      const row = result.rows[0] as Row;
+      const identity = activityAudienceIdentity();
+      if (identity && !activityVisibleTo(row,identity)) return false;
+      const previous = map(row).clearedBy;
+      if (!previous.length) {
+        const {commitOps} = await import("@/core/api/pos-db");
+        await commitOps("Clearing notification",[{kind:"update",table:"activity_events",match:{id},values:{cleared_by:JSON.stringify([userId])},requireMatch:true}]);
+      }
+      return true;
+    }
+    const credentials = await readCredentials();
+    if (platformName() === "electron") {
+      if (!credentials.accessToken) return false;
+      const result = await supabaseExternal.rpc("set_activity_event_cleared",{p_event_id:id,p_cleared:true});
+      return !result.error;
+    }
+    const response = await posFetch("/api/v1/pos/activity-preferences",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"clear",eventId:id,cleared:true,...credentials})});
+    const result = await response.json() as {ok?:boolean};
+    return response.ok && result.ok === true;
+  } catch { return false; }
+}
 
 export async function clearActivityEntry(userId: string, id: string): Promise<boolean> {
+  if (!await saveNotificationClear(userId,id)) return false;
   const map = readClearedMap();
-  const key = who(userId);
+  const key = "shared";
   const list = map[key] ?? [];
-  if (!list.includes(id)) map[key] = [...list, id].slice(-500);
+  if (!list.includes(id)) map[key] = [...list, id];
   writeClearedMap(map);
   return true;
 }
 
 export async function reopenActivityEntry(userId: string, id: string): Promise<boolean> {
+  if ((readClearedMap()["shared"] ?? []).includes(id)) return false;
   const map = readClearedMap();
   const key = who(userId);
   map[key] = (map[key] ?? []).filter((x) => x !== id);
@@ -711,16 +748,35 @@ export async function reopenActivityEntry(userId: string, id: string): Promise<b
   return true;
 }
 
-/** Move every currently active notification into this person's history. */
+/** Acknowledge the displayed notifications; retain successful clears on partial failure. */
 export async function clearAllActivityEntries(
   userId: string,
   visibleIds: string[],
 ): Promise<boolean> {
-  const map = readClearedMap();
-  const key = who(userId);
-  map[key] = [...new Set([...(map[key] ?? []), ...visibleIds])].slice(-500);
-  writeClearedMap(map);
-  return true;
+  const ids = [...new Set(visibleIds)];
+  const bridge = localDb();
+  if (bridge?.query && ids.length) {
+    if (!userId) return false;
+    try {
+      const result = await bridge.query("activity_events",{in:{column:"id",values:ids},limit:ids.length});
+      if (!result.ok || result.rows?.length !== ids.length) return false;
+      const identity = activityAudienceIdentity();
+      if (identity && result.rows.some(row => !activityVisibleTo(row as Row,identity))) return false;
+      const {commitOps} = await import("@/core/api/pos-db");
+      const rows = result.rows.filter(row => !map(row as Row).clearedBy.length);
+      if (rows.length) await commitOps("Clearing notifications",rows.map(row => ({kind:"update" as const,table:"activity_events",match:{id:row.id},values:{cleared_by:JSON.stringify([userId])},requireMatch:true})));
+      const cleared = readClearedMap();
+      cleared["shared"] = [...new Set([...(cleared["shared"] ?? []),...ids])];
+      writeClearedMap(cleared);
+      return true;
+    } catch { return false; }
+  }
+  let saved = true;
+  for (let index=0;index<ids.length;index+=4) {
+    const results = await Promise.all(ids.slice(index,index+4).map(id => clearActivityEntry(userId,id)));
+    if (results.some(result => !result)) saved = false;
+  }
+  return saved;
 }
 
 export const isCleared = (userId: string, id: string): boolean => clearedIds(userId).includes(id);
