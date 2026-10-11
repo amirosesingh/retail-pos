@@ -4948,6 +4948,7 @@ IF OBJECT_ID(N'dbo.sale_items', N'U') IS NULL BEGIN CREATE TABLE dbo.[sale_items
   [row_version] int NOT NULL CONSTRAINT [DF_sale_items_row_version] DEFAULT (1),
   [refunded_qty] int NOT NULL CONSTRAINT [DF_sale_items_refunded_qty] DEFAULT (0),
   [branch_id] nvarchar(450) NULL,
+  [corrected_at] datetimeoffset(7) NULL,
   CONSTRAINT [PK_sale_items] PRIMARY KEY ([id])
 
 ); END;
@@ -5145,6 +5146,8 @@ IF COL_LENGTH(N'dbo.sale_items', N'branch_id') IS NULL ALTER TABLE dbo.[sale_ite
 
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.sale_items') AND c.name=N'branch_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[sale_items] ALTER COLUMN [branch_id] nvarchar(450) NULL;
 
+IF COL_LENGTH(N'dbo.sale_items', N'corrected_at') IS NULL ALTER TABLE dbo.[sale_items] ADD [corrected_at] datetimeoffset(7) NULL;
+
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.sale_items') AND name=N'IX_sale_items_branch_id') CREATE INDEX [IX_sale_items_branch_id] ON dbo.[sale_items]([branch_id]);
 
 IF OBJECT_ID(N'dbo.sales', N'U') IS NULL BEGIN CREATE TABLE dbo.[sales] (
@@ -5188,6 +5191,7 @@ IF OBJECT_ID(N'dbo.sales', N'U') IS NULL BEGIN CREATE TABLE dbo.[sales] (
   [rounding_adjustment] decimal(18,4) NOT NULL CONSTRAINT [DF_sales_rounding_adjustment] DEFAULT (0),
   [rounding_label] nvarchar(max) NULL,
   [branch_id] nvarchar(450) NULL,
+  [corrected_at] datetimeoffset(7) NULL,
   CONSTRAINT [PK_sales] PRIMARY KEY ([id])
 
 ); END;
@@ -5481,6 +5485,8 @@ IF COL_LENGTH(N'dbo.sales', N'rounding_label') IS NULL ALTER TABLE dbo.[sales] A
 IF COL_LENGTH(N'dbo.sales', N'branch_id') IS NULL ALTER TABLE dbo.[sales] ADD [branch_id] nvarchar(450) NULL;
 
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.sales') AND c.name=N'branch_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[sales] ALTER COLUMN [branch_id] nvarchar(450) NULL;
+
+IF COL_LENGTH(N'dbo.sales', N'corrected_at') IS NULL ALTER TABLE dbo.[sales] ADD [corrected_at] datetimeoffset(7) NULL;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.sales') AND name=N'UX_sales_bill_number') CREATE UNIQUE INDEX [UX_sales_bill_number] ON dbo.[sales]([bill_number]);
 

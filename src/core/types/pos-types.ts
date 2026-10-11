@@ -148,6 +148,8 @@ export type Member = {
 };
 
 export type CartLine = {
+  /** Persisted receipt line identity, retained by in-place corrections. */
+  saleItemId?: string;
   productId: string;
   name: string;
   /** exact barcode variation scanned for this line, when applicable */
@@ -327,6 +329,8 @@ export function validateTenders(total: number, tenders: Payment[]): TenderCheck 
 }
 
 export type Sale = {
+  rowVersion?: number;
+  correctedAt?: string;
   id: string;
   receiptNo: string;
   storeId: string;

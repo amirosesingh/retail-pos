@@ -302,8 +302,18 @@ class CloudClient {
         : versioned
           ? ` AND source.[row_version]${cloudWinsEqual ? ">=" : ">"}target.[row_version]`
           : "";
+      // Only authoritative cloud corrections may amend posted receipt fields.
+      // Terminal uploads still obey the immutable sale/refund contract.
+      const correctedReceipt = correction && versioned && names.some(([name]) => name === "corrected_at") && deviceRow.corrected_at;
+      const correctionAllowed = `source.[corrected_at] IS NOT NULL AND source.[row_version]>target.[row_version] AND ${table.cloudTable === "sales" ? "COALESCE(target.[is_refunded],0)=0 AND COALESCE(source.[is_refunded],0)=0" : "COALESCE(target.[refunded_qty],0)=0 AND COALESCE(source.[refunded_qty],0)=0"}`;
+      const correctedUpdates = correctedReceipt ? names.filter(([name]) => !mergeKey.includes(name)).map(([name]) => {
+        const fallback = name === "row_version" ? "CASE WHEN source.[row_version]>target.[row_version] THEN source.[row_version] ELSE target.[row_version] END"
+          : name === "is_refunded" ? "CASE WHEN target.[is_refunded]=1 OR source.[is_refunded]=1 THEN 1 ELSE 0 END"
+          : name === "refunded_qty" ? "CASE WHEN source.[refunded_qty]>target.[refunded_qty] THEN source.[refunded_qty] ELSE target.[refunded_qty] END" : `target.[${name}]`;
+        return `target.[${name}]=CASE WHEN ${correctionAllowed} THEN source.[${name}] ELSE ${fallback} END`;
+      }).join(",") : null;
       const matched = correction
-        ? `WHEN MATCHED THEN UPDATE SET ${correction}`
+        ? `WHEN MATCHED THEN UPDATE SET ${correctedUpdates ?? correction}`
         : mayUpdate
           ? `WHEN MATCHED${authorizationOrder} THEN UPDATE SET ${updates.join(",")}`
           : "";
