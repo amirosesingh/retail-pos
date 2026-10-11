@@ -7,6 +7,17 @@ const {stripTypeScriptTypes}=require('node:module');
 const gapSource=stripTypeScriptTypes(readFileSync('src/lib/schema-health.ts','utf8')).replace(/^import .*;\s*$/gm,'').replace(/\bexport /g,'');
 const {buildLocalSql,buildCloudSql}=new Function(`${gapSource}\nreturn {buildLocalSql,buildCloudSql};`)();
 
+test('in-place receipt migration records completion after ensuring both columns',()=>{
+  const sql=readFileSync('database/sqlserver/migrations/017_in_place_sale_corrections.sql','utf8');
+  assert.match(sql,/IF NOT EXISTS \(SELECT 1 FROM dbo\.pos_schema_migrations WHERE version=17\)/);
+  const marker=sql.indexOf('INSERT dbo.pos_schema_migrations(version,name) VALUES(17,');
+  assert.ok(marker>sql.indexOf('ALTER TABLE dbo.sales ADD corrected_at'));
+  assert.ok(marker>sql.indexOf('ALTER TABLE dbo.sale_items ADD corrected_at'));
+  for(const file of ['retail-pos-local-update.sql','retail-pos-local-database.sql']) {
+    assert.match(readFileSync(`database/sqlserver/${file}`,'utf8'),/INSERT dbo\.pos_schema_migrations\(version,name\) VALUES\(17,/);
+  }
+});
+
 test('legacy gap exports refuse unknown column types and incomplete table repairs',()=>{
   const gap={environment:'local',table:'members',columns:['is_verified'],missingTable:false};
   assert.throws(()=>buildLocalSql([gap],'local.sql'),/No verified local type/);
