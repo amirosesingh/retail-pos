@@ -1,5 +1,5 @@
 import { uniqueSales, sameRecordId } from "@/lib/sale-identity";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Gift, Printer, ReceiptText, Search, ScrollText, Wallet, Wrench } from "lucide-react";
 import { toast } from "sonner";
@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { cartTotals, money, usePos } from "@/lib/pos-store";
+import { money, usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import { useUserPermissions } from "@/lib/pos-permissions";
 import { logger } from "@/lib/audit-log";
@@ -38,15 +38,15 @@ import {
 } from "@/lib/pos-print";
 import type { PaymentMethod, Sale } from "@/core/types/pos-types";
 import { r2, type CartLine, type DiscountType } from "@/core/types/pos-types";
-import { findReceiptExact, loadSalesPage } from "@/core/api/pos-db";
+import { findReceiptExact, loadSalesPage, loadBillForCorrection } from "@/core/api/pos-db";
 import type { Cursor } from "@/lib/keyset";
 import {
   clearPendingRecordEditHistory,
   loadPendingRecordEditHistory,
   type RecordEditHistoryInput,
-  rememberPendingRecordEditHistory,
   saveRecordEditHistory,
 } from "@/lib/record-edit-flow";
+import { billCorrectionTotals } from "@/lib/bill-correction";
 import { useManagerGate } from "@/lib/manager-gate";
 
 export const Route = createFileRoute("/receipts")({
@@ -85,8 +85,7 @@ const TEMPLATES: { key: Template; label: string; icon: typeof Printer }[] = [
 ];
 
 function ReceiptVault() {
-  const navigate = useNavigate();
-  const { state, currentStore, activeShift, refundSale, changeSalePayment } = usePos();
+  const { state, currentStore, activeShift, refundSale, changeSalePayment, correctSale } = usePos();
   const { user, can, isAdmin } = useAuth();
   const { requirePermission } = useUserPermissions();
   const { authorize, rules: authorizationRules } = useManagerGate();
@@ -104,6 +103,7 @@ function ReceiptVault() {
   const [correctionDiscount, setCorrectionDiscount] = useState(0);
   const [correctionDiscountType, setCorrectionDiscountType] = useState<DiscountType>("amount");
   const [correctionSearch, setCorrectionSearch] = useState("");
+  const correctionKey = useRef(crypto.randomUUID());
   const cancelling = useRef(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [pendingCorrectionAudit, setPendingCorrectionAudit] = useState<{
@@ -276,19 +276,20 @@ function ReceiptVault() {
     setCancelOpen(true);
   }
 
-  function openSaleCorrection() {
-    if (!selected) return;
-    if (!isAdmin) {
-      toast.error("Only an administrator can correct a finalized sale.");
-      return;
-    }
-    setCancelMode("correct");
-    setCorrectionLines(selected.lines.map(line => ({...line})));
-    setCorrectionDiscount(saleCorrectionContext(selected).cartDiscount);
-    setCorrectionDiscountType("amount");
-    setCorrectionSearch("");
-    setCancelReason("");
-    setCancelOpen(true);
+  async function openSaleCorrection() {
+    if (!selected || cancelBusy) return;
+    if (!isAdmin) {toast.error("Only an administrator can correct a finalized sale.");return;}
+    setCancelBusy(true);
+    try {
+      const fresh=await loadBillForCorrection(selected);
+      setOlder(rows=>[fresh,...rows.filter(row=>row.id!==fresh.id)]);
+      correctionKey.current=crypto.randomUUID();
+      setCancelMode("correct");
+      setCorrectionLines(fresh.lines.map(line=>({...line})));
+      setCorrectionDiscount(saleCorrectionContext(fresh).cartDiscount);
+      setCorrectionDiscountType("amount");setCorrectionSearch("");setCancelReason("");setCancelOpen(true);
+    }catch(error){notifyError(error,"Opening bill correction");}
+    finally{setCancelBusy(false);}
   }
 
   async function confirmCancel() {
@@ -300,6 +301,25 @@ function ReceiptVault() {
   }
 
   async function performCancel() {
+    if (cancelMode === "correct") {
+      if (!selected || !isAdmin) return;
+      if (!Number.isFinite(correctionDiscount) || correctionDiscount < 0 || (correctionDiscountType === "percent" && correctionDiscount > 100) || !correctionLines.length || correctionLines.some(line => !Number.isInteger(line.qty) || line.qty <= 0 || !Number.isFinite(line.discount) || line.discount < 0 || line.discount > (line.discountType === "percent" ? 100 : line.price))) {
+        toast.error("Check the quantities and discounts before saving this correction"); return;
+      }
+      const reason=cancelReason.trim();
+      if(reason.length<3){toast.error("Enter the reason for this correction");return;}
+      const totals=billCorrectionTotals(selected,correctionLines,correctionDiscount,correctionDiscountType);
+      const corrected:Sale={...selected,lines:correctionLines,subtotal:totals.subtotal,discount:totals.discount,tax:totals.tax,total:totals.total,
+        couponDiscount:selected.couponScope==="item"?r2(correctionLines.reduce((sum,line)=>sum+(line.couponDiscount??0),0)):selected.couponDiscount,
+        roundingAdjustment:0};
+      try {
+        const saved=await correctSale(selected,corrected,reason,correctionKey.current);
+        setOlder(rows=>[saved,...rows.filter(row=>row.id!==saved.id)]);
+        setCancelOpen(false);
+        toast.success(`Corrected bill ${saved.receiptNo}`);
+      }catch(error){notifyError(error,"Correcting the bill");}
+      return;
+    }
     if (pendingCorrectionHold && retryingCorrectionHold) {
       if (correctionHoldRetries.current.has(pendingCorrectionHold.saleId)) return;
       correctionHoldRetries.current.add(pendingCorrectionHold.saleId);
@@ -313,7 +333,6 @@ function ReceiptVault() {
             ? "The correction draft is now in Holds. Retry its audit entry next."
             : "The correction draft is now available in Holds.",
         );
-        if (!retryingCorrectionAudit) await navigate({to:"/",search:{resume:pendingCorrectionHold.id ?? `C-${pendingCorrectionHold.saleId}`,sell:true}});
       } catch (error) {
         notifyError(error, "The bill is reversed, but preparing its correction draft still failed");
       } finally {
@@ -331,151 +350,28 @@ function ReceiptVault() {
       setPendingCorrectionAudit(null);
       setCancelOpen(false);
       toast.success("The completed correction audit entry is now saved.");
-      await navigate({to:"/",search:{resume:`C-${pendingCorrectionAudit.input.recordId}`,sell:true}});
       return;
     }
     if (!selected) return;
-    if (cancelMode === "correct" && (!Number.isFinite(correctionDiscount) || correctionDiscount < 0 || (correctionDiscountType === "percent" && correctionDiscount > 100))) {
-      toast.error("Enter a valid whole-bill discount");
-      return;
-    }
-    if (cancelMode === "correct" && (!correctionLines.length || correctionLines.some(line => !Number.isFinite(line.qty) || line.qty <= 0 || !Number.isFinite(line.discount) || line.discount < 0 || line.discount > (line.discountType === "percent" ? 100 : line.price)))) {
-      toast.error("Check each item's quantity and discount before preparing the correction");
-      return;
-    }
     const reason = cancelReason.trim();
-    if (reason.length < 3) {
-      toast.error("Type why this bill is being cancelled");
-      return;
-    }
+    if (reason.length < 3) { toast.error("Type why this bill is being cancelled"); return; }
     const grant = await authorize({
-      action: "refund",
-      title: "Authorise bill void / refund",
-      reason,
-      storeId: currentStore.id,
-      requestedBy: user?.staffId ?? user?.name ?? null,
-      requestedAmount: Math.abs(selected.total),
-      valueUnit: "currency",
-      payload: {
-        sale_id: selected.id,
-        receipt_no: selected.receiptNo,
-        total: Math.abs(selected.total),
-      },
-      detail: reason,
+      action: "refund", title: "Authorise bill void / refund", reason, storeId: currentStore.id,
+      requestedBy: user?.staffId ?? user?.name ?? null, requestedAmount: Math.abs(selected.total), valueUnit: "currency",
+      payload: {sale_id:selected.id,receipt_no:selected.receiptNo,total:Math.abs(selected.total)}, detail:reason,
     });
-    if (!grant.ok) {
-      if (grant.pendingRequestId) setCancelOpen(false);
-      return;
-    }
+    if(!grant.ok){if(grant.pendingRequestId)setCancelOpen(false);return;}
     try {
-      const saleSnapshot = {
-        receiptNo: selected.receiptNo,
-        subtotal: selected.subtotal,
-        discount: selected.discount,
-        tax: selected.tax,
-        total: selected.total,
-        paymentMethod: selected.method,
-        refunded: selected.refunded,
-        lines: selected.lines,
-      };
-      const stockDeltas = selected.lines.reduce<Record<string, number>>((changes, line) => {
-        changes[line.productId] = (changes[line.productId] ?? 0) + line.qty;
-        return changes;
-      }, {});
-      if (cancelMode === "correct") {
-        const auditReady = await saveRecordEditHistory({
-          kind: "sale",
-          recordId: selected.id,
-          reference: selected.receiptNo,
-          storeId: selected.storeId,
-          actionKey: "SALE_CORRECTION_STARTED",
-          before: saleSnapshot,
-          after: saleSnapshot,
-          stockDeltas: {},
-          note: reason,
-        });
-        if (!auditReady) {
-          toast.error("Correction stopped because its audit record could not be saved.");
-          return;
-        }
-      }
       const reversed = await refundSale(selected.id, grant.grantToken, selected);
-      if (!reversed) {
-        toast.error("The bill could not be reversed. No correction draft was created.");
-        return;
-      }
-      setOlder((rows) =>
-        rows.map((row) => (row.id === selected.id ? { ...row, refunded: true } : row)),
-      );
-      const correctionHold = {
-        ...saleCorrectionContext(selected),
-        id: `C-${selected.id}`,
-        saleId: selected.id,
-        receiptNo: selected.receiptNo,
-        total: cancelMode === "correct" ? cartTotals(correctionLines, correctionDiscount, correctionDiscountType, state.settings.tax, selected.couponScope === "bill" ? selected.couponDiscount ?? 0 : 0).total : selected.total,
-        lines: cancelMode === "correct" ? correctionLines : selected.lines,
-        storeId: selected.storeId,
-        cartDiscount: cancelMode === "correct" ? correctionDiscount : saleCorrectionContext(selected).cartDiscount,
-        cartDiscountType: cancelMode === "correct" ? correctionDiscountType : "amount" as const,
-      };
-      let holdPrepared = true;
-      try {
-        await holdCancelledBill(correctionHold);
-      } catch {
-        holdPrepared = false;
-        setPendingCorrectionHold(correctionHold);
-        await rememberPendingCorrectionHold(correctionHold).catch(() => undefined);
-      }
-      if (cancelMode === "correct") {
-        const completedAudit = {
-          historyId: crypto.randomUUID(),
-          kind: "sale",
-          recordId: selected.id,
-          reference: selected.receiptNo,
-          storeId: selected.storeId,
-          actionKey: "SALE_REVERSED_FOR_CORRECTION",
-          before: saleSnapshot,
-          after: {
-            ...saleSnapshot,
-            refunded: true,
-            correctionDraft: {lines:correctionHold.lines,cartDiscount:correctionHold.cartDiscount,cartDiscountType:correctionHold.cartDiscountType,total:correctionHold.total},
-          },
-          stockDeltas,
-          note: reason,
-        } satisfies Parameters<typeof saveRecordEditHistory>[0];
-        const auditSaved = await saveRecordEditHistory(completedAudit);
-        if (!auditSaved) {
-          const retryRemembered = await rememberPendingRecordEditHistory(completedAudit);
-          setPendingCorrectionAudit({ input: completedAudit, persisted: retryRemembered });
-          logActivity(selected, reason);
-          toast.error(
-            retryRemembered
-              ? holdPrepared
-                ? "The bill was reversed and placed in Holds, but its completed audit entry still needs saving. The retry is secured on this device."
-                : "The bill was reversed, but its correction draft and completed audit entry still need retrying. Keep this dialog open."
-              : "The bill was reversed, but this device could not preserve the audit retry. Keep this dialog open and retry before leaving.",
-          );
-          return;
-        }
-      }
-      logActivity(selected, reason);
-      if (!holdPrepared) {
-        toast.error("The bill was reversed, but its correction draft was not prepared", {
-          description:
-            "The reversal is safely recorded. Keep this dialog open and use Retry preparing correction.",
-        });
-        return;
-      }
+      if (!reversed) {toast.error("The bill could not be reversed. No correction draft was created.");return;}
+      setOlder(rows=>rows.map(row=>row.id===selected.id?{...row,refunded:true}:row));
+      const correctionHold={...saleCorrectionContext(selected),id:`C-${selected.id}`,saleId:selected.id,receiptNo:selected.receiptNo,total:selected.total,lines:selected.lines,storeId:selected.storeId};
+      try{await holdCancelledBill(correctionHold);}
+      catch{setPendingCorrectionHold(correctionHold);await rememberPendingCorrectionHold(correctionHold).catch(()=>undefined);toast.error("The bill was reversed, but its correction draft was not prepared. Retry preparing correction.");return;}
+      logActivity(selected,reason);
       setCancelOpen(false);
-      toast.success(
-        cancelMode === "correct"
-          ? `Bill ${selected.receiptNo} reversed — open it from Holds, correct it, and complete a replacement receipt`
-          : `Bill ${selected.receiptNo} cancelled — the items are waiting on the register's hold list`,
-      );
-      if (cancelMode === "correct") await navigate({to:"/",search:{resume:correctionHold.id,sell:true}});
-    } catch (error) {
-      notifyError(error, "Cancelling the bill");
-    }
+      toast.success(`Bill ${selected.receiptNo} cancelled — the items are waiting on the register's hold list`);
+    }catch(error){notifyError(error,"Cancelling the bill");}
   }
 
   function logActivity(sale: Sale, reason: string) {
@@ -654,7 +550,7 @@ function ReceiptVault() {
                       }`}
                     >
                       <div className="min-w-0 flex-1">
-                        <p className="numeric text-sm font-semibold">{s.receiptNo}</p>
+                        <p className="numeric text-sm font-semibold">{s.correctedAt && <span className="mr-2 text-category-2">Corrected</span>}{s.receiptNo}</p>
                         <p className="text-[11px] text-muted-foreground">
                           {new Date(s.createdAt).toLocaleString()} · {s.cashier} · {s.lines.length}{" "}
                           item{s.lines.length > 1 ? "s" : ""}
@@ -809,7 +705,7 @@ function ReceiptVault() {
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             {cancelMode === "correct"
-              ? `Add the missing item or adjust quantities and discounts here. The original receipt stays traceable. After reversal, the corrected bill opens automatically for approval and payment. An open shift is required to complete the replacement receipt.`
+              ? `Add the missing item or adjust quantities and discounts here. The original receipt stays traceable. Save here under the same bill number. Payment records stay unchanged. An online connection is required.`
               : `The items go back into stock at ${currentStore.name} and the receipt is flagged as cancelled. This is recorded against ${user?.name}.`}
           </p>
           {cancelMode === "correct" && !retryingCorrectionHold && !retryingCorrectionAudit && (
@@ -839,8 +735,9 @@ function ReceiptVault() {
               <div className="flex flex-wrap items-end gap-2">
                 <div><Label htmlFor="correction-bill-discount">Whole-bill discount</Label><Input id="correction-bill-discount" type="number" min="0" step="0.01" value={correctionDiscount} onChange={event => setCorrectionDiscount(Number(event.target.value))} /></div>
                 <select aria-label="Whole-bill discount type" className="h-9 rounded-md border bg-background px-2 text-sm" value={correctionDiscountType} onChange={event => {setCorrectionDiscountType(event.target.value as DiscountType);setCorrectionDiscount(0);}}><option value="amount">Amount</option><option value="percent">Percentage</option></select>
-                <p className="text-sm font-semibold">Corrected total: {money(cartTotals(correctionLines,correctionDiscount,correctionDiscountType,state.settings.tax,selected?.couponScope === "bill" ? selected.couponDiscount ?? 0 : 0).total)}</p>
+                <p className="text-sm font-semibold">Corrected total: {money(selected ? billCorrectionTotals(selected,correctionLines,correctionDiscount,correctionDiscountType).total : 0)}</p>
               </div>
+              <p className="text-xs text-muted-foreground">Recorded payment stays {money(selected?.paid ?? 0)}. This correction does not collect or refund money.</p>
             </fieldset>
           )}
           <div className="space-y-2">
@@ -862,12 +759,12 @@ function ReceiptVault() {
               Keep bill
             </Button>
             <Button variant="destructive" disabled={cancelBusy} onClick={() => void confirmCancel()}>
-              {cancelBusy ? "Preparing…" : retryingCorrectionHold
+              {cancelBusy ? "Saving…" : retryingCorrectionHold
                 ? "Retry preparing correction"
                 : retryingCorrectionAudit
                 ? "Retry saving completed audit"
                 : cancelMode === "correct"
-                  ? "Reverse and prepare correction"
+                  ? "Save correction"
                   : "Cancel bill"}
             </Button>
           </DialogFooter>

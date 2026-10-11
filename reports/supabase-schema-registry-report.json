@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-09T01:04:53.063Z",
+  "generatedAt": "2026-10-10T14:40:25.795Z",
   "tableCount": 70,
-  "columnCount": 1183,
+  "columnCount": 1185,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -3923,6 +3923,12 @@
           "declaration": "text",
           "nullable": true,
           "hasDefault": false
+        },
+        {
+          "name": "corrected_at",
+          "declaration": "timestamptz",
+          "nullable": true,
+          "hasDefault": false
         }
       ],
       "primaryKey": [
@@ -4176,6 +4182,12 @@
         {
           "name": "branch_id",
           "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "corrected_at",
+          "declaration": "timestamptz",
           "nullable": true,
           "hasDefault": false
         }

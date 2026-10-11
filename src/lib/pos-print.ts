@@ -453,7 +453,7 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
   setTokens({
     ...placeTokens(),
     ...dateTokens(sale.createdAt),
-    receipt_number: sale.receiptNo,
+    receipt_number: sale.correctedAt ? `Corrected ${sale.receiptNo}` : sale.receiptNo,
     cashier: sale.cashier ?? "",
     customer_name: member?.name ?? "",
     customer_code: member?.code ?? "",
@@ -545,7 +545,7 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
 
   return `${header(subtitle)}
     <table>
-      <tr><td>Receipt</td><td class="r b">${esc(sale.receiptNo)}</td></tr>
+      <tr><td>Receipt</td><td class="r b">${sale.correctedAt ? "Corrected " : ""}${esc(sale.receiptNo)}</td></tr>
       <tr><td>Date</td><td class="r">${new Date(sale.createdAt).toLocaleString()}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(sale.cashier)}</td></tr>
     </table>

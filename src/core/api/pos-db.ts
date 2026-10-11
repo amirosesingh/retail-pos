@@ -729,12 +729,12 @@ const shiftSessionToRow = (s: ShiftSession): Row => ({
  * schema that grows new columns never inflates the payload of every read.
  */
 const SALE_COLUMNS_BASE =
-  "id, bill_number, store_id, shift_id, cashier_name, member_id, subtotal_amount, " +
+  "id, row_version, bill_number, store_id, shift_id, cashier_name, member_id, subtotal_amount, " +
   "discount_amount, tax_amount, total_amount, paid_amount, change_amount, payment_type, " +
   "payments, points_earned, is_refunded, original_bill_number, exchanged_to_bill_number, " +
   "exchange_credit, coupon_code, coupon_promo_id, coupon_scope, coupon_discount, created_at, " +
   "store_name_snapshot, store_address_snapshot, " +
-  "sale_items(product_id, product_name, variant_code, unit_price, quantity, tax_rate, discount_percent, " +
+  "sale_items(id, product_id, product_name, variant_code, unit_price, quantity, tax_rate, discount_percent, " +
   "discount_amount, is_return, is_foc, promo_id, coupon_code, coupon_discount, unit_cost)";
 
 /**
@@ -747,6 +747,7 @@ let hasClientTxnColumn = true;
 let hasStoreSnapshotColumns = true;
 /** …and for the total-rounding columns. */
 let hasRoundingColumns = true;
+let hasCorrectionColumn = true;
 
 const saleColumns = () =>
   [
@@ -754,6 +755,7 @@ const saleColumns = () =>
     hasStoreSnapshotColumns ? "store_name_snapshot, store_address_snapshot" : "",
     hasClientTxnColumn ? "client_transaction_id" : "",
     hasRoundingColumns ? "rounding_adjustment, rounding_label" : "",
+    hasCorrectionColumn ? "corrected_at" : "",
   ]
     .filter(Boolean)
     .join(", ");
@@ -761,7 +763,7 @@ const saleColumns = () =>
 /** True when a failure is "that column is not in this database (yet)". */
 export const isMissingTxnColumn = (message: string | undefined | null) =>
   !!message &&
-  /client_transaction_id|store_name_snapshot|store_address_snapshot|rounding_adjustment|rounding_label/.test(
+  /client_transaction_id|store_name_snapshot|store_address_snapshot|rounding_adjustment|rounding_label|corrected_at/.test(
     message,
   ) &&
   /does not exist|schema cache/i.test(message);
@@ -780,6 +782,7 @@ const announceDrift = (column: string) => {
 };
 
 const forgetTxnColumn = (message?: string | null) => {
+  if (!message || /corrected_at/.test(message)) { hasCorrectionColumn = false; announceDrift("corrected_at"); }
   if (!message || /client_transaction_id/.test(message)) {
     if (hasClientTxnColumn) announceDrift("client_transaction_id");
     hasClientTxnColumn = false;
@@ -795,6 +798,8 @@ const forgetTxnColumn = (message?: string | null) => {
 };
 
 export const rowToSale = (r: Row): Sale => ({
+  rowVersion: num(r.row_version),
+  correctedAt: r.corrected_at ?? undefined,
   id: recordId(r.id),
   // Historic/imported SQL rows can predate bill numbering. Reports and the
   // register counter require a string; use the stable row id as a visible,
@@ -806,6 +811,7 @@ export const rowToSale = (r: Row): Sale => ({
   storeAddress: r.store_address_snapshot ?? undefined,
   shiftId: recordId(r.shift_id ?? ""),
   lines: ((r.sale_items ?? []) as Row[]).map((l) => ({
+    saleItemId: l.id,
     productId: l.product_id ?? "",
     name: l.product_name,
     variantCode: l.variant_code ?? undefined,
@@ -2308,6 +2314,38 @@ async function commitOpsInternal(context: string, ops: SyncOp[]): Promise<Commit
     }
     throw new AllTargetsFailed(context, cloud);
   }
+}
+
+/** Read the authoritative bill and its version before opening an admin correction. */
+export async function loadBillForCorrection(sale:Sale):Promise<Sale>{
+  const [{loadPostedSaleForCorrection},{getPosCallerAuth}]=await Promise.all([import("@/lib/sale-corrections.functions"),import("@/lib/pos-caller-auth")]);
+  const response=await loadPostedSaleForCorrection({data:{...await getPosCallerAuth(),saleId:sale.id,storeId:sale.storeId}});
+  if(!response.ok)throw new Error(response.error);
+  const rows=JSON.parse(response.receiptJson) as Row[];
+  if(!rows[0])throw new Error("That bill is not yet available in the cloud. Sync this terminal and retry.");
+  const fresh=rowToSale(rows[0]);
+  if(fresh.refunded||fresh.exchangeOfReceiptNo||fresh.exchangedToReceiptNo||(rows[0].sale_items??[]).some((item:Row)=>num(item.refunded_qty)>0))throw new Error("Refunded or exchanged bills cannot be corrected in place.");
+  return fresh;
+}
+
+/** Save a posted bill in place; payments and receipt identity remain untouched. */
+export async function correctSaleInPlace(previous: Sale, corrected: Sale, reason: string, clientKey: string): Promise<Sale> {
+  const items = saleItemRows(corrected).map((row, index) => ({
+    ...row, is_return:false as const, id: corrected.lines[index].saleItemId ?? stableChildId(clientKey, "6", index),
+  }));
+  const payload = {saleId:previous.id,storeId:previous.storeId,expectedVersion:previous.rowVersion ?? 0,clientKey,reason,
+    totals:{subtotal_amount:corrected.subtotal,discount_amount:corrected.discount,tax_amount:corrected.tax,total_amount:corrected.total,coupon_discount:corrected.couponDiscount ?? 0},items};
+  const local=localDb();
+  const [{correctPostedSale},{getPosCallerAuth}]=await Promise.all([import("@/lib/sale-corrections.functions"),import("@/lib/pos-caller-auth")]);
+  const result=await correctPostedSale({data:{...await getPosCallerAuth(),...payload}});
+  if(!result.ok) throw new Error(result.error);
+  const receipt=JSON.parse(result.receiptJson) as {sale:Row;items:Row[]};
+  const saved=rowToSale({...receipt.sale,sale_items:receipt.items});
+  if(local?.findReceipt){
+    try {await local.findReceipt(saved.id,saved.storeId,{...await readCredentials(),refresh:true});}
+    catch { showNotification("Bill corrected in the cloud. Reconnect and sync to refresh this terminal's local copy.","info"); }
+  }
+  return saved;
 }
 
 /** Human wording for a completed commit. */

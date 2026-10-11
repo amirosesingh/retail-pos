@@ -4973,6 +4973,7 @@ IF OBJECT_ID(N'dbo.sale_items', N'U') IS NULL BEGIN CREATE TABLE dbo.[sale_items
   [row_version] int NOT NULL CONSTRAINT [DF_sale_items_row_version] DEFAULT (1),
   [refunded_qty] int NOT NULL CONSTRAINT [DF_sale_items_refunded_qty] DEFAULT (0),
   [branch_id] nvarchar(450) NULL,
+  [corrected_at] datetimeoffset(7) NULL,
   CONSTRAINT [PK_sale_items] PRIMARY KEY ([id])
 
 ); END;
@@ -5170,6 +5171,8 @@ IF COL_LENGTH(N'dbo.sale_items', N'branch_id') IS NULL ALTER TABLE dbo.[sale_ite
 
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.sale_items') AND c.name=N'branch_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[sale_items] ALTER COLUMN [branch_id] nvarchar(450) NULL;
 
+IF COL_LENGTH(N'dbo.sale_items', N'corrected_at') IS NULL ALTER TABLE dbo.[sale_items] ADD [corrected_at] datetimeoffset(7) NULL;
+
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.sale_items') AND name=N'IX_sale_items_branch_id') CREATE INDEX [IX_sale_items_branch_id] ON dbo.[sale_items]([branch_id]);
 
 IF OBJECT_ID(N'dbo.sales', N'U') IS NULL BEGIN CREATE TABLE dbo.[sales] (
@@ -5213,6 +5216,7 @@ IF OBJECT_ID(N'dbo.sales', N'U') IS NULL BEGIN CREATE TABLE dbo.[sales] (
   [rounding_adjustment] decimal(18,4) NOT NULL CONSTRAINT [DF_sales_rounding_adjustment] DEFAULT (0),
   [rounding_label] nvarchar(max) NULL,
   [branch_id] nvarchar(450) NULL,
+  [corrected_at] datetimeoffset(7) NULL,
   CONSTRAINT [PK_sales] PRIMARY KEY ([id])
 
 ); END;
@@ -5506,6 +5510,8 @@ IF COL_LENGTH(N'dbo.sales', N'rounding_label') IS NULL ALTER TABLE dbo.[sales] A
 IF COL_LENGTH(N'dbo.sales', N'branch_id') IS NULL ALTER TABLE dbo.[sales] ADD [branch_id] nvarchar(450) NULL;
 
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.sales') AND c.name=N'branch_id' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[sales] ALTER COLUMN [branch_id] nvarchar(450) NULL;
+
+IF COL_LENGTH(N'dbo.sales', N'corrected_at') IS NULL ALTER TABLE dbo.[sales] ADD [corrected_at] datetimeoffset(7) NULL;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.sales') AND name=N'UX_sales_bill_number') CREATE UNIQUE INDEX [UX_sales_bill_number] ON dbo.[sales]([bill_number]);
 
@@ -11801,6 +11807,14 @@ IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=16)
 GO
 
 GO
+-- SECTION 2: Local upgrade 017_in_place_sale_corrections.sql
+-- Add a receipt marker for verified cloud corrections. No existing business rows changed.
+IF COL_LENGTH(N'dbo.sales',N'corrected_at') IS NULL
+ ALTER TABLE dbo.sales ADD corrected_at datetimeoffset(7) NULL;
+IF COL_LENGTH(N'dbo.sale_items',N'corrected_at') IS NULL
+ ALTER TABLE dbo.sale_items ADD corrected_at datetimeoffset(7) NULL;
+
+GO
 
 -- SECTION 3: Verify all required tables, columns and migration versions
 
@@ -12481,6 +12495,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'sale_items', N'row_version'),
   (N'sale_items', N'refunded_qty'),
   (N'sale_items', N'branch_id'),
+  (N'sale_items', N'corrected_at'),
   (N'sales', N'id'),
   (N'sales', N'bill_number'),
   (N'sales', N'member_id'),
@@ -12520,6 +12535,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'sales', N'rounding_adjustment'),
   (N'sales', N'rounding_label'),
   (N'sales', N'branch_id'),
+  (N'sales', N'corrected_at'),
   (N'secure_settings', N'key'),
   (N'secure_settings', N'ciphertext'),
   (N'secure_settings', N'hint'),
@@ -12904,10 +12920,10 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_action_history', N'row_version'),
   (N'authorization_action_history', N'changed_by'),
   (N'authorization_action_history', N'change_source'),
-  (N'authorization_action_history', N'change_kind'),
-  (N'authorization_action_history', N'snapshot'),
-  (N'authorization_action_history', N'created_at');
+  (N'authorization_action_history', N'change_kind');
 INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N'authorization_action_history', N'snapshot'),
+  (N'authorization_action_history', N'created_at'),
   (N'authorization_requests', N'id'),
   (N'authorization_requests', N'action_key'),
   (N'authorization_requests', N'requested_by'),
@@ -13120,7 +13136,7 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL
   THROW 51002, 'Retail POS local database migration history table is missing.', 1;
 
-EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 13) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 14) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 15) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 16)
+EXEC(N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 13) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 14) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 15) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 16) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 17)
   THROW 51002, ''Retail POS local database migration history is incomplete.'', 1;');
 
 EXEC(N'SELECT version, name, applied_at

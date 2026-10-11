@@ -1846,8 +1846,9 @@ function registerIpc() {
     localShiftReconciliationView(shiftId),
   ));
   ipcMain.handle("receipts:find-exact", (_e, value, branchId, proof) => guard.guarded(() => {
-    const input = guard.options(proof, { name: "receipt authorization", max: 3 });
+    const input = guard.options(proof, { name: "receipt authorization", max: 4 });
     const authorization = {
+      ...(input.refresh === true ? {refresh:true} : {}),
       ...(input.sessionToken ? { sessionToken: guard.text(input.sessionToken, { name: "session token", max: 400 }) } : {}),
       ...(input.cashierToken ? { cashierToken: guard.text(input.cashierToken, { name: "cashier token", max: 2000 }) } : {}),
       ...(input.accessToken ? { accessToken: guard.text(input.accessToken, { name: "access token", max: 4000 }) } : {}),

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-09T01:04:53.063Z",
+  "generatedAt": "2026-10-10T14:40:25.795Z",
   "tables": [
     {
       "cloudTable": "coupon_campaigns",
@@ -7990,6 +7990,19 @@
           "foreignKeyTarget": null,
           "unique": false,
           "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "corrected_at",
+          "sqlServerColumn": "corrected_at",
+          "cloudType": "timestamptz",
+          "sqlServerType": "datetimeoffset(7)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
         }
       ]
     },
@@ -8508,6 +8521,19 @@
           "sqlServerColumn": "branch_id",
           "cloudType": "text",
           "sqlServerType": "nvarchar(450)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "corrected_at",
+          "sqlServerColumn": "corrected_at",
+          "cloudType": "timestamptz",
+          "sqlServerType": "datetimeoffset(7)",
           "nullable": true,
           "defaultRule": null,
           "primaryKey": false,

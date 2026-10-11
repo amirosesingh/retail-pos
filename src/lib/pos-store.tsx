@@ -323,6 +323,7 @@ type Ctx = {
     sale: Omit<Sale, "id" | "receiptNo" | "createdAt"> & { receiptNo?: string },
     memberSnapshot?: Member | null,
   ) => Promise<Sale>;
+  correctSale: (previous: Sale, corrected: Sale, reason: string, clientKey: string) => Promise<Sale>;
   refundSale: (
     saleId: string,
     grantToken?: string | null,
@@ -2437,6 +2438,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
     [activeShift, recordSale],
   );
 
+  const correctSale = useCallback(async (previous: Sale, corrected: Sale, reason: string, clientKey: string) => {
+    const {correctSaleInPlace}=await import("@/core/api/pos-db");
+    const saved=await correctSaleInPlace(previous,corrected,reason,clientKey);
+    setState(s=>({...s,sales:s.sales.map(sale=>sale.id===saved.id?saved:sale),products:s.products.map(product=>{
+      const before=previous.lines.reduce((sum,line)=>sum+(line.productId===product.id?line.qty:0),0);
+      const after=saved.lines.reduce((sum,line)=>sum+(line.productId===product.id?line.qty:0),0);
+      return before===after?product:bump(product,saved.storeId,before-after,s.settings.integrations.autoArchiveZeroStock!==false);
+    })}));
+    return saved;
+  },[]);
+
   const refundSale = useCallback(
     async (
       saleId: string,
@@ -4123,6 +4135,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     openShift,
     closeShift,
     recordSale,
+    correctSale,
     refundSale,
     changeSalePayment,
     createBooking,
