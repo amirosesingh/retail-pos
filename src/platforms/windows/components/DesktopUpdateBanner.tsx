@@ -25,7 +25,7 @@ export function DesktopUpdateBanner() {
   return (
     <aside aria-label="Application update" className="fixed bottom-4 right-4 z-50 w-[calc(100%-2rem)] max-w-sm rounded-xl border border-border bg-card p-4 shadow-lg">
       <div className="flex items-start gap-3">
-        <img src="/favicon.ico" alt="Tomboard POS" className="h-9 w-9 shrink-0" />
+        <img src="/favicon.ico?v=retail" alt="Tomboard POS" className="h-9 w-9 shrink-0" />
         <div className="min-w-0 text-sm" aria-live="polite">
           <p className="font-semibold">{ready ? "Tomboard POS Update Ready" : failed ? "Update could not be downloaded" : `Tomboard POS v${state.available ?? ""}`}</p>
           <p className="mt-1 text-xs text-muted-foreground">{installError || (installing ? "Saving and synchronizing before restarting…" : ready ? "A new version is ready. Update now or install it when you next restart the application." : failed ? "Your current POS version will continue working." : `Downloading automatically — ${state.percent}%`)}</p>

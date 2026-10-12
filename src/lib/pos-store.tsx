@@ -1,3 +1,4 @@
+import { retainUnchangedFields } from "./live-state";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "./points-redemption";
 import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE, exchangePolicyError } from "./returns-policy";
@@ -484,7 +485,7 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
   const cloudStores = cloud.stores ?? [];
   const cloudSettings = cloud.settings ?? ({} as CloudSlice["settings"]);
   const settings = mergeCloudSettings(cloudSettings);
-  return {
+  const next: PosState = {
     ...s,
     // Older installations may not have the database lifecycle trigger yet.
     // Keep stale zero-stock rows out of the active catalogue immediately; the
@@ -526,6 +527,7 @@ function applyCloud(s: PosState, cloud: CloudSlice, pendingSales?: Set<string>):
       s.counter,
     ),
   };
+  return retainUnchangedFields(s, next);
 }
 
 function applyLocationDirectory(s: PosState, stores: Store[]): PosState {
@@ -1014,18 +1016,18 @@ export function PosProvider({ children }: { children: ReactNode }) {
         return;
       }
       setShiftReadError(null);
-      setDbShift(found);
+      setDbShift(previous => hasSameValue(previous, found) ? previous : found);
       // Only a real close ends a shift. An empty read never rewrites the
       // cached shift to CLOSED — the database row stays OPEN, and marking it
       // closed locally is what used to lock a trading till after a sign-out.
       if (found) {
         const row = found;
-        setState((s) => ({
-          ...s,
-          shifts: s.shifts.some((x) => x.id === row.id)
+        setState((s) => {
+          const shifts = s.shifts.some((x) => x.id === row.id)
             ? s.shifts.map((x) => (x.id === row.id ? row : x))
-            : [row, ...s.shifts],
-        }));
+            : [row, ...s.shifts];
+          return hasSameValue(s.shifts, shifts) ? s : { ...s, shifts };
+        });
       }
     } catch (e) {
       // Offline, refused or unreachable: never downgrade a trading till to

@@ -712,7 +712,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
           </DropdownMenu>);
     return (
       <TableControlsContext.Provider value={controls}>
-        {loading && <div role="status" className="flex items-center gap-2 border-b border-border/60 bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
+        {loading && !hasRows && <div role="status" className="flex items-center gap-2 border-b border-border/60 bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
           <Loader2 aria-hidden="true" className="size-3.5 animate-spin text-primary motion-reduce:animate-none" />
           {loadingLabel || (hasRows ? "Refreshing rows…" : "Loading rows…")}
         </div>}

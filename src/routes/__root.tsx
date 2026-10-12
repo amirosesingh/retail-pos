@@ -211,7 +211,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: appCss,
       },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
+      { rel: "icon", href: "/favicon.ico?v=retail", type: "image/x-icon" },
     ],
   }),
   shellComponent: RootShell,
@@ -272,7 +272,7 @@ function RootComponent() {
 
   // A confirmed reconnect or foreground resume wakes every data mechanism in
   // one place. The current URL stays intact while active queries and route
-  // loaders refresh; queued mutations are allowed to continue automatically.
+  // data refreshes quietly; queued mutations are allowed to continue automatically.
   useEffect(() => {
     let refreshing = false;
     const recover = () => {
@@ -281,7 +281,6 @@ function RootComponent() {
       void Promise.allSettled([
         queryClient.resumePausedMutations(),
         queryClient.refetchQueries({ type: "active" }),
-        router.invalidate(),
         import("@/lib/terminal-session").then(({ ensureTerminalSession }) =>
           ensureTerminalSession(),
         ),
@@ -295,7 +294,7 @@ function RootComponent() {
       window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
       window.removeEventListener(APP_RESUME_EVENT, recover);
     };
-  }, [queryClient, router]);
+  }, [queryClient]);
 
   // Coalesce a committed sync page into one active-query refresh.
   useEffect(() => {
@@ -303,12 +302,12 @@ function RootComponent() {
     const tables = new Set<string>();
     const off = subscribeDataChange((change) => {
       tables.add(change.table);
-      if (timer) clearTimeout(timer);
+      if (timer) return;
       timer = setTimeout(() => {
         timer = undefined;
         const changed = new Set(tables); tables.clear();
         void queryClient.invalidateQueries({refetchType:"active", predicate: query => queryReadsChangedTables(query.meta, changed)}).catch(cause => notifyError(cause, "Refreshing live data"));
-      }, 400);
+      }, 100);
     });
     return () => { off(); if (timer) clearTimeout(timer); };
   }, [queryClient]);

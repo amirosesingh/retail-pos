@@ -85,7 +85,8 @@ describe("report refresh stability", () => {
     harness.focus?.();
     render();
     const refreshing = render();
-    expect(refreshing.loading).toBe(true);
+    expect(refreshing.loading).toBe(false);
+    expect(refreshing.refreshing).toBe(true);
     expect(refreshing.sales).toEqual([sale]);
   });
   it("does not show a previous branch or date range while a new query loads", async () => {

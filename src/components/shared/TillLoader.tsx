@@ -1,4 +1,3 @@
-import { DataProgress } from "./DataProgress";
 /**
  * The start-up screen of the till, with the connection state written on it.
  *
@@ -98,8 +97,7 @@ export function TillLoader({
         )}
       </div>
 
-      <DataProgress variant="panel" />
-      <div className="h-1.5 w-64 overflow-hidden rounded-full bg-muted">
+      <div role="progressbar" aria-label={message} aria-valuemin={0} aria-valuemax={100} className="h-1.5 w-64 overflow-hidden rounded-full bg-muted">
         <div className={cn("h-full rounded-full", style.bar, "w-1/2 animate-pulse")} />
       </div>
 

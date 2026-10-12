@@ -1,6 +1,5 @@
 import { useAdminWebActivation } from "@/lib/use-admin-web-activation";
 import { isLocationSetupRoute } from "@/lib/app-shell-routes";
-import { DataProgress } from "@/components/shared/DataProgress";
 import { usePersonalAppearance, usePersonalAppearanceSync } from "@/lib/personal-appearance";
 import { setPersonalLanguage } from "@/lib/time-zone";
 import { useDisplayProfile } from "@/lib/display-profile";
@@ -455,7 +454,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
             <WindowControls />
           </div>
         )}
-        <DataProgress />
         <ShiftGuard>
           <div className="flex min-h-0 min-w-0 flex-1">
             {/* Desktop / tablet sidebar */}
