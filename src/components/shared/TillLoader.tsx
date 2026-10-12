@@ -40,15 +40,17 @@ const TONE: Record<StatusTone, { bar: string; text: string; label: string }> = {
   error: { bar: "bg-destructive", text: "text-destructive", label: "Connection problem" },
 };
 
-/** How long the till may sit here, once the check answered, before offering a way out. */
+/** How long the startup screen waits before offering recovery. */
 const STALL_MS = 12000;
 
 export function TillLoader({
   message = "Loading store data…",
   onContinueOffline,
+  onRetry,
 }: {
   message?: string;
   onContinueOffline?: () => void;
+  onRetry?: () => void;
 }) {
   const [health, setHealth] = useState<HealthReport | null>(lastHealth());
   const [state, setState] = useState<Connectivity>(connectivity());
@@ -67,15 +69,12 @@ export function TillLoader({
     };
   }, []);
 
-  // The stall escape only starts counting once we actually know where we are.
+  // Recovery must remain available even if the first connection check is
+  // stalled. Connectivity notifications must not restart this deadline.
   useEffect(() => {
-    if (state === "connecting") {
-      setStalled(false);
-      return;
-    }
     const stall = window.setTimeout(() => setStalled(true), STALL_MS);
     return () => window.clearTimeout(stall);
-  }, [state]);
+  }, []);
 
   const tone: StatusTone =
     state === "connecting"
@@ -91,9 +90,7 @@ export function TillLoader({
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6">
       <div className="flex items-center gap-2">
         <CloudStateIcon tone={tone} className="size-5" />
-        <p className="text-sm font-medium">
-          {tone === "connecting" ? "Connecting…" : message}
-        </p>
+        <p className="text-sm font-medium">{tone === "connecting" ? "Connecting…" : message}</p>
         {tone === "offline" && (
           <span className="rounded-full border border-warning px-2 py-0.5 text-[11px] uppercase tracking-wide text-warning">
             Offline
@@ -101,15 +98,9 @@ export function TillLoader({
         )}
       </div>
 
-      <DataProgress />
+      <DataProgress variant="panel" />
       <div className="h-1.5 w-64 overflow-hidden rounded-full bg-muted">
-        <div
-          className={cn(
-            "h-full rounded-full",
-            style.bar,
-            "w-1/2 animate-pulse",
-          )}
-        />
+        <div className={cn("h-full rounded-full", style.bar, "w-1/2 animate-pulse")} />
       </div>
 
       <p className={cn("text-xs", style.text)}>{style.label}</p>
@@ -120,15 +111,24 @@ export function TillLoader({
       )}
 
       {stalled && (
-        <div className="flex items-center gap-2 pt-2">
-          <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
-            <RefreshCw className="mr-1.5 size-3.5" /> Try again
-          </Button>
-          {onContinueOffline && health?.local && (
-            <Button size="sm" onClick={onContinueOffline}>
-              Continue on this terminal
+        <div className="flex flex-col items-center gap-3 pt-2">
+          <p role="status" className="max-w-xs text-center text-xs text-muted-foreground">
+            Still loading. You can retry without clearing your saved connection.
+          </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRetry ?? (() => window.location.reload())}
+            >
+              <RefreshCw className="mr-1.5 size-3.5" /> Try again
             </Button>
-          )}
+            {onContinueOffline && health?.local && (
+              <Button size="sm" onClick={onContinueOffline}>
+                Continue on this terminal
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </div>

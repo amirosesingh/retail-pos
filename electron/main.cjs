@@ -1019,7 +1019,7 @@ public static class PosRaw {
         try {
           Marshal.Copy(data, 0, buf, data.Length);
           int written;
-          if (!WritePrinter(h, buf, data.Length, out written))
+          if (!WritePrinter(h, buf, data.Length, out written) || written != data.Length)
             throw new Exception("WritePrinter failed (" + Marshal.GetLastWin32Error() + ")");
         } finally { Marshal.FreeCoTaskMem(buf); }
       } finally { EndPagePrinter(h); EndDocPrinter(h); }
@@ -1036,11 +1036,22 @@ function runProcess(cmd, args) {
     const child = spawn(cmd, args, { windowsHide: true });
     let stderr = "";
     let stdout = "";
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      finish({ ok: false, error: "The receipt printer did not respond within 20 seconds. Check its connection." });
+      child.kill();
+    }, 20_000);
     child.stdout.on("data", (d) => (stdout += String(d)));
     child.stderr.on("data", (d) => (stderr += String(d)));
-    child.on("error", (err) => resolve({ ok: false, error: err.message }));
-    child.on("exit", (code) =>
-      resolve(
+    child.on("error", (err) => finish({ ok: false, error: err.message }));
+    child.on("close", (code) =>
+      finish(
         code === 0
           ? { ok: true, stdout: stdout.trim() }
           : { ok: false, error: stderr.trim() || stdout.trim() || `${cmd} exited ${code}` },
@@ -1064,7 +1075,7 @@ async function printRaw(bytes, options = {}) {
     return { ok: false, error: "Raw printing is only supported on Windows" };
   }
 
-  const stamp = Date.now();
+  const stamp = randomUUID();
   const binFile = path.join(os.tmpdir(), `pos-raw-${stamp}.bin`);
   const psFile = path.join(os.tmpdir(), `pos-raw-${stamp}.ps1`);
   const cleanup = () => {

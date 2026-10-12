@@ -178,7 +178,7 @@ function ItemSalesReport() {
         </ReportHeader>
 
         {history.loading ? (
-          <p className="text-sm text-muted-foreground">Loading complete SQL history…</p>
+          <p className="text-sm text-muted-foreground">Updating report data…</p>
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
@@ -192,7 +192,7 @@ function ItemSalesReport() {
         </div>
 
         <div className="rounded-lg border border-border">
-          <Table>
+          <Table loading={history.loading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Date &amp; time</TableHead>

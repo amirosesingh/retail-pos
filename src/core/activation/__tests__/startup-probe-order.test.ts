@@ -157,4 +157,69 @@ describe("start-up connection check", () => {
     await health.checkHealth(true);
     expect(health.hasProbedCloud()).toBe(true);
   });
+  it("shares one in-flight probe between startup checks and the heartbeat", async () => {
+    let complete!: (value: { error: null }) => void;
+    let calls = 0;
+    queryImpl = () => {
+      calls++;
+      return new Promise((resolve) => {
+        complete = resolve;
+      });
+    };
+    const health = await import("@/core/activation/connection-health");
+    health.resetHealthCache();
+    const startup = health.checkHealth(true);
+    const heartbeat = health.heartbeat();
+    await vi.waitFor(() => expect(calls).toBe(1));
+    complete({ error: null });
+    expect((await startup).cloud).toBe(true);
+    await heartbeat;
+    expect(calls).toBe(1);
+    expect(health.cloudVerdict()).toBe("verified");
+  });
+
+  it("lets the initial heartbeat recover from a transient failure before blocking startup", async () => {
+    let calls = 0;
+    queryImpl = async () =>
+      ++calls === 1 ? { error: { message: "network error" } } : { error: null };
+    const health = await import("@/core/activation/connection-health");
+    health.resetHealthCache();
+    await health.heartbeat();
+    expect(calls).toBe(2);
+    expect(health.cloudVerdict()).toBe("verified");
+  });
+
+  it("does not turn a slow first heartbeat into a timeout page when its retry succeeds", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    queryImpl = () => (++calls === 1 ? new Promise(() => {}) : Promise.resolve({ error: null }));
+    const health = await import("@/core/activation/connection-health");
+    health.resetHealthCache();
+    const heartbeat = health.heartbeat();
+    await vi.advanceTimersByTimeAsync(15_000);
+    await heartbeat;
+    expect(calls).toBe(2);
+    expect(health.cloudVerdict()).toBe("verified");
+    expect(health.cloudDiagnosis().issue).toBe("none");
+  });
+  it("allows a warm web connection to answer after five seconds", async () => {
+    vi.useFakeTimers();
+    const health = await import("@/core/activation/connection-health");
+    health.resetHealthCache();
+    await health.checkHealth(true);
+    let calls = 0;
+    queryImpl = () => {
+      calls++;
+      return new Promise((resolve) => setTimeout(() => resolve({ error: null }), 6_000));
+    };
+    let finished = false;
+    const check = health.checkHealth(true).then((report) => {
+      finished = true;
+      return report;
+    });
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(finished).toBe(true);
+    expect((await check).cloud).toBe(true);
+    expect(calls).toBe(1);
+  });
 });

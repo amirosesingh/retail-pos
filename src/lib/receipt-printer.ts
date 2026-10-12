@@ -247,9 +247,9 @@ export function canPrintReceipts(): boolean {
   return !isMobileShell();
 }
 
-/** A cash drawer only opens through a printer, so it follows the same rule. */
+/** Drawer pulses require the protected native bridge; browser printing cannot send raw bytes. */
 export function canOpenDrawer(): boolean {
-  return printBridge() !== null || !isMobileShell();
+  return typeof printBridge()?.openDrawer === "function";
 }
 
 /** ESC/POS drawer kick bytes for the configured connector pin. */

@@ -75,7 +75,7 @@ function Dashboard() {
   const storeIds = useMemo(() => [currentStore.id], [currentStore.id]);
   // Include a boundary day on both sides: report loading uses device-local
   // midnight, while dashboard buckets use the configured business timezone.
-  const { sales } = useReportSales(state.sales, storeIds,
+  const { sales, loading: reportLoading } = useReportSales(state.sales, storeIds,
     posDayKey(new Date(Date.parse(`${today}T12:00:00`) - 14 * 86_400_000)),
     posDayKey(new Date(Date.parse(`${today}T12:00:00`) + 86_400_000)));
   const todaySales = sales.filter((s) => posDayKey(s.createdAt) === today);
@@ -334,7 +334,7 @@ function Dashboard() {
             )}
           </div>
           <Separator />
-          <Table>
+          <Table loading={reportLoading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Cashier</TableHead>
@@ -380,7 +380,7 @@ function Dashboard() {
         <section className="rounded-lg border border-border bg-card">
           <h2 className="px-5 py-3 text-sm font-semibold">Cash drawer opens without a sale</h2>
           <Separator />
-          <Table>
+          <Table loading={reportLoading}>
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
@@ -417,7 +417,7 @@ function Dashboard() {
         <section className="rounded-lg border border-border bg-card">
           <h2 className="px-5 py-3 text-sm font-semibold">Split payments today</h2>
           <Separator />
-          <Table>
+          <Table loading={reportLoading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Receipt</TableHead>

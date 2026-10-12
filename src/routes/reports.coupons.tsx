@@ -302,7 +302,7 @@ function CouponReport() {
           </Button>
         </ReportHeader>
 
-        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.loading ? <p className="text-sm text-muted-foreground">Updating report data…</p> : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-3">
@@ -320,7 +320,7 @@ function CouponReport() {
             <div className="border-b border-border px-4 py-2 text-sm font-medium">
               Redemptions by coupon code
             </div>
-            <Table>
+            <Table loading={history.loading}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Coupon</TableHead>
@@ -344,7 +344,7 @@ function CouponReport() {
         )}
 
         <div className="rounded-lg border border-border">
-          <Table>
+          <Table loading={history.loading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

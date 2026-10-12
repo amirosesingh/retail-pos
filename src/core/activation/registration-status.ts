@@ -74,11 +74,12 @@ export function useStartupGate(): StartupGate {
   // default — which sent a configured, registered terminal to the connection
   // screen. One awaited check per launch, before any decision is shown.
   useEffect(() => {
-    if (hasProbedCloud()) {
+    if (hasProbedCloud() && tick === 0) {
       setProbing(false);
       return;
     }
     let cancelled = false;
+    setProbing(true);
     void checkHealth(true)
       .catch(() => undefined)
       .then(() => {

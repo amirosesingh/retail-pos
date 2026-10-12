@@ -345,7 +345,7 @@ export function useVisibility() {
   );
   // Prefer the person's real level so a supervisor can be hidden from a page
   // even though the till treats them as elevated. Only true admins see all.
-  const role = (user?.metaRole ?? (isAdmin ? "admin" : user?.role) ?? "cashier") as string;
+  const role = (isAdmin ? "admin" : user?.metaRole ?? user?.role ?? "cashier") as string;
 
   const visible = useCallback((key: string) => isVisibleFor(hidden, key, role), [hidden, role]);
 

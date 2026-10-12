@@ -73,7 +73,7 @@ import { notifyError } from "./notify";
 import type { CloudSlice, CommitTarget } from "@/core/api/pos-db";
 import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 import { platformName } from "@/platform-config/platform";
-import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
+import { APP_RESUME_EVENT, CONNECTIVITY_RESTORED_EVENT } from "@/core/activation/connection-health";
 import { useAuth } from "@/lib/pos-auth";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { reserveBillNumber } from "./bill-number";
@@ -688,7 +688,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // still comes from SQL Server, but a newly registered/created branch
         // must not stay invisible until a later full local snapshot refresh.
         const canLoadCloudDirectory = typeof navigator === "undefined" || navigator.onLine;
-        const locationTask = canLoadCloudDirectory ? loadLocationDirectory() : null;
+        // A paired local-first till gets its authoritative branch from the
+        // same SQL snapshot as its catalogue. Do not hold that snapshot behind
+        // a second directory read that may fall back to a slow cloud relay.
+        const pairedLocalSnapshot = effectiveDatabaseMode() === "local" &&
+          !!localDb()?.snapshot && !!readTerminalConfig()?.locationId;
+        const locationTask = canLoadCloudDirectory && !pairedLocalSnapshot
+          ? loadLocationDirectory() : null;
         let fullSnapshotApplied = false;
         const settingsRevision = settingsWrites.current.revision;
         const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined, (name) => {
@@ -777,6 +783,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(watchdog);
     };
   }, [signedIn, authReady, reloadTick]);
+
+  // Retry a failed initial read when the connection recovers. Do not restart
+  // an active catalogue download or discard a successfully loaded snapshot.
+  useEffect(() => {
+    if (!signedIn || loadPhase !== "failed") return;
+    const recover = () => retryLoad();
+    window.addEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
+    return () => window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
+  }, [signedIn, loadPhase, retryLoad]);
 
   // Transfers are not part of the register's small startup snapshot. Restore
   // their persisted headers and lines separately so a reload does not turn a

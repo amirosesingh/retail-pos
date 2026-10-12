@@ -282,7 +282,7 @@ function BusinessReport() {
         </ReportHeader>
 
         {history.loading ? (
-          <p className="text-sm text-muted-foreground">Loading complete SQL history…</p>
+          <p className="text-sm text-muted-foreground">Updating report data…</p>
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
@@ -299,7 +299,7 @@ function BusinessReport() {
 
         <div className="rounded-lg border border-border">
           {view === "products" ? (
-            <Table>
+            <Table loading={history.loading}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Product</TableHead>
@@ -347,7 +347,7 @@ function BusinessReport() {
               </TableBody>
             </Table>
           ) : (
-            <Table>
+            <Table loading={history.loading}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Cashier</TableHead>

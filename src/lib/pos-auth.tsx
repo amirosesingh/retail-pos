@@ -1040,13 +1040,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await endSession("locked");
   }, [endSession]);
 
+  // Permission identity depends on account fields, never on refreshed bearer tokens.
+  const accountId = session?.user?.id;
+  const accountEmail = session?.user?.email;
+  const accountRole = session?.user?.user_metadata?.role;
+  const accountName = session?.user?.user_metadata?.full_name;
+  const accountStore = session?.user?.user_metadata?.store_id;
+  const accountStaffId = session?.user?.user_metadata?.user_id;
+
   // Resolved fresh from the staff list so a duty change applies immediately.
   const user = useMemo<PosUser | null>(() => {
     // A PIN login already carries its verified role and permissions in
     // terminalUser. If the optional Supabase bearer is absent or still being
     // checked, keep using that proven terminal identity instead of replacing
     // it with a permission-empty provisional Auth user.
-    const account = !terminalUser && centralAuthVerified ? session?.user : null;
+    const account = !terminalUser && centralAuthVerified && rolesReady && profileReady && accountId
+      ? { email: accountEmail, user_metadata: { role: accountRole, full_name: accountName, store_id: accountStore, user_id: accountStaffId } }
+      : null;
     if (!account) {
       if (!terminalUser) return null;
       // Local bootstrap / offline terminal session.
@@ -1129,7 +1139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               fromDbRole(appUser?.role ?? null),
             ),
     };
-  }, [session, centralAuthVerified, roles, staff, terminalUser, appUser]);
+  }, [accountId, accountEmail, accountRole, accountName, accountStore, accountStaffId, centralAuthVerified, rolesReady, profileReady, roles, staff, terminalUser, appUser]);
 
   // "Active" is simply the state of having somebody signed in; the other
   // states are set by the teardown that produced them.
@@ -1330,6 +1340,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const ready = authReady && (!!terminalUser || !userId || (rolesReady && profileReady));
 
+  const can = useCallback((flag: PermissionFlag) => hasPermission(user, flag), [user]);
+
   const value = useMemo<AuthCtx>(
     () => ({
       ready,
@@ -1357,7 +1369,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       authUserId: centralAuthVerified ? userId : null,
       terminalUser,
       appUser,
-      can: (flag) => hasPermission(user, flag),
+      can,
       staff,
       addStaff,
       updateStaff,
@@ -1371,6 +1383,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [
       ready,
       user,
+      can,
       userId,
       centralAuthVerified,
       terminalStoreId,

@@ -91,3 +91,19 @@ test("profile hydration failure does not escape background session check",async(
   const module=load("src/lib/terminal-session.ts",f.deps,["ensureTerminalSession"]);
   assert.equal(await module.ensureTerminalSession(),false);assert.deepEqual(f.counts(),{logins:0,provisions:0});
 });
+
+
+test("manual startup retry performs a new probe after the first launch check",async()=>{
+  const file=readFileSync("src/core/activation/registration-status.ts","utf8");
+  const start=file.indexOf("export function useStartupGate()");
+  const end=file.indexOf("/** The four Emergency Access",start);
+  const source=stripTypeScriptTypes(file.slice(start,end)).replace(/\bexport /g,"");
+  const slots=[];let index=0;let effects=[];let calls=0;
+  const useState=initial=>{const slot=index++;if(!(slot in slots))slots[slot]=typeof initial==="function"?initial():initial;return[slots[slot],value=>{slots[slot]=typeof value==="function"?value(slots[slot]):value;}];};
+  const useEffect=(effect)=>effects.push(effect);
+  const deps={useState,useEffect,isCloudConnected:()=>true,cloudVerdict:()=>"verified",hasProbedCloud:()=>true,checkHealth:async()=>{calls++;return{cloud:true};},isRegistered:async()=>"registered",subscribeConnectivity:()=>()=>{},cloudKeyStatus:async()=>({configured:true}),subscribeCloudKeys:()=>()=>{}};
+  const hook=new Function(...Object.keys(deps),`${source};return useStartupGate;`)(...Object.values(deps));
+  const render=async()=>{index=0;effects=[];const value=hook();for(const effect of effects)effect();await new Promise(resolve=>setImmediate(resolve));return value;};
+  const initial=await render();assert.equal(calls,0);
+  initial.refresh();await render();assert.equal(calls,1);
+});

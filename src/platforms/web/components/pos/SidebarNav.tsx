@@ -80,14 +80,14 @@ function SidebarRow({ entry, collapsed, active, inbound, onNavigate }: SidebarRo
       aria-label={entry.label}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex touch-manipulation select-none items-center gap-2.5 rounded-xl text-sm transition-[background-color,color] duration-[var(--motion-fast)] ease-[var(--motion-ease-standard)] motion-reduce:transition-none",
+        "flex touch-manipulation select-none items-center gap-2.5 rounded-xl text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-inset transition-[background-color,color] duration-[var(--motion-fast)] ease-[var(--motion-ease-standard)] motion-reduce:transition-none",
         collapsed ? "justify-center py-2.5" : "px-3 py-2.5",
         active
-          ? "bg-category-1/15 font-medium text-foreground"
+          ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
           : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
       )}
     >
-      <NavIcon strokeWidth={1.75} aria-hidden="true" className={cn(collapsed ? "size-5" : "size-4 shrink-0", active ? "text-category-1" : "text-category-4")} />
+      <NavIcon strokeWidth={1.75} aria-hidden="true" className={cn(collapsed ? "size-5" : "size-4 shrink-0", active ? "text-primary" : "text-muted-foreground")} />
       {!collapsed && <span className="min-w-0 truncate">{entry.label}</span>}
       {entry.badge && inbound > 0 && !collapsed && (
         <Badge className="ml-auto h-5 min-w-5 shrink-0 justify-center px-1 text-[10px]">

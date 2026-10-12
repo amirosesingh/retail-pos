@@ -132,6 +132,7 @@ import { ShiftCloseDialog } from "@/platforms/web/components/pos/ShiftCloseDialo
 import {
   openCustomerDisplay,
   publishDisplay,
+  displayRounding,
   toDisplayLine,
   type DisplaySnapshot,
 } from "@/lib/customer-display";
@@ -1226,7 +1227,7 @@ function Register() {
     tax: totals.tax,
     taxRate: taxSettings.rate,
     taxEnabled: taxSettings.enabled,
-    total: totals.total,
+    ...displayRounding(rounding, state.settings.integrations.rounding),
     paid: 0,
     change: 0,
     balance: 0,
@@ -1353,7 +1354,10 @@ function Register() {
 
   const displayKey = JSON.stringify({
     l: lines.map((l) => [l.productId, l.qty, l.discount, l.discountType, l.foc, l.credit]),
-    t: totals.total,
+    t: roundedTotal,
+    ra: rounding.adjustment,
+    rl: roundingOf(state.settings.integrations.rounding).receiptLabel,
+    rs: showsRoundingLine(rounding.adjustment, state.settings.integrations.rounding),
     d: totals.discount,
     x: totals.tax,
     xr: taxSettings.rate,
@@ -1375,7 +1379,7 @@ function Register() {
       mode: method === "bank_transfer" ? "transfer" : "cart",
       method,
       transferRef,
-      balance: totals.total,
+      balance: roundedTotal,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payOpen, method, transferRef, displayKey]);

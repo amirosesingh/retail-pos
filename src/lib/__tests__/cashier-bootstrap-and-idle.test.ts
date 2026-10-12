@@ -147,7 +147,7 @@ describe("cashier location bootstrap", () => {
     const store = read("src/lib/pos-store.tsx");
     expect(store).toContain("const canLoadCloudDirectory =");
     expect(store).toContain(
-      "const locationTask = canLoadCloudDirectory ? loadLocationDirectory() : null",
+      "const locationTask = canLoadCloudDirectory && !pairedLocalSnapshot",
     );
     expect(store).toContain(
       "const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined, (name) =>",

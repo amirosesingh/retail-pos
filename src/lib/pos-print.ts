@@ -30,7 +30,6 @@ import { toast } from "sonner";
 import {
   canOpenDrawer,
   canPrintReceipts,
-  drawerPulseBytes,
   getPrinterPrefs,
   protectedDrawerOpen,
   rawPulse,
@@ -1133,10 +1132,9 @@ export function printTransferNote(transfer: Transfer, products: Product[], from:
 }
 
 /**
- * Cash drawer kick. Browsers cannot open a USB drawer directly, so we send the
- * standard ESC/POS pulse sequence (ESC p 0 25 250) through the receipt printer,
- * which is how drawers are wired in practice. If a local ESC/POS bridge agent is
- * installed it is used instead.
+ * Cash drawer kick through the protected native printer bridge. The main
+ * process sends the raw ESC/POS pulse to the configured receipt printer.
+ * Browser print dialogs cannot transport a drawer pulse.
  */
 export async function openCashDrawer(reason = "Cash drawer opened", shiftId?: string | null) {
   if (!canOpenDrawer()) {
@@ -1145,7 +1143,6 @@ export async function openCashDrawer(reason = "Cash drawer opened", shiftId?: st
     });
     return { ok: false, error: "Cash drawer not available on this device" };
   }
-  const bytes = drawerPulseBytes();
   return protectedDrawerOpen(reason, shiftId)
     .then((res) => {
       if (res.handled) {
@@ -1159,15 +1156,7 @@ export async function openCashDrawer(reason = "Cash drawer opened", shiftId?: st
         }
         return { ok: res.ok, ...(res.error ? { error: res.error } : {}) };
       }
-      // Browser fallback: the pulse rides along on a tiny printed slip.
-      const kick = String.fromCharCode(...bytes);
-      browserPrint(
-        shell(
-          "drawer",
-          `<pre style="font-size:1px;line-height:1px">${kick}</pre><div class="c muted">${esc(reason)}</div>`,
-        ),
-      );
-      return { ok: true };
+      return { ok: false, error: "The native cash drawer connection is unavailable." };
     })
     .catch((error: unknown) => {
       toast.error("Drawer did not open", {

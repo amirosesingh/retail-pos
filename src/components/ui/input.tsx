@@ -4,7 +4,16 @@ import { cn } from "@/lib/utils";
 import { resolveFieldIdentity } from "@/lib/field-name";
 
 // Types where an auto-generated name could change form semantics.
-const UNMANAGED_TYPES = new Set(["hidden", "file", "submit", "button", "reset", "radio", "checkbox", "image"]);
+const UNMANAGED_TYPES = new Set([
+  "hidden",
+  "file",
+  "submit",
+  "button",
+  "reset",
+  "radio",
+  "checkbox",
+  "image",
+]);
 
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
   ({ className, type, ...props }, ref) => {
@@ -23,7 +32,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
       <input
         type={type}
         className={cn(
-          "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-[color,background-color,border-color,box-shadow] duration-[var(--motion-fast)] file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
+          "flex h-9 w-full rounded-lg border border-input bg-card px-3 py-1 text-base shadow-none transition-[color,background-color,border-color,box-shadow] duration-[var(--motion-fast)] file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none motion-reduce:transition-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
           className,
         )}
         ref={ref}

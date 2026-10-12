@@ -17,7 +17,7 @@ import { openCashDrawer, printBookingSlip, printJobTag, printSaleReceipt } from 
 import { buildBookingMessage, buildSaleMessage, sendBillOnWhatsApp } from "@/lib/whatsapp";
 import { logger } from "@/lib/audit-log";
 import { redeemVoucher } from "@/lib/coupons";
-import { publishDisplay, type DisplaySnapshot } from "@/lib/customer-display";
+import { publishDisplay, displayRounding, type DisplaySnapshot } from "@/lib/customer-display";
 import { rememberBanks } from "@/platforms/web/components/pos/TenderSplit";
 import { isoDaysFromNow } from "@/lib/register/use-booking-intake";
 import type { useBookingIntake } from "@/lib/register/use-booking-intake";
@@ -348,6 +348,7 @@ export function useCheckout(deps: CheckoutDeps) {
     publishDisplay({
       ...deps.cartSnapshot(),
       mode: "booking",
+      ...displayRounding({total: booking.total, adjustment: 0}),
       paid: booking.paid,
       balance: r2(booking.total - booking.paid),
       reference: booking.ref,
@@ -623,6 +624,7 @@ export function useCheckout(deps: CheckoutDeps) {
       paidDisplay = {
         ...deps.cartSnapshot(),
         mode: "paid",
+        ...displayRounding({total: sale.total, adjustment: sale.roundingAdjustment ?? 0}, roundingCfg),
         paid: sale.paid,
         change: sale.change,
         reference: sale.receiptNo,

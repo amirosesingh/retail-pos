@@ -1,3 +1,4 @@
+import { beginDataTask } from "./data-progress";
 import { subscribeSalesChange } from "./sync-engine";
 import { useEffect, useMemo, useState } from "react";
 import { loadSalesPage } from "@/core/api/pos-db";
@@ -27,7 +28,9 @@ export function useReportSales(
     const stores = new Set(storeIds.filter(Boolean).map(canonicalBranchId));
     return seed.filter((sale) => {
       const at = Date.parse(sale.createdAt);
-      return at >= start && at <= end && (!stores.size || stores.has(canonicalBranchId(sale.storeId)));
+      return (
+        at >= start && at <= end && (!stores.size || stores.has(canonicalBranchId(sale.storeId)))
+      );
     });
   }, [seed, storeIds, from, to]);
   const [revision, setRevision] = useState(0);
@@ -35,24 +38,32 @@ export function useReportSales(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const off = subscribeSalesChange(() => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => setRevision(value => value + 1), 400);
+      timer = setTimeout(() => setRevision((value) => value + 1), 400);
     });
-    const refresh = () => setRevision(value => value + 1);
+    const refresh = () => setRevision((value) => value + 1);
     window.addEventListener("focus", refresh);
     window.addEventListener("online", refresh);
-    return () => { off(); if (timer) clearTimeout(timer); window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh); };
+    return () => {
+      off();
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+    };
   }, []);
-  const [loaded, setLoaded] = useState<Sale[]>([]);
+  const [loaded, setLoaded] = useState<{ key: string; rows: Sale[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const storeKey = storeIds.filter(Boolean).sort().join("|");
+
+  const rangeKey = JSON.stringify([storeKey, from, to]);
 
   useEffect(() => {
     let cancelled = false;
     const ids = storeKey ? storeKey.split("|") : [""];
     const start = dayStart(from);
     const end = dayEnd(to);
-    setLoaded([]);
+    const progress = beginDataTask("Loading report history");
+    let processed = 0;
     setLoading(true);
     setError("");
 
@@ -65,32 +76,42 @@ export function useReportSales(
           for (;;) {
             if (cancelled) return;
             const page = await loadSalesPage(storeId, cursor, 500);
+            if (cancelled) return;
+            processed += page.rows.length;
+            progress.report(processed);
             for (const sale of page.rows) {
               const at = Date.parse(sale.createdAt);
               if (at >= start && at <= end) found.push(sale);
             }
             const oldest = page.rows.at(-1);
-            if (!page.hasMore || !page.cursor || !oldest || Date.parse(oldest.createdAt) < start) break;
+            if (!page.hasMore || !page.cursor || !oldest || Date.parse(oldest.createdAt) < start)
+              break;
             if (cursor?.ts === page.cursor.ts && cursor.id === page.cursor.id) break;
             cursor = page.cursor;
           }
         }
-        if (!cancelled) setLoaded(found);
+        if (!cancelled) setLoaded({ key: rangeKey, rows: found });
       } catch (reason) {
-        if (!cancelled) setError((reason as Error).message || "Could not load the full report history");
+        if (!cancelled)
+          setError((reason as Error).message || "Could not load the full report history");
       } finally {
+        progress.finish();
         if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
+      progress.finish();
     };
-  }, [from, to, storeKey, revision]);
+  }, [from, to, storeKey, rangeKey, revision]);
 
   const sales = useMemo(() => {
     // Live committed state wins over an older page snapshot (for example a refund).
-    return uniqueSales([...loaded, ...seedRows]).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [seedRows, loaded]);
+    const rows = loaded?.key === rangeKey ? loaded.rows : [];
+    return uniqueSales([...rows, ...seedRows]).sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    );
+  }, [seedRows, loaded, rangeKey]);
 
   return { sales, loading, error };
 }

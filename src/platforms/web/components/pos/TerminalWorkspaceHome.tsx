@@ -9,6 +9,7 @@ const localDay = () => {
 };
 import {
   Activity,
+  ArrowUpRight,
   ArrowLeftRight,
   BarChart3,
   Boxes,
@@ -230,22 +231,32 @@ const ACTIONS: Record<TerminalPurpose, WorkspaceAction[]> = {
 export function TerminalWorkspaceHome() {
   const { state, currentStore, activeShift } = usePos();
   const { isAdmin, isSupervisor, can, user } = useAuth();
-  const { visible } = useVisibility();
+  const { visible, visibleRoute } = useVisibility();
   const configured = state.settings.integrations.terminalPurpose ?? "retail";
   const purpose: TerminalPurpose = isAdmin ? "management" : configured;
   const detail = PURPOSE_DETAILS[purpose];
   const visibleActions = ACTIONS[purpose].filter(
-    (action) => !action.permission || can(action.permission),
+    (action) =>
+      (!action.permission || can(action.permission)) &&
+      (!action.sell || can("can_process_sale")) &&
+      visibleRoute(action.to),
   );
   const [todayKey, setTodayKey] = useState(localDay);
   useEffect(() => {
     const refreshDay = () => setTodayKey(localDay());
     const timer = window.setInterval(refreshDay, 30_000);
     window.addEventListener("focus", refreshDay);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", refreshDay); };
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshDay);
+    };
   }, []);
   const storeIds = useMemo(() => [currentStore.id], [currentStore.id]);
-  const { sales: todaySales, loading, error } = useReportSales(state.sales, storeIds, todayKey, todayKey);
+  const {
+    sales: todaySales,
+    loading,
+    error,
+  } = useReportSales(state.sales, storeIds, todayKey, todayKey);
   const todayRevenue = todaySales.reduce((sum, sale) => sum + sale.total, 0);
   const lowStock = state.products.filter(
     (product) => stockAtLocation(product, currentStore.id) <= product.reorderLevel,
@@ -254,35 +265,36 @@ export function TerminalWorkspaceHome() {
 
   return (
     <AppShell>
-      <main className="h-full overflow-y-auto bg-muted/20 p-4 sm:p-6 lg:p-8">
-        <div className="mx-auto max-w-6xl space-y-6">
-          <header className="rounded-2xl border border-border bg-gradient-to-br from-primary/10 via-card to-card p-5 shadow-sm sm:p-7">
+      <div className="h-full overflow-y-auto bg-background p-4 sm:p-6 lg:p-8">
+        <div className="mx-auto max-w-6xl space-y-8">
+          <header className="rounded-2xl border border-border/70 bg-card p-5 sm:p-7">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-4">
-                <span className="rounded-xl bg-primary p-3 text-primary-foreground">
+                <span className="rounded-2xl bg-primary/10 p-3 text-primary">
                   <PurposeIcon className="size-6" />
                 </span>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <h1 className="text-2xl font-semibold tracking-tight">
+                    <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
                       {isSupervisor && !isAdmin ? "Manager workspace" : detail.label}
                     </h1>
                     <Badge variant="outline">{currentStore.name}</Badge>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">{detail.description}</p>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Signed in as {user?.name ?? "staff"}. Access remains controlled by your
-                    permissions.
+                    Welcome back, {user?.name ?? "staff"}.
                   </p>
                 </div>
               </div>
-              <Link
-                to="/"
-                search={{ sell: true }}
-                className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90"
-              >
-                <ShoppingCart className="size-4" /> Sell now
-              </Link>
+              {can("can_process_sale") && visibleRoute("/") && (
+                <Link
+                  to="/"
+                  search={{ sell: true }}
+                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <ShoppingCart className="size-4" /> Sell now
+                </Link>
+              )}
             </div>
           </header>
 
@@ -290,6 +302,8 @@ export function TerminalWorkspaceHome() {
             {visible("workspace.shiftStatus") && (
               <Metric
                 label="Shift"
+                icon={Activity}
+                tone={activeShift ? "text-success bg-success/10" : "text-muted-foreground bg-muted"}
                 value={activeShift ? "Open" : "Closed"}
                 hint={activeShift ? activeShift.cashier : "Open a shift before cash sales"}
               />
@@ -297,6 +311,8 @@ export function TerminalWorkspaceHome() {
             {can("can_view_sales_reports") && visible("workspace.todayBills") && (
               <Metric
                 label="Today's bills"
+                icon={PackageSearch}
+                tone="text-category-1 bg-category-1/10"
                 value={String(todaySales.length)}
                 hint={error ? "Could not refresh totals" : loading ? "Updating…" : "Current branch"}
               />
@@ -304,15 +320,25 @@ export function TerminalWorkspaceHome() {
             {can("can_view_sales_reports") && visible("workspace.todayRevenue") && (
               <Metric
                 label="Today's revenue"
+                icon={BarChart3}
+                tone="text-category-2 bg-category-2/10"
                 value={todayRevenue.toLocaleString(undefined, {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
                 })}
-                hint={error ? "Could not refresh totals" : loading ? "Updating…" : "Completed sales"}
+                hint={
+                  error ? "Could not refresh totals" : loading ? "Updating…" : "Completed sales"
+                }
               />
             )}
             {can("can_view_inventory") && visible("workspace.lowStock") && (
-              <Metric label="Low stock" value={String(lowStock)} hint="At or below reorder level" />
+              <Metric
+                icon={Boxes}
+                tone="text-warning bg-warning/10"
+                label="Low stock"
+                value={String(lowStock)}
+                hint="At or below reorder level"
+              />
             )}
           </section>
 
@@ -320,25 +346,31 @@ export function TerminalWorkspaceHome() {
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold">Quick actions</h2>
-                <p className="text-sm text-muted-foreground">
-                  Only actions allowed for this user are shown.
-                </p>
+                <p className="text-sm text-muted-foreground">Your everyday tools, one step away.</p>
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {visibleActions.map((action) => (
+              {visibleActions.map((action, index) => (
                 <Link
                   key={`${action.to}-${action.label}`}
                   to={action.to}
                   search={action.sell ? { sell: true } : {}}
-                  className="group"
+                  className="group rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 >
-                  <Card className="h-full transition-all group-hover:-translate-y-0.5 group-hover:border-primary/50 group-hover:shadow-md">
+                  <Card className="h-full transition-[border-color,background-color] duration-[var(--motion-fast)] group-hover:border-primary/40 group-hover:bg-muted/25 motion-reduce:transition-none">
                     <CardHeader className="flex flex-row items-center gap-3 pb-2">
-                      <span className="rounded-lg bg-primary/10 p-2 text-primary">
+                      <span
+                        className={`rounded-xl p-2.5 ${["bg-category-1/10 text-category-1", "bg-category-2/10 text-category-2", "bg-category-3/10 text-category-3", "bg-category-4/10 text-category-4"][index % 4]}`}
+                      >
                         <action.icon className="size-5" />
                       </span>
-                      <CardTitle className="text-base">{action.label}</CardTitle>
+                      <CardTitle className="flex-1 text-base leading-snug">
+                        {action.label}
+                      </CardTitle>
+                      <ArrowUpRight
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary"
+                      />
                     </CardHeader>
                     <CardContent className="text-sm text-muted-foreground">
                       {action.description}
@@ -349,18 +381,37 @@ export function TerminalWorkspaceHome() {
             </div>
           </section>
         </div>
-      </main>
+      </div>
     </AppShell>
   );
 }
 
-function Metric({ label, value, hint }: { label: string; value: string; hint: string }) {
+function Metric({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  icon: typeof Store;
+  tone: string;
+}) {
   return (
     <Card>
-      <CardContent className="p-4">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-        <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
-        <p className="mt-1 truncate text-xs text-muted-foreground">{hint}</p>
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-medium text-muted-foreground">{label}</p>
+          <span className={`rounded-xl p-2 ${tone}`}>
+            <Icon aria-hidden="true" className="size-4" />
+          </span>
+        </div>
+        <p className="mt-3 break-words text-3xl font-semibold tracking-tight tabular-nums">
+          {value}
+        </p>
+        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{hint}</p>
       </CardContent>
     </Card>
   );
