@@ -2596,22 +2596,19 @@ export const db = {
   },
 
   /** Correct the tender recorded against a completed bill (e.g. card -> cash). */
-  updateSalePayment(saleId: string, method: PaymentMethod, branchId: string, payments?: Sale["payments"]) {
-    return commitOps("Correcting bill payment", [{
-      kind: "update",
-      table: "sales",
-      values: { payment_type: method, ...(payments ? { payments } : {}) },
-      // Keep the branch in the mutation itself. The relay pins ordinary staff
-      // automatically, but administrators and direct local SQL writes also
-      // need the same immutable ownership boundary.
-      match: { id: saleId, store_id: branchId },
-      requireMatch: true,
-    }, {
-      kind: "update",
-      table: "payment_transactions",
-      values: { method, reference: null },
-      match: { sale_id: saleId, store_id: branchId, source_type: "sale" },
-    }]);
+  async updateSalePayment(saleId: string, method: PaymentMethod, branchId: string, _payments?: Sale["payments"]) {
+    const [{ correctSaleTender }, { getPosCallerAuth }] = await Promise.all([
+      import("@/lib/tender-correction.functions"), import("@/lib/pos-caller-auth"),
+    ]);
+    const credentials = await getPosCallerAuth();
+    const result = await correctSaleTender({ data: { ...credentials, saleId, storeId: branchId, method } });
+    if (!result.ok) throw new Error(result.error);
+    const bridge = localDb();
+    if (bridge?.findReceipt) {
+      try { await bridge.findReceipt(saleId, branchId, { ...credentials, refresh: true }); }
+      catch { showNotification("Payment corrected in the cloud. Reconnect and sync to refresh this terminal's local copy.", "info"); }
+    }
+    await broadcastSettingsChange("sales");
   },
 
   /** Batch-push pending audit rows; returns the ids that landed in the cloud. */

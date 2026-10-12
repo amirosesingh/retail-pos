@@ -27,7 +27,7 @@ describe("administrator corrections and shared table controls", () => {
     expect(receipts).toContain(
       "changeSalePayment(selected.id, payMethod, reason, selected)",
     );
-    expect(db).toContain("match: { id: saleId, store_id: branchId }");
+    expect(db).toContain("saleId, storeId: branchId, method");
     expect(receipts).toContain("rows.map((row) => (row.id === selected.id");
   });
 

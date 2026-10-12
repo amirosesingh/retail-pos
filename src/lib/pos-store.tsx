@@ -2559,7 +2559,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           ? loadedSale
           : stateRef.current.sales.find((x) => x.id === saleId);
       if (!sale || sale.method === method) return false;
-      const payments = sale.payments?.map(payment => ({ id: payment.id, amount: payment.amount, method }));
+      const payments = sale.payments?.map(payment => ({ ...payment, method }));
       await db.updateSalePayment(saleId, method, sale.storeId, payments);
       logger.log("sale_event", "Bill payment method corrected", "receipts", {
         saleId,

@@ -165,6 +165,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261010141611_align_sale_refund_branch_contract.sql",
       "supabase/migrations/20261010142848_in_place_bill_corrections.sql",
       "supabase/migrations/20261012111755_allow_existing_sale_replay_after_shift_close.sql",
+      "supabase/migrations/20261012121232_admin_tender_correction_and_signin_history_access.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
