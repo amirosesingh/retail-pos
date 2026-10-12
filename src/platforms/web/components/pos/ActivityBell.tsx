@@ -2,7 +2,7 @@ import { activeBranchId } from "@/lib/active-branch";
 /** Shared, durable notification acknowledgements; business records remain unchanged. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Bell, Check, LoaderCircle } from "lucide-react";
+import { Bell, Check, LoaderCircle, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AnimatedList } from "@/components/ui/animated-list";
@@ -26,6 +26,7 @@ import { usePosOptional } from "@/lib/pos-store";
 import { humanizeText } from "@/lib/human-readable";
 
 const POLL_MS = 15_000;
+const activityKey = (row: ActivityEvent) => row.id;
 /** Notifications expire from the live delivery feed after one week. The
  * underlying immutable activity/audit event remains available in Reports. */
 const NOTIFICATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -48,15 +49,17 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     }),
     [pos?.stores, pos?.state.products, pos?.state.members, pos?.state.sales],
   );
-  const eventText = useCallback((value: string) => humanizeText(value, refs), [refs]);
+  const textRefs = useRef(refs);
+  textRefs.current = refs;
+  const eventText = useCallback((value: string) => humanizeText(value, textRefs.current), []);
 
   // Everyone polls the feed. Server and local audience filters return general
   // branch activity to supervisors and private approval notices to recipients.
   const showActivity = true;
   const allowed = true;
 
-  const [, setClearedTick] = useState(0);
   const meKey = user?.staffId ?? user?.name ?? "";
+  const [cleared, setCleared] = useState<string[]>(() => clearedIds(meKey));
   const [rows, setRows] = useState<ActivityEvent[]>([]);
   const [, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
@@ -66,6 +69,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const preferenceBusyRef = useRef(new Set<string>());
   const announcedIdsRef = useRef(new Set<string>());
   const activityInitializedRef = useRef(false);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
+  const refreshPending = useRef(false);
+  const refreshGeneration = useRef(0);
+  const mounted = useRef(false);
+  const refreshLatest = useRef<() => Promise<void>>(async () => undefined);
 
   const updatePreference = useCallback(
     async (id: string, action: () => Promise<boolean>, failure: string) => {
@@ -128,58 +136,95 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   );
 
   const refresh = useCallback(async () => {
-    if (!showActivity) return;
-    void flushActivityQueue().catch(() => undefined);
-    const list = await listActivityEvents({
-      limit: 200,
-      storeId: activeBranchId() ?? undefined,
-      from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString(),
-    });
-    if (isActivityLogMissing()) {
-      setMissing(true);
-      return;
+    if (!showActivity || !meKey || !mounted.current) return;
+    if (refreshInFlight.current) {
+      refreshPending.current = true;
+      return refreshInFlight.current;
     }
-    setRows(list);
-    mergeRemoteActivityPreferences(meKey, list);
-    const hidden = new Set(clearedIds(meKey));
-    const fresh = unseenEvents(list, meKey).filter(
-      (row) => !hidden.has(row.id) && !row.clearedBy.length,
-    );
-    setUnread(fresh.length);
-    const newlyArrived = activityInitializedRef.current
-      ? list.filter(
-          (row) =>
-            !announcedIdsRef.current.has(row.id) && !hidden.has(row.id) && !row.clearedBy.length,
-        )
-      : [];
-    for (const row of list) announcedIdsRef.current.add(row.id);
-    activityInitializedRef.current = true;
-    // At most four compact cards are introduced at once. Sonner stacks them
-    // at the right edge and animates both entry and dismissal.
-    for (const row of newlyArrived.slice(0, 4).reverse()) {
-      const show =
-        row.severity === "critical"
-          ? toast.error
-          : row.severity === "warning"
-            ? toast.warning
-            : toast.info;
-      show(eventText(row.title), {
-        id: `activity-${row.id}`,
-        description: row.message ? eventText(row.message) : undefined,
-        closeButton: true,
-        duration: 4_000,
-        position: "top-right",
-        className: "activity-notification-toast !w-[min(20rem,calc(100vw-1rem))] !gap-2 !p-3",
-        classNames: {
-          title: "text-xs font-medium",
-          description: "line-clamp-2 text-[11px] leading-4",
-        },
+    const generation = refreshGeneration.current;
+    const run = (async () => {
+      void flushActivityQueue().catch(() => undefined);
+      const list = await listActivityEvents({
+        limit: 200,
+        storeId: activeBranchId() ?? undefined,
+        from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString(),
       });
+      if (generation !== refreshGeneration.current) return;
+      if (isActivityLogMissing()) {
+        setMissing(true);
+        return;
+      }
+      setRows((current) => (JSON.stringify(current) === JSON.stringify(list) ? current : list));
+      mergeRemoteActivityPreferences(meKey, list);
+      const hidden = new Set(clearedIds(meKey));
+      const fresh = unseenEvents(list, meKey).filter(
+        (row) => !hidden.has(row.id) && !row.clearedBy.length,
+      );
+      setUnread(fresh.length);
+      const newlyArrived = activityInitializedRef.current
+        ? list.filter(
+            (row) =>
+              !announcedIdsRef.current.has(row.id) && !hidden.has(row.id) && !row.clearedBy.length,
+          )
+        : [];
+      for (const row of list) announcedIdsRef.current.add(row.id);
+      activityInitializedRef.current = true;
+      // At most four compact cards are introduced at once. Sonner stacks them
+      // at the right edge and animates both entry and dismissal.
+      for (const row of newlyArrived.slice(0, 4).reverse()) {
+        const show =
+          row.severity === "critical"
+            ? toast.error
+            : row.severity === "warning"
+              ? toast.warning
+              : toast.info;
+        show(eventText(row.title), {
+          id: `activity-${row.id}`,
+          description: row.message ? eventText(row.message) : undefined,
+          closeButton: true,
+          onDismiss: () => {
+            if (!mounted.current || generation !== refreshGeneration.current || clearedIds(meKey).includes(row.id)) return;
+            void updatePreference(
+              row.id,
+              () => clearActivityEntry(meKey, row.id),
+              "Could not clear notification. Your notification remains available in the bell.",
+            );
+          },
+          duration: 4_000,
+          position: "top-right",
+          className: "activity-notification-toast !w-[min(20rem,calc(100vw-1rem))] !gap-2 !p-3",
+          classNames: {
+            title: "text-xs font-medium",
+            description: "line-clamp-2 text-[11px] leading-4",
+          },
+        });
+      }
+    })();
+    refreshInFlight.current = run;
+    try {
+      await run;
+    } finally {
+      refreshInFlight.current = null;
+      if (refreshPending.current && mounted.current) {
+        refreshPending.current = false;
+        queueMicrotask(() => {
+          void refreshLatest.current().catch(() => undefined);
+        });
+      }
     }
-  }, [eventText, meKey, showActivity]);
+  }, [eventText, meKey, showActivity, updatePreference]);
+  refreshLatest.current = refresh;
 
   useEffect(() => {
     if (!showActivity) return;
+    const generation = refreshGeneration.current;
+    mounted.current = true;
+    const onCleared = () =>
+      setCleared((current) => {
+        const next = clearedIds(meKey);
+        return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+      });
+    onCleared();
     const tick = () => {
       if (document.visibilityState !== "hidden") void refresh().catch(() => undefined);
     };
@@ -194,23 +239,26 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       tick();
     }, POLL_MS);
     document.addEventListener("visibilitychange", tick);
-    const onCleared = () => setClearedTick((value) => value + 1);
     window.addEventListener("pos:activity-cleared-changed", onCleared);
     window.addEventListener("storage", onCleared);
     return () => {
+      refreshGeneration.current = generation + 1;
+      mounted.current = false;
       off();
       clearInterval(t);
       document.removeEventListener("visibilitychange", tick);
       window.removeEventListener("pos:activity-cleared-changed", onCleared);
       window.removeEventListener("storage", onCleared);
     };
-  }, [showActivity, refresh]);
+  }, [showActivity, refresh, meKey]);
 
-  const hidden = new Set(clearedIds(meKey));
-  const visibleRows = rows.filter(
-    (r) => !hidden.has(r.id) && !r.clearedBy.length && r.meta["auditOnly"] !== true,
-  );
-  const badge = visibleRows.filter((row) => unseenEvents([row], meKey).length > 0).length;
+  const visibleRows = useMemo(() => {
+    const hidden = new Set(cleared);
+    return rows.filter(
+      (r) => !hidden.has(r.id) && !r.clearedBy.length && r.meta["auditOnly"] !== true,
+    );
+  }, [rows, cleared]);
+  const badge = unseenEvents(visibleRows, meKey).length;
 
   if (!allowed) return null;
 
@@ -244,8 +292,18 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[min(26rem,calc(100vw-1rem))] p-0">
-        <div className="border-b border-border px-3 py-2">
+        <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <p className="text-sm font-medium">Notifications</p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            aria-label="Close notifications"
+            onClick={() => setOpen(false)}
+          >
+            <X className="size-4" />
+          </Button>
         </div>
 
         <div className="max-h-80 overflow-y-auto">
@@ -302,7 +360,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
           ) : (
             <AnimatedList
               items={visibleRows}
-              getKey={(row) => row.id}
+              getKey={activityKey}
               empty={
                 <p className="px-3 py-6 text-center text-xs text-muted-foreground">
                   No notifications.

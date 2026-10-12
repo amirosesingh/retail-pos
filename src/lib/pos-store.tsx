@@ -562,14 +562,14 @@ function applySalesSnapshot(
   const sales = uniqueSales([...otherBranches, ...pending, ...rows])
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 500);
-  return {
+  return retainUnchangedFields(current, {
     ...current,
     sales,
     counter: rows.reduce(
       (max, sale) => Math.max(max, receiptSequence(sale.receiptNo)),
       current.counter,
     ),
-  };
+  });
 }
 
 export function PosProvider({ children }: { children: ReactNode }) {
