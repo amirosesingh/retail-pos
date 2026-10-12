@@ -6,7 +6,7 @@ const harness = vi.hoisted(() => ({
   effectCursor: 0,
   effects: [] as { deps: unknown[]; cleanup?: () => void }[],
   pending: [] as (() => void)[],
-  focus: null as null | (() => void),
+  focus: null as null | (() => void), salesChange: null as null | (() => void),
 }));
 vi.mock("react", () => ({
   useState: (initial: unknown) => {
@@ -33,7 +33,7 @@ vi.mock("react", () => ({
 }));
 const load = vi.hoisted(() => vi.fn());
 vi.mock("@/core/api/pos-db", () => ({ loadSalesPage: (...args: unknown[]) => load(...args) }));
-vi.mock("../sync-engine", () => ({ subscribeSalesChange: () => () => {} }));
+vi.mock("../sync-engine", () => ({ subscribeSalesChange: (fn: () => void) => { harness.salesChange = fn; return () => {}; } }));
 vi.mock("../data-progress", () => ({
   beginDataTask: () => ({ report: vi.fn(), finish: vi.fn() }),
 }));
@@ -58,7 +58,7 @@ beforeEach(() => {
   harness.values = [];
   harness.effects = [];
   harness.pending = [];
-  harness.focus = null;
+  harness.focus = null; harness.salesChange = null;
   load.mockReset();
   vi.stubGlobal("window", {
     addEventListener: (name: string, fn: () => void) => {
@@ -69,7 +69,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   harness.effects.forEach((effect) => effect.cleanup?.());
-  vi.unstubAllGlobals();
+  vi.unstubAllGlobals(); vi.useRealTimers();
 });
 async function loaded() {
   load.mockResolvedValueOnce(page);
@@ -79,6 +79,24 @@ async function loaded() {
   expect(render().sales).toHaveLength(1);
 }
 describe("report refresh stability", () => {
+  it("refreshes again for later live changes after the first batch", async () => {
+    vi.useFakeTimers();
+    await loaded();
+    load.mockResolvedValue(page);
+    harness.salesChange?.();
+    harness.salesChange?.();
+    await vi.advanceTimersByTimeAsync(100);
+    render();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(load).toHaveBeenCalledTimes(2);
+    harness.salesChange?.();
+    await vi.advanceTimersByTimeAsync(100);
+    render();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(load).toHaveBeenCalledTimes(3);
+  });
   it("retains existing rows during a same-range refresh", async () => {
     await loaded();
     load.mockImplementationOnce(() => new Promise(() => {}));
