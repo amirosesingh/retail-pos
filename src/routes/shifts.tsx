@@ -1,3 +1,4 @@
+import { canOpenDrawer } from "@/lib/receipt-printer";
 import { tenderSales } from "@/lib/shift-close";
 import { sameRecordId } from "@/lib/sale-identity";
 import { subscribeDataChange } from "@/lib/sync-engine";
@@ -350,8 +351,10 @@ function Shifts() {
                       (user?.name ?? cashier).trim() || "Cashier",
                       parsePositiveAmount(float) ?? 0,
                     );
-                    const drawer = await openCashDrawer("Opening float for a new shift");
-                    if (!drawer.ok) toast.warning(drawer.error ?? "The cash drawer did not open.");
+                    if (canOpenDrawer()) {
+                      const drawer = await openCashDrawer("Opening float for a new shift");
+                      if (!drawer.ok) toast.warning(drawer.error ?? "The cash drawer did not open.");
+                    }
                     setFloat("");
                     toast.success(`Shift opened — ${commitLabel(target).toLowerCase()}`);
                   } catch (e) {
@@ -539,12 +542,10 @@ function Shifts() {
                             try {
                               await refundSale(s.id, grant.grantToken);
                               printSaleReceipt(s, member, "refund");
-                              const drawer = await openCashDrawer(
-                                `Refund ${s.receiptNo}`,
-                                activeShift?.id,
-                              );
-                              if (!drawer.ok)
-                                toast.warning(drawer.error ?? "The cash drawer did not open.");
+                              if (canOpenDrawer()) {
+                                const drawer = await openCashDrawer(`Refund ${s.receiptNo}`, activeShift?.id);
+                                if (!drawer.ok) toast.warning(drawer.error ?? "The cash drawer did not open.");
+                              }
                               toast.success(`${s.receiptNo} refunded`);
                             } catch (error) {
                               notifyError(error, "Refunding the sale");

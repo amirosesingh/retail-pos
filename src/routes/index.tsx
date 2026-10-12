@@ -1,3 +1,4 @@
+import { canOpenDrawer } from "@/lib/receipt-printer";
 import { draftTicketId } from "@/lib/session-draft";
 import { LegacyExchangeForm } from "@/platforms/web/components/pos/LegacyExchangeForm";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
@@ -3260,7 +3261,7 @@ function Register() {
                   notifyError(error, "Logging the drawer opening");
                   return;
                 }
-                openCashDrawer();
+                if (canOpenDrawer()) openCashDrawer();
                 setNoSaleOpen(false);
                 setNoSaleReason("");
                 setNoSaleNote("");
@@ -4092,7 +4093,7 @@ function Register() {
                     (user?.name ?? cashier).trim() || "Cashier",
                     parsePositiveAmount(float) ?? 0,
                   );
-                  openCashDrawer();
+                  if (canOpenDrawer()) openCashDrawer();
                   setFloat("");
                   setOpenShiftOpen(false);
                   toast.success(`Shift opened — ${commitLabel(target).toLowerCase()}`);

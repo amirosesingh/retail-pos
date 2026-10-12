@@ -1,3 +1,4 @@
+import { canOpenDrawer } from "@/lib/receipt-printer";
 import { flushTicketDrafts } from "@/lib/session-draft";
 import { redeemedPoints } from "../points-redemption";
 import { exchangePolicyError } from "../returns-policy";
@@ -333,7 +334,7 @@ export function useCheckout(deps: CheckoutDeps) {
     } finally {
       setSaving(false);
     }
-    if (paidNow > 0 && bi.depositMethod === "cash") openCashDrawer();
+    if (canOpenDrawer() && paidNow > 0 && bi.depositMethod === "cash") openCashDrawer();
     printBookingSlip(booking, member, state.settings.payment);
     if (booking.job) printJobTag(booking);
     if (wa.enabled && wa.autoSendOnBooking) {
@@ -659,7 +660,7 @@ export function useCheckout(deps: CheckoutDeps) {
         /* audit recovery must not break a completed checkout */
       }
     }
-    if (payments.some((p) => p.method === "cash")) {
+    if (canOpenDrawer() && payments.some((p) => p.method === "cash")) {
       try {
         openCashDrawer();
       } catch (error) {
