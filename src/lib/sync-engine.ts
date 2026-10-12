@@ -817,7 +817,7 @@ function queueLiveChange(change: LiveChange): void {
   );
   if (liveTimer) return;
   // One catch-up for a burst of related edits.
-  liveTimer = window.setTimeout(flushLiveChanges, 400);
+  liveTimer = window.setTimeout(flushLiveChanges, 100);
 }
 
 /**

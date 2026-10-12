@@ -1,4 +1,3 @@
-import { beginDataTask } from "./data-progress";
 import { subscribeSalesChange } from "./sync-engine";
 import { useEffect, useMemo, useState } from "react";
 import { loadSalesPage } from "@/core/api/pos-db";
@@ -21,7 +20,7 @@ export function useReportSales(
   storeIds: string[],
   from: string,
   to: string,
-): { sales: Sale[]; loading: boolean; error: string } {
+): { sales: Sale[]; loading: boolean; refreshing: boolean; error: string } {
   const seedRows = useMemo(() => {
     const start = dayStart(from);
     const end = dayEnd(to);
@@ -37,8 +36,11 @@ export function useReportSales(
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const off = subscribeSalesChange(() => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => setRevision((value) => value + 1), 400);
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        setRevision((value) => value + 1);
+      }, 100);
     });
     const refresh = () => setRevision((value) => value + 1);
     window.addEventListener("focus", refresh);
@@ -62,8 +64,6 @@ export function useReportSales(
     const ids = storeKey ? storeKey.split("|") : [""];
     const start = dayStart(from);
     const end = dayEnd(to);
-    const progress = beginDataTask("Loading report history");
-    let processed = 0;
     setLoading(true);
     setError("");
 
@@ -77,8 +77,6 @@ export function useReportSales(
             if (cancelled) return;
             const page = await loadSalesPage(storeId, cursor, 500);
             if (cancelled) return;
-            processed += page.rows.length;
-            progress.report(processed);
             for (const sale of page.rows) {
               const at = Date.parse(sale.createdAt);
               if (at >= start && at <= end) found.push(sale);
@@ -95,13 +93,11 @@ export function useReportSales(
         if (!cancelled)
           setError((reason as Error).message || "Could not load the full report history");
       } finally {
-        progress.finish();
         if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
-      progress.finish();
     };
   }, [from, to, storeKey, rangeKey, revision]);
 
@@ -113,5 +109,6 @@ export function useReportSales(
     );
   }, [seedRows, loaded, rangeKey]);
 
-  return { sales, loading, error };
+  const sameScope = loaded?.key === rangeKey;
+  return { sales, loading: loading && !sameScope, refreshing: loading && sameScope, error };
 }

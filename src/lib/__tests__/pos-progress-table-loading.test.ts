@@ -49,7 +49,7 @@ describe("table loading", () => {
     );
     const html = renderToStaticMarkup(h(Table, { loading: true }, headers, body));
     expect(html).toContain("Existing product");
-    expect(html).toContain("Refreshing rows…");
+    expect(html).not.toContain("Refreshing rows…");
     expect(html).toContain('aria-busy="true"');
     expect(html).not.toContain("animate-pulse");
   });
