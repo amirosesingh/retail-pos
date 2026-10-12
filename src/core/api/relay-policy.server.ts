@@ -495,6 +495,19 @@ export async function authorizeRelayOp(
     return deny("PERMISSION_DENIED", "Global settings require an administrator.");
   if (["settings_overrides", "settings_locks"].includes(op.table))
     return authorizeSettingsMutation(op, scope);
+  if (op.table === SCOPED_SETTINGS_TABLE &&
+      (op.kind === "insert" || op.kind === "upsert") &&
+      op.rows.some(row => String(row.key ?? "").startsWith("pos_field:"))) {
+    if (!settingsAdmin || scope.kind === "terminal" || scope.stale)
+      return deny("PERMISSION_DENIED", "Global settings require a verified administrator.");
+    if (!op.rows.every(row => row.scope === "GLOBAL" && row.scope_id === "" &&
+        /^pos_field:[a-z][a-z0-9_]*$/.test(String(row.key ?? "")) &&
+        Object.prototype.hasOwnProperty.call(row, "value")))
+      return deny("PERMISSION_DENIED", "Only complete global POS settings fields may be saved together.");
+    const rows = op.rows.map(row => ({ scope: "GLOBAL", scope_id: "", key: row.key,
+      value: row.value, is_overridden: true, updated_by: scope.staffUserId ?? scope.actorName ?? null }));
+    return { ok: true, op: { ...op, rows, ...(op.kind === "upsert" ? { onConflict: "scope,scope_id,key" } : {}) } };
+  }
 
 
   if (scope.stale && !scope.isSupervisor)

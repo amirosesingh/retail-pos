@@ -10,8 +10,8 @@ describe("source-neutral settings field merge", () => {
     expect(db).toContain('table: "settings_scoped"');
     expect(db).toContain('table: "pos_settings"');
     expect(db).toContain('[fieldOp, op]');
-    expect(db).toContain('[fieldOp, op2]');
-    expect(db).toContain("delete compatibleRow[col]");
+    expect(db).toContain('runBatchLive("Saving settings", [fieldOp, op])');
+    expect(read("src/lib/sync-engine.ts")).toContain("strip(op.rows, dropped)");
     expect(db).toContain("const fieldSourceRow = patch ? settingsPatchRow(s, patch) : buildSettingsRow(s)");
     expect(db).toContain("settingsFieldRows(fieldSourceRow)");
     expect(db).toContain('onConflict: "scope,scope_id,key"');
