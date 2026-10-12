@@ -418,6 +418,18 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  const notificationOps = channel === "business:commit-aggregate" ? args[0]?.operations
+    : channel === "business:write-batch" ? args[1] : null;
+  if (Array.isArray(notificationOps) && notificationOps.length > 0 && notificationOps.every(op =>
+      op?.table === "activity_events" && op.kind === "update" && op.requireMatch === true &&
+      Object.keys(op.values ?? {}).length === 1 && Object.hasOwn(op.values, "cleared_by") &&
+      Object.keys(op.match ?? {}).length === 1 && typeof op.match.id === "string" && op.match.id.length > 0)) {
+    // Repository checks the verified operator and recipient audience; no
+    // arbitrary event edit or general batch authority is granted here.
+    if (!adminSession.hasPosAuthority()) return false;
+    adminSession.touch();
+    return true;
+  }
   if (channel === "business:reserve-bill") {
     if (adminSession.hasPosAuthority() && adminSession.hasPermission("can_process_sale")) {
       adminSession.touch();

@@ -330,7 +330,9 @@ class OperationsRepository {
         : sensitive ? operator.role === "admin"
         : operator.mayViewGeneralActivity && (operator.role === "admin" || sameBranch);
       if (!visible) throw Object.assign(new Error("Notification access denied."), { code: "PERMISSION_DENIED" });
-      op = { ...op, values: { cleared_by: JSON.stringify([String(person?.id ?? operator.subject)]) } };
+      // columnValueForSql owns JSON encoding for text[] columns. Supplying a
+      // pre-encoded string here double-encodes it and violates ISJSON checks.
+      op = { ...op, values: { cleared_by: [String(person?.id ?? operator.subject)] } };
     }
     await this.assertLegacyExchange(transaction, op, scope);
     await this.assertSettingsPermissions(transaction, op, scope);
