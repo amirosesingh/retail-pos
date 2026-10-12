@@ -101,7 +101,7 @@ describe("online approval primary database", () => {
     expect(register).toContain('action: "price_override"');
     expect(register).toContain("priceOverridden: true");
     expect(receipts).toContain('action: "refund"');
-    expect(shifts).toContain('action: "refund"');
+    expect(shifts).not.toContain("printSaleReceipt");
     expect(transfers).toContain("authorizationRules.stock_transfer?.mode");
     expect(transfers).toContain('action: "stock_transfer"');
   });

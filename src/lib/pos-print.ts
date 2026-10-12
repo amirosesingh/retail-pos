@@ -478,10 +478,14 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
             ? "KITCHEN ORDER TICKET"
             : undefined;
   const sign = kind === "refund" ? -1 : 1;
-  const rows = sale.lines
+  const receiptLines = sale.exchangeOfReceiptNo
+    ? [...sale.lines.filter(line => line.credit), ...sale.lines.filter(line => !line.credit)]
+    : sale.lines;
+  const rows = receiptLines
     .map(
-      (l) =>
-        `<tr><td>${esc(l.name)}${l.credit ? ' <span class="tag">CREDIT</span>' : ""}<div class="muted">${l.qty} x ${fmt(l.price)}${
+      (l, index) =>
+        `${sale.exchangeOfReceiptNo && (index === 0 || receiptLines[index - 1].credit !== l.credit)
+          ? `<tr><td colspan="2" class="b">${l.credit ? "ITEMS RETURNED FOR EXCHANGE" : "REPLACEMENT ITEMS"}</td></tr>` : ""}<tr><td>${esc(l.name)}${l.credit ? ' <span class="tag">EXCHANGED / RETURNED</span>' : ""}<div class="muted">${Math.abs(l.qty)} x ${fmt(l.price)}${
           l.discount
             ? ` - ${l.discountType === "percent" ? `${l.discount}%` : fmt(l.discount)} disc`
             : ""
@@ -511,7 +515,7 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
       }
       ${
         sale.exchangeOfReceiptNo
-          ? `<tr><td>Store Credit from Bill #${esc(sale.exchangeOfReceiptNo)}</td><td class="r">-${fmt(sale.exchangeCredit ?? 0)}</td></tr>`
+          ? `<tr><td>Exchange credit</td><td class="r">-${fmt(sale.exchangeCredit ?? 0)}</td></tr>`
           : ""
       }
       ${
@@ -543,8 +547,10 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
     : "";
 
   return `${header(subtitle)}
+    ${sale.exchangeOfReceiptNo ? `<div class="c b big">EXCHANGE RECEIPT</div>` : ""}
     <table>
       <tr><td>Receipt</td><td class="r b">${sale.correctedAt ? "Corrected " : ""}${esc(sale.receiptNo)}</td></tr>
+      ${sale.exchangeOfReceiptNo ? `<tr><td>Original receipt</td><td class="r b">${esc(sale.exchangeOfReceiptNo)}</td></tr>` : ""}
       <tr><td>Date</td><td class="r">${new Date(sale.createdAt).toLocaleString()}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(sale.cashier)}</td></tr>
     </table>

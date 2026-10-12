@@ -23,7 +23,7 @@ describe("administrator corrections and shared table controls", () => {
     const receipts = read("src/routes/receipts.tsx");
     const db = read("src/core/api/pos-db.ts");
     expect(store).toContain("loadedSale?.id === saleId");
-    expect(store).toContain("db.updateSalePayment(saleId, method, sale.storeId)");
+    expect(store).toContain("db.updateSalePayment(saleId, method, sale.storeId, payments)");
     expect(receipts).toContain(
       "changeSalePayment(selected.id, payMethod, reason, selected)",
     );
@@ -41,7 +41,7 @@ describe("administrator corrections and shared table controls", () => {
     expect(source).toContain('serviceRest("rpc/pos_admin_correct_closed_shift"');
     const route = read("src/routes/shifts.tsx");
     expect(route).toContain("correctionClientKey.current = crypto.randomUUID()");
-    expect(route).toContain("clientKey: correctionClientKey.current");
+    expect(route).toMatch(/clientKey:\s+correctionClientKey.current/);
     const migration = read(
       "supabase/migrations/20261002023000_admin_only_posted_record_corrections.sql",
     );

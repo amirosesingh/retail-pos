@@ -24,7 +24,8 @@ describe("business UI persistence acknowledgements", () => {
     expect(receipts).toContain("loadPendingRecordEditHistory(selected.id)");
     expect(receipts).toContain("Retry saving correction audit");
     expect(receipts).toContain("await changeSalePayment(selected.id");
-    expect(shifts).toContain("await refundSale(s.id, grant.grantToken)");
+    expect(shifts).not.toContain("printSaleReceipt");
+    expect(shifts).not.toContain("await refundSale(");
   });
 
   it("awaits product and member acceptance before changing business state", () => {

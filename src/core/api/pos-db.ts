@@ -2596,16 +2596,22 @@ export const db = {
   },
 
   /** Correct the tender recorded against a completed bill (e.g. card -> cash). */
-  updateSalePayment(saleId: string, method: PaymentMethod, branchId: string) {
-    return queue("Correcting bill payment", {
+  updateSalePayment(saleId: string, method: PaymentMethod, branchId: string, payments?: Sale["payments"]) {
+    return commitOps("Correcting bill payment", [{
       kind: "update",
       table: "sales",
-      values: { payment_type: method },
+      values: { payment_type: method, ...(payments ? { payments } : {}) },
       // Keep the branch in the mutation itself. The relay pins ordinary staff
       // automatically, but administrators and direct local SQL writes also
       // need the same immutable ownership boundary.
       match: { id: saleId, store_id: branchId },
-    });
+      requireMatch: true,
+    }, {
+      kind: "update",
+      table: "payment_transactions",
+      values: { method, reference: null },
+      match: { sale_id: saleId, store_id: branchId, source_type: "sale" },
+    }]);
   },
 
   /** Batch-push pending audit rows; returns the ids that landed in the cloud. */

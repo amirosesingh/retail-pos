@@ -77,7 +77,20 @@ class OperationsRepository {
       if (!["insert", "upsert", "update", "delete"].includes(op.kind)) throw new Error("Unsupported business operation.");
       if (op.requireMatch !== undefined && typeof op.requireMatch !== "boolean")
         throw new Error("The required-match flag must be a boolean.");
-      if (table.updateRule === "append_only" && ["update", "delete"].includes(op.kind))
+      // Acknowledgement is mutable notification state, not an edit to the
+      // append-only event. Its content, audience and identity stay immutable.
+      const notificationClear = op.table === "activity_events" && op.kind === "update" &&
+        Object.keys(op.values ?? {}).length === 1 && Object.hasOwn(op.values, "cleared_by") &&
+        Object.keys(op.match ?? {}).length === 1 && typeof op.match.id === "string" &&
+        op.match.id.length > 0 && op.requireMatch === true;
+      if (notificationClear) {
+        let acknowledgements;
+        try { acknowledgements = JSON.parse(op.values.cleared_by); } catch { /* reject below */ }
+        if (!Array.isArray(acknowledgements) || !acknowledgements.length || acknowledgements.length > 100 ||
+            acknowledgements.some(value => typeof value !== "string" || !value.trim() || value.length > 128))
+          throw new Error("A valid notification acknowledgement is required.");
+      }
+      if (table.updateRule === "append_only" && ["update", "delete"].includes(op.kind) && !notificationClear)
         throw new Error(`${op.table} is append-only and cannot be changed after insertion.`);
       const allowed = new Set(table.columns.map((column) => column.sqlServerColumn));
       const rows = op.rows ?? (op.values ? [op.values] : []);

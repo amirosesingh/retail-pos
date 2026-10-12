@@ -414,7 +414,8 @@ function ReceiptVault() {
       const changed = await changeSalePayment(selected.id, payMethod, reason, selected);
       if (!changed) return;
       setOlder((rows) =>
-        rows.map((row) => (row.id === selected.id ? { ...row, method: payMethod } : row)),
+        rows.map((row) => (row.id === selected.id ? { ...row, method: payMethod,
+          payments: row.payments?.map(payment => ({ id: payment.id, amount: payment.amount, method: payMethod })) } : row)),
       );
       await saveRecordEditHistory({
         kind: "sale",
