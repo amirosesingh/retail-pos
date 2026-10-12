@@ -38,7 +38,7 @@ describe("Supervisor/Admin online login configuration", () => {
       "!centralUserId || !centralAuthVerified",
     );
     expect(auth).toContain(
-      "const account = !terminalUser && centralAuthVerified ? session?.user : null",
+      "const account = !terminalUser && centralAuthVerified && rolesReady && profileReady && accountId",
     );
     expect(auth).toContain(
       "const ready = authReady && (!!terminalUser || !userId || (rolesReady && profileReady))",

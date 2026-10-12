@@ -94,7 +94,7 @@ function SalesReport() {
           }
         />
 
-        {history.loading ? <p className="text-sm text-muted-foreground">Loading complete SQL history…</p> : null}
+        {history.loading ? <p className="text-sm text-muted-foreground">Updating report data…</p> : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
@@ -106,7 +106,7 @@ function SalesReport() {
         </div>
 
         <div className="rounded-lg border border-border">
-          <Table>
+          <Table loading={history.loading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

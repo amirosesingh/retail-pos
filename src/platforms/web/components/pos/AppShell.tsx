@@ -5,7 +5,7 @@ import { usePersonalAppearance, usePersonalAppearanceSync } from "@/lib/personal
 import { setPersonalLanguage } from "@/lib/time-zone";
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
-import { Loader2, LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
+import { LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { usePos } from "@/lib/pos-store";
 import { useAuth, type PermissionFlag } from "@/lib/pos-auth";
@@ -108,7 +108,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 function AppShellFrame({ children }: { children: ReactNode }) {
   useAdminWebActivation();
   useEffect(() => startSyncEngine(), []);
-  const { stores, currentStore, setCurrentStore, state, ready: dataReady } = usePos();
+  const { stores, currentStore, setCurrentStore, state, ready: dataReady, retryLoad } = usePos();
   useEffect(() => {
     setSharedPrinterPrefs(state.settings.integrations.receiptPrinter);
     return () => setSharedPrinterPrefs(undefined);
@@ -291,11 +291,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     awaitingVerdict ||
     ((isDesktop() || isNative()) && startup.probing)
   )
-    return (
-      <div className="flex h-dvh items-center justify-center">
-        <Loader2 className="size-6 animate-spin text-primary" />
-      </div>
-    );
+    return <TillLoader message="Checking terminal connection…" onRetry={startup.refresh} />;
 
   // Desktop tills and Android terminals both have to register before use.
   if (isDesktop() || isNative()) {
@@ -340,7 +336,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       </>
     );
   if (!dataReady && !offlineBypass)
-    return <TillLoader onContinueOffline={() => setOfflineBypass(true)} />;
+    return <TillLoader onRetry={retryLoad} onContinueOffline={() => setOfflineBypass(true)} />;
   // Nothing can be sold, received or moved without somewhere to book it to.
   if (!activeLocations(stores).length && !isLocationSetupRoute(location.pathname))
     return <LocationBootGuard />;
@@ -369,7 +365,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
 
   const Brand = ({ mini }: { mini?: boolean }) => (
     <div className={cn("flex items-center gap-2 px-3 py-4", mini && "justify-center px-0")}>
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
         <ReceiptText className="size-5" />
       </div>
       {!mini && (
@@ -447,7 +443,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   return (
     <TooltipProvider delayDuration={250} skipDelayDuration={100} disableHoverableContent>
       <div className="pos-scaled flex h-dvh min-h-dvh flex-col overflow-hidden bg-background text-foreground">
-        <DataProgress />
         <DbConnectionModal />
         <CloudSetupGate />
         {/* Frameless desktop shell: draggable strip under the native window buttons. */}
@@ -460,6 +455,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
             <WindowControls />
           </div>
         )}
+        <DataProgress />
         <ShiftGuard>
           <div className="flex min-h-0 min-w-0 flex-1">
             {/* Desktop / tablet sidebar */}
@@ -485,7 +481,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {/* Mobile top bar + slide-out drawer */}
-              <header className="pt-safe sticky top-0 z-30 flex shrink-0 items-center gap-2 border-b border-category-1/20 bg-category-1/5 px-3 pb-2 md:hidden">
+              <header className="pt-safe sticky top-0 z-30 flex shrink-0 items-center gap-2 border-b border-border/70 bg-background px-3 pb-2 md:hidden">
                 <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
                   <SheetTrigger asChild>
                     <Button
@@ -541,7 +537,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               </header>
 
               {/* Desktop header: system controls and signed-in operator profile. */}
-              <header className="sticky top-0 z-30 hidden shrink-0 items-center gap-3 border-b border-category-1/20 bg-category-1/5 px-4 py-2 md:flex">
+              <header className="sticky top-0 z-30 hidden shrink-0 items-center gap-3 border-b border-border/70 bg-background px-4 py-2 md:flex">
                 <div className="ml-auto" />
                 <span className="hidden xl:inline-flex">
                   <LiveClock />

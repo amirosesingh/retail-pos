@@ -14,7 +14,7 @@ import { hydrateTerminalConfig } from "@/core/activation/terminal-tokens";
 import { hasSupabaseConfig } from "@/lib/external-supabase-config";
 import { awaitProfileHydrated } from "@/lib/connection-profile";
 import { clearConnectivityIssue } from "@/lib/session-expiry";
-import { isMobileShell } from "@/platform-config/features";
+import { isWindowsShell } from "@/platform-config/features";
 
 /**
  * Why the central database is or is not usable right now.
@@ -58,7 +58,7 @@ export type HealthReport = {
 // which reuse a warm connection, stay quick.
 const CLOUD_TIMEOUT_FIRST = 15_000;
 const CLOUD_TIMEOUT_DESKTOP = 5_000;
-const CLOUD_TIMEOUT_MOBILE = 8_000;
+const CLOUD_TIMEOUT_WEB_MOBILE = 8_000;
 const LOCAL_TIMEOUT = 800;
 const CACHE_MS = 2000;
 
@@ -102,7 +102,7 @@ let diagnosis: CloudDiagnosis = { issue: "transport" };
 export const cloudVerdict = (): CloudVerdict => verdict;
 export const cloudDiagnosis = (): CloudDiagnosis => diagnosis;
 
-const cloudTimeout = () => (isMobileShell() ? CLOUD_TIMEOUT_MOBILE : CLOUD_TIMEOUT_DESKTOP);
+const cloudTimeout = () => (isWindowsShell() ? CLOUD_TIMEOUT_DESKTOP : CLOUD_TIMEOUT_WEB_MOBILE);
 
 async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
   await hydrateTerminalConfig();
@@ -247,8 +247,7 @@ export function checkHealth(force = false): Promise<HealthReport> {
     // A single slow answer must not be recorded as "cannot be reached": that
     // verdict sends a configured terminal back to the connection screen.
     let cloud = firstCloud;
-    if (!cloud && verdict === "unreachable")
-      cloud = await probeCloudWithin(budget);
+    if (!cloud && verdict === "unreachable") cloud = await probeCloudWithin(budget);
     probedOnce = true;
     settleVerdict(cloud);
     const report: HealthReport = { cloud, local, anyOnline: cloud || local, at: Date.now() };
@@ -361,31 +360,17 @@ function startMinTimer() {
   }, MIN_CONNECTING_MS);
 }
 
-/**
- * The first probe never races a stopwatch: it waits for the request to give a
- * real answer within the cold-connection budget instead of assuming offline
- * after a second.
- */
-async function probeDefinitive(): Promise<boolean> {
-  try {
-    return await probeCloudWithin(CLOUD_TIMEOUT_FIRST);
-  } catch {
-    return false;
-  }
-}
-
 /** Run one heartbeat now and publish the result. */
 export async function heartbeat(): Promise<Connectivity> {
   if (heartbeatInflight) return heartbeatInflight;
   heartbeatInflight = (async () => {
-    const cloud = resolvedOnce
-      ? await probeCloudWithin(cloudTimeout())
-      : await probeDefinitive();
-    settleVerdict(cloud);
+    // Startup, status checks and reconnect share the same probe and retry.
+    // Independent probes used to race the shared diagnosis and could mark a
+    // healthy connection offline while another check was already recovering.
+    const report = await checkHealth(true);
+    const { cloud } = report;
     consecutiveCloudFailures = cloud ? 0 : consecutiveCloudFailures + 1;
-    const local = await withTimeout(probeLocal(), LOCAL_TIMEOUT);
-    cached = { cloud, local, anyOnline: cloud || local, at: Date.now() };
-    for (const l of listeners) l(cached);
+
     if (cloud) clearConnectivityIssue();
     // A single slow mobile request must not cover the app with an offline
     // gate. Keep the last proven-online state while the next heartbeat checks

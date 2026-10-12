@@ -1,6 +1,6 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, Tickets, Shapes, CalendarClock, WalletCards, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Filter, Loader2, Columns3, Tickets, Shapes, CalendarClock, WalletCards, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
@@ -32,7 +32,7 @@ const TableHeader = React.forwardRef<
   React.HTMLAttributes<HTMLTableSectionElement>
 >(({ className, children, ...props }, ref) => {
   return (
-    <thead ref={ref} className={cn("bg-category-1/10 [&_tr]:border-b", className)} {...props}>
+    <thead ref={ref} className={cn("bg-muted/45 [&_tr]:border-b", className)} {...props}>
       {assignHeaderColumns(children)}
     </thead>
   );
@@ -65,7 +65,7 @@ const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
     <tr
       ref={ref}
       className={cn(
-        "border-b border-border/60 transition-colors duration-[var(--motion-fast)] hover:bg-category-2/5 data-[state=selected]:bg-category-1/15",
+        "border-b border-border/60 transition-colors duration-[var(--motion-fast)] hover:bg-muted/40 data-[state=selected]:bg-primary/10",
         className,
       )}
       {...props}
@@ -103,7 +103,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
       <th
         ref={ref}
         className={cn(
-          "h-11 px-3 text-left align-middle text-xs font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+          "h-11 px-3 text-left align-middle text-xs font-semibold text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
           sortable && "relative",
           className,
         )}
@@ -147,15 +147,15 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
                   <button
                     type="button"
                     className={cn(
-                      "grid size-7 shrink-0 place-items-center rounded-sm hover:bg-muted hover:text-foreground",
-                      controls.filters[column] && "text-primary",
+                      "grid size-7 shrink-0 place-items-center rounded-md hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      controls.filters[column] && "bg-primary/10 text-primary",
                     )}
                     aria-label={`Filter ${label}`}
                     onClick={() =>
                       controls.setActiveFilter(controls.activeFilter === column ? null : column)
                     }
                   >
-                    <Columns3 className="size-3.5" />
+                    <Filter aria-hidden="true" className="size-3.5" />
                   </button>
                 </>
               ) : (
@@ -555,7 +555,21 @@ export function hideTableColumns(nodes: React.ReactNode, hidden: number[]): Reac
   });
 }
 
+/** Initial loading replaces empty-state messages, never an existing record. */
+function loadingTableBodies(nodes: React.ReactNode, columns: number): React.ReactNode {
+  return React.Children.map(nodes, node => {
+    if (!React.isValidElement<{children?:React.ReactNode}>(node)) return node;
+    if (isTableComponent(node, TableBody, "TableBody")) return React.cloneElement(node, undefined,
+      <TableRow><TableCell colSpan={columns}><div aria-hidden="true" className="space-y-3 py-3">
+        {[0,1,2].map(index => <div key={index} className="h-6 animate-pulse rounded-lg bg-muted motion-reduce:animate-none" />)}
+      </div></TableCell></TableRow>);
+    return React.cloneElement(node, undefined, loadingTableBodies(node.props.children, columns));
+  });
+}
+
 type TableProps = React.HTMLAttributes<HTMLTableElement> & {
+  loading?: boolean;
+  loadingLabel?: string;
   /** Opt-in controls for operational tables; all rows must be supplied. */
   managed?: boolean;
   columnControls?: boolean;
@@ -568,7 +582,7 @@ type TableProps = React.HTMLAttributes<HTMLTableElement> & {
 };
 
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
-  ({ className, children, mobileCards = true, clientDataControls = true, managed = false, columnControls = false, controlsTarget, summaryFormats = {}, ...props }, ref) => {
+  ({ className, children, loading = false, loadingLabel, mobileCards = true, clientDataControls = true, managed = false, columnControls = false, controlsTarget, summaryFormats = {}, ...props }, ref) => {
     const [hiddenColumns, setHiddenColumns] = React.useState<number[]>([]);
     const internalRef = React.useRef<HTMLTableElement>(null);
     React.useImperativeHandle(ref, () => internalRef.current as HTMLTableElement, []);
@@ -658,7 +672,9 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
     const pagination = usePagination(managedRows);
     const totals = sumManagedRows(managedRows);
     const pagedContent = managed ? replaceManagedRows(content, pagination.pageItems) : content;
-    const displayedContent = managed || columnControls ? hideTableColumns(pagedContent, hiddenColumns) : pagedContent;
+    const hasRows = getManagedRows(content).length > 0;
+    const displayContent = loading && !hasRows ? loadingTableBodies(pagedContent, Math.max(1, labels.length)) : pagedContent;
+    const displayedContent = managed || columnControls ? hideTableColumns(displayContent, hiddenColumns) : displayContent;
     const controls = React.useMemo<TableControls>(
       () => ({
         clientDataControls,
@@ -696,7 +712,11 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
           </DropdownMenu>);
     return (
       <TableControlsContext.Provider value={controls}>
-        {managed && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-category-2/5 px-4 py-3">
+        {loading && <div role="status" className="flex items-center gap-2 border-b border-border/60 bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
+          <Loader2 aria-hidden="true" className="size-3.5 animate-spin text-primary motion-reduce:animate-none" />
+          {loadingLabel || (hasRows ? "Refreshing rows…" : "Loading rows…")}
+        </div>}
+        {managed && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-muted/25 px-4 py-3">
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-live="polite">
             <span className="text-muted-foreground">Matching totals · {managedRows.length} rows</span>
             {Object.entries(totals).map(([label, value]) => <span key={label}>{label}: <strong className="numeric">{summaryFormats[label]?.(value) ?? value.toLocaleString()}</strong></span>)}
@@ -710,6 +730,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
             data-mobile-cards={mobileCards ? "true" : "false"}
             className={cn("responsive-table w-full caption-bottom text-sm", className)}
             {...props}
+            aria-busy={loading || props["aria-busy"]}
           >
             {displayedContent}
           </table>

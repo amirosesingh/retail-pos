@@ -73,7 +73,7 @@ export function TablePagination({
 }: Props) {
   const fmt = (n: number) => n.toLocaleString();
   return (
-    <div className="flex flex-col items-stretch gap-3 border-t border-border/60 bg-category-2/5 px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-4">
+    <div className="flex flex-col items-stretch gap-3 border-t border-border/60 bg-muted/25 px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-4">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <span>Rows per page</span>
         <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
@@ -98,7 +98,7 @@ export function TablePagination({
         <Button
           size="icon"
           variant="ghost"
-          className="size-9 rounded-lg text-category-1 hover:bg-category-1/10"
+          className="size-9 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
           aria-label="First page"
           disabled={page <= 1}
           onClick={() => onPage(1)}
@@ -108,7 +108,7 @@ export function TablePagination({
         <Button
           size="icon"
           variant="ghost"
-          className="size-9 rounded-lg text-category-1 hover:bg-category-1/10"
+          className="size-9 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
           aria-label="Previous page"
           disabled={page <= 1}
           onClick={() => onPage(page - 1)}
@@ -121,7 +121,7 @@ export function TablePagination({
         <Button
           size="icon"
           variant="ghost"
-          className="size-9 rounded-lg text-category-1 hover:bg-category-1/10"
+          className="size-9 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
           aria-label="Next page"
           disabled={page >= pageCount}
           onClick={() => onPage(page + 1)}
@@ -131,7 +131,7 @@ export function TablePagination({
         <Button
           size="icon"
           variant="ghost"
-          className="size-9 rounded-lg text-category-1 hover:bg-category-1/10"
+          className="size-9 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
           aria-label="Last page"
           disabled={page >= pageCount}
           onClick={() => onPage(pageCount)}

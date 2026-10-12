@@ -1,3 +1,4 @@
+import { canOpenDrawer } from "@/lib/receipt-printer";
 import { flushTicketDrafts } from "@/lib/session-draft";
 import { redeemedPoints } from "../points-redemption";
 import { exchangePolicyError } from "../returns-policy";
@@ -17,7 +18,7 @@ import { openCashDrawer, printBookingSlip, printJobTag, printSaleReceipt } from 
 import { buildBookingMessage, buildSaleMessage, sendBillOnWhatsApp } from "@/lib/whatsapp";
 import { logger } from "@/lib/audit-log";
 import { redeemVoucher } from "@/lib/coupons";
-import { publishDisplay, type DisplaySnapshot } from "@/lib/customer-display";
+import { publishDisplay, displayRounding, type DisplaySnapshot } from "@/lib/customer-display";
 import { rememberBanks } from "@/platforms/web/components/pos/TenderSplit";
 import { isoDaysFromNow } from "@/lib/register/use-booking-intake";
 import type { useBookingIntake } from "@/lib/register/use-booking-intake";
@@ -333,7 +334,7 @@ export function useCheckout(deps: CheckoutDeps) {
     } finally {
       setSaving(false);
     }
-    if (paidNow > 0 && bi.depositMethod === "cash") openCashDrawer();
+    if (canOpenDrawer() && paidNow > 0 && bi.depositMethod === "cash") openCashDrawer();
     printBookingSlip(booking, member, state.settings.payment);
     if (booking.job) printJobTag(booking);
     if (wa.enabled && wa.autoSendOnBooking) {
@@ -348,6 +349,7 @@ export function useCheckout(deps: CheckoutDeps) {
     publishDisplay({
       ...deps.cartSnapshot(),
       mode: "booking",
+      ...displayRounding({total: booking.total, adjustment: 0}),
       paid: booking.paid,
       balance: r2(booking.total - booking.paid),
       reference: booking.ref,
@@ -623,6 +625,7 @@ export function useCheckout(deps: CheckoutDeps) {
       paidDisplay = {
         ...deps.cartSnapshot(),
         mode: "paid",
+        ...displayRounding({total: sale.total, adjustment: sale.roundingAdjustment ?? 0}, roundingCfg),
         paid: sale.paid,
         change: sale.change,
         reference: sale.receiptNo,
@@ -657,7 +660,7 @@ export function useCheckout(deps: CheckoutDeps) {
         /* audit recovery must not break a completed checkout */
       }
     }
-    if (payments.some((p) => p.method === "cash")) {
+    if (canOpenDrawer() && payments.some((p) => p.method === "cash")) {
       try {
         openCashDrawer();
       } catch (error) {

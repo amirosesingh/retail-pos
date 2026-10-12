@@ -1,4 +1,6 @@
-import type { CartLine, PaymentDetails, PaymentMethod } from "@/core/types/pos-types";
+import type { CartLine, PaymentDetails, PaymentMethod, RoundingSettings } from "@/core/types/pos-types";
+
+import { roundingOf, showsRoundingLine, type RoundingResult } from "@/core/pricing/rounding";
 
 export const DISPLAY_CHANNEL = "pos-customer-display";
 export const DISPLAY_STORAGE_KEY = "pos.display.snapshot";
@@ -32,6 +34,9 @@ export type DisplaySnapshot = {
   /** Explicit switch so a zero-valued taxable ticket is distinct from tax being disabled. */
   taxEnabled?: boolean;
   total: number;
+  roundingAdjustment?: number;
+  roundingLabel?: string;
+  showRounding?: boolean;
   /** paid / change / balance figures for the "paid" and "booking" modes */
   paid: number;
   change: number;
@@ -45,6 +50,16 @@ export type DisplaySnapshot = {
   /** bank-transfer slip reference typed by the cashier */
   transferRef: string;
 };
+
+/** Carry the cashier's already-calculated payable amount; never round again here. */
+export function displayRounding(result: RoundingResult, config?: Partial<RoundingSettings>) {
+  return {
+    total: result.total,
+    roundingAdjustment: result.adjustment,
+    roundingLabel: roundingOf(config).receiptLabel,
+    showRounding: showsRoundingLine(result.adjustment, config),
+  };
+}
 
 export const toDisplayLine = (l: CartLine, lineTotal: number): DisplayLine => ({
   name: l.name,

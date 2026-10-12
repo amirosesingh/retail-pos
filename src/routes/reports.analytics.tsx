@@ -163,7 +163,7 @@ function AnalyticsBoard() {
         />
 
         {history.loading ? (
-          <p className="text-sm text-muted-foreground">Loading complete SQL history…</p>
+          <p className="text-sm text-muted-foreground">Updating report data…</p>
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
@@ -328,7 +328,7 @@ function AnalyticsBoard() {
 
           <section className="rounded-lg border border-border p-4">
             <h2 className="mb-3 text-sm font-semibold">Profit by shop</h2>
-            <Table>
+            <Table loading={history.loading}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Shop</TableHead>

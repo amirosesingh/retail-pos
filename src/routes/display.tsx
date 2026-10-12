@@ -206,6 +206,9 @@ function CustomerDisplay() {
           <div className="rounded-xl border border-border p-5">
             <Row label="Subtotal" value={money(snap?.subtotal ?? 0)} />
             <Row label="Discount" value={`-${money(snap?.discount ?? 0)}`} />
+            {snap.showRounding && (snap.roundingAdjustment ?? 0) < 0 && (
+              <Row label={snap.roundingLabel || "Extra Discount"} value={money(snap.roundingAdjustment!)} />
+            )}
             {snap?.taxEnabled && (snap.tax ?? 0) > 0 ? (
               <Row label={`Tax ${snap.taxRate ?? 0}%`} value={money(snap.tax)} />
             ) : null}
