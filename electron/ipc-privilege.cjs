@@ -519,6 +519,7 @@ function allowed(channel, args = []) {
     const table = String(args[0] ?? "");
     if (table === "shift_reconciliations") return false;
     if (table === "shift_notifications") return adminSession.hasPosAuthority() && adminSession.identity()?.level === "admin";
+    if (table === "shift_sessions" && adminSession.hasPosAuthority() && adminSession.identity()?.level === "admin") return true;
     const permission = table === "shift_sessions" ? "can_shift_signin_history_view" : table === "shift_close_events"
       ? "can_shift_closing_history_view"
       : table === "shift_cash_counts"
