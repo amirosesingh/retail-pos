@@ -498,12 +498,6 @@ export const rowToSettings = (r: Row | null): AppSettings =>
  */
 const missingSettingsColumns = new Set<string>();
 
-/** "Could not find the 'x' column of 'pos_settings' in the schema cache" */
-const unknownSettingsColumn = (message: string): string | null => {
-  const m = /could not find the '([^']+)' column/i.exec(message);
-  return m?.[1] ?? null;
-};
-
 const buildSettingsRow = (s: AppSettings): Row => ({
   id: 1,
   tax_percentage: s.tax.rate,
@@ -2566,37 +2560,11 @@ export const db = {
       await commitOps("Saving settings", [fieldOp, op]);
       return;
     }
-    const op2: SyncOp = op;
-    let res: { error: { message: string } | null };
-    try {
-      const fields = await supabase.from("settings_scoped").upsert(fieldRows as never);
-      if (fields.error) throw new Error(fields.error.message);
-      res = await supabase.from("pos_settings").upsert(snapshotRow as never);
-    } catch (e) {
-      // The line is down: park the change so it lands when it is back.
-      if (!isConnectionError(e)) throw e;
-      await commitOps("Saving settings", [fieldOp, op2]);
-      return;
-    }
-    if (!res.error) {
-      await broadcastSettingsChange("pos_settings");
-      return;
-    }
-    if (isConnectionError(new Error(res.error.message))) {
-      await commitOps("Saving settings", [fieldOp, op2]);
-      return;
-    }
-    // The database is missing a newer column: drop it and save the rest, so a
-    // single missing field never blocks the whole settings record.
-    const col = unknownSettingsColumn(res.error.message);
-    if (!col) throw new Error(res.error.message);
-    missingSettingsColumns.add(col);
-    const compatibleRow = { ...snapshotRow };
-    delete compatibleRow[col];
-    const retry = await supabase.from("pos_settings").upsert(compatibleRow as never);
-    if (retry.error) throw new Error(retry.error.message);
+    // PIN sessions are verified by the POS relay; they need not also carry a
+    // Supabase Auth session. Pre-activation setup uses the same live writer.
+    if (globalSetup) await runBatchLive("Saving settings", [fieldOp, op]);
+    else await commitOps("Saving settings", [fieldOp, op]);
     await broadcastSettingsChange("pos_settings");
-    if (import.meta.env.DEV) console.warn(`[settings] compatibility column unavailable: ${col}`);
   },
 
   /*

@@ -3385,7 +3385,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             visibility: { ...prev.visibility, ...(patch.visibility ?? {}) },
           }, patch)
           .catch((error) => {
-            dbError("Saving display settings", error);
+            dbError("Saving settings", error);
             throw error;
           }),
       );
