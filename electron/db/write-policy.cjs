@@ -114,6 +114,8 @@ function aggregatePolicy(kind, operations, identity) {
       spent: Number(sale.total_amount),
     });
   }
-  return { enforcePermissions: true, memberAccrual, isSettingsAdmin: identity.level === "admin" };
+  return { enforcePermissions: true, memberAccrual, isSettingsAdmin: identity.level === "admin",
+    activityOperator: { subject: identity.subject, role: identity.level,
+      mayViewGeneralActivity: identity.level === "admin" || identity.level === "supervisor" || permissions.can_view_audit_trail === true } };
 }
 module.exports = { aggregatePolicy };

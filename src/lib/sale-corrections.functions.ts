@@ -5,7 +5,8 @@ export const loadPostedSaleForCorrection = createServerFn({ method: "POST" })
   .validator((value: unknown) =>
     z
       .object({
-        accessToken: z.string().optional(),
+        sessionToken: z.string().min(10).optional(),
+  accessToken: z.string().optional(),
         terminalToken: z.string().optional(),
         cashierToken: z.string().optional(),
         saleId: z.string().uuid(),
@@ -39,6 +40,7 @@ export const loadPostedSaleForCorrection = createServerFn({ method: "POST" })
   });
 
 export const saleCorrectionInput = z.object({
+  sessionToken: z.string().min(10).optional(),
   accessToken: z.string().optional(),
   terminalToken: z.string().optional(),
   cashierToken: z.string().optional(),

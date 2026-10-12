@@ -8,6 +8,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const caller = z.object({
+  sessionToken: z.string().min(10).optional(),
   accessToken: z.string().min(10).optional(),
   terminalToken: z.string().min(10).optional(),
   cashierToken: z.string().min(10).optional(),

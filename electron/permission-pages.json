@@ -56,6 +56,7 @@
       "can_shift_financial_summary_view",
       "can_shift_payment_breakdown_view",
       "can_shift_closing_history_view",
+      "can_shift_signin_history_view",
       "can_shift_report_reprint",
       "can_manage_other_shifts",
       "can_shift_variance_approve",

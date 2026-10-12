@@ -77,7 +77,20 @@ class OperationsRepository {
       if (!["insert", "upsert", "update", "delete"].includes(op.kind)) throw new Error("Unsupported business operation.");
       if (op.requireMatch !== undefined && typeof op.requireMatch !== "boolean")
         throw new Error("The required-match flag must be a boolean.");
-      if (table.updateRule === "append_only" && ["update", "delete"].includes(op.kind))
+      // Acknowledgement is mutable notification state, not an edit to the
+      // append-only event. Its content, audience and identity stay immutable.
+      const notificationClear = op.table === "activity_events" && op.kind === "update" &&
+        Object.keys(op.values ?? {}).length === 1 && Object.hasOwn(op.values, "cleared_by") &&
+        Object.keys(op.match ?? {}).length === 1 && typeof op.match.id === "string" &&
+        op.match.id.length > 0 && op.requireMatch === true;
+      if (notificationClear) {
+        let acknowledgements;
+        try { acknowledgements = JSON.parse(op.values.cleared_by); } catch { /* reject below */ }
+        if (!Array.isArray(acknowledgements) || !acknowledgements.length || acknowledgements.length > 100 ||
+            acknowledgements.some(value => typeof value !== "string" || !value.trim() || value.length > 128))
+          throw new Error("A valid notification acknowledgement is required.");
+      }
+      if (table.updateRule === "append_only" && ["update", "delete"].includes(op.kind) && !notificationClear)
         throw new Error(`${op.table} is append-only and cannot be changed after insertion.`);
       const allowed = new Set(table.columns.map((column) => column.sqlServerColumn));
       const rows = op.rows ?? (op.values ? [op.values] : []);
@@ -285,6 +298,40 @@ class OperationsRepository {
     }
   }
   async applyOperation(transaction, op, scope = {}) {
+    if (op.table === "activity_events" && op.kind === "update") {
+      const operator = scope.activityOperator;
+      if (!operator?.subject || !scope.branchId)
+        throw Object.assign(new Error("A verified notification operator is required."), { code: "PERMISSION_DENIED" });
+      const Request = this.connectionManager.sql().Request;
+      const account = await new Request(transaction).input("subject", operator.subject)
+        .query("SELECT TOP(1) id,user_id,email FROM dbo.app_users WHERE is_active=1 AND (user_id=@subject OR email=@subject);");
+      const person = account.recordset?.[0];
+      const ids = [operator.subject, person?.id, person?.user_id, person?.email].filter(Boolean).map(value => String(value).toLowerCase());
+      const result = await new Request(transaction).input("event", op.match.id)
+        .query("SELECT store_id,terminal_id,event_type,meta FROM dbo.activity_events WITH (UPDLOCK,HOLDLOCK) WHERE id=@event;");
+      const event = result.recordset?.[0];
+      if (!event) throw Object.assign(new Error("Notification not found."), { code: "PERMISSION_DENIED" });
+      let meta = event.meta;
+      if (typeof meta === "string") { try { meta = JSON.parse(meta); } catch { meta = {}; } }
+      meta = meta && typeof meta === "object" ? meta : {};
+      const values = value => Array.isArray(value) ? value.map(item => String(item).toLowerCase()) : [];
+      const audience = String(meta.audience ?? "").toLowerCase();
+      const users = values(meta.audience_user_ids);
+      if (audience && audience !== "configured_approvers") users.push(audience);
+      const roles = values(meta.audience_roles);
+      const terminal = String(meta.audience_terminal_id ?? "").toLowerCase();
+      const sameBranch = !event.store_id || String(event.store_id).toLowerCase() === String(scope.branchId).toLowerCase();
+      const targeted = !!audience || users.length || roles.length || !!terminal;
+      const operational = ["stock_request_received","transfer_sent","transfer_received","po_finalised"].includes(event.event_type);
+      const sensitive = ["sale_complete","sale_refund","sale_void","shift_open","shift_close","shift_cash_variance","drawer_open","xreport_print"].includes(event.event_type);
+      const visible = targeted
+        ? sameBranch && (users.some(id => ids.includes(id)) || roles.includes(operator.role) || (terminal && terminal === String(scope.terminalId ?? "").toLowerCase()))
+        : operational ? !!event.store_id && sameBranch
+        : sensitive ? operator.role === "admin"
+        : operator.mayViewGeneralActivity && (operator.role === "admin" || sameBranch);
+      if (!visible) throw Object.assign(new Error("Notification access denied."), { code: "PERMISSION_DENIED" });
+      op = { ...op, values: { cleared_by: JSON.stringify([String(person?.id ?? operator.subject)]) } };
+    }
     await this.assertLegacyExchange(transaction, op, scope);
     await this.assertSettingsPermissions(transaction, op, scope);
     await this.assertShiftOpening(transaction, op, scope);

@@ -4,7 +4,7 @@ import { sameRecordId } from "@/lib/sale-identity";
 import { subscribeDataChange } from "@/lib/sync-engine";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { Pencil, Printer, RotateCcw, Users, Vault } from "lucide-react";
+import { Pencil, Printer, Users, Vault } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
@@ -35,7 +35,7 @@ import { isShiftOverdue, localTerminalId, shiftDuration } from "@/lib/shift-hour
 import { defaultTradingHours } from "@/lib/pos-seed";
 import { useAuth } from "@/lib/pos-auth";
 import { useUserPermissions } from "@/lib/pos-permissions";
-import { openCashDrawer, printSaleReceipt, printShiftReport } from "@/lib/pos-print";
+import { openCashDrawer, printShiftReport } from "@/lib/pos-print";
 import { signInsForDay, type SignInEntry } from "@/lib/shift-attendance";
 import { localShiftSessions, mergeSessions } from "@/lib/shift-sessions";
 import { commitLabel, loadShiftSessions } from "@/core/api/pos-db";
@@ -67,7 +67,7 @@ export const Route = createFileRoute("/shifts")({
 });
 
 function Shifts() {
-  const { state, activeShift, openShift, refundSale, currentStore, stores } = usePos();
+  const { state, activeShift, openShift, currentStore, stores } = usePos();
   const { user, isAdmin, isSupervisor, can } = useAuth();
   const { requirePermission } = useUserPermissions();
   const { rules } = usePosRules();
@@ -78,6 +78,31 @@ function Shifts() {
   const [closeOpen, setCloseOpen] = useState(false);
   const [signIns, setSignIns] = useState<SignInEntry[]>([]);
   const [sessions, setSessions] = useState<ShiftSession[]>([]);
+  const mayViewSignIns = isAdmin || can("can_shift_signin_history_view");
+  const mayViewShiftHistory = isAdmin || can("can_shift_closing_history_view");
+  const [signHistoryOpen, setSignHistoryOpen] = useState(false);
+  const [shiftHistoryOpen, setShiftHistoryOpen] = useState(false);
+  const [signSearch, setSignSearch] = useState("");
+  const [historySearch, setHistorySearch] = useState("");
+  const [signPage, setSignPage] = useState(0);
+  const [historyPage, setHistoryPage] = useState(0);
+  const matches = (values: unknown[], query: string) =>
+    values.join(" ").toLowerCase().includes(query.trim().toLowerCase());
+  const visibleSignIns = signIns.filter((entry) =>
+    matches([entry.name, entry.staffId, entry.role, entry.firstSeen], signSearch),
+  );
+  const visibleSessions = sessions.filter((entry) =>
+    matches(
+      [
+        entry.staffName,
+        entry.role,
+        entry.terminalName,
+        entry.signedInAt,
+        new Date(entry.signedInAt).toLocaleString(),
+      ],
+      signSearch,
+    ),
+  );
   const [correcting, setCorrecting] = useState<Shift | null>(null);
   const [correctCash, setCorrectCash] = useState("");
   const [correctCard, setCorrectCard] = useState("");
@@ -88,15 +113,23 @@ function Shifts() {
 
   // Local per-terminal log — read after mount so SSR and hydration match.
   useEffect(() => {
+    if (!mayViewSignIns || !signHistoryOpen) {
+      setSignIns([]);
+      return;
+    }
     const refresh = () => setSignIns(signInsForDay());
     refresh();
     const t = window.setInterval(refresh, 30_000);
     return () => window.clearInterval(t);
-  }, [user?.staffId]);
+  }, [user?.staffId, mayViewSignIns, signHistoryOpen]);
 
   // Central record of every sign-in against a shift, with the local cache as
   // the offline fallback.
   useEffect(() => {
+    if (!mayViewSignIns || !signHistoryOpen) {
+      setSessions([]);
+      return;
+    }
     let alive = true;
     const refresh = async () => {
       const local = localShiftSessions();
@@ -108,17 +141,31 @@ function Shifts() {
       }
     };
     void refresh();
-    const offData = subscribeDataChange(change => { if (change.table === "shift_sessions") void refresh(); });
+    const offData = subscribeDataChange((change) => {
+      if (change.table === "shift_sessions") void refresh();
+    });
     const t = window.setInterval(() => void refresh(), 60_000);
     return () => {
       alive = false;
       offData();
       window.clearInterval(t);
     };
-  }, [currentStore.id, activeShift?.id]);
+  }, [currentStore.id, activeShift?.id, mayViewSignIns, signHistoryOpen]);
 
-  const storeSales = state.sales.filter((s) => s.storeId === currentStore.id);
-  const storeShifts = state.shifts.filter((s) => s.storeId === currentStore.id);
+  const storeSales = state.sales.filter((s) => sameRecordId(s.storeId, currentStore.id));
+  const storeShifts = state.shifts.filter((s) => sameRecordId(s.storeId, currentStore.id));
+  const visibleShifts = storeShifts.filter((shift) =>
+    matches(
+      [
+        shift.cashier,
+        shift.terminalName,
+        shift.status,
+        shift.openedAt,
+        new Date(shift.openedAt).toLocaleString(),
+      ],
+      historySearch,
+    ),
+  );
   const shiftSales = activeShift
     ? storeSales.filter((s) => sameRecordId(s.shiftId, activeShift.id) && !s.refunded)
     : [];
@@ -131,7 +178,8 @@ function Shifts() {
     !activeShift ||
     !activeShift.terminalId ||
     activeShift.terminalId === hereId ||
-    isAdmin || can("can_manage_other_shifts") ||
+    isAdmin ||
+    can("can_manage_other_shifts") ||
     (state.settings.integrations.allowAnyStaffCloseShift === true && can("can_close_shift"));
   const overdueNow = activeShift ? isShiftOverdue(activeShift, defaultTradingHours) : false;
 
@@ -156,7 +204,11 @@ function Shifts() {
     const cash = parsePositiveAmount(correctCash);
     const card = correctCard.trim() ? parsePositiveAmount(correctCard) : null;
     const digital = correctDigital.trim() ? parsePositiveAmount(correctDigital) : null;
-    if (cash === null || (correctCard.trim() && card === null) || (correctDigital.trim() && digital === null)) {
+    if (
+      cash === null ||
+      (correctCard.trim() && card === null) ||
+      (correctDigital.trim() && digital === null)
+    ) {
       toast.error("Enter valid non-negative tender counts.");
       return;
     }
@@ -177,7 +229,8 @@ function Shifts() {
           digital,
           reason: correctReason.trim(),
           terminalId: correcting.terminalId ?? null,
-          clientKey: correctionClientKey.current ?? (correctionClientKey.current = crypto.randomUUID()),
+          clientKey:
+            correctionClientKey.current ?? (correctionClientKey.current = crypto.randomUUID()),
         },
       });
       if (!result.ok) throw new Error(result.error);
@@ -196,9 +249,9 @@ function Shifts() {
       <div className="space-y-6 p-6">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold">Shifts &amp; receipts · {currentStore.name}</h1>
+            <h1 className="text-2xl font-semibold">Shifts · {currentStore.name}</h1>
             <p className="text-sm text-muted-foreground">
-              Drawer control, X / Z reports and full sales history
+              Current shift, drawer control and X / Z reports
             </p>
           </div>
           {can("can_open_drawer") && (
@@ -216,19 +269,19 @@ function Shifts() {
             </Button>
           )}
         </header>
-
         {!isAdmin && (
           <div className="rounded-md border border-primary/40 bg-primary/10 px-4 py-3 text-sm font-medium text-primary">
             Viewing data for {storeLabel} Only
           </div>
         )}
-
         {isAdmin && (
           <section className="rounded-lg border border-border bg-card p-5">
             <h2 className="mb-3 text-sm font-semibold">Aggregated multi-store statistics</h2>
             <div className="grid gap-4 md:grid-cols-4">
               {stores.map((st, i) => {
-                const sales = state.sales.filter((s) => s.storeId === st.id && !s.refunded);
+                const sales = state.sales.filter(
+                  (s) => sameRecordId(s.storeId, st.id) && !s.refunded,
+                );
                 return (
                   <Metric
                     key={st.id}
@@ -247,7 +300,6 @@ function Shifts() {
             </div>
           </section>
         )}
-
         <section className="rounded-lg border border-border bg-card p-5">
           {activeShift ? (
             <div className="grid gap-4 md:grid-cols-4">
@@ -283,11 +335,11 @@ function Shifts() {
                       // Read-only audit snapshot: derived from recorded sales,
                       // never editable, and every print is logged.
                       void printShiftReport(activeShift, storeSales, "xreport", {
-                        financialSummary: (isAdmin || can("can_shift_financial_summary_view")),
-                        paymentBreakdown: (isAdmin || can("can_shift_payment_breakdown_view")),
-                        expected: (isAdmin || can("can_shift_expected_cash_view")),
-                        counted: (isAdmin || can("can_shift_counted_cash_view")),
-                        variance: (isAdmin || can("can_shift_variance_view")),
+                        financialSummary: isAdmin || can("can_shift_financial_summary_view"),
+                        paymentBreakdown: isAdmin || can("can_shift_payment_breakdown_view"),
+                        expected: isAdmin || can("can_shift_expected_cash_view"),
+                        counted: isAdmin || can("can_shift_counted_cash_view"),
+                        variance: isAdmin || can("can_shift_variance_view"),
                       });
                       logSystemAction({
                         actorName: user?.name ?? activeShift.cashier,
@@ -353,7 +405,8 @@ function Shifts() {
                     );
                     if (canOpenDrawer()) {
                       const drawer = await openCashDrawer("Opening float for a new shift");
-                      if (!drawer.ok) toast.warning(drawer.error ?? "The cash drawer did not open.");
+                      if (!drawer.ok)
+                        toast.warning(drawer.error ?? "The cash drawer did not open.");
                     }
                     setFloat("");
                     toast.success(`Shift opened — ${commitLabel(target).toLowerCase()}`);
@@ -367,210 +420,171 @@ function Shifts() {
             </div>
           )}
         </section>
-
-        <section className="rounded-lg border border-border bg-card">
-          <h2 className="flex items-center gap-2 px-5 py-3 text-sm font-semibold">
-            <Users className="size-4" /> Signed in today on this terminal
-          </h2>
-          <Separator />
-          {signIns.length === 0 ? (
-            <p className="px-5 py-4 text-sm text-muted-foreground">
-              No sign-ins recorded yet today.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Staff ID</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>First sign-in</TableHead>
-                  <TableHead>Last seen</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {signIns.map((e) => (
-                  <TableRow key={e.staffId}>
-                    <TableCell className="font-medium">
-                      {e.name}
-                      {user && (user.staffId === e.staffId || user.name === e.name) && (
-                        <Badge variant="outline" className="ml-2">
-                          signed in
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="numeric text-muted-foreground">{e.staffId}</TableCell>
-                    <TableCell className="capitalize text-muted-foreground">{e.role}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {new Date(e.firstSeen).toLocaleTimeString()}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {new Date(e.lastSeen).toLocaleTimeString()}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+        <div className="flex flex-wrap gap-2">
+          {mayViewSignIns && (
+            <Button variant="outline" onClick={() => setSignHistoryOpen(true)}>
+              <Users className="size-4" /> Sign-in history
+            </Button>
           )}
-        </section>
-
-        <section className="rounded-lg border border-border bg-card">
-          <h2 className="flex items-center gap-2 px-5 py-3 text-sm font-semibold">
-            <Users className="size-4" /> Shift sign-in history (all terminals)
-          </h2>
-          <Separator />
-          {sessions.length === 0 ? (
-            <p className="px-5 py-4 text-sm text-muted-foreground">
-              No shift sessions recorded for this branch yet.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Terminal</TableHead>
-                  <TableHead>Signed in</TableHead>
-                  <TableHead>Signed out</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sessions.slice(0, 50).map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="font-medium">
-                      {s.staffName}
-                      {s.shiftId === activeShift?.id && !s.signedOutAt && (
-                        <Badge variant="outline" className="ml-2">
-                          on shift
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="capitalize text-muted-foreground">
-                      {s.role ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{s.terminalName ?? "—"}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {new Date(s.signedInAt).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {s.signedOutAt ? new Date(s.signedOutAt).toLocaleString() : "Still signed in"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          {mayViewShiftHistory && (
+            <Button variant="outline" onClick={() => setShiftHistoryOpen(true)}>
+              Shift history
+            </Button>
           )}
-        </section>
+        </div>{" "}
+      </div>
 
-        <section className="rounded-lg border border-border bg-card">
-          <h2 className="px-5 py-3 text-sm font-semibold">Receipts</h2>
-          <Separator />
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Receipt</TableHead>
-                <TableHead>When</TableHead>
-                <TableHead>Cashier</TableHead>
-                <TableHead>Method</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead className="text-right">Reprint</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {storeSales.map((s) => {
-                const member = state.members.find((m) => m.id === s.memberId) ?? null;
-                return (
-                  <TableRow key={s.id}>
-                    <TableCell className="numeric">
-                      {s.receiptNo}
-                      {s.refunded && (
-                        <Badge
-                          variant="outline"
-                          className="ml-2 border-destructive/50 text-destructive"
-                        >
-                          refunded
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {new Date(s.createdAt).toLocaleString()}
-                    </TableCell>
-                    <TableCell>{s.cashier}</TableCell>
-                    <TableCell className="uppercase text-muted-foreground">{s.method}</TableCell>
-                    <TableCell className="numeric text-right">{money(s.total)}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => printSaleReceipt(s, member, "duplicate")}
-                        >
-                          Copy
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => printSaleReceipt(s, member, "gift")}
-                        >
-                          Gift
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={s.refunded}
-                          onClick={async () => {
-                            if (
-                              (authorizationRules.refund?.mode ?? "none") === "none" &&
-                              !(await requirePermission("can_process_refund"))
-                            )
-                              return;
-                            const grant = await authorize({
-                              action: "refund",
-                              title: "Authorise refund",
-                              reason: `Refund bill ${s.receiptNo}`,
-                              storeId: currentStore.id,
-                              requestedBy: user?.staffId ?? user?.name ?? null,
-                              requestedAmount: Math.abs(s.total),
-                              valueUnit: "currency",
-                              payload: {
-                                sale_id: s.id,
-                                receipt_no: s.receiptNo,
-                                total: Math.abs(s.total),
-                              },
-                            });
-                            if (!grant.ok) return;
-                            try {
-                              await refundSale(s.id, grant.grantToken);
-                              printSaleReceipt(s, member, "refund");
-                              if (canOpenDrawer()) {
-                                const drawer = await openCashDrawer(`Refund ${s.receiptNo}`, activeShift?.id);
-                                if (!drawer.ok) toast.warning(drawer.error ?? "The cash drawer did not open.");
-                              }
-                              toast.success(`${s.receiptNo} refunded`);
-                            } catch (error) {
-                              notifyError(error, "Refunding the sale");
-                            }
-                          }}
-                        >
-                          <RotateCcw className="size-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+      <Dialog open={mayViewSignIns && signHistoryOpen} onOpenChange={setSignHistoryOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Sign-in history</DialogTitle>
+            <DialogDescription>Staff sign-ins for this branch and terminal.</DialogDescription>
+          </DialogHeader>
+          <Input
+            aria-label="Search sign-in history"
+            placeholder="Search staff, role or terminal…"
+            value={signSearch}
+            onChange={(event) => {
+              setSignSearch(event.target.value);
+              setSignPage(0);
+            }}
+          />{" "}
+          <section className="rounded-lg border border-border bg-card">
+            <h2 className="flex items-center gap-2 px-5 py-3 text-sm font-semibold">
+              <Users className="size-4" /> Signed in today on this terminal
+            </h2>
+            <Separator />
+            {visibleSignIns.length === 0 ? (
+              <p className="px-5 py-4 text-sm text-muted-foreground">
+                No sign-ins recorded yet today.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead>Staff ID</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>First sign-in</TableHead>
+                    <TableHead>Last seen</TableHead>
                   </TableRow>
-                );
-              })}
-              {!storeSales.length && (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
-                    No sales recorded yet.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </section>
-
-        {(isAdmin || can("can_shift_closing_history_view")) && (
+                </TableHeader>
+                <TableBody>
+                  {visibleSignIns.map((e) => (
+                    <TableRow key={e.staffId}>
+                      <TableCell className="font-medium">
+                        {e.name}
+                        {user && (user.staffId === e.staffId || user.name === e.name) && (
+                          <Badge variant="outline" className="ml-2">
+                            signed in
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="numeric text-muted-foreground">{e.staffId}</TableCell>
+                      <TableCell className="capitalize text-muted-foreground">{e.role}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {new Date(e.firstSeen).toLocaleTimeString()}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {new Date(e.lastSeen).toLocaleTimeString()}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </section>
+          <section className="rounded-lg border border-border bg-card">
+            <h2 className="flex items-center gap-2 px-5 py-3 text-sm font-semibold">
+              <Users className="size-4" /> Shift sign-in history (all terminals)
+            </h2>
+            <Separator />
+            {visibleSessions.length === 0 ? (
+              <p className="px-5 py-4 text-sm text-muted-foreground">
+                No shift sessions recorded for this branch yet.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Terminal</TableHead>
+                    <TableHead>Signed in</TableHead>
+                    <TableHead>Signed out</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleSessions.slice(signPage * 25, (signPage + 1) * 25).map((s) => (
+                    <TableRow key={s.id}>
+                      <TableCell className="font-medium">
+                        {s.staffName}
+                        {s.shiftId === activeShift?.id && !s.signedOutAt && (
+                          <Badge variant="outline" className="ml-2">
+                            on shift
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="capitalize text-muted-foreground">
+                        {s.role ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {s.terminalName ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {new Date(s.signedInAt).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {s.signedOutAt
+                          ? new Date(s.signedOutAt).toLocaleString()
+                          : "Still signed in"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </section>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm text-muted-foreground">
+              {visibleSessions.length} sign-ins · Page {signPage + 1}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={signPage === 0}
+                onClick={() => setSignPage((page) => page - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                disabled={(signPage + 1) * 25 >= visibleSessions.length}
+                onClick={() => setSignPage((page) => page + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={mayViewShiftHistory && shiftHistoryOpen} onOpenChange={setShiftHistoryOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-6xl">
+          <DialogHeader>
+            <DialogTitle>Shift history</DialogTitle>
+            <DialogDescription>
+              Search this branch's shifts and open permitted reports.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            aria-label="Search shift history"
+            placeholder="Search cashier, terminal, status or date…"
+            value={historySearch}
+            onChange={(event) => {
+              setHistorySearch(event.target.value);
+              setHistoryPage(0);
+            }}
+          />
           <section className="rounded-lg border border-border bg-card">
             <h2 className="px-5 py-3 text-sm font-semibold">Shift history</h2>
             <Separator />
@@ -598,7 +612,7 @@ function Shifts() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {storeShifts.map((sh) => (
+                {visibleShifts.slice(historyPage * 25, (historyPage + 1) * 25).map((sh) => (
                   <TableRow key={sh.id}>
                     <TableCell>{sh.cashier}</TableCell>
                     <TableCell>
@@ -665,11 +679,11 @@ function Shifts() {
                           variant="ghost"
                           onClick={() =>
                             void printShiftReport(sh, storeSales, "zreport", {
-                              financialSummary: (isAdmin || can("can_shift_financial_summary_view")),
-                              paymentBreakdown: (isAdmin || can("can_shift_payment_breakdown_view")),
-                              expected: (isAdmin || can("can_shift_expected_cash_view")),
-                              counted: (isAdmin || can("can_shift_counted_cash_view")),
-                              variance: (isAdmin || can("can_shift_variance_view")),
+                              financialSummary: isAdmin || can("can_shift_financial_summary_view"),
+                              paymentBreakdown: isAdmin || can("can_shift_payment_breakdown_view"),
+                              expected: isAdmin || can("can_shift_expected_cash_view"),
+                              counted: isAdmin || can("can_shift_counted_cash_view"),
+                              variance: isAdmin || can("can_shift_variance_view"),
                             })
                           }
                         >
@@ -691,7 +705,7 @@ function Shifts() {
                     )}
                   </TableRow>
                 ))}
-                {!storeShifts.length && (
+                {!visibleShifts.length && (
                   <TableRow>
                     <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                       No shifts yet.
@@ -700,10 +714,30 @@ function Shifts() {
                 )}
               </TableBody>
             </Table>
-          </section>
-        )}
-      </div>
-
+          </section>{" "}
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm text-muted-foreground">
+              {visibleShifts.length} shifts · Page {historyPage + 1}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={historyPage === 0}
+                onClick={() => setHistoryPage((page) => page - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                disabled={(historyPage + 1) * 25 >= visibleShifts.length}
+                onClick={() => setHistoryPage((page) => page + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
       <ShiftCloseDialog open={closeOpen} onOpenChange={setCloseOpen} />
       <Dialog open={!!correcting} onOpenChange={(open) => !open && setCorrecting(null)}>
         <DialogContent className="sm:max-w-2xl">
@@ -717,15 +751,27 @@ function Shifts() {
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <Label>Counted cash</Label>
-              <Input inputMode="decimal" value={correctCash} onChange={(e) => setCorrectCash(e.target.value)} />
+              <Input
+                inputMode="decimal"
+                value={correctCash}
+                onChange={(e) => setCorrectCash(e.target.value)}
+              />
             </div>
             <div className="space-y-1">
               <Label>Counted card</Label>
-              <Input inputMode="decimal" value={correctCard} onChange={(e) => setCorrectCard(e.target.value)} />
+              <Input
+                inputMode="decimal"
+                value={correctCard}
+                onChange={(e) => setCorrectCard(e.target.value)}
+              />
             </div>
             <div className="space-y-1">
               <Label>Counted digital</Label>
-              <Input inputMode="decimal" value={correctDigital} onChange={(e) => setCorrectDigital(e.target.value)} />
+              <Input
+                inputMode="decimal"
+                value={correctDigital}
+                onChange={(e) => setCorrectDigital(e.target.value)}
+              />
             </div>
           </div>
           <div className="space-y-1">

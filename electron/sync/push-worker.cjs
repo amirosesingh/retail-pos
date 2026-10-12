@@ -298,7 +298,11 @@ class PushWorker {
           aggregates.push(...aggregate.originals);
           continue;
         }
-        error.table ??= aggregate.changes[0]?.entity_type ?? null;
+        // An aggregate is atomic: the first table is not necessarily the one
+        // whose trigger rejected it. Preserve a server-supplied table; otherwise
+        // identify every affected table rather than blaming its first product.
+        error.tables ??= [...new Set(aggregate.changes.map(change => change.entity_type).filter(Boolean))];
+        error.table ??= "transaction batch";
         for (const id of originalIds) await this.reader.failAggregate(id, error);
         if (!isolate || [401,403].includes(Number(error?.status))) throw error;
         originalIds.forEach(id => deferred.add(id));

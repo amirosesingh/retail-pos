@@ -21,6 +21,7 @@ export const PERMISSION_GROUPS = [
       "can_shift_financial_summary_view",
       "can_shift_payment_breakdown_view",
       "can_shift_closing_history_view",
+      "can_shift_signin_history_view",
       "can_shift_report_reprint",
       "can_manage_other_shifts",
       "can_shift_variance_approve",
@@ -133,6 +134,7 @@ export type PermissionKey =
   | "can_shift_financial_summary_view"
   | "can_shift_payment_breakdown_view"
   | "can_shift_closing_history_view"
+  | "can_shift_signin_history_view"
   | "can_shift_report_reprint"
   | "can_manage_other_shifts"
   | "can_shift_variance_approve"
@@ -205,6 +207,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_shift_variance_view: "See shift over/short variance",
   can_shift_financial_summary_view: "See the financial summary for a shift",
   can_shift_payment_breakdown_view: "See the payment-method breakdown for a shift",
+  can_shift_signin_history_view: "View staff sign-in history for the branch (off by default for cashiers)",
   can_shift_closing_history_view: "See completed shift-closing history",
   can_shift_report_reprint: "Reprint a completed shift closing report",
   can_manage_other_shifts: "Close or manage another user's or terminal's shift",
@@ -570,6 +573,7 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
         "can_shift_financial_summary_view",
         "can_shift_payment_breakdown_view",
         "can_shift_closing_history_view",
+      "can_shift_signin_history_view",
         "can_shift_report_reprint",
         "can_manage_other_shifts",
         "can_shift_variance_approve",
