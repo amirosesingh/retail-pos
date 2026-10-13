@@ -2,6 +2,9 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useReportSales } from "@/lib/use-report-sales";
 import { stockAtLocation } from "@/lib/locations";
+import { dailyPaymentSummary } from "@/lib/daily-payment-summary";
+import { methodLabel } from "@/core/types/pos-types";
+import { SellingShortcuts } from "./SellingShortcuts";
 
 const localDay = () => {
   const now = new Date();
@@ -257,7 +260,9 @@ export function TerminalWorkspaceHome() {
     loading,
     error,
   } = useReportSales(state.sales, storeIds, todayKey, todayKey);
-  const todayRevenue = todaySales.reduce((sum, sale) => sum + sale.total, 0);
+  const completedSales = todaySales.filter((sale) => !sale.refunded);
+  const todayRevenue = completedSales.reduce((sum, sale) => sum + sale.total, 0);
+  const paymentSummary = dailyPaymentSummary(completedSales);
   const lowStock = state.products.filter(
     (product) => stockAtLocation(product, currentStore.id) <= product.reorderLevel,
   ).length;
@@ -265,6 +270,7 @@ export function TerminalWorkspaceHome() {
 
   return (
     <AppShell>
+      <SellingShortcuts />
       <div className="h-full overflow-y-auto bg-background p-4 sm:p-6 lg:p-8">
         <div className="mx-auto max-w-6xl space-y-8">
           <header className="rounded-2xl border border-border/70 bg-card p-5 sm:p-7">
@@ -320,6 +326,7 @@ export function TerminalWorkspaceHome() {
             {can("can_view_sales_reports") && visible("workspace.todayRevenue") && (
               <Metric
                 label="Today's revenue"
+                payments={paymentSummary}
                 icon={BarChart3}
                 tone="text-category-2 bg-category-2/10"
                 value={todayRevenue.toLocaleString(undefined, {
@@ -392,12 +399,14 @@ function Metric({
   hint,
   icon: Icon,
   tone,
+  payments,
 }: {
   label: string;
   value: string;
   hint: string;
   icon: typeof Store;
   tone: string;
+  payments?: { method: string; amount: number }[];
 }) {
   return (
     <Card>
@@ -412,6 +421,21 @@ function Metric({
           {value}
         </p>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{hint}</p>
+        {payments && payments.length > 0 && (
+          <dl className="mt-3 flex flex-wrap gap-x-3 gap-y-1 border-t border-border/60 pt-2 text-xs">
+            {payments.map((payment) => (
+              <div key={payment.method} className="flex gap-1.5">
+                <dt className="text-muted-foreground">{methodLabel(payment.method)}</dt>
+                <dd className="font-medium tabular-nums">
+                  {payment.amount.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
       </CardContent>
     </Card>
   );

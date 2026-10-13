@@ -75,21 +75,23 @@ function AccountsForm() {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-        <div>
-          <p className="text-sm">Ask for an account at the till</p>
-          <p className="text-xs text-muted-foreground">
-            Card, transfer and wallet tenders get a dropdown of the accounts below.
-          </p>
+      {
+        <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+          <div>
+            <p className="text-sm">Ask for an account at the till</p>
+            <p className="text-xs text-muted-foreground">
+              Card, transfer and wallet tenders get a dropdown of the accounts below.
+            </p>
+          </div>
+          <Switch
+            aria-label="Ask for an account at the till"
+            checked={!!integrations.usePaymentAccounts}
+            onCheckedChange={(v) =>
+              updateSettings({ integrations: { ...integrations, usePaymentAccounts: v } })
+            }
+          />
         </div>
-        <Switch
-          aria-label="Ask for an account at the till"
-          checked={!!integrations.usePaymentAccounts}
-          onCheckedChange={(v) =>
-            updateSettings({ integrations: { ...integrations, usePaymentAccounts: v } })
-          }
-        />
-      </div>
+      }
 
       {accounts.map((a) => (
         <div key={a.id} className="space-y-3 rounded-md border border-border p-3">
@@ -130,6 +132,30 @@ function AccountsForm() {
                 onChange={(e) => patch(a.id, { accountNumber: e.target.value })}
               />
             </div>
+            {a.type === "card_machine" && (
+              <div className="space-y-1 sm:col-span-2">
+                <Label className="text-xs text-muted-foreground">Accepted cards (optional)</Label>
+                <Input
+                  defaultValue={a.acceptedCards?.join(", ") ?? ""}
+                  placeholder="Visa, Mastercard, Amex, bank cards"
+                  onBlur={(event) =>
+                    patch(a.id, {
+                      acceptedCards: [
+                        ...new Set(
+                          event.target.value
+                            .split(",")
+                            .map((value) => value.trim())
+                            .filter(Boolean),
+                        ),
+                      ],
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  Separate names with commas. Shown when staff select this machine.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="space-y-1">

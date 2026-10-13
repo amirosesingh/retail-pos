@@ -180,8 +180,7 @@ export async function updateHeldOrder(id: string, patch: Partial<HeldOrder>) {
     // Electron starts with an empty renderer cache. Approval decisions can
     // arrive before the holds screen has hydrated it, so recover the durable
     // row instead of dropping the state transition.
-    const row = (await db.listHeldOrders()).find((held) => String(held.id ?? "") === id);
-    if (row) current = rowToHeldOrder(row as Record<string, unknown>);
+    current = await loadHeldOrder(id);
   }
   if (!current) return;
   // Approval polling may repeat a decision long after payment. Only a

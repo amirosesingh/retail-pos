@@ -1,3 +1,4 @@
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -6,24 +7,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
-import { useAuditLogs } from "@/lib/audit-log";
+import { useQuery } from "@tanstack/react-query";
+import { loadStockAdjustmentReport } from "@/lib/stock-adjustment-report";
+import { sameBranchId } from "@/lib/branch-id";
 import { STOCK_ADJUSTMENT_REASONS } from "@/core/types/pos-types";
 import {
   ReportHeader,
   StatCard,
   defaultRange,
-  downloadCsv,
-  inRange,
+  downloadReport,
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
 
@@ -50,12 +45,10 @@ export const Route = createFileRoute("/reports/stock")({
 
 const ALL = "__all__";
 
-const reasonLabel = (v: string) =>
-  STOCK_ADJUSTMENT_REASONS.find((r) => r.value === v)?.label ?? v;
+const reasonLabel = (v: string) => STOCK_ADJUSTMENT_REASONS.find((r) => r.value === v)?.label ?? v;
 
 function StockReport() {
   const { state, stores } = usePos();
-  const logs = useAuditLogs();
   const init = defaultRange();
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
@@ -64,39 +57,26 @@ function StockReport() {
   const [store, setStore] = useState(ALL);
   const [direction, setDirection] = useState(ALL);
 
-  const all = useMemo(() => {
-    return logs
-      .filter((l) => l.category === "inventory" && /stock adjusted/i.test(l.action))
-      .filter((l) => inRange(l.at, from, to))
-      .map((l) => {
-        const d = l.details as Record<string, unknown>;
-        return {
-          at: l.at,
-          name: String(d.name ?? "—"),
-          sku: String(d.sku ?? ""),
-          storeId: String(d.storeId ?? l.storeId ?? ""),
-          reason: String(d.reason ?? "stock_count"),
-          note: String(d.note ?? ""),
-          before: Number(d.previousStock ?? 0),
-          after: Number(d.updatedStock ?? 0),
-          delta: Number(d.delta ?? 0),
-          cost: Number(d.costImpact ?? 0),
-          staff: l.staffName,
-        };
-      })
-      .sort((a, b) => b.at.localeCompare(a.at));
-  }, [logs, from, to]);
-
+  const storeIds = useMemo(
+    () => (store === ALL ? stores.map((item) => item.id) : [store]),
+    [stores, store],
+  );
+  const history = useQuery({
+    queryKey: ["stock-adjustment-report", from, to, storeIds.join("|")],
+    meta: { tables: ["stock_adjustments"] },
+    queryFn: () => loadStockAdjustmentReport(storeIds, from, to),
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
+  });
+  const all = useMemo(() => history.data ?? [], [history.data]);
   const rows = useMemo(
     () =>
       all.filter(
         (r) =>
-          (!query ||
-            `${r.name} ${r.sku}`.toLowerCase().includes(query.trim().toLowerCase())) &&
+          (!query || `${r.name} ${r.sku}`.toLowerCase().includes(query.trim().toLowerCase())) &&
           (reason === ALL || r.reason === reason) &&
-          (store === ALL || r.storeId === store) &&
-          (direction === ALL ||
-            (direction === "over" ? r.delta > 0 : r.delta < 0)),
+          (store === ALL || sameBranchId(r.storeId, store)) &&
+          (direction === ALL || (direction === "over" ? r.delta > 0 : r.delta < 0)),
       ),
     [all, query, reason, store, direction],
   );
@@ -105,11 +85,11 @@ function StockReport() {
   const over = rows.filter((r) => r.delta > 0).reduce((a, r) => a + r.delta, 0);
   const short = rows.filter((r) => r.delta < 0).reduce((a, r) => a + r.delta, 0);
   const impact = rows.reduce((a, r) => a + r.cost, 0);
-  const storeName = (id: string) => stores.find((s) => s.id === id)?.name ?? "—";
+  const storeName = (id: string) => stores.find((s) => sameBranchId(s.id, id))?.name ?? "—";
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Stock Adjustments & Calibration"
           subtitle="Every correction to stock on hand, with the reason, the variance and the person responsible."
@@ -118,7 +98,7 @@ function StockReport() {
           onFrom={setFrom}
           onTo={setTo}
           onExport={() =>
-            downloadCsv("stock-adjustments", [
+            downloadReport("stock-adjustments", [
               [
                 "Time",
                 "Product",
@@ -149,7 +129,7 @@ function StockReport() {
           }
         >
           <div className="space-y-1">
-            <Label className="text-xs">Product</Label>
+            <Label className="text-sm">Product</Label>
             <Input
               className="h-9 w-44"
               placeholder="Name or SKU…"
@@ -158,7 +138,7 @@ function StockReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Reason</Label>
+            <Label className="text-sm">Reason</Label>
             <ThemedSelect
               ariaLabel="Reason"
               className="h-9 w-48"
@@ -171,7 +151,7 @@ function StockReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Branch</Label>
+            <Label className="text-sm">Branch</Label>
             <ThemedSelect
               ariaLabel="Branch"
               className="h-9 w-40"
@@ -184,7 +164,7 @@ function StockReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Direction</Label>
+            <Label className="text-sm">Direction</Label>
             <ThemedSelect
               ariaLabel="Direction"
               className="h-9 w-36"
@@ -198,6 +178,13 @@ function StockReport() {
             />
           </div>
           <Button
+            variant="outline"
+            disabled={history.isFetching}
+            onClick={() => void history.refetch()}
+          >
+            Refresh
+          </Button>
+          <Button
             variant="ghost"
             className="h-9"
             onClick={() => {
@@ -210,6 +197,11 @@ function StockReport() {
             Clear filters
           </Button>
         </ReportHeader>
+        {history.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {history.error.message}
+          </p>
+        )}
 
         <div className="grid gap-4 sm:grid-cols-4">
           <StatCard label="Adjustments" value={String(rows.length)} />
@@ -222,8 +214,8 @@ function StockReport() {
           />
         </div>
 
-        <div className="rounded-lg border border-border">
-          <Table>
+        <div className="rounded-2xl border border-border bg-card">
+          <Table loading={history.isPending}>
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>
@@ -240,13 +232,11 @@ function StockReport() {
             <TableBody>
               {pager.pageItems.map((r, i) => (
                 <TableRow key={`${r.at}-${i}`}>
-                  <TableCell className="numeric text-xs">{stamp(r.at)}</TableCell>
+                  <TableCell className="numeric text-sm">{stamp(r.at)}</TableCell>
                   <TableCell>
                     <div className="font-medium">{r.name}</div>
-                    <div className="numeric text-[11px] text-muted-foreground">{r.sku}</div>
-                    {r.note && (
-                      <div className="text-[11px] text-muted-foreground">“{r.note}”</div>
-                    )}
+                    <div className="numeric text-xs text-muted-foreground">{r.sku}</div>
+                    {r.note && <div className="text-xs text-muted-foreground">“{r.note}”</div>}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{storeName(r.storeId)}</TableCell>
                   <TableCell>
@@ -267,7 +257,10 @@ function StockReport() {
               ))}
               {!rows.length && (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={9}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     No stock adjustments match these filters.
                   </TableCell>
                 </TableRow>

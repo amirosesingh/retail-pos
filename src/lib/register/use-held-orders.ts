@@ -232,7 +232,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         null;
       let request: Awaited<ReturnType<typeof loadApprovalCentre>>["ready"][number] | undefined;
       if (order.pendingRequestId) {
-        const centre = await loadApprovalCentre(deps.storeId);
+        const centre = await loadApprovalCentre(deps.storeId, order.pendingRequestId);
         request = [...centre.waiting, ...centre.ready, ...centre.history].find(
           (candidate) => candidate.id === order.pendingRequestId,
         );

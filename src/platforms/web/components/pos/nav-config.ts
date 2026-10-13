@@ -58,7 +58,7 @@ export type NavGroup = {
   items: NavItem[];
 };
 
-export const navGroups: NavGroup[] = [
+const originalGroups: NavGroup[] = [
   {
     id: "register",
     label: "Register & Selling",
@@ -68,7 +68,7 @@ export const navGroups: NavGroup[] = [
     items: [
       {
         to: "/",
-        label: "Register POS",
+        label: "Selling",
         icon: LayoutGrid,
         keywords: "checkout cart sale",
         blurb: "Scan, discount and charge a ticket.",
@@ -456,6 +456,31 @@ export const navGroups: NavGroup[] = [
   },
 ];
 
+// Keep each page in one section. The original entries retain their permission
+// flags and pin identities; only presentation and grouping change here.
+const group = (id: string) => originalGroups.find(item => item.id === id)!;
+const items = (id: string, paths: string[]) => group(id).items.filter(item => paths.includes(item.to));
+export const navGroups: NavGroup[] = [
+  { ...group("register"), label: "Sales", blurb: "Held bills, receipts, shifts and customer display.",
+    items: group("register").items.filter(item => !["/promotions", "/coupons"].includes(item.to)) },
+  { ...group("inventory"), label: "Inventory", blurb: "Products, stock, purchasing, receiving and transfers.",
+    items: group("inventory").items.filter(item => !["/verifications", "/approvals"].includes(item.to)) },
+  { ...group("people"), label: "Membership", blurb: "Members, customer registration and verification history.",
+    items: [...items("people", ["/members"]), ...items("inventory", ["/verifications"])] },
+  group("bookings"),
+  { id: "approvals", label: "Approvals", icon: ShieldCheck, hubTo: "/approvals",
+    blurb: "Assigned decisions and your authorization requests.", items: items("inventory", ["/approvals"]) },
+  { id: "marketing", label: "Marketing", icon: Percent, hubTo: "/marketing",
+    blurb: "Promotions, coupons and loyalty rules.", items: items("register", ["/promotions", "/coupons"]) },
+  { ...group("company"), label: "Business Overview", blurb: "All shops, locations, dashboards and audit history.",
+    items: group("company").items.map(item => ({ ...item, label: item.to === "/all-shops" ? "All Shops" :
+      item.to === "/stores" ? "Locations & Warehouses" : item.to === "/dashboard" ? "Dashboard" :
+      item.to === "/analytics" ? "Business Analytics" : item.to === "/audit" ? "Audit History" : item.label })) },
+  { ...group("reports"), items: group("reports").items
+    .filter(item => !["/reports/items", "/reports/payments"].includes(item.to))
+    .map(item => item.to === "/reports/sales" ? { ...item, label: "Sales Report", blurb: "Bills, item sales and cashier payments in one workspace." } : item) },
+];
+
 export const navItemKey = (i: NavItem) => `${i.to}#${i.hash ?? ""}?${i.section ?? ""}`;
 
 /** Top-level entries pinned above the groups in the sidebar. */
@@ -468,6 +493,9 @@ export { Store };
  * Longest prefix wins so child settings pages may tighten their parent gate.
  */
 const ROUTE_PERMISSION_OVERRIDES: Record<string, PermissionFlag> = {
+  "/reports/items": "can_view_sales_reports",
+  "/reports/payments": "can_view_sales_reports",
+  "/staff": "can_manage_staff",
   "/settings/groups": "can_manage_locations",
   "/settings/terminals": "can_manage_terminals",
   "/settings/mobile-terminals": "can_manage_terminals",

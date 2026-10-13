@@ -44,7 +44,9 @@ class SyncCoordinator {
     // A distinct option makes a shift-close request wait for an already
     // running periodic cycle and then perform its own catch-up pass. It never
     // overlaps the active coordinator run.
-    const result=await this.runNow({ ...options, includeActivity:true, final:true });
+    // Closing needs central acknowledgement of outgoing records. Downloading
+    // unrelated history must not turn an acknowledged close into a failure.
+    const result=await this.runNow({ ...options, includeActivity:true, final:true, pushOnly:true });
     if(!result.ok)return result;
     if(result.deferredTables?.length)return {...result,ok:false,code:"ESYNC_AUTH_PENDING",error:`Settings changes still need an authorized sign-in: ${result.deferredTables.join(", ")}.`};
     const reader=this.pushWorker?.reader;
@@ -79,8 +81,11 @@ class SyncCoordinator {
       try { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString(); }
       catch(error) { pushError=error; }
       if (pushError && (pushError.code === "ECHANGEGAP" || [401,403].includes(Number(pushError.status)))) throw pushError;
-      this.status.phase="pulling"; this.status.currentTable=null; this.publish(this.snapshot());
-      const pulled=(await this.pullWorker.run(workerOptions)) ?? {}; this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
+      let pulled = {};
+      if (!options.pushOnly) {
+        this.status.phase="pulling"; this.status.currentTable=null; this.publish(this.snapshot());
+        pulled=(await this.pullWorker.run(workerOptions)) ?? {}; this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
+      }
       this.status.pushed=Number(pushed.pushed??this.status.pushed); this.status.merged=Number(pulled.merged??this.status.merged);
       if (pushError) throw pushError;
       this.status.phase="idle"; this.status.lastError=null; this.status.credentialsInvalid=false;

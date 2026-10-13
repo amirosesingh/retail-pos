@@ -8,7 +8,7 @@ import {
 } from "@/platforms/web/components/pos/settings/use-settings-nav";
 
 const BASE =
-  "rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap";
+  "rounded-lg px-3 py-2 text-sm font-medium transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const ACTIVE = "bg-primary text-primary-foreground";
 const IDLE = "text-muted-foreground hover:bg-muted hover:text-foreground";
 
@@ -44,7 +44,7 @@ export function SettingsTabs({
       <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
         {category.label}
       </p>
-      <div className="no-scrollbar flex w-full max-w-full gap-1 overflow-x-auto rounded-lg border border-border bg-card p-1">
+      <div className="flex w-full max-w-full gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1">
         {tabs.map((tab) => {
           const tabSearch = searchOf(tab);
           const tabId = tabSearch["tab"];

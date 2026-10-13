@@ -27,24 +27,24 @@ export function SaveIndicator({
     <span
       role="status"
       aria-live="polite"
-      className={`flex items-center gap-2 text-xs text-muted-foreground ${className}`}
+      className={`flex min-w-0 items-start gap-2 break-words text-sm text-muted-foreground ${className}`}
     >
       {saving ? (
         <>
-          <Loader2 className="size-4 animate-spin" /> Saving…
+          <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin motion-reduce:animate-none text-primary" /> Saving…
         </>
       ) : error ? (
         <>
-          <TriangleAlert className="size-4 text-destructive" />
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
           <span className="text-destructive">Could not save — {error}</span>
         </>
       ) : dirty ? (
         <>
-          <TriangleAlert className="size-4 text-amber-500" /> {dirtyText}
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" /> {dirtyText}
         </>
       ) : (
         <>
-          <Check className="size-4 text-emerald-500" />
+          <Check className="mt-0.5 size-4 shrink-0 text-success" />
           {savedAt ? `${savedText} · ${savedAt}` : savedText}
         </>
       )}

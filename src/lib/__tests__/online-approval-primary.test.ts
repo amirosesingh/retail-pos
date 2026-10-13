@@ -66,7 +66,7 @@ describe("online approval primary database", () => {
     const engine = source("src/lib/sync-engine.ts");
     const centre = source("src/lib/approval-centre.ts");
 
-    expect(route).toContain("subscribeApprovals(() => void load())");
+    expect(route).toContain("subscribeApprovals(load)");
     expect(route).toContain("void syncNow(`approval-decision:");
     expect(engine).toMatch(/LIVE_TABLES[\s\S]*"authorization_requests"/);
     expect(centre).toContain("++approvalChannelSequence");

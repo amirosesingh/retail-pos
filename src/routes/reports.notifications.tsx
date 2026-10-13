@@ -1,3 +1,8 @@
+import {
+  ReportTable as Table,
+  downloadReport,
+  ReportFilters,
+} from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Download, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
@@ -8,14 +13,7 @@ import { useAnimatedItems } from "@/components/ui/animated-list";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/pos-auth";
@@ -30,7 +28,6 @@ import {
   listActivityEvents,
   markActivitySeen,
   mergeRemoteActivityPreferences,
-
   toCsv,
   type ActivityEvent,
   type EventSeverity,
@@ -148,60 +145,98 @@ function NotificationsReport() {
 
   return (
     <AppShell>
-      <div className="space-y-4 p-4">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         {missing && (
-          <p className="rounded-md border border-border bg-surface-2 p-3 text-xs text-muted-foreground">
+          <p className="rounded-md border border-border bg-surface-2 p-3 text-sm text-muted-foreground">
             The activity log needs a database update. Follow the existing-database upgrade
             instructions in <span className="font-medium">docs/database-upgrade.md</span>.
           </p>
         )}
         <div className="flex flex-wrap items-end gap-3">
           <div className="mr-auto">
-            <h1 className="text-lg font-semibold">Activity & notifications</h1>
-            <p className="text-xs text-muted-foreground">
+            <h1 className="text-2xl font-semibold tracking-tight">Activity & notifications</h1>
+            <p className="text-sm text-muted-foreground">
               Every recorded sign-in, shift, sale, drawer open and staff change, with WhatsApp
               delivery status.
             </p>
           </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Event</Label>
-            <ThemedSelect
-              className="h-9 w-56"
-              value={type}
-              onChange={setType}
-              options={TYPE_OPTIONS}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Importance</Label>
-            <ThemedSelect
-              className="h-9 w-40"
-              value={severity}
-              onChange={setSeverity}
-              options={SEVERITY_OPTIONS}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Status</Label>
-            <ThemedSelect
-              className="h-9 w-44"
-              value={status}
-              onChange={setStatus}
-              options={STATUS_OPTIONS}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Search</Label>
-            <Input
-              className="h-9 w-52"
-              placeholder="Person or text"
-              value={actor}
-              onChange={(e) => setActor(e.target.value)}
-            />
-          </div>
+          <ReportFilters title="Activity & notifications filters">
+            <div className="space-y-1">
+              <Label className="text-xs">Event</Label>
+              <ThemedSelect
+                className="h-9 w-56"
+                value={type}
+                onChange={setType}
+                options={TYPE_OPTIONS}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Importance</Label>
+              <ThemedSelect
+                className="h-9 w-40"
+                value={severity}
+                onChange={setSeverity}
+                options={SEVERITY_OPTIONS}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Status</Label>
+              <ThemedSelect
+                className="h-9 w-44"
+                value={status}
+                onChange={setStatus}
+                options={STATUS_OPTIONS}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Search</Label>
+              <Input
+                className="h-9 w-52"
+                placeholder="Person or text"
+                value={actor}
+                onChange={(e) => setActor(e.target.value)}
+              />
+            </div>
+          </ReportFilters>
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={busy}>
             <RefreshCw className={cn("size-4", busy && "animate-spin")} /> Refresh
           </Button>
+          {can("can_export_reports") && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                downloadReport("activity-notifications", [
+                  [
+                    "Date & time",
+                    "Event",
+                    "Importance",
+                    "Title",
+                    "Message",
+                    "Person",
+                    "Terminal",
+                    "Branch",
+                    "Delivery",
+                    "Status",
+                  ],
+                  ...filtered.map((row) => [
+                    when(row.createdAt),
+                    EVENT_LABELS[row.type] ?? row.type,
+                    row.severity,
+                    humanizeText(row.title, refs),
+                    humanizeText(row.message ?? "", refs),
+                    row.actorName || "System",
+                    row.terminalName || "",
+                    stores.find((store) => store.id === row.storeId)?.name ?? row.storeId,
+                    row.whatsappStatus,
+                    row.clearedBy.length ? "Acknowledged" : "Active",
+                  ]),
+                ])
+              }
+            >
+              <Download className="size-4" /> Export Excel
+            </Button>
+          )}
           {can("can_export_reports") && (
             <Button variant="secondary" size="sm" onClick={exportCsv}>
               <Download className="size-4" /> Export CSV
@@ -209,7 +244,7 @@ function NotificationsReport() {
           )}
         </div>
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -227,7 +262,7 @@ function NotificationsReport() {
             <TableBody>
               {animated.rendered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-8 text-center text-xs text-muted-foreground">
+                  <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
                     No events match these filters.
                   </TableCell>
                 </TableRow>
@@ -241,47 +276,45 @@ function NotificationsReport() {
                       if (event.target === event.currentTarget) animated.settle(key, phase);
                     }}
                   >
-                    <TableCell className="text-xs">{when(r.createdAt)}</TableCell>
+                    <TableCell className="text-sm">{when(r.createdAt)}</TableCell>
                     <TableCell>
                       <span
                         className={cn(
-                          "rounded border px-1.5 py-0.5 text-[10px]",
+                          "rounded border px-1.5 py-0.5 text-xs",
                           SEVERITY_TONE[r.severity],
                         )}
                       >
                         {EVENT_LABELS[r.type] ?? r.type}
                       </span>
                     </TableCell>
-                    <TableCell className="text-xs">
+                    <TableCell className="text-sm">
                       <p className="font-medium">{humanizeText(r.title, refs)}</p>
                       {r.message && (
                         <p className="text-muted-foreground">{humanizeText(r.message, refs)}</p>
                       )}
                     </TableCell>
-                    <TableCell className="text-xs">
+                    <TableCell className="text-sm">
                       {r.actorName || "—"}
                       {r.actorRole && (
-                        <span className="block text-[10px] capitalize text-muted-foreground">
+                        <span className="block text-xs capitalize text-muted-foreground">
                           {r.actorRole}
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="text-xs">{r.terminalName || "—"}</TableCell>
-                    <TableCell className="text-xs">
+                    <TableCell className="text-sm">{r.terminalName || "—"}</TableCell>
+                    <TableCell className="text-sm">
                       {stores.find((store) => store.id === r.storeId)?.name ?? "Unknown branch"}
                     </TableCell>
-                    <TableCell className="text-xs capitalize">{r.whatsappStatus}</TableCell>
-                    <TableCell className="text-xs">
-                      {r.clearedBy.length > 0
-                        ? "History"
-                        : "Active"}
+                    <TableCell className="text-sm capitalize">{r.whatsappStatus}</TableCell>
+                    <TableCell className="text-sm">
+                      {r.clearedBy.length > 0 ? "History" : "Active"}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-7 px-2 text-[10px]"
+                        className="h-7 px-2 text-xs"
                         disabled={preferenceBusy === r.id || r.clearedBy.length > 0}
                         onClick={() => void updatePreference(r)}
                       >

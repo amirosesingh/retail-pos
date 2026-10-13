@@ -5,13 +5,15 @@ const {mayCloseShift}=require("../../../electron/db/shift-close-policy.cjs");
 const session=require("../../../electron/admin-session.cjs");
 const privilege=require("../../../electron/ipc-privilege.cjs");
 afterEach(()=>session.clear());
-it("allows handover only with the saved setting and close permission",()=>{
+it("allows another operator with close permission on the same terminal",()=>{
  const input={differentOperator:true,differentTerminal:false,isAdmin:false,canManageOthers:false,canClose:true,allowHandover:false};
- expect(mayCloseShift(input)).toBe(false);
+ expect(mayCloseShift(input)).toBe(true);
  expect(mayCloseShift({...input,allowHandover:true})).toBe(true);
  expect(mayCloseShift({...input,allowHandover:true,canClose:false})).toBe(false);
  expect(mayCloseShift({...input,isAdmin:true})).toBe(true);
  expect(mayCloseShift({...input,canManageOthers:true})).toBe(true);
+ expect(mayCloseShift({...input,differentTerminal:true})).toBe(false);
+ expect(mayCloseShift({...input,differentTerminal:true,allowHandover:true})).toBe(true);
 });
 it("shows admin expected totals without granting cashier visibility",()=>{
  session.grant("admin","admin",{},"pos","branch");

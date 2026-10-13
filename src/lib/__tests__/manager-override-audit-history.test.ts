@@ -37,14 +37,16 @@ describe("manager override audit history", () => {
     expect(report).toContain("display.method");
   });
 
-  it("requires an authorization PIN when every new staff account is created", () => {
+  it("keeps authorization PIN setup separate and optional when creating accounts", () => {
     const admin = read("src/lib/staff-admin.functions.ts");
     const server = read("src/lib/staff-admin.server.ts");
     const screen = read("src/platforms/web/components/admin/StaffManager.tsx");
-    expect(admin).toContain("authorizationPin: z.string().regex");
+    expect(admin).toMatch(/authorizationPin:\s*z\s*\.string\(\)\s*\.regex\([^\n]+\)\s*\.optional\(\)/);
     expect(server).toContain("p_pin: authorizationPin");
-    expect(screen).toContain("Generate 6-digit PIN");
-    expect(screen).toContain("Show generated PIN");
+    expect(screen).toContain("setPinValue(generateAuthorizationPin(6))");
+    expect(screen).toContain("Show authorisation PIN");
+    expect(screen).not.toContain("form.authorizationPin");
+    expect(screen).toContain("row.approval_pin_eligible");
     expect(screen.match(/setShowPinValue\(false\)/g)?.length).toBeGreaterThanOrEqual(3);
     expect(server).toContain('serviceRpc("staff_account_set_terminal_pin"');
     expect(server).toContain('p_pin: ""');

@@ -1,18 +1,15 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { AppShell } from "@/platforms/web/components/pos/AppShell";
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
+import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { useMemo } from "react";
+import { ReportFrame as AppShell } from "@/platforms/web/components/pos/report-kit";
+import { useSalesReportFilters, useSalesReportContext } from "@/lib/sales-report-context";
+import { saleMatchesSearch } from "@/lib/sales-report-search";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
 import { useReportSales } from "@/lib/use-report-sales";
@@ -21,12 +18,15 @@ import {
   ReportHeader,
   StatCard,
   defaultRange,
-  downloadCsv,
+  downloadReport,
   inRange,
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
 
 export const Route = createFileRoute("/reports/payments")({
+  beforeLoad: () => {
+    throw redirect({ to: "/reports/sales", search: { view: "payments" }, replace: true });
+  },
   head: () => ({
     meta: [
       { title: "Cashier Payments Report — Retail" },
@@ -49,31 +49,41 @@ export const Route = createFileRoute("/reports/payments")({
 
 /** Tenders on a bill; single-tender bills are normalised into one line. */
 const tendersOf = (s: Sale): Payment[] =>
-  s.payments?.length
-    ? s.payments
-    : [{ id: s.id, method: s.method, amount: s.total }];
+  s.payments?.length ? s.payments : [{ id: s.id, method: s.method, amount: s.total }];
 
 const tenderKey = (p: Payment) =>
-  p.method === "card" && p.bankName?.trim()
-    ? `card:${p.bankName.trim()}`
-    : (p.method as string);
+  p.method === "card" && p.bankName?.trim() ? `card:${p.bankName.trim()}` : (p.method as string);
 
 const tenderLabel = (key: string) =>
   key.startsWith("card:")
     ? `Card · ${key.slice(5)}`
     : (PAYMENT_LABELS[key as keyof typeof PAYMENT_LABELS] ?? key);
 
-function PaymentsReport() {
+export function PaymentsReport() {
   const { state, stores } = usePos();
   const init = defaultRange(7);
-  const [from, setFrom] = useState(init.from);
-  const [to, setTo] = useState(init.to);
-  const [storeId, setStoreId] = useState("all");
+  const {
+    from,
+    setFrom,
+    to,
+    setTo,
+    storeId,
+    setStoreId,
+    cashier,
+    setCashier,
+    q,
+    setQ,
+    tender,
+    setTender,
+  } = useSalesReportFilters(init);
+  const shared = useSalesReportContext();
   const reportStoreIds = storeId === "all" ? stores.map((store) => store.id) : [storeId];
-  const history = useReportSales(state.sales, reportStoreIds, from, to);
-  const [cashier, setCashier] = useState("all");
-  const [tender, setTender] = useState("all");
-  const [q, setQ] = useState("");
+  const localHistory = useReportSales(state.sales, reportStoreIds, from, to, !shared);
+  const history = shared?.history ?? localHistory;
+  const products = useMemo(
+    () => new Map(state.products.map((product) => [product.id, product])),
+    [state.products],
+  );
 
   const cashiers = useMemo(
     () => [...new Set(history.sales.map((s) => s.cashier).filter(Boolean))].sort(),
@@ -97,13 +107,12 @@ function PaymentsReport() {
           const needle = q.trim().toLowerCase();
           if (!needle) return true;
           return (
-            s.receiptNo.toLowerCase().includes(needle) ||
-            s.cashier.toLowerCase().includes(needle) ||
+            saleMatchesSearch(s, q, products) ||
             paymentsLabel(tendersOf(s)).toLowerCase().includes(needle)
           );
         })
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [history.sales, from, to, storeId, cashier, tender, q],
+    [history.sales, from, to, storeId, cashier, tender, q, products],
   );
 
   /** Takings per cashier, split by tender. */
@@ -113,8 +122,7 @@ function PaymentsReport() {
       { bills: number; total: number; cash: number; card: number; other: number }
     >();
     for (const s of rows) {
-      const cur =
-        map.get(s.cashier) ?? { bills: 0, total: 0, cash: 0, card: 0, other: 0 };
+      const cur = map.get(s.cashier) ?? { bills: 0, total: 0, cash: 0, card: 0, other: 0 };
       cur.bills += 1;
       cur.total += s.total;
       for (const p of tendersOf(s)) {
@@ -135,7 +143,7 @@ function PaymentsReport() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Payments by Cashier"
           subtitle="Every payment transaction taken at the till, with the tender and card machine used."
@@ -144,7 +152,7 @@ function PaymentsReport() {
           onFrom={setFrom}
           onTo={setTo}
           onExport={() =>
-            downloadCsv("cashier-payments", [
+            downloadReport("cashier-payments", [
               ["Time", "Bill", "Store", "Cashier", "Member", "Total", "Tenders"],
               ...rows.map((s) => [
                 stamp(s.createdAt),
@@ -159,7 +167,7 @@ function PaymentsReport() {
           }
         >
           <div className="space-y-1">
-            <Label className="text-xs">Store</Label>
+            <Label className="text-sm">Store</Label>
             <ThemedSelect
               value={storeId}
               onChange={setStoreId}
@@ -172,7 +180,7 @@ function PaymentsReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Cashier</Label>
+            <Label className="text-sm">Cashier</Label>
             <ThemedSelect
               value={cashier}
               onChange={setCashier}
@@ -185,7 +193,7 @@ function PaymentsReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Tender</Label>
+            <Label className="text-sm">Tender</Label>
             <ThemedSelect
               value={tender}
               onChange={setTender}
@@ -198,7 +206,7 @@ function PaymentsReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Search</Label>
+            <Label className="text-sm">Search</Label>
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -208,7 +216,9 @@ function PaymentsReport() {
           </div>
         </ReportHeader>
 
-        {history.loading ? <p className="text-sm text-muted-foreground">Updating report data…</p> : null}
+        {history.loading ? (
+          <p className="text-sm text-muted-foreground">Updating report data…</p>
+        ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-4">
@@ -226,7 +236,7 @@ function PaymentsReport() {
           />
         </div>
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           <div className="border-b border-border px-4 py-2 text-sm font-medium">Per cashier</div>
           <Table loading={history.loading}>
             <TableHeader>
@@ -265,7 +275,7 @@ function PaymentsReport() {
           </Table>
         </div>
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           <Table loading={history.loading}>
             <TableHeader>
               <TableRow>
@@ -280,16 +290,18 @@ function PaymentsReport() {
             <TableBody>
               {pager.pageItems.map((s) => (
                 <TableRow key={s.id}>
-                  <TableCell className="numeric whitespace-nowrap text-xs">
+                  <TableCell className="numeric whitespace-nowrap text-sm">
                     {stamp(s.createdAt)}
                   </TableCell>
-                  <TableCell className="numeric font-medium">{s.receiptNo}</TableCell>
+                  <TableCell data-sort-value={s.receiptNo}>
+                    <ReportReceiptLink sale={s} />
+                  </TableCell>
                   <TableCell className="text-muted-foreground">{storeName(s.storeId)}</TableCell>
                   <TableCell>{s.cashier}</TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
                       {tendersOf(s).map((p, i) => (
-                        <Badge key={`${s.id}-${i}`} variant="outline" className="text-[10px]">
+                        <Badge key={`${s.id}-${i}`} variant="outline" className="text-xs">
                           {tenderLabel(tenderKey(p))} {money(p.amount)}
                         </Badge>
                       ))}
@@ -300,7 +312,10 @@ function PaymentsReport() {
               ))}
               {!rows.length && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={6}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     No payment transactions match these filters.
                   </TableCell>
                 </TableRow>

@@ -1,12 +1,19 @@
+import { ReportFilters } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, RefreshCw, Search } from "lucide-react";
+import { BellRing, RefreshCw, Search } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -159,12 +166,100 @@ function AlertsHistory() {
 
   return (
     <AppShell>
-      <div className="space-y-4 p-3 sm:p-4 lg:p-6">
-        <header>
-          <h1 className="text-xl font-semibold">Alerts history</h1>
-          <p className="text-sm text-muted-foreground">
-            Every system alert, with branch, item, quantity, delivery state and full details.
-          </p>
+      <div className="mx-auto w-full max-w-7xl space-y-5 p-4 sm:p-6">
+        <header className="flex items-start gap-3">
+          <span className="rounded-xl bg-primary/10 p-3 text-primary">
+            <BellRing className="size-5" aria-hidden="true" />
+          </span>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Alert History</h1>
+            <p className="text-sm text-muted-foreground">
+              Every system alert, with branch, item, quantity, delivery state and full details.
+            </p>
+          </div>
+          <div className="ml-auto">
+            <ReportFilters title="Alert History filters">
+              <section
+                aria-label="Alert filters"
+                className="grid grid-cols-1 gap-4 rounded-2xl border border-border bg-card p-4 sm:grid-cols-2"
+              >
+                <div className="space-y-1 sm:col-span-2 xl:col-span-2">
+                  <Label className="text-xs">Search</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="pl-9"
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Message, item, person or reference"
+                    />
+                  </div>
+                </div>
+                <Filter label="Category">
+                  <ThemedSelect
+                    value={type}
+                    onChange={setType}
+                    options={[{ value: "all", label: "All categories" }, ...ALERT_TYPES]}
+                  />
+                </Filter>
+                <Filter label="Importance">
+                  <ThemedSelect
+                    value={severity}
+                    onChange={setSeverity}
+                    options={[
+                      { value: "all", label: "All severities" },
+                      { value: "critical", label: "Critical" },
+                      { value: "warning", label: "Warning" },
+                      { value: "info", label: "Information" },
+                    ]}
+                  />
+                </Filter>
+                <Filter label="Branch">
+                  <ThemedSelect
+                    value={storeId}
+                    onChange={setStoreId}
+                    options={[
+                      { value: "all", label: "All branches" },
+                      ...stores.map((store) => ({ value: store.id, label: store.name })),
+                    ]}
+                  />
+                </Filter>
+                <Filter label="From">
+                  <Input
+                    type="date"
+                    value={from}
+                    onChange={(event) => setFrom(event.target.value)}
+                  />
+                </Filter>
+                <Filter label="To">
+                  <Input type="date" value={to} onChange={(event) => setTo(event.target.value)} />
+                </Filter>
+                <Filter label="Sort">
+                  <ThemedSelect
+                    value={sort}
+                    onChange={setSort}
+                    options={[
+                      { value: "created_at.desc", label: "Newest first" },
+                      { value: "created_at.asc", label: "Oldest first" },
+                      { value: "severity.asc", label: "Importance" },
+                      { value: "event_type.asc", label: "Category" },
+                      { value: "store_id.asc", label: "Branch" },
+                    ]}
+                  />
+                </Filter>
+                <div className="flex items-end">
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    onClick={() => void load()}
+                    disabled={busy}
+                  >
+                    <RefreshCw className={cn("size-4", busy && "animate-spin")} /> Refresh
+                  </Button>
+                </div>
+              </section>
+            </ReportFilters>
+          </div>
         </header>
         {missing && (
           <p className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
@@ -173,99 +268,28 @@ function AlertsHistory() {
           </p>
         )}
 
-        <section className="grid grid-cols-1 gap-3 rounded-lg border border-border p-3 sm:grid-cols-2 xl:grid-cols-7">
-          <div className="space-y-1 sm:col-span-2 xl:col-span-2">
-            <Label className="text-xs">Search</Label>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Message, item, person or reference"
-              />
-            </div>
+        <div className="overflow-hidden rounded-2xl border border-border bg-card">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <p className="text-sm font-medium">{total.toLocaleString()} alerts</p>
+            <span role="status" className="text-xs text-muted-foreground">
+              {busy ? "Updating…" : "Select an alert to see full details"}
+            </span>
           </div>
-          <Filter label="Category">
-            <ThemedSelect
-              value={type}
-              onChange={setType}
-              options={[{ value: "all", label: "All categories" }, ...ALERT_TYPES]}
-            />
-          </Filter>
-          <Filter label="Importance">
-            <ThemedSelect
-              value={severity}
-              onChange={setSeverity}
-              options={[
-                { value: "all", label: "All severities" },
-                { value: "critical", label: "Critical" },
-                { value: "warning", label: "Warning" },
-                { value: "info", label: "Information" },
-              ]}
-            />
-          </Filter>
-          <Filter label="Branch">
-            <ThemedSelect
-              value={storeId}
-              onChange={setStoreId}
-              options={[
-                { value: "all", label: "All branches" },
-                ...stores.map((store) => ({ value: store.id, label: store.name })),
-              ]}
-            />
-          </Filter>
-          <Filter label="From">
-            <Input type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
-          </Filter>
-          <Filter label="To">
-            <Input type="date" value={to} onChange={(event) => setTo(event.target.value)} />
-          </Filter>
-          <Filter label="Sort">
-            <ThemedSelect
-              value={sort}
-              onChange={setSort}
-              options={[
-                { value: "created_at.desc", label: "Newest first" },
-                { value: "created_at.asc", label: "Oldest first" },
-                { value: "severity.asc", label: "Importance" },
-                { value: "event_type.asc", label: "Category" },
-                { value: "store_id.asc", label: "Branch" },
-              ]}
-            />
-          </Filter>
-          <div className="flex items-end">
-            <Button
-              className="w-full"
-              variant="outline"
-              onClick={() => void load()}
-              disabled={busy}
-            >
-              <RefreshCw className={cn("size-4", busy && "animate-spin")} /> Refresh
-            </Button>
-          </div>
-        </section>
-
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <Table>
+          <Table clientDataControls={false} className="report-table text-sm">
             <TableHeader>
               <TableRow>
-                <TableHead>Date & time</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Item / alert</TableHead>
-                <TableHead>Branch</TableHead>
-                <TableHead className="text-right">Quantity / amount</TableHead>
+                <TableHead className="w-[42%]">Alert</TableHead>
+                <TableHead>Location & time</TableHead>
+                <TableHead className="text-right">Amount / quantity</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="text-right">
-                  <ArrowUpDown className="ml-auto size-4" />
-                </TableHead>
+                <TableHead className="text-right">Details</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={5}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     {busy ? "Loading alerts…" : "No alerts match these filters."}
@@ -275,46 +299,60 @@ function AlertsHistory() {
                 rows.map((row) => {
                   const cleared = row.clearedBy.length > 0;
                   return (
-                    <TableRow key={row.id}>
-                      <TableCell className="whitespace-nowrap text-xs">
-                        {when(row.createdAt)}
-                      </TableCell>
-                      <TableCell>
+                    <TableRow key={row.id} className="align-top">
+                      <TableCell className="min-w-64 space-y-2 py-4">
                         <Badge
                           variant="outline"
-                          className={cn(
-                            "whitespace-nowrap text-[10px]",
-                            SEVERITY_TONE[row.severity],
-                          )}
+                          className={cn("whitespace-normal text-xs", SEVERITY_TONE[row.severity])}
                         >
                           {EVENT_LABELS[row.type] ?? row.type}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="max-w-md text-xs">
-                        <p className="font-medium">{eventText(row.title)}</p>
-                        <p className="line-clamp-2 text-muted-foreground">
+                        <p className="break-words font-medium leading-6">{eventText(row.title)}</p>
+                        <p className="whitespace-pre-wrap break-words leading-6 text-muted-foreground">
                           {row.message
                             ? eventText(row.message)
                             : friendlyReference(row.entityId, refs)}
                         </p>
                         {row.entityId && (
-                          <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          <p className="text-xs leading-5 text-muted-foreground">
                             Related: {friendlyReference(row.entityId, refs)}
                           </p>
                         )}
                       </TableCell>
-                      <TableCell className="text-xs">{branchName(row.storeId)}</TableCell>
-                      <TableCell className="numeric text-right text-xs">
+                      <TableCell className="min-w-44 py-4">
+                        <p className="font-medium">{branchName(row.storeId)}</p>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          {when(row.createdAt)}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {row.actorName || "System"}
+                        </p>
+                      </TableCell>
+                      <TableCell className="numeric py-4 text-right tabular-nums">
                         {row.amount == null ? "—" : row.amount.toLocaleString()}
                       </TableCell>
-                      <TableCell className="text-xs">
-                        <span className="block">{cleared ? "Acknowledged" : "Active"}</span>
-                        <span className="capitalize text-[10px] text-muted-foreground">
+                      <TableCell className="py-4">
+                        <Badge
+                          variant="outline"
+                          className={
+                            cleared
+                              ? "text-muted-foreground"
+                              : "border-primary/25 bg-primary/5 text-primary"
+                          }
+                        >
+                          {cleared ? "Acknowledged" : "Active"}
+                        </Badge>
+                        <span className="mt-2 block text-xs text-muted-foreground">
                           Delivery: {row.whatsappStatus}
                         </span>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <Button size="sm" variant="outline" onClick={() => setSelected(row)}>
+                      <TableCell className="py-4 text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`View details: ${eventText(row.title)}`}
+                          onClick={() => setSelected(row)}
+                        >
                           View details
                         </Button>
                       </TableCell>
@@ -339,9 +377,12 @@ function AlertsHistory() {
       </div>
 
       <Dialog open={Boolean(selected)} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-2xl sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Alert details</DialogTitle>
+            <DialogDescription>
+              Full message, related record and delivery information.
+            </DialogDescription>
           </DialogHeader>
           {selected && (
             <div className="space-y-4 text-sm">
@@ -353,7 +394,7 @@ function AlertsHistory() {
               </div>
               <div>
                 <p className="font-semibold">{eventText(selected.title)}</p>
-                <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
+                <p className="mt-2 whitespace-pre-wrap break-words leading-6 text-muted-foreground">
                   {selected.message ? eventText(selected.message) : "No additional message."}
                 </p>
               </div>
@@ -398,7 +439,7 @@ function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 break-words font-medium capitalize">{value}</dd>
+      <dd className="mt-1 break-words font-medium">{value}</dd>
     </div>
   );
 }

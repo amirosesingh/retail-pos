@@ -1,3 +1,4 @@
+import { branchChartColor, ANALYTICS_COLORS } from "@/lib/analytics-design";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -22,7 +23,7 @@ import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { StatCard, downloadCsv, isoDay } from "@/platforms/web/components/pos/report-kit";
+import { StatCard, downloadReport, isoDay, ReportFilters } from "@/platforms/web/components/pos/report-kit";
 import { money, usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import { AnalyticsErrorPanel } from "@/platforms/web/components/pos/AnalyticsErrorPanel";
@@ -58,18 +59,6 @@ export const Route = createFileRoute("/analytics")({
   component: LiveBoard,
 });
 
-const PALETTE = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-6)",
-  "var(--chart-7)",
-  "var(--chart-8)",
-  "var(--chart-9)",
-  "var(--chart-10)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-];
 
 const shift = (days: number) => isoDay(new Date(Date.now() - days * 86_400_000));
 
@@ -100,7 +89,16 @@ function LiveBoard() {
     queryKey: ["analytics-board", from, to],
     queryFn: () => fetchBoard(from, to),
     enabled: allowed,
-    meta: { tables: ["sales", "sale_items", "payment_transactions", "products", "product_categories", "stores"] },
+    meta: {
+      tables: [
+        "sales",
+        "sale_items",
+        "payment_transactions",
+        "products",
+        "product_categories",
+        "stores",
+      ],
+    },
     staleTime: 30_000,
   });
 
@@ -176,7 +174,7 @@ function LiveBoard() {
   }, [shops, trend, data]);
 
   const exportRows = () =>
-    downloadCsv("live-business-board", [
+    downloadReport("live-business-board", [
       [
         "Shop",
         "Bills",
@@ -229,23 +227,13 @@ function LiveBoard() {
             </Link>
             <h1 className="text-2xl font-semibold tracking-tight">Live Business Board</h1>
             <p className="text-sm text-muted-foreground">
-              {data?.localOnly ? "This terminal’s branch — reports calculated from local SQL Server. Group-wide reports are available on the web." : "Every shop combined — categories, item drilldown, revenue share and margin. Refreshes every minute."}
+              {data?.localOnly
+                ? "This terminal’s branch — reports calculated from local SQL Server. Group-wide reports are available on the web."
+                : "Every shop combined — categories, item drilldown, revenue share and margin. Refreshes every minute."}
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => query.refetch()} disabled={query.isFetching}>
-              <RefreshCw className={`mr-2 h-4 w-4 ${query.isFetching ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
-            {canExport && (
-              <Button variant="outline" onClick={exportRows}>
-                Export CSV
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border p-3">
+<ReportFilters title="Business Analytics filters"><div className="flex flex-wrap items-end gap-4">
           <div className="flex gap-1">
             {(["today", "7", "30"] as const).map((p) => (
               <Button
@@ -307,6 +295,17 @@ function LiveBoard() {
                 </Button>
               ))}
             </div>
+          </div>
+        </div></ReportFilters>
+            <Button variant="outline" onClick={() => query.refetch()} disabled={query.isFetching}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${query.isFetching ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+            {canExport && (
+              <Button variant="outline" onClick={exportRows}>
+                Export Excel
+              </Button>
+            )}
           </div>
         </div>
 
@@ -371,7 +370,7 @@ function LiveBoard() {
                   </div>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  {combinedCategories.map((category, index) => (
+                  {combinedCategories.map((category) => (
                     <button
                       key={category.name}
                       type="button"
@@ -384,7 +383,7 @@ function LiveBoard() {
                     >
                       <span
                         className="grid size-9 shrink-0 place-items-center rounded-lg text-white"
-                        style={{ background: PALETTE[index % PALETTE.length] }}
+                        style={{ background: branchChartColor("category:" + category.name) }}
                       >
                         <FolderOpen className="size-4" />
                       </span>
@@ -419,8 +418,8 @@ function LiveBoard() {
                       outerRadius={92}
                       paddingAngle={2}
                     >
-                      {shops.map((s, i) => (
-                        <Cell key={s.storeId} fill={PALETTE[i % PALETTE.length]} />
+                      {shops.map((s) => (
+                        <Cell key={s.storeId} fill={branchChartColor(s.storeId)} />
                       ))}
                     </Pie>
                     <Tooltip formatter={(v) => money(Number(v ?? 0))} />
@@ -498,7 +497,7 @@ function LiveBoard() {
                           {money(shop.revenue)} · {shop.sharePct.toFixed(1)}% of group
                         </p>
                         <div className="mt-3 space-y-1.5">
-                          {rows.map((category, index) => (
+                          {rows.map((category) => (
                             <button
                               key={category.name}
                               type="button"
@@ -507,7 +506,7 @@ function LiveBoard() {
                             >
                               <span
                                 className="size-2.5 shrink-0 rounded-full"
-                                style={{ background: PALETTE[index % PALETTE.length] }}
+                                style={{ background: branchChartColor("category:" + category.name) }}
                               />
                               <span className="min-w-0 flex-1 truncate">{category.name}</span>
                               <span className="numeric shrink-0 text-muted-foreground">
@@ -584,7 +583,7 @@ function LiveBoard() {
                         yAxisId="left"
                         dataKey="revenue"
                         name="Revenue"
-                        fill="var(--primary)"
+                        fill={ANALYTICS_COLORS.revenue}
                         maxBarSize={38}
                         radius={[4, 4, 0, 0]}
                       />
@@ -592,7 +591,7 @@ function LiveBoard() {
                         yAxisId="left"
                         dataKey="cost"
                         name="Cost"
-                        fill="var(--muted-foreground)"
+                        fill={ANALYTICS_COLORS.cost}
                         maxBarSize={38}
                         radius={[4, 4, 0, 0]}
                       />
@@ -600,7 +599,7 @@ function LiveBoard() {
                         yAxisId="left"
                         dataKey="profit"
                         name="Profit"
-                        fill="var(--success)"
+                        fill={ANALYTICS_COLORS.profit}
                         maxBarSize={38}
                         radius={[4, 4, 0, 0]}
                       />
@@ -609,7 +608,7 @@ function LiveBoard() {
                         type="monotone"
                         dataKey="marginPct"
                         name="Margin %"
-                        stroke="var(--warning)"
+                        stroke={ANALYTICS_COLORS.margin}
                         strokeWidth={2}
                         dot={{ r: 3 }}
                       />
@@ -624,7 +623,7 @@ function LiveBoard() {
                         type="monotone"
                         dataKey="marginPct"
                         name="Margin %"
-                        stroke="var(--warning)"
+                        stroke={ANALYTICS_COLORS.margin}
                         strokeWidth={3}
                         dot={{ r: 4 }}
                       />
@@ -662,25 +661,27 @@ function LiveBoard() {
                     <YAxis fontSize={11} width={64} />
                     <Tooltip formatter={(v) => money(Number(v ?? 0))} />
                     <Legend />
-                    <Bar dataKey="profit" stackId="m" name="Kept as profit" fill="var(--success)" />
+                    <Bar dataKey="profit" stackId="m" name="Kept as profit" fill={ANALYTICS_COLORS.profit} />
                     <Bar
                       dataKey="itemDiscount"
                       stackId="m"
                       name="Item discounts"
-                      fill="var(--primary)"
+                      fill={ANALYTICS_COLORS.discount}
                     />
                     <Bar
                       dataKey="billDiscount"
                       stackId="m"
                       name="Bill discounts"
-                      fill="var(--accent)"
+                      fill={ANALYTICS_COLORS.discount}
+                      fillOpacity={0.75}
                     />
                     <Bar dataKey="coupon" stackId="m" name="Coupons" fill="var(--warning)" />
                     <Bar
                       dataKey="focValue"
                       stackId="m"
                       name="Free items"
-                      fill="var(--destructive)"
+                      fill={ANALYTICS_COLORS.discount}
+                      fillOpacity={0.45}
                     />
                   </BarChart>
                 </ResponsiveContainer>
@@ -718,7 +719,7 @@ function LiveBoard() {
                     type="monotone"
                     dataKey="revenue"
                     name="Revenue"
-                    stroke="var(--primary)"
+                    stroke={ANALYTICS_COLORS.revenue}
                     strokeWidth={2}
                     dot={false}
                   />
@@ -726,7 +727,7 @@ function LiveBoard() {
                     type="monotone"
                     dataKey="profit"
                     name="Profit"
-                    stroke="var(--success)"
+                    stroke={ANALYTICS_COLORS.profit}
                     strokeWidth={2}
                     dot={false}
                   />

@@ -1,3 +1,4 @@
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -5,19 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import {
   ReportHeader,
   defaultRange,
-  downloadCsv,
+  downloadReport,
   inRange,
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
@@ -121,15 +115,40 @@ function EditHistoryReport() {
   const page = usePagination(filtered);
 
   const exportCsv = () => {
-    downloadCsv("edit-history", [
-      ["When", "Requested by", "Approved / acted by", "Role", "Action", "Outcome", "Method", "Where", "Requested value", "Purpose", "Reference", "Before", "After", "Terminal"],
+    downloadReport("edit-history", [
+      [
+        "When",
+        "Requested by",
+        "Approved / acted by",
+        "Role",
+        "Action",
+        "Outcome",
+        "Method",
+        "Where",
+        "Requested value",
+        "Purpose",
+        "Reference",
+        "Before",
+        "After",
+        "Terminal",
+      ],
       ...filtered.map((r) => {
         const display = auditReportFields(r);
         return [
-          stamp(r.created_at), display.requestedBy, display.approvedBy,
-          r.actor_role ?? "", display.action, display.outcome, display.method, display.location,
-          display.requestedAmount, display.purpose, display.reference, r.old_value ?? "",
-          r.new_value ?? "", r.terminal_id ?? "",
+          stamp(r.created_at),
+          display.requestedBy,
+          display.approvedBy,
+          r.actor_role ?? "",
+          display.action,
+          display.outcome,
+          display.method,
+          display.location,
+          display.requestedAmount,
+          display.purpose,
+          display.reference,
+          r.old_value ?? "",
+          r.new_value ?? "",
+          r.terminal_id ?? "",
         ];
       }),
     ]);
@@ -138,14 +157,16 @@ function EditHistoryReport() {
   if (!can("can_view_audit_trail")) {
     return (
       <AppShell>
-        <div className="p-6 text-sm text-destructive">Permission required to view audit history.</div>
+        <div className="p-6 text-sm text-destructive">
+          Permission required to view audit history.
+        </div>
       </AppShell>
     );
   }
 
   return (
     <AppShell>
-      <div className="space-y-4 p-4">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Edit History"
           subtitle="Permanent history of recorded actions and unverified client reports. Entries cannot be changed or removed."
@@ -178,7 +199,7 @@ function EditHistoryReport() {
           <p className="text-sm text-muted-foreground">No recorded actions yet.</p>
         ) : (
           <>
-            <div className="overflow-x-auto rounded-lg border border-border">
+            <div className="overflow-x-auto rounded-2xl border border-border bg-card">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -195,42 +216,46 @@ function EditHistoryReport() {
                 <TableBody>
                   {page.pageItems.map((r) => {
                     const display = auditReportFields(r);
-                    return <TableRow key={r.id}>
-                      <TableCell className="whitespace-nowrap text-xs">
-                        {stamp(r.created_at)}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {display.requestedBy || "—"}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        <div className="font-medium">{display.approvedBy}</div>
-                        {r.actor_role ? (
-                          <Badge variant="outline" className="mt-1">
-                            {r.actor_role}
-                          </Badge>
-                        ) : null}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        <div>{display.action}</div>
-                        {display.outcome ? <Badge variant="outline" className="mt-1">{display.outcome}</Badge> : null}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {display.method}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        <div>{display.location}</div>
-                        <div className="text-muted-foreground">{display.reference}</div>
-                        {display.requestedAmount ? (
-                          <div className="text-muted-foreground">Value: {display.requestedAmount}</div>
-                        ) : null}
-                      </TableCell>
-                      <TableCell className="max-w-[26rem] text-xs text-muted-foreground">
-                        <div className="text-foreground">{display.purpose}</div>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {r.terminal_id ? r.terminal_id.slice(0, 8) : "—"}
-                      </TableCell>
-                    </TableRow>;
+                    return (
+                      <TableRow key={r.id}>
+                        <TableCell className="whitespace-nowrap text-sm">
+                          {stamp(r.created_at)}
+                        </TableCell>
+                        <TableCell className="text-sm">{display.requestedBy || "—"}</TableCell>
+                        <TableCell className="text-sm">
+                          <div className="font-medium">{display.approvedBy}</div>
+                          {r.actor_role ? (
+                            <Badge variant="outline" className="mt-1">
+                              {r.actor_role}
+                            </Badge>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          <div>{display.action}</div>
+                          {display.outcome ? (
+                            <Badge variant="outline" className="mt-1">
+                              {display.outcome}
+                            </Badge>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-sm">{display.method}</TableCell>
+                        <TableCell className="text-sm">
+                          <div>{display.location}</div>
+                          <div className="text-muted-foreground">{display.reference}</div>
+                          {display.requestedAmount ? (
+                            <div className="text-muted-foreground">
+                              Value: {display.requestedAmount}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="max-w-[26rem] text-sm text-muted-foreground">
+                          <div className="text-foreground">{display.purpose}</div>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {r.terminal_id ? r.terminal_id.slice(0, 8) : "—"}
+                        </TableCell>
+                      </TableRow>
+                    );
                   })}
                 </TableBody>
               </Table>

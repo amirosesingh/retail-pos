@@ -11,14 +11,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/pos-auth";
 import {
-  PINNED_SETTINGS,
   settingsCard,
   SETTINGS_CATEGORIES,
   type SettingsCard,
   type SettingsCategoryId,
 } from "@/lib/settings-catalog";
-import { PinButton } from "@/platforms/web/components/pos/PinButton";
-import { useNavPins } from "@/lib/nav-pins";
 
 /** `section` and `card` are legacy deep links; `beforeLoad` forwards them. */
 type Search = { cat?: SettingsCategoryId; section?: string; card?: string };
@@ -73,27 +70,26 @@ export const Route = createFileRoute("/settings/")({
 
 function Row({ c }: { c: SettingsCard }) {
   return (
-    <div className="flex items-center gap-1 rounded-lg border border-border bg-card pr-2 transition-colors hover:border-primary/60">
+    <div data-settings-category={c.category} className="flex items-center gap-1 rounded-lg border border-border bg-card pr-2 transition-colors hover:border-primary/60">
       <SettingsLink
         card={c}
         className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <c.icon className="size-4 shrink-0 text-primary" />
+        <c.icon className="size-5 shrink-0 text-primary" />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-medium leading-tight">{c.label}</span>
-          <span className="mt-0.5 block truncate text-[11px] leading-snug text-muted-foreground">
+          <span className="block break-words text-sm font-medium leading-tight">{c.label}</span>
+          <span className="mt-0.5 block break-words text-sm leading-relaxed text-muted-foreground">
             {c.blurb}
           </span>
         </span>
         <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
       </SettingsLink>
-      <PinButton kind="settings" itemKey={c.id} label={c.label} />
     </div>
   );
 }
 
 function SettingsHome() {
-  const { isAdmin, isSupervisor, can, authUserId } = useAuth();
+  const { isAdmin, isSupervisor, can } = useAuth();
   const allowed = isAdmin || can("can_access_pos_settings") || isSupervisor;
   const navigate = useNavigate({ from: "/settings/" });
   const { cat } = Route.useSearch();
@@ -105,12 +101,6 @@ function SettingsHome() {
 
   const activeCat = cat && categories.some((g) => g.id === cat) ? cat : undefined;
   const category = categories.find((g) => g.id === activeCat);
-  const { pins } = useNavPins(authUserId ?? null);
-  const chosen = pins.filter((p) => p.kind === "settings").map((p) => p.key);
-  // Until someone pins their own, the busiest areas stand in.
-  const pinned = (chosen.length ? chosen : PINNED_SETTINGS)
-    .map((id) => cards.find((c) => c.id === id))
-    .filter((c): c is SettingsCard => !!c);
 
   return (
     <SettingsShell home>
@@ -138,7 +128,7 @@ function SettingsHome() {
               <h1 className="truncate text-xl font-semibold sm:text-2xl">
                 {category ? category.label : "Settings"}
               </h1>
-              <p className="truncate text-xs text-muted-foreground sm:text-sm">
+              <p className="text-sm leading-relaxed text-muted-foreground">
                 {category
                   ? category.blurb
                   : "Everything this till can be configured to do, grouped by area."}
@@ -181,9 +171,9 @@ function SettingsHome() {
                   card={c}
                   className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:border-primary/60"
                 >
-                  <c.icon className="size-4 shrink-0 text-primary" />
+                  <c.icon className="size-5 shrink-0 text-primary" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-medium">{c.label}</span>
+                    <span className="block break-words text-sm font-medium">{c.label}</span>
                     <span className="block truncate text-[11px] text-muted-foreground">
                       Settings → {categories.find((g) => g.id === c.category)?.label}
                     </span>
@@ -207,36 +197,17 @@ function SettingsHome() {
           </section>
         ) : (
           <>
-            {pinned.length > 0 && (
-              <section className="space-y-1.5">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Quick access
-                </h2>
-                <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-                  {pinned.map((c) => (
-                    <SettingsLink
-                      key={c.id}
-                      card={c}
-                      className="flex shrink-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium transition-colors hover:border-primary/60"
-                    >
-                      <c.icon className="size-3.5 text-primary" />
-                      <span className="whitespace-nowrap">{c.label}</span>
-                    </SettingsLink>
-                  ))}
-                </div>
-              </section>
-            )}
-
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {categories.map((g) => (
                 <button
                   key={g.id}
+                  data-settings-category={g.id}
                   type="button"
                   onClick={() => void navigate({ search: { cat: g.id }, replace: false })}
-                  className="group flex min-h-40 w-full flex-col rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-sm"
+                  className="group flex w-full flex-col gap-4 rounded-2xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-sm"
                 >
                   <span className="flex w-full items-start gap-3">
-                    <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/20">
                       <g.icon className="size-5" />
                     </span>
                     <span className="min-w-0 flex-1">
@@ -247,7 +218,7 @@ function SettingsHome() {
                     </span>
                     <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                   </span>
-                  <span className="mt-auto block w-full border-t border-border/60 pt-3 text-[11px] leading-relaxed text-muted-foreground">
+                  <span className="mt-auto block w-full border-t border-border/60 pt-3 text-xs leading-relaxed text-muted-foreground">
                     {cards
                       .filter((card) => card.category === g.id)
                       .map((card) => card.label)

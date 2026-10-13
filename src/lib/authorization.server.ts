@@ -253,6 +253,7 @@ const withExpiry = (r: AuthorizationRequest): AuthorizationRequest =>
     : r;
 
 export async function listRequests(opts: {
+  requestId?: string;
   storeId?: string;
   allBranches: boolean;
   status?: string;
@@ -267,6 +268,7 @@ export async function listRequests(opts: {
     parts.push(`or=(store_id.eq.${encodeURIComponent(opts.storeId)},store_id.eq.)`);
   }
   if (opts.status && opts.status !== "all") parts.push(`status=eq.${opts.status}`);
+  if (opts.requestId) parts.push(`id=eq.${encodeURIComponent(opts.requestId)}`);
   const rows = await readRows(`authorization_requests?${parts.join("&")}`);
   return rows.map(normalizeRequest).map(withExpiry);
 }
@@ -276,10 +278,10 @@ export async function listRequests(opts: {
  * makes this safe when several tills poll at once: only one caller receives
  * each expired row and therefore writes its audit/notification side effects.
  */
-export async function expirePendingRequests(): Promise<AuthorizationRequest[]> {
+export async function expirePendingRequests(requestId?: string): Promise<AuthorizationRequest[]> {
   const now = new Date().toISOString();
   const res = await rest(
-    `authorization_requests?status=in.(pending,approved)&consumed_at=is.null&expires_at=lt.${encodeURIComponent(now)}`,
+    `authorization_requests?status=in.(pending,approved)&consumed_at=is.null&expires_at=lt.${encodeURIComponent(now)}${requestId ? `&id=eq.${encodeURIComponent(requestId)}` : ""}`,
     {
       method: "PATCH",
       body: JSON.stringify({
@@ -413,6 +415,15 @@ export async function setUserAuthorizationPin(
   pin: string,
   setBy: string,
 ): Promise<void> {
+  const people = await readRows(`app_users?user_id=eq.${encodeURIComponent(targetUserId)}&select=user_id,role,role_slug,store_id,is_active&limit=1`);
+  const person = people[0];
+  if (!person) throw new Error("Staff account not found");
+  const { approvalPinEligible } = await import("./approval-pin-eligibility");
+  const rules = await loadRuleRows(String(person.store_id ?? ""));
+  if (!approvalPinEligible(rules, {
+    userId: String(person.user_id), role: String(person.role_slug || person.role),
+    storeId: String(person.store_id ?? ""), active: person.is_active === true,
+  })) throw new Error("Assign this person to a PIN approval rule before setting an authorization PIN");
   const { rpc } = await import("./pos-rules.server");
   await rpc<unknown>("set_authorization_pin", {
     p_user_id: targetUserId,

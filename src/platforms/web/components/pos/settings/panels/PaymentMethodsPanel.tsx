@@ -90,7 +90,7 @@ export function PaymentMethodsPanel() {
       return;
     }
     toast.success("Payment method deleted");
-    setRows(current => current.filter(item => item.id !== row.id));
+    setRows((current) => current.filter((item) => item.id !== row.id));
   };
 
   if (loading) {
@@ -195,7 +195,6 @@ export function PaymentMethodsPanel() {
                 <Trash2 className="mr-1 size-3.5" /> Delete
               </Button>
             )}
-
           </div>
         </div>
       ))}
@@ -209,11 +208,16 @@ export function PaymentMethodsPanel() {
         <Plus className="mr-1 size-4" /> Add payment method
       </Button>
       <Button onClick={() => void save()} disabled={busy !== null}>
-        {busy === "saving" ? <Loader2 className="mr-1 size-4 animate-spin" /> : <Save className="mr-1 size-4" />}
+        {busy === "saving" ? (
+          <Loader2 className="mr-1 size-4 animate-spin" />
+        ) : (
+          <Save className="mr-1 size-4" />
+        )}
         Save all payment methods
       </Button>
       <p className="text-xs text-muted-foreground">
-        Display order controls the checkout buttons: lower numbers appear first. Use 15 to place a method between 10 and 20.
+        Display order controls the checkout buttons: lower numbers appear first. Use 15 to place a
+        method between 10 and 20.
       </p>
       <p className="text-xs text-muted-foreground">
         A method marked “needs a serial / voucher number” makes the cashier type the voucher or slip

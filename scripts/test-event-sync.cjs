@@ -62,6 +62,52 @@ test('final sync rejects settings waiting for authorization even with an empty j
   assert.equal((await coordinator.runFinal({branchId:'B1'})).code,'ESYNC_AUTH_PENDING');
 });
 
+test('acknowledged final uploads do not depend on a historical pull timeout', async () => {
+  let pulled = 0;
+  const coordinator = new SyncCoordinator({
+    pushWorker: { run: async () => ({ pushed: 4 }), reader: {
+      pendingSummary: async () => ({ pending: 0, failed: 0 }),
+    } },
+    pullWorker: { run: async () => {
+      pulled++;
+      throw Object.assign(new Error('statement timeout'), { code: '57014' });
+    } },
+  });
+  assert.equal((await coordinator.runFinal({ branchId: 'B1' })).ok, true);
+  assert.equal(pulled, 0);
+  // Ordinary synchronization continues to download changes and report errors.
+  assert.equal((await coordinator.runNow({ branchId: 'B1' })).code, '57014');
+  assert.equal(pulled, 1);
+});
+
+test('final uploads still reject failed local records', async () => {
+  const coordinator = new SyncCoordinator({
+    pushWorker: { run: async () => ({ pushed: 4 }), reader: {
+      pendingSummary: async () => ({ pending: 0, failed: 1 }),
+    } },
+    pullWorker: { run: async () => assert.fail('closing downloaded history') },
+  });
+  assert.equal((await coordinator.runFinal({ branchId: 'B1' })).code, 'ESYNC_PENDING');
+});
+
+test('slow download pages shrink without skipping or immediately growing again', async () => {
+  const { readPage } = require('../electron/sync/page-policy.cjs');
+  const limits = [];
+  const result = await readPage(async limit => {
+    limits.push(limit);
+    if (limit > 25) throw Object.assign(new Error('statement timeout'), { code: '57014' });
+    return { count: 1, cursor: 9, rows: [], tombstones: [] };
+  }, 100);
+  assert.deepEqual(limits, [100, 50, 25]);
+  assert.equal(result.nextLimit, 25);
+  let attempts = 0;
+  await assert.rejects(readPage(async () => {
+    attempts++;
+    throw Object.assign(new Error('permission denied'), { code: '42501', status: 403 });
+  }), /permission denied/);
+  assert.equal(attempts, 1);
+});
+
 test('urgent pass defers activity without advancing its checkpoint', async () => {
   const visited=[]; let journalOptions;
   const worker=new PushWorker({

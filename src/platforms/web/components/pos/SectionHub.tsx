@@ -8,7 +8,6 @@ import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { navGroups, navItemKey, type NavItem } from "@/platforms/web/components/pos/nav-config";
 import { useAuth } from "@/lib/pos-auth";
 import { useVisibility } from "@/lib/ui-visibility";
-import { PinButton } from "@/platforms/web/components/pos/PinButton";
 
 export function SectionHub({ groupId }: { groupId: string }) {
   const { can, isAdmin } = useAuth();
@@ -78,7 +77,6 @@ export function SectionHub({ groupId }: { groupId: string }) {
                     className="ml-auto mt-1 size-4 shrink-0 text-muted-foreground group-hover:text-primary"
                   />
                 </Link>
-                <PinButton kind="nav" itemKey={navItemKey(item)} label={item.label} />
               </div>
             ))}
           </div>

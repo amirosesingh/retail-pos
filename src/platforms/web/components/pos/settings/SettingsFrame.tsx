@@ -177,7 +177,13 @@ export function SettingsFrame({
   }, []);
 
   const save = async () => {
-    if (requireCompanyName && !(typeof state.settings.receipt.companyName === "string" && state.settings.receipt.companyName.trim())) {
+    if (
+      requireCompanyName &&
+      !(
+        typeof state.settings.receipt.companyName === "string" &&
+        state.settings.receipt.companyName.trim()
+      )
+    ) {
       const message = "Enter the company name before saving business identity.";
       setSaveError(message);
       toast.error(message);
@@ -221,23 +227,45 @@ export function SettingsFrame({
 
   // `state.settings` has already been resolved by the central scope engine.
   // Receipt pages must not layer a second, branch-only override system on top.
-  const effective = useMemo(() => ({
-    ...receipt,
-    ...Object.fromEntries(
-      (["companyName", "taxNumber", "regNumber", "phone", "website", "headerText", "footerText", "logo"] as const)
-        .map((key) => [key, typeof receipt[key] === "string" ? receipt[key] : ""]),
-    ),
-    fonts: Object.fromEntries(
-      (["header", "body", "footer"] as const).map((key) =>
-        [key, { ...defaultReceiptSettings.fonts[key], ...(receipt.fonts?.[key] ?? {}) }]),
-    ) as ReceiptSettings["fonts"],
-    customLines: Array.isArray(receipt.customLines)
-      ? receipt.customLines.filter((line) => line && typeof line.text === "string") : [],
-    qr: { ...defaultReceiptSettings.qr, ...receipt.qr,
-      value: typeof receipt.qr?.value === "string" ? receipt.qr.value : "" },
-    bookingSlip: { ...defaultReceiptSettings.bookingSlip, ...receipt.bookingSlip,
-      terms: typeof receipt.bookingSlip?.terms === "string" ? receipt.bookingSlip.terms : "" },
-  }), [receipt]);
+  const effective = useMemo(
+    () => ({
+      ...receipt,
+      ...Object.fromEntries(
+        (
+          [
+            "companyName",
+            "taxNumber",
+            "regNumber",
+            "phone",
+            "website",
+            "headerText",
+            "footerText",
+            "logo",
+          ] as const
+        ).map((key) => [key, typeof receipt[key] === "string" ? receipt[key] : ""]),
+      ),
+      fonts: Object.fromEntries(
+        (["header", "body", "footer"] as const).map((key) => [
+          key,
+          { ...defaultReceiptSettings.fonts[key], ...(receipt.fonts?.[key] ?? {}) },
+        ]),
+      ) as ReceiptSettings["fonts"],
+      customLines: Array.isArray(receipt.customLines)
+        ? receipt.customLines.filter((line) => line && typeof line.text === "string")
+        : [],
+      qr: {
+        ...defaultReceiptSettings.qr,
+        ...receipt.qr,
+        value: typeof receipt.qr?.value === "string" ? receipt.qr.value : "",
+      },
+      bookingSlip: {
+        ...defaultReceiptSettings.bookingSlip,
+        ...receipt.bookingSlip,
+        terms: typeof receipt.bookingSlip?.terms === "string" ? receipt.bookingSlip.terms : "",
+      },
+    }),
+    [receipt],
+  );
 
   const editSettings: typeof updateSettings = (patch) => {
     localSettingsEdit.current = true;
@@ -358,14 +386,14 @@ export function SettingsFrame({
         className={
           embedded
             ? "w-full max-w-full space-y-4"
-            : `mx-auto w-full space-y-5 p-6 ${wide ? "max-w-full" : "max-w-6xl"}`
+            : `mx-auto w-full space-y-5 p-4 sm:p-6 ${wide ? "max-w-full" : "max-w-6xl"}`
         }
       >
-        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
+        <header className="flex flex-wrap items-start justify-between gap-4">
           {embedded ? (
             <div />
           ) : (
-            <div className="flex min-w-0 items-start gap-3">
+            <div className="flex min-w-0 flex-1 basis-64 items-start gap-3">
               <Button
                 type="button"
                 variant="outline"
@@ -415,10 +443,11 @@ export function SettingsFrame({
 
         <fieldset
           disabled={settingsScopeLoading && !allowWhileScopeLoading}
-          className="w-full min-w-0 max-w-full space-y-4 rounded-lg border border-border bg-card p-5 disabled:opacity-60"
+          className="settings-form w-full min-w-0 max-w-full space-y-5 rounded-2xl border border-border bg-card p-4 shadow-sm disabled:opacity-60 sm:p-6"
         >
           {settingsScopeLoading && !allowWhileScopeLoading && (
-            <p role="status" className="text-sm text-muted-foreground">
+            <p role="status" className="flex items-center gap-2 rounded-xl bg-primary/5 p-3 text-sm text-muted-foreground">
+              <Loader2 aria-hidden="true" className="size-4 shrink-0 animate-spin motion-reduce:animate-none text-primary" />
               Loading settings for this scope. Editing becomes available when loading succeeds.
             </p>
           )}
@@ -429,11 +458,11 @@ export function SettingsFrame({
         {showSaveBar && (
           <div
             className={`sticky bottom-0 flex flex-wrap items-center gap-3 border-t border-border bg-background/95 py-3 backdrop-blur ${
-              embedded ? "px-1" : "-mx-6 px-6"
+              embedded ? "px-1" : "-mx-4 px-4 sm:-mx-6 sm:px-6"
             }`}
           >
             <SaveIndicator dirty={dirty} saving={saving} savedAt={savedAt} error={saveError} />
-            <div className="ml-auto flex gap-2">
+            <div className="ml-auto flex flex-wrap gap-2">
               <Button variant="ghost" size="sm" disabled={!dirty || saving} onClick={discard}>
                 <RotateCcw className="size-4" /> Discard changes
               </Button>

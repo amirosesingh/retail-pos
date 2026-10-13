@@ -1,3 +1,4 @@
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -5,14 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { useAuditLogs, type AuditLog } from "@/lib/audit-log";
 import { describeLog } from "@/lib/audit-format";
@@ -21,7 +15,7 @@ import {
   ReportHeader,
   StatCard,
   defaultRange,
-  downloadCsv,
+  downloadReport,
   inRange,
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
@@ -154,12 +148,11 @@ function VoidsReport() {
   const totalValue = rows.reduce((a, e) => a + e.value, 0);
   const refunds = rows.filter((e) => e.kind === "refund").length;
   const voids = rows.filter((e) => e.kind === "void").length;
-  const storeName = (id: string | null) =>
-    (id && stores.find((s) => s.id === id)?.code) || "—";
+  const storeName = (id: string | null) => (id && stores.find((s) => s.id === id)?.code) || "—";
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Void & Refund History"
           subtitle="Every void, line removal, cancellation and refund — who did it, when, why and for how much."
@@ -168,8 +161,18 @@ function VoidsReport() {
           onFrom={setFrom}
           onTo={setTo}
           onExport={() =>
-            downloadCsv("void-refund-history", [
-              ["Time", "Type", "Staff", "Role", "Store", "Value", "Reason", "Approved by", "Detail"],
+            downloadReport("void-refund-history", [
+              [
+                "Time",
+                "Type",
+                "Staff",
+                "Role",
+                "Store",
+                "Value",
+                "Reason",
+                "Approved by",
+                "Detail",
+              ],
               ...rows.map((e) => [
                 stamp(e.log.at),
                 KIND_LABEL[e.kind],
@@ -185,7 +188,7 @@ function VoidsReport() {
           }
         >
           <div className="space-y-1">
-            <Label className="text-xs">Type</Label>
+            <Label className="text-sm">Type</Label>
             <ThemedSelect
               value={kind}
               onChange={setKind}
@@ -201,7 +204,7 @@ function VoidsReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Staff</Label>
+            <Label className="text-sm">Staff</Label>
             <ThemedSelect
               value={staff}
               onChange={setStaff}
@@ -214,7 +217,7 @@ function VoidsReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Search</Label>
+            <Label className="text-sm">Search</Label>
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -231,7 +234,7 @@ function VoidsReport() {
           <StatCard label="Value removed" value={money(totalValue)} />
         </div>
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           <div className="border-b border-border px-4 py-2 text-sm font-medium">Per person</div>
           <Table>
             <TableHeader>
@@ -266,7 +269,7 @@ function VoidsReport() {
           </Table>
         </div>
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -282,17 +285,17 @@ function VoidsReport() {
             <TableBody>
               {pager.pageItems.map((e) => (
                 <TableRow key={e.log.id}>
-                  <TableCell className="numeric whitespace-nowrap text-xs">
+                  <TableCell className="numeric whitespace-nowrap text-sm">
                     {stamp(e.log.at)}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline" className="text-[10px]">
+                    <Badge variant="outline" className="text-xs">
                       {KIND_LABEL[e.kind]}
                     </Badge>
                   </TableCell>
                   <TableCell>
                     {e.log.staffName}
-                    <span className="block text-[11px] text-muted-foreground">{e.log.role}</span>
+                    <span className="block text-xs text-muted-foreground">{e.log.role}</span>
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {storeName(e.log.storeId)}
@@ -301,7 +304,7 @@ function VoidsReport() {
                   <TableCell className="text-sm text-muted-foreground">
                     {reasonOf(e.log)}
                     {approverOf(e.log) !== "—" && (
-                      <span className="block text-[11px]">approved by {approverOf(e.log)}</span>
+                      <span className="block text-xs">approved by {approverOf(e.log)}</span>
                     )}
                   </TableCell>
                   <TableCell className="numeric text-right">
@@ -311,7 +314,10 @@ function VoidsReport() {
               ))}
               {!rows.length && (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={7}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     Nothing matches these filters.
                   </TableCell>
                 </TableRow>

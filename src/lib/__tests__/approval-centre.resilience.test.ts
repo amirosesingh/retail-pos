@@ -25,6 +25,13 @@ vi.mock("../authorization.functions", () => ({
 import { loadApprovalCentre, splitRequests } from "../approval-centre";
 
 describe("approvals resilience", () => {
+  it("loads only the requested approval when resuming one parked bill", async () => {
+    listMock.mockResolvedValue({ ok: true, me: { id: "me" }, requests: [] });
+    await loadApprovalCentre("s1", "11111111-1111-4111-8111-111111111111");
+    expect(listMock).toHaveBeenLastCalledWith({ data: expect.objectContaining({
+      storeId: "s1", requestId: "11111111-1111-4111-8111-111111111111",
+    }) });
+  });
   it("returns an empty view when the reply carries no requests", async () => {
     listMock.mockResolvedValue({ ok: false, error: "Not signed in" });
     const view = await loadApprovalCentre("s1");

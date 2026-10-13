@@ -451,7 +451,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
       code: "ESYNC_PENDING",
       pending: 1,
     });
-    expect(push).toHaveBeenCalledWith({ branchId: "B1", batchSize: 100, final: true, includeActivity: true, onProgress: expect.any(Function) });
+    expect(push).toHaveBeenCalledWith({ branchId: "B1", batchSize: 100, final: true, pushOnly: true, includeActivity: true, onProgress: expect.any(Function) });
   });
 
   it("keeps an unacknowledged local row and records the cloud conflict", async () => {

@@ -9,7 +9,7 @@ describe("settings scroll containment", () => {
     );
     expect(shell).toContain('document.documentElement.style.overflow = "hidden"');
     expect(shell).toContain('document.body.style.overflow = "hidden"');
-    expect(shell).toContain('className="min-h-0 flex-1 overflow-y-auto"');
+    expect(shell).toContain('className="min-h-0 flex-1 overflow-y-auto overscroll-contain"');
     expect(shell).toContain("max-h-full");
   });
 

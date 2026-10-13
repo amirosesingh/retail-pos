@@ -20,6 +20,7 @@ export function useReportSales(
   storeIds: string[],
   from: string,
   to: string,
+  enabled = true,
 ): { sales: Sale[]; loading: boolean; refreshing: boolean; error: string } {
   const seedRows = useMemo(() => {
     const start = dayStart(from);
@@ -34,6 +35,7 @@ export function useReportSales(
   }, [seed, storeIds, from, to]);
   const [revision, setRevision] = useState(0);
   useEffect(() => {
+    if (!enabled) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const off = subscribeSalesChange(() => {
       if (timer) return;
@@ -51,7 +53,7 @@ export function useReportSales(
       window.removeEventListener("focus", refresh);
       window.removeEventListener("online", refresh);
     };
-  }, []);
+  }, [enabled]);
   const [loaded, setLoaded] = useState<{ key: string; rows: Sale[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -61,6 +63,7 @@ export function useReportSales(
 
   useEffect(() => {
     let cancelled = false;
+    if (!enabled) return;
     const ids = storeKey ? storeKey.split("|") : [""];
     const start = dayStart(from);
     const end = dayEnd(to);
@@ -99,7 +102,7 @@ export function useReportSales(
     return () => {
       cancelled = true;
     };
-  }, [from, to, storeKey, rangeKey, revision]);
+  }, [from, to, storeKey, rangeKey, revision, enabled]);
 
   const sales = useMemo(() => {
     // Live committed state wins over an older page snapshot (for example a refund).

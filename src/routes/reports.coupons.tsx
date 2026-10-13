@@ -1,3 +1,5 @@
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
+import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -6,14 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
 import { useAuditLogs } from "@/lib/audit-log";
@@ -22,7 +17,7 @@ import {
   ReportHeader,
   StatCard,
   defaultRange,
-  downloadCsv,
+  downloadReport,
   inRange,
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
@@ -138,10 +133,7 @@ function CouponReport() {
     return [...events, ...bills].sort((a, b) => b.at.localeCompare(a.at));
   }, [logs, history.sales, from, to, partnerOf]);
 
-  const partners = useMemo(
-    () => [...new Set(allRows.map((r) => r.partner))].sort(),
-    [allRows],
-  );
+  const partners = useMemo(() => [...new Set(allRows.map((r) => r.partner))].sort(), [allRows]);
   const staffNames = useMemo(() => [...new Set(allRows.map((r) => r.staff))].sort(), [allRows]);
 
   const rows = useMemo(
@@ -185,7 +177,7 @@ function CouponReport() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Coupon & Discount Usage"
           subtitle="Which coupon was used, on which bill or item, by whom and when."
@@ -194,7 +186,7 @@ function CouponReport() {
           onFrom={setFrom}
           onTo={setTo}
           onExport={() =>
-            downloadCsv("coupon-usage", [
+            downloadReport("coupon-usage", [
               [
                 "Time",
                 "Coupon",
@@ -221,7 +213,7 @@ function CouponReport() {
           }
         >
           <div className="space-y-1">
-            <Label className="text-xs">Coupon code</Label>
+            <Label className="text-sm">Coupon code</Label>
             <Input
               value={codeQuery}
               onChange={(e) => setCodeQuery(e.target.value)}
@@ -230,7 +222,7 @@ function CouponReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Partner</Label>
+            <Label className="text-sm">Partner</Label>
             <ThemedSelect
               ariaLabel="Partner"
               className="h-9 w-48"
@@ -243,7 +235,7 @@ function CouponReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Scope</Label>
+            <Label className="text-sm">Scope</Label>
             <ThemedSelect
               ariaLabel="Scope"
               className="h-9 w-36"
@@ -257,7 +249,7 @@ function CouponReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Status</Label>
+            <Label className="text-sm">Status</Label>
             <ThemedSelect
               ariaLabel="Status"
               className="h-9 w-36"
@@ -272,7 +264,7 @@ function CouponReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Staff</Label>
+            <Label className="text-sm">Staff</Label>
             <ThemedSelect
               ariaLabel="Staff"
               className="h-9 w-40"
@@ -285,7 +277,7 @@ function CouponReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Branch</Label>
+            <Label className="text-sm">Branch</Label>
             <ThemedSelect
               ariaLabel="Branch"
               className="h-9 w-40"
@@ -302,7 +294,9 @@ function CouponReport() {
           </Button>
         </ReportHeader>
 
-        {history.loading ? <p className="text-sm text-muted-foreground">Updating report data…</p> : null}
+        {history.loading ? (
+          <p className="text-sm text-muted-foreground">Updating report data…</p>
+        ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-3">
@@ -316,7 +310,7 @@ function CouponReport() {
         </div>
 
         {byCode.length > 0 && (
-          <div className="rounded-lg border border-border">
+          <div className="rounded-2xl border border-border bg-card">
             <div className="border-b border-border px-4 py-2 text-sm font-medium">
               Redemptions by coupon code
             </div>
@@ -343,7 +337,7 @@ function CouponReport() {
           </div>
         )}
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           <Table loading={history.loading}>
             <TableHeader>
               <TableRow>
@@ -361,12 +355,19 @@ function CouponReport() {
             <TableBody>
               {pager.pageItems.map((r, i) => (
                 <TableRow key={`${r.at}-${i}`}>
-                  <TableCell className="numeric text-xs">{stamp(r.at)}</TableCell>
+                  <TableCell className="numeric text-sm">{stamp(r.at)}</TableCell>
                   <TableCell className="font-medium">{r.code}</TableCell>
                   <TableCell className="text-muted-foreground">{r.partner}</TableCell>
                   <TableCell>{r.target}</TableCell>
                   <TableCell className="capitalize">{r.scope}</TableCell>
-                  <TableCell>{r.receipt}</TableCell>
+                  <TableCell data-sort-value={r.receipt}>
+                    <ReportReceiptLink
+                      receiptNo={r.receipt}
+                      sale={history.sales.find(
+                        (sale) => sale.receiptNo === r.receipt && sale.storeId === r.storeId,
+                      )}
+                    />
+                  </TableCell>
                   <TableCell>{r.staff}</TableCell>
                   <TableCell className="numeric text-right">{money(r.value)}</TableCell>
                   <TableCell>
@@ -378,7 +379,10 @@ function CouponReport() {
               ))}
               {!rows.length && (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={9}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     No coupons match these filters.
                   </TableCell>
                 </TableRow>

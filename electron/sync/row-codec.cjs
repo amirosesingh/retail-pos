@@ -1,11 +1,19 @@
 /** SQL Server stores PostgreSQL jsonb and text[] in nvarchar columns. */
+function normalizeSettingsScope(table, row) {
+  if (!["settings_scoped", "settings_overrides"].includes(table) || typeof row?.scope !== "string") return row;
+  const scope = row.scope.trim().toUpperCase();
+  if (!["GLOBAL", "CLUSTER", "BRANCH", "TERMINAL"].includes(scope) &&
+      !(table === "settings_scoped" && scope === "PRIVATE")) throw new Error("Invalid settings scope.");
+  return { ...row, scope };
+}
+
 function structured(column) {
   const type = String(column.cloudType ?? "").trim().toLowerCase();
   return type === "jsonb" || type.endsWith("[]");
 }
 
 function toCloudRow(table, row) {
-  const result = { ...row };
+  const result = { ...normalizeSettingsScope(table.sqlServerTable, row) };
   for (const column of table.columns) {
     const name = column.sqlServerColumn;
     // SQL Server drivers can return uppercase GUIDs. PostgreSQL emits UUIDs
@@ -63,4 +71,4 @@ function toLocalValue(column, value) {
     : value;
 }
 
-module.exports = { toCloudRow, toLocalValue, toRendererRow };
+module.exports = { toCloudRow, toLocalValue, toRendererRow, normalizeSettingsScope };

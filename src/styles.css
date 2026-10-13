@@ -4,6 +4,56 @@
 
 @custom-variant dark (&:is(.dark *));
 
+:root {
+  --analytics-revenue: #2563eb;
+  --analytics-profit: #0f766e;
+  --analytics-cost: #7c3aed;
+  --analytics-discount: #b45309;
+  --analytics-units: #0284c7;
+  --analytics-margin: #be185d;
+  --analytics-category-lightness: 0.58;
+}
+.dark, :root[data-pos-theme="midnight"] {
+  --analytics-revenue: #60a5fa;
+  --analytics-profit: #2dd4bf;
+  --analytics-cost: #c4b5fd;
+  --analytics-discount: #fbbf24;
+  --analytics-units: #38bdf8;
+  --analytics-margin: #f9a8d4;
+  --analytics-category-lightness: 0.76;
+}
+
+/* Reports keep full-width readable cards on phones, and tables on desktops. */
+.report-stat { border-top: 3px solid var(--category-1); }
+.report-stat:nth-child(4n + 2) { border-top-color: var(--category-2); }
+.report-stat:nth-child(4n + 3) { border-top-color: var(--category-3); }
+.report-stat:nth-child(4n + 4) { border-top-color: var(--category-4); }
+.report-row-toggle { display: none; }
+
+@container (max-width: 900px) {
+  .responsive-table.report-table[data-mobile-cards="true"] .report-record:not(.report-expanded) td:nth-child(n + 4):not(.report-row-toggle):not([data-label="Total"]):not([data-label="Amount"]):not([data-label="Revenue"]) { display: none; }
+  .responsive-table.report-table[data-mobile-cards="true"] tbody tr {
+    border-radius: 1rem;
+    border-top: 3px solid var(--primary);
+  }
+  .responsive-table.report-table[data-mobile-cards="true"] tbody td {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    white-space: normal;
+  }
+  .responsive-table.report-table[data-mobile-cards="true"] tbody td::before {
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--muted-foreground);
+  }
+  .responsive-table.report-table[data-mobile-cards="true"] tbody td > * { justify-self: start; }
+}
+
 /* Compact cards key off the table's real content width, including sidebars and split panes. */
 .responsive-table-region {
   container-type: inline-size;
@@ -305,6 +355,86 @@
 
 /* Color palettes change visual tokens only. Register geometry is persisted in
    a separate layout store and never reads these values. */
+:root[data-pos-theme="vibrant"] {
+  --background: #f5f8ff;
+  --surface: #ffffff;
+  --surface-2: #edf3ff;
+  --card: #ffffff;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --accent: #0d9488;
+  --accent-foreground: #ffffff;
+  --secondary: #dbeafe;
+  --secondary-foreground: #1e3a8a;
+  --muted: #edf3ff;
+  --muted-foreground: #475569;
+  --border: #d7e2f5;
+  --input: #c7d7ef;
+  --ring: #2563eb;
+  --sidebar: #edf3ff;
+  --sidebar-primary: #2563eb;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #dbeafe;
+  --sidebar-accent-foreground: #1e3a8a;
+  --sidebar-border: #d7e2f5;
+  --sidebar-ring: #2563eb;
+  --pos-pay: #2563eb;
+  --pos-pay-foreground: #ffffff;
+  --pos-hold: #0f766e;
+  --pos-discount: #7c3aed;
+  --category-1: #2563eb;
+  --category-2: #0f766e;
+  --category-3: #b45309;
+  --category-4: #7c3aed;
+  --chart-1: #2563eb;
+  --chart-2: #0d9488;
+  --chart-3: #7c3aed;
+  --chart-4: #d97706;
+  --chart-5: #db2777;
+}
+
+.dark[data-pos-theme="vibrant"] {
+  --background: #10182b;
+  --surface: #18243c;
+  --surface-2: #22314f;
+  --card: #18243c;
+  --popover: #18243c;
+  --foreground: #f1f5ff;
+  --card-foreground: #f1f5ff;
+  --popover-foreground: #f1f5ff;
+  --primary: #60a5fa;
+  --primary-foreground: #10203b;
+  --accent: #2dd4bf;
+  --accent-foreground: #092c28;
+  --secondary: #253655;
+  --secondary-foreground: #dbeafe;
+  --muted: #22314f;
+  --muted-foreground: #b5c5df;
+  --border: #334768;
+  --input: #415779;
+  --ring: #60a5fa;
+  --sidebar: #132039;
+  --sidebar-primary: #60a5fa;
+  --sidebar-primary-foreground: #10203b;
+  --sidebar-accent: #253b60;
+  --sidebar-accent-foreground: #dbeafe;
+  --sidebar-border: #334768;
+  --sidebar-ring: #60a5fa;
+  --pos-pay: #60a5fa;
+  --pos-pay-foreground: #10203b;
+  --pos-hold: #2dd4bf;
+  --pos-discount: #c4b5fd;
+  --category-1: #60a5fa;
+  --category-2: #2dd4bf;
+  --category-3: #fbbf24;
+  --category-4: #c4b5fd;
+  --chart-1: #60a5fa;
+  --chart-2: #2dd4bf;
+  --chart-3: #c4b5fd;
+  --chart-4: #fbbf24;
+  --chart-5: #f472b6;
+}
+
 :root[data-pos-theme="ocean"] {
   --background: oklch(0.985 0.006 238);
   --surface-2: oklch(0.955 0.018 235);
@@ -1075,3 +1205,25 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
+/* Shared settings presentation: readable controls, stable semantic category accents. */
+.settings-workspace .settings-form :where(input, select, textarea, label) {
+  font-size: 0.875rem;
+}
+.settings-workspace .settings-form :where(section, fieldset, header) {
+  min-width: 0;
+}
+.settings-workspace .settings-form :where(h2, h3, label) {
+  overflow-wrap: anywhere;
+}
+.settings-workspace [data-settings-category] { --settings-accent: var(--primary); }
+.settings-workspace [data-settings-category="products"],
+.settings-workspace [data-settings-category="payments"] { --settings-accent: var(--analytics-profit); }
+.settings-workspace [data-settings-category="people"],
+.settings-workspace [data-settings-category="receipts"] { --settings-accent: var(--analytics-cost); }
+.settings-workspace [data-settings-category="sales"] { --settings-accent: var(--analytics-discount); }
+.settings-workspace [data-settings-category="security"] { --settings-accent: var(--destructive); }
+.settings-workspace [data-settings-category="health"] { --settings-accent: var(--success); }
+.settings-workspace [data-settings-category] svg:first-child {
+  color: var(--settings-accent);
+}
+.settings-workspace .animate-spin { animation-duration: 1s; }

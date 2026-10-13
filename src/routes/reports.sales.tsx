@@ -1,31 +1,34 @@
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
+import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { AppShell } from "@/platforms/web/components/pos/AppShell";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { useMemo } from "react";
+import { ReportFrame as AppShell } from "@/platforms/web/components/pos/report-kit";
+import { SalesReportWorkspace } from "@/platforms/web/components/pos/SalesReportWorkspace";
+import { useSalesReportFilters, useSalesReportContext } from "@/lib/sales-report-context";
+import { saleMatchesSearch } from "@/lib/sales-report-search";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
 import { saleNetRevenue } from "@/core/pricing/profit";
+import { paymentsLabel, methodLabel } from "@/core/types/pos-types";
 import { useReportSales } from "@/lib/use-report-sales";
 import {
   ReportHeader,
   StatCard,
   defaultRange,
-  downloadCsv,
+  downloadReport,
   inRange,
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
 
 export const Route = createFileRoute("/reports/sales")({
+  validateSearch: (search: Record<string, unknown>) =>
+    ({ view: search.view === "items" || search.view === "payments" ? search.view : "bills" }) as {
+      view: "bills" | "items" | "payments";
+    },
   head: () => ({
     meta: [
-      { title: "Sales Summary Report — Retail" },
+      { title: "Sales Report — Retail" },
       {
         name: "description",
         content:
@@ -37,38 +40,61 @@ export const Route = createFileRoute("/reports/sales")({
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  component: SalesReport,
+  component: SalesReportPage,
 });
 
-function SalesReport() {
+function SalesReportPage() {
+  return <SalesReportWorkspace initialView={Route.useSearch().view} />;
+}
+
+export function BillsReport() {
   const { state, stores } = usePos();
   const init = defaultRange();
-  const [from, setFrom] = useState(init.from);
-  const [to, setTo] = useState(init.to);
-  const history = useReportSales(state.sales, stores.map((store) => store.id), from, to);
+  const { from, setFrom, to, setTo, storeId, cashier, q } = useSalesReportFilters(init);
+  const shared = useSalesReportContext();
+  const localHistory = useReportSales(
+    state.sales,
+    stores.map((store) => store.id),
+    from,
+    to,
+    !shared,
+  );
+  const history = shared?.history ?? localHistory;
+  const products = useMemo(
+    () => new Map(state.products.map((product) => [product.id, product])),
+    [state.products],
+  );
 
   const rows = useMemo(
     () =>
       history.sales
-        .filter((s) => inRange(s.createdAt, from, to))
+        .filter(
+          (s) =>
+            inRange(s.createdAt, from, to) &&
+            (storeId === "all" || s.storeId === storeId) &&
+            (cashier === "all" || s.cashier === cashier) &&
+            saleMatchesSearch(s, q, products),
+        )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [history.sales, from, to],
+    [history.sales, from, to, storeId, cashier, q, products],
   );
 
-  const totals = rows.filter((sale) => !sale.refunded).reduce(
-    (a, s) => ({
-      net: a.net + saleNetRevenue(s),
-      collected: a.collected + s.total,
-      discount: a.discount + s.discount,
-      tax: a.tax + s.tax,
-    }),
-    { net: 0, collected: 0, discount: 0, tax: 0 },
-  );
+  const totals = rows
+    .filter((sale) => !sale.refunded)
+    .reduce(
+      (a, s) => ({
+        net: a.net + saleNetRevenue(s),
+        collected: a.collected + s.total,
+        discount: a.discount + s.discount,
+        tax: a.tax + s.tax,
+      }),
+      { net: 0, collected: 0, discount: 0, tax: 0 },
+    );
   const pager = usePagination(rows);
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Sales Summary"
           subtitle="Every completed bill in the selected window."
@@ -77,14 +103,24 @@ function SalesReport() {
           onFrom={setFrom}
           onTo={setTo}
           onExport={() =>
-            downloadCsv("sales-summary", [
-              ["Time", "Receipt", "Store", "Cashier", "Method", "Subtotal", "Discount", "Tax", "Total"],
+            downloadReport("sales-summary", [
+              [
+                "Time",
+                "Receipt",
+                "Store",
+                "Cashier",
+                "Method",
+                "Subtotal",
+                "Discount",
+                "Tax",
+                "Total",
+              ],
               ...rows.map((s) => [
                 stamp(s.createdAt),
                 s.receiptNo,
-                s.storeId,
+                stores.find((store) => store.id === s.storeId)?.name ?? s.storeName ?? s.storeId,
                 s.cashier,
-                s.method,
+                s.payments?.length ? paymentsLabel(s.payments) : methodLabel(s.method),
                 s.subtotal,
                 s.discount,
                 s.tax,
@@ -94,18 +130,23 @@ function SalesReport() {
           }
         />
 
-        {history.loading ? <p className="text-sm text-muted-foreground">Updating report data…</p> : null}
+        {history.loading ? (
+          <p className="text-sm text-muted-foreground">Updating report data…</p>
+        ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <StatCard label="Completed bills" value={String(rows.filter((sale) => !sale.refunded).length)} />
+          <StatCard
+            label="Completed bills"
+            value={String(rows.filter((sale) => !sale.refunded).length)}
+          />
           <StatCard label="Net sales (ex tax)" value={money(totals.net)} />
           <StatCard label="Total collected" value={money(totals.collected)} />
           <StatCard label="Discounts given" value={money(totals.discount)} />
           <StatCard label="Tax collected" value={money(totals.tax)} />
         </div>
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           <Table loading={history.loading}>
             <TableHeader>
               <TableRow>
@@ -121,18 +162,27 @@ function SalesReport() {
             <TableBody>
               {pager.pageItems.map((s) => (
                 <TableRow key={s.id}>
-                  <TableCell className="numeric text-xs">{stamp(s.createdAt)}</TableCell>
-                  <TableCell className="font-medium">{s.receiptNo}</TableCell>
+                  <TableCell className="numeric text-sm">{stamp(s.createdAt)}</TableCell>
+                  <TableCell data-sort-value={s.receiptNo}>
+                    <ReportReceiptLink sale={s} />
+                  </TableCell>
                   <TableCell>{s.cashier}</TableCell>
-                  <TableCell className="capitalize">{s.method.replace("_", " ")}</TableCell>
+                  <TableCell>
+                    {s.payments?.length ? paymentsLabel(s.payments) : methodLabel(s.method)}
+                  </TableCell>
                   <TableCell className="numeric text-right">{money(s.discount)}</TableCell>
                   <TableCell className="numeric text-right">{money(s.tax)}</TableCell>
-                  <TableCell className="numeric text-right font-semibold">{money(s.total)}</TableCell>
+                  <TableCell className="numeric text-right font-semibold">
+                    {money(s.total)}
+                  </TableCell>
                 </TableRow>
               ))}
               {!rows.length && (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={7}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     No bills in this date range.
                   </TableCell>
                 </TableRow>
