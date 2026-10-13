@@ -24,7 +24,7 @@ export type StaffAccountInput = {
   pin?: string;
   password?: string;
   /** Separate PIN used only when this person approves a governed action. */
-  authorizationPin: string;
+  authorizationPin?: string;
   branchId?: string | null;
   roleSlug: string;
   baseRole: StaffRole;
@@ -45,7 +45,7 @@ export async function createStaffMember(input: StaffAccountInput): Promise<void>
   const identifier = input.username.trim().toLowerCase();
   const emailMode = looksLikeEmail(identifier);
   if (!input.roleSlug) throw new Error("Choose a role for this person");
-  if (!/^\d{4,6}$/.test(input.authorizationPin)) {
+  if (input.authorizationPin && !/^\d{4,6}$/.test(input.authorizationPin)) {
     throw new Error("Set a 4 to 6 digit authorisation PIN");
   }
   if (emailMode) {

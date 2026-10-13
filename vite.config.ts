@@ -2,9 +2,15 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { nitro } from "nitro/vite";
-import { defineConfig } from "vite";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 import type { Plugin } from "vite";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import webOnlyEnv from "./scripts/web-only-env-names.json" with { type: "json" };
+
+// Managed checkouts can resolve dependencies from a parent node_modules.
+// Allow that exact directory while keeping Vite's filesystem guard enabled.
+const runtimeDependencies = resolve(dirname(fileURLToPath(import.meta.resolve("nitro/vite"))), "../..");
 
 /**
  * `use client` is an RSC package-boundary marker, not a runtime directive.
@@ -79,6 +85,7 @@ const blankWebEnv = Object.fromEntries(
 
 export default defineConfig({
   server: {
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), runtimeDependencies] },
     host: "::",
     port: 8080,
     // Release/package jobs may run beside the development server. Their

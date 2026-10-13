@@ -20,12 +20,12 @@ export function shouldOpenRegister(input: WorkspaceEntryInput): boolean {
 }
 
 const PURPOSE_NAV_ORDER: Record<TerminalPurpose | "management-user", string[]> = {
-  retail: ["register", "bookings", "people", "inventory", "reports", "company"],
+  retail: ["register", "inventory", "people", "bookings", "approvals", "marketing", "reports", "company"],
   warehouse: ["inventory", "company", "reports", "people", "register", "bookings"],
   inventory: ["inventory", "reports", "company", "people", "register", "bookings"],
   receiving: ["inventory", "company", "reports", "register", "people", "bookings"],
   management: ["company", "reports", "people", "inventory", "register", "bookings"],
-  "management-user": ["company", "reports", "people", "inventory", "register", "bookings"],
+  "management-user": ["company", "approvals", "inventory", "people", "bookings", "marketing", "reports", "register"],
 };
 
 /** Reorder the same permitted destinations without creating another sidebar. */

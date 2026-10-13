@@ -107,7 +107,7 @@ export function ShiftCloseDialog({
   const otherClosure = differentOperator || differentTerminal;
   const allowHandover =
     state.settings.integrations.allowAnyStaffCloseShift === true && can("can_close_shift");
-  const forcedClosure = otherClosure && !allowHandover;
+  const forcedClosure = differentTerminal && !allowHandover;
   const mayForceClose = isAdmin || can("can_manage_other_shifts");
 
   // Reopening the dialog always starts a fresh walk-through.

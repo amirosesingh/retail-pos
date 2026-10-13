@@ -10053,10 +10053,7 @@ BEGIN
   IF NOT public.store_visible(v.store_id) THEN RAISE EXCEPTION 'That shift belongs to another branch.'; END IF;
 
   SELECT * INTO v_me FROM public.current_app_user();
-  IF (
-    (v.opened_by_staff_id IS NOT NULL AND v.opened_by_staff_id::text IS DISTINCT FROM v_me.user_id::text)
-    OR (v.terminal_id IS NOT NULL AND v.terminal_id IS DISTINCT FROM p_terminal)
-  ) AND NOT public.has_perm('can_manage_other_shifts')
+  IF (v.terminal_id IS NOT NULL AND v.terminal_id IS DISTINCT FROM p_terminal) AND NOT public.has_perm('can_manage_other_shifts')
     AND NOT public.has_role((SELECT auth.uid()), 'admin'::public.app_role)
     AND NOT COALESCE((SELECT integration_settings->'allowAnyStaffCloseShift' = 'true'::jsonb FROM public.pos_settings WHERE id=1),false) THEN
     RAISE EXCEPTION 'You do not have permission to close another employee or terminal shift.';
@@ -19072,6 +19069,86 @@ CREATE POLICY "Branch staff read shift sessions" ON public.shift_sessions FOR SE
 USING (public.is_staff_now() AND public.store_visible(store_id) AND
 (public.settings_admin_now() OR coalesce((SELECT (a.permissions->>'can_shift_signin_history_view')::boolean FROM public.current_app_user() a LIMIT 1),false)));
 
+-- Accept mixed-case input but persist the same uppercase keys as SQL Server.
+ALTER TABLE public.settings_scoped DROP CONSTRAINT IF EXISTS settings_scoped_scope_check;
+ALTER TABLE public.settings_scoped ADD CONSTRAINT settings_scoped_scope_check
+  CHECK (scope IN ('GLOBAL','CLUSTER','BRANCH','TERMINAL','PRIVATE'));
+
+CREATE OR REPLACE FUNCTION public.pos_normalize_settings_scope()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
+BEGIN
+  NEW.scope := upper(btrim(NEW.scope));
+  IF NEW.scope NOT IN ('GLOBAL', 'CLUSTER', 'BRANCH', 'TERMINAL')
+     AND NOT (TG_TABLE_NAME = 'settings_scoped' AND NEW.scope = 'PRIVATE') THEN
+    RAISE EXCEPTION 'Invalid settings scope' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.pos_normalize_settings_scope() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS pos_normalize_settings_scope ON public.settings_scoped;
+CREATE TRIGGER pos_normalize_settings_scope BEFORE INSERT OR UPDATE OF scope
+ON public.settings_scoped FOR EACH ROW EXECUTE FUNCTION public.pos_normalize_settings_scope();
+DROP TRIGGER IF EXISTS pos_normalize_settings_scope ON public.settings_overrides;
+CREATE TRIGGER pos_normalize_settings_scope BEFORE INSERT OR UPDATE OF scope
+ON public.settings_overrides FOR EACH ROW EXECUTE FUNCTION public.pos_normalize_settings_scope();
+
+
+-- Preserve event history while removing completed approval actions from alerts.
+CREATE OR REPLACE FUNCTION public.pos_resolve_approval_notifications()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
+BEGIN
+  UPDATE public.activity_events e
+  SET cleared_by = ARRAY['system:approval-resolved']::text[]
+  WHERE e.entity_type = 'authorization_request' AND e.entity_id = NEW.id::text
+    AND (e.store_id IS NOT DISTINCT FROM NULLIF(NEW.store_id, ''))
+    AND COALESCE(cardinality(e.cleared_by), 0) = 0
+    AND ((e.event_type = 'approval_requested' AND NEW.status <> 'pending')
+      OR (e.event_type = 'approval_granted' AND NEW.consumed_at IS NOT NULL));
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.pos_resolve_approval_notifications() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS pos_resolve_approval_notifications ON public.authorization_requests;
+CREATE TRIGGER pos_resolve_approval_notifications AFTER UPDATE OF status, consumed_at
+ON public.authorization_requests FOR EACH ROW EXECUTE FUNCTION public.pos_resolve_approval_notifications();
+
+-- An event can arrive after its approval was consumed. Lock the request first,
+-- matching the decision path's lock order, and preserve the event as history.
+CREATE OR REPLACE FUNCTION public.pos_resolve_late_approval_notification()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
+DECLARE request_row public.authorization_requests%ROWTYPE;
+BEGIN
+  IF NEW.entity_type <> 'authorization_request'
+     OR NEW.event_type NOT IN ('approval_requested','approval_granted')
+     OR NEW.entity_id IS NULL OR NEW.entity_id !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN
+    RETURN NEW;
+  END IF;
+  SELECT * INTO request_row FROM public.authorization_requests
+    WHERE id = NEW.entity_id::uuid AND NULLIF(store_id,'') IS NOT DISTINCT FROM NULLIF(NEW.store_id,'')
+    FOR SHARE;
+  IF FOUND AND ((NEW.event_type='approval_requested' AND request_row.status<>'pending')
+    OR (NEW.event_type='approval_granted' AND request_row.consumed_at IS NOT NULL)) THEN
+    NEW.cleared_by := ARRAY['system:approval-resolved']::text[];
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.pos_resolve_late_approval_notification() FROM PUBLIC,anon,authenticated;
+DROP TRIGGER IF EXISTS pos_resolve_late_approval_notification ON public.activity_events;
+CREATE TRIGGER pos_resolve_late_approval_notification BEFORE INSERT ON public.activity_events
+FOR EACH ROW EXECUTE FUNCTION public.pos_resolve_late_approval_notification();
+
+-- Catch up alerts from requests already decided or used; no audit rows deleted.
+UPDATE public.activity_events e
+SET cleared_by = ARRAY['system:approval-resolved']::text[]
+FROM public.authorization_requests r
+WHERE e.entity_type = 'authorization_request' AND e.entity_id = r.id::text
+  AND (e.store_id IS NOT DISTINCT FROM NULLIF(r.store_id, ''))
+  AND COALESCE(cardinality(e.cleared_by), 0) = 0
+  AND ((e.event_type = 'approval_requested' AND r.status <> 'pending')
+    OR (e.event_type = 'approval_granted' AND r.consumed_at IS NOT NULL));
+
 -- Final public-schema privilege hardening after release 1.4.38 routine definitions.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC,anon,authenticated;
 DO $release_hardening$
@@ -19081,3 +19158,6 @@ BEGIN
   LOOP EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon',routine.signature); END LOOP;
 END $release_hardening$;
 
+
+-- Required by personal-settings RLS ownership policies.
+GRANT EXECUTE ON FUNCTION public.settings_private_key() TO authenticated;

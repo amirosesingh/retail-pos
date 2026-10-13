@@ -143,7 +143,9 @@ function ApprovalsPage() {
   const [note, setNote] = useState<Record<string, string>>({});
   // What the approver is granting, when it differs from what was asked.
   const [amount, setAmount] = useState<Record<string, string>>({});
-  const [discountAmounts, setDiscountAmounts] = useState<Record<string, Record<number, string>>>({});
+  const [discountAmounts, setDiscountAmounts] = useState<Record<string, Record<number, string>>>(
+    {},
+  );
   const [amountMode, setAmountMode] = useState<Record<string, "total" | "extra">>({});
   const [amountInvalid, setAmountInvalid] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -194,15 +196,7 @@ function ApprovalsPage() {
   // The queue is decided from another screen, so it refreshes on its own and
   // whenever this window is looked at again.
   useEffect(() => {
-    const timer = window.setInterval(() => void load(), 30_000);
-    const onFocus = () => void load();
-    const unsubscribe = subscribeApprovals(() => void load());
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", onFocus);
-      unsubscribe();
-    };
+    return subscribeApprovals(load);
   }, [load]);
 
   const decide = async (row: AuthorizationRequest, approve: boolean) => {
@@ -232,11 +226,24 @@ function ApprovalsPage() {
       }
       const auth = await getPosCallerAuth();
       const discounts = ticketDiscounts(row.payload);
-      const discountDecisions = discounts.map(entry => ({index:entry.index,
-        value:Number(discountAmounts[row.id]?.[entry.index] ?? entry.value)}));
-      if (approve && discountDecisions.some((entry,index) => !Number.isFinite(entry.value) || entry.value < 0 || entry.value > discounts[index].value)) {
-        toast.error("Enter an approved discount between zero and the requested value for each item");
-        setBusy(null);return;
+      const discountDecisions = discounts.map((entry) => ({
+        index: entry.index,
+        value: Number(discountAmounts[row.id]?.[entry.index] ?? entry.value),
+      }));
+      if (
+        approve &&
+        discountDecisions.some(
+          (entry, index) =>
+            !Number.isFinite(entry.value) ||
+            entry.value < 0 ||
+            entry.value > discounts[index].value,
+        )
+      ) {
+        toast.error(
+          "Enter an approved discount between zero and the requested value for each item",
+        );
+        setBusy(null);
+        return;
       }
       const res = await decideAuthorizationRequest({
         data: {
@@ -246,7 +253,7 @@ function ApprovalsPage() {
           note: note[row.id] ?? "",
           // Blank means "as requested"; a number here grants a different value.
           ...(approve && approvedAmount !== null ? { approvedAmount } : {}),
-          ...(approve && discounts.length ? {discountDecisions} : {}),
+          ...(approve && discounts.length ? { discountDecisions } : {}),
         },
       });
       if (!res.ok) toast.error(res.error ?? "Could not record the decision");
@@ -347,286 +354,331 @@ function ApprovalsPage() {
                 open={openRequestId === row.id}
                 onOpenChange={(open) => setOpenRequestId(open ? row.id : null)}
               >
-              <Card>
-                <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
-                  <div>
-                    <CardTitle className="text-base">
-                      {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey}
-                    </CardTitle>
-                    <p className="text-xs text-muted-foreground">
-                      {approvalReference(row)} · {row.requestedByName || "Staff member"} ·{" "}
-                      {pos?.stores.find((store) => store.id === row.storeId)?.name ??
-                        "All branches"}{" "}
-                      · {ago(row.createdAt)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      aria-label={`Open ${row.status} approval details`}
-                      onClick={() => setOpenRequestId(row.id)}
-                    >
-                      <Badge className={STATUS_TONE[row.status] ?? ""} variant="secondary">
-                        {row.status}
-                      </Badge>
-                    </button>
-                    <Button variant="outline" size="sm" onClick={() => setOpenRequestId(row.id)}>
-                      <Eye className="mr-1 size-4" /> View details
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="grid gap-2 pt-0 text-xs sm:grid-cols-2 lg:grid-cols-4">
-                  <div>
-                    <p className="text-muted-foreground">Bill number</p>
-                    <p className="font-semibold">{requestBillNumber(row)}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Purpose</p>
-                    <p className="font-semibold">{row.reason || "No reason provided"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">
-                      {row.status === "pending" ? "Requested" : "Decision"}
-                    </p>
-                    <p className="font-semibold text-primary">
-                      {row.status === "approved"
-                        ? `Approved ${approvalValue(outcome.grant, row.valueUnit)}`
-                        : row.status === "pending"
-                          ? approvalValue(row.requestedAmount, row.valueUnit)
-                          : row.status}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">After discount</p>
-                    <p className="font-semibold">
-                      {outcome.after === null ? "—" : `$${money(outcome.after)}`}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-              <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
-                <DialogHeader>
-                  <DialogTitle>
-                    {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey} · {row.status}
-                  </DialogTitle>
-                </DialogHeader>
-                <div className="space-y-3">
-                  {row.reason ? <p className="text-sm">“{row.reason}”</p> : null}
-                  <dl className="grid gap-x-4 gap-y-1 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-2">
+                <Card>
+                  <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
                     <div>
-                      <dt className="text-muted-foreground">Approval number</dt>
-                      <dd className="font-mono font-semibold">{approvalReference(row)}</dd>
+                      <CardTitle className="text-base">
+                        {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey}
+                      </CardTitle>
+                      <p className="text-xs text-muted-foreground">
+                        {approvalReference(row)} · {row.requestedByName || "Staff member"} ·{" "}
+                        {pos?.stores.find((store) => store.id === row.storeId)?.name ??
+                          "All branches"}{" "}
+                        · {ago(row.createdAt)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        aria-label={`Open ${row.status} approval details`}
+                        onClick={() => setOpenRequestId(row.id)}
+                      >
+                        <Badge className={STATUS_TONE[row.status] ?? ""} variant="secondary">
+                          {row.status}
+                        </Badge>
+                      </button>
+                      <Button variant="outline" size="sm" onClick={() => setOpenRequestId(row.id)}>
+                        <Eye className="mr-1 size-4" /> View details
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="grid gap-2 pt-0 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <p className="text-muted-foreground">Bill number</p>
+                      <p className="font-semibold">{requestBillNumber(row)}</p>
                     </div>
                     <div>
-                      <dt className="text-muted-foreground">Request ID</dt>
-                      <dd className="break-all font-mono">{row.id}</dd>
+                      <p className="text-muted-foreground">Purpose</p>
+                      <p className="font-semibold">{row.reason || "No reason provided"}</p>
                     </div>
                     <div>
-                      <dt className="text-muted-foreground">Created</dt>
-                      <dd>{new Date(row.createdAt).toLocaleString()}</dd>
+                      <p className="text-muted-foreground">
+                        {row.status === "pending" ? "Requested" : "Decision"}
+                      </p>
+                      <p className="font-semibold text-primary">
+                        {row.status === "approved"
+                          ? `Approved ${approvalValue(outcome.grant, row.valueUnit)}`
+                          : row.status === "pending"
+                            ? approvalValue(row.requestedAmount, row.valueUnit)
+                            : row.status}
+                      </p>
                     </div>
                     <div>
-                      <dt className="text-muted-foreground">Expires</dt>
-                      <dd>{new Date(row.expiresAt).toLocaleString()}</dd>
+                      <p className="text-muted-foreground">After discount</p>
+                      <p className="font-semibold">
+                        {outcome.after === null ? "—" : `$${money(outcome.after)}`}
+                      </p>
                     </div>
-                    <div>
-                      <dt className="text-muted-foreground">Terminal</dt>
-                      <dd>{row.terminalId || "—"}</dd>
-                    </div>
-                    {row.decidedAt ? (
+                  </CardContent>
+                </Card>
+                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey} · {row.status}
+                    </DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-3">
+                    {row.reason ? <p className="text-sm">“{row.reason}”</p> : null}
+                    <dl className="grid gap-x-4 gap-y-1 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-2">
                       <div>
-                        <dt className="text-muted-foreground">Decision time</dt>
-                        <dd>{new Date(row.decidedAt).toLocaleString()}</dd>
+                        <dt className="text-muted-foreground">Approval number</dt>
+                        <dd className="font-mono font-semibold">{approvalReference(row)}</dd>
                       </div>
-                    ) : null}
-                    {row.consumedAt ? (
                       <div>
-                        <dt className="text-muted-foreground">Grant used</dt>
-                        <dd>{new Date(row.consumedAt).toLocaleString()}</dd>
+                        <dt className="text-muted-foreground">Request ID</dt>
+                        <dd className="break-all font-mono">{row.id}</dd>
                       </div>
-                    ) : null}
-                  </dl>
-                  {row.approvalRoute ? <ApprovalRouteReview row={row} /> : null}
-                  {payload.length ? (
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/50 p-3 text-xs">
-                      {payload.map(([k, v]) => (
-                        <div key={k} className="contents">
-                          <dt className="text-muted-foreground">{k.replace(/_/g, " ")}</dt>
-                          <dd className="font-medium">
-                            {humanizeText(String(v), {
-                              stores: pos?.stores,
-                              products: pos?.state.products,
-                              members: pos?.state.members,
-                              sales: pos?.state.sales,
-                            })}
-                          </dd>
+                      <div>
+                        <dt className="text-muted-foreground">Created</dt>
+                        <dd>{new Date(row.createdAt).toLocaleString()}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Expires</dt>
+                        <dd>{new Date(row.expiresAt).toLocaleString()}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Terminal</dt>
+                        <dd>{row.terminalId || "—"}</dd>
+                      </div>
+                      {row.decidedAt ? (
+                        <div>
+                          <dt className="text-muted-foreground">Decision time</dt>
+                          <dd>{new Date(row.decidedAt).toLocaleString()}</dd>
                         </div>
-                      ))}
+                      ) : null}
+                      {row.consumedAt ? (
+                        <div>
+                          <dt className="text-muted-foreground">Grant used</dt>
+                          <dd>{new Date(row.consumedAt).toLocaleString()}</dd>
+                        </div>
+                      ) : null}
                     </dl>
-                  ) : null}
-                  <ApprovalAmountReview
-                    row={row}
-                    draft={amount[row.id] ?? ""}
-                    mode={amountMode[row.id] ?? "total"}
-                  />
-                  <TicketReview row={row} />
-                  {row.status === "pending" ? (
-                    mine ? (
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-xs text-muted-foreground">
-                          Waiting for someone else to decide this.
-                        </p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={busy === row.id}
-                          onClick={() => void withdraw(row)}
-                        >
-                          Withdraw
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="space-y-3 rounded-md border border-border/60 p-3">
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div className="space-y-1">
-                            <Label htmlFor={`approval-note-${row.id}`} className="text-xs">
-                              Decision note
-                            </Label>
-                            <Input
-                              id={`approval-note-${row.id}`}
-                              className="h-9"
-                              placeholder="Optional note for the cashier"
-                              value={note[row.id] ?? ""}
-                              onChange={(e) =>
-                                setNote((n) => ({ ...n, [row.id]: e.target.value.slice(0, 400) }))
-                              }
-                            />
+                    {row.approvalRoute ? <ApprovalRouteReview row={row} /> : null}
+                    {payload.length ? (
+                      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/50 p-3 text-xs">
+                        {payload.map(([k, v]) => (
+                          <div key={k} className="contents">
+                            <dt className="text-muted-foreground">{k.replace(/_/g, " ")}</dt>
+                            <dd className="font-medium">
+                              {humanizeText(String(v), {
+                                stores: pos?.stores,
+                                products: pos?.state.products,
+                                members: pos?.state.members,
+                                sales: pos?.state.sales,
+                              })}
+                            </dd>
                           </div>
-                          {ticketDiscounts(row.payload).length > 0 ? <div className="space-y-2">
-                            <p className="text-xs font-semibold">Discounts on this bill</p>
-                            {ticketDiscounts(row.payload).map(entry => <div key={entry.index} className="space-y-1">
-                              <Label htmlFor={`discount-${row.id}-${entry.index}`} className="text-xs">
-                                {entry.name} · requested {entry.type === "percent" ? `${entry.value}%` : money(entry.value)}
-                                {entry.index >= 0 ? " per unit" : ""} · {entry.requiresApproval ? "Needs approval" : "Within cashier limit"}
-                              </Label>
-                              <Input id={`discount-${row.id}-${entry.index}`} type="number" min="0" max={entry.value} step="0.01"
-                                value={discountAmounts[row.id]?.[entry.index] ?? String(entry.value)}
-                                onChange={event => setDiscountAmounts(current => ({...current,[row.id]:{...current[row.id],[entry.index]:event.target.value}}))} />
-                              <p className="text-[11px] text-muted-foreground">Enter 0 to reject this discount.</p>
-                            </div>)}
-                          </div> : <div className="space-y-1">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <Label htmlFor={`approval-amount-${row.id}`} className="text-xs">
-                                {(amountMode[row.id] ?? "total") === "extra"
-                                  ? "Extra above cashier limit"
-                                  : "Total approval to grant"}
-                              </Label>
-                              <div className="flex rounded-md border border-border p-0.5">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant={
-                                    (amountMode[row.id] ?? "total") === "total"
-                                      ? "secondary"
-                                      : "ghost"
-                                  }
-                                  className="h-6 px-2 text-[11px]"
-                                  onClick={() =>
-                                    setAmountMode((current) => ({ ...current, [row.id]: "total" }))
-                                  }
-                                >
-                                  Total
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant={amountMode[row.id] === "extra" ? "secondary" : "ghost"}
-                                  className="h-6 px-2 text-[11px]"
-                                  disabled={row.requesterDirectLimit === null}
-                                  onClick={() =>
-                                    setAmountMode((current) => ({ ...current, [row.id]: "extra" }))
-                                  }
-                                >
-                                  Extra
-                                </Button>
-                              </div>
-                            </div>
-                            <Input
-                              id={`approval-amount-${row.id}`}
-                              className="h-9"
-                              type="number"
-                              min="0"
-                              step="any"
-                              placeholder={
-                                (amountMode[row.id] ?? "total") === "extra"
-                                  ? approvalValue(
-                                      row.requestedAmount !== null &&
-                                        row.requesterDirectLimit !== null
-                                        ? Math.max(
-                                            0,
-                                            row.requestedAmount - row.requesterDirectLimit,
-                                          )
-                                        : null,
-                                      row.valueUnit,
-                                    )
-                                  : typeof row.requestedAmount === "number"
-                                    ? approvalValue(row.requestedAmount, row.valueUnit)
-                                    : "No amount requested"
-                              }
-                              value={amount[row.id] ?? ""}
-                              aria-invalid={amountInvalid[row.id] || undefined}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                const invalid = e.target.validity.badInput || value.length > 12;
-                                setAmountInvalid((current) => ({ ...current, [row.id]: invalid }));
-                                setAmount((current) => ({
-                                  ...current,
-                                  [row.id]: value,
-                                }));
-                              }}
-                            />
-                            <p className="text-[11px] text-muted-foreground">
-                              Leave blank to grant the requested total. The extra above the
-                              cashier's limit is shown above.
-                            </p>
-                          </div>}
-                        </div>
-                        <div className="flex flex-wrap justify-end gap-2">
+                        ))}
+                      </dl>
+                    ) : null}
+                    <ApprovalAmountReview
+                      row={row}
+                      draft={amount[row.id] ?? ""}
+                      mode={amountMode[row.id] ?? "total"}
+                    />
+                    <TicketReview row={row} />
+                    {row.status === "pending" ? (
+                      mine ? (
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs text-muted-foreground">
+                            Waiting for someone else to decide this.
+                          </p>
                           <Button
-                            size="sm"
-                            disabled={busy === row.id || Boolean(amountInvalid[row.id])}
-                            onClick={() => void decide(row, true)}
-                          >
-                            <Check className="mr-1 size-4" /> Approve
-                          </Button>
-                          <Button
-                            size="sm"
                             variant="outline"
+                            size="sm"
                             disabled={busy === row.id}
-                            onClick={() => void decide(row, false)}
+                            onClick={() => void withdraw(row)}
                           >
-                            <X className="mr-1 size-4" /> Reject
+                            Withdraw
                           </Button>
                         </div>
-                      </div>
-                    )
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      {row.decidedByName || row.decidedBy
-                        ? `${row.status} by ${row.decidedByName || row.decidedBy}`
-                        : row.status}
-                      {row.decisionNote ? ` — ${row.decisionNote}` : ""}
-                      {typeof row.requestedAmount === "number"
-                        ? ` · asked ${approvalValue(row.requestedAmount, row.valueUnit)}`
-                        : ""}
-                      {typeof row.approvedAmount === "number"
-                        ? ` · granted ${approvalValue(row.approvedAmount, row.valueUnit)}`
-                        : ""}
-                      {row.consumedAt ? " · used" : ""}
-                    </p>
-                  )}
-                </div>
-              </DialogContent>
+                      ) : (
+                        <div className="space-y-3 rounded-md border border-border/60 p-3">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-1">
+                              <Label htmlFor={`approval-note-${row.id}`} className="text-xs">
+                                Decision note
+                              </Label>
+                              <Input
+                                id={`approval-note-${row.id}`}
+                                className="h-9"
+                                placeholder="Optional note for the cashier"
+                                value={note[row.id] ?? ""}
+                                onChange={(e) =>
+                                  setNote((n) => ({ ...n, [row.id]: e.target.value.slice(0, 400) }))
+                                }
+                              />
+                            </div>
+                            {ticketDiscounts(row.payload).length > 0 ? (
+                              <div className="space-y-2">
+                                <p className="text-xs font-semibold">Discounts on this bill</p>
+                                {ticketDiscounts(row.payload).map((entry) => (
+                                  <div key={entry.index} className="space-y-1">
+                                    <Label
+                                      htmlFor={`discount-${row.id}-${entry.index}`}
+                                      className="text-xs"
+                                    >
+                                      {entry.name} · requested{" "}
+                                      {entry.type === "percent"
+                                        ? `${entry.value}%`
+                                        : money(entry.value)}
+                                      {entry.index >= 0 ? " per unit" : ""} ·{" "}
+                                      {entry.requiresApproval
+                                        ? "Needs approval"
+                                        : "Within cashier limit"}
+                                    </Label>
+                                    <Input
+                                      id={`discount-${row.id}-${entry.index}`}
+                                      type="number"
+                                      min="0"
+                                      max={entry.value}
+                                      step="0.01"
+                                      value={
+                                        discountAmounts[row.id]?.[entry.index] ??
+                                        String(entry.value)
+                                      }
+                                      onChange={(event) =>
+                                        setDiscountAmounts((current) => ({
+                                          ...current,
+                                          [row.id]: {
+                                            ...current[row.id],
+                                            [entry.index]: event.target.value,
+                                          },
+                                        }))
+                                      }
+                                    />
+                                    <p className="text-[11px] text-muted-foreground">
+                                      Enter 0 to reject this discount.
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="space-y-1">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <Label htmlFor={`approval-amount-${row.id}`} className="text-xs">
+                                    {(amountMode[row.id] ?? "total") === "extra"
+                                      ? "Extra above cashier limit"
+                                      : "Total approval to grant"}
+                                  </Label>
+                                  <div className="flex rounded-md border border-border p-0.5">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant={
+                                        (amountMode[row.id] ?? "total") === "total"
+                                          ? "secondary"
+                                          : "ghost"
+                                      }
+                                      className="h-6 px-2 text-[11px]"
+                                      onClick={() =>
+                                        setAmountMode((current) => ({
+                                          ...current,
+                                          [row.id]: "total",
+                                        }))
+                                      }
+                                    >
+                                      Total
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant={
+                                        amountMode[row.id] === "extra" ? "secondary" : "ghost"
+                                      }
+                                      className="h-6 px-2 text-[11px]"
+                                      disabled={row.requesterDirectLimit === null}
+                                      onClick={() =>
+                                        setAmountMode((current) => ({
+                                          ...current,
+                                          [row.id]: "extra",
+                                        }))
+                                      }
+                                    >
+                                      Extra
+                                    </Button>
+                                  </div>
+                                </div>
+                                <Input
+                                  id={`approval-amount-${row.id}`}
+                                  className="h-9"
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  placeholder={
+                                    (amountMode[row.id] ?? "total") === "extra"
+                                      ? approvalValue(
+                                          row.requestedAmount !== null &&
+                                            row.requesterDirectLimit !== null
+                                            ? Math.max(
+                                                0,
+                                                row.requestedAmount - row.requesterDirectLimit,
+                                              )
+                                            : null,
+                                          row.valueUnit,
+                                        )
+                                      : typeof row.requestedAmount === "number"
+                                        ? approvalValue(row.requestedAmount, row.valueUnit)
+                                        : "No amount requested"
+                                  }
+                                  value={amount[row.id] ?? ""}
+                                  aria-invalid={amountInvalid[row.id] || undefined}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    const invalid = e.target.validity.badInput || value.length > 12;
+                                    setAmountInvalid((current) => ({
+                                      ...current,
+                                      [row.id]: invalid,
+                                    }));
+                                    setAmount((current) => ({
+                                      ...current,
+                                      [row.id]: value,
+                                    }));
+                                  }}
+                                />
+                                <p className="text-[11px] text-muted-foreground">
+                                  Leave blank to grant the requested total. The extra above the
+                                  cashier's limit is shown above.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button
+                              size="sm"
+                              disabled={busy === row.id || Boolean(amountInvalid[row.id])}
+                              onClick={() => void decide(row, true)}
+                            >
+                              <Check className="mr-1 size-4" /> Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={busy === row.id}
+                              onClick={() => void decide(row, false)}
+                            >
+                              <X className="mr-1 size-4" /> Reject
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        {row.decidedByName || row.decidedBy
+                          ? `${row.status} by ${row.decidedByName || row.decidedBy}`
+                          : row.status}
+                        {row.decisionNote ? ` — ${row.decisionNote}` : ""}
+                        {typeof row.requestedAmount === "number"
+                          ? ` · asked ${approvalValue(row.requestedAmount, row.valueUnit)}`
+                          : ""}
+                        {typeof row.approvedAmount === "number"
+                          ? ` · granted ${approvalValue(row.approvedAmount, row.valueUnit)}`
+                          : ""}
+                        {row.consumedAt ? " · used" : ""}
+                      </p>
+                    )}
+                  </div>
+                </DialogContent>
               </Dialog>
             </Fragment>
           );
@@ -663,17 +715,29 @@ function ApprovalAmountReview({
 }) {
   const requestedDiscounts = ticketDiscounts(row.payload);
   if (requestedDiscounts.length) {
-    const decisions = ticketDiscounts(row.approvedPayload,"approved_discounts");
-    return <div className="space-y-2 rounded-md border border-border p-3 text-xs">
-      <p className="font-semibold">Bill discount review</p>
-      {requestedDiscounts.map(entry => {
-        const approved = decisions.find(decision => decision.index === entry.index);
-        const format = (value: number) => entry.type === "percent" ? `${value}%` : `$${money(value)}`;
-        return <p key={entry.index}>{entry.name}{entry.index >= 0 ? ` × ${entry.qty}` : ""} · requested {format(entry.value)}
-          {entry.type === "amount" && entry.index >= 0 ? " per unit" : ""}
-          {approved ? ` · ${approved.value === 0 ? "Rejected" : `Approved ${format(approved.value)}`}` : entry.requiresApproval ? " · Needs approval" : " · Within cashier limit"}</p>;
-      })}
-    </div>;
+    const decisions = ticketDiscounts(row.approvedPayload, "approved_discounts");
+    return (
+      <div className="space-y-2 rounded-md border border-border p-3 text-xs">
+        <p className="font-semibold">Bill discount review</p>
+        {requestedDiscounts.map((entry) => {
+          const approved = decisions.find((decision) => decision.index === entry.index);
+          const format = (value: number) =>
+            entry.type === "percent" ? `${value}%` : `$${money(value)}`;
+          return (
+            <p key={entry.index}>
+              {entry.name}
+              {entry.index >= 0 ? ` × ${entry.qty}` : ""} · requested {format(entry.value)}
+              {entry.type === "amount" && entry.index >= 0 ? " per unit" : ""}
+              {approved
+                ? ` · ${approved.value === 0 ? "Rejected" : `Approved ${format(approved.value)}`}`
+                : entry.requiresApproval
+                  ? " · Needs approval"
+                  : " · Within cashier limit"}
+            </p>
+          );
+        })}
+      </div>
+    );
   }
   const typed = draft.trim() === "" ? null : Number(draft);
   const entered =

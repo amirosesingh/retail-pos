@@ -139,6 +139,8 @@ import {
 } from "@/lib/customer-display";
 import { MemberHistoryDialog } from "@/platforms/web/components/pos/MemberHistoryDialog";
 import { TerminalWorkspaceHome } from "@/platforms/web/components/pos/TerminalWorkspaceHome";
+import { SellingShortcuts } from "@/platforms/web/components/pos/SellingShortcuts";
+import { CardMachineSelect } from "@/platforms/web/components/pos/CardMachineSelect";
 import { shouldOpenRegister } from "@/lib/terminal-workspace";
 import { searchSellingProducts, sellingCodeMatches } from "@/lib/register/product-search";
 import { frequentRecentProducts } from "@/lib/standard-pos";
@@ -601,6 +603,8 @@ function Register() {
     setTenders,
     bankName,
     setBankName,
+    cardAccountId,
+    setCardAccountId,
     tenderOptions,
     activeMethodName,
     needsTenderRef,
@@ -1271,6 +1275,7 @@ function Register() {
     getTenderRef: () => tenderRef,
     getTenderRefNote: () => tenderRefNote,
     getBankName: () => bankName,
+    getCardAccountId: () => cardAccountId,
     getTenders: () => tenders,
     getActiveMethodName: () => activeMethodName,
     getNeedsTenderRef: () => needsTenderRef,
@@ -2657,6 +2662,7 @@ function Register() {
   return (
     <AppShell>
       <div className="flex h-full min-h-0 flex-col">
+        <SellingShortcuts />
         <div className="min-h-0 flex-1">
           <ZoomCanvas>
             <RegisterActionsProvider handlers={registerActionHandlers}>
@@ -3143,11 +3149,8 @@ function Register() {
           {method === "card" && refundDue === 0 && tenders.length === 0 && (
             <div className="space-y-2">
               <Label>Bank / card machine used</Label>
-              <Input
-                value={bankName}
-                onChange={(e) => setBankName(e.target.value)}
-                placeholder="e.g. HSBC terminal 2"
-              />
+              <CardMachineSelect accountId={cardAccountId} bankName={bankName}
+                onChange={value => { setBankName(value.bankName); setCardAccountId(value.accountId); }} />
             </div>
           )}
 

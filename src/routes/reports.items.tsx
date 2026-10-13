@@ -1,18 +1,14 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { AppShell } from "@/platforms/web/components/pos/AppShell";
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
+import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { useMemo } from "react";
+import { ReportFrame as AppShell } from "@/platforms/web/components/pos/report-kit";
+import { useSalesReportFilters, useSalesReportContext } from "@/lib/sales-report-context";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
 import { soldLines, sumLines } from "@/lib/sales-analytics";
@@ -21,13 +17,16 @@ import {
   ReportHeader,
   StatCard,
   defaultRange,
-  downloadCsv,
+  downloadReport,
   inRange,
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
 import { branchDisplayName } from "@/lib/human-readable";
 
 export const Route = createFileRoute("/reports/items")({
+  beforeLoad: () => {
+    throw redirect({ to: "/reports/sales", search: { view: "items" }, replace: true });
+  },
   head: () => ({
     meta: [
       { title: "Item Sales History — Retail" },
@@ -48,16 +47,15 @@ export const Route = createFileRoute("/reports/items")({
   component: ItemSalesReport,
 });
 
-function ItemSalesReport() {
+export function ItemSalesReport() {
   const { state, stores } = usePos();
   const init = defaultRange(30);
-  const [from, setFrom] = useState(init.from);
-  const [to, setTo] = useState(init.to);
-  const [storeId, setStoreId] = useState("all");
+  const { from, setFrom, to, setTo, storeId, setStoreId, cashier, setCashier, q, setQ } =
+    useSalesReportFilters(init);
+  const shared = useSalesReportContext();
   const reportStoreIds = storeId === "all" ? stores.map((store) => store.id) : [storeId];
-  const history = useReportSales(state.sales, reportStoreIds, from, to);
-  const [cashier, setCashier] = useState("all");
-  const [q, setQ] = useState("");
+  const localHistory = useReportSales(state.sales, reportStoreIds, from, to, !shared);
+  const history = shared?.history ?? localHistory;
 
   const cashiers = useMemo(
     () => [...new Set(history.sales.map((s) => s.cashier).filter(Boolean))].sort(),
@@ -91,7 +89,7 @@ function ItemSalesReport() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Item Sales History"
           subtitle="Every item sold, line by line, with cost price and margin."
@@ -100,7 +98,7 @@ function ItemSalesReport() {
           onFrom={setFrom}
           onTo={setTo}
           onExport={() =>
-            downloadCsv("item-sales", [
+            downloadReport("item-sales", [
               [
                 "Date & time",
                 "Receipt",
@@ -143,7 +141,7 @@ function ItemSalesReport() {
           }
         >
           <div className="space-y-1">
-            <Label className="text-xs">Store</Label>
+            <Label className="text-sm">Store</Label>
             <ThemedSelect
               value={storeId}
               onChange={setStoreId}
@@ -155,7 +153,7 @@ function ItemSalesReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Cashier</Label>
+            <Label className="text-sm">Cashier</Label>
             <ThemedSelect
               value={cashier}
               onChange={setCashier}
@@ -167,7 +165,7 @@ function ItemSalesReport() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Search</Label>
+            <Label className="text-sm">Search</Label>
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -191,7 +189,7 @@ function ItemSalesReport() {
           <StatCard label="Margin" value={`${totals.marginPct.toFixed(1)}%`} />
         </div>
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           <Table loading={history.loading}>
             <TableHeader>
               <TableRow>
@@ -212,10 +210,17 @@ function ItemSalesReport() {
             <TableBody>
               {pager.pageItems.map((l, i) => (
                 <TableRow key={`${l.saleId}-${l.productId}-${i}`}>
-                  <TableCell className="numeric text-xs">{stamp(l.createdAt)}</TableCell>
-                  <TableCell className="font-medium">{l.receiptNo}</TableCell>
-                  <TableCell className="text-xs">{storeName(l.storeId)}</TableCell>
-                  <TableCell className="text-xs">{l.cashier}</TableCell>
+                  <TableCell className="numeric text-sm">{stamp(l.createdAt)}</TableCell>
+                  <TableCell data-sort-value={l.receiptNo}>
+                    <ReportReceiptLink
+                      receiptNo={l.receiptNo}
+                      sale={history.sales.find(
+                        (sale) => sale.receiptNo === l.receiptNo && sale.storeId === l.storeId,
+                      )}
+                    />
+                  </TableCell>
+                  <TableCell className="text-sm">{storeName(l.storeId)}</TableCell>
+                  <TableCell className="text-sm">{l.cashier}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <span>{l.name}</span>
@@ -223,7 +228,7 @@ function ItemSalesReport() {
                       {l.credit && <Badge variant="outline">Return</Badge>}
                     </div>
                     {(l.sku || l.barcode) && (
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         {[l.sku, l.barcode].filter(Boolean).join(" · ")}
                         {l.unit ? ` · ${l.unit}` : ""}
                       </p>
@@ -238,7 +243,7 @@ function ItemSalesReport() {
                   <TableCell className="numeric text-right">
                     {money(l.cost)}
                     {l.estimatedCost && (
-                      <span className="ml-1 text-[10px] text-muted-foreground">est.</span>
+                      <span className="ml-1 text-xs text-muted-foreground">est.</span>
                     )}
                   </TableCell>
                   <TableCell
@@ -273,7 +278,7 @@ function ItemSalesReport() {
             onPageSize={pager.setPageSize}
           />
         </div>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Lines marked “est.” were sold before cost capture was switched on, so their cost uses the
           product’s current cost price.
         </p>

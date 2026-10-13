@@ -102,7 +102,7 @@ class PullWorker {
     while (true) {
       const page = await readPage(limit => this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit }),batchSize);
       const batch = page.batch;
-      batchSize=page.nextLimit;
+      batchSize=Math.min(100,page.nextLimit);
       if (!batch.count) break;
       if (!Number.isFinite(Number(batch.cursor)) || Number(batch.cursor) <= Number(checkpoint?.committed_cursor ?? 0))
         throw Object.assign(new Error("The cloud change cursor did not advance. Download stopped to avoid replaying the same page."), { code: "ESYNC_CURSOR" });

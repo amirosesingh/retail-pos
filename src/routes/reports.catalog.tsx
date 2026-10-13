@@ -1,17 +1,11 @@
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { useAuditLogs } from "@/lib/audit-log";
 import { describeLog } from "@/lib/audit-format";
@@ -19,7 +13,7 @@ import {
   ReportHeader,
   StatCard,
   defaultRange,
-  downloadCsv,
+  downloadReport,
   inRange,
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
@@ -52,10 +46,7 @@ function CatalogReport() {
   const rows = useMemo(
     () =>
       logs
-        .filter(
-          (l) =>
-            l.category === "inventory" && inRange(l.at, from, to),
-        )
+        .filter((l) => l.category === "inventory" && inRange(l.at, from, to))
         .filter((l) => {
           const needle = q.trim().toLowerCase();
           return (
@@ -74,7 +65,7 @@ function CatalogReport() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Catalog Change History"
           subtitle="Product creations, price changes and stock movements with who and when."
@@ -83,7 +74,7 @@ function CatalogReport() {
           onFrom={setFrom}
           onTo={setTo}
           onExport={() =>
-            downloadCsv("catalog-changes", [
+            downloadReport("catalog-changes", [
               ["Time", "Staff", "Action", "Description", "Details"],
               ...rows.map((l) => [
                 stamp(l.at),
@@ -96,7 +87,7 @@ function CatalogReport() {
           }
         >
           <div className="space-y-1">
-            <Label className="text-xs">Search</Label>
+            <Label className="text-sm">Search</Label>
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -113,7 +104,7 @@ function CatalogReport() {
           <StatCard label="Stock movements" value={String(stocked)} />
         </div>
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -126,10 +117,10 @@ function CatalogReport() {
             <TableBody>
               {pager.pageItems.map((l) => (
                 <TableRow key={l.id}>
-                  <TableCell className="numeric whitespace-nowrap text-xs">{stamp(l.at)}</TableCell>
+                  <TableCell className="numeric whitespace-nowrap text-sm">{stamp(l.at)}</TableCell>
                   <TableCell>
                     {l.staffName}
-                    <Badge variant="outline" className="ml-2 text-[10px] capitalize">
+                    <Badge variant="outline" className="ml-2 text-xs capitalize">
                       {l.role}
                     </Badge>
                   </TableCell>
@@ -139,7 +130,10 @@ function CatalogReport() {
               ))}
               {!rows.length && (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={4}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     No catalog changes recorded in this window.
                   </TableCell>
                 </TableRow>

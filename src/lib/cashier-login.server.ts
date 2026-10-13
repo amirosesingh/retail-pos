@@ -33,7 +33,7 @@ export type CashierLoginResult =
   | {
       ok: false;
       error: string;
-      code?: "invalid_credentials" | "session_prepare_failed" | "identity_mismatch";
+      code?: "invalid_credentials" | "session_prepare_failed" | "identity_mismatch" | "central_unavailable";
     };
 
 export async function cashierLoginServer(input: {
@@ -57,7 +57,7 @@ export async function cashierLoginServer(input: {
     method: "POST",
     body: JSON.stringify({ p_user_id: username, p_pin: secret }),
   });
-  if (!res.ok) return { ok: false, error: "Could not reach the central database" };
+  if (!res.ok) return { ok: false, code: "central_unavailable", error: "Could not reach the central database" };
 
   const rows = (await res.json()) as
     | {
@@ -73,6 +73,7 @@ export async function cashierLoginServer(input: {
     const lookup = await serviceRest(
       `app_users?email=eq.${encodeURIComponent(username)}&select=user_id&limit=1`,
     );
+    if (!lookup.ok) return { ok: false, code: "central_unavailable", error: "Could not reach the central database" };
     const found = lookup.ok
       ? ((await lookup.json()) as { user_id?: string }[])[0]?.user_id
       : null;
@@ -81,6 +82,7 @@ export async function cashierLoginServer(input: {
         method: "POST",
         body: JSON.stringify({ p_user_id: found, p_pin: secret }),
       });
+      if (!retry.ok) return { ok: false, code: "central_unavailable", error: "Could not reach the central database" };
       if (retry.ok) {
         const again = (await retry.json()) as
           | { user_id: string; full_name: string; store_id: string | null }[]
@@ -107,7 +109,7 @@ export async function cashierLoginServer(input: {
   const profileResponse = await serviceRest(
     `app_users?user_id=eq.${encodeURIComponent(row.user_id)}&select=id,user_id,full_name,email,store_id,role,role_slug,permissions,is_active,auth_user_id&limit=1`,
   );
-  if (!profileResponse.ok) return { ok: false, error: "Could not load this staff account" };
+  if (!profileResponse.ok) return { ok: false, code: "central_unavailable", error: "Could not load this staff account" };
   const profiles = (await profileResponse.json()) as {
     id: string;
     user_id: string;

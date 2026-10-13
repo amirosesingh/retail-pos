@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
+import { CardMachineSelect } from "./CardMachineSelect";
 import {
   paymentsLabel,
   validateTenders,
@@ -62,7 +63,8 @@ export function TenderSplit({ total, tenders, onChange, onBeforeAdd }: Props) {
   // method is available at the till the moment an administrator saves it.
   const { types } = usePaymentTypes();
   const methods = activePaymentTypes(types);
-  const needsReference = (code: string) => !!methods.find((m) => m.code === code)?.requiresReference;
+  const needsReference = (code: string) =>
+    !!methods.find((m) => m.code === code)?.requiresReference;
 
   // Named card machines / bank accounts, so takings can be reconciled per
   // machine at close of day.
@@ -86,7 +88,8 @@ export function TenderSplit({ total, tenders, onChange, onBeforeAdd }: Props) {
     // line must never appear unless that check actually passed.
     try {
       if (onBeforeAdd && !(await onBeforeAdd())) return;
-      const next = tenders.length === 0 ? (methods[0]?.code ?? "cash") : (methods[1]?.code ?? "card");
+      const next =
+        tenders.length === 0 ? (methods[0]?.code ?? "cash") : (methods[1]?.code ?? "card");
       onChange([
         ...tenders,
         {
@@ -119,8 +122,14 @@ export function TenderSplit({ total, tenders, onChange, onBeforeAdd }: Props) {
       {tenders.length > 0 && (
         <div className="numeric flex items-center justify-between rounded-md bg-muted/50 px-2 py-1.5 text-xs">
           <span>Paid so far {money(check.paid)}</span>
-          <span className={outstanding > 0 ? "font-semibold text-destructive" : "font-semibold text-primary"}>
-            {outstanding > 0 ? `Balance due ${money(outstanding)}` : `Change ${money(check.change)}`}
+          <span
+            className={
+              outstanding > 0 ? "font-semibold text-destructive" : "font-semibold text-primary"
+            }
+          >
+            {outstanding > 0
+              ? `Balance due ${money(outstanding)}`
+              : `Change ${money(check.change)}`}
           </span>
         </div>
       )}
@@ -141,7 +150,12 @@ export function TenderSplit({ total, tenders, onChange, onBeforeAdd }: Props) {
                   value={t.method}
                   onChange={(e) => {
                     const code = e.target.value as PaymentMethod;
-                    patch(i, { method: code, requiresReference: needsReference(code) });
+                    patch(i, {
+                      method: code,
+                      requiresReference: needsReference(code),
+                      accountId: undefined,
+                      bankName: undefined,
+                    });
                   }}
                   className="h-9 rounded-md border border-border bg-background px-2 text-xs"
                 >
@@ -152,12 +166,10 @@ export function TenderSplit({ total, tenders, onChange, onBeforeAdd }: Props) {
                   ))}
                 </select>
                 {t.method === "card" ? (
-                  <Input
-                    list="recent-card-machines"
-                    value={t.bankName ?? ""}
-                    onChange={(e) => patch(i, { bankName: e.target.value })}
-                    placeholder="Bank / machine"
-                    className="h-9 text-xs"
+                  <CardMachineSelect
+                    accountId={t.accountId}
+                    bankName={t.bankName ?? ""}
+                    onChange={(value) => patch(i, value)}
                   />
                 ) : (
                   <Input
@@ -175,7 +187,9 @@ export function TenderSplit({ total, tenders, onChange, onBeforeAdd }: Props) {
                 onChange={(e) => {
                   const raw = Number(e.target.value) || 0;
                   // Only cash may overpay — everything else is capped at the balance.
-                  patch(i, { amount: t.method === "cash" ? r2(raw) : r2(Math.min(raw, remaining)) });
+                  patch(i, {
+                    amount: t.method === "cash" ? r2(raw) : r2(Math.min(raw, remaining)),
+                  });
                 }}
                 className="numeric h-9 w-24 text-right"
               />
@@ -189,7 +203,7 @@ export function TenderSplit({ total, tenders, onChange, onBeforeAdd }: Props) {
               </Button>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {useAccounts && t.method !== "cash" && accounts.length > 0 && (
+              {useAccounts && t.method !== "cash" && t.method !== "card" && accounts.length > 0 && (
                 <ThemedSelect
                   ariaLabel="Payment account"
                   className="h-7 w-full text-[11px]"

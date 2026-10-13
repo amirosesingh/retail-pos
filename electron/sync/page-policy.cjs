@@ -1,6 +1,7 @@
 const MAX_PAGE_BYTES = 6 * 1024 * 1024;
 async function readPage(fetchPage, preferred = 100) {
   let limit = Math.max(10, Math.min(500, Number(preferred) || 100));
+  let timedOut = false;
   for (;;) {
     try {
       const batch = await fetchPage(limit);
@@ -12,11 +13,14 @@ async function readPage(fetchPage, preferred = 100) {
       return {
         batch,
         limit,
-        nextLimit: bytes < MAX_PAGE_BYTES / 4 ? Math.min(500, limit * 2) : limit,
+        nextLimit: !timedOut && bytes < MAX_PAGE_BYTES / 4 ? Math.min(500, limit * 2) : limit,
       };
     } catch (error) {
-      if (!(error?.code === "EOVERSIZED" || Number(error?.status) === 413) || limit === 10)
+      const timeout = ["57014", "ETIMEDOUT"].includes(error?.code) ||
+        ["TimeoutError", "AbortError"].includes(error?.name);
+      if (!(timeout || error?.code === "EOVERSIZED" || Number(error?.status) === 413) || limit === 10)
         throw error;
+      timedOut ||= timeout;
       limit = Math.max(10, Math.floor(limit / 2));
     }
   }

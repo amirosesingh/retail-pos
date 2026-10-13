@@ -1085,6 +1085,8 @@ export type PaymentAccount = {
   name: string;
   type: PaymentAccountType;
   bankName?: string;
+  /** Card networks / bank cards accepted by this machine. */
+  acceptedCards?: string[];
   accountNumber?: string;
   active: boolean;
   /** empty = available at every branch */

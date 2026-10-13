@@ -1,4 +1,10 @@
-import { PERMISSION_PAGES, pageKey, pageEnabled, setPageFeatures, setPageVisibility } from "@/lib/permission-pages";
+import {
+  PERMISSION_PAGES,
+  pageKey,
+  pageEnabled,
+  setPageFeatures,
+  setPageVisibility,
+} from "@/lib/permission-pages";
 import { StaffIdleTimeout } from "./StaffIdleTimeout";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -85,6 +91,7 @@ type Row = {
   permissions: StaffPermissions;
   pin_length: number;
   pin_set_at: string | null;
+  approval_pin_eligible: boolean;
   last_login_at: string | null;
 };
 
@@ -92,7 +99,7 @@ type Form = {
   displayName: string;
   username: string;
   credential: string;
-  authorizationPin: string;
+
   roleSlug: string;
   branchId: string;
   active: boolean;
@@ -102,7 +109,7 @@ const EMPTY: Form = {
   displayName: "",
   username: "",
   credential: "",
-  authorizationPin: "",
+
   roleSlug: "cashier",
   // Empty until the administrator makes an explicit branch choice.
   branchId: "",
@@ -174,7 +181,7 @@ export function StaffManager() {
   const [pinFor, setPinFor] = useState<Row | null>(null);
   const [pinValue, setPinValue] = useState("");
   const [showPinValue, setShowPinValue] = useState(false);
-  const [showAuthorizationPin, setShowAuthorizationPin] = useState(false);
+
   const [idleFor, setIdleFor] = useState<Row | null>(null);
 
   async function saveAuthPin() {
@@ -187,7 +194,10 @@ export function StaffManager() {
       });
       if (!res.ok) toast.error(res.error ?? "Could not save the PIN");
       else {
-        await Promise.all([load(), propagateStaffChange("staff approval PIN changed", ["app_users"])]);
+        await Promise.all([
+          load(),
+          propagateStaffChange("staff approval PIN changed", ["app_users"]),
+        ]);
         toast.success(`Authorisation PIN set for ${pinFor.full_name}`);
         setPinFor(null);
         setPinValue("");
@@ -229,6 +239,7 @@ export function StaffManager() {
             ),
             pin_length: Number(r["pin_length"] ?? 0),
             pin_set_at: (r["pin_set_at"] as string | null) ?? null,
+            approval_pin_eligible: r.approval_pin_eligible === true,
             last_login_at: (r["last_login_at"] as string | null) ?? null,
           };
         }),
@@ -273,7 +284,6 @@ export function StaffManager() {
   const openCreate = () => {
     setEditing(null);
     setForm({ ...EMPTY });
-    setShowAuthorizationPin(false);
     setFormOpen(true);
   };
 
@@ -283,7 +293,7 @@ export function StaffManager() {
       displayName: row.full_name,
       username: row.user_id,
       credential: "",
-      authorizationPin: "",
+
       roleSlug: row.role_slug,
       branchId: row.store_id ?? "all",
       active: row.is_active,
@@ -307,14 +317,8 @@ export function StaffManager() {
   const branchValid = form.branchId === "all" || stores.some((store) => store.id === form.branchId);
   const branchId = form.branchId === "all" ? null : form.branchId;
   const branchLabel = branchId ? branchDisplayName(stores, branchId) : "All branches";
-  const authorizationPinValid = editing ? true : /^\d{4,6}$/.test(form.authorizationPin);
-  const canSave =
-    nameValid &&
-    identifierValid &&
-    credentialValid &&
-    authorizationPinValid &&
-    branchValid &&
-    !!selectedRole;
+
+  const canSave = nameValid && identifierValid && credentialValid && branchValid && !!selectedRole;
 
   const save = async () => {
     if (!canSave || !selectedRole) return;
@@ -347,7 +351,7 @@ export function StaffManager() {
           displayName: form.displayName.trim(),
           username: form.username.trim().toLowerCase(),
           ...(emailMode ? { password: form.credential } : { pin: form.credential }),
-          authorizationPin: form.authorizationPin,
+
           branchId,
           roleSlug: selectedRole.slug,
           baseRole: selectedRole.baseLevel,
@@ -512,11 +516,13 @@ export function StaffManager() {
                     <Badge variant="outline">
                       {terminal ? "Terminal PIN sign-in" : "Email & password"}
                     </Badge>
-                    <p className={row.pin_set_at ? "mt-1 text-xs text-muted-foreground" : "mt-1 text-xs text-destructive"}>
-                      {row.pin_set_at
-                        ? `Approval PIN · ${row.pin_length || 6} digits`
-                        : "Approval PIN not set"}
-                    </p>
+                    {row.approval_pin_eligible && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {row.pin_set_at
+                          ? `Approval PIN · ${row.pin_length || 6} digits`
+                          : "Approval PIN not set"}
+                      </p>
+                    )}
                   </td>
                   <td className="pr-3">
                     {roles.find((role) => role.slug === row.role_slug)?.name ?? row.role_slug}
@@ -554,19 +560,21 @@ export function StaffManager() {
                       >
                         <Pencil className="size-4" />
                       </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title="Set authorisation PIN"
-                        disabled={offline}
-                        onClick={() => {
-                          setPinFor(row);
-                          setPinValue("");
-                          setShowPinValue(false);
-                        }}
-                      >
-                        <ShieldCheck className="size-4" />
-                      </Button>
+                      {row.approval_pin_eligible && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Set authorisation PIN"
+                          disabled={offline || !row.approval_pin_eligible}
+                          onClick={() => {
+                            setPinFor(row);
+                            setPinValue("");
+                            setShowPinValue(false);
+                          }}
+                        >
+                          <ShieldCheck className="size-4" />
+                        </Button>
+                      )}
                       <Button
                         size="icon"
                         variant="ghost"
@@ -652,7 +660,11 @@ export function StaffManager() {
             >
               {showPinValue ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
             </Button>
-            <Button type="button" variant="outline" onClick={() => setPinValue(generateAuthorizationPin(6))}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPinValue(generateAuthorizationPin(6))}
+            >
               Generate
             </Button>
           </div>
@@ -760,52 +772,6 @@ export function StaffManager() {
                 </SelectContent>
               </Select>
             </div>
-            {!editing ? (
-              <div className="space-y-1 sm:col-span-2">
-                <Label htmlFor="staff-authorization-pin">Authorisation PIN *</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="staff-authorization-pin"
-                    type={showAuthorizationPin ? "text" : "password"}
-                    inputMode="numeric"
-                    maxLength={6}
-                    autoComplete="new-password"
-                    value={form.authorizationPin}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        authorizationPin: e.target.value.replace(/\D/g, "").slice(0, 6),
-                      })
-                    }
-                    aria-invalid={!authorizationPinValid}
-                  />
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="outline"
-                    aria-label={showAuthorizationPin ? "Hide generated PIN" : "Show generated PIN"}
-                    onClick={() => setShowAuthorizationPin((value) => !value)}
-                  >
-                    {showAuthorizationPin ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() =>
-                      setForm({ ...form, authorizationPin: generateAuthorizationPin(6) })
-                    }
-                  >
-                    Generate 6-digit PIN
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Used only to approve governed actions. It is hashed and will not be shown again.
-                </p>
-                {!authorizationPinValid ? (
-                  <p className="text-xs text-destructive">Use a 4 to 6 digit PIN.</p>
-                ) : null}
-              </div>
-            ) : null}
             <div className="space-y-1">
               <Label>Branch *</Label>
               <Select
@@ -937,36 +903,126 @@ export function StaffManager() {
                 return (
                   <section key={group.id} className="rounded-lg border border-border">
                     <div className="flex flex-wrap items-center justify-between gap-3 p-3">
-                      <button type="button" className="flex items-center gap-2 text-left text-sm font-semibold" aria-expanded={open}
-                        onClick={() => setPermissionGroupsOpen(current => { const next = new Set(current); if (open) next.delete(group.id); else next.add(group.id); return next; })}>
-                        {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}{group.label}
+                      <button
+                        type="button"
+                        className="flex items-center gap-2 text-left text-sm font-semibold"
+                        aria-expanded={open}
+                        onClick={() =>
+                          setPermissionGroupsOpen((current) => {
+                            const next = new Set(current);
+                            if (open) next.delete(group.id);
+                            else next.add(group.id);
+                            return next;
+                          })
+                        }
+                      >
+                        {open ? (
+                          <ChevronDown className="size-4" />
+                        ) : (
+                          <ChevronRight className="size-4" />
+                        )}
+                        {group.label}
                       </button>
                       <label className="flex items-center gap-2 text-xs font-medium">
                         Page visibility
-                        <Switch checked={enabled} disabled={admin} aria-label={`${group.label} page visibility`}
-                          onCheckedChange={checked => setPermissionsFor({ ...permissionsFor, permissions: setPageVisibility(permissionsFor.permissions, group.id, checked) })} />
+                        <Switch
+                          checked={enabled}
+                          disabled={admin}
+                          aria-label={`${group.label} page visibility`}
+                          onCheckedChange={(checked) =>
+                            setPermissionsFor({
+                              ...permissionsFor,
+                              permissions: setPageVisibility(
+                                permissionsFor.permissions,
+                                group.id,
+                                checked,
+                              ),
+                            })
+                          }
+                        />
                       </label>
                     </div>
                     {open && enabled && (
                       <div className="space-y-3 border-t border-border p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-xs text-muted-foreground">Choose allowed actions. Visibility alone grants no actions. Shared actions use the same permission on related pages; turning visibility off also deselects these actions.</span>
-                          {group.keys.length > 0 && <div className="flex gap-1">
-                            <Button size="sm" variant="ghost" disabled={admin} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: setPageFeatures(permissionsFor.permissions, group.id, true) })}>Select all</Button>
-                            <Button size="sm" variant="ghost" disabled={admin} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: setPageFeatures(permissionsFor.permissions, group.id, false) })}>Deselect all</Button>
-                          </div>}
+                          <span className="text-xs text-muted-foreground">
+                            Choose allowed actions. Visibility alone grants no actions. Shared
+                            actions use the same permission on related pages; turning visibility off
+                            also deselects these actions.
+                          </span>
+                          {group.keys.length > 0 && (
+                            <div className="flex gap-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={admin}
+                                onClick={() =>
+                                  setPermissionsFor({
+                                    ...permissionsFor,
+                                    permissions: setPageFeatures(
+                                      permissionsFor.permissions,
+                                      group.id,
+                                      true,
+                                    ),
+                                  })
+                                }
+                              >
+                                Select all
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={admin}
+                                onClick={() =>
+                                  setPermissionsFor({
+                                    ...permissionsFor,
+                                    permissions: setPageFeatures(
+                                      permissionsFor.permissions,
+                                      group.id,
+                                      false,
+                                    ),
+                                  })
+                                }
+                              >
+                                Deselect all
+                              </Button>
+                            </div>
+                          )}
                         </div>
                         <div className="grid gap-3 sm:grid-cols-2">
-                          {group.keys.map(key => <label key={key} className="flex items-start gap-2 text-sm">
-                            <Checkbox className="mt-0.5 size-4 shrink-0" checked={admin || permissionsFor.permissions[key]} disabled={admin}
-                              onCheckedChange={checked => setPermissionsFor({ ...permissionsFor, permissions: { ...permissionsFor.permissions, [key]: checked === true } })} />
-                            <span>{PERMISSION_LABELS[key]}</span>
-                          </label>)}
+                          {group.keys.map((key) => (
+                            <label key={key} className="flex items-start gap-2 text-sm">
+                              <Checkbox
+                                className="mt-0.5 size-4 shrink-0"
+                                checked={admin || permissionsFor.permissions[key]}
+                                disabled={admin}
+                                onCheckedChange={(checked) =>
+                                  setPermissionsFor({
+                                    ...permissionsFor,
+                                    permissions: {
+                                      ...permissionsFor.permissions,
+                                      [key]: checked === true,
+                                    },
+                                  })
+                                }
+                              />
+                              <span>{PERMISSION_LABELS[key]}</span>
+                            </label>
+                          ))}
                         </div>
-                        {!group.keys.length && <p className="text-xs text-muted-foreground">This page has no separate configurable actions.</p>}
+                        {!group.keys.length && (
+                          <p className="text-xs text-muted-foreground">
+                            This page has no separate configurable actions.
+                          </p>
+                        )}
                       </div>
                     )}
-                    {open && !enabled && <p className="border-t border-border p-3 text-xs text-muted-foreground">Page access is off. Its content and actions are unavailable, including direct URLs. Enable visibility, then select the actions to grant.</p>}
+                    {open && !enabled && (
+                      <p className="border-t border-border p-3 text-xs text-muted-foreground">
+                        Page access is off. Its content and actions are unavailable, including
+                        direct URLs. Enable visibility, then select the actions to grant.
+                      </p>
+                    )}
                   </section>
                 );
               })}

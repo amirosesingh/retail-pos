@@ -53,13 +53,15 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         const parsed = bodySchema.safeParse(body);
         if (!parsed.success) return reply({ ok: false, error: "Invalid request" }, 400);
         const input = parsed.data;
-        const { verifyRelayCaller, serviceRest } = await import("@/core/api/pos-relay.server");
+        const { verifyRelayCaller, serviceRest, RelayAuthenticationError } = await import("@/core/api/pos-relay.server");
         const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
         let caller: Awaited<ReturnType<typeof verifyRelayCaller>>;
         try {
           caller = await verifyRelayCaller(input);
-        } catch {
-          return reply({ ok: false, error: "Sign in is required" }, 401);
+        } catch (error) {
+          if (error instanceof RelayAuthenticationError)
+            return reply({ ok: false, error: "Sign in is required" }, 401);
+          return reply({ ok: false, error: "The central system is temporarily unavailable. Try again shortly." }, 503);
         }
         // Reuse the relay's canonical account resolver. Besides Auth id, staff
         // id and email, it safely falls back to the verified session label and

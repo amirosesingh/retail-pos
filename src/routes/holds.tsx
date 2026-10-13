@@ -76,19 +76,21 @@ function HoldTickets() {
     let active = true;
     const refresh = async () => {
       try {
-      const centre = await loadApprovalCentre(currentStore.id);
-      if (active) {
-        setApprovalRequests([
-          ...centre.toDecide,
-          ...centre.waiting,
-          ...centre.ready,
-          ...centre.history,
-        ]);
+        const centre = await loadApprovalCentre(currentStore.id);
+        if (active) {
+          setApprovalRequests([
+            ...centre.toDecide,
+            ...centre.waiting,
+            ...centre.ready,
+            ...centre.history,
+          ]);
+        }
+      } catch (cause) {
+        if (active) notifyError(cause, "Loading ticket approvals");
       }
-      } catch (cause) { if (active) notifyError(cause, "Loading ticket approvals"); }
     };
     void refresh();
-    const unsubscribe = subscribeApprovals(() => void refresh());
+    const unsubscribe = subscribeApprovals(refresh);
     return () => {
       active = false;
       unsubscribe();
@@ -190,7 +192,9 @@ function HoldTickets() {
                         </span>
                       </button>
                       <div className="mt-1 flex flex-wrap gap-1">
-                        <Badge variant="outline">{h.status === "draft" ? "Draft — unpaid" : "Held — unpaid"}</Badge>
+                        <Badge variant="outline">
+                          {h.status === "draft" ? "Draft — unpaid" : "Held — unpaid"}
+                        </Badge>
                         {h.cancelledFrom && (
                           <Badge variant="outline">Cancelled {h.cancelledFrom}</Badge>
                         )}
@@ -283,7 +287,12 @@ function HoldTickets() {
               )}
             </TableBody>
           </Table>
-          <TablePagination {...pager} onPage={pager.setPage} onPageSize={pager.setPageSize} label="tickets" />
+          <TablePagination
+            {...pager}
+            onPage={pager.setPage}
+            onPageSize={pager.setPageSize}
+            label="tickets"
+          />
         </section>
 
         <section className="rounded-lg border border-border bg-card p-4">

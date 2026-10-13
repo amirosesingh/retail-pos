@@ -1,5 +1,11 @@
 export const THEME_PALETTES = [
   {
+    id: "vibrant",
+    label: "Vibrant",
+    description: "Electric blue, teal, violet and amber",
+    preview: { background: "#f5f8ff", primary: "#2563eb", secondary: "#dbeafe", accent: "#0d9488" },
+  },
+  {
     id: "ocean",
     label: "Ocean",
     description: "Clear blue and cyan",
@@ -39,12 +45,12 @@ export const THEME_PALETTES = [
 
 export type ThemePalette = (typeof THEME_PALETTES)[number]["id"];
 
-export const DEFAULT_THEME_PALETTE: ThemePalette = "sunset";
+export const DEFAULT_THEME_PALETTE: ThemePalette = "vibrant";
 
 export function isThemePalette(value: unknown): value is ThemePalette {
   return THEME_PALETTES.some((palette) => palette.id === value);
 }
 
 export function themePalette(id: unknown) {
-  return THEME_PALETTES.find((palette) => palette.id === id) ?? THEME_PALETTES[2];
+  return THEME_PALETTES.find((palette) => palette.id === id) ?? THEME_PALETTES[0];
 }

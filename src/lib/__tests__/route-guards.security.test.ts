@@ -176,9 +176,9 @@ describe("route guards", () => {
     expect(reportKit).toContain('can("can_export_reports")');
     expect(reportKit).toMatch(/onExport && canExport/);
     expect(analytics).toContain('const canExport = can("can_export_reports")');
-    expect(analytics).toMatch(/\{canExport && \([\s\S]{0,180}?Export CSV/);
+    expect(analytics).toMatch(/\{canExport && \([\s\S]{0,180}?Export Excel/);
     expect(notifications).toMatch(
-      /\{can\("can_export_reports"\) && \([\s\S]{0,220}?Export CSV/,
+      /\{can\("can_export_reports"\) && \(\s*<Button[\s\S]*?Export Excel\s*<\/Button>\s*\)\}/,
     );
   });
 });

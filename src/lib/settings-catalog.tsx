@@ -83,7 +83,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   },
   {
     id: "people",
-    label: "People & permissions",
+    label: "Staff & Permissions",
     blurb: "Who may do what, and who is signed in right now.",
     group: "business",
     icon: Users,
@@ -600,6 +600,18 @@ export const SETTINGS_CARDS: SettingsCard[] = [
 
   /* ---- Staff & security --------------------------------------------- */
   {
+    id: "staff",
+    label: "Staff & Permissions",
+    blurb: "Staff accounts, roles and individual feature permissions.",
+    icon: Users,
+    category: "people",
+    scope: "company",
+    to: "/staff",
+    panel: lazy(() => import("@/routes/staff").then(module => ({ default: module.StaffPermissionsPanel }))),
+    raw: true,
+    keywords: "people employees users accounts roles permissions pin cashier supervisor warehouse",
+  },
+  {
     id: "access",
     label: "Roles & access",
     blurb: "One page: what each role may do, and what it can see.",
@@ -611,15 +623,6 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   },
 ];
 
-/** Fallback quick access, used until someone pins their own shortcuts. */
-export const PINNED_SETTINGS = [
-  "identity",
-  "branch-telemetry",
-  "hardware",
-  "payment-methods",
-  "whatsapp",
-  "system",
-];
 
 export function settingsCard(id: string | undefined | null): SettingsCard | null {
   if (!id) return null;

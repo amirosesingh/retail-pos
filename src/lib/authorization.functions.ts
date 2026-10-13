@@ -114,6 +114,7 @@ const submitInput = caller.extend({
 });
 
 const listInput = caller.extend({
+  requestId: z.string().uuid().optional(),
   storeId: z.string().max(64).optional(),
   allBranches: z.boolean().default(false),
   status: z.string().max(20).default("pending"),
@@ -833,7 +834,7 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
       const { expirePendingRequests, listRequests, loadRuleRows, writeLog } =
         await import("./authorization.server");
       const { resolveRules, canViewAuthorizationRequest } = await import("./authorization");
-      const expired = await expirePendingRequests();
+      const expired = await expirePendingRequests(data.requestId);
       await Promise.all(
         expired.map(async (request) => {
           await writeLog({
@@ -871,6 +872,7 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
       const all = await listRequests({
         allBranches: true,
         status: data.status,
+        requestId: data.requestId,
       });
       const rulesByStore = new Map<string, ReturnType<typeof resolveRules>>();
       for (const branch of new Set(all.map((request) => request.storeId))) {

@@ -14,8 +14,9 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("shared POS colour themes", () => {
-  it("offers the six approved palettes through one registry", () => {
+  it("offers the vibrant default and existing palettes through one registry", () => {
     expect(THEME_PALETTES.map((palette) => palette.id)).toEqual([
+      "vibrant",
       "ocean",
       "emerald",
       "sunset",
@@ -23,7 +24,7 @@ describe("shared POS colour themes", () => {
       "candy",
       "midnight",
     ]);
-    expect(new Set(THEME_PALETTES.map((palette) => palette.id)).size).toBe(6);
+    expect(new Set(THEME_PALETTES.map((palette) => palette.id)).size).toBe(7);
   });
 
   it("falls back safely when an older or invalid setting is loaded", () => {

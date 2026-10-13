@@ -24,12 +24,11 @@ export const Route = createFileRoute("/staff")({
   component: StaffManagement,
 });
 
-function StaffManagement() {
+export function StaffPermissionsPanel() {
   const { can } = useAuth();
 
   if (!can("can_manage_staff")) {
     return (
-      <AppShell>
         <div className="flex min-h-screen items-center justify-center p-6">
           <div className="max-w-sm rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-center">
             <ShieldAlert className="mx-auto size-6 text-destructive" />
@@ -39,15 +38,13 @@ function StaffManagement() {
             </p>
           </div>
         </div>
-      </AppShell>
     );
   }
 
   return (
-    <AppShell>
       <main className="space-y-5 p-4 sm:p-6">
         <header>
-          <h1 className="text-2xl font-semibold">Staff management</h1>
+          <h1 className="text-2xl font-semibold">Staff &amp; Permissions</h1>
           <p className="text-sm text-muted-foreground">
             Accounts, access status, roles and feature permissions in one place.
           </p>
@@ -65,6 +62,9 @@ function StaffManagement() {
           </TabsContent>
         </Tabs>
       </main>
-    </AppShell>
   );
+}
+
+function StaffManagement() {
+  return <AppShell><StaffPermissionsPanel /></AppShell>;
 }

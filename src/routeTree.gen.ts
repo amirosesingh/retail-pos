@@ -26,6 +26,7 @@ import { Route as HoldsRouteImport } from './routes/holds'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as InventoryHubRouteImport } from './routes/inventory-hub'
 import { Route as JoinRouteImport } from './routes/join'
+import { Route as MarketingRouteImport } from './routes/marketing'
 import { Route as MembersRouteImport } from './routes/members'
 import { Route as MembershipRouteImport } from './routes/membership'
 import { Route as PromotionsRouteImport } from './routes/promotions'
@@ -211,6 +212,11 @@ const InventoryHubRoute = InventoryHubRouteImport.update({
 const JoinRoute = JoinRouteImport.update({
   id: '/join',
   path: '/join',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketingRoute = MarketingRouteImport.update({
+  id: '/marketing',
+  path: '/marketing',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MembersRoute = MembersRouteImport.update({
@@ -741,6 +747,7 @@ export interface FileRoutesByFullPath {
   '/inventory': typeof InventoryRoute
   '/inventory-hub': typeof InventoryHubRoute
   '/join': typeof JoinRoute
+  '/marketing': typeof MarketingRoute
   '/members': typeof MembersRoute
   '/membership': typeof MembershipRoute
   '/promotions': typeof PromotionsRoute
@@ -861,6 +868,7 @@ export interface FileRoutesByTo {
   '/inventory': typeof InventoryRoute
   '/inventory-hub': typeof InventoryHubRoute
   '/join': typeof JoinRoute
+  '/marketing': typeof MarketingRoute
   '/members': typeof MembersRoute
   '/membership': typeof MembershipRoute
   '/promotions': typeof PromotionsRoute
@@ -982,6 +990,7 @@ export interface FileRoutesById {
   '/inventory': typeof InventoryRoute
   '/inventory-hub': typeof InventoryHubRoute
   '/join': typeof JoinRoute
+  '/marketing': typeof MarketingRoute
   '/members': typeof MembersRoute
   '/membership': typeof MembershipRoute
   '/promotions': typeof PromotionsRoute
@@ -1104,6 +1113,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/inventory-hub'
     | '/join'
+    | '/marketing'
     | '/members'
     | '/membership'
     | '/promotions'
@@ -1224,6 +1234,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/inventory-hub'
     | '/join'
+    | '/marketing'
     | '/members'
     | '/membership'
     | '/promotions'
@@ -1344,6 +1355,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/inventory-hub'
     | '/join'
+    | '/marketing'
     | '/members'
     | '/membership'
     | '/promotions'
@@ -1465,6 +1477,7 @@ export interface RootRouteChildren {
   InventoryRoute: typeof InventoryRoute
   InventoryHubRoute: typeof InventoryHubRoute
   JoinRoute: typeof JoinRoute
+  MarketingRoute: typeof MarketingRoute
   MembersRoute: typeof MembersRoute
   MembershipRoute: typeof MembershipRoute
   PromotionsRoute: typeof PromotionsRoute
@@ -1686,6 +1699,13 @@ declare module '@tanstack/react-router' {
       path: '/join'
       fullPath: '/join'
       preLoaderRoute: typeof JoinRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/marketing': {
+      id: '/marketing'
+      path: '/marketing'
+      fullPath: '/marketing'
+      preLoaderRoute: typeof MarketingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/members': {
@@ -2427,6 +2447,7 @@ const rootRouteChildren: RootRouteChildren = {
   InventoryRoute: InventoryRoute,
   InventoryHubRoute: InventoryHubRoute,
   JoinRoute: JoinRoute,
+  MarketingRoute: MarketingRoute,
   MembersRoute: MembersRoute,
   MembershipRoute: MembershipRoute,
   PromotionsRoute: PromotionsRoute,

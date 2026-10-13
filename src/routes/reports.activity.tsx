@@ -1,17 +1,11 @@
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { useAuditLogs } from "@/lib/audit-log";
 import { describeLog } from "@/lib/audit-format";
@@ -19,7 +13,7 @@ import {
   ReportHeader,
   StatCard,
   defaultRange,
-  downloadCsv,
+  downloadReport,
   inRange,
   stamp,
 } from "@/platforms/web/components/pos/report-kit";
@@ -72,7 +66,7 @@ function ActivityReport() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Register Activity Trail"
           subtitle="Everything that happened on the till, in plain English, with timestamps."
@@ -81,7 +75,7 @@ function ActivityReport() {
           onFrom={setFrom}
           onTo={setTo}
           onExport={() =>
-            downloadCsv("register-activity", [
+            downloadReport("register-activity", [
               ["Time", "Staff", "Role", "Action", "Description", "Details"],
               ...rows.map((l) => [
                 stamp(l.at),
@@ -95,7 +89,7 @@ function ActivityReport() {
           }
         >
           <div className="space-y-1">
-            <Label className="text-xs">Search</Label>
+            <Label className="text-sm">Search</Label>
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -112,7 +106,7 @@ function ActivityReport() {
           <StatCard label="Bills split" value={String(count(/split/i))} />
         </div>
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -125,10 +119,10 @@ function ActivityReport() {
             <TableBody>
               {pager.pageItems.map((l) => (
                 <TableRow key={l.id}>
-                  <TableCell className="numeric whitespace-nowrap text-xs">{stamp(l.at)}</TableCell>
+                  <TableCell className="numeric whitespace-nowrap text-sm">{stamp(l.at)}</TableCell>
                   <TableCell>
                     {l.staffName}
-                    <Badge variant="outline" className="ml-2 text-[10px] capitalize">
+                    <Badge variant="outline" className="ml-2 text-xs capitalize">
                       {l.role}
                     </Badge>
                   </TableCell>
@@ -138,7 +132,10 @@ function ActivityReport() {
               ))}
               {!rows.length && (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={4}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     No register activity in this window.
                   </TableCell>
                 </TableRow>

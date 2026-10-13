@@ -4,7 +4,7 @@ const {
   rendererReadBranchPredicate,
   settingsScopePredicate,
 } = require("../branch-scope.cjs");
-const { toRendererRow } = require("../../sync/row-codec.cjs");
+const { toRendererRow, normalizeSettingsScope } = require("../../sync/row-codec.cjs");
 
 const MAX_BATCH_ROWS = 2000;
 const MAX_ENCODED_BYTES = 6 * 1024 * 1024;
@@ -74,6 +74,11 @@ class OperationsRepository {
     for (const op of ops) {
       const table = this.tables.get(op?.table);
       if (!table) throw new Error("Unsupported business table.");
+      if (["settings_scoped", "settings_overrides"].includes(op.table)) {
+        if (op.rows) op.rows = op.rows.map(row => normalizeSettingsScope(op.table, row));
+        if (op.values) op.values = normalizeSettingsScope(op.table, op.values);
+        if (op.match) op.match = normalizeSettingsScope(op.table, op.match);
+      }
       if (!["insert", "upsert", "update", "delete"].includes(op.kind)) throw new Error("Unsupported business operation.");
       if (op.requireMatch !== undefined && typeof op.requireMatch !== "boolean")
         throw new Error("The required-match flag must be a boolean.");

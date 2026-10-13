@@ -43,7 +43,24 @@ export const listManagedStaffAccounts = createServerFn({ method: "POST" })
         "app_users?select=id,auth_user_id,user_id,full_name,email,role,role_slug,store_id,is_active,permissions,pin_length,pin_set_at,last_login_at,created_at&order=full_name.asc",
       );
       if (!response.ok) throw new Error("Staff accounts could not be loaded.");
-      return { ok: true as const, rows: z.array(managedStaffRow).parse(await response.json()) };
+      const rows = z.array(managedStaffRow).parse(await response.json());
+      const rulesResponse = await serviceRest("authorization_actions?select=*");
+      if (!rulesResponse.ok) throw new Error("Approval rules could not be loaded.");
+      const { normalizeRule } = await import("./authorization");
+      const { approvalPinEligible } = await import("./approval-pin-eligibility");
+      const rules = ((await rulesResponse.json()) as Record<string, unknown>[]).map(normalizeRule);
+      return {
+        ok: true as const,
+        rows: rows.map((row) => ({
+          ...row,
+          approval_pin_eligible: approvalPinEligible(rules, {
+            userId: row.user_id,
+            role: row.role_slug || row.role,
+            storeId: row.store_id ?? "",
+            active: row.is_active,
+          }),
+        })),
+      };
     } catch (error) {
       return { ok: false as const, error: (error as Error).message, rows: [] };
     }
@@ -120,7 +137,10 @@ export const saveStaffAccount = createServerFn({ method: "POST" })
         username: z.string().min(2).max(160),
         pin: z.string().min(4).max(32).optional(),
         password: z.string().min(8).max(200).optional(),
-        authorizationPin: z.string().regex(/^\d{4,6}$/),
+        authorizationPin: z
+          .string()
+          .regex(/^\d{4,6}$/)
+          .optional(),
         branchId: z.string().max(60).nullable().optional(),
         roleSlug: z.string().min(2).max(60),
         baseRole: z.enum(["admin", "manager", "staff"]),

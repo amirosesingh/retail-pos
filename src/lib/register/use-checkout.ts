@@ -2,6 +2,7 @@ import { canOpenDrawer } from "@/lib/receipt-printer";
 import { flushTicketDrafts } from "@/lib/session-draft";
 import { redeemedPoints } from "../points-redemption";
 import { exchangePolicyError } from "../returns-policy";
+import { availableCardMachines } from "../card-machines";
 /**
  * Checkout orchestration.
  *
@@ -79,6 +80,7 @@ export type CheckoutDeps = {
   getTenderRef: () => string;
   getTenderRefNote: () => string;
   getBankName: () => string;
+  getCardAccountId?: () => string;
   getTenders: () => Payment[];
   getActiveMethodName: () => string;
   getNeedsTenderRef: () => boolean;
@@ -446,6 +448,14 @@ export function useCheckout(deps: CheckoutDeps) {
     const settleMethod = roundingPaymentMethod(method, tenders);
     const rounding = applyRounding(totals.total, roundingCfg, settleMethod);
     const chargeTotal = rounding.total;
+    const cardMachines = availableCardMachines(state.settings.integrations.paymentAccounts, currentStore.id);
+    const cardIds = new Set(cardMachines.map(machine => machine.id));
+    if (!isRefund && cardMachines.length && (splitting
+      ? tenders.some(tender => tender.method === "card" && !cardIds.has(tender.accountId ?? ""))
+      : method === "card" && !cardIds.has(deps.getCardAccountId?.() ?? ""))) {
+      toast.error("Select an active card machine for this branch");
+      return;
+    }
     const split = validateTenders(chargeTotal, tenders);
     const splitPaid = split.paid;
     if (!isRefund && splitting && split.error) {
@@ -496,6 +506,7 @@ export function useCheckout(deps: CheckoutDeps) {
             method,
             amount: r2(Math.abs(chargeTotal)),
             ...(method === "card" && bankName.trim() ? { bankName: bankName.trim() } : {}),
+            ...(method === "card" && deps.getCardAccountId?.() ? { accountId: deps.getCardAccountId() } : {}),
             ...(method === "bank_transfer" && transferRef.trim()
               ? { ref: transferRef.trim() }
               : {}),

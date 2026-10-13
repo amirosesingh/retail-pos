@@ -611,6 +611,8 @@ export type RelayCaller = {
  * may also hold a separate Supabase machine account, which must not replace
  * the person who signed in with a PIN.
  */
+export class RelayAuthenticationError extends Error {}
+
 export async function verifyRelayCaller(input: {
   sessionToken?: string;
   cashierToken?: string;
@@ -714,10 +716,10 @@ export async function verifyRelayCaller(input: {
   }
 
   if (!identity && endedSession)
-    throw new Error("Your session has ended — please sign in again.");
+    throw new RelayAuthenticationError("Your session has ended — please sign in again.");
 
   if (!identity)
-    throw new Error("This till could not prove who it is — sign in again or re-activate it.");
+    throw new RelayAuthenticationError("This till could not prove who it is — sign in again or re-activate it.");
 
   // A physical terminal's activation is the branch authority. A cashier or
   // administrator signed into that device may change permissions, but cannot

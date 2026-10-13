@@ -70,6 +70,6 @@ describe("terminal navigation priority", () => {
       orderWorkspaceGroups(groups, "retail", true)
         .map((group) => group.id)
         .slice(0, 2),
-    ).toEqual(["company", "reports"]);
+    ).toEqual(["company", "inventory"]);
   });
 });

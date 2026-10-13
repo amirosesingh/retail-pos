@@ -1,3 +1,4 @@
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -5,7 +6,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  Legend,
   Line,
   LineChart,
   Pie,
@@ -17,14 +17,7 @@ import {
 } from "recharts";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { money, usePos } from "@/lib/pos-store";
 import { savingsOf, soldLines, sumLines } from "@/lib/sales-analytics";
 import { useReportSales } from "@/lib/use-report-sales";
@@ -34,8 +27,10 @@ import {
   StatCard,
   defaultRange,
   inRange,
+  isoDay,
 } from "@/platforms/web/components/pos/report-kit";
 import { branchDisplayName } from "@/lib/human-readable";
+import { ANALYTICS_COLORS, branchChartColor, compactChartNumber } from "@/lib/analytics-design";
 
 export const Route = createFileRoute("/reports/analytics")({
   head: () => ({
@@ -58,20 +53,14 @@ export const Route = createFileRoute("/reports/analytics")({
   component: AnalyticsBoard,
 });
 
-const PALETTE = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-6)",
-  "var(--chart-7)",
-  "var(--chart-8)",
-  "var(--chart-9)",
-  "var(--chart-10)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-];
-
-const monthKey = (iso: string) => iso.slice(0, 7);
+const monthKey = (iso: string) => isoDay(new Date(iso)).slice(0, 7);
+const tooltipStyle = {
+  background: "var(--card)",
+  color: "var(--card-foreground)",
+  border: "1px solid var(--border)",
+  borderRadius: 12,
+  maxWidth: 280,
+};
 
 function AnalyticsBoard() {
   const { state, stores } = usePos();
@@ -115,9 +104,14 @@ function AnalyticsBoard() {
   }, [lines, topBy]);
 
   const byStore = useMemo(() => {
-    const by = new Map<string, { name: string; revenue: number; cost: number }>();
+    const by = new Map<string, { id: string; name: string; revenue: number; cost: number }>();
     for (const l of lines) {
-      const cur = by.get(l.storeId) ?? { name: storeName(l.storeId), revenue: 0, cost: 0 };
+      const cur = by.get(l.storeId) ?? {
+        id: l.storeId,
+        name: storeName(l.storeId),
+        revenue: 0,
+        cost: 0,
+      };
       cur.revenue += l.revenue;
       cur.cost += l.cost;
       by.set(l.storeId, cur);
@@ -138,7 +132,7 @@ function AnalyticsBoard() {
   const series = useMemo(() => {
     const by = new Map<string, number>();
     for (const s of bills) {
-      const key = trend === "daily" ? s.createdAt.slice(0, 10) : monthKey(s.createdAt);
+      const key = trend === "daily" ? isoDay(new Date(s.createdAt)) : monthKey(s.createdAt);
       by.set(key, (by.get(key) ?? 0) + saleNetRevenue(s));
     }
     return [...by.entries()]
@@ -146,13 +140,13 @@ function AnalyticsBoard() {
       .map(([label, value]) => ({ label, value: Math.round(value * 100) / 100 }));
   }, [bills, trend]);
 
-  const dayCount = new Set(bills.map((s) => s.createdAt.slice(0, 10))).size || 1;
+  const dayCount = new Set(bills.map((s) => isoDay(new Date(s.createdAt)))).size || 1;
   const monthCount = new Set(bills.map((s) => monthKey(s.createdAt))).size || 1;
   const revenue = Math.round(bills.reduce((a, s) => a + saleNetRevenue(s), 0) * 100) / 100;
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Business Analytics"
           subtitle="Top sellers, shop performance, trends, savings and profit."
@@ -168,32 +162,73 @@ function AnalyticsBoard() {
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <StatCard label="Revenue" value={money(revenue)} hint={`${bills.length} bills`} />
+          <StatCard
+            tone="revenue"
+            label="Revenue"
+            value={money(revenue)}
+            hint={`${bills.length} completed bills · before tax`}
+          />
           <StatCard
             label="Avg / day"
+            tone="revenue"
             value={money(revenue / dayCount)}
             hint={`${dayCount} trading days`}
           />
           <StatCard
             label="Avg / month"
+            tone="revenue"
             value={money(revenue / monthCount)}
             hint={`${monthCount} months`}
           />
           <StatCard
             label="Gross profit"
+            tone={totals.profit < 0 ? "loss" : "profit"}
             value={money(totals.profit)}
             hint={`${totals.marginPct.toFixed(1)}% margin`}
           />
           <StatCard
             label="Given away"
+            tone="discount"
             value={money(savings.total)}
             hint="Discounts, coupons and free items"
           />
         </div>
 
+        <section
+          aria-label="Analytics color meanings"
+          className="flex flex-wrap gap-x-5 gap-y-2 rounded-xl border border-border bg-card px-4 py-3 text-xs"
+        >
+          {(
+            [
+              ["revenue", "Revenue"],
+              ["profit", "Profit"],
+              ["cost", "Cost"],
+              ["discount", "Discounts / giveaways"],
+              ["units", "Units sold"],
+              ["loss", "Loss / negative result"],
+            ] as const
+          ).map(([key, label]) => (
+            <span key={key} className="inline-flex items-center gap-2">
+              <span
+                className="size-2.5 rounded-full"
+                style={{ background: ANALYTICS_COLORS[key] }}
+              />
+              {label}
+            </span>
+          ))}
+        </section>
+        {!bills.length && !history.loading && !history.error && (
+          <p
+            role="status"
+            className="rounded-xl border border-dashed border-border p-5 text-sm text-muted-foreground"
+          >
+            No completed sales in this date range. Choose different dates in Filters.
+          </p>
+        )}
+
         <div className="grid gap-4 lg:grid-cols-2">
-          <section className="rounded-lg border border-border p-4">
-            <div className="mb-3 flex items-center justify-between">
+          <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-sm font-semibold">Top selling items</h2>
               <div className="flex gap-1">
                 <Button
@@ -212,26 +247,55 @@ function AnalyticsBoard() {
                 </Button>
               </div>
             </div>
-            <ResponsiveContainer width="100%" height={320}>
+            <ResponsiveContainer
+              width="100%"
+              height={Math.max(240, topItems.length * 36)}
+              minWidth={0}
+            >
               <BarChart data={topItems} layout="vertical" margin={{ left: 24, right: 16 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" fontSize={11} />
-                <YAxis type="category" dataKey="name" width={130} fontSize={11} />
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" horizontal={false} />
+                <XAxis
+                  type="number"
+                  fontSize={12}
+                  tickFormatter={compactChartNumber}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  width={110}
+                  fontSize={12}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value) =>
+                    String(value).length > 18 ? String(value).slice(0, 17) + "…" : String(value)
+                  }
+                />
                 <Tooltip
+                  contentStyle={tooltipStyle}
+                  itemStyle={{ color: "var(--card-foreground)" }}
                   formatter={(v) =>
                     topBy === "revenue" ? money(Number(v ?? 0)) : `${Number(v ?? 0)} units`
                   }
                 />
-                <Bar dataKey={topBy} fill="var(--primary)" radius={[0, 4, 4, 0]} />
+                <Bar
+                  isAnimationActive={false}
+                  name={topBy === "revenue" ? "Net revenue" : "Units sold"}
+                  dataKey={topBy}
+                  fill={topBy === "revenue" ? ANALYTICS_COLORS.revenue : ANALYTICS_COLORS.units}
+                  radius={[0, 5, 5, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </section>
 
-          <section className="rounded-lg border border-border p-4">
+          <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">Revenue by shop</h2>
-            <ResponsiveContainer width="100%" height={320}>
+            <ResponsiveContainer width="100%" height={260} minWidth={0}>
               <PieChart>
                 <Pie
+                  isAnimationActive={false}
                   data={byStore}
                   dataKey="revenue"
                   nameKey="name"
@@ -239,19 +303,37 @@ function AnalyticsBoard() {
                   outerRadius={110}
                   paddingAngle={2}
                 >
-                  {byStore.map((s, i) => (
-                    <Cell key={s.name} fill={PALETTE[i % PALETTE.length]} />
+                  {byStore.map((s) => (
+                    <Cell key={s.id} fill={branchChartColor(s.id)} />
                   ))}
                 </Pie>
-                <Legend />
-                <Tooltip formatter={(v) => money(Number(v ?? 0))} />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  itemStyle={{ color: "var(--card-foreground)" }}
+                  formatter={(v) => money(Number(v ?? 0))}
+                />
               </PieChart>
             </ResponsiveContainer>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Colors identify branches and stay the same when their ranking changes.
+            </p>
+            <ul className="grid gap-2 text-sm sm:grid-cols-2">
+              {byStore.map((shop) => (
+                <li key={shop.id} className="flex min-w-0 items-start gap-2">
+                  <span
+                    className="mt-1.5 size-2.5 shrink-0 rounded-full"
+                    style={{ background: branchChartColor(shop.id) }}
+                  />
+                  <span className="min-w-0 flex-1 break-words">{shop.name}</span>
+                  <span className="shrink-0 tabular-nums">{shop.sharePct.toFixed(1)}%</span>
+                </li>
+              ))}
+            </ul>
           </section>
         </div>
 
-        <section className="rounded-lg border border-border p-4">
-          <div className="mb-3 flex items-center justify-between">
+        <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">
               {trend === "daily" ? "Daily revenue" : "Monthly revenue"}
             </h2>
@@ -275,22 +357,62 @@ function AnalyticsBoard() {
           <ResponsiveContainer width="100%" height={280}>
             {trend === "daily" ? (
               <BarChart data={series}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" fontSize={11} />
-                <YAxis fontSize={11} />
-                <Tooltip formatter={(v) => money(Number(v ?? 0))} />
-                <Bar dataKey="value" fill="var(--primary)" radius={[4, 4, 0, 0]} />
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  fontSize={12}
+                  minTickGap={30}
+                  interval="preserveStartEnd"
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  fontSize={12}
+                  tickFormatter={compactChartNumber}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  itemStyle={{ color: "var(--card-foreground)" }}
+                  formatter={(v) => money(Number(v ?? 0))}
+                />
+                <Bar
+                  isAnimationActive={false}
+                  name="Net revenue"
+                  dataKey="value"
+                  fill={ANALYTICS_COLORS.revenue}
+                  radius={[5, 5, 0, 0]}
+                />
               </BarChart>
             ) : (
               <LineChart data={series}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" fontSize={11} />
-                <YAxis fontSize={11} />
-                <Tooltip formatter={(v) => money(Number(v ?? 0))} />
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  fontSize={12}
+                  minTickGap={30}
+                  interval="preserveStartEnd"
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  fontSize={12}
+                  tickFormatter={compactChartNumber}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  itemStyle={{ color: "var(--card-foreground)" }}
+                  formatter={(v) => money(Number(v ?? 0))}
+                />
                 <Line
                   type="monotone"
                   dataKey="value"
-                  stroke="var(--primary)"
+                  stroke={ANALYTICS_COLORS.revenue}
+                  name="Net revenue"
+                  isAnimationActive={false}
                   strokeWidth={2}
                   dot={false}
                 />
@@ -300,13 +422,21 @@ function AnalyticsBoard() {
         </section>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <section className="rounded-lg border border-border p-4">
+          <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">What we gave away</h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              <StatCard label="Item discounts" value={money(savings.lineDiscount)} />
-              <StatCard label="Bill discounts" value={money(savings.billDiscount)} />
-              <StatCard label="Coupons &amp; vouchers" value={money(savings.coupon)} />
-              <StatCard label="Free items" value={money(savings.focValue)} />
+              <StatCard
+                tone="discount"
+                label="Item discounts"
+                value={money(savings.lineDiscount)}
+              />
+              <StatCard
+                tone="discount"
+                label="Bill discounts"
+                value={money(savings.billDiscount)}
+              />
+              <StatCard tone="discount" label="Coupons & vouchers" value={money(savings.coupon)} />
+              <StatCard tone="discount" label="Free items" value={money(savings.focValue)} />
             </div>
             <ResponsiveContainer width="100%" height={200}>
               <BarChart
@@ -317,16 +447,38 @@ function AnalyticsBoard() {
                   { label: "Free items", value: savings.focValue },
                 ]}
               >
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" fontSize={11} />
-                <YAxis fontSize={11} />
-                <Tooltip formatter={(v) => money(Number(v ?? 0))} />
-                <Bar dataKey="value" fill="var(--accent)" radius={[4, 4, 0, 0]} />
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  fontSize={12}
+                  minTickGap={30}
+                  interval="preserveStartEnd"
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  fontSize={12}
+                  tickFormatter={compactChartNumber}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  itemStyle={{ color: "var(--card-foreground)" }}
+                  formatter={(v) => money(Number(v ?? 0))}
+                />
+                <Bar
+                  isAnimationActive={false}
+                  name="Given away"
+                  dataKey="value"
+                  fill={ANALYTICS_COLORS.discount}
+                  radius={[5, 5, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </section>
 
-          <section className="rounded-lg border border-border p-4">
+          <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">Profit by shop</h2>
             <Table loading={history.loading}>
               <TableHeader>
@@ -346,7 +498,12 @@ function AnalyticsBoard() {
                     <TableCell className="numeric text-right">{money(s.revenue)}</TableCell>
                     <TableCell className="numeric text-right">{s.sharePct.toFixed(1)}%</TableCell>
                     <TableCell className="numeric text-right">{money(s.cost)}</TableCell>
-                    <TableCell className="numeric text-right font-semibold">
+                    <TableCell
+                      className={
+                        "numeric text-right font-semibold " +
+                        (s.profit < 0 ? "text-destructive" : "text-success")
+                      }
+                    >
                       {money(s.profit)}
                     </TableCell>
                     <TableCell className="numeric text-right">{s.marginPct.toFixed(1)}%</TableCell>

@@ -40,7 +40,7 @@ export function SettingsShell({ children, home = false }: { children: ReactNode;
   }, []);
 
   return (
-    <div className="flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden">
+    <div className="settings-workspace flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden bg-muted/20">
       <div
         className={
           "z-20 shrink-0 border-b border-border bg-background/95 px-3 py-2 text-xs backdrop-blur " +
@@ -76,7 +76,7 @@ export function SettingsShell({ children, home = false }: { children: ReactNode;
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
     </div>
   );
 }

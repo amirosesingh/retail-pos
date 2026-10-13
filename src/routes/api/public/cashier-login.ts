@@ -81,7 +81,7 @@ export async function handleCashierLogin(request: Request): Promise<Response> {
     // cache while the hosted Auth handoff is temporarily unavailable.
     const status = result.ok
       ? 200
-      : result.code === "session_prepare_failed"
+      : result.code === "session_prepare_failed" || result.code === "central_unavailable"
         ? 503
         : result.code === "identity_mismatch"
           ? 409

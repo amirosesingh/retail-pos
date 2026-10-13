@@ -38,9 +38,9 @@ describe("location management boundaries", () => {
     const page = read("src/routes/all-shops.tsx");
 
     expect(page).toContain('const canExport = can("can_export_reports")');
-    expect(page).toMatch(/\{canExport && \([\s\S]{0,220}?Export CSV/);
-    expect(page).toMatch(/\{showMoney && \([\s\S]{0,180}?Shift open/);
+    expect(page).toMatch(/\{canExport && \([\s\S]{0,220}?Export Excel/);
+    expect(page).toMatch(/\{showMoney && \([\s\S]{0,220}?Current shift open/);
     expect(page).toContain('"Stock quantities only"');
-    expect(page).toContain("visibleStoreIds.has(sale.storeId)");
+    expect(page).toContain("visibleStoreIds.has(canonicalBranchId(sale.storeId))");
   });
 });

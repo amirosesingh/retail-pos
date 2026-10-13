@@ -1,17 +1,11 @@
+import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Label } from "@/components/ui/label";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
 import { useReportSales } from "@/lib/use-report-sales";
@@ -20,7 +14,7 @@ import {
   ReportHeader,
   StatCard,
   defaultRange,
-  downloadCsv,
+  downloadReport,
   inRange,
 } from "@/platforms/web/components/pos/report-kit";
 import { loadCompleteReceivingHistory } from "@/core/api/pos-db";
@@ -200,7 +194,7 @@ function BusinessReport() {
 
   const exportCsv = () => {
     if (view === "products") {
-      downloadCsv("retail-performance-products", [
+      downloadReport("retail-performance-products", [
         [
           "Product",
           "Arrived",
@@ -227,7 +221,7 @@ function BusinessReport() {
         ]),
       ]);
     } else {
-      downloadCsv("retail-performance-cashiers", [
+      downloadReport("retail-performance-cashiers", [
         ["Cashier", "Bills", "Revenue", "Profit", "Discount given", "Average bill"],
         ...cashiers.map((r) => [
           r.name,
@@ -243,7 +237,7 @@ function BusinessReport() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Retail performance"
           subtitle="Where the profit comes from, how fast stock moves, and how each cashier is trading."
@@ -254,7 +248,7 @@ function BusinessReport() {
           onExport={exportCsv}
         >
           <div className="space-y-1">
-            <Label className="text-xs">Branch</Label>
+            <Label className="text-sm">Branch</Label>
             <div className="w-52">
               <ThemedSelect
                 value={storeId}
@@ -267,7 +261,7 @@ function BusinessReport() {
             </div>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">View</Label>
+            <Label className="text-sm">View</Label>
             <div className="w-64">
               <ThemedSelect
                 value={view}
@@ -297,7 +291,7 @@ function BusinessReport() {
           />
         </div>
 
-        <div className="rounded-lg border border-border">
+        <div className="rounded-2xl border border-border bg-card">
           {view === "products" ? (
             <Table loading={history.loading}>
               <TableHeader>
@@ -327,7 +321,7 @@ function BusinessReport() {
                   prodPage.pageItems.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell className="font-medium">{r.name}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                         {r.arrivalDate
                           ? new Date(r.arrivalDate).toLocaleDateString()
                           : "Not recorded"}

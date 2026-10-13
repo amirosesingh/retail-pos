@@ -7,15 +7,23 @@
  * predictable click instead of a fold-out tree.
  */
 import { Link, useRouterState } from "@tanstack/react-router";
-import { PanelLeftClose, PanelLeftOpen, SlidersHorizontal as SettingsIcon, PanelsTopLeft, PackageSearch, UsersRound, CalendarClock, ChartNoAxesCombined, BriefcaseBusiness } from "lucide-react";
+import {
+  PanelLeftClose,
+  PanelLeftOpen,
+  SlidersHorizontal as SettingsIcon,
+  PanelsTopLeft,
+  PackageSearch,
+  UsersRound,
+  CalendarClock,
+  ChartNoAxesCombined,
+  BriefcaseBusiness,
+} from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
-import { navGroups, navItemKey, type NavItem } from "./nav-config";
+import { navGroups, type NavItem } from "./nav-config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/lib/pos-auth";
-import { useNavPins } from "@/lib/nav-pins";
-import { SETTINGS_CARDS } from "@/lib/settings-catalog";
 import { cn } from "@/lib/utils";
 import { usePos } from "@/lib/pos-store";
 import { orderWorkspaceGroups } from "@/lib/terminal-workspace";
@@ -70,7 +78,29 @@ type SidebarRowProps = {
  * could drop a click and visibly reset the hover state mid-interaction.
  */
 function SidebarRow({ entry, collapsed, active, inbound, onNavigate }: SidebarRowProps) {
-  const NavIcon = entry.to === "/" || entry.to === "/sales" ? PanelsTopLeft : /inventory|stock|transfer|request|purchas/.test(entry.to) ? PackageSearch : /customer|member/.test(entry.to) ? UsersRound : /booking|service/.test(entry.to) ? CalendarClock : /report/.test(entry.to) ? ChartNoAxesCombined : /setting/.test(entry.to) ? SettingsIcon : /admin|staff/.test(entry.to) ? BriefcaseBusiness : entry.icon;
+  const iconTone = /inventory|stock|transfer|purchas/.test(entry.to)
+    ? "text-category-2"
+    : /customer|member|marketing/.test(entry.to)
+      ? "text-category-4"
+      : /booking|service|approval/.test(entry.to)
+        ? "text-category-3"
+        : "text-category-1";
+  const NavIcon =
+    entry.to === "/" || entry.to === "/sales"
+      ? PanelsTopLeft
+      : /inventory|stock|transfer|request|purchas/.test(entry.to)
+        ? PackageSearch
+        : /customer|member/.test(entry.to)
+          ? UsersRound
+          : /booking|service/.test(entry.to)
+            ? CalendarClock
+            : /report/.test(entry.to)
+              ? ChartNoAxesCombined
+              : /setting/.test(entry.to)
+                ? SettingsIcon
+                : /admin|staff/.test(entry.to)
+                  ? BriefcaseBusiness
+                  : entry.icon;
   const link = (
     <Link
       to={entry.to}
@@ -87,7 +117,11 @@ function SidebarRow({ entry, collapsed, active, inbound, onNavigate }: SidebarRo
           : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
       )}
     >
-      <NavIcon strokeWidth={1.75} aria-hidden="true" className={cn(collapsed ? "size-5" : "size-4 shrink-0", active ? "text-primary" : "text-muted-foreground")} />
+      <NavIcon
+        strokeWidth={1.75}
+        aria-hidden="true"
+        className={cn(collapsed ? "size-5" : "size-4 shrink-0", active ? "text-primary" : iconTone)}
+      />
       {!collapsed && <span className="min-w-0 truncate">{entry.label}</span>}
       {entry.badge && inbound > 0 && !collapsed && (
         <Badge className="ml-auto h-5 min-w-5 shrink-0 justify-center px-1 text-[10px]">
@@ -116,9 +150,8 @@ export function SidebarNav({
   footer,
 }: Props) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
-  const { authUserId, isAdmin, isSupervisor, can } = useAuth();
+  const { isAdmin, isSupervisor, can } = useAuth();
   const { state } = usePos();
-  const { pins } = useNavPins(authUserId ?? null);
 
   const settingsAllowed = isSupervisor || can("can_access_pos_settings");
 
@@ -130,7 +163,7 @@ export function SidebarNav({
       isAdmin || isSupervisor,
     )
       .map((g) => ({ ...g, items: g.items.filter(canSee) }))
-      .filter((g) => g.items.length > 0)
+      .filter((g) => g.id !== "register" && g.items.length > 0)
       .map((g) => ({
         key: g.id,
         label: g.label,
@@ -151,45 +184,6 @@ export function SidebarNav({
     }
     return list;
   }, [canSee, isAdmin, isSupervisor, settingsAllowed, state.settings.integrations.terminalPurpose]);
-
-  /**
-   * Pins are rebuilt from the shared lists, so a pin cannot show a screen the
-   * person is not allowed to see.
-   */
-  const pinnedEntries: Entry[] = useMemo(() => {
-    const navByKey = new Map(
-      navGroups.flatMap((g) => g.items).map((i) => [navItemKey(i), i] as const),
-    );
-    const out: Entry[] = [];
-    for (const pin of pins) {
-      if (pin.kind === "nav") {
-        const item = navByKey.get(pin.key);
-        if (!item || !canSee(item)) continue;
-        out.push({
-          key: `nav:${pin.key}`,
-          label: item.label,
-          icon: item.icon,
-          to: item.to,
-          ...(item.hash ? { hash: item.hash } : {}),
-          ...(item.section ? { search: { section: item.section } } : {}),
-        });
-      } else {
-        if (!settingsAllowed) continue;
-        const card = SETTINGS_CARDS.find((c) => c.id === pin.key);
-        if (!card) continue;
-        const [to, qs] = card.to.split("?");
-        if (!canSee({ to: to as string, label: card.label, icon: card.icon })) continue;
-        out.push({
-          key: `settings:${pin.key}`,
-          label: card.label,
-          icon: card.icon,
-          to: to as string,
-          ...(qs ? { search: Object.fromEntries(new URLSearchParams(qs).entries()) } : {}),
-        });
-      }
-    }
-    return out;
-  }, [pins, canSee, settingsAllowed]);
 
   /** The till itself always stays one click away, above everything else. */
   const registerEntry: Entry | null = useMemo(() => {
@@ -225,27 +219,6 @@ export function SidebarNav({
           />
         )}
 
-        {pinnedEntries.length > 0 && (
-          <>
-            {!collapsed && (
-              <p className="px-3 pb-1 pt-3 text-xs font-medium text-muted-foreground">
-                Pinned
-              </p>
-            )}
-            {pinnedEntries.map((e) => (
-              <SidebarRow
-                key={e.key}
-                entry={e}
-                collapsed={collapsed}
-                active={isActive(e)}
-                inbound={inbound}
-                onNavigate={onNavigate}
-              />
-            ))}
-            <div className="my-3 border-t border-border/60" />
-          </>
-        )}
-
         {sections.map((e) => (
           <SidebarRow
             key={e.key}
@@ -272,7 +245,11 @@ export function SidebarNav({
             )}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+            {collapsed ? (
+              <PanelLeftOpen className="size-4" />
+            ) : (
+              <PanelLeftClose className="size-4" />
+            )}
             {!collapsed && <span>Collapse</span>}
           </Button>
         </div>

@@ -33,6 +33,7 @@ export function useTender(deps: TenderDeps) {
   /* Split tenders + card machine capture */
   const [tenders, setTenders] = useState<Payment[]>([]);
   const [bankName, setBankName] = useState("");
+  const [cardAccountId, setCardAccountId] = useState("");
 
   // Tenders are configured centrally, so a new collection type (a government
   // voucher scheme, say) appears at the till without a new build.
@@ -46,8 +47,11 @@ export function useTender(deps: TenderDeps) {
   function setMethod(next: PaymentMethod) {
     // Update the automatic exact-payment amount, but preserve cash entered by
     // the operator (for example a 100 note against a smaller bill).
-    setTendered(current => current === Math.max(0, deps.getTotal(method)).toFixed(2)
-      ? Math.max(0, deps.getTotal(next)).toFixed(2) : current);
+    setTendered((current) =>
+      current === Math.max(0, deps.getTotal(method)).toFixed(2)
+        ? Math.max(0, deps.getTotal(next)).toFixed(2)
+        : current,
+    );
     updateMethod(next);
   }
 
@@ -66,6 +70,7 @@ export function useTender(deps: TenderDeps) {
     setTenderRefNote("");
     setTenders([]);
     setBankName("");
+    setCardAccountId("");
     setPayOpen(false);
   }
 
@@ -90,6 +95,8 @@ export function useTender(deps: TenderDeps) {
     setTenders,
     bankName,
     setBankName,
+    cardAccountId,
+    setCardAccountId,
     paymentTypes,
     tenderOptions,
     activeTender,
