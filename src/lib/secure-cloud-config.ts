@@ -74,27 +74,28 @@ async function androidStore(): Promise<{ value: SecureStoragePluginType } | null
   }
 }
 
-async function androidRead(): Promise<{ url: string; key: string } | null> {
-  try {
-    const loaded = await androidStore();
-    if (!loaded) return null;
-    const store = loaded.value;
-    const [url, key] = await Promise.all([
-      store.get({ key: ANDROID_URL_KEY }).then((r) => r.value, () => ""),
-      store.get({ key: ANDROID_KEY_KEY }).then((r) => r.value, () => ""),
-    ]);
-    return url && key ? { url, key } : null;
-  } catch {
-    return null;
-  }
+export function isMissingSecureValue(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /^(Item with given key does not exist|not found)$/i.test(message);
 }
 
+async function androidRead(): Promise<{ url: string; key: string } | null> {
+  const loaded = await androidStore();
+  if (!loaded) throw new Error("Secure connection storage is temporarily unavailable. Retry restoring the connection.");
+  const read = (key: string) => loaded.value.get({ key }).then(r => r.value).catch(error => {
+    if (isMissingSecureValue(error)) return "";
+    throw new Error("Could not read the saved secure connection. Retry restoring the connection.");
+  });
+  const [url, key] = await Promise.all([read(ANDROID_URL_KEY), read(ANDROID_KEY_KEY)]);
+  return url && key ? { url, key } : null;
+}
 
 const mask = (key: string) => (key.length > 10 ? `${key.slice(0, 6)}…${key.slice(-4)}` : "••••");
 
 export async function cloudKeyStatus(): Promise<CloudKeyStatus> {
   if (isWindowsShell() && window.pos?.cloudKeyStatus) {
     const res = await window.pos.cloudKeyStatus();
+    if (!res.ok) throw new Error("Could not read the saved database connection.");
     return {
       configured: Boolean(res.configured),
       url: res.url ?? "",
@@ -339,6 +340,7 @@ export async function initCloudConfigFromShell(): Promise<CloudKeyStatus> {
     // The main process owns the key; ask it for the live pair through the
     // dedicated bootstrap channel so the renderer can configure its client.
     const res = await window.pos.bootstrapCloudCredentials();
+    if (!res.ok && "error" in res) throw new Error("Could not restore the saved database connection.");
     if (res.ok && res.url && res.key) {
       if (setTerminalSupabaseOverride(res.url, res.key)) resetExternalClient();
     }

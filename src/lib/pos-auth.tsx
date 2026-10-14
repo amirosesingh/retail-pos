@@ -532,6 +532,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string) => {
+      if (!email.trim() || !password) return {
+        ok: false, code: "invalid-credentials" as const,
+        error: "Enter your username or email and password.",
+      };
       // Terminal credentials are restored asynchronously from DPAPI/Keystore.
       // Never construct the lazy cloud client until the current saved profile
       // has replaced any older cloud pair carried by terminal activation.
@@ -983,13 +987,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Quiesce the UI and every cloud background job before revoking tokens.
       // Otherwise timers can send authenticated work at the same instant the
       // logout request invalidates that session, producing a burst of 401/403s.
+      if(reason !== "locked") {
+        const {removePhonePushBinding}=await import("./android-push-device");
+        await removePhonePushBinding().catch(()=>{});
+      }
       const sessionToken = await loadSessionToken().catch(() => null);
       if (!isCurrentEpoch(startedAt)) return;
       // In-flight validation belongs to the session being ended. It must not
       // restore credentials or proof after this local purge.
       startedAt = bumpSessionEpoch();
       // Stamp the sign-out time on this user's open shift sessions first.
-      endShiftSessions({});
+      const staffId = terminalUser?.userCode ?? appUser?.user_id;
+      if (staffId) await endShiftSessions({staffId, awaitWrites: true, persist: reason !== "expired"});
+      if (!isCurrentEpoch(startedAt)) return;
       setSessionState(reason === "locked" ? "locked" : reason);
       centralSessionVerifiedRef.current = false;
       setCentralSessionVerified(false);
@@ -1028,7 +1038,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         /* web/Android, or a desktop bridge that is already closing */
       }
     },
-    [setCentralSessionVerified],
+    [setCentralSessionVerified, terminalUser?.userCode, appUser?.user_id],
   );
 
   const logout = useCallback(async () => {

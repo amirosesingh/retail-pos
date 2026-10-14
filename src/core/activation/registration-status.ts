@@ -118,7 +118,7 @@ export function useStartupGate(): StartupGate {
     const read = () =>
       void cloudKeyStatus()
         .then((s) => setCloudConfigured(Boolean(s.configured)))
-        .catch(() => setCloudConfigured(false));
+        .catch(() => { /* An unreadable vault does not mean credentials were removed. */ });
     read();
     return subscribeCloudKeys(read);
   }, [tick]);

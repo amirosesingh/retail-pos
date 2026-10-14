@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 
 const secure = vi.hoisted(() => new Map<string, string>());
+const vault = vi.hoisted(() => ({ fail: false }));
 const shell = vi.hoisted(() => ({ mobile: true, windows: false }));
 const net = vi.hoisted(() => ({
   backendOk: true,
@@ -36,6 +37,7 @@ vi.mock("@/platform-config/features", () => ({
 vi.mock("capacitor-secure-storage-plugin", () => ({
   SecureStoragePlugin: {
     get: async ({ key }: { key: string }) => {
+      if (vault.fail) throw new Error("Keystore not ready");
       const value = secure.get(key);
       if (value === undefined) throw new Error("not found");
       return { value };
@@ -113,7 +115,7 @@ function installWindow() {
       encrypted: true,
     }),
     bootstrapCloudCredentials: async () =>
-      electronStore.cloudUrl && electronStore.cloudKey
+      vault.fail ? { ok: false, error: "Vault temporarily unavailable" } : electronStore.cloudUrl && electronStore.cloudKey
         ? { ok: true, url: electronStore.cloudUrl, key: electronStore.cloudKey }
         : { ok: false },
     setCloudCredentials: async ({ url, key }: { url: string; key: string }) => {
@@ -340,6 +342,35 @@ describe("connection profile", () => {
     expect(shown.backendUrl).toBe("https://pos.example.com");
     expect(shown.hasKey).toBe(true);
     expect(shown.keyHint).not.toContain(KEY_A);
+  });
+
+  it("keeps an unreadable saved profile out of setup and restores it on retry", async () => {
+    secure.set("pos.cloud.url", "https://tenant.example.co");
+    secure.set("pos.cloud.key", KEY_A);
+    secure.set("pos.backend.url", "https://pos.example.com");
+    restart();
+    vault.fail = true;
+    try {
+      expect(await hasRequiredPlatformConfig()).toMatchObject({ ready: false, state: "failed" });
+    } finally {
+      vault.fail = false;
+    }
+    expect(await hasRequiredPlatformConfig()).toMatchObject({ ready: true, state: "ready" });
+    expect(secure.get("pos.cloud.key")).toBe(KEY_A);
+  });
+
+  it("does not send a saved Windows profile to setup when the vault bridge fails", async () => {
+    shell.mobile = false;
+    shell.windows = true;
+    electronStore.cloudUrl = "https://tenant.example.co";
+    electronStore.cloudKey = KEY_A;
+    electronStore.backendUrl = "https://pos.example.com";
+    restart();
+    vault.fail = true;
+    try {
+      expect(await hasRequiredPlatformConfig()).toMatchObject({ ready: false, state: "failed" });
+    } finally { vault.fail = false; }
+    expect(await hasRequiredPlatformConfig()).toMatchObject({ ready: true });
   });
 
   it("hydrates the secure profile before mounting cloud-dependent root providers", () => {

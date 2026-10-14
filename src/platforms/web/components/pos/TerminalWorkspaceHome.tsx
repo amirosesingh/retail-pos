@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { AnimatedMetric } from "./AnimatedMetric";
 import { useReportSales } from "@/lib/use-report-sales";
 import { stockAtLocation } from "@/lib/locations";
 import { dailyPaymentSummary } from "@/lib/daily-payment-summary";
@@ -264,8 +265,11 @@ export function TerminalWorkspaceHome() {
   const todayRevenue = completedSales.reduce((sum, sale) => sum + sale.total, 0);
   const paymentSummary = dailyPaymentSummary(completedSales);
   const lowStock = state.products.filter(
-    (product) => stockAtLocation(product, currentStore.id) <= product.reorderLevel,
+    (product) =>
+      !product.archived && stockAtLocation(product, currentStore.id) <= product.reorderLevel,
   ).length;
+  const archivedProducts = state.products.filter((product) => product.archived === true).length;
+  const activeProducts = state.products.length - archivedProducts;
   const PurposeIcon = detail.icon;
 
   return (
@@ -319,7 +323,7 @@ export function TerminalWorkspaceHome() {
                 label="Today's bills"
                 icon={PackageSearch}
                 tone="text-category-1 bg-category-1/10"
-                value={String(todaySales.length)}
+                value={<AnimatedMetric value={todaySales.length} />}
                 hint={error ? "Could not refresh totals" : loading ? "Updating…" : "Current branch"}
               />
             )}
@@ -329,10 +333,17 @@ export function TerminalWorkspaceHome() {
                 payments={paymentSummary}
                 icon={BarChart3}
                 tone="text-category-2 bg-category-2/10"
-                value={todayRevenue.toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                value={
+                  <AnimatedMetric
+                    value={todayRevenue}
+                    format={(value) =>
+                      value.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })
+                    }
+                  />
+                }
                 hint={
                   error ? "Could not refresh totals" : loading ? "Updating…" : "Completed sales"
                 }
@@ -343,8 +354,26 @@ export function TerminalWorkspaceHome() {
                 icon={Boxes}
                 tone="text-warning bg-warning/10"
                 label="Low stock"
-                value={String(lowStock)}
-                hint="At or below reorder level"
+                value={<AnimatedMetric value={lowStock} />}
+                hint={
+                  <>
+                    <span className="block">Active items at or below reorder level</span>
+                    <span className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-border/60 pt-2">
+                      <span>
+                        Active{" "}
+                        <strong className="font-medium text-foreground">
+                          <AnimatedMetric value={activeProducts} />
+                        </strong>
+                      </span>
+                      <span>
+                        Archived{" "}
+                        <strong className="font-medium text-foreground">
+                          <AnimatedMetric value={archivedProducts} />
+                        </strong>
+                      </span>
+                    </span>
+                  </>
+                }
               />
             )}
           </section>
@@ -402,8 +431,8 @@ function Metric({
   payments,
 }: {
   label: string;
-  value: string;
-  hint: string;
+  value: ReactNode;
+  hint: ReactNode;
   icon: typeof Store;
   tone: string;
   payments?: { method: string; amount: number }[];
@@ -427,10 +456,15 @@ function Metric({
               <div key={payment.method} className="flex gap-1.5">
                 <dt className="text-muted-foreground">{methodLabel(payment.method)}</dt>
                 <dd className="font-medium tabular-nums">
-                  {payment.amount.toLocaleString(undefined, {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
+                  <AnimatedMetric
+                    value={payment.amount}
+                    format={(value) =>
+                      value.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })
+                    }
+                  />
                 </dd>
               </div>
             ))}

@@ -13,10 +13,10 @@ const Bills = lazy(() =>
   import("@/routes/reports.sales").then((module) => ({ default: module.BillsReport })),
 );
 const Items = lazy(() =>
-  import("@/routes/reports.items").then((module) => ({ default: module.ItemSalesReport })),
+  import("./ItemSalesReport").then((module) => ({ default: module.ItemSalesReport })),
 );
 const Payments = lazy(() =>
-  import("@/routes/reports.payments").then((module) => ({ default: module.PaymentsReport })),
+  import("./PaymentsReport").then((module) => ({ default: module.PaymentsReport })),
 );
 export type SalesReportView = "bills" | "items" | "payments";
 export function SalesReportWorkspace({ initialView = "bills" }: { initialView?: SalesReportView }) {

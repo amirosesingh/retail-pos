@@ -64,9 +64,8 @@ let lastReady = false;
  */
 export async function hasRequiredPlatformConfig(): Promise<ConfigReadiness> {
   if (!isTerminalApp()) return { ready: true, state: "not-applicable", have: NONE };
-  await hydrateConnectionProfile();
-
   try {
+    await hydrateConnectionProfile();
     const [status, backend] = await Promise.all([cloudKeyStatus(), backendUrl()]);
     const have = {
       supabaseUrl: Boolean(status.configured && status.url),
@@ -132,7 +131,7 @@ function settle(result: ConfigReadiness): ConfigReadiness {
 export function platformConfigReadySync(): boolean {
   if (!isTerminalApp()) return true;
   if (!isConnectionProfileHydrated()) {
-    void hydrateConnectionProfile();
+    void hydrateConnectionProfile().catch(() => {});
     return lastReady;
   }
   return lastReady || hasTerminalSupabaseOverride();

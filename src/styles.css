@@ -355,6 +355,8 @@
 
 /* Color palettes change visual tokens only. Register geometry is persisted in
    a separate layout store and never reads these values. */
+:root:not([data-pos-theme]),
+[data-pos-customer-display],
 :root[data-pos-theme="vibrant"] {
   --background: #f5f8ff;
   --surface: #ffffff;
@@ -393,6 +395,9 @@
   --chart-5: #db2777;
 }
 
+.dark [data-pos-customer-display],
+:root[data-pos-theme="midnight"] [data-pos-customer-display],
+:root.dark:not([data-pos-theme]),
 .dark[data-pos-theme="vibrant"] {
   --background: #10182b;
   --surface: #18243c;

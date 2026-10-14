@@ -56,15 +56,25 @@ export function hydrateConnectionProfile(): Promise<void> {
     } catch {
       /* no readable activation — the saved connection stands on its own */
     }
-    // Neither half may abort the other: a device with only one of the two
-    // stored must still come up as "incomplete", not as "unreadable".
-    await Promise.all([
-      initCloudConfigFromShell().catch(() => undefined),
-      hydrateBackendUrl().catch(() => ""),
-    ]);
+    // Missing values resolve normally. Unreadable storage must keep the boot
+    // gate closed. Settle both reads before allowing another restore attempt.
+    for (let attempt = 0; ; attempt++) {
+      const results = await Promise.allSettled([
+        initCloudConfigFromShell(),
+        hydrateBackendUrl(),
+      ]);
+      const failed = results.find(result => result.status === "rejected");
+      if (!failed || failed.status !== "rejected") break;
+      if (attempt === 2) throw failed.reason;
+      await new Promise(resolve => setTimeout(resolve, 200 * (attempt + 1)));
+    }
   })()
 
-    .catch(() => {})
+    .catch((error) => {
+      state = "idle";
+      inFlight = null;
+      throw error;
+    })
     .then(() => {
       state = "hydrated";
       inFlight = null;

@@ -127,6 +127,7 @@ import { Route as ApiV1PosActivityPreferencesRouteImport } from './routes/api/v1
 import { Route as ApiV1PosAuthorizationRouteImport } from './routes/api/v1/pos/authorization'
 import { Route as ApiV1PosIpcAdoptRouteImport } from './routes/api/v1/pos/ipc-adopt'
 import { Route as ApiV1PosIpcAuthorizeRouteImport } from './routes/api/v1/pos/ipc-authorize'
+import { Route as ApiV1PosPushServiceRouteImport } from './routes/api/v1/pos/push-service'
 import { Route as ApiV1PosSyncRouteImport } from './routes/api/v1/pos/sync'
 
 const IndexRoute = IndexRouteImport.update({
@@ -723,6 +724,11 @@ const ApiV1PosIpcAuthorizeRoute = ApiV1PosIpcAuthorizeRouteImport.update({
   path: '/api/v1/pos/ipc-authorize',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1PosPushServiceRoute = ApiV1PosPushServiceRouteImport.update({
+  id: '/api/v1/pos/push-service',
+  path: '/api/v1/pos/push-service',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiV1PosSyncRoute = ApiV1PosSyncRouteImport.update({
   id: '/api/v1/pos/sync',
   path: '/api/v1/pos/sync',
@@ -848,6 +854,7 @@ export interface FileRoutesByFullPath {
   '/api/v1/pos/authorization': typeof ApiV1PosAuthorizationRoute
   '/api/v1/pos/ipc-adopt': typeof ApiV1PosIpcAdoptRoute
   '/api/v1/pos/ipc-authorize': typeof ApiV1PosIpcAuthorizeRoute
+  '/api/v1/pos/push-service': typeof ApiV1PosPushServiceRoute
   '/api/v1/pos/sync': typeof ApiV1PosSyncRoute
 }
 export interface FileRoutesByTo {
@@ -969,6 +976,7 @@ export interface FileRoutesByTo {
   '/api/v1/pos/authorization': typeof ApiV1PosAuthorizationRoute
   '/api/v1/pos/ipc-adopt': typeof ApiV1PosIpcAdoptRoute
   '/api/v1/pos/ipc-authorize': typeof ApiV1PosIpcAuthorizeRoute
+  '/api/v1/pos/push-service': typeof ApiV1PosPushServiceRoute
   '/api/v1/pos/sync': typeof ApiV1PosSyncRoute
 }
 export interface FileRoutesById {
@@ -1091,6 +1099,7 @@ export interface FileRoutesById {
   '/api/v1/pos/authorization': typeof ApiV1PosAuthorizationRoute
   '/api/v1/pos/ipc-adopt': typeof ApiV1PosIpcAdoptRoute
   '/api/v1/pos/ipc-authorize': typeof ApiV1PosIpcAuthorizeRoute
+  '/api/v1/pos/push-service': typeof ApiV1PosPushServiceRoute
   '/api/v1/pos/sync': typeof ApiV1PosSyncRoute
 }
 export interface FileRouteTypes {
@@ -1214,6 +1223,7 @@ export interface FileRouteTypes {
     | '/api/v1/pos/authorization'
     | '/api/v1/pos/ipc-adopt'
     | '/api/v1/pos/ipc-authorize'
+    | '/api/v1/pos/push-service'
     | '/api/v1/pos/sync'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -1335,6 +1345,7 @@ export interface FileRouteTypes {
     | '/api/v1/pos/authorization'
     | '/api/v1/pos/ipc-adopt'
     | '/api/v1/pos/ipc-authorize'
+    | '/api/v1/pos/push-service'
     | '/api/v1/pos/sync'
   id:
     | '__root__'
@@ -1456,6 +1467,7 @@ export interface FileRouteTypes {
     | '/api/v1/pos/authorization'
     | '/api/v1/pos/ipc-adopt'
     | '/api/v1/pos/ipc-authorize'
+    | '/api/v1/pos/push-service'
     | '/api/v1/pos/sync'
   fileRoutesById: FileRoutesById
 }
@@ -1577,6 +1589,7 @@ export interface RootRouteChildren {
   ApiV1PosAuthorizationRoute: typeof ApiV1PosAuthorizationRoute
   ApiV1PosIpcAdoptRoute: typeof ApiV1PosIpcAdoptRoute
   ApiV1PosIpcAuthorizeRoute: typeof ApiV1PosIpcAuthorizeRoute
+  ApiV1PosPushServiceRoute: typeof ApiV1PosPushServiceRoute
   ApiV1PosSyncRoute: typeof ApiV1PosSyncRoute
 }
 
@@ -2408,6 +2421,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1PosIpcAuthorizeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/pos/push-service': {
+      id: '/api/v1/pos/push-service'
+      path: '/api/v1/pos/push-service'
+      fullPath: '/api/v1/pos/push-service'
+      preLoaderRoute: typeof ApiV1PosPushServiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/v1/pos/sync': {
       id: '/api/v1/pos/sync'
       path: '/api/v1/pos/sync'
@@ -2547,6 +2567,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiV1PosAuthorizationRoute: ApiV1PosAuthorizationRoute,
   ApiV1PosIpcAdoptRoute: ApiV1PosIpcAdoptRoute,
   ApiV1PosIpcAuthorizeRoute: ApiV1PosIpcAuthorizeRoute,
+  ApiV1PosPushServiceRoute: ApiV1PosPushServiceRoute,
   ApiV1PosSyncRoute: ApiV1PosSyncRoute,
 }
 export const routeTree = rootRouteImport

@@ -2205,11 +2205,11 @@ function registerIpc() {
     }
     return { ok: true, url: next };
   });
-  ipcMain.handle("cloud:status", () => ({ ok: true, ...cloudCredentials.status() }));
-  ipcMain.handle("cloud:bootstrap", () => {
-    const saved = cloudCredentials.read();
+  ipcMain.handle("cloud:status", () => guard.guarded(() => ({ ok: true, ...cloudCredentials.status() })));
+  ipcMain.handle("cloud:bootstrap", () => guard.guarded(() => {
+    const saved = cloudCredentials.read({ strict: true });
     return saved ? { ok: true, url: saved.url, key: saved.key } : { ok: false };
-  });
+  }));
   ipcMain.handle("cloud:set", (_e, value) => {
     const saved = cloudCredentials.write(value);
     if (saved.ok === false) return saved;

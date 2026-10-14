@@ -28,6 +28,14 @@ vi.mock("@/lib/backend-config", () => ({
   backendUrl: async () => store.backend,
 }));
 
+// These tests exercise readiness after restoration; vault failures are covered
+// by connection-profile.test.ts with the real restoration path.
+vi.mock("@/lib/connection-profile", () => ({
+  hydrateConnectionProfile: async () => {},
+  isConnectionProfileHydrated: () => true,
+  subscribeProfileHydrated: () => () => {},
+}));
+
 import { hasRequiredPlatformConfig } from "../platform-config-ready";
 
 const configured = {

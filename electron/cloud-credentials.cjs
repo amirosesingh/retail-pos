@@ -32,26 +32,28 @@ function clean(value) {
   return { url, key };
 }
 
-function read() {
-  if (canSeal()) {
-    try {
-      const parsed = clean(JSON.parse(safeStorage.decryptString(fs.readFileSync(sealedPath()))));
-      if (parsed) return parsed;
-    } catch {
-      /* no sealed copy yet — fall through to the legacy file */
-    }
-  }
-  try {
-    const parsed = clean(JSON.parse(fs.readFileSync(legacyPath(), "utf8")));
-    if (parsed && canSeal()) {
-      // Migrate a plain copy into the vault, then drop the plain file.
-      write(parsed);
-      return parsed;
-    }
+function readStrict() {
+  if (fs.existsSync(sealedPath())) {
+    if (!canSeal()) throw new Error("The Windows credential vault is not ready. Retry restoring the connection.");
+    const parsed = clean(JSON.parse(safeStorage.decryptString(fs.readFileSync(sealedPath()))));
+    if (!parsed) throw new Error("The saved database connection could not be read.");
     return parsed;
-  } catch {
-    return null;
   }
+  if (!fs.existsSync(legacyPath())) return null;
+  const parsed = clean(JSON.parse(fs.readFileSync(legacyPath(), "utf8")));
+  if (!parsed) throw new Error("The saved database connection could not be read.");
+  if (canSeal()) {
+    const saved = write(parsed);
+    if (!saved.ok) throw new Error("Could not restore the connection into the Windows vault.");
+  }
+  return parsed;
+}
+
+// Background probes may pause while the vault is unavailable; startup uses the
+// strict read so it never mistakes a failed restore for a fresh device.
+function read(options = {}) {
+  try { return readStrict(); }
+  catch (error) { if (options.strict) throw error; return null; }
 }
 
 function write(value) {
@@ -86,7 +88,7 @@ function remove() {
 
 /** Status for the settings UI — the key itself never leaves this process. */
 function status() {
-  const saved = read();
+  const saved = read({ strict: true });
   return {
     configured: Boolean(saved),
     url: saved ? saved.url : "",

@@ -23,6 +23,7 @@ if (!fs.existsSync(manifest)) {
 /* ------------------------------ manifest ------------------------------ */
 
 const lines = [
+  '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
   '    <uses-permission android:name="android.permission.CAMERA" />',
   '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />',
   '    <uses-feature android:name="android.hardware.camera" android:required="false" />',

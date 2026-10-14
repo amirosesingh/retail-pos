@@ -7,6 +7,7 @@
  * action cannot skip the message.
  */
 import { serviceRest } from "@/core/api/pos-relay.server";
+import { defaultAndroidPushRules, type AndroidPushRules } from "./android-push-policy";
 
 export type NotificationChannel = "off" | "app" | "whatsapp";
 
@@ -17,6 +18,7 @@ export type NotificationSettings = {
   quietFrom: string;
   quietTo: string;
   channels: Record<string, NotificationChannel>;
+  androidPush?: AndroidPushRules;
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
@@ -26,6 +28,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   quietFrom: "",
   quietTo: "",
   channels: {},
+  androidPush: defaultAndroidPushRules,
 };
 
 export async function readNotificationSettings(): Promise<NotificationSettings> {
@@ -39,6 +42,7 @@ export async function readNotificationSettings(): Promise<NotificationSettings> 
       ...saved,
       recipients: Array.isArray(saved.recipients) ? saved.recipients : [],
       channels: (saved.channels as Record<string, NotificationChannel>) ?? {},
+      androidPush: { ...defaultAndroidPushRules, ...saved.androidPush },
     };
   } catch {
     return DEFAULT_NOTIFICATION_SETTINGS;
@@ -174,9 +178,39 @@ export async function writeActivityEvent(
     : "activity_events";
   const res = await serviceRest(path, {
     method: "POST",
-    headers: { Prefer: "return=minimal,resolution=ignore-duplicates" },
+    headers: { Prefer: "return=representation,resolution=ignore-duplicates" },
     body: JSON.stringify([{ ...full, whatsapp_status: status, whatsapp_error: error }]),
   });
   if (!res.ok) return { ok: false, error: (await res.text()).slice(0, 300) };
+  if (cfg.androidPush?.enabled && process.env.POS_PUSH_SERVICE_URL) {
+    // Fast path; the central service also polls durable events to recover missed calls.
+    try {
+      const rows = await res.json() as {id:string}[];
+      const {centralPushRequest}=await import("./central-push.server");
+      for(const event of rows) await centralPushRequest({action:"event",eventId:event.id});
+    } catch { /* An audit write must still succeed if push is temporarily unavailable. */ }
+  }
   return { ok: true };
+}
+
+/** Compare-and-save prevents two delivery dialogs from overwriting each other. */
+export async function writeNotificationSection(incoming: NotificationSettings, section: "android" | "whatsapp"): Promise<NotificationSettings> {
+  const {mergeNotificationSection} = await import("./notification-settings-sections");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await serviceRest("pos_settings?id=eq.1&select=notification_settings");
+    if (!response.ok) throw new Error("Could not read the current notification settings.");
+    const rows = await response.json() as Array<{notification_settings: Partial<NotificationSettings> | null}>;
+    if (!rows.length) throw new Error("Company notification settings are not initialized.");
+    const raw = rows[0].notification_settings;
+    const current = {...DEFAULT_NOTIFICATION_SETTINGS, ...(raw ?? {})};
+    const next = mergeNotificationSection(current, incoming, section);
+    const match = raw === null ? "is.null" : `eq.${encodeURIComponent(JSON.stringify(raw))}`;
+    const update = await serviceRest(`pos_settings?id=eq.1&notification_settings=${match}`, {
+      method: "PATCH", headers: {Prefer: "return=representation"},
+      body: JSON.stringify({notification_settings: next}),
+    });
+    if (!update.ok) throw new Error("Could not save notification settings.");
+    if ((await update.json() as unknown[]).length) return next;
+  }
+  throw new Error("Notification settings changed on another device. Reopen this dialog and retry.");
 }
