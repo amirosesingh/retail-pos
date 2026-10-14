@@ -33,3 +33,11 @@ it("preserves malformed JSON, non-UUID identifiers, credentials and case-sensiti
   expect(normalizeUuidFields(row)).toEqual(row);
   expect(native.normalizeUuidFields(row)).toEqual(row);
 });
+it("accepts mixed-case local branch identities while rejecting a different branch", () => {
+  const { OperationsRepository } = require("../../../electron/db/repositories/operations.cjs");
+  const repository = new OperationsRepository({}, { tables: [{ sqlServerTable: "stock_adjustments", columns: ["id", "store_id", "product_id"].map(name => ({ sqlServerColumn: name })) }] });
+  const operations = repository.validate([{ kind: "insert", table: "stock_adjustments", rows: [{ id: mixed, product_id: mixed, store_id: mixed }] }]);
+  expect(() => repository.assertWriteScope(operations, { branchId: lower.toUpperCase() })).not.toThrow();
+  expect(operations[0].rows[0]).toMatchObject({ id: lower, product_id: lower, store_id: lower });
+  expect(() => repository.assertWriteScope(operations, { branchId: "b611a328-2217-4d77-944a-5f6a637d123b" })).toThrow("terminal's branch");
+});
