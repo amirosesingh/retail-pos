@@ -1,3 +1,4 @@
+const { normalizeUuidFields } = require("../../sync/uuid-fields.cjs");
 const { createHash } = require("node:crypto");
 const { branchPredicate } = require("../branch-scope.cjs");
 
@@ -80,6 +81,7 @@ class AggregateRepository {
   }
 
   async commitOnce(kind, aggregate) {
+    aggregate = normalizeUuidFields(aggregate);
     if (!AGGREGATE_KINDS.has(kind)) throw new Error("Unsupported aggregate type.");
     const operations = this.operationsRepository.validate(aggregate?.operations);
     const operationId = aggregate?.operationId || stableUuid({ kind, operations });

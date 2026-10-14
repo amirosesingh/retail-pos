@@ -295,6 +295,27 @@ BEGIN
   END LOOP;
   RETURN v_count;
 END $fn$;`);
+  } else if (table.cloudTable === "stock_adjustments") {
+    out.push(`CREATE OR REPLACE FUNCTION public.sync_apply_stock_adjustments(p_rows jsonb)
+RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE v_count integer := 0; v_adjustment public.stock_adjustments%ROWTYPE;
+BEGIN
+  -- Only newly inserted movements change stock. Replayed audit rows are inert.
+  FOR v_adjustment IN
+    INSERT INTO public."stock_adjustments" ("id","product_id","product_name","sku","barcode","store_id","terminal_id","reason","note","previous_stock","updated_stock","delta","cost_impact","staff_id","staff_name","role","created_at","row_version","draft_id")
+  SELECT "id","product_id","product_name","sku","barcode","store_id","terminal_id","reason","note","previous_stock","updated_stock","delta","cost_impact","staff_id","staff_name","role","created_at","row_version","draft_id" FROM jsonb_populate_recordset(NULL::public."stock_adjustments", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO NOTHING RETURNING *
+  LOOP
+    IF v_adjustment.product_id IS NULL OR NULLIF(v_adjustment.store_id,'') IS NULL
+       OR v_adjustment.delta <> v_adjustment.updated_stock - v_adjustment.previous_stock THEN
+      RAISE EXCEPTION 'Invalid stock adjustment movement';
+    END IF;
+    PERFORM public.stock_apply_delta(v_adjustment.id, v_adjustment.product_id,
+      v_adjustment.store_id, v_adjustment.delta);
+    v_count := v_count + 1;
+  END LOOP;
+  RETURN v_count;
+END $fn$;`);
   } else if (table.cloudTable === "stock_delta_applied") {
     out.push(`CREATE OR REPLACE FUNCTION public.sync_apply_stock_delta_applied(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
 DECLARE v_count integer:=0; v_row jsonb;

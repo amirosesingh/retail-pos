@@ -1,9 +1,10 @@
-/** UUID-shaped location identifiers are case-insensitive in PostgreSQL but not in JS objects. */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { recordId } from "./sale-identity";
+
+/** UUID identifiers share the same comparison format across SQL and JavaScript. */
 
 export function canonicalBranchId(value: unknown): string {
   const id = String(value ?? "").trim();
-  return UUID.test(id) ? id.toLowerCase() : id;
+  return recordId(id);
 }
 
 export function sameBranchId(left: unknown, right: unknown): boolean {

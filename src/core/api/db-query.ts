@@ -177,6 +177,9 @@ export function routedQueryWithSource(
   table: string,
   options: QueryOptions = {},
 ): Promise<{ rows: Row[]; source: ReadSource }> {
+  options = normalizeUuidFields(options);
+  if (options.in) options = { ...options, in: { ...options.in, values: options.in.values.map(value =>
+    normalizeUuidFields({ [options.in!.column]: value })[options.in!.column]) } };
   const key = readKey(table, options);
   const existing = inFlight.get(key);
   if (existing) return existing;

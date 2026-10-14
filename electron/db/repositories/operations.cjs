@@ -1,3 +1,4 @@
+const { normalizeUuidFields } = require("../../sync/uuid-fields.cjs");
 const { loadRegistry } = require("../schema-registry.cjs");
 const {
   branchPredicate,
@@ -72,6 +73,9 @@ class OperationsRepository {
       });
     }
     for (const op of ops) {
+      if (op.rows) op.rows = normalizeUuidFields(op.rows);
+      if (op.values) op.values = normalizeUuidFields(op.values);
+      if (op.match) op.match = normalizeUuidFields(op.match);
       const table = this.tables.get(op?.table);
       if (!table) throw new Error("Unsupported business table.");
       if (["settings_scoped", "settings_overrides"].includes(op.table)) {
@@ -109,7 +113,7 @@ class OperationsRepository {
     return ops;
   }
   assertWriteScope(ops, scopeContext) {
-    const { branchId, terminalId } = scopeContext;
+    const { branchId, terminalId } = normalizeUuidFields(scopeContext);
     if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
     const branch = String(branchId);
     const terminal = String(terminalId ?? "");
@@ -303,6 +307,7 @@ class OperationsRepository {
     }
   }
   async applyOperation(transaction, op, scope = {}) {
+    scope = normalizeUuidFields(scope);
     if (op.table === "activity_events" && op.kind === "update") {
       const operator = scope.activityOperator;
       if (!operator?.subject || !scope.branchId)

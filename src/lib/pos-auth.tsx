@@ -1,3 +1,4 @@
+import { normalizeUuidFields } from "./uuid-fields";
 import { preserveSessionDrafts } from "./session-draft";
 import {
   createContext,
@@ -296,7 +297,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       const rawTerminal = window.sessionStorage.getItem(TERMINAL_KEY);
-      if (rawTerminal) setTerminalUser(JSON.parse(rawTerminal) as TerminalUser);
+      if (rawTerminal) setTerminalUser(normalizeUuidFields(JSON.parse(rawTerminal) as TerminalUser));
     } catch {
       /* ignore corrupt storage */
     }
@@ -489,7 +490,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
         const row = (Array.isArray(data) ? data[0] : data) as unknown as AppUserProfile | undefined;
-        setAppUser(row ?? null);
+        setAppUser(normalizeUuidFields(row ?? null));
         setProfileReady(true);
         markStartupStage("profile");
       },
@@ -936,7 +937,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       bumpSessionEpoch();
-      setTerminalUser(next);
+      setTerminalUser(normalizeUuidFields(next));
       // The branch is in place before the register mounts, so nothing renders
       // against an unresolved branch.
       try {

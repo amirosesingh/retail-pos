@@ -1,3 +1,4 @@
+const { normalizeUuidFields } = require("./uuid-fields.cjs");
 /** SQL Server stores PostgreSQL jsonb and text[] in nvarchar columns. */
 function normalizeSettingsScope(table, row) {
   if (!["settings_scoped", "settings_overrides"].includes(table) || typeof row?.scope !== "string") return row;
@@ -36,7 +37,7 @@ function toCloudRow(table, row) {
     }
     if (column.cloudColumn !== name) delete result[name];
   }
-  return result;
+  return normalizeUuidFields(result);
 }
 
 /** Return native values to Electron without exposing JSON-encoded SQL text. */
@@ -62,10 +63,11 @@ function toRendererRow(table, row) {
     catch { result[column.cloudColumn] = result[name]; }
     if (column.cloudColumn !== name) delete result[name];
   }
-  return result;
+  return normalizeUuidFields(result);
 }
 
 function toLocalValue(column, value) {
+  value = normalizeUuidFields({ [column.cloudColumn ?? column.sqlServerColumn]: value })[column.cloudColumn ?? column.sqlServerColumn];
   return structured(column) && value !== null
     ? JSON.stringify(value)
     : value;

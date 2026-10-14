@@ -1,3 +1,4 @@
+import { normalizeUuidFields } from "@/lib/uuid-fields";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "@/lib/points-redemption";
 import { recordId } from "@/lib/sale-identity";
@@ -134,7 +135,7 @@ export async function productDeleteBlock(id: string): Promise<DeleteGuardVerdict
 
 /* ------------------------------- mappers ------------------------------- */
 
-export const rowToProduct = (r: Row): Product => ({
+export const rowToProduct = (r: Row): Product => normalizeUuidFields({
   id: r.id,
   createdAt: r.created_at ?? undefined,
   name: r.name,
@@ -186,13 +187,13 @@ export function applyScopedProductPrices(
     )
       continue;
     const value = jsonValue<Row>(row.value, {});
-    const productId = key.slice("product_price:".length);
+    const productId = recordId(key.slice("product_price:".length));
     const candidate = { priority: priority[kind], value };
     if (candidate.priority >= (selected.get(productId)?.priority ?? -1))
       selected.set(productId, candidate);
   }
   return products.map((product) => {
-    const value = selected.get(product.id)?.value;
+    const value = selected.get(recordId(product.id))?.value;
     if (!value) return product;
     const selling =
       value.selling_price == null ? product.price : safeNum(value.selling_price, product.price);
@@ -302,7 +303,7 @@ export const productToRow = (p: Product): Row => {
   };
 };
 
-const rowToMember = (r: Row, tierName: (id: string | null) => MemberTier): Member => ({
+const rowToMember = (r: Row, tierName: (id: string | null) => MemberTier): Member => normalizeUuidFields({
   id: r.id,
   code: r.member_code,
   name: r.full_name,
@@ -349,7 +350,7 @@ const memberToRow = (
   // directory snapshot back into the POS mirror.
 });
 
-const rowToPromotion = (r: Row): Promotion => ({
+const rowToPromotion = (r: Row): Promotion => normalizeUuidFields({
   id: r.id,
   name: r.title,
   type: r.promo_type as PromoType,
@@ -366,7 +367,7 @@ const rowToPromotion = (r: Row): Promotion => ({
   partner: r.partner ?? undefined,
 });
 
-export const rowToStore = (r: Row): Store => ({
+export const rowToStore = (r: Row): Store => normalizeUuidFields({
   id: r.id,
   code: r.code ?? "",
   name: r.name ?? "",
@@ -632,7 +633,7 @@ export const applySettingsFields = (
   return merged;
 };
 
-const rowToShift = (r: Row): Shift => ({
+const rowToShift = (r: Row): Shift => normalizeUuidFields({
   id: recordId(r.id),
   storeId: r.store_id ?? "",
   cashier: r.opened_by_name ?? "",
@@ -691,7 +692,7 @@ const shiftToRow = (s: Shift): Row => ({
   updated_at: new Date().toISOString(),
 });
 
-const rowToShiftSession = (r: Row): ShiftSession => ({
+const rowToShiftSession = (r: Row): ShiftSession => normalizeUuidFields({
   id: r.id,
   shiftId: r.shift_id ?? "",
   storeId: r.store_id ?? "",
@@ -791,7 +792,7 @@ const forgetTxnColumn = (message?: string | null) => {
   }
 };
 
-export const rowToSale = (r: Row): Sale => ({
+export const rowToSale = (r: Row): Sale => normalizeUuidFields({
   rowVersion: num(r.row_version),
   correctedAt: r.corrected_at ?? undefined,
   id: recordId(r.id),
@@ -1861,7 +1862,7 @@ export type ReceivingInvoice = {
   lines: ReceivingLine[];
 };
 
-const rowToReceivingLine = (r: Row): ReceivingLine => ({
+const rowToReceivingLine = (r: Row): ReceivingLine => normalizeUuidFields({
   id: r.id,
   productId: r.product_id ?? null,
   barcode: r.barcode ?? "",
@@ -1887,7 +1888,7 @@ const storedPurchaseOrderNumber = (inv: ReceivingInvoice): string =>
     ? `${DRAFT_PO_PREFIX}${inv.id}:${inv.invoiceNo.trim().slice(0, 400)}`
     : inv.invoiceNo.trim();
 
-const rowToReceivingInvoice = (r: Row): ReceivingInvoice => ({
+const rowToReceivingInvoice = (r: Row): ReceivingInvoice => normalizeUuidFields({
   id: r.id,
   reference: r.reference ?? null,
   invoiceNo: visiblePurchaseOrderNumber(r.po_number, r.status),
@@ -2181,7 +2182,7 @@ async function runBatchLive(context: string, ops: SyncOp[]) {
  * action — nothing moves on while the data is still only in memory.
  */
 export function commitOps(context: string, ops: SyncOp[]): Promise<CommitTarget> {
-  return withDataTask(context, () => commitOpsInternal(context, ops));
+  return withDataTask(context, () => commitOpsInternal(context, normalizeUuidFields(ops)));
 }
 
 async function commitOpsInternal(context: string, ops: SyncOp[]): Promise<CommitTarget> {

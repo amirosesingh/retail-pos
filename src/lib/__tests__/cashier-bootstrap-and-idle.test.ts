@@ -98,7 +98,7 @@ describe("cashier location bootstrap", () => {
     const source = read("src/lib/pos-auth.tsx");
     const auth = source.slice(source.indexOf("const cashierLogin"));
     expect(auth.indexOf("await saveCashierToken(cashierToken)")).toBeLessThan(
-      auth.indexOf("setTerminalUser(next)"),
+      auth.indexOf("setTerminalUser(normalizeUuidFields(next))"),
     );
   });
 
@@ -108,7 +108,7 @@ describe("cashier location bootstrap", () => {
     expect(login).toContain("verified?.authTokenHash");
     expect(login).not.toContain("preparePinAccount");
     expect(login.indexOf("supabase.auth.verifyOtp")).toBeLessThan(
-      login.indexOf("setTerminalUser(next)"),
+      login.indexOf("setTerminalUser(normalizeUuidFields(next))"),
     );
 
     const server = read("src/lib/cashier-login.server.ts");

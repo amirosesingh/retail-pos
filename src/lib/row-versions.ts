@@ -1,3 +1,4 @@
+import { recordId } from "./sale-identity";
 /**
  * What version of each record this terminal last saw centrally.
  *
@@ -17,7 +18,7 @@ type Versions = Record<string, number>;
 
 const isBrowser = () => typeof window !== "undefined";
 
-const cacheKey = (table: string, id: string) => `${table}:${id}`;
+const cacheKey = (table: string, id: string) => `${table}:${recordId(id)}`;
 
 let memory: Versions | null = null;
 
@@ -25,7 +26,13 @@ function read(): Versions {
   if (memory) return memory;
   if (!isBrowser()) return (memory = {});
   try {
-    memory = JSON.parse(readBusinessValue(KEY) ?? "{}") as Versions;
+    const stored = JSON.parse(readBusinessValue(KEY) ?? "{}") as Versions;
+    memory = {};
+    for (const [key, version] of Object.entries(stored)) {
+      const split = key.indexOf(":");
+      const canonical = split < 0 ? key : cacheKey(key.slice(0, split), key.slice(split + 1));
+      memory[canonical] = Math.max(memory[canonical] ?? 0, version);
+    }
   } catch {
     memory = {};
   }
