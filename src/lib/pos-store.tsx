@@ -3218,11 +3218,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
       adjustmentAttemptId?: string | null,
     ): Promise<CommitTarget | null> => {
       const target = storeId ?? stateRef.current.currentStoreId;
-      const productsById = new Map(stateRef.current.products.map((product) => [product.id, product]));
+      const productsById = new Map(stateRef.current.products.map((product) => [canonicalBranchId(product.id), product]));
       const changes = entries
         .map((e) => {
-          const product = productsById.get(e.productId);
-          if (!product) return null;
+          const product = productsById.get(canonicalBranchId(e.productId));
+          if (!product) throw new Error("A counted item is missing from inventory. Refresh the count before posting.");
+          if (!Number.isSafeInteger(e.counted) || e.counted < 0)
+            throw new Error("Stock counts must contain non-negative whole quantities.");
           const before = stockAt(product, target);
           const counted = Math.max(0, Math.round(e.counted));
           if (counted === before) return null;
@@ -3236,10 +3238,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
       }[];
       if (!changes.length) return Promise.resolve(null);
 
-      const products = changes.map((c) => ({
+      const lifecycle = stateRef.current.settings.integrations.autoArchiveZeroStock !== false;
+      const products = changes.map((c) => applyZeroStockLifecycle({
         ...c.product,
-        stockByStore: { ...c.product.stockByStore, [target]: c.counted },
-      }));
+        stockByStore: { ...canonicalStockMap(c.product.stockByStore), [canonicalBranchId(target)]: c.counted },
+      }, lifecycle));
       // Stable movement ids make a retry safe after a local/cloud timeout. The
       // product id sort keeps the child index deterministic even if the UI
       // rows were re-ordered between attempts.
@@ -3285,7 +3288,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             ...s,
             products: s.products.map((p) =>
               byId.has(p.id)
-                ? { ...p, stockByStore: { ...p.stockByStore, [target]: byId.get(p.id)! } }
+                ? applyZeroStockLifecycle({ ...p, stockByStore: { ...canonicalStockMap(p.stockByStore), [canonicalBranchId(target)]: byId.get(p.id)! } }, lifecycle)
                 : p,
             ),
           }));

@@ -1,3 +1,4 @@
+const { recordId } = require("./uuid-fields.cjs");
 const { retryDelay } = require("./retry.cjs");
 const { stableUuid } = require("../db/repositories/aggregates.cjs");
 const { ACTIVITY_TABLES } = require("./event-policy.cjs");
@@ -63,7 +64,7 @@ function rowsForBranch(table, rows, branchId) {
       ? columns.has("store_id") ? "store_id" : columns.has("branch_id") ? "branch_id" : null
       : null;
   if (!branchColumn) return rows;
-  const authoritative = String(branchId ?? "").trim();
+  const authoritative = recordId(String(branchId ?? "").trim());
   return rows.map((row) => {
     const supplied = String(row?.[branchColumn] ?? "").trim();
     const equivalent =
@@ -92,6 +93,7 @@ function isSharedPosFieldChange(change) {
 
 /** A child-only retry must carry its locally owned parent into the same cloud transaction. */
 async function includeMissingParents(operations, reader, registry, branchId) {
+  branchId = recordId(branchId);
   const completed = (operations.find(op => op.table === "held_orders" && !op.deletePhase)?.rows ?? []).filter(row => row.status === "completed");
   if (completed.length) {
     const parents = await reader.ticketCompletionParents(completed, branchId);
@@ -141,13 +143,15 @@ async function includeMissingParents(operations, reader, registry, branchId) {
  * remain in the batch so the server rejects malformed writes.
  */
 function terminalWritableChanges(tableName, changes, { branchId = "", terminalId = "" } = {}) {
+  branchId = recordId(branchId);
+  terminalId = recordId(terminalId);
   if (!["settings_overrides", "settings_scoped"].includes(tableName)) return changes;
   return changes.filter((change) => {
     const key = changeKey(change);
     const scope = String(key.scope ?? "")
       .trim()
       .toLowerCase();
-    const scopeId = String(key.scope_id ?? "").trim();
+    const scopeId = recordId(String(key.scope_id ?? "").trim());
     const fieldWrite =
       tableName === "settings_scoped" &&
       scope === "global" &&
@@ -187,6 +191,7 @@ class PushWorker {
     throw new Error("The synchronization retry loop ended unexpectedly.");
   }
   async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true) {
+    branchId = recordId(branchId);
     this.pushErrors = []; this.blockedTables = new Set();
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
@@ -315,6 +320,7 @@ class PushWorker {
     return pushed;
   }
   async run({ branchId, batchSize = 500, onProgress = () => {}, includeActivity = true }) {
+    branchId = recordId(branchId);
     if (!branchId) throw new Error("A branch is required for synchronization.");
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
     const terminalId = this.cloud.terminalId?.() ?? "";

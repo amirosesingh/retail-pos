@@ -1,3 +1,4 @@
+const { recordId } = require("./sync/uuid-fields.cjs");
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -89,7 +90,7 @@ function publishBusinessChange(change){
 function localBranchId(){
   const terminal=terminalStore.read()??{};
   return [terminal.locationId,terminal.storeId,terminal.branchId,adminSession.branchId()]
-    .map(value=>String(value??"").trim()).find(Boolean)??null;
+    .map(value=>recordId(String(value??"").trim())).find(Boolean)??null;
 }
 function rememberVerifiedBranch(branchId){
   if(!branchId)return;
@@ -929,21 +930,39 @@ function printSilent(html, deviceName, paper, dialog = false) {
       width: 420,
       height: 900,
       ...(dialog ? { title: "Print", autoHideMenuBar: true } : {}),
-      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false },
+      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false },
     });
     // A receipt is printed content, never a place to browse from.
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     win.webContents.on("will-navigate", (event) => event.preventDefault());
+    let finished = false;
+    let timeout;
     const done = (result) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
       if (!win.isDestroyed()) win.destroy();
       resolve(result);
     };
+    timeout = setTimeout(() => done({ ok: false, error: "The printer did not confirm the receipt. Check the printer before trying again." }), 60_000);
     const pageSize =
       PAGE_SIZES[paper] ?? (paper === "letter" ? "Letter" : paper === "a4" ? "A4" : undefined);
-    win.webContents.once("did-finish-load", () => {
-      // Settle delay so fonts/QR SVG are laid out before the page is rasterised.
-      setTimeout(() => {
-        if (win.isDestroyed()) return;
+    win.webContents.once("did-finish-load", async () => {
+      try {
+        const ready = await win.webContents.executeJavaScript(`(async () => {
+          const resources = Promise.all([
+            document.fonts ? document.fonts.ready : Promise.resolve(),
+            ...Array.from(document.images).map(image => image.complete ? Promise.resolve() :
+              new Promise(resolve => { image.addEventListener('load', resolve, { once: true }); image.addEventListener('error', resolve, { once: true }); }))
+          ]);
+          await Promise.race([resources, new Promise(resolve => setTimeout(resolve, 5000))]);
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          return !!document.body && !!document.body.innerText.trim() && document.body.getBoundingClientRect().height > 0;
+        })()`);
+        if (finished || win.isDestroyed()) return;
+        if (!ready) return done({ ok: false, error: "The receipt has no visible content. Open the receipt preview and check its layout before printing." });
+        // A person may leave the Windows dialog open while choosing a printer.
+        if (dialog) clearTimeout(timeout);
         win.webContents.print(
           {
             silent: !dialog,
@@ -952,21 +971,17 @@ function printSilent(html, deviceName, paper, dialog = false) {
             ...(pageSize ? { pageSize } : {}),
             ...(deviceName ? { deviceName } : {}),
           },
-          (success, reason) =>
-            done(
-              success
-                ? { ok: true }
-                : reason === "cancelled"
-                  ? { ok: true, cancelled: true }
-                  : { ok: false, error: reason },
-            ),
+          (success, reason) => done(success ? { ok: true } : reason === "cancelled"
+            ? { ok: true, cancelled: true } : { ok: false, error: reason || "The printer could not print the receipt." }),
         );
-      }, 350);
+      } catch (error) {
+        done({ ok: false, error: error?.message || "The receipt could not be rendered for printing." });
+      }
     });
     win.webContents.once("did-fail-load", (_e, code, description) =>
       done({ ok: false, error: `${description} (${code})` }),
     );
-    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(error => done({ ok: false, error: error?.message || "The receipt could not be loaded." }));
   });
 }
 

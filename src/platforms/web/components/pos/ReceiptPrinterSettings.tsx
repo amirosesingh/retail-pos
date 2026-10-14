@@ -118,6 +118,29 @@ export function ReceiptPrinterSettings() {
       </div>
 
       <div className="mt-4 space-y-1">
+        <Label className="text-xs text-muted-foreground">Receipt paper width</Label>
+        <ThemedSelect
+          value={state.settings.receipt.paper}
+          ariaLabel="Receipt paper width"
+          onChange={(value: string) => {
+            if (!["30mm", "58mm", "80mm", "a4", "letter"].includes(value)) return;
+            updateSettings({ receipt: { ...state.settings.receipt, paper: value as typeof state.settings.receipt.paper } });
+          }}
+          options={[
+            { value: "30mm", label: "30 mm roll" },
+            { value: "58mm", label: "58 mm roll" },
+            { value: "80mm", label: "80 mm roll" },
+            { value: "a4", label: "A4 sheet" },
+            { value: "letter", label: "Letter sheet" },
+          ]}
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Select the paper installed in the printer. This saved size controls receipt previews,
+          Direct, Dialog and Thermal printing. For driver printing, select the same paper in Windows printer preferences.
+        </p>
+      </div>
+
+      <div className="mt-4 space-y-1">
         <Label className="text-xs text-muted-foreground">Receipt print mode</Label>
         <ThemedSelect
           value={prefs.printMode ?? "dialog"}

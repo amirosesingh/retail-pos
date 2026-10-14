@@ -1,3 +1,4 @@
+import { normalizeUuidFields } from "./uuid-fields";
 /**
  * Persisted register draft.
  *
@@ -32,7 +33,7 @@ export async function loadCartDraft(storeId: string): Promise<CartDraft | null> 
     await pending;
     const raw = readBusinessValue(key(storeId));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<CartDraft>;
+    const parsed = normalizeUuidFields(JSON.parse(raw) as Partial<CartDraft>);
     if (!Array.isArray(parsed.lines)) return null;
     return {
       lines: parsed.lines as CartLine[],

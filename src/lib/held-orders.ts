@@ -1,3 +1,5 @@
+import { normalizeUuidFields } from "./uuid-fields";
+import { sameRecordId } from "./sale-identity";
 import { subscribeDataChange } from "./sync-engine";
 /**
  * Held orders shared across routes.
@@ -75,7 +77,7 @@ const parseJson = <T>(value: unknown, fallback: T): T => {
 };
 
 export function rowToHeldOrder(row: Record<string, unknown>): HeldOrder {
-  return {
+  return normalizeUuidFields({
     id: String(row.id ?? ""),
     label: String(row.label ?? "Held ticket"),
     total: Number(row.total ?? 0),
@@ -97,7 +99,7 @@ export function rowToHeldOrder(row: Record<string, unknown>): HeldOrder {
     pendingRequestId: row.pending_request_id == null ? null : String(row.pending_request_id),
     approvalSnapshotHash:
       row.approval_snapshot_hash == null ? null : String(row.approval_snapshot_hash),
-  };
+  });
 }
 
 export function readHeldOrders(): HeldOrder[] {
@@ -106,7 +108,7 @@ export function readHeldOrders(): HeldOrder[] {
   try {
     const raw = readBusinessValue(KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? (parsed as HeldOrder[]) : [];
+    return Array.isArray(parsed) ? normalizeUuidFields(parsed as HeldOrder[]) : [];
   } catch {
     return [];
   }
@@ -114,8 +116,8 @@ export function readHeldOrders(): HeldOrder[] {
 
 /** Deep links may arrive before the Holds hook's first database read finishes. */
 export async function loadHeldOrder(id: string): Promise<HeldOrder | undefined> {
-  const cached = readHeldOrders().find(order => order.id === id);
-  const order = cached ?? (await db.listHeldOrders()).map(row => rowToHeldOrder(row as Record<string, unknown>)).find(order => order.id === id);
+  const cached = readHeldOrders().find(order => sameRecordId(order.id, id));
+  const order = cached ?? (await db.listHeldOrders()).map(row => rowToHeldOrder(row as Record<string, unknown>)).find(order => sameRecordId(order.id, id));
   return order && !["completed", "cancelled"].includes(order.status ?? "held") ? order : undefined;
 }
 

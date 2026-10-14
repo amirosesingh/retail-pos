@@ -102,6 +102,19 @@ describe("checkout commit", () => {
   });
   afterEach(() => setPreferredDatabaseMode("local"));
 
+  it("commits restored stock, its audit movement and posted draft in one Electron transaction", async () => {
+    platform.offlineFirst = true;
+    const product: Product = { id: "p1", name: "Shirt", sku: "S1", barcode: "10001", category: "Clothes", cost: 25, price: 50, reorderLevel: 1, taxRate: 0, stockByStore: { "store-1": 1 }, archived: false };
+    await expect(db.commitStockAdjustments([product], [{ id: "movement-1", productId: product.id, productName: product.name, sku: product.sku, storeId: "store-1", reason: "manual", previousStock: 0, updatedStock: 1, delta: 1, costImpact: 25 }], { id: "draft-1" })).resolves.toBe("local");
+    const batch = localAggregate.mock.calls[0][0];
+    expect(batch.kind).toBe("stock");
+    expect(batch.operations.map((op: { table: string }) => op.table)).toEqual(["products", "stock_adjustments", "stock_count_drafts"]);
+    expect(batch.operations[0].rows[0]).toMatchObject({ is_archived: false, stock_by_store: { "store-1": 1 } });
+    expect(batch.operations[1].rows[0]).toMatchObject({ id: "movement-1", delta: 1 });
+    expect(batch.operations[2]).toMatchObject({ values: { status: "posted" }, requireMatch: true });
+    expect(live).not.toHaveBeenCalled();
+  });
+
   it("checks unsynced Electron sales locally, never against cloud absence", async () => {
     platform.offlineFirst = true;
     localQuery.mockResolvedValueOnce({ ok: true, rows: [{ id: "sale-1" }] });
