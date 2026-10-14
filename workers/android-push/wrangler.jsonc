@@ -1,0 +1,7 @@
+{
+  "name": "retail-pos-android-push",
+  "main": "index.ts",
+  "compatibility_date": "2026-10-14",
+  "triggers": { "crons": ["* * * * *"] },
+  "d1_databases": [{ "binding": "DB", "database_name": "retail-pos-android-push", "database_id": "295485dd-be06-484c-aa20-5056eb8c28b5" }]
+}

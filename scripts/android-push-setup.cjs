@@ -1,0 +1,37 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const root = path.resolve(__dirname, "..");
+const input = process.env.ANDROID_GOOGLE_SERVICES_JSON;
+const source = process.env.POS_ANDROID_FIREBASE_CONFIG;
+const target = path.join(root, "android", "app", "google-services.json");
+if (!fs.existsSync(path.dirname(target)))
+  throw new Error("Generate the Android project before configuring push.");
+if (!input && !source) {
+  if (process.env.VITE_ANDROID_PUSH_ENABLED === "true")
+    throw new Error("Android push is enabled but Firebase Android configuration is missing.");
+  console.log("Android push is not configured; this build keeps phone push disabled.");
+  process.exit(0);
+}
+const text = input ?? fs.readFileSync(source, "utf8");
+const configuration = JSON.parse(text);
+if (
+  !configuration.client?.some(
+    (client) => client.client_info?.android_client_info?.package_name === "com.luckycharms.pos",
+  )
+)
+  throw new Error("Firebase configuration must register com.luckycharms.pos.");
+fs.writeFileSync(target, JSON.stringify(configuration, null, 2));
+console.log("Firebase Android configuration installed.");
+
+const javaFolder = path.join(root,"android","app","src","main","java","com","luckycharms","pos");
+fs.mkdirSync(javaFolder,{recursive:true});
+fs.copyFileSync(path.join(root,"workers","android-push","android","PosFirebaseMessagingService.java"),path.join(javaFolder,"PosFirebaseMessagingService.java"));
+const manifestPath=path.join(root,"android","app","src","main","AndroidManifest.xml");
+let manifest=fs.readFileSync(manifestPath,"utf8");
+if(!manifest.includes("xmlns:tools="))manifest=manifest.replace("<manifest ",'<manifest xmlns:tools="http://schemas.android.com/tools" ');
+if(!manifest.includes("com.luckycharms.pos.PosFirebaseMessagingService"))manifest=manifest.replace("</application>",`<service android:name="com.capacitorjs.plugins.pushnotifications.MessagingService" tools:node="remove" />
+<service android:name="com.luckycharms.pos.PosFirebaseMessagingService" android:exported="false">
+<intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
+</service>
+</application>`);
+fs.writeFileSync(manifestPath,manifest);

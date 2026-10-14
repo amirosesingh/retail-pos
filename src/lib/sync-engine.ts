@@ -1,6 +1,7 @@
 import { externalClientSnapshot, supabaseExternal } from "@/integrations/supabase/external-client";
 import { logSync } from "./sync-log";
 import { hasRequiredPlatformConfig } from "./platform-config-ready";
+import { sessionEpoch, isCurrentEpoch } from "./session-epoch";
 import { hasSignedInIdentity } from "./session-presence";
 import { createSerialChannelReplacer } from "./realtime-channel-replacer";
 import { createSyncWakeChannels } from "./sync-wake-channels";
@@ -243,13 +244,16 @@ async function execute(op: SyncOp): Promise<QueryResult> {
  */
 export async function runOpLive(context: string, op: SyncOp): Promise<void> {
   // Shift rows intentionally expose only a safe SELECT projection, while a
-  // generic PostgREST upsert requires table-wide SELECT. Day-end summaries
+  // generic PostgREST upsert requires SELECT. Sign-in history is also hidden
+  // from cashiers, while recording their own sign-in must still succeed.
+  // Day-end summaries
   // also need to work for PIN sessions that have no Supabase Auth token. Both
   // already have a branch-scoped server relay, so avoid a guaranteed 403/401
   // direct attempt before using it.
   if (
     (op.table === "stores" ||
       op.table === "shifts" ||
+      op.table === "shift_sessions" ||
       op.table === "shift_notifications" ||
       refusedTables.has(op.table) ||
       preferRelay()) &&
@@ -352,6 +356,7 @@ async function readChangedPage(
   since: string,
   through: string,
   from: number,
+  current: () => boolean = () => true,
 ) {
   const ask = (column: string) =>
     client
@@ -367,6 +372,7 @@ async function readChangedPage(
   if (known) return { ...(await ask(known)), column: known };
 
   let res = await ask("updated_at");
+  if (!current()) return { ...res, column: "updated_at" as const };
   if (!res.error) {
     stampColumn.set(table, "updated_at");
     return { ...res, column: "updated_at" as const };
@@ -391,10 +397,18 @@ export async function pullDelta(): Promise<{ merged: number }> {
   // PIN credentials do not authorize SELECT on business tables. Electron's
   // worker owns its pull; only cloud staff sessions can run this probe.
   if (localDb() || !hasStaffSession()) return { merged: 0 };
+  pulling = true;
+  try { return await pullDeltaForSession(); }
+  finally { pulling = false; }
+}
+
+async function pullDeltaForSession(): Promise<{merged: number}> {
   // Local storage can briefly retain a revoked session while GoTrue is
   // finishing its sign-out/refresh callback. Prove the user once before the
   // table loop; otherwise every protected table repeats the same anonymous
   // 401/42501 failure and floods the database log.
+  const epoch = sessionEpoch();
+  const current = () => isCurrentEpoch(epoch) && hasStaffSession();
   const client = externalClientSnapshot();
   let verified: Awaited<ReturnType<typeof client.auth.getUser>>;
   let session: Awaited<ReturnType<typeof client.auth.getSession>>;
@@ -404,9 +418,11 @@ export async function pullDelta(): Promise<{ merged: number }> {
     // getUser succeeds with the old token while the following table requests
     // leave as anon, producing one 42501 error for every pull table.
     session = await client.auth.getSession();
+    if (!current()) return { merged: 0 };
     const accessToken = session.data.session?.access_token;
     if (session.error || !accessToken) return { merged: 0 };
     verified = await client.auth.getUser(accessToken);
+    if (!current()) return { merged: 0 };
   } catch {
     // A rejected promise is a connectivity failure, not proof that the token
     // is invalid. Keep the signed-in session and retry on the next sync pass.
@@ -432,7 +448,9 @@ export async function pullDelta(): Promise<{ merged: number }> {
   // has a valid Supabase user, but may never probe staff-only business tables.
   // Only ask for the staff profile after the JWT itself has been proven, so an
   // expired token cannot create one extra rejected RPC in the database logs.
+  if (!current()) return { merged: 0 };
   const staff = await client.rpc("current_app_user");
+  if (!current()) return { merged: 0 };
   const staffProfile = (staff.data?.[0] ?? null) as { is_active?: boolean } | null;
   if (staff.error || !staffProfile?.is_active) return { merged: 0 };
   // Keys rejected: stay parked until fresh ones are saved.
@@ -445,6 +463,7 @@ export async function pullDelta(): Promise<{ merged: number }> {
   try {
     beginSyncRun(PULL_TABLES.filter((table) => tableSyncAllowed(table)));
     for (const table of PULL_TABLES) {
+      if (!current()) { endSyncRun(); return { merged: changed }; }
       if (!tableSyncAllowed(table)) continue;
       markTableSync(table, "syncing", "Checking for changes…");
       // Each table resumes from its own mark, so one failing table never
@@ -454,7 +473,9 @@ export async function pullDelta(): Promise<{ merged: number }> {
       let offset = 0;
       let tableError: { message: string; status?: number } | null = null;
       for (;;) {
-        const page = await readChangedPage(client, table, since, startedAt, offset);
+        if (!current()) { endSyncRun(); return { merged: changed }; }
+        const page = await readChangedPage(client, table, since, startedAt, offset, current);
+        if (!current()) { endSyncRun(); return { merged: changed }; }
         if (page.error) {
           tableError = page.error;
           break;
@@ -497,6 +518,7 @@ export async function pullDelta(): Promise<{ merged: number }> {
       recordSync({ direction: "pull", entity: table, records: tableChanged, status: "success" });
       markTableSync(table, "synced", `${tableChanged} row(s) updated`);
     }
+    if (!current()) { endSyncRun(); return { merged: changed }; }
     // Marks only advance for tables that answered and were merged cleanly.
     for (const table of clean) setLastTablePull(table, startedAt);
     setLastSuccessfulPull(startedAt);
@@ -504,13 +526,12 @@ export async function pullDelta(): Promise<{ merged: number }> {
     setSyncState({ lastSyncAt: startedAt, credentialsInvalid: false });
     endSyncRun();
   } catch (e) {
+    if (!current()) { endSyncRun(); return { merged: changed }; }
     const message = e instanceof Error ? e.message : String(e);
     if (isCredentialError(e) || CREDENTIAL_ERROR_RE.test(message)) noteCredentialsInvalid(message);
     setSyncState({ lastError: message });
     recordSync({ direction: "pull", entity: "catalogue", status: "failed", error: message });
     endSyncRun(message);
-  } finally {
-    pulling = false;
   }
   return { merged: changed };
 }
@@ -1058,9 +1079,12 @@ export function startSyncEngine() {
     });
   };
   installLiveChannel(liveHasStaffSession);
-  const { data: authListener } = supabaseExternal.auth.onAuthStateChange((_event, session) => {
+  const { data: authListener } = supabaseExternal.auth.onAuthStateChange((event, session) => {
     const staffPresent = Boolean(session?.access_token);
-    if (staffPresent === liveHasStaffSession) return;
+    if (staffPresent === liveHasStaffSession) {
+      if (event === "TOKEN_REFRESHED" || event === "SIGNED_IN") installSyncWake();
+      return;
+    }
     liveHasStaffSession = staffPresent;
     installLiveChannel(staffPresent);
     installSyncWake();

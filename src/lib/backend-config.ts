@@ -91,18 +91,24 @@ function apply(url: string): void {
 export async function backendUrl(): Promise<string> {
   if (typeof window === "undefined") return "";
   if (isWindowsShell()) {
-    const res = await bridge()?.backendUrl?.().catch(() => undefined);
+    const res = await bridge()?.backendUrl?.();
+    if (!res?.ok) throw new Error("Could not restore the saved backend address.");
     const saved = clean(res?.url);
     if (saved) return saved;
   } else if (isMobileShell()) {
     // Secure storage is the authority on the phone; the plain copy is only a
     // read-through cache that a start-up purge is allowed to lose.
     const loaded = await secureStore();
+    if (!loaded) throw new Error("Secure connection storage is temporarily unavailable.");
     if (loaded) {
       const value = await loaded.value
         .get({ key: STORAGE_KEY })
         .then((r) => clean(r.value))
-        .catch(() => "");
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/^(Item with given key does not exist|not found)$/i.test(message)) return "";
+          throw new Error("Could not read the saved backend address.");
+        });
       if (value) return value;
     }
     try {
@@ -195,7 +201,11 @@ export async function testBackendUrl(value: string): Promise<BackendTestResult> 
     };
   }
 
-  const text = await res.text().catch(() => "");
+  const text = await res.text().catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/^(Item with given key does not exist|not found)$/i.test(message)) return "";
+          throw new Error("Could not read the saved backend address.");
+        });
   let body: unknown = null;
   try {
     body = JSON.parse(text) as unknown;

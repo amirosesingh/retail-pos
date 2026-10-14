@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   rpc: vi.fn(),
   expired: vi.fn(),
+  allTables: false,
 }));
 vi.mock("@/integrations/supabase/external-client", () => ({
   supabaseExternal: {
@@ -40,7 +41,7 @@ vi.mock("../sync-status", () => ({
   setLastTablePull: mocks.checkpoint,
   setLastSuccessfulPull: mocks.checkpoint,
 }));
-vi.mock("../sync-policy", () => ({ tableSyncAllowed: (table: string) => table === "products" }));
+vi.mock("../sync-policy", () => ({ tableSyncAllowed: (table: string) => mocks.allTables || table === "products" }));
 vi.mock("../sync-progress", () => ({
   beginSyncRun: vi.fn(),
   endSyncRun: vi.fn(),
@@ -53,11 +54,13 @@ vi.mock("../session-expiry", async (loadOriginal) => ({
   notifySessionExpired: mocks.expired,
 }));
 
-import { pullDelta } from "../sync-engine";
+import { pullDelta, runOpLive } from "../sync-engine";
+import { bumpSessionEpoch } from "../session-epoch";
 import { db } from "@/core/api/pos-db";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.allTables = false;
   mocks.staff.mockReturnValue(false);
   mocks.local.mockReturnValue(null);
   mocks.relayAllowed.mockReturnValue(true);
@@ -82,6 +85,21 @@ beforeEach(() => {
   mocks.from.mockReturnValue(query);
 });
 
+describe("cashier sign-in recording without history read access", () => {
+  const op = { kind: "upsert" as const, table: "shift_sessions", rows: [{ id: "session-1", store_id: "branch-1" }] };
+  it("uses the verified relay without first provoking a direct RLS denial", async () => {
+    mocks.staff.mockReturnValue(true);
+    await runOpLive("Saving shift sign-in", op);
+    expect(mocks.relay).toHaveBeenCalledExactlyOnceWith(op);
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
+  it("preserves a denied relay result instead of bypassing its branch checks", async () => {
+    mocks.relay.mockResolvedValue({ok: false, error: "Branch forbidden"});
+    await expect(runOpLive("Saving shift sign-in", op)).rejects.toThrow("Branch forbidden");
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
+});
+
 describe("protected background table access", () => {
   it("does not send anonymous delta reads or advance their checkpoints", async () => {
     await expect(pullDelta()).resolves.toEqual({ merged: 0 });
@@ -89,6 +107,30 @@ describe("protected background table access", () => {
     expect(mocks.checkpoint).not.toHaveBeenCalled();
   });
 
+  it("stops the remaining tables when sign-out overtakes an in-flight read", async () => {
+    mocks.staff.mockReturnValue(true);
+    mocks.allTables = true;
+    mocks.range.mockImplementationOnce(async () => {
+      bumpSessionEpoch();
+      mocks.staff.mockReturnValue(false);
+      return { data: [{id: "product-1"}], error: null };
+    });
+    await expect(pullDelta()).resolves.toEqual({ merged: 0 });
+    expect(mocks.from).toHaveBeenCalledExactlyOnceWith("products");
+    expect(mocks.checkpoint).not.toHaveBeenCalled();
+    expect(mocks.expired).not.toHaveBeenCalled();
+  });
+  it("does not let an old Auth response expire a newer sign-in", async () => {
+    mocks.staff.mockReturnValue(true);
+    mocks.getUser.mockImplementationOnce(async () => {
+      bumpSessionEpoch();
+      return {data: {user: null}, error: {status: 403, message: "Session not found"}};
+    });
+    await pullDelta();
+    expect(mocks.from).not.toHaveBeenCalled();
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.expired).not.toHaveBeenCalled();
+  });
   it("leaves Electron pulls to its worker even with a staff session", async () => {
     mocks.staff.mockReturnValue(true);
     mocks.local.mockReturnValue({});

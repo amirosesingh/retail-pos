@@ -78,6 +78,11 @@ const settingsInput = z.object({
   quietFrom: z.string().max(5),
   quietTo: z.string().max(5),
   channels: z.record(z.string(), z.enum(["off", "app", "whatsapp"])),
+  androidPush: z.object({
+    enabled: z.boolean(), events: z.array(z.string().max(60)).max(100),
+    recipients: z.array(z.string().max(64)).max(500), branches: z.array(z.string().max(64)).max(500),
+    criticalOnly: z.boolean(),
+  }).optional(),
 });
 
 const callerProof = z.object({
@@ -96,14 +101,19 @@ export const loadNotificationSettings = createServerFn({ method: "POST" })
       if (scope.kind === "terminal" || (scope.role !== "admin" && scope.roleSlug !== "admin"))
         throw new Error("Only an administrator can manage global notification settings.");
       const { readNotificationSettings } = await import("./activity-events.server");
-      return { ok: true as const, settings: await readNotificationSettings() };
+      const {serviceRest}=await import("@/core/api/pos-relay.server");
+      const users=await serviceRest("app_users?is_active=eq.true&select=user_id,full_name&order=full_name.asc&limit=500");
+      if(!users.ok) throw new Error("Could not load notification recipients.");
+      let pushConfigured=false;
+      try {const {centralPushConfig}=await import("./central-push.server");centralPushConfig();pushConfigured=true;} catch { /* Not yet provisioned. */ }
+      return { ok: true as const, settings: await readNotificationSettings(), staff:await users.json() as {user_id:string;full_name:string}[],pushConfigured };
     } catch (error) {
       return { ok: false as const, error: (error as Error).message };
     }
   });
 
 export const saveNotificationSettings = createServerFn({ method: "POST" })
-  .validator((input: unknown) => callerProof.extend({ settings: settingsInput }).parse(input))
+  .validator((input: unknown) => callerProof.extend({ settings: settingsInput, section: z.enum(["android", "whatsapp"]).optional() }).parse(input))
   .handler(async ({ data }) => {
     try {
       const { requireCallerScope } = await import("./privileged-caller.server");
@@ -113,10 +123,14 @@ export const saveNotificationSettings = createServerFn({ method: "POST" })
     } catch (error) {
       return { ok: false as const, error: (error as Error).message };
     }
-    const { writeNotificationSettings } = await import("./activity-events.server");
+    const { writeNotificationSettings, writeNotificationSection } = await import("./activity-events.server");
     try {
+      if (data.section) {
+        const settings = await writeNotificationSection(data.settings, data.section);
+        return {ok: true as const, settings};
+      }
       await writeNotificationSettings(data.settings);
-      return { ok: true as const };
+      return { ok: true as const, settings: data.settings };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message };
     }

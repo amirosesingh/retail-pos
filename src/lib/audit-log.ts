@@ -5,6 +5,7 @@ import { hasSignedInIdentity } from "./session-presence";
 import { replayOrder, stamp } from "./activity-journal";
 import { isTerminalApp } from "@/platform-config/platform";
 import { localDb } from "@/core/local-db/local-db";
+import {auditDetails,normalizeCachedAuditRows} from "./audit-row-normalization";
 
 /**
  * Business-language activity groups.
@@ -245,7 +246,7 @@ function load() {
   loaded = true;
   try {
     const raw = readBusinessValue(KEY);
-    if (raw) logs = JSON.parse(raw) as AuditLog[];
+      if (raw) logs = normalizeCachedAuditRows(JSON.parse(raw));
   } catch {
     /* corrupt storage */
   }
@@ -489,6 +490,7 @@ export function startAuditSync() {
   void flushBatch();
 }
 
+const EMPTY_AUDIT_LOGS:AuditLog[]=[];
 export function useAuditLogs() {
   // The renderer cache is deliberately small. On Windows, hydrate a bounded
   // history from SQL Server so reports survive restarts without expanding
@@ -501,7 +503,7 @@ export function useAuditLogs() {
   return useSyncExternalStore(
     logger.subscribe,
     () => logger.all(),
-    () => [] as AuditLog[],
+    () => EMPTY_AUDIT_LOGS,
   );
 }
 
@@ -513,19 +515,7 @@ async function dbRouterAuditHistory(): Promise<void> {
     const mapped = rows
       .filter((row) => !existing.has(String(row.id)))
       .map((row): AuditLog => {
-        const rawDetails = row.details;
-        const details =
-          rawDetails && typeof rawDetails === "object"
-            ? (rawDetails as Record<string, unknown>)
-            : typeof rawDetails === "string"
-              ? (() => {
-                  try {
-                    return JSON.parse(rawDetails) as Record<string, unknown>;
-                  } catch {
-                    return {};
-                  }
-                })()
-              : {};
+        const details = auditDetails(row.details);
         const action = String(row.action_name ?? row.action ?? "Recorded activity");
         const module = String(row.target_module ?? "");
         const createdAt = String(row.created_at ?? new Date(0).toISOString());

@@ -96,7 +96,7 @@ function CustomerDisplay() {
 
   if (tillClosed)
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-background p-8 text-center text-foreground">
+      <main data-pos-customer-display="vibrant" className="flex min-h-screen flex-col items-center justify-center bg-background p-8 text-center text-foreground">
         <h1 className="text-4xl font-bold tracking-tight">Till closed</h1>
         <p className="mt-2 text-muted-foreground">
           This counter has shut down. You may close this window.
@@ -107,7 +107,7 @@ function CustomerDisplay() {
   const idle = !snap || snap.mode === "idle" || (snap.mode === "cart" && snap.lines.length === 0);
   if (idle)
     return (
-      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-8 text-foreground">
+      <main data-pos-customer-display="vibrant" className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-8 text-foreground">
         <div className="absolute -left-24 top-[-12rem] size-[34rem] rounded-full bg-primary/20 blur-3xl" />
         <div className="absolute -bottom-48 right-[-8rem] size-[38rem] rounded-full bg-accent/20 blur-3xl" />
         <button
@@ -131,7 +131,7 @@ function CustomerDisplay() {
     );
 
   return (
-    <main className="flex min-h-screen flex-col bg-background text-foreground">
+    <main data-pos-customer-display="vibrant" className="flex min-h-screen flex-col bg-background text-foreground">
       <header className="flex items-baseline justify-between border-b border-border px-8 py-5">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{snap?.companyName || "Welcome"}</h1>

@@ -42,7 +42,7 @@ END $$;
 REVOKE ALL ON FUNCTION private.pos_sync_topic_allowed(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION private.pos_sync_topic_allowed(text) TO authenticated;
 
-ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
+-- Supabase already enables RLS on its managed realtime.messages table.
 DROP POLICY IF EXISTS pos_sync_wake_receive ON realtime.messages;
 CREATE POLICY pos_sync_wake_receive ON realtime.messages FOR SELECT TO authenticated
 USING (extension='broadcast' AND private.pos_sync_topic_allowed((SELECT realtime.topic())));

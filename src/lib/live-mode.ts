@@ -53,6 +53,7 @@ export const DEVICE_STATE_KEYS = [
   // Half of this device's connection profile. Losing it on a start-up purge
   // sent a perfectly configured phone back to the setup screen.
   "pos.backend.url",
+  "pos.push.state",
 ];
 
 const DEVICE_STATE_PREFIXES = ["pos.secure."];

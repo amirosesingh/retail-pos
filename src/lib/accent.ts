@@ -1,7 +1,7 @@
 /**
  * Terminal-local accent colour.
  *
- * The till ships amber, but a shop may want its own colour for buttons, icons
+ * The till ships Vibrant blue, but a shop may want its own colour for buttons, icons
  * and highlights. The choice is stored per machine and written straight onto
  * the <html> element as inline custom properties, so it overrides both the
  * light and dark palettes without touching the design tokens themselves.
@@ -11,8 +11,8 @@ import { useSyncExternalStore } from "react";
 export type AccentPreset = { id: string; label: string; hex: string };
 
 export const ACCENT_PRESETS: AccentPreset[] = [
-  { id: "amber", label: "Amber (default)", hex: "#e8a33d" },
-  { id: "blue", label: "Ocean blue", hex: "#3b82f6" },
+  { id: "blue", label: "Vibrant blue (default)", hex: "#2563eb" },
+  { id: "amber", label: "Amber", hex: "#e8a33d" },
   { id: "emerald", label: "Emerald", hex: "#10b981" },
   { id: "violet", label: "Violet", hex: "#8b5cf6" },
   { id: "rose", label: "Rose", hex: "#f43f5e" },

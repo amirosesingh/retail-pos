@@ -59,6 +59,7 @@ type Row = {
 
 function EditHistoryReport() {
   const { can } = useAuth();
+  const allowed = can("can_view_audit_trail");
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -68,19 +69,19 @@ function EditHistoryReport() {
   const [to, setTo] = useState(init.to);
 
   const load = useCallback(async () => {
+    if (!allowed) {setRows([]);setLoading(false);return;}
     setLoading(true);
-    const accessToken = await adminAccessToken();
-    if (!accessToken) {
-      setError("Sign in with a supervisor or administrator account to view the edit history.");
-      setRows([]);
-      setLoading(false);
-      return;
-    }
-    const res = await listSystemAudit({ data: { accessToken, limit: 500 } });
-    setError(res.ok ? "" : (res.error ?? "Could not load the edit history"));
-    setRows((res.rows ?? []) as Row[]);
-    setLoading(false);
-  }, []);
+    try {
+      const accessToken = await adminAccessToken();
+      if (!accessToken) throw new Error("Sign in with a supervisor or administrator account to view the edit history.");
+      const res = await listSystemAudit({data:{accessToken,limit:500}});
+      if (!res.ok) throw new Error(res.error ?? "Could not load the edit history");
+      setError("");
+      setRows(Array.isArray(res.rows) ? res.rows as Row[] : []);
+    } catch (cause) {
+      setError(cause instanceof Error?cause.message:"Could not load the edit history. Try refreshing.");
+    } finally {setLoading(false);}
+  }, [allowed]);
 
   useEffect(() => {
     void load();
@@ -154,7 +155,7 @@ function EditHistoryReport() {
     ]);
   };
 
-  if (!can("can_view_audit_trail")) {
+  if (!allowed) {
     return (
       <AppShell>
         <div className="p-6 text-sm text-destructive">

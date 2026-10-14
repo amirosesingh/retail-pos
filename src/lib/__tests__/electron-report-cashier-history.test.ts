@@ -81,7 +81,10 @@ describe("legacy report data", () => {
   it("pages database history for every sales-based report instead of stopping at the boot cache", () => {
     const reports = ["sales", "items", "payments", "business", "analytics", "coupons"];
     for (const report of reports) {
-      expect(read(`src/routes/reports.${report}.tsx`), report).toContain("useReportSales(");
+      const component = report === "items" ? "src/platforms/web/components/pos/ItemSalesReport.tsx"
+        : report === "payments" ? "src/platforms/web/components/pos/PaymentsReport.tsx"
+        : `src/routes/reports.${report}.tsx`;
+      expect(read(component), report).toContain("useReportSales(");
     }
     const loader = read("src/lib/use-report-sales.ts");
     expect(loader).toContain("loadSalesPage(storeId, cursor, 500)");

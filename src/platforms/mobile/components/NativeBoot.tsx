@@ -41,6 +41,7 @@ export function NativeBoot({ children }: { children: React.ReactNode }) {
       .then(() => applyPendingWebBundle())
       // Keep only what a terminal needs: caches and leftover installers go.
       .then(() => runDeviceCleanup())
+      .catch(() => { /* ConnectionProfileBoot provides a retry without entering setup. */ })
       .finally(() => {
         if (!cancelled) setReady(true);
       });

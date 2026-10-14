@@ -35,6 +35,7 @@ import { RECOVERY_PATH } from "@/lib/recovery-route";
 import { ThemeProvider, themeBootScript } from "../lib/theme";
 import { publicConfigScript } from "../lib/public-config-script";
 import { NativeBoot } from "@/platforms/mobile/components/NativeBoot";
+import { AndroidPushAgent } from "@/platforms/mobile/components/AndroidPushAgent";
 import { OfflineGate } from "@/platforms/mobile/components/OfflineGate";
 import {
   APP_RESUME_EVENT,
@@ -49,7 +50,8 @@ import { usePublicHostLanding } from "../lib/coupon-hosts";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { bypassPersistentAppShell, isCustomerPublicRoute } from "@/lib/app-shell-routes";
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
-import { hydrateConnectionProfile } from "@/lib/connection-profile";
+import { hasRequiredPlatformConfig, type ConfigReadiness } from "@/lib/platform-config-ready";
+import { hydrateConnectionProfile, isConnectionProfileHydrated } from "@/lib/connection-profile";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { staleAssetRecoveryScript } from "@/lib/stale-asset-recovery";
 
@@ -95,13 +97,10 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
   // so the shared startup decision can proceed to activation or sign-in.
   if (notConfigured && isTerminalApp()) {
     return (
-      <ConnectDatabaseScreen
-        cloudConfigured={false}
-        onRetry={() => {
-          router.invalidate();
-          reset();
-        }}
-      />
+      <ConnectionErrorRecovery onRetry={() => {
+        void router.invalidate();
+        reset();
+      }} />
     );
   }
 
@@ -344,6 +343,7 @@ function TillRuntime() {
         <PosProvider>
           <RulesBridge>
             <AuditTracker />
+            <AndroidPushAgent />
             <TelemetryAgent />
             <FirstRunSetup>
               <PrivilegeGate>
@@ -363,18 +363,50 @@ function TillRuntime() {
   );
 }
 
+/** Only a completed local storage check may send a terminal to setup. */
+function ConnectionErrorRecovery({ onRetry }: { onRetry: () => void }) {
+  const [status, setStatus] = useState<ConfigReadiness | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let current = true;
+    setStatus(null);
+    void hasRequiredPlatformConfig().then(result => {
+      if (current) setStatus(result);
+    });
+    return () => { current = false; };
+  }, [attempt]);
+  if (!status) return <TillLoader message="Restoring secure connection…" />;
+  if (status.state === "missing" || status.state === "incomplete") {
+    return <ConnectDatabaseScreen cloudConfigured={status.have.supabaseKey} onRetry={onRetry} />;
+  }
+  return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
+    <p>{status.ready ? "Your saved connection is available. Retry opening the app." : "Could not restore your saved connection. Your settings have not been removed."}</p>
+    <button className="rounded-lg bg-primary px-5 py-2 text-primary-foreground" onClick={() => status.ready ? onRetry() : setAttempt(value => value + 1)}>Retry connection</button>
+  </div>;
+}
+
 /** Do not resolve a cloud client before Electron restores its DPAPI values. */
 function ConnectionProfileBoot({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
+  const [restoreFailed, setRestoreFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let current = true;
-    void hydrateConnectionProfile().catch(cause => notifyError(cause, "Restoring database connection")).finally(() => {
-      if (current) setReady(true);
+    setRestoreFailed(false);
+    void hydrateConnectionProfile().catch(cause => {
+      notifyError(cause, "Restoring database connection");
+      if (current) setRestoreFailed(true);
+    }).then(() => {
+      if (current && isConnectionProfileHydrated()) setReady(true);
     });
     return () => {
       current = false;
     };
-  }, []);
+  }, [attempt]);
+  if (restoreFailed) return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
+    <p>Could not restore your saved connection. Your settings have not been removed.</p>
+    <button className="rounded-lg bg-primary px-5 py-2 text-primary-foreground" onClick={() => setAttempt(value => value + 1)}>Retry connection</button>
+  </div>;
   if (!ready) return <TillLoader message="Restoring secure connection…" />;
   return children;
 }

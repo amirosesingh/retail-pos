@@ -73,6 +73,14 @@ describe("shared database reliability", () => {
     await expect(worker.retry(work)).rejects.toThrow("Forbidden");
     expect(work).toHaveBeenCalledOnce();
   });
+  it("recovers a PostgreSQL timeout with a smaller page without advancing the cursor", async () => {
+    const fetch = vi.fn(async (limit: number) => {
+      if (limit > 50) throw Object.assign(new Error("statement timeout"), { code: "57014" });
+      return { rows: [{ cursor: 91, id: "one" }], cursor: 91 };
+    });
+    expect(await readPage(fetch, 100)).toMatchObject({ limit: 50, nextLimit: 50, batch: { cursor: 91 } });
+    expect(fetch.mock.calls.map(call => call[0])).toEqual([100, 50]);
+  });
   it("shrinks an oversized download and grows small subsequent pages", async () => {
     const fetch = vi.fn(async (limit: number) => {
       if (limit > 50) throw Object.assign(new Error("Too large"), { status: 413 });

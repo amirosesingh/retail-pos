@@ -9,6 +9,7 @@
  */
 import { db } from "@/core/api/pos-db";
 import type { ShiftSession } from "@/core/types/pos-types";
+import { recordDiagnostic, reasonCode } from "./diagnostics";
 import { readBusinessValue, writeBusinessValue } from "./business-storage";
 
 const KEY = "pos-shift-sessions-v1";
@@ -76,7 +77,8 @@ export function beginShiftSession(ctx: SessionContext): ShiftSession | null {
  * shift's sessions (used when the shift itself is closed), or a staff id to
  * close just that person's.
  */
-export function endShiftSessions(opts: { shiftId?: string; staffId?: string } = {}) {
+export async function endShiftSessions(opts: { shiftId?: string; staffId?: string; awaitWrites?: boolean; persist?: boolean } = {}) {
+  const writes: Promise<unknown>[] = [];
   const list = read();
   const now = new Date().toISOString();
   let changed = false;
@@ -86,10 +88,16 @@ export function endShiftSessions(opts: { shiftId?: string; staffId?: string } = 
     if (opts.staffId && (s.staffId || s.staffName) !== opts.staffId) return s;
     changed = true;
     const closed = { ...s, signedOutAt: now };
-    db.upsertShiftSession(closed);
+    if (opts.persist !== false) {
+      if (opts.awaitWrites) writes.push(db.commitShiftSession(closed).catch(error => {
+        recordDiagnostic({kind: "soft_write_failed", entity: "shift_sessions", code: reasonCode(error)});
+      }));
+      else db.upsertShiftSession(closed);
+    }
     return closed;
   });
   if (changed) write(next);
+  await Promise.all(writes);
 }
 
 /** Locally cached sessions, newest first, optionally for one shift. */
