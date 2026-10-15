@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const bridge = vi.hoisted(() => ({reserveStockCounter:vi.fn()}));
-vi.mock("@/core/local-db/local-db", () => ({ localDb: () => bridge, readLocalSetting:vi.fn(async () => null), writeLocalSetting:vi.fn(async () => true) }));
-vi.mock("../document-origin", () => ({documentOrigin: () => "B1-WIN-DEVICE"}));
+vi.mock("@/core/local-db/local-db", () => ({ localDb: () => bridge, readLocalSetting:vi.fn(async () => { throw new Error("Electron settings must not be read"); }), writeLocalSetting:vi.fn(async () => { throw new Error("Electron settings must not be written"); }) }));
+vi.mock("../document-origin", () => ({documentOrigin: (branch:string) => `${branch}-WIN-DEVICE`}));
 import {nextStockRef, saveStockDraftReference} from "../stock-ref";
 beforeEach(() => vi.clearAllMocks());
 const duplicate = {sqlNumber:2601,table:"stock_count_drafts",sqlDetail:"Cannot insert duplicate key row with unique index 'UX_stock_count_drafts_reference'."};
@@ -13,6 +13,9 @@ describe("stock reference reservation and recovery", () => {
       expect(await nextStockRef({},"B1",series,at)).toBe(`${prefix}-B1-WIN-DEVICE-202610-0082`);
       expect(bridge.reserveStockCounter).toHaveBeenLastCalledWith(`${prefix}-B1-WIN-DEVICE-202610`,expect.any(Number));
     }
+    bridge.reserveStockCounter.mockResolvedValue({ok:true,sequence:500});
+    expect(await nextStockRef({startNumber:500},"B2","stock",at)).toBe("SC-B2-WIN-DEVICE-202610-0500");
+    expect(bridge.reserveStockCounter).toHaveBeenLastCalledWith("SC-B2-WIN-DEVICE-202610",500);
     bridge.reserveStockCounter.mockResolvedValue({ok:false,error:"Counter disk failure"});
     await expect(nextStockRef({},"B1","stock",at)).rejects.toThrow("Counter disk failure");
   });

@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const { randomBytes, randomUUID } = require("node:crypto");
 const sql = require("mssql/msnodesqlv8");
 const { reserveStockCounter } = require("../electron/bill-counter.cjs");
@@ -22,6 +24,8 @@ async function main() {
       CREATE UNIQUE INDEX UX_products_barcode ON dbo.products(barcode);
       CREATE TABLE dbo.local_operation_receipts(operation_id uniqueidentifier NOT NULL PRIMARY KEY,note nvarchar(128));
     `);
+    await pool.request().batch("CREATE TABLE dbo.pos_schema_migrations(version int PRIMARY KEY,name nvarchar(200));");
+    await pool.request().batch(fs.readFileSync(path.join(__dirname,"../database/sqlserver/migrations/018_sql_document_counters.sql"),"utf8"));
     const prefix = "SC-B1-WIN-DEVICE-202610";
     await pool.request().input("ref",prefix+"-0001").query("INSERT dbo.stock_count_drafts VALUES(NEWID(),@ref)");
     await pool.request().input("ref",prefix+"-0041").query("INSERT dbo.purchase_orders VALUES(NEWID(),@ref)");
@@ -30,15 +34,25 @@ async function main() {
     try { await pool.request().input("ref",prefix+"-0001").query("INSERT dbo.stock_count_drafts VALUES(NEWID(),@ref)"); }
     catch (error) { duplicate=error; }
     assert.equal(duplicate?.number,2601,"Legacy reset must reproduce SQL Server 2601");
-    const saved = new Map();
-    const store = {get:key=>saved.get(key),set:(key,value)=>{saved.set(key,value);return{ok:true};}};
-    const first = await reserveStockCounter(store,pool,prefix,1);
+    const first = await reserveStockCounter(sql,pool,"B1",prefix,1);
     assert.deepEqual(first,{ok:true,sequence:61});
     await pool.request().input("ref",prefix+"-0061").query("INSERT dbo.stock_count_drafts VALUES(NEWID(),@ref)");
-    const simultaneous = await Promise.all(Array.from({length:10},()=>reserveStockCounter(store,pool,prefix,1)));
-    assert.equal(new Set(simultaneous.map(item=>item.sequence)).size,10);
-    const resetStore = {get:()=>undefined,set:()=>({ok:true})};
-    assert.equal((await reserveStockCounter(resetStore,pool,prefix,1)).sequence,62,"Recover from SQL after losing the device counter");
+    const otherPool=await connect(database);
+    try {
+      const simultaneous = await Promise.all(Array.from({length:10},(_,index)=>reserveStockCounter(sql,index%2 ? otherPool : pool,"B1",prefix,1)));
+      assert(simultaneous.every(item=>item.ok),JSON.stringify(simultaneous));
+      assert.equal(new Set(simultaneous.map(item=>item.sequence)).size,10);
+      assert.equal((await reserveStockCounter(sql,otherPool,"B1",prefix,1)).sequence,72,"SQL reservations survive a new connection without Electron storage");
+      assert.equal((await reserveStockCounter(sql,otherPool,"B2",prefix,1)).ok,false,"Another branch cannot use an owned prefix");
+      assert.equal((await reserveStockCounter(sql,otherPool,"B2","SC-B2-WIN-DEVICE-202610",500)).sequence,500);
+      assert.equal((await reserveStockCounter(sql,otherPool,"B2","SC-B2-WIN-DEVICE-202610",1)).sequence,501);
+      const branchUuid="A1234567-1234-4234-8234-123456789ABC";
+      const uuidPrefix="SC-B3-WIN-DEVICE-202610";
+      assert.equal((await reserveStockCounter(sql,otherPool,branchUuid,uuidPrefix,1000)).sequence,1000);
+      assert.equal((await reserveStockCounter(sql,otherPool,branchUuid.toLowerCase(),uuidPrefix,1)).sequence,1001);
+      assert.equal((await reserveStockCounter(sql,otherPool,"B1234567-1234-4234-8234-123456789ABC",uuidPrefix,1)).ok,false);
+
+    } finally {await otherPool.close();}
     await pool.request().query("INSERT dbo.products VALUES(NEWID(),N'barcode-existing')");
     for (const [table,field,value,index] of [["stock_count_drafts","reference",prefix+"-0001","UX_stock_count_drafts_reference"],["stock_transfers","ref",prefix+"-0060","UX_stock_transfers_ref"],["products","barcode","barcode-existing","UX_products_barcode"]]) {
       const metadata={sqlServerTable:table,columns:[{sqlServerColumn:"id",primaryKey:true}]};
@@ -48,7 +62,7 @@ async function main() {
     }
     const count=await pool.request().query("SELECT COUNT(*) AS count FROM dbo.stock_count_drafts");
     assert.equal(count.recordset[0].count,2,"Duplicate attempts must not change existing drafts");
-    console.log("Live SQL Server regression passed: reproduced 2601, recovered past all document types, serialized 10 reservations, preserved drafts and verified duplicate diagnostics for three tables.");
+    console.log("Live SQL Server regression passed: reproduced 2601, recovered past all document types, serialized 10 cross-connection SQL reservations, preserved drafts and verified duplicate diagnostics for three tables.");
   } finally {
     if(pool) await pool.close();
     if(created) {

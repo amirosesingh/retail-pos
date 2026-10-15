@@ -2,42 +2,39 @@ import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const { reserveStockCounter } = require("../../../electron/bill-counter.cjs");
-const prefix = "SC-B1-WIN-11111111111141118111111111111111-202610";
-function harness(last = 0) {
-  const values = new Map<string, unknown>();
-  const store = { get: (key: string) => values.get(key), set: vi.fn((key: string, value: unknown) => { values.set(key, value); return {ok:true}; }) };
-  const query = vi.fn(async (_sql: string) => ({recordset:[{last_sequence:last}]}));
-  const request = {input:vi.fn(() => request), query};
-  const pool = {request:() => request};
-  return {store,pool,query,request,values};
+const prefix="SC-B1-WIN-DEVICE-202610";
+function harness() {
+  const request={input:vi.fn(() => request),query:vi.fn(async (_text:string) => ({recordset:[{sequence:42}]}))};
+  return {sql:{BigInt:"bigint"},pool:{request:()=>request},request};
 }
-describe("durable Electron stock numbering", () => {
-  it("recovers after a reset from existing drafts, receiving and transfer documents", async () => {
-    const h = harness(41);
-    expect(await reserveStockCounter(h.store,h.pool,prefix,1)).toMatchObject({ok:true,sequence:42});
-    expect(await reserveStockCounter(h.store,h.pool,prefix,1)).toMatchObject({ok:true,sequence:43});
-    expect(h.request.input).toHaveBeenCalledWith("prefix",prefix);
-    const sql = h.query.mock.calls[0][0];
-    for (const table of ["stock_count_drafts","purchase_orders","stock_transfers"]) expect(sql).toContain("dbo."+table);
-    expect(sql).not.toContain(prefix);
+describe("SQL-only stock numbering",()=>{
+  it("uses one atomic parameterized SQL request and returns only its acknowledged reservation",async()=>{
+    const h=harness();
+    expect(await reserveStockCounter(h.sql,h.pool,"B1",prefix,1)).toEqual({ok:true,sequence:42});
+    expect(h.request.query).toHaveBeenCalledOnce();
+    expect(h.request.input).toHaveBeenCalledWith("branch","B1");
+    const text=h.request.query.mock.calls[0][0];
+    expect(text).toContain("BEGIN TRANSACTION");expect(text).toContain("COMMIT TRANSACTION");expect(text).toContain("UPDLOCK,HOLDLOCK");
+    for(const table of ["stock_count_drafts","purchase_orders","stock_transfers"]) expect(text).toContain("dbo."+table);
+    expect(text).not.toContain(prefix);
   });
-  it("serializes simultaneous windows and persists each reservation before returning", async () => {
-    const h = harness();
-    const results = await Promise.all(Array.from({length:20},() => reserveStockCounter(h.store,h.pool,prefix,1)));
-    expect(new Set(results.map(row => row.sequence)).size).toBe(20);
-    expect(await reserveStockCounter(h.store,h.pool,prefix,1)).toMatchObject({sequence:21});
-    expect(await reserveStockCounter(h.store,h.pool,prefix.replace("SC-","GRN-"),1)).toMatchObject({sequence:1});
+  it("passes configured minimums and refuses another branch without consuming a number",async()=>{
+    const h=harness();h.request.query.mockResolvedValueOnce({recordset:[{sequence:500}]});
+    expect(await reserveStockCounter(h.sql,h.pool,"B1",prefix,500)).toMatchObject({sequence:500});
+    expect(h.request.input).toHaveBeenCalledWith("minimum","bigint",500);
+    h.request.query.mockRejectedValueOnce(Object.assign(new Error("Other branch"),{number:51021}));
+    expect(await reserveStockCounter(h.sql,h.pool,"B2",prefix,1)).toMatchObject({ok:false,error:expect.stringContaining("another branch")});
   });
-  it("refuses storage failure, unreadable SQL, invalid input and exhausted counters", async () => {
-    const h = harness(); h.store.set.mockReturnValue({ok:false});
-    expect(await reserveStockCounter(h.store,h.pool,prefix,1)).toMatchObject({ok:false});
-    h.query.mockRejectedValueOnce(new Error("Disconnected"));
-    expect(await reserveStockCounter(h.store,h.pool,prefix,1)).toMatchObject({ok:false});
-    const queries = h.query.mock.calls.length;
-    expect(await reserveStockCounter(h.store,h.pool,"bad' SQL",1)).toMatchObject({ok:false});
-    expect(h.query.mock.calls.length).toBe(queries);
-    expect(await reserveStockCounter(h.store,h.pool,prefix,Number.MAX_SAFE_INTEGER)).toMatchObject({ok:false});
-    h.values.set("setting:pos.stockref.counter:"+prefix,"corrupt");
-    expect(await reserveStockCounter(h.store,h.pool,prefix,1)).toMatchObject({ok:false});
+  it("refuses SQL/acknowledgement failures and invalid arguments, retrying only deadlock rollbacks",async()=>{
+    const h=harness();h.request.query.mockRejectedValueOnce(new Error("Disconnected"));
+    expect(await reserveStockCounter(h.sql,h.pool,"B1",prefix,1)).toMatchObject({ok:false});
+    h.request.query.mockResolvedValueOnce({recordset:[{sequence:0}]});
+    expect(await reserveStockCounter(h.sql,h.pool,"B1",prefix,1)).toMatchObject({ok:false});
+    h.request.query.mockRejectedValueOnce(Object.assign(new Error("Deadlock"),{number:1205}));
+    expect(await reserveStockCounter(h.sql,h.pool,"B1",prefix,1)).toMatchObject({ok:true});
+    const count=h.request.query.mock.calls.length;
+    for(const [branch,value,min] of [["B1","bad' SQL",1],["",prefix,1],["B1",prefix,Number.MAX_SAFE_INTEGER]])
+      expect(await reserveStockCounter(h.sql,h.pool,branch,value,min)).toMatchObject({ok:false});
+    expect(h.request.query.mock.calls.length).toBe(count);
   });
 });

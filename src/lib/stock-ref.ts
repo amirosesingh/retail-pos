@@ -175,20 +175,20 @@ export async function nextStockRef(
   at: Date = new Date(),
 ): Promise<string> {
   return reserveDocument("pos-stock-reference", async () => {
-    const key = counterKey(cfg, branchCode, at, series);
     const bridge = localDb();
-    if (!bridge?.reserveStockCounter) await restoreStockRefCounter();
-    const all = readAll();
-    const seq = sequenceFor(all, key, legacyStockCounterKey(cfg, branchCode, at, series), cfg);
-    if (bridge?.reserveStockCounter) {
+    if (bridge) {
+      if (!bridge.reserveStockCounter) throw new Error("Restart or update the POS to enable safe SQL stock document numbering.");
       const prefix = build(cfg, branchCode, at, 1, series).replace(/-0*1$/, "");
-      const reserved = await bridge.reserveStockCounter(prefix, seq);
-      if (!reserved.ok || !Number.isSafeInteger(reserved.sequence) || reserved.sequence! < seq)
-        throw new Error(reserved.error || "The stock document counter could not be reserved.");
-      memoryCounters = { ...all, [key]: reserved.sequence! + 1 };
+      const minimum = Math.max(1, Math.round(cfg.startNumber ?? 1));
+      const reserved = await bridge.reserveStockCounter(prefix, minimum);
+      if (!reserved.ok || !Number.isSafeInteger(reserved.sequence) || reserved.sequence! < minimum)
+        throw new Error(reserved.error || "The stock document counter could not be reserved in SQL Server.");
       return build(cfg, branchCode, at, reserved.sequence!, series);
     }
-    if (bridge) throw new Error("Restart or update the POS to enable safe stock document numbering.");
+    await restoreStockRefCounter();
+    const key = counterKey(cfg, branchCode, at, series);
+    const all = readAll();
+    const seq = sequenceFor(all, key, legacyStockCounterKey(cfg, branchCode, at, series), cfg);
     all[key] = seq + 1;
     await writeAll(all);
     return build(cfg, branchCode, at, seq, series);

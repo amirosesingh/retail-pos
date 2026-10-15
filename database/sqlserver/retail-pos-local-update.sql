@@ -11852,6 +11852,23 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=17)
  INSERT dbo.pos_schema_migrations(version,name) VALUES(17,N''''in_place_sale_corrections'''');'';
 COMMIT TRANSACTION;
 END;';
+-- 018_sql_document_counters.sql
+EXEC sys.sp_executesql N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=18)
+BEGIN
+BEGIN TRANSACTION;
+EXEC sys.sp_executesql N''-- Device reservations live in SQL Server, never in Electron settings or browser storage.
+IF OBJECT_ID(N''''dbo.pos_document_counters'''',N''''U'''') IS NULL
+ CREATE TABLE dbo.pos_document_counters (
+  prefix nvarchar(200) NOT NULL CONSTRAINT PK_pos_document_counters PRIMARY KEY,
+  branch_id nvarchar(128) NOT NULL,
+  next_value bigint NOT NULL,
+  updated_at datetimeoffset(7) NOT NULL CONSTRAINT DF_pos_document_counters_updated DEFAULT SYSDATETIMEOFFSET(),
+  CONSTRAINT CK_pos_document_counters_value CHECK (next_value BETWEEN 1 AND 9007199254740991)
+ );
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=18)
+ INSERT dbo.pos_schema_migrations(version,name) VALUES(18,N''''sql_document_counters'''');'';
+COMMIT TRANSACTION;
+END;';
 BEGIN TRANSACTION;
 EXEC sys.sp_executesql N'-- SECTION 3: Verify all required tables, columns and migration versions
 
@@ -13173,7 +13190,7 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N''dbo.pos_schema_migrations'', N''U'') IS NULL
   THROW 51002, ''Retail POS local database migration history table is missing.'', 1;
 
-EXEC(N''IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 13) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 14) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 15) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 16) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 17)
+EXEC(N''IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 13) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 14) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 15) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 16) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 17) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 18)
   THROW 51002, ''''Retail POS local database migration history is incomplete.'''', 1;'');
 
 EXEC(N''SELECT version, name, applied_at
