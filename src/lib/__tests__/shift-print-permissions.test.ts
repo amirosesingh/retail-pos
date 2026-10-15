@@ -16,8 +16,8 @@ describe("shift report printing", () => {
   });
 
   it("awaits the printer result without resubmitting the shift close", () => {
-    expect(closeDialog).toContain("const printed = await printShiftReport");
-    expect(closeDialog).toContain("The shift is safely closed. Reprint the Z report");
+    expect(closeDialog).toContain("const { printed, synchronized } = await closedShiftEffects");
+    expect(closeDialog).toContain("Check the printer and reprint the Z report from Shifts.");
     expect(printing).toContain("Promise<PrintResult>");
   });
 });

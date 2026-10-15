@@ -23,7 +23,9 @@ describe("database ticket lifecycle",()=>{
   await expect(preserveSessionDrafts()).resolves.toBeUndefined();
  });
  it("keeps one stable draft identity through cashier changes and flushing",async()=>{
-  expect(draftTicketId("BRANCH-A","B-WIN01-20261010-001")).toBe(draftTicketId("branch-a","B-WIN01-20261010-001"));
+  expect(draftTicketId("BRANCH-A","B-WIN01-20261010-001")).not.toBe(draftTicketId("branch-a","B-WIN01-20261010-001"));
+  const id = "A1234567-1234-7234-8234-123456789ABC";
+  expect(draftTicketId(id,"bill")).toBe(draftTicketId(id.toLowerCase(),"bill"));
   const handler=vi.fn().mockResolvedValue(undefined);unregister.push(registerSessionDraft(handler));
   await flushTicketDrafts();await flushTicketDrafts("cancel");
   expect(handler.mock.calls.map(call=>call[0])).toEqual(["save","cancel"]);

@@ -45,7 +45,7 @@ describe("queued receiving aggregate recovery", () => {
     expect(cloud.pushAggregate).not.toHaveBeenCalled();
   });
 
-  it.each([null, "", " b1 "])("repairs legacy parent branch %s before a child-only retry", async (store_id) => {
+  it.each([null, "", " B1 "])("repairs legacy parent branch %s before a child-only retry", async (store_id) => {
     const reader = {
       pendingAggregates: vi.fn().mockResolvedValueOnce([aggregate]).mockResolvedValueOnce([]),
       rows: vi.fn(async (table: { cloudTable: string }) => table.cloudTable === "purchase_orders"

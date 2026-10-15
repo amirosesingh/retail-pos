@@ -79,7 +79,7 @@ describe("SQL Server checkpoints 13 through 15", () => {
     expect(caller).toContain(
       "if (terminalStore) identity = { ...identity, storeId: terminalStore, terminalId }",
     );
-    expect(cloud).toContain("JSON.stringify({ ...payload, ...personProof, terminalToken })");
+    expect(cloud).toContain("JSON.stringify({ ...normalizeSyncPayload(payload), ...personProof, terminalToken: recordId(terminalToken) })");
     expect(main).toContain(
       "operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null,",
     );

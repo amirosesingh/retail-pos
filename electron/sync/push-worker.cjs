@@ -68,7 +68,7 @@ function rowsForBranch(table, rows, branchId) {
   return rows.map((row) => {
     const supplied = String(row?.[branchColumn] ?? "").trim();
     const equivalent =
-      !supplied || supplied.toLocaleLowerCase("en-US") === authoritative.toLocaleLowerCase("en-US");
+      !supplied || recordId(supplied) === authoritative;
     return equivalent ? { ...row, [branchColumn]: authoritative } : row;
   });
 }

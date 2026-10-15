@@ -2,7 +2,7 @@ import { retainUnchangedFields } from "./live-state";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "./points-redemption";
 import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE, exchangePolicyError } from "./returns-policy";
-import { uniqueSales } from "./sale-identity";
+import { uniqueSales, sameRecordId } from "./sale-identity";
 import { staffSettingsTarget } from "./settings-edit-policy";
 import { isCompanyIdentityPath } from "./company-identity";
 import { readBranding, writeBranding } from "./branding";
@@ -1701,7 +1701,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // Only the PC that opened the shift may close it — unless a manager or
       // admin is signed in, who can close from anywhere.
       const here = readTerminalConfig()?.tokenId ?? localTerminalId();
-      const sameTerminal = !activeShift.terminalId || activeShift.terminalId === here;
+      const sameTerminal = !activeShift.terminalId || sameRecordId(activeShift.terminalId, here);
       if (!sameTerminal && !isAdmin && !can("can_manage_other_shifts") && !(stateRef.current.settings.integrations.allowAnyStaffCloseShift === true && can("can_close_shift"))) return null;
       const closed: Shift = {
         ...activeShift,
@@ -1710,6 +1710,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         countedCash,
         closingFloat: countedCash,
         status: "CLOSED",
+        state: "CLOSED",
         note,
         closedBy: user?.name ?? terminalUser?.name ?? activeShift.cashier,
         closedByStaffId: user?.staffId ?? terminalUser?.userCode,
@@ -1767,14 +1768,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
       });
       // Do not let Electron exit until the closing records have either reached
       // the server or been parked durably in the terminal database.
-      const summaryWritten = (async () => {
+      const summaryWritten = localDb() ? Promise.resolve() : (async () => {
         const { publishCompleteShiftSummary } = await import("./shift-summary.functions");
         const { getPosCallerAuth } = await import("./pos-caller-auth");
         // Electron already stores a complete SQL aggregate in the cash-count
         // transaction. After the final sync, central SQL can confirm all bills.
         await publishCompleteShiftSummary({ data: { ...await getPosCallerAuth(), shiftId: closed.id } }).catch(() => null);
       })();
-      await Promise.all([transitionWritten, activityWritten, summaryWritten]);
+      const recorded = await Promise.allSettled([transitionWritten, activityWritten, summaryWritten]);
+      for (const result of recorded) if (result.status === "rejected")
+        notifyError(result.reason, "Saving shift closure activity");
       return closed;
     },
     [isAdmin, activeShift, user, terminalUser, can],

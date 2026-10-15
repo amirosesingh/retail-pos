@@ -1,3 +1,4 @@
+import { alignVerifiedScopeIds } from "./verified-scope-ids";
 /**
  * Shared handler for the POS sync relay.
  *
@@ -229,6 +230,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       }
     }
     scope = await resolveRelayScope(caller);
+    body = alignVerifiedScopeIds(body, scope);
   } catch (e) {
     return Response.json(
       { ok: false, code: "SESSION_INVALID", error: (e as Error).message },

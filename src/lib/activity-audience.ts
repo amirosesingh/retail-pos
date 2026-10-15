@@ -1,3 +1,5 @@
+import { sameBranchId } from "./branch-id";
+
 export type ActivityAudienceIdentity = {
   userIds: string[];
   role?: string | null;
@@ -31,8 +33,8 @@ export function activityVisibleTo(
     strings(meta["audience_user_ids"]).length > 0 ||
     strings(meta["audience_roles"]).length > 0 ||
     Boolean(meta["audience_terminal_id"]);
-  const rowStore = String(row.store_id ?? "").trim().toLowerCase();
-  const sameBranch = !rowStore || (!!identity.storeId && rowStore === identity.storeId.trim().toLowerCase());
+  const rowStore = String(row.store_id ?? "").trim();
+  const sameBranch = !rowStore || (!!identity.storeId && sameBranchId(rowStore, identity.storeId));
   if (!targeted) {
     const type = String(row.event_type ?? "");
     if (["stock_request_received", "transfer_sent", "transfer_received", "po_finalised"].includes(type))

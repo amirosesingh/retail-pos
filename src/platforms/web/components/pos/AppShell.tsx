@@ -24,7 +24,6 @@ import {
   ConnectionStatusButton,
   SystemAlertsButton,
 } from "@/platforms/web/components/pos/StatusCluster";
-import { WindowControls } from "@/platforms/windows/components/WindowControls";
 
 import { ActivityBell } from "@/platforms/web/components/pos/ActivityBell";
 import { MobileStatusSheet } from "@/platforms/web/components/pos/MobileStatusSheet";
@@ -73,6 +72,8 @@ import { CloudSetupGate } from "@/platforms/web/components/pos/CloudSetupGate";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { LocationBootGuard } from "@/platforms/web/components/pos/LocationBootGuard";
 import { activeLocations } from "@/lib/locations";
+import { flushTicketDrafts } from "@/lib/session-draft";
+import { localDb } from "@/core/local-db/local-db";
 import { startSyncEngine } from "@/lib/sync-engine";
 
 /** The only screens any signed-in account may open. Everything else must have
@@ -107,6 +108,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 function AppShellFrame({ children }: { children: ReactNode }) {
   useAdminWebActivation();
   useEffect(() => startSyncEngine(), []);
+  useEffect(() => localDb()?.onBeforeClose?.(() => flushTicketDrafts().then(() => undefined)), []);
   const { stores, currentStore, setCurrentStore, state, ready: dataReady, retryLoad } = usePos();
   useEffect(() => {
     setSharedPrinterPrefs(state.settings.integrations.receiptPrinter);
@@ -444,16 +446,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       <div className="pos-scaled flex h-dvh min-h-dvh flex-col overflow-hidden bg-background text-foreground">
         <DbConnectionModal />
         <CloudSetupGate />
-        {/* Frameless desktop shell: draggable strip under the native window buttons. */}
-        {isDesktop() && (
-          <div className="app-drag flex h-[34px] shrink-0 items-center gap-2 border-b border-border bg-sidebar pl-3">
-            <ReceiptText className="size-3.5 shrink-0 text-primary" />
-            <span className="truncate text-[11px] font-semibold text-muted-foreground">
-              {companyName}
-            </span>
-            <WindowControls />
-          </div>
-        )}
         <ShiftGuard>
           <div className="flex min-h-0 min-w-0 flex-1">
             {/* Desktop / tablet sidebar */}

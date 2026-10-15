@@ -14,14 +14,13 @@ describe("thermal receipt output", () => {
     expect(encodeText("A · B", "cp437")).toEqual([0x41, 0x20, 0xfa, 0x20, 0x42]);
   });
 
-  it("emits a length-prefixed Code 39 barcode", () => {
-    const bytes = slipToBytes([{ text: "Receipt" }], { barcode: "RCPT-123" });
-    const command = bytes.findIndex(
-      (_, index) => bytes[index] === 0x1d && bytes[index + 1] === 0x6b && bytes[index + 2] === 69,
-    );
+  it("renders a width-bounded barcode image instead of an oversized printer barcode command", () => {
+    const bytes = slipToBytes([{ text: "Receipt" }], { barcode: "RCPT-123", barcodeWidthDots: 320 });
+    const command = bytes.findIndex((_, index) => bytes[index] === 0x1d && bytes[index + 1] === 0x76 && bytes[index + 2] === 0x30);
     expect(command).toBeGreaterThan(-1);
-    expect(bytes[command + 3]).toBe(8);
-    expect(String.fromCharCode(...bytes.slice(command + 4, command + 12))).toBe("RCPT-123");
+    expect((bytes[command + 4] + bytes[command + 5] * 256) * 8).toBeLessThanOrEqual(320);
+    expect(bytes.some((byte, index) => byte === 0x1d && bytes[index + 1] === 0x6b)).toBe(false);
+    expect(String.fromCharCode(...bytes)).toContain("RCPT-123");
   });
 
   it("prints browser barcodes as SVG with scanner quiet zones", () => {

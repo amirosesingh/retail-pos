@@ -1,3 +1,5 @@
+import { closedShiftEffects } from "@/lib/closed-shift-effects";
+import { sameRecordId } from "@/lib/sale-identity";
 /**
  * The one closing screen used everywhere — register header and Shifts page.
  *
@@ -67,7 +69,6 @@ export function ShiftCloseDialog({
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [syncingClose, setSyncingClose] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
   const [serverState, setServerState] = useState<ShiftState | null>(null);
   const [expectedSnapshot, setExpectedSnapshot] = useState<{
     owner: string;
@@ -100,10 +101,10 @@ export function ShiftCloseDialog({
   const actorId = user?.staffId ?? null;
   const differentOperator = activeShift
     ? activeShift.openedByStaffId && actorId
-      ? activeShift.openedByStaffId !== actorId
+      ? !sameRecordId(activeShift.openedByStaffId, actorId)
       : activeShift.cashier.trim().toLowerCase() !== (user?.name ?? "").trim().toLowerCase()
     : false;
-  const differentTerminal = !!activeShift?.terminalId && activeShift.terminalId !== terminalId;
+  const differentTerminal = !!activeShift?.terminalId && !sameRecordId(activeShift.terminalId, terminalId);
   const otherClosure = differentOperator || differentTerminal;
   const allowHandover =
     state.settings.integrations.allowAnyStaffCloseShift === true && can("can_close_shift");
@@ -128,7 +129,6 @@ export function ShiftCloseDialog({
     setDigital("");
     setRecountReason("");
     setSyncingClose(false);
-    setSyncError(null);
   }, [open, owner]);
 
   // Managers see the numbers; the database refuses everyone else.
@@ -194,7 +194,6 @@ export function ShiftCloseDialog({
     };
   }, [open, ready, shiftId, owner, maySeeExpected, state.sales]);
 
-
   if (!activeShift) return null;
 
   const cashValue = parsePositiveAmount(cash);
@@ -208,27 +207,6 @@ export function ShiftCloseDialog({
   async function finish() {
     const shift = activeShift;
     if (!shift) return false;
-    setSyncingClose(true);
-    setSyncError(null);
-    const syncToast = toast.loading("Closing shift…", {
-      description: "Synchronizing pending transactions with the central database.",
-    });
-    const synchronized = await synchronizeShiftClose(shift.id);
-    toast.dismiss(syncToast);
-    setSyncingClose(false);
-    if (!synchronized.ok) {
-      setSyncError(synchronized.error);
-      toast.error("Synchronization failed — the shift remains open on this screen.", {
-        description: synchronized.error,
-      });
-      return false;
-    }
-    if (synchronized.offline) {
-      toast.info("Central server unavailable", {
-        description:
-          "The shift is stored safely on this terminal and will synchronize when the server returns.",
-      });
-    }
     const closed = await closeShift(cashValue ?? shift.countedCash ?? 0, note.trim(), {
       ...(expected
         ? {
@@ -265,27 +243,36 @@ export function ShiftCloseDialog({
         terminalId,
         storeId: shift.storeId,
         note: reason.trim(),
-      });
+      }).catch(error => notifyError(error, "Recording shift closure audit"));
     }
-    const printed = await printShiftReport(closed, state.sales, "zreport", {
-      financialSummary: maySeeFinancialSummary,
-      paymentBreakdown: maySeePaymentBreakdown,
-      expected: maySeeExpected,
-      counted: maySeeCounted,
-      variance: maySeeVariance,
+    const { printed, synchronized } = await closedShiftEffects({
+      print: () => printShiftReport(closed, state.sales, "zreport", {
+        financialSummary: maySeeFinancialSummary,
+        paymentBreakdown: maySeePaymentBreakdown,
+        expected: maySeeExpected,
+        counted: maySeeCounted,
+        variance: maySeeVariance,
+      }),
+      synchronize: async () => {
+        setSyncingClose(true);
+        const syncToast = toast.loading("Shift closed · synchronizing pending transactions…");
+        try { return await synchronizeShiftClose(shift.id); }
+        finally { toast.dismiss(syncToast); setSyncingClose(false); }
+      },
     });
-    toast.success(printed.ok ? "Shift closed · Z report sent to printer" : "Shift closed", {
-      description: printed.ok
-        ? undefined
-        : "The shift is safely closed. Reprint the Z report after checking the printer.",
+    if (!printed.ok) toast.warning("Shift closed · Z report could not print", {
+      description: printed.error ?? "Check the printer and reprint the Z report from Shifts.",
     });
+    if (!synchronized.ok) toast.warning("Shift closed locally · synchronization pending", {
+      description: synchronized.error + " Your data remains saved on this terminal. Retry from Sync status.",
+      duration: 10000,
+    });
+    else toast.success(printed.ok ? "Shift closed · Z report sent to printer" : "Shift closed");
     setStep("done");
     onOpenChange(false);
-    // The browser has no native window to close. On Electron this request is
-    // deliberately last: the local close is durable, final sync has been
-    // acknowledged (or safely classified offline), and the Z report attempt
-    // has completed before the main-process exit guard is engaged.
-    await localDb()?.closeWindow?.();
+    // Only exit automatically after both effects succeed. Other exits use the
+    // main-process drain guard, which preserves the local queue while offline.
+    if (synchronized.ok && printed.ok) await localDb()?.closeWindow?.();
     return true;
   }
 
@@ -550,14 +537,7 @@ export function ShiftCloseDialog({
               Closing shift… Synchronizing pending transactions.
             </p>
           )}
-          {syncError && (
-            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-              <span>
-                Synchronization failed. Check the connection and submit again to retry. {syncError}
-              </span>
-            </div>
-          )}
+
         </div>
 
         <DialogFooter>

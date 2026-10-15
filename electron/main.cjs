@@ -7,6 +7,8 @@ const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage } = require("electron");
 
+require("./window-rendering.cjs").configureWindowRendering(app);
+
 const updater = require("./updater.cjs");
 const terminalStore = require("./terminal-store.cjs");
 const configStore = require("./config-store.cjs");
@@ -311,7 +313,11 @@ async function flushSyncBeforeShutdown() {
     return await require('./sync/shutdown-sync.cjs').finishShutdownSync({
       progress: reportCloseProgress,
       run: async () => {
-        const settled = await settleWithin(() => syncCoordinator.runFinal({branchId,batchSize:500}), SHUTDOWN_SYNC_TIMEOUT_MS);
+        const settled = await settleWithin(() => require('./sync/shutdown-sync.cjs').runShutdownSync({
+          health: () => syncCloud.health({ timeoutMs: 8000 }),
+          pendingSummary: () => changeReader.pendingSummary(branchId),
+          run: () => syncCoordinator.runFinal({branchId,batchSize:500}),
+        }), SHUTDOWN_SYNC_TIMEOUT_MS);
         if (settled.timedOut) return {ok:false,timedOut:true,error:"Synchronization is still running. Your data remains saved locally; retry closing when it finishes."};
         if (!settled.ok) return {ok:false,code:settled.error?.code,error:String(settled.error?.message ?? settled.error)};
         return settled.value;
@@ -346,13 +352,22 @@ async function synchronizeClosingShifts(shiftId = null) {
         code: healthResult.code ?? "ECENTRAL_UNAVAILABLE",
         error: healthResult.error ?? "The central POS server is not ready.",
       };
-    let result = await syncCoordinator.runFinal({ branchId, batchSize: 500 });
-    if (result.code === "ECHANGEGAP") {
-      await prepareLocalData({ force: true });
-      result = await syncCoordinator.runFinal({ branchId, batchSize: 500 });
-    }
-    if (result.ok) pendingShiftCloseSync.clear();
-    return result;
+    const wasPaused = syncCoordinator.paused;
+    syncCoordinator.resume();
+    try {
+      const result = await require('./sync/shutdown-sync.cjs').finishShutdownSync({
+        run: async () => {
+          let result = await syncCoordinator.runFinal({ branchId, batchSize: 500 });
+          if (result.code === "ECHANGEGAP") {
+            await prepareLocalData({ force: true });
+            result = await syncCoordinator.runFinal({ branchId, batchSize: 500 });
+          }
+          return result;
+        },
+      });
+      if (result.ok) pendingShiftCloseSync.clear();
+      return result;
+    } finally { if (wasPaused) syncCoordinator.pause(); }
   })();
   try {
     return await mandatoryShiftSyncRun;
@@ -820,12 +835,9 @@ function createWindows(initialRoute = "/") {
     height: 900,
     show: false,
     backgroundColor: "#0b0b0c",
-    // Frameless shell. On Windows the app paints its own minimise / maximise /
-    // close buttons inside the title strip so they follow the POS theme.
-    titleBarStyle: "hidden",
-    ...(process.platform === "darwin"
-      ? { trafficLightPosition: { x: 12, y: 12 } }
-      : { frame: false }),
+    // Native captions provide window controls on login and all POS screens.
+    frame: true,
+    transparent: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -1499,14 +1511,8 @@ async function localShiftReconciliationView(shiftId) {
 
 /** ESC/POS drawer pulses must use drawer:open, where identity and permission are checked. */
 function containsDrawerPulse(bytes) {
-  const values = Array.from(bytes ?? []);
-  for (let index = 0; index <= values.length - 5; index += 1) {
-    if (values[index] === 0x1b && values[index + 1] === 0x70 &&
-        (values[index + 2] === 0 || values[index + 2] === 1)) return true;
-  }
-  return false;
+  return require("./receipt-command-guard.cjs").containsDrawerPulse(bytes);
 }
-
 
 function authorizationServerUrl() {
   const configured = String(configStore.get("backendUrl") ?? "").trim().replace(/\/+$/, "");

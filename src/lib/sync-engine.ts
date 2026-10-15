@@ -1,3 +1,4 @@
+import { sameBranchId } from "./branch-id";
 import { externalClientSnapshot, supabaseExternal } from "@/integrations/supabase/external-client";
 import { logSync } from "./sync-log";
 import { hasRequiredPlatformConfig } from "./platform-config-ready";
@@ -903,7 +904,7 @@ export function startSyncEngine() {
   };
   const offDesktopBusiness = desktopBridge?.onBusinessChanged?.((event) => {
     const active = activeBranchId();
-    if (event.branchId && active && event.branchId.toLowerCase() !== active.toLowerCase()) return;
+    if (event.branchId && active && !sameBranchId(event.branchId, active)) return;
     const changes = event.changes ?? (event.tables ?? []).map(table => ({ table, entityId: null }));
     for (const change of changes) {
       const live = { ...change, reason: "desktop:committed", storeId: event.branchId ?? active ?? null };

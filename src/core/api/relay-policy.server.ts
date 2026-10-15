@@ -1,3 +1,4 @@
+import { alignVerifiedScopeIds } from "@/lib/verified-scope-ids";
 /**
  * Server-side authorisation for the POS write relay.
  *
@@ -485,6 +486,7 @@ export async function authorizeRelayOp(
   /** ids inserted earlier in the same request, so child-first pushes work. */
   batchIds?: Map<string, Set<string>>,
 ): Promise<{ ok: true; op: RelayOp } | RelayDenial> {
+  op = alignVerifiedScopeIds(op, scope);
   if (!RELAY_WRITABLE_TABLES.has(op.table))
     return deny("TABLE_FORBIDDEN", `"${op.table}" cannot be synced`);
 

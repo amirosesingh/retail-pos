@@ -12,4 +12,13 @@ async function finishShutdownSync({ run, progress = () => {}, sleep = ms => new 
     await sleep(attempt * 1000);
   }
 }
-module.exports = { finishShutdownSync };
+async function runShutdownSync({ health, pendingSummary, run }) {
+  const connection = await health();
+  if (!connection.online && connection.code === "EOFFLINE") {
+    const remaining = await pendingSummary(); // Must prove the local journal is readable.
+    return { ...remaining, ok: true, offline: true, synchronized: false };
+  }
+  if (!connection.ready) return { ok: false, code: connection.code, error: connection.error };
+  return run();
+}
+module.exports = { finishShutdownSync, runShutdownSync };

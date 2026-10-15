@@ -7,6 +7,8 @@
  * slip and encodes it as ESC/POS bytes for the Windows RAW spooler path.
  */
 
+import { receiptBarcode, receiptBarcodeBytes } from "./receipt-barcode";
+
 const ESC = 0x1b;
 const GS = 0x1d;
 
@@ -275,8 +277,10 @@ export function slipToBytes(
     cut?: boolean;
     encoding?: SlipEncoding;
     lineEnding?: SlipLineEnding;
-    /** Code 39 value printed as a real barcode at the end of the slip. */
+    /** Full receipt reference rendered as a width-bounded scan code. */
     barcode?: string;
+    /** Actual printable width, in 203-dpi dots (8 dots/mm). */
+    barcodeWidthDots?: number;
     /** Blank columns inserted at the start of every line (left margin). */
     indent?: number;
   } = {},
@@ -300,21 +304,19 @@ export function slipToBytes(
   }
 
   bytes.push(ESC, 0x61, 0, ESC, 0x45, 0, GS, 0x21, 0x00);
-  const bc = (opts.barcode ?? "")
-    .toUpperCase()
-    .replace(/[^0-9A-Z\-.$/+% ]/g, "")
-    .slice(0, 255);
-  if (bc) {
-    bytes.push(ESC, 0x61, 1); // centre
-    bytes.push(GS, 0x68, 60); // barcode height
-    bytes.push(GS, 0x77, 2); // module width
-    bytes.push(GS, 0x48, 2); // print the number below the bars
-    // Function B is length-prefixed and is understood by current Epson-compatible
-    // printers and clones that ignore the older NUL-terminated command.
-    bytes.push(GS, 0x6b, 69, bc.length); // Code 39, length-prefixed
-    for (const b of encodeText(bc, "ascii")) bytes.push(b);
-    bytes.push(...eol);
-    bytes.push(ESC, 0x61, 0);
+  if (opts.barcode) {
+    const bitmap = receiptBarcode(opts.barcode, opts.barcodeWidthDots ?? 512);
+    if (bitmap) {
+      bytes.push(ESC, 0x61, 1); // Centre the bounded image.
+      bytes.push(...receiptBarcodeBytes(bitmap));
+      bytes.push(...eol);
+      // The receipt HTML already carries the reference; direct callers still need it.
+      if (!lines.some(line => line.text === opts.barcode)) {
+        text(opts.barcode);
+        bytes.push(...eol);
+      }
+      bytes.push(ESC, 0x61, 0);
+    }
   }
   for (let i = 0; i < 4; i++) bytes.push(...eol);
   if (opts.cut !== false) bytes.push(GS, 0x56, 66, 0x00); // partial cut with feed
@@ -333,6 +335,8 @@ export function htmlToEscPos(
     encoding?: SlipEncoding;
     lineEnding?: SlipLineEnding;
     barcode?: string;
+    /** Actual printable width, in 203-dpi dots (8 dots/mm). */
+    barcodeWidthDots?: number;
     indent?: number;
     /** Override the printable column count (narrower paper / wider margins). */
     cols?: number;
@@ -342,5 +346,8 @@ export function htmlToEscPos(
     paper === "30mm" ? 8 : 16,
     (opts.cols ?? columnsForPaper(paper)) - Math.max(0, opts.indent ?? 0),
   );
-  return slipToBytes(htmlToSlip(html, cols, opts.encoding ?? "cp437"), opts);
+  const widthMm = paper === "30mm" ? 24 : paper === "58mm" ? 48 : 72;
+  return slipToBytes(htmlToSlip(html, cols, opts.encoding ?? "cp437"), {
+    ...opts, barcodeWidthDots: opts.barcodeWidthDots ?? widthMm * 8,
+  });
 }

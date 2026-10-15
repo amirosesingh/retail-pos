@@ -782,7 +782,7 @@
     border-color: var(--color-border);
   }
 
-  body {
+  html, body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
@@ -930,14 +930,7 @@
 
 /* Frameless Electron window: the strip below the OS overlay drags the window,
    while interactive elements inside it stay clickable. */
-.app-drag {
-  -webkit-app-region: drag;
-}
-
-.app-drag button,
-.app-drag a,
-.app-drag input,
-.app-drag [role="button"],
+.app-drag,
 .app-no-drag {
   -webkit-app-region: no-drag;
 }
@@ -1050,16 +1043,6 @@
     box-shadow 160ms ease-out;
 }
 
-@keyframes activity-toast-in {
-  from {
-    opacity: 0;
-    transform: translateX(calc(100% + 1rem)) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
-}
 
 @keyframes activity-row-in {
   from {
@@ -1087,9 +1070,6 @@
   }
 }
 
-[data-sonner-toast].activity-notification-toast[data-mounted="true"] {
-  animation: activity-toast-in 220ms ease-out both;
-}
 
 .ui-animated-list-item {
   display: grid;
@@ -1150,10 +1130,29 @@
     opacity var(--motion-fast) var(--motion-ease-standard);
 }
 
-[data-sonner-toast].activity-notification-toast:not([data-mounted="true"]),
-[data-sonner-toast].activity-notification-toast[data-removed="true"][data-swipe-out="false"] {
-  --y: translateX(calc(100% + 1rem));
-  opacity: 0;
+/* Keep Sonner's own --y/transform positioning intact, including stacked notifications. */
+.toaster [data-sonner-toast][data-styled="true"]:has([data-close-button]) {
+  padding-inline-end: 44px !important;
+}
+
+.toaster [data-sonner-toast][data-styled="true"] [data-close-button] {
+  left: auto;
+  right: 8px;
+  top: 8px;
+  transform: none;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-app-region: no-drag;
+}
+
+/* The button must be the pointer target, not its SVG; otherwise Sonner begins a swipe. */
+.toaster [data-close-button] > svg {
+  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
