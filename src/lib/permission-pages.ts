@@ -27,5 +27,5 @@ export function effectivePagePermissions(matrix: Record<string, boolean>): Recor
 export function setPageVisibility(matrix: StaffPermissions, id: string, visible: boolean): StaffPermissions {
   const page = PERMISSION_PAGES.find(item => item.id === id);
   if (!page) return matrix;
-  return { ...matrix, ...(!visible ? Object.fromEntries(page.keys.map(key => [key, false])) : {}), [pageKey(id)]: visible };
+  return { ...matrix, [pageKey(id)]: visible };
 }

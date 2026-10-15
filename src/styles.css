@@ -54,6 +54,26 @@
   .responsive-table.report-table[data-mobile-cards="true"] tbody td > * { justify-self: start; }
 }
 
+/* Keep dialog grids and dense tables inside the visible device viewport. */
+.pos-dialog-content {
+  max-height: calc(100dvh - 1rem);
+}
+.pos-dialog-content > * { min-width: 0; }
+.pos-dialog-content { overflow-wrap: anywhere; }
+@media (min-width: 768px) {
+  .pos-dialog-content:has(table) {
+    width: min(96vw, 90rem);
+    max-width: min(96vw, 90rem);
+  }
+}
+@media (max-width: 639px) {
+  .pos-dialog-content {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+    padding: 1rem;
+  }
+}
+
 /* Compact cards key off the table's real content width, including sidebars and split panes. */
 .responsive-table-region {
   container-type: inline-size;
@@ -105,6 +125,8 @@
     min-height: 2.5rem;
     padding: 0.5rem 0.75rem;
     overflow-wrap: anywhere;
+    white-space: normal;
+    min-width: 0;
     text-align: right;
     font-size: clamp(0.75rem, calc(0.7rem + 0.4cqi), 0.875rem);
     border-bottom: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
@@ -127,6 +149,8 @@
   .responsive-table[data-mobile-cards="true"] tbody td > * {
     min-width: 0;
     justify-self: end;
+    max-width: 100%;
+    white-space: normal;
   }
 
   .responsive-table[data-mobile-cards="true"] tbody td[colspan] {

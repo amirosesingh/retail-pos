@@ -16,6 +16,15 @@ describe("page visibility and execution permissions", () => {
     expect(hasPermission({permissions}, 'can_process_sale')).toBe(false);
     expect(effectivePagePermissions(permissions).can_process_sale).toBe(false);
   });
+  it("hiding a page does not revoke shared actions on other pages", () => {
+    const owners = PERMISSION_PAGES.filter(page => page.keys.includes("can_manage_bookings"));
+    expect(owners.length).toBeGreaterThan(1);
+    const permissions = setPageVisibility({...NO_PERMISSIONS, can_manage_bookings:true}, owners[0].id, false);
+    expect(permissions.can_manage_bookings).toBe(true);
+    expect(hasPermission(permissions, "can_manage_bookings")).toBe(true);
+    const hiddenEverywhere = owners.reduce((matrix, page) => setPageVisibility(matrix, page.id, false), permissions);
+    expect(hasPermission(hiddenEverywhere, "can_manage_bookings")).toBe(false);
+  });
   it("matches direct and nested URLs using the most specific page", () => {
     expect(pageForRoute('/inventory/item/123')?.id).toBe('inventory');
     expect(pageForRoute('/settings/database/')?.id).toBe('database');
@@ -25,8 +34,9 @@ describe("page visibility and execution permissions", () => {
   it("select all and deselect all affect only the chosen visible section", () => {
     const all = setPageFeatures({...NO_PERMISSIONS}, 'register', true);
     const hidden = setPageVisibility(all, "register", false);
-    expect(hidden.can_process_sale).toBe(false);
-    expect(setPageVisibility(hidden, "register", true).can_process_sale).toBe(false);
+    expect(hidden.can_process_sale).toBe(true);
+    expect(hasPermission(hidden, "can_process_sale")).toBe(false);
+    expect(setPageVisibility(hidden, "register", true).can_process_sale).toBe(true);
     expect(all.can_process_sale).toBe(true);expect(all.can_manage_staff).toBe(false);
     expect(setPageFeatures(all,'register',false).can_process_sale).toBe(false);
     expect(setPageFeatures({...NO_PERMISSIONS,'page:register':false},'register',true).can_process_sale).toBe(false);

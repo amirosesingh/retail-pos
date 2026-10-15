@@ -724,7 +724,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
           {columnMenu}
         </div>}
         {!managed && columnControls && (controlsTarget ? createPortal(columnMenu, controlsTarget) : <div className="flex justify-end px-3 py-2">{columnMenu}</div>)}
-        <div className="responsive-table-region relative w-full max-w-full overflow-x-auto overscroll-x-contain">
+        <div className="responsive-table-region relative min-w-0 w-full max-w-full overflow-x-auto overscroll-x-contain">
           <table
             ref={internalRef}
             data-mobile-cards={mobileCards ? "true" : "false"}

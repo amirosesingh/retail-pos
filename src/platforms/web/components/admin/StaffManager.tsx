@@ -170,6 +170,7 @@ export function StaffManager() {
   const [form, setForm] = useState<Form>({ ...EMPTY });
   const [editing, setEditing] = useState<Row | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [permissionSearch, setPermissionSearch] = useState("");
   const [permissionsFor, setPermissionsFor] = useState<Row | null>(null);
   const [permissionGroupsOpen, setPermissionGroupsOpen] = useState<Set<string>>(
     () => new Set(PERMISSION_PAGES.map((group) => group.id)),
@@ -582,6 +583,7 @@ export function StaffManager() {
                         disabled={offline}
                         onClick={() => {
                           setPermissionGroupsOpen(new Set(PERMISSION_PAGES.map((g) => g.id)));
+                          setPermissionSearch("");
                           setPermissionsFor({ ...row, permissions: { ...row.permissions } });
                         }}
                       >
@@ -825,11 +827,11 @@ export function StaffManager() {
           if (!open && busy !== "permissions") setPermissionsFor(null);
         }}
       >
-        <DialogContent className="max-h-[86vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[92dvh] w-[calc(100vw-1rem)] overflow-y-auto sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>Permissions · {permissionsFor?.full_name}</DialogTitle>
             <DialogDescription>
-              Changes apply to this account only. Administrators always retain full access.
+              Changes stay pending until Save. Copying changes permissions only; branch assignments remain unchanged. Administrators retain full access.
             </DialogDescription>
           </DialogHeader>
           {permissionsFor && (
@@ -839,6 +841,7 @@ export function StaffManager() {
                   Copy permissions from another account
                 </span>
                 <Select
+                  disabled={permissionsFor.role === "admin" || busy === "permissions"}
                   onValueChange={(userId) => {
                     const source = rows.find((row) => row.user_id === userId);
                     if (!source) return;
@@ -894,135 +897,59 @@ export function StaffManager() {
               </Button>
             </div>
           )}
+          {permissionsFor && <div className="flex flex-wrap items-center gap-3">
+            <Badge variant="secondary">{permissionsFor.role_slug}</Badge>
+            <span className="text-sm text-muted-foreground">Branch: {permissionsFor.store_id ? branchDisplayName(stores, permissionsFor.store_id) : "No branch assigned"}</span>
+            <Input className="min-w-48 flex-1" aria-label="Search permissions" placeholder="Search pages or permissions…" value={permissionSearch} onChange={event => setPermissionSearch(event.target.value)} />
+            <Button variant="outline" disabled={permissionsFor.role === "admin" || busy === "permissions"} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: { ...(roles.find(role => role.slug === permissionsFor.role_slug)?.permissions ?? rolePermissions(permissionsFor.role)) } })}>Reset to role defaults</Button>
+          </div>}
           <div className="space-y-3">
             {permissionsFor &&
-              PERMISSION_PAGES.map((group) => {
-                const open = permissionGroupsOpen.has(group.id);
+              PERMISSION_PAGES.filter(group => !permissionSearch.trim() || `${group.label} ${group.keys.map(key => PERMISSION_LABELS[key]).join(" ")}`.toLowerCase().includes(permissionSearch.trim().toLowerCase())).map((group) => {
+                const open = !!permissionSearch.trim() || permissionGroupsOpen.has(group.id);
                 const admin = permissionsFor.role === "admin";
                 const enabled = admin || pageEnabled(permissionsFor.permissions, group.id);
                 return (
                   <section key={group.id} className="rounded-lg border border-border">
                     <div className="flex flex-wrap items-center justify-between gap-3 p-3">
-                      <button
-                        type="button"
-                        className="flex items-center gap-2 text-left text-sm font-semibold"
-                        aria-expanded={open}
-                        onClick={() =>
-                          setPermissionGroupsOpen((current) => {
-                            const next = new Set(current);
-                            if (open) next.delete(group.id);
-                            else next.add(group.id);
-                            return next;
-                          })
-                        }
-                      >
-                        {open ? (
-                          <ChevronDown className="size-4" />
-                        ) : (
-                          <ChevronRight className="size-4" />
-                        )}
-                        {group.label}
+                      <button type="button" className="flex items-center gap-2 text-left text-sm font-semibold" aria-expanded={open}
+                        onClick={() => setPermissionGroupsOpen(current => { const next = new Set(current); if (open) next.delete(group.id); else next.add(group.id); return next; })}>
+                        {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}{group.label}
                       </button>
                       <label className="flex items-center gap-2 text-xs font-medium">
-                        Page visibility
-                        <Switch
-                          checked={enabled}
-                          disabled={admin}
-                          aria-label={`${group.label} page visibility`}
-                          onCheckedChange={(checked) =>
-                            setPermissionsFor({
-                              ...permissionsFor,
-                              permissions: setPageVisibility(
-                                permissionsFor.permissions,
-                                group.id,
-                                checked,
-                              ),
-                            })
-                          }
-                        />
+                        Open page
+                        <Switch checked={enabled} disabled={admin} aria-label={`${group.label} page visibility`}
+                          onCheckedChange={checked => setPermissionsFor({ ...permissionsFor, permissions: setPageVisibility(permissionsFor.permissions, group.id, checked) })} />
                       </label>
                     </div>
                     {open && enabled && (
                       <div className="space-y-3 border-t border-border p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-xs text-muted-foreground">
-                            Choose allowed actions. Visibility alone grants no actions. Shared
-                            actions use the same permission on related pages; turning visibility off
-                            also deselects these actions.
-                          </span>
-                          {group.keys.length > 0 && (
-                            <div className="flex gap-1">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                disabled={admin}
-                                onClick={() =>
-                                  setPermissionsFor({
-                                    ...permissionsFor,
-                                    permissions: setPageFeatures(
-                                      permissionsFor.permissions,
-                                      group.id,
-                                      true,
-                                    ),
-                                  })
-                                }
-                              >
-                                Select all
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                disabled={admin}
-                                onClick={() =>
-                                  setPermissionsFor({
-                                    ...permissionsFor,
-                                    permissions: setPageFeatures(
-                                      permissionsFor.permissions,
-                                      group.id,
-                                      false,
-                                    ),
-                                  })
-                                }
-                              >
-                                Deselect all
-                              </Button>
+                          <span className="text-xs text-muted-foreground">Page access grants no actions. Shared permissions are marked below; changes apply everywhere that permission is used. Hiding a page preserves your selected permissions.</span>
+                          {group.keys.length > 0 && <div className="flex gap-1">
+                            <Button size="sm" variant="ghost" disabled={admin} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: setPageFeatures(permissionsFor.permissions, group.id, true) })}>Select all</Button>
+                            <Button size="sm" variant="ghost" disabled={admin} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: setPageFeatures(permissionsFor.permissions, group.id, false) })}>Deselect all</Button>
+                          </div>}
+                        </div>
+                        {(["Visible information", "Allowed actions"] as const).map(section => {
+                          const isView = (key: PermissionKey) => key.startsWith("can_view_") || key.endsWith("_view");
+                          const keys = group.keys.filter(key => (section === "Visible information") === isView(key));
+                          if (!keys.length) return null;
+                          return <div key={section} className="space-y-3">
+                            <h4 className="text-sm font-semibold">{section}</h4>
+                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                              {keys.map(key => <label key={key} className="flex items-start gap-2 text-sm">
+                                <Checkbox className="mt-0.5 size-4 shrink-0" checked={admin || permissionsFor.permissions[key]} disabled={admin || busy === "permissions"}
+                                  onCheckedChange={checked => setPermissionsFor({ ...permissionsFor, permissions: { ...permissionsFor.permissions, [key]: checked === true } })} />
+                                <span>{PERMISSION_LABELS[key]}{PERMISSION_PAGES.filter(page => page.keys.includes(key)).length > 1 && <span className="block text-xs text-muted-foreground">Shared with {PERMISSION_PAGES.filter(page => page.id !== group.id && page.keys.includes(key)).map(page => page.label).join(", ")}</span>}</span>
+                              </label>)}
                             </div>
-                          )}
-                        </div>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          {group.keys.map((key) => (
-                            <label key={key} className="flex items-start gap-2 text-sm">
-                              <Checkbox
-                                className="mt-0.5 size-4 shrink-0"
-                                checked={admin || permissionsFor.permissions[key]}
-                                disabled={admin}
-                                onCheckedChange={(checked) =>
-                                  setPermissionsFor({
-                                    ...permissionsFor,
-                                    permissions: {
-                                      ...permissionsFor.permissions,
-                                      [key]: checked === true,
-                                    },
-                                  })
-                                }
-                              />
-                              <span>{PERMISSION_LABELS[key]}</span>
-                            </label>
-                          ))}
-                        </div>
-                        {!group.keys.length && (
-                          <p className="text-xs text-muted-foreground">
-                            This page has no separate configurable actions.
-                          </p>
-                        )}
+                          </div>;
+                        })}
+                        {!group.keys.length && <p className="text-xs text-muted-foreground">This page has no separate configurable actions.</p>}
                       </div>
                     )}
-                    {open && !enabled && (
-                      <p className="border-t border-border p-3 text-xs text-muted-foreground">
-                        Page access is off. Its content and actions are unavailable, including
-                        direct URLs. Enable visibility, then select the actions to grant.
-                      </p>
-                    )}
+                    {open && !enabled && <p className="border-t border-border p-3 text-xs text-muted-foreground">Page access is off. Selected permissions are preserved; shared actions can still work on other enabled pages.</p>}
                   </section>
                 );
               })}
