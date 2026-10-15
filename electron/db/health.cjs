@@ -17,6 +17,27 @@ function requiredIndexes() {
   return indexes;
 }
 
+const LOCAL_SUPPORT_TABLES = {
+  pos_schema_migrations:["version","name","applied_at"],
+  pos_jobs:["job_id","job_type","status","branch_id","phase","updated_at"],
+  sync_checkpoints:["organization_id","branch_id","entity_type","direction","committed_cursor"],
+  sync_change_journal:["change_id","entity_type","entity_id","operation","branch_id","entity_version","aggregate_id","acknowledged_at"],
+  sync_conflicts:["conflict_id","entity_type","entity_id","branch_id","status"],
+  local_operation_receipts:["operation_id","operation_type","entity_id","note","committed_at"],
+  pos_document_counters:["prefix","branch_id","next_value","updated_at"],
+};
+function inspectLocalSupport(actual) {
+  const details=[],differences=[];
+  for(const [table,names] of Object.entries(LOCAL_SUPPORT_TABLES)) {
+    const columns=actual.get(table);
+    const missingColumns=names.filter(name=>!columns?.has(name));
+    if(!columns) differences.push({kind:"table",table,object:table,issue:"missing",expected:"local support table",actual:"not found"});
+    for(const name of missingColumns) differences.push({kind:"column",table,object:name,issue:"missing",expected:"local support column",actual:"not found"});
+    details.push({table,present:Boolean(columns),missingColumns,incompatible:[]});
+  }
+  return {details,differences};
+}
+
 async function validateDatabase(manager, profile) {
   try {
     const registry = loadRegistry();
@@ -81,6 +102,9 @@ async function validateDatabase(manager, profile) {
         }
         details.push({ table: tableName, present: Boolean(columns), missingColumns, incompatible });
       }
+      const localSupport=inspectLocalSupport(actual);
+      details.push(...localSupport.details);
+      differences.push(...localSupport.differences);
       for (const expected of requiredIndexes()) {
         const actualIndex=actualIndexes.get(`${expected.table.toLowerCase()}.${expected.name.toLowerCase()}`);
         if(!actualIndex)differences.push({kind:"index",table:expected.table,object:expected.name,issue:"missing",expected:`${expected.unique?"unique ":""}index (${expected.columns.join(", ")})`,actual:"not found"});
@@ -98,8 +122,8 @@ async function validateDatabase(manager, profile) {
       } finally { await transaction.rollback(); }
       if(!changeTracking.recordset?.length)differences.push({kind:"database",table:null,object:"change tracking",issue:"disabled",expected:"enabled",actual:"disabled"});
       const ready = registry.tables?.length > 0 && missingTables.length === 0 && incompatibleColumns.length === 0 && missingMigrationVersions.length === 0 && differences.filter((item)=>item.kind==="index").length===0 && writeTest && Boolean(changeTracking.recordset?.length);
-      return { ok: true, ready, schemaVersion: registry.version, requiredTables: registry.tables?.length ?? 0,
-        presentTables: (registry.tables?.length ?? 0) - missingTables.length, missingTables,
+      return { ok: true, ready, schemaVersion: registry.version, requiredTables: (registry.tables?.length ?? 0)+Object.keys(LOCAL_SUPPORT_TABLES).length,
+        presentTables: (registry.tables?.length ?? 0)+Object.keys(LOCAL_SUPPORT_TABLES).length - missingTables.length, missingTables,
         columnsCompatible: incompatibleColumns.length === 0, incompatibleColumns, writeTest,
         changeTracking: Boolean(changeTracking.recordset?.length), migrationHistoryPresent,
         missingMigrationVersions, differences, details,
@@ -108,4 +132,4 @@ async function validateDatabase(manager, profile) {
   } catch (error) { return { ...safeError(error), ready: false, status: "error" }; }
 }
 
-module.exports = { validateDatabase };
+module.exports = { validateDatabase, inspectLocalSupport };

@@ -47,7 +47,7 @@
     "desktop:release": "node scripts/desktop-release.cjs",
     "mobile:build": "node scripts/mobile-build.cjs",
     "mobile:sync": "node scripts/mobile-build.cjs && node --require ./scripts/node-user-info-fallback.cjs ./node_modules/@capacitor/cli/bin/capacitor sync android && node scripts/android-permissions.cjs && node scripts/android-push-setup.cjs",
-    "mobile:release": "node scripts/mobile-build.cjs && node --require ./scripts/node-user-info-fallback.cjs ./node_modules/@capacitor/cli/bin/capacitor sync android && node scripts/android-permissions.cjs"
+    "mobile:release": "npm run mobile:sync"
   },
   "dependencies": {
     "@capacitor-community/file-opener": "^8.0.1",
@@ -125,6 +125,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
+    "@electric-sql/pglite": "0.5.10",
     "@electron/rebuild": "4.2.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",

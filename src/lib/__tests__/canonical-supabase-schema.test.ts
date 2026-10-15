@@ -173,6 +173,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261013164303_restore_personal_settings_policy_helper.sql",
       "supabase/migrations/20261013164447_allow_authorized_shift_operator_handover.sql",
       "supabase/migrations/20261014092837_restore_private_sync_wake_authorization.sql",
+      "supabase/migrations/20261015120141_reserve_cloud_stock_document_numbers.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

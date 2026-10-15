@@ -2205,6 +2205,11 @@ function registerIpc() {
   ipcMain.handle("config:reset", () => configStore.reset());
   ipcMain.handle("business:reserve-bill", (_e, prefix, minimum) =>
     require("./bill-counter.cjs").reserveBillCounter(configStore, prefix, minimum));
+  ipcMain.handle("business:reserve-stock", async (_e, prefix, minimum) => {
+    if (!adminSession.hasPosAuthority()) return { ok: false, code: "PERMISSION_DENIED", error: "Sign in to reserve a stock document number." };
+    try { return await require("./bill-counter.cjs").reserveStockCounter(databaseManager.sql(), operationsRepository.pool(), localBranchId(), prefix, minimum); }
+    catch { return { ok: false, code: "ESTOCK_COUNTER", error: "Connect the local database before reserving a stock document number." }; }
+  });
   ipcMain.handle("settings:get", (_e, key) => ({ ok: true, value: configStore.get(`setting:${String(key)}`) }));
   ipcMain.handle("settings:set", (_e, key, value) => configStore.set(`setting:${String(key)}`, value));
 
