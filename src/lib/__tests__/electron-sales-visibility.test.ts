@@ -153,7 +153,7 @@ describe("Electron sales visibility", () => {
     expect(sync).toContain("desktopBridge.sync?.getStatus");
   });
 
-  it("canonicalizes only missing or SQL-equivalent legacy branch fields before upload", async () => {
+  it("repairs missing ownership while preserving exact-case branch code mismatches", async () => {
     const { rowsForBranch } = await import("../../../electron/sync/push-worker.cjs");
     const rows = rowsForBranch("sale_items", [
       { id: "missing", branch_id: null },
@@ -166,7 +166,7 @@ describe("Electron sales visibility", () => {
     expect(rows).toEqual([
       { id: "missing", branch_id: "branch-1" },
       { id: "correct", branch_id: "branch-1" },
-      { id: "case", branch_id: "branch-1" },
+      { id: "case", branch_id: "BRANCH-1" },
       { id: "space", branch_id: "branch-1" },
       { id: "wrong", branch_id: "branch-2" },
     ]);
@@ -179,7 +179,7 @@ describe("Electron sales visibility", () => {
     ], "branch-1")).toEqual([
       { id: "missing", store_id: "branch-1" },
       { id: "correct", store_id: "branch-1" },
-      { id: "case", store_id: "branch-1" },
+      { id: "case", store_id: "BRANCH-1" },
       { id: "space", store_id: "branch-1" },
       { id: "wrong", store_id: "branch-2" },
     ]);
@@ -196,7 +196,7 @@ describe("Electron sales visibility", () => {
     ], "branch-1")).toEqual([
       { id: "missing", store_id: "branch-1" },
       { id: "correct", store_id: "branch-1" },
-      { id: "case", store_id: "branch-1" },
+      { id: "case", store_id: "BRANCH-1" },
       { id: "space", store_id: "branch-1" },
       { id: "wrong", store_id: "branch-2" },
     ]);

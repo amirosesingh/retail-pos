@@ -1,3 +1,4 @@
+import { receiptBarcode } from "./receipt-barcode";
 import { tenderTotals, shiftSalesOf } from "./shift-close";
 import type {
   RoundingSettings,
@@ -223,95 +224,25 @@ const qrBlock = (placement: "header" | "footer") =>
       )
     : "";
 
-/**
- * Real Code 39 barcode drawn as inline SVG.
- *
- * SVG shapes print through every driver, unlike CSS background colours which
- * Windows and browsers drop from printouts by default — that is why the bars
- * used to vanish and only the number came out.
- */
+/** The driver and raw printer use the same compact, width-bounded scan image. */
 export function barcodeSvg(value: string, height = 44) {
-  const clean = code39Text(value);
-  if (!clean) return "";
-  const NARROW = 2;
-  const WIDE = 5;
-  // Code 39 requires a blank quiet zone on both sides. Keep it inside the SVG
-  // so browser and Windows print drivers cannot crop the first or last bars.
-  const QUIET = NARROW * 10;
-  let x = QUIET;
+  if (!value) return "";
+  const bitmap = receiptBarcode(value, Math.floor(printableWidthMm(receiptCfg.paper) * 8), Math.round(height * 203 / 96));
+  if (!bitmap) return `<div class="bc-text">${esc(value)}</div>`;
   let rects = "";
-  const chars = `*${clean}*`.split("");
-  chars.forEach((ch, idx) => {
-    const pattern = CODE39[ch];
-    if (!pattern) return;
-    for (let i = 0; i < pattern.length; i++) {
-      const w = pattern[i] === "1" ? WIDE : NARROW;
-      if (i % 2 === 0)
-        rects += `<rect x="${x}" y="0" width="${w}" height="${height}" fill="#000"/>`;
-      x += w;
+  // Code 128 rows are identical; draw bars once rather than thousands of pixel rectangles.
+  const step = bitmap.kind === "code128" ? bitmap.height : 1;
+  for (let y = 0; y < bitmap.height; y += step) {
+    let x = 0;
+    while (x < bitmap.width) {
+      if (!bitmap.pixels[y * bitmap.width + x]) { x++; continue; }
+      const start = x;
+      while (x < bitmap.width && bitmap.pixels[y * bitmap.width + x]) x++;
+      rects += `<rect x="${start}" y="${y}" width="${x - start}" height="${step}" fill="#000"/>`;
     }
-    if (idx < chars.length - 1) x += NARROW; // inter-character gap
-  });
-  const width = x + QUIET;
-  return `<div class="barcode"><svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><rect width="${width}" height="${height}" fill="#fff"/>${rects}</svg></div><div class="bc-text">${esc(
-    clean,
-  )}</div>`;
-}
-
-/** Code 39 patterns: 9 elements per character, 1 = wide, 0 = narrow. */
-const CODE39: Record<string, string> = {
-  "0": "000110100",
-  "1": "100100001",
-  "2": "001100001",
-  "3": "101100000",
-  "4": "000110001",
-  "5": "100110000",
-  "6": "001110000",
-  "7": "000100101",
-  "8": "100100100",
-  "9": "001100100",
-  A: "100001001",
-  B: "001001001",
-  C: "101001000",
-  D: "000011001",
-  E: "100011000",
-  F: "001011000",
-  G: "000001101",
-  H: "100001100",
-  I: "001001100",
-  J: "000011100",
-  K: "100000011",
-  L: "001000011",
-  M: "101000010",
-  N: "000010011",
-  O: "100010010",
-  P: "001010010",
-  Q: "000000111",
-  R: "100000110",
-  S: "001000110",
-  T: "000010110",
-  U: "110000001",
-  V: "011000001",
-  W: "111000000",
-  X: "010010001",
-  Y: "110010000",
-  Z: "011010000",
-  "-": "010000101",
-  ".": "110000100",
-  " ": "011000100",
-  $: "010101000",
-  "/": "010100010",
-  "+": "010001010",
-  "%": "000101010",
-};
-
-/** Strip anything Code 39 cannot represent. */
-export function code39Text(value: string) {
-  return value
-    .toUpperCase()
-    .split("")
-    .filter((c) => c !== "*" && CODE39[c])
-    .join("");
+  }
+  const widthMm = bitmap.width / 8;
+  return `<div class="barcode" data-symbology="${bitmap.kind}"><svg width="${widthMm}mm" viewBox="0 0 ${bitmap.width} ${bitmap.height}" preserveAspectRatio="xMidYMid meet" style="width:${widthMm}mm;max-width:100%;height:auto;margin:0 auto" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><rect width="${bitmap.width}" height="${bitmap.height}" fill="#fff"/>${rects}</svg></div><div class="bc-text">${esc(value)}</div>`;
 }
 
 const PAPER_MM: Record<PaperSize, number> = {
@@ -723,7 +654,7 @@ async function printHtml(
         encoding: prefs.encoding ?? "cp437",
         lineEnding: prefs.lineEnding ?? "lf",
         cols,
-        ...(barcode ? { barcode: code39Text(barcode) } : {}),
+        ...(barcode ? { barcode, barcodeWidthDots: Math.floor(printable * 8) } : {}),
       });
       const res = await rawPulse(bytes);
       if (res.handled) {

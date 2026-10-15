@@ -1,3 +1,4 @@
+const { recordId } = require("../sync/uuid-fields.cjs");
 /** Main owns permissions; renderer-selected aggregate labels grant no authority. */
 const KIND_TABLES = {
   sale: [
@@ -61,7 +62,7 @@ function aggregatePolicy(kind, operations, identity) {
     for (const row of op.rows ?? [op.values ?? {}]) {
       const state = row.status ?? "held";
       const bookingId = String(row.note ?? "").startsWith("booking:") ? String(row.note).slice(8) : null;
-      const bookingConversion = state === "completed" && bookingId && permissions.can_create_booking === true && operations.some(candidate => candidate.table === "bookings" && (candidate.rows ?? []).some(booking => booking.id === bookingId && booking.store_id === op.match?.store_id));
+      const bookingConversion = state === "completed" && bookingId && permissions.can_create_booking === true && operations.some(candidate => candidate.table === "bookings" && (candidate.rows ?? []).some(booking => recordId(booking.id) === recordId(bookingId) && recordId(booking.store_id) === recordId(op.match?.store_id)));
       const permitted = bookingConversion || (state === "cancelled"
         ? permissions.can_discard_held_order === true || permissions.can_void_cart === true
         : state === "draft" ? permissions.can_process_sale === true || permissions.can_reopen_held_order === true

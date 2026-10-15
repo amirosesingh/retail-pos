@@ -222,9 +222,12 @@ describe("per-user notification state", () => {
     expect(bell).toContain("closeButton: true");
     expect(bell).toContain('position: "top-right"');
     expect(bell).toContain("newlyArrived.slice(0, 4).reverse()");
-    expect(styles).toContain("translateX(calc(100% + 1rem))");
+    expect(styles).not.toContain("--y: translateX(calc(100% + 1rem))");
+    expect(styles).toContain("Keep Sonner's own --y/transform positioning intact");
     expect(styles).toContain("transform 220ms ease-out");
-    expect(styles).toContain("@keyframes activity-toast-in");
+    expect(styles).not.toContain("@keyframes activity-toast-in");
+    expect(styles).toContain("[data-close-button] > svg");
+    expect(styles).toContain("pointer-events: none;");
     expect(bell).toContain("<AnimatedList");
     expect(bell).toContain("activity-notification-row");
     expect(bell).not.toContain('value="history"');

@@ -54,6 +54,26 @@
   .responsive-table.report-table[data-mobile-cards="true"] tbody td > * { justify-self: start; }
 }
 
+/* Keep dialog grids and dense tables inside the visible device viewport. */
+.pos-dialog-content {
+  max-height: calc(100dvh - 1rem);
+}
+.pos-dialog-content > * { min-width: 0; }
+.pos-dialog-content { overflow-wrap: anywhere; }
+@media (min-width: 768px) {
+  .pos-dialog-content:has(table) {
+    width: min(96vw, 90rem);
+    max-width: min(96vw, 90rem);
+  }
+}
+@media (max-width: 639px) {
+  .pos-dialog-content {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+    padding: 1rem;
+  }
+}
+
 /* Compact cards key off the table's real content width, including sidebars and split panes. */
 .responsive-table-region {
   container-type: inline-size;
@@ -105,6 +125,8 @@
     min-height: 2.5rem;
     padding: 0.5rem 0.75rem;
     overflow-wrap: anywhere;
+    white-space: normal;
+    min-width: 0;
     text-align: right;
     font-size: clamp(0.75rem, calc(0.7rem + 0.4cqi), 0.875rem);
     border-bottom: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
@@ -127,6 +149,8 @@
   .responsive-table[data-mobile-cards="true"] tbody td > * {
     min-width: 0;
     justify-self: end;
+    max-width: 100%;
+    white-space: normal;
   }
 
   .responsive-table[data-mobile-cards="true"] tbody td[colspan] {
@@ -758,7 +782,7 @@
     border-color: var(--color-border);
   }
 
-  body {
+  html, body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
@@ -906,14 +930,7 @@
 
 /* Frameless Electron window: the strip below the OS overlay drags the window,
    while interactive elements inside it stay clickable. */
-.app-drag {
-  -webkit-app-region: drag;
-}
-
-.app-drag button,
-.app-drag a,
-.app-drag input,
-.app-drag [role="button"],
+.app-drag,
 .app-no-drag {
   -webkit-app-region: no-drag;
 }
@@ -1026,16 +1043,6 @@
     box-shadow 160ms ease-out;
 }
 
-@keyframes activity-toast-in {
-  from {
-    opacity: 0;
-    transform: translateX(calc(100% + 1rem)) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
-}
 
 @keyframes activity-row-in {
   from {
@@ -1063,9 +1070,6 @@
   }
 }
 
-[data-sonner-toast].activity-notification-toast[data-mounted="true"] {
-  animation: activity-toast-in 220ms ease-out both;
-}
 
 .ui-animated-list-item {
   display: grid;
@@ -1126,10 +1130,29 @@
     opacity var(--motion-fast) var(--motion-ease-standard);
 }
 
-[data-sonner-toast].activity-notification-toast:not([data-mounted="true"]),
-[data-sonner-toast].activity-notification-toast[data-removed="true"][data-swipe-out="false"] {
-  --y: translateX(calc(100% + 1rem));
-  opacity: 0;
+/* Keep Sonner's own --y/transform positioning intact, including stacked notifications. */
+.toaster [data-sonner-toast][data-styled="true"]:has([data-close-button]) {
+  padding-inline-end: 44px !important;
+}
+
+.toaster [data-sonner-toast][data-styled="true"] [data-close-button] {
+  left: auto;
+  right: 8px;
+  top: 8px;
+  transform: none;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-app-region: no-drag;
+}
+
+/* The button must be the pointer target, not its SVG; otherwise Sonner begins a swipe. */
+.toaster [data-close-button] > svg {
+  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

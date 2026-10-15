@@ -1,3 +1,5 @@
+const { normalizeSyncPayload } = require("./uuid-payload.cjs");
+const { recordId } = require("./uuid-fields.cjs");
 const { policy } = require("./conflicts.cjs");
 const { toLocalValue } = require("./row-codec.cjs");
 
@@ -133,7 +135,7 @@ class CloudClient {
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...payload, ...personProof, terminalToken }),
+      body: JSON.stringify({ ...normalizeSyncPayload(payload), ...personProof, terminalToken: recordId(terminalToken) }),
       signal: AbortSignal.timeout(30_000),
     }); } catch (error) {
       if (["TimeoutError","AbortError"].includes(error?.name)) {
@@ -156,7 +158,7 @@ class CloudClient {
         detail: data?.details ?? data?.detail ?? null,
       });
     }
-    return data;
+    return normalizeSyncPayload(data);
   }
   pushBatch(batch) {
     return this.request({

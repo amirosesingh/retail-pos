@@ -18,3 +18,27 @@ test('authorization and still-running timeout require intervention without dupli
     assert.equal(calls,1);assert.equal(result.ok,false);
   }
 });
+
+const { runShutdownSync } = require('../electron/sync/shutdown-sync.cjs');
+test('offline exit proves the journal is readable and preserves pending rows without an ACK', async () => {
+  const result = await runShutdownSync({health:async()=>({online:false,ready:false,code:'EOFFLINE'}),
+    pendingSummary:async()=>({pending:3,failed:1}),run:async()=>assert.fail('offline sync attempted')});
+  assert.deepEqual(result,{ok:true,offline:true,synchronized:false,pending:3,failed:1});
+});
+test('online exit drains the final sync and refuses an unacknowledged result', async () => {
+  let calls=0;
+  const result = await runShutdownSync({health:async()=>({online:true,ready:true}),
+    pendingSummary:async()=>assert.fail('offline path'),run:async()=>{calls++;return {ok:false,code:'ESYNC_PENDING',pending:2};}});
+  assert.equal(calls,1);assert.equal(result.ok,false);assert.equal(result.pending,2);
+});
+test('bad cloud configuration and HTTP permission failures are not classified as offline', async () => {
+  for(const code of ['EBACKEND','HTTP_401','HTTP_403','HTTP_500']) {
+    const result=await runShutdownSync({health:async()=>({online:code!=='EBACKEND',ready:false,code}),
+      pendingSummary:async()=>assert.fail('configuration cannot use offline exit'),run:async()=>assert.fail('sync should not run')});
+    assert.equal(result.ok,false);assert.equal(result.code,code);
+  }
+});
+test('offline close is refused if the local journal cannot be read', async () => {
+  await assert.rejects(runShutdownSync({health:async()=>({online:false,ready:false,code:'EOFFLINE'}),
+    pendingSummary:async()=>{throw new Error('Local DB unavailable');},run:async()=>{}}),/Local DB unavailable/);
+});

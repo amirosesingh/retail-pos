@@ -1,3 +1,5 @@
+import { canonicalBranchId } from "./branch-id";
+
 /** Register-owned database drafts; no ticket payload is persisted in device settings. */
 type DraftHandler = (action: "save" | "hold" | "cancel" | "release") => Promise<string | void>;
 const handlers = new Set<DraftHandler>();
@@ -16,4 +18,4 @@ export function preserveSessionDrafts(): Promise<void> {
   pending = flushTicketDrafts("hold").then(() => undefined).finally(() => { pending = null; });
   return pending;
 }
-export const draftTicketId = (branch: string, bill: string) => `D:${branch.toLowerCase()}:${bill}`;
+export const draftTicketId = (branch: string, bill: string) => `D:${canonicalBranchId(branch)}:${bill}`;

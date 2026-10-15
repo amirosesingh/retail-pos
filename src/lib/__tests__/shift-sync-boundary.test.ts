@@ -5,13 +5,13 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
 describe("shift sync boundaries", () => {
-  it("awaits the Electron final sync barrier before completing the UI close", () => {
+  it("prints a committed closure and awaits sync before automatically exiting", () => {
     const dialog = read("src/platforms/web/components/pos/ShiftCloseDialog.tsx");
     const closing = read("src/lib/shift-closing.ts");
     const main = read("electron/main.cjs");
     const store = read("src/lib/pos-store.tsx");
-    expect(dialog.indexOf("await synchronizeShiftClose(shift.id)")).toBeLessThan(
-      dialog.indexOf("await closeShift("),
+    expect(dialog.indexOf("await closeShift(")).toBeLessThan(
+      dialog.indexOf("await closedShiftEffects("),
     );
     expect(dialog.indexOf("await closeShift(")).toBeLessThan(
       dialog.indexOf("await localDb()?.closeWindow?.()"),
@@ -21,9 +21,9 @@ describe("shift sync boundaries", () => {
     expect(main).toContain("syncCoordinator.runFinal");
     expect(main).toContain("pendingShiftCloseSync.size");
     expect(main).toContain("if (result?.ok === false)");
-    expect(main).not.toContain("ok: true, offline: true");
-    expect(store).toContain("await Promise.all([transitionWritten, activityWritten, summaryWritten])");
-    expect(store.indexOf("await Promise.all([transitionWritten")).toBeLessThan(
+    expect(dialog).toContain("if (synchronized.ok && printed.ok)");
+    expect(store).toContain("await Promise.allSettled([transitionWritten, activityWritten, summaryWritten])");
+    expect(store.indexOf("await Promise.allSettled([transitionWritten")).toBeLessThan(
       store.indexOf("return closed;"),
     );
     expect(dialog.indexOf("await logSystemAction({")).toBeLessThan(

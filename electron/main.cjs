@@ -7,6 +7,8 @@ const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage } = require("electron");
 
+require("./window-rendering.cjs").configureWindowRendering(app);
+
 const updater = require("./updater.cjs");
 const terminalStore = require("./terminal-store.cjs");
 const configStore = require("./config-store.cjs");
@@ -311,7 +313,11 @@ async function flushSyncBeforeShutdown() {
     return await require('./sync/shutdown-sync.cjs').finishShutdownSync({
       progress: reportCloseProgress,
       run: async () => {
-        const settled = await settleWithin(() => syncCoordinator.runFinal({branchId,batchSize:500}), SHUTDOWN_SYNC_TIMEOUT_MS);
+        const settled = await settleWithin(() => require('./sync/shutdown-sync.cjs').runShutdownSync({
+          health: () => syncCloud.health({ timeoutMs: 8000 }),
+          pendingSummary: () => changeReader.pendingSummary(branchId),
+          run: () => syncCoordinator.runFinal({branchId,batchSize:500}),
+        }), SHUTDOWN_SYNC_TIMEOUT_MS);
         if (settled.timedOut) return {ok:false,timedOut:true,error:"Synchronization is still running. Your data remains saved locally; retry closing when it finishes."};
         if (!settled.ok) return {ok:false,code:settled.error?.code,error:String(settled.error?.message ?? settled.error)};
         return settled.value;
@@ -346,13 +352,22 @@ async function synchronizeClosingShifts(shiftId = null) {
         code: healthResult.code ?? "ECENTRAL_UNAVAILABLE",
         error: healthResult.error ?? "The central POS server is not ready.",
       };
-    let result = await syncCoordinator.runFinal({ branchId, batchSize: 500 });
-    if (result.code === "ECHANGEGAP") {
-      await prepareLocalData({ force: true });
-      result = await syncCoordinator.runFinal({ branchId, batchSize: 500 });
-    }
-    if (result.ok) pendingShiftCloseSync.clear();
-    return result;
+    const wasPaused = syncCoordinator.paused;
+    syncCoordinator.resume();
+    try {
+      const result = await require('./sync/shutdown-sync.cjs').finishShutdownSync({
+        run: async () => {
+          let result = await syncCoordinator.runFinal({ branchId, batchSize: 500 });
+          if (result.code === "ECHANGEGAP") {
+            await prepareLocalData({ force: true });
+            result = await syncCoordinator.runFinal({ branchId, batchSize: 500 });
+          }
+          return result;
+        },
+      });
+      if (result.ok) pendingShiftCloseSync.clear();
+      return result;
+    } finally { if (wasPaused) syncCoordinator.pause(); }
   })();
   try {
     return await mandatoryShiftSyncRun;
@@ -820,12 +835,9 @@ function createWindows(initialRoute = "/") {
     height: 900,
     show: false,
     backgroundColor: "#0b0b0c",
-    // Frameless shell. On Windows the app paints its own minimise / maximise /
-    // close buttons inside the title strip so they follow the POS theme.
-    titleBarStyle: "hidden",
-    ...(process.platform === "darwin"
-      ? { trafficLightPosition: { x: 12, y: 12 } }
-      : { frame: false }),
+    // Native captions provide window controls on login and all POS screens.
+    frame: true,
+    transparent: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -1160,8 +1172,8 @@ async function startLocalShiftClose(raw) {
   const identity = adminSession.identity();
   const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
   const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
-  const differentOperator = Boolean(shift.opened_by_staff_id && actor && String(shift.opened_by_staff_id) !== actor);
-  const differentTerminal = Boolean(shift.terminal_id && String(shift.terminal_id) !== terminalId);
+  const differentOperator = Boolean(shift.opened_by_staff_id && actor && recordId(String(shift.opened_by_staff_id)) !== recordId(actor));
+  const differentTerminal = Boolean(shift.terminal_id && recordId(String(shift.terminal_id)) !== recordId(terminalId));
   const forced = differentOperator || differentTerminal;
   const policyRows = await operationsRepository.query(branchId, "pos_settings", {match:{id:1},limit:1});
   const rawPolicy = policyRows.rows?.[0]?.integration_settings;
@@ -1499,14 +1511,8 @@ async function localShiftReconciliationView(shiftId) {
 
 /** ESC/POS drawer pulses must use drawer:open, where identity and permission are checked. */
 function containsDrawerPulse(bytes) {
-  const values = Array.from(bytes ?? []);
-  for (let index = 0; index <= values.length - 5; index += 1) {
-    if (values[index] === 0x1b && values[index + 1] === 0x70 &&
-        (values[index + 2] === 0 || values[index + 2] === 1)) return true;
-  }
-  return false;
+  return require("./receipt-command-guard.cjs").containsDrawerPulse(bytes);
 }
-
 
 function authorizationServerUrl() {
   const configured = String(configStore.get("backendUrl") ?? "").trim().replace(/\/+$/, "");
@@ -1788,7 +1794,7 @@ function registerIpc() {
     try {
       const branchId=localBranchId();
       if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});
-      if(adminSession.branchId()&&String(adminSession.branchId())!==String(branchId))
+      if(adminSession.branchId()&&recordId(String(adminSession.branchId()))!==recordId(String(branchId)))
         throw Object.assign(new Error("The signed-in account is not authorized for this terminal branch."),{code:"SYNC_BRANCH_FORBIDDEN"});
       // Early-startup governance events may be emitted before the renderer has
       // learned its branch. Main already owns the verified terminal branch, so
@@ -1885,7 +1891,7 @@ function registerIpc() {
       authorization,
     );
   }));
-  ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(async () => { if(!adminSession.hasPosAuthority()||!adminSession.hasPermission("can_process_refund"))return{ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required."};const input=guard.options(value,{name:"refund",max:5}); const terminal=terminalStore.read()??{}; const branch=localBranchId();if(input.branchId&&String(input.branchId)!==String(branch))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The refund must belong to this terminal branch."};const result=await receiptRepository.refund({saleId:guard.uuid(input.saleId,{name:"sale id"}),refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null});publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result; }));
+  ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(async () => { if(!adminSession.hasPosAuthority()||!adminSession.hasPermission("can_process_refund"))return{ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required."};const input=guard.options(value,{name:"refund",max:5}); const terminal=terminalStore.read()??{}; const branch=localBranchId();if(input.branchId&&recordId(String(input.branchId))!==recordId(String(branch)))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The refund must belong to this terminal branch."};const result=await receiptRepository.refund({saleId:guard.uuid(input.saleId,{name:"sale id"}),refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null});publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result; }));
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
   ipcMain.handle("sync:get-status", () => syncCoordinator.refresh(localBranchId()));

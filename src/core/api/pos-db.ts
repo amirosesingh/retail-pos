@@ -206,9 +206,9 @@ export function applyScopedProductPrices(
 }
 
 function jsonValue<T>(value: unknown, fallback: T): T {
-  if (typeof value !== "string") return (value ?? fallback) as T;
+  if (typeof value !== "string") return normalizeUuidFields((value ?? fallback) as T);
   try {
-    return JSON.parse(value) as T;
+    return normalizeUuidFields(JSON.parse(value) as T);
   } catch {
     return fallback;
   }
@@ -1129,7 +1129,7 @@ let tierIdByName: Record<string, string> = {};
 let tierNameById: Record<string, MemberTier> = {};
 
 const tierId = (name: MemberTier) => tierIdByName[name] ?? null;
-const tierName = (id: string | null): MemberTier => (id && tierNameById[id]) || "Bronze";
+const tierName = (id: string | null): MemberTier => (id && tierNameById[recordId(id)]) || "Bronze";
 
 /* ------------------------------ bootstrap ------------------------------ */
 
@@ -1458,8 +1458,8 @@ export async function loadCloudState(
   tierIdByName = {};
   tierNameById = {};
   for (const t of tiers.data ?? []) {
-    tierIdByName[t.name] = t.id;
-    tierNameById[t.id] = t.name as MemberTier;
+    tierIdByName[t.name] = recordId(t.id);
+    tierNameById[recordId(t.id)] = t.name as MemberTier;
   }
 
   const terminal = readTerminalConfig();
@@ -1614,8 +1614,8 @@ async function loadLocalState(cause: unknown, showProgress = false): Promise<Clo
   tierNameById = {};
   for (const tier of result.tiers ?? []) {
     const name = String(tier.name ?? "Member") as MemberTier;
-    tierIdByName[name] = String(tier.id);
-    tierNameById[String(tier.id)] = name;
+    tierIdByName[name] = recordId(String(tier.id));
+    tierNameById[recordId(String(tier.id))] = name;
   }
   return {
     products: (result.products ?? []).map(rowToProduct),

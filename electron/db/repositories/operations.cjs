@@ -1,4 +1,4 @@
-const { normalizeUuidFields } = require("../../sync/uuid-fields.cjs");
+const { normalizeUuidFields, recordId } = require("../../sync/uuid-fields.cjs");
 const { loadRegistry } = require("../schema-registry.cjs");
 const {
   branchPredicate,
@@ -124,11 +124,11 @@ class OperationsRepository {
       const names = new Set(table.columns.map((column) => column.sqlServerColumn));
       const inserting = op.kind === "insert" || op.kind === "upsert";
       for (const row of inserting ? (op.rows ?? (op.values ? [op.values] : [])) : []) {
-        if (names.has("store_id") && String(row.store_id ?? "") !== branch)
+        if (names.has("store_id") && recordId(String(row.store_id ?? "")) !== branch)
           throw Object.assign(new Error(`${op.table} must belong to this terminal's branch.`), { code: "EWRITE_SCOPE" });
-        if (names.has("branch_id") && String(row.branch_id ?? "") !== branch)
+        if (names.has("branch_id") && recordId(String(row.branch_id ?? "")) !== branch)
           throw Object.assign(new Error(`${op.table} must belong to this terminal's branch.`), { code: "EWRITE_SCOPE" });
-        if (names.has("from_store_id") && names.has("to_store_id") && ![row.from_store_id, row.to_store_id].map(String).includes(branch))
+        if (names.has("from_store_id") && names.has("to_store_id") && ![row.from_store_id, row.to_store_id].map(value => recordId(String(value))).includes(branch))
           throw Object.assign(new Error("A stock transfer must involve this terminal's branch."), { code: "EWRITE_SCOPE" });
       }
       if (op.table === "pos_settings") {
@@ -142,7 +142,7 @@ class OperationsRepository {
         const candidates = inserting ? (op.rows ?? (op.values ? [op.values] : [])) : [op.match ?? {}];
         for (const row of candidates) {
           const scope = String(row.scope ?? "").toLowerCase();
-          const scopeId = String(row.scope_id ?? "");
+          const scopeId = recordId(String(row.scope_id ?? ""));
           const globalField = op.table === "settings_scoped" && scope === "global" &&
             scopeId === "" && String(row.key ?? "").startsWith("pos_field:") &&
             scopeContext.enforcePermissions === true &&
