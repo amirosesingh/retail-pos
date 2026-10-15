@@ -403,6 +403,9 @@ lines.push(`IF OBJECT_ID(N'dbo.sync_conflicts', N'U') IS NULL CREATE TABLE dbo.s
 lines.push(`IF OBJECT_ID(N'dbo.local_operation_receipts', N'U') IS NULL CREATE TABLE dbo.local_operation_receipts (
  operation_id uniqueidentifier NOT NULL PRIMARY KEY, operation_type nvarchar(40) NOT NULL, entity_id nvarchar(128) NOT NULL,
  note nvarchar(400) NULL, committed_at datetimeoffset(7) NOT NULL DEFAULT SYSDATETIMEOFFSET());`);
+// Include the additive counter definition in every schema repair, even if migration 18 is already recorded.
+lines.push(fs.readFileSync(path.join(outputDir,"migrations","018_sql_document_counters.sql"),"utf8")
+  .split("IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations")[0]);
 lines.push(`IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL CREATE TABLE dbo.pos_schema_migrations (
  version int NOT NULL PRIMARY KEY, name nvarchar(200) NOT NULL, applied_at datetimeoffset(7) NOT NULL DEFAULT SYSDATETIMEOFFSET());
 IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=1) INSERT dbo.pos_schema_migrations(version,name) VALUES(1,N'initial_sqlserver_parity');`);

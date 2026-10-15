@@ -3605,7 +3605,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ? (integrations.transferNumbering ?? {})
         : (integrations.requestNumbering ?? {});
     const { nextStockRef } = await import("./stock-ref");
-    if (!transfer.ref) transfer.ref = await nextStockRef(numbering, originCode, series);
+    if (!transfer.ref) transfer.ref = await nextStockRef(numbering, originCode, series, new Date(), originStoreId);
     await saveTransfer({
       transfer,
       from: fromStore,

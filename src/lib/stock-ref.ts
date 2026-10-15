@@ -10,7 +10,7 @@ import { documentOrigin } from "./document-origin";
  * physical count never borrows a receipt number. The reference is minted once,
  * the moment a draft row is first written, and never regenerated afterwards.
  */
-import { localDb, readLocalSetting, writeLocalSetting } from "@/core/local-db/local-db";
+import { localDb } from "@/core/local-db/local-db";
 
 export type StockNumberReset = "never" | "yearly" | "monthly";
 
@@ -57,47 +57,17 @@ const store = (): Storage | null => {
   }
 };
 
-let memoryCounters: SeqStore = {};
 const readAll = (): SeqStore => {
-  const s = store();
-  if (!s || (typeof window !== "undefined" && (window as unknown as { pos?: unknown }).pos)) return { ...memoryCounters };
   try {
-    const raw = s.getItem(SEQ_KEY);
-    const parsed = raw ? (JSON.parse(raw) as SeqStore) : null;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { ...memoryCounters };
+    const raw = store()?.getItem(SEQ_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as SeqStore)
+      : {};
   } catch {
     return {};
   }
 };
-
-const writeAll = async (value: SeqStore) => {
-  const native = typeof window !== "undefined" && !!(window as unknown as { pos?: unknown }).pos;
-  const s = native ? null : store();
-  let stored = false;
-  if (s) { s.setItem(SEQ_KEY, JSON.stringify(value)); stored = true; }
-  const durable = await writeLocalSetting(SEQ_KEY, JSON.stringify(value));
-  if (!stored && !durable) throw new Error("The document counter could not be saved. Check database connectivity and retry.");
-  memoryCounters = value;
-};
-
-/** Restore the counter from the till database at start-up. */
-export async function restoreStockRefCounter(): Promise<void> {
-  const s = store();
-  try {
-    const raw = await readLocalSetting(SEQ_KEY);
-    if (!raw) return;
-    const durable = JSON.parse(raw) as SeqStore;
-    const local = readAll();
-    const merged: SeqStore = { ...local };
-    for (const [k, v] of Object.entries(durable)) {
-      if (typeof v === "number" && v > (merged[k] ?? 0)) merged[k] = v;
-    }
-    memoryCounters = merged;
-    if (!(typeof window !== "undefined" && (window as unknown as { pos?: unknown }).pos)) s?.setItem(SEQ_KEY, JSON.stringify(merged));
-  } catch {
-    /* nothing durable to restore */
-  }
-}
 
 /** The period segment for a reference, empty when numbering never resets. */
 export function periodStamp(at: Date, reset: StockNumberReset): string {
@@ -160,9 +130,12 @@ const sequenceFor = (
   legacyKey: string | null,
   cfg: StockNumberingSettings,
 ) =>
-  all[key] ??
-  (legacyKey ? all[legacyKey] : undefined) ??
-  Math.max(1, Math.round(cfg.startNumber ?? 1));
+  Math.max(
+    1,
+    ...[Math.round(cfg.startNumber ?? 1), all[key], legacyKey ? all[legacyKey] : 0].map((value) =>
+      Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0,
+    ),
+  );
 
 /**
  * Reserve the next reference for a new draft. Consumes the counter, so it is
@@ -173,25 +146,41 @@ export async function nextStockRef(
   branchCode: string,
   series: RefSeries = "stock",
   at: Date = new Date(),
+  storeId?: string,
 ): Promise<string> {
   return reserveDocument("pos-stock-reference", async () => {
     const bridge = localDb();
     if (bridge) {
-      if (!bridge.reserveStockCounter) throw new Error("Restart or update the POS to enable safe SQL stock document numbering.");
+      if (!bridge.reserveStockCounter)
+        throw new Error("Restart or update the POS to enable safe SQL stock document numbering.");
       const prefix = build(cfg, branchCode, at, 1, series).replace(/-0*1$/, "");
       const minimum = Math.max(1, Math.round(cfg.startNumber ?? 1));
       const reserved = await bridge.reserveStockCounter(prefix, minimum);
       if (!reserved.ok || !Number.isSafeInteger(reserved.sequence) || reserved.sequence! < minimum)
-        throw new Error(reserved.error || "The stock document counter could not be reserved in SQL Server.");
+        throw new Error(
+          reserved.error || "The stock document counter could not be reserved in SQL Server.",
+        );
       return build(cfg, branchCode, at, reserved.sequence!, series);
     }
-    await restoreStockRefCounter();
-    const key = counterKey(cfg, branchCode, at, series);
-    const all = readAll();
-    const seq = sequenceFor(all, key, legacyStockCounterKey(cfg, branchCode, at, series), cfg);
-    all[key] = seq + 1;
-    await writeAll(all);
-    return build(cfg, branchCode, at, seq, series);
+    const prefix = build(cfg, branchCode, at, 1, series).replace(/-0*1$/, "");
+    const { reserveCloudStockReference } = await import("./stock-ref.functions");
+    const { getPosCallerAuth } = await import("./pos-caller-auth");
+    const result = await reserveCloudStockReference({
+      data: {
+        ...(await getPosCallerAuth()),
+        prefix,
+        minimum: sequenceFor(
+          readAll(),
+          counterKey(cfg, branchCode, at, series),
+          legacyStockCounterKey(cfg, branchCode, at, series),
+          cfg,
+        ),
+        series,
+        storeId: storeId ?? branchCode,
+      },
+    });
+    if (!result.ok) throw new Error(result.error);
+    return build(cfg, branchCode, at, result.sequence, series);
   });
 }
 
@@ -204,8 +193,9 @@ export function bumpStockRef(
   branchCode: string,
   series: RefSeries = "stock",
   at: Date = new Date(),
+  storeId?: string,
 ): Promise<string> {
-  return nextStockRef(cfg, branchCode, series, at);
+  return nextStockRef(cfg, branchCode, series, at, storeId);
 }
 
 /**
@@ -223,12 +213,18 @@ export async function saveStockDraftReference(
   reserve: () => Promise<string>,
   allowRenumber: boolean,
 ): Promise<string | null> {
-  try { await save(reference); return reference; }
-  catch (error) {
+  try {
+    await save(reference);
+    return reference;
+  } catch (error) {
     const failure = error as { table?: string; sqlNumber?: number; sqlDetail?: string };
-    if (!allowRenumber || failure?.table !== "stock_count_drafts" ||
-        ![2601, 2627].includes(Number(failure.sqlNumber)) ||
-        !/['"]UX_stock_count_drafts_reference['"]/i.test(failure.sqlDetail ?? "")) throw error;
+    if (
+      !allowRenumber ||
+      failure?.table !== "stock_count_drafts" ||
+      ![2601, 2627].includes(Number(failure.sqlNumber)) ||
+      !/['"]UX_stock_count_drafts_reference['"]/i.test(failure.sqlDetail ?? "")
+    )
+      throw error;
     const fresh = await reserve();
     await save(fresh);
     return fresh;

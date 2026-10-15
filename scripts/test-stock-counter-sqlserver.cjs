@@ -62,6 +62,14 @@ async function main() {
     }
     const count=await pool.request().query("SELECT COUNT(*) AS count FROM dbo.stock_count_drafts");
     assert.equal(count.recordset[0].count,2,"Duplicate attempts must not change existing drafts");
+    // A recorded migration must not prevent repairing a support table deleted later.
+    await pool.request().query("DROP TABLE dbo.pos_document_counters");
+    const schema=fs.readFileSync(path.join(__dirname,"../database/sqlserver/schema.sql"),"utf8");
+    const counterStart=schema.indexOf("-- Device reservations live in SQL Server");
+    const counterEnd=schema.indexOf("IF OBJECT_ID(N'dbo.pos_schema_migrations'",counterStart);
+    assert(counterStart>=0 && counterEnd>counterStart);
+    await pool.request().batch(schema.slice(counterStart,counterEnd));
+    assert.equal((await reserveStockCounter(sql,pool,"B1",prefix,1)).sequence,62,"Schema repair recreates the missing counter despite migration history");
     console.log("Live SQL Server regression passed: reproduced 2601, recovered past all document types, serialized 10 cross-connection SQL reservations, preserved drafts and verified duplicate diagnostics for three tables.");
   } finally {
     if(pool) await pool.close();

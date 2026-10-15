@@ -412,7 +412,7 @@ function Purchasing() {
       await nextStockRef(
         state.settings.integrations.receivingNumbering ?? {},
         currentStore.code || currentStore.id,
-        "receiving",
+        "receiving", new Date(), currentStore.id,
       );
     const removals = draftLineRemovals;
     const save = (async () => {
@@ -720,7 +720,7 @@ function Purchasing() {
         await nextStockRef(
           state.settings.integrations.receivingNumbering ?? {},
           currentStore.code || currentStore.id,
-          "receiving",
+          "receiving", new Date(), currentStore.id,
         );
       const invoice: ReceivingInvoice = {
         ...buildInvoice("posted", attemptId, grn),

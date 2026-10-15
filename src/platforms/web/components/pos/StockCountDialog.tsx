@@ -289,7 +289,7 @@ export function StockCountDialog({
       if (!draftIdentityPromiseRef.current) {
         const id = draftId ?? crypto.randomUUID();
         draftIdentityPromiseRef.current = (async () => {
-          const ref = reference ?? await nextStockRef(numbering, targetStore.code || targetStore.id);
+          const ref = reference ?? await nextStockRef(numbering, targetStore.code || targetStore.id, "stock", new Date(), targetStore.id);
           const created = { id, ref };
           draftIdentityRef.current = created;
           draftCreatedAt.current ??= new Date().toISOString();
@@ -325,7 +325,7 @@ export function StockCountDialog({
           staffName: user?.name ?? null,
           status: "draft",
           ...snapshot,
-        }); }, () => nextStockRef(numbering, targetStore.code || targetStore.id), !draft);
+        }); }, () => nextStockRef(numbering, targetStore.code || targetStore.id, "stock", new Date(), targetStore.id), !draft);
         if (draftIdentityRef.current?.id === id) draftIdentityRef.current = { id, ref };
         if (session === sessionRef.current) {
           setReference(ref);
