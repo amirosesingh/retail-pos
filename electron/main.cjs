@@ -1172,8 +1172,8 @@ async function startLocalShiftClose(raw) {
   const identity = adminSession.identity();
   const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
   const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
-  const differentOperator = Boolean(shift.opened_by_staff_id && actor && String(shift.opened_by_staff_id) !== actor);
-  const differentTerminal = Boolean(shift.terminal_id && String(shift.terminal_id) !== terminalId);
+  const differentOperator = Boolean(shift.opened_by_staff_id && actor && recordId(String(shift.opened_by_staff_id)) !== recordId(actor));
+  const differentTerminal = Boolean(shift.terminal_id && recordId(String(shift.terminal_id)) !== recordId(terminalId));
   const forced = differentOperator || differentTerminal;
   const policyRows = await operationsRepository.query(branchId, "pos_settings", {match:{id:1},limit:1});
   const rawPolicy = policyRows.rows?.[0]?.integration_settings;
@@ -1794,7 +1794,7 @@ function registerIpc() {
     try {
       const branchId=localBranchId();
       if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});
-      if(adminSession.branchId()&&String(adminSession.branchId())!==String(branchId))
+      if(adminSession.branchId()&&recordId(String(adminSession.branchId()))!==recordId(String(branchId)))
         throw Object.assign(new Error("The signed-in account is not authorized for this terminal branch."),{code:"SYNC_BRANCH_FORBIDDEN"});
       // Early-startup governance events may be emitted before the renderer has
       // learned its branch. Main already owns the verified terminal branch, so
@@ -1891,7 +1891,7 @@ function registerIpc() {
       authorization,
     );
   }));
-  ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(async () => { if(!adminSession.hasPosAuthority()||!adminSession.hasPermission("can_process_refund"))return{ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required."};const input=guard.options(value,{name:"refund",max:5}); const terminal=terminalStore.read()??{}; const branch=localBranchId();if(input.branchId&&String(input.branchId)!==String(branch))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The refund must belong to this terminal branch."};const result=await receiptRepository.refund({saleId:guard.uuid(input.saleId,{name:"sale id"}),refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null});publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result; }));
+  ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(async () => { if(!adminSession.hasPosAuthority()||!adminSession.hasPermission("can_process_refund"))return{ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required."};const input=guard.options(value,{name:"refund",max:5}); const terminal=terminalStore.read()??{}; const branch=localBranchId();if(input.branchId&&recordId(String(input.branchId))!==recordId(String(branch)))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The refund must belong to this terminal branch."};const result=await receiptRepository.refund({saleId:guard.uuid(input.saleId,{name:"sale id"}),refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null});publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result; }));
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
   ipcMain.handle("sync:get-status", () => syncCoordinator.refresh(localBranchId()));

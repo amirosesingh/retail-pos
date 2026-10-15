@@ -16,6 +16,21 @@ vi.mock("@/core/api/relay-policy.server", () => ({
 }));
 
 describe("purchase order sync recovery", () => {
+  it("accepts lowercase UUID branch requests against an uppercase verified legacy assignment", async () => {
+    const policy = await import("@/core/api/relay-policy.server");
+    const branch = "A1234567-1234-4234-8234-123456789ABC";
+    const resolver = vi.spyOn(policy, "resolveRelayScope").mockResolvedValueOnce({ kind: "terminal", storeId: branch, terminalId: "T1", permissions: {} } as never);
+    const { serviceRest } = await import("@/core/api/pos-relay.server");
+    const { handleSyncRequest } = await import("../sync-endpoint.server");
+    vi.mocked(serviceRest).mockClear();
+    const response = await handleSyncRequest(new Request("https://pos.example.test/api/v1/pos/sync", {
+      method: "POST", body: JSON.stringify({ terminalToken: "T1", sqlServerCounts: { organizationId: "default", branchId: branch.toLowerCase(), historyDays: 90 } }),
+    }));
+    resolver.mockRestore();
+    expect(response.status).toBe(200);
+    expect(vi.mocked(serviceRest).mock.calls.some(call => JSON.stringify(call).includes(branch))).toBe(true);
+  });
+
   it("renders SQL Server invoice dates after Electron IPC without crashing", async () => {
     const { toRendererRow } = await import("../../../electron/sync/row-codec.cjs");
     const raw = {

@@ -1,3 +1,4 @@
+const { normalizeUuidFields } = require("./sync/uuid-fields.cjs");
 /**
  * Argument checks for the bridge between the window and the desktop process.
  *
@@ -122,7 +123,7 @@ function writeOp(value, { name = "write" } = {}) {
   if (op.rows !== undefined) list(op.rows, { name: "rows", max: 5000 });
   if (op.requireMatch !== undefined && typeof op.requireMatch !== "boolean")
     throw new BadArg(`The ${name} required-match flag must be true or false.`);
-  return op;
+  return normalizeUuidFields(op);
 }
 
 function writeOps(value, { max = 500 } = {}) {
@@ -275,7 +276,7 @@ function boolean(value, { name }) {
 }
 function uuid(value, { name = "identifier" } = {}) {
   const result = text(value, { name, max: 36 });
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result))
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(result))
     throw new BadArg(`The ${name} must be a UUID.`);
   return result.toLowerCase();
 }
