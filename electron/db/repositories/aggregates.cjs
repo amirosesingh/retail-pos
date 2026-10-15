@@ -184,8 +184,13 @@ class AggregateRepository {
         .replace(/[\r\n\t]+/g, " ")
         .replace(/\s{2,}/g, " ")
         .slice(0, 500);
+      const uniqueName = [2601,2627].includes(sqlNumber)
+        ? /(?:index|constraint) ['"]([A-Za-z0-9_]{1,128})['"]/i.exec(sqlDetail)?.[1] : null;
+      const message = [2601,2627].includes(sqlNumber)
+        ? `A duplicate value conflicts with an existing record in ${tableName ?? "the local database"}${uniqueName ? ` (${uniqueName})` : ""}. No changes were committed. Review the document reference or other unique fields and retry.`
+        : `Local SQL Server ${kind} commit failed${target}${suffix}.`;
       throw Object.assign(
-        new Error(`Local SQL Server ${kind} commit failed${target}${suffix}.`),
+        new Error(message),
         { code: "ESQLSERVER_WRITE", stage, table: tableName, sqlNumber, sqlDetail, cause: error },
       );
     }

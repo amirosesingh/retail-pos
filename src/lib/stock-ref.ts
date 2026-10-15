@@ -10,7 +10,7 @@ import { documentOrigin } from "./document-origin";
  * physical count never borrows a receipt number. The reference is minted once,
  * the moment a draft row is first written, and never regenerated afterwards.
  */
-import { readLocalSetting, writeLocalSetting } from "@/core/local-db/local-db";
+import { localDb, readLocalSetting, writeLocalSetting } from "@/core/local-db/local-db";
 
 export type StockNumberReset = "never" | "yearly" | "monthly";
 
@@ -83,7 +83,6 @@ const writeAll = async (value: SeqStore) => {
 /** Restore the counter from the till database at start-up. */
 export async function restoreStockRefCounter(): Promise<void> {
   const s = store();
-  if (!s) return;
   try {
     const raw = await readLocalSetting(SEQ_KEY);
     if (!raw) return;
@@ -94,7 +93,7 @@ export async function restoreStockRefCounter(): Promise<void> {
       if (typeof v === "number" && v > (merged[k] ?? 0)) merged[k] = v;
     }
     memoryCounters = merged;
-    if (!(typeof window !== "undefined" && (window as unknown as { pos?: unknown }).pos)) s.setItem(SEQ_KEY, JSON.stringify(merged));
+    if (!(typeof window !== "undefined" && (window as unknown as { pos?: unknown }).pos)) s?.setItem(SEQ_KEY, JSON.stringify(merged));
   } catch {
     /* nothing durable to restore */
   }
@@ -177,8 +176,19 @@ export async function nextStockRef(
 ): Promise<string> {
   return reserveDocument("pos-stock-reference", async () => {
     const key = counterKey(cfg, branchCode, at, series);
+    const bridge = localDb();
+    if (!bridge?.reserveStockCounter) await restoreStockRefCounter();
     const all = readAll();
     const seq = sequenceFor(all, key, legacyStockCounterKey(cfg, branchCode, at, series), cfg);
+    if (bridge?.reserveStockCounter) {
+      const prefix = build(cfg, branchCode, at, 1, series).replace(/-0*1$/, "");
+      const reserved = await bridge.reserveStockCounter(prefix, seq);
+      if (!reserved.ok || !Number.isSafeInteger(reserved.sequence) || reserved.sequence! < seq)
+        throw new Error(reserved.error || "The stock document counter could not be reserved.");
+      memoryCounters = { ...all, [key]: reserved.sequence! + 1 };
+      return build(cfg, branchCode, at, reserved.sequence!, series);
+    }
+    if (bridge) throw new Error("Restart or update the POS to enable safe stock document numbering.");
     all[key] = seq + 1;
     await writeAll(all);
     return build(cfg, branchCode, at, seq, series);
@@ -204,4 +214,23 @@ export function bumpStockRef(
  */
 export function canEditPosted(): boolean {
   return false;
+}
+
+/** Recover only a new draft's reference collision, never merge or overwrite another draft. */
+export async function saveStockDraftReference(
+  reference: string | null,
+  save: (reference: string | null) => Promise<unknown>,
+  reserve: () => Promise<string>,
+  allowRenumber: boolean,
+): Promise<string | null> {
+  try { await save(reference); return reference; }
+  catch (error) {
+    const failure = error as { table?: string; sqlNumber?: number; sqlDetail?: string };
+    if (!allowRenumber || failure?.table !== "stock_count_drafts" ||
+        ![2601, 2627].includes(Number(failure.sqlNumber)) ||
+        !/['"]UX_stock_count_drafts_reference['"]/i.test(failure.sqlDetail ?? "")) throw error;
+    const fresh = await reserve();
+    await save(fresh);
+    return fresh;
+  }
 }

@@ -41,7 +41,7 @@ import { db } from "@/core/api/pos-db";
 import { localTerminalId } from "@/lib/shift-hours";
 import { money, stockAt, usePos } from "@/lib/pos-store";
 import { resolveByBarcode } from "@/lib/product-lookup";
-import { nextStockRef } from "@/lib/stock-ref";
+import { nextStockRef, saveStockDraftReference } from "@/lib/stock-ref";
 import { saveRecordEditHistory, type EditGrant } from "@/lib/record-edit-flow";
 import {
   STOCK_ADJUSTMENT_REASONS,
@@ -300,7 +300,7 @@ export function StockCountDialog({
       try { identity = await draftIdentityPromiseRef.current; }
       finally { draftIdentityPromiseRef.current = null; }
     }
-    const { id, ref } = identity;
+    const { id } = identity;
     const snapshot = {
       reason: reason || null,
       note,
@@ -313,10 +313,11 @@ export function StockCountDialog({
     const run = saveTailRef.current
       .catch(() => undefined)
       .then(async () => {
+        let ref = draftIdentityRef.current?.id === id ? draftIdentityRef.current.ref : identity!.ref;
         if (postedRecordsRef.current.has(id)) return { id, ref };
-        await db.saveStockCountDraft({
+        ref = await saveStockDraftReference(ref, async reference => { await db.saveStockCountDraft({
           id,
-          reference: ref,
+          reference,
           storeId: targetStore.id,
           storeCode: targetStore.code ?? null,
           terminalId: localTerminalId(),
@@ -324,8 +325,10 @@ export function StockCountDialog({
           staffName: user?.name ?? null,
           status: "draft",
           ...snapshot,
-        });
+        }); }, () => nextStockRef(numbering, targetStore.code || targetStore.id), !draft);
+        if (draftIdentityRef.current?.id === id) draftIdentityRef.current = { id, ref };
         if (session === sessionRef.current) {
+          setReference(ref);
           setSavedAt(new Date().toISOString());
           if (sequence === saveSequenceRef.current) setDirty(false);
           onChanged();
@@ -337,7 +340,7 @@ export function StockCountDialog({
       () => undefined,
     );
     return run;
-  }, [rows, reason, note, draftId, reference, numbering, targetStore, user, onChanged]);
+  }, [rows, reason, note, draftId, reference, numbering, targetStore, user, onChanged, draft]);
 
   /** Auto-save: the same write, after the counter pauses. */
   useEffect(() => {

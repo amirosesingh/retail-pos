@@ -9,6 +9,7 @@ vi.stubGlobal("localStorage", {
 });
 
 vi.mock("@/core/local-db/local-db", () => ({
+  localDb: () => null,
   readLocalSetting: vi.fn(async () => null),
   writeLocalSetting: vi.fn(async () => true),
 }));
