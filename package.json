@@ -149,7 +149,7 @@
     "vitest": "^5.0.3",
     "wrangler": "^4.147.0"
   },
-  "version": "1.4.66",
+  "version": "1.4.67",
   "build": {
     "appId": "app.lovable.pos",
     "productName": "Retail",
