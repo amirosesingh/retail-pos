@@ -1,4 +1,4 @@
--- Retail POS local database update — 1.4.68
+-- Retail POS local database update — 1.4.69
 -- Source: retail-pos-local-database.sql bundled with this application.
 -- Select your configured POS database. This file never switches databases.
 -- Back up the existing database before upgrading. No business rows are deleted.
@@ -11966,7 +11966,7 @@ DECLARE @Missing int = @Required - @Present;
 
 SELECT
   DB_NAME() AS database_name,
-  N''1.4.68'' AS application_version,
+  N''1.4.69'' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -13208,7 +13208,7 @@ EXEC(N''SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;'');
 
-PRINT N''Retail POS 1.4.68: POS_Local installation and validation completed successfully.'';';
+PRINT N''Retail POS 1.4.69: POS_Local installation and validation completed successfully.'';';
 COMMIT TRANSACTION;
 END TRY
 BEGIN CATCH
