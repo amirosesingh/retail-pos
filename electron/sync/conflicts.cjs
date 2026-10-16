@@ -8,6 +8,22 @@ function policy(entity) {
 }
 class ConflictRepository {
   constructor(connectionManager) { this.connectionManager = connectionManager; }
+  async reconcileAcknowledged() {
+    // Repair only the old pending-upload warnings. Genuine conflicts and any
+    // entity with an outstanding local transaction must remain unresolved.
+    await this.connectionManager.pool.request()
+      .input("reason", "An unacknowledged local transaction has priority over this cloud change.")
+      .query(`UPDATE conflict SET status='resolved',resolved_at=SYSDATETIMEOFFSET()
+        FROM dbo.sync_conflicts conflict
+        WHERE conflict.status='unresolved' AND conflict.reason=@reason
+          AND NOT EXISTS (
+            SELECT 1 FROM dbo.sync_change_journal journal
+            WHERE journal.entity_type=conflict.entity_type
+              AND journal.entity_id=conflict.entity_id
+              AND journal.branch_id IN (conflict.branch_id,'global')
+              AND journal.acknowledged_at IS NULL
+          );`);
+  }
   async record(transaction, conflict) {
     const id = stableUuid({ table: conflict.entityType, entity: conflict.entityId, remoteVersion: conflict.remoteVersion, reason: conflict.reason });
     const sql = this.connectionManager.sql();
@@ -17,10 +33,12 @@ class ConflictRepository {
         INSERT dbo.sync_conflicts(conflict_id,entity_type,entity_id,branch_id,local_version,remote_version,reason) VALUES(@id,@entity_type,@entity_id,@branch,@local_version,@remote_version,@reason);`);
   }
   async unresolved(limit = 100) {
+    await this.reconcileAcknowledged();
     const result = await this.connectionManager.pool.request().input("limit", Math.max(1, Math.min(200, limit))).query("SELECT TOP (@limit) * FROM dbo.sync_conflicts WHERE status='unresolved' ORDER BY created_at;");
     return result.recordset ?? [];
   }
   async count() {
+    await this.reconcileAcknowledged();
     const result = await this.connectionManager.pool.request().query("SELECT COUNT_BIG(*) count FROM dbo.sync_conflicts WHERE status='unresolved';");
     return Number(result.recordset?.[0]?.count ?? 0);
   }

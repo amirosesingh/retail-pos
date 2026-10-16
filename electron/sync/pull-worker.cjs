@@ -12,7 +12,6 @@ class PullWorker {
     const entityIds = changes.map((change) => String(change.entity_id));
     const pending = new Set([...(await this.reader.unacknowledged(table, entityIds, transaction))].map(canonicalEntityKey));
     const safe = [];
-    let conflictCount = 0;
     for (const change of changes) {
       if (!pending.has(canonicalEntityKey(change.entity_id))) { safe.push(change); continue; }
       if (table.cloudTable === "held_orders" && change.tombstone) {
@@ -20,17 +19,18 @@ class PullWorker {
         // an idempotent upload retry could swallow the only cleanup tombstone.
         throw Object.assign(new Error("Held bill cleanup is waiting for its pending upload."), {code:"EHELD_CLEANUP_PENDING"});
       }
-      conflictCount += 1;
-      await this.conflicts.record(transaction, {
-        entityType: table.sqlServerTable, entityId: String(change.entity_id), branchId,
-        remoteVersion: Number(change.row_version ?? 0), reason: "An unacknowledged local transaction has priority over this cloud change.",
+      // A pending upload is a temporary ordering barrier, not a data conflict.
+      // Retain the page cursor so this cloud revision is read again after the
+      // local transaction is acknowledged; never overwrite or discard either.
+      throw Object.assign(new Error("Cloud download is waiting for a pending local upload."), {
+        code: "ELOCAL_UPLOAD_PENDING", table: table.cloudTable,
       });
     }
     if (safe.length) await this.cloud.applyLocalBatch(transaction, table, {
       rows: safe.filter((change) => !change.tombstone),
       tombstones: safe.filter((change) => change.tombstone),
     });
-    return { applied: safe.length, conflicts: conflictCount };
+    return { applied: safe.length, conflicts: 0 };
   }
   async ensureStoreGroups(batch, branchId) {
     const groupIds = [...new Set(batch.rows
@@ -97,7 +97,8 @@ class PullWorker {
     // the database's byte-safe minimum even when a caller asks for a larger
     // upload batch through the coordinator's shared options object.
     batchSize = 100;
-    let merged = 0; let conflictCount = 0; let membershipMirrored = 0; let membershipDeferred = false; let deferredHeldDeletion = false;
+    await this.conflicts?.reconcileAcknowledged?.();
+    let merged = 0; let conflictCount = 0; let membershipMirrored = 0; let membershipDeferred = false; let deferredHeldDeletion = false; let deferredLocalChanges = false;
     let checkpoint = await this.checkpoints.get(branchId, "__feed__", "pull");
     while (true) {
       const page = await readPage(limit => this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit }),batchSize);
@@ -129,9 +130,10 @@ class PullWorker {
         await transaction.commit();
       } catch (error) {
         await Promise.resolve(transaction.rollback()).catch(() => undefined);
-        if (error?.code === "EHELD_CLEANUP_PENDING") {
+        if (["EHELD_CLEANUP_PENDING", "ELOCAL_UPLOAD_PENDING"].includes(error?.code)) {
           merged = beforePage; conflictCount = conflictsBeforePage;
-          deferredHeldDeletion = true;
+          deferredHeldDeletion = error.code === "EHELD_CLEANUP_PENDING";
+          deferredLocalChanges = true;
           break;
         }
         throw error;
@@ -176,7 +178,7 @@ class PullWorker {
       // approvals, staff changes, or the main POS synchronization feed.
       membershipDeferred = true;
     }
-    return { merged, conflicts: conflictCount, membershipMirrored, membershipDeferred, deferredHeldDeletion };
+    return { merged, conflicts: conflictCount, membershipMirrored, membershipDeferred, deferredHeldDeletion, deferredLocalChanges };
   }
 }
 module.exports = { PullWorker };

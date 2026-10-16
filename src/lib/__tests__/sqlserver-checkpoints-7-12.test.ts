@@ -454,9 +454,10 @@ describe("SQL Server checkpoints 7 through 12", () => {
     expect(push).toHaveBeenCalledWith({ branchId: "B1", batchSize: 100, final: true, pushOnly: true, includeActivity: true, onProgress: expect.any(Function) });
   });
 
-  it("keeps an unacknowledged local row and records the cloud conflict", async () => {
+  it("keeps an unacknowledged local row and retains the cloud page for retry", async () => {
     const commit = vi.fn();
-    class Transaction { begin = vi.fn(); commit = commit; rollback = vi.fn(); }
+    const rollback = vi.fn();
+    class Transaction { begin = vi.fn(); commit = commit; rollback = rollback; }
     const checkpoints = { get: vi.fn().mockResolvedValue(null), save: vi.fn() };
     const cloud = {
       pullBatch: vi.fn().mockResolvedValue({ count: 1, cursor: 9, rows: [{ table_name: "products", entity_id: '{"id":"P1"}', row_version: 3, row_data: { id: "P1" } }], tombstones: [] }),
@@ -466,11 +467,12 @@ describe("SQL Server checkpoints 7 through 12", () => {
     const conflicts = { record: vi.fn() };
     const { PullWorker } = await import("../../../electron/sync/pull-worker.cjs");
     const worker = new PullWorker({ connectionManager: { sql: () => ({ Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: {} }, cloud, checkpoints, reader, conflicts, registry: { tables: [{ cloudTable: "products", sqlServerTable: "products", dependencyOrder: 1 }] } });
-    await expect(worker.run({ branchId: "B1" })).resolves.toMatchObject({ merged: 0, conflicts: 1 });
+    await expect(worker.run({ branchId: "B1" })).resolves.toMatchObject({ merged: 0, conflicts: 0, deferredLocalChanges: true });
     expect(cloud.applyLocalBatch).not.toHaveBeenCalled();
-    expect(conflicts.record).toHaveBeenCalledOnce();
-    expect(checkpoints.save).toHaveBeenCalledOnce();
-    expect(commit).toHaveBeenCalledOnce();
+    expect(conflicts.record).not.toHaveBeenCalled();
+    expect(checkpoints.save).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+    expect(rollback).toHaveBeenCalledOnce();
   });
 
   it("streams one million rows through bounded resumable job pages", async () => {

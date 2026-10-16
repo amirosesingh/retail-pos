@@ -224,3 +224,75 @@ test("held cleanup waits for pending uploads without losing its pull cursor", as
   assert.equal(done.deferredHeldDeletion,false);assert.equal(saved,1);assert.equal(applied.length,1);
   assert.deepEqual(events,["rollback","commit"]);
 });
+
+for (const entity of ["shift_sessions","held_orders","audit_logs"]) test(`${entity} pending uploads defer downloads without permanent conflicts or lost cursors`, async()=>{
+  let pending=true,saved=0,recorded=0;const applied=[];const events=[];
+  class Transaction {async begin(){} async commit(){events.push("commit");} async rollback(){events.push("rollback");}}
+  const target={...table,cloudTable:entity,sqlServerTable:entity};
+  const key=JSON.stringify({id:entity==="held_orders"?"D:a611a328-2217-4d77-944a-5f6a637d123b:STR1-WIN51-20261016-0005":"1484f3ee-92fc-450a-9d36-0a1362e5e797"});
+  const worker=new PullWorker({registry:{tables:[target]},connectionManager:{pool:{},sql:()=>({Transaction})},
+    reader:{unacknowledged:async()=>pending?new Set([key]):new Set()},
+    conflicts:{record:async()=>recorded++},
+    checkpoints:{get:async(_b,name)=>({committed_cursor:name==="__feed__"?saved:0}),save:async(_b,name,_d,patch)=>{if(name==="__feed__")saved=patch.committed_cursor;}},
+    cloud:{pullBatch:async()=>({count:1,cursor:1,rows:[{table_name:entity,entity_id:key,row_version:7,row_data:{id:JSON.parse(key).id}}],tombstones:[]}),
+      applyLocalBatch:async(_tx,_table,batch)=>applied.push(...batch.rows),membershipDirectory:async()=>({ok:true,nextRevision:0,hasMore:false})}});
+  for(let retry=0;retry<2;retry++){
+    const deferred=await worker.run({branchId:"B1"});
+    assert.equal(deferred.deferredLocalChanges,true);assert.equal(deferred.conflicts,0);
+    assert.equal(saved,0);assert.equal(applied.length,0);assert.equal(recorded,0);
+  }
+  pending=false;
+  const done=await worker.run({branchId:"B1"});
+  assert.equal(done.deferredLocalChanges,false);assert.equal(done.merged,1);
+  assert.equal(saved,1);assert.equal(applied.length,1);assert.equal(recorded,0);
+  assert.deepEqual(events,["rollback","rollback","commit"]);
+});
+
+test("a later pending table rolls back the whole page and does not publish uncommitted rows",async()=>{
+  let saved=0,published=0,committed=0,rolledBack=0;
+  class Transaction {async begin(){} async commit(){committed++;} async rollback(){rolledBack++;}}
+  const first={...table,cloudTable:"products",sqlServerTable:"products",dependencyOrder:1};
+  const last={...table,cloudTable:"shift_sessions",sqlServerTable:"shift_sessions",dependencyOrder:2};
+  const worker=new PullWorker({registry:{tables:[first,last]},connectionManager:{pool:{},sql:()=>({Transaction})},
+    reader:{unacknowledged:async current=>current.cloudTable==="shift_sessions"?new Set(['{"id":"pending"}']):new Set()},
+    conflicts:{record:async()=>assert.fail("temporary contention is not a permanent conflict")},publish:()=>published++,
+    checkpoints:{get:async()=>({committed_cursor:0}),save:async()=>saved++},
+    cloud:{pullBatch:async()=>({count:2,cursor:2,rows:[{table_name:"products",entity_id:'{"id":"safe"}'},{table_name:"shift_sessions",entity_id:'{"id":"pending"}'}],tombstones:[]}),applyLocalBatch:async()=>{},membershipDirectory:async()=>({ok:true,nextRevision:0,hasMore:false})}});
+  const result=await worker.run({branchId:"B1"});
+  assert.equal(result.merged,0);assert.equal(saved,0);assert.equal(committed,0);assert.equal(rolledBack,1);assert.equal(published,0);
+});
+
+test("old pending-upload warnings are reconciled on read with journal and branch safeguards", async()=>{
+  const { ConflictRepository }=require("../electron/sync/conflicts.cjs");
+  const calls=[];let inputs={};
+  const request={input(key,value){inputs[key]=value;return this;},async query(sql){calls.push({sql,inputs});inputs={};return {recordset:[]};}};
+  const repository=new ConflictRepository({pool:{request:()=>request}});
+  await repository.unresolved();
+  const repair=calls[0];
+  assert.equal(repair.inputs.reason,"An unacknowledged local transaction has priority over this cloud change.");
+  assert.match(repair.sql,/conflict\.status='unresolved' AND conflict\.reason=@reason/);
+  assert.match(repair.sql,/NOT EXISTS/);assert.match(repair.sql,/journal\.acknowledged_at IS NULL/);
+  assert.match(repair.sql,/journal\.entity_type=conflict\.entity_type/);
+  assert.match(repair.sql,/journal\.entity_id=conflict\.entity_id/);
+  assert.match(repair.sql,/journal\.branch_id IN \(conflict\.branch_id,'global'\)/);
+  assert.match(calls[1].sql,/SELECT TOP/);
+});
+
+test("pending ordinary tombstones retain their page for retry", async()=>{
+  let saved=false,rolledBack=false;
+  class Transaction {async begin(){} async commit(){assert.fail("pending deletion must not commit");} async rollback(){rolledBack=true;}}
+  const worker=new PullWorker({registry:{tables:[table]},connectionManager:{pool:{},sql:()=>({Transaction})},
+    reader:{unacknowledged:async()=>new Set(['{"id":"pending"}'])},conflicts:{},
+    checkpoints:{get:async()=>({committed_cursor:0}),save:async()=>{saved=true;}},
+    cloud:{pullBatch:async()=>({count:1,cursor:1,rows:[],tombstones:[{table_name:"audit_logs",entity_id:'{"id":"pending"}',tombstone:true}]}),
+      applyLocalBatch:async()=>assert.fail("pending deletion must not apply"),membershipDirectory:async()=>({ok:true,nextRevision:0,hasMore:false})}});
+  const result=await worker.run({branchId:"B1"});
+  assert.equal(result.deferredLocalChanges,true);assert.equal(saved,false);assert.equal(rolledBack,true);
+});
+
+test("a deferred download cannot hide the real upload failure", async()=>{
+  const coordinator=new SyncCoordinator({pushWorker:{run:async()=>{throw new Error("SQL upload rejected");}},
+    pullWorker:{run:async()=>({merged:0,conflicts:0,deferredLocalChanges:true})}});
+  const result=await coordinator.runNow({branchId:"B1"});
+  assert.equal(result.ok,false);assert.match(result.lastError,/SQL upload rejected/);
+});
