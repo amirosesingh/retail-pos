@@ -81,9 +81,10 @@ describe("scoped SQL Server synchronization", () => {
     expect(engine).not.toMatch(/LIVE_SETTINGS_TABLES[\s\S]{0,500}\.\.\.LIVE_SETTINGS_TABLES/);
     expect(activity).toContain("filter: `store_id=eq.${branchId}`");
     expect(approvals).toContain("filter: `store_id=eq.${branchId}`");
-    expect(engine).toContain("supabaseExternal.auth.onAuthStateChange");
+    expect(engine).toContain("subscribeCentralAuthSession(() =>");
+    expect(engine).not.toContain("Boolean(session?.access_token)");
     expect(engine).toContain("installLiveChannel(staffPresent)");
-    expect(engine).toContain("authListener.subscription.unsubscribe()");
+    expect(engine).toContain("offVerifiedAuth()");
     expect(activity).toContain("if (!hasStaffSession()) return");
     expect(approvals).toContain("if (!hasStaffSession()) return");
   });

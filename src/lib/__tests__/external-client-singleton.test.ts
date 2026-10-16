@@ -11,10 +11,13 @@ const harness = vi.hoisted(() => ({
     removeAllChannels: ReturnType<typeof vi.fn>;
   }>,
   session: null as { access_token: string } | null,
+  fetchers: [] as Array<typeof fetch>,
+  transport: vi.fn(),
 }));
 
 vi.mock("@supabase/supabase-js", () => ({
-  createClient: vi.fn(() => {
+  createClient: vi.fn((_url, _key, options) => {
+    harness.fetchers.push(options.global.fetch);
     const client = {
       auth: {
         stopAutoRefresh: vi.fn(),
@@ -26,6 +29,9 @@ vi.mock("@supabase/supabase-js", () => ({
     return client;
   }),
 }));
+
+vi.mock("@/lib/desktop-supabase-fetch", () => ({ desktopSupabaseFetch: harness.transport }));
+vi.mock("@/lib/fetch-deadline", () => ({ fetchWithDeadline: harness.transport }));
 
 vi.mock("@/lib/external-supabase-config", () => ({
   supabaseConfig: (scope = "pos") => ({
@@ -53,6 +59,9 @@ describe("external Supabase client ownership", () => {
     };
     harness.clients.length = 0;
     harness.session = null;
+    harness.fetchers.length = 0;
+    harness.transport.mockReset();
+    harness.transport.mockResolvedValue(new Response("[]"));
   });
 
   it("reuses the same GoTrue owner when the module is evaluated again", async () => {
@@ -129,5 +138,43 @@ describe("external Supabase client ownership", () => {
     resetExternalClient();
     expect(listener).toHaveBeenCalledOnce();
     unsubscribe();
+  });
+  it("stops anonymous protected requests before transport but preserves public reads", async () => {
+    const { externalClientSnapshot } = await import("@/integrations/supabase/external-client");
+    externalClientSnapshot();
+    const fetcher = harness.fetchers[0];
+    for (const path of [
+      "products",
+      "stores",
+      "sales",
+      "audit_logs",
+      "user_roles",
+      "rpc/current_app_user",
+    ]) {
+      const result = await fetcher(`https://tenant-a.example.co/rest/v1/${path}`);
+      expect(result.status).toBe(401);
+    }
+    expect(harness.transport).not.toHaveBeenCalled();
+    await fetcher("https://tenant-a.example.co/rest/v1/public_flags");
+    expect(harness.transport).toHaveBeenCalledOnce();
+  });
+  it("preserves a signed-in bearer and denies publishable keys used as bearer tokens", async () => {
+    const { externalClientSnapshot } = await import("@/integrations/supabase/external-client");
+    externalClientSnapshot();
+    const fetcher = harness.fetchers[0];
+    expect(
+      (
+        await fetcher("https://tenant-a.example.co/rest/v1/products", {
+          headers: { Authorization: "Bearer publishable-a" },
+        })
+      ).status,
+    ).toBe(401);
+    await fetcher("https://tenant-a.example.co/rest/v1/products", {
+      headers: { Authorization: "Bearer user-session" },
+    });
+    expect(harness.transport).toHaveBeenCalledOnce();
+    expect(new Headers(harness.transport.mock.calls[0][1].headers).get("Authorization")).toBe(
+      "Bearer user-session",
+    );
   });
 });

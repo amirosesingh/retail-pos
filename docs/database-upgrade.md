@@ -75,3 +75,19 @@ After database setup, enter the Supabase URL and publishable key through **Setti
 
 Company name, logo, tax/registration numbers, company phone/website and receipt header/footer are shared globally. A fresh Electron installation asks only for its terminal name; setup downloads shared settings before processing other pending uploads or the full catalogue. Old branch/terminal copies of those identity fields no longer override the global identity. Printer and receipt layout preferences remain scoped separately. After installing this application update, reconnect through Database & Cloud Connection to refresh an older terminal's shared settings automatically; no extra SQL migration is required for this identity fix.
 
+
+
+## POS log-error repair deployed 16 October 2026
+
+On project `qhrufhtbeguxydenzfey`, the deployment service assigned these versions:
+
+| Repository source | Recorded deployment version | Status |
+| --- | --- | --- |
+| `20261015120141_reserve_cloud_stock_document_numbers.sql` | `20261016030521` (`reserve_cloud_stock_document_numbers`) | Applied; function and private counter verified |
+| `20261016030607_repair_stock_helper_and_scoped_sync_pull.sql` | `20261016030607` | Applied; helper grants, scoped pull and indexes verified |
+
+The original stock-number migration was executed exactly as committed; the deployment tool recorded its deployment timestamp. Production migration history was left unchanged. Do not replay the stock-number migration or run an indiscriminate `db push` to resolve this source/deployment timestamp difference. Compare the applied SQL/name with the repository and follow the history reconciliation process above before a future CLI deployment.
+
+The repair grants signed-in users only the immutable JSON stock-normalization helper. Anonymous helper access stays revoked. Stock-number reservation and sync pull remain service-only and keep their branch checks. Live verification used rollback-only reservations, confirmed a terminal could not pull another branch, and preserved all business rows and sync checkpoints.
+
+The accompanying app update clears rejected secondary Supabase sessions without clearing valid PIN credentials, validates cached machine accounts, prevents anonymous protected REST attempts, and opens protected Realtime subscriptions only after session verification. Existing installed clients need the updated web/Electron/Android release to use those client fixes.

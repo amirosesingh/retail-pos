@@ -3,7 +3,7 @@ import { externalClientSnapshot, supabaseExternal } from "@/integrations/supabas
 import { logSync } from "./sync-log";
 import { hasRequiredPlatformConfig } from "./platform-config-ready";
 import { sessionEpoch, isCurrentEpoch } from "./session-epoch";
-import { hasSignedInIdentity } from "./session-presence";
+import { hasSignedInIdentity, subscribeCentralAuthSession } from "./session-presence";
 import { createSerialChannelReplacer } from "./realtime-channel-replacer";
 import { createSyncWakeChannels } from "./sync-wake-channels";
 import { readTerminalConfig, subscribeTerminalConfig } from "@/core/activation/terminal-tokens";
@@ -1080,10 +1080,12 @@ export function startSyncEngine() {
     });
   };
   installLiveChannel(liveHasStaffSession);
-  const { data: authListener } = supabaseExternal.auth.onAuthStateChange((event, session) => {
-    const staffPresent = Boolean(session?.access_token);
+  const offVerifiedAuth = subscribeCentralAuthSession(() => {
+    // INITIAL_SESSION only restores a cache; it must never open protected
+    // Realtime channels before AuthProvider proves that session server-side.
+    const staffPresent = hasStaffSession();
     if (staffPresent === liveHasStaffSession) {
-      if (event === "TOKEN_REFRESHED" || event === "SIGNED_IN") installSyncWake();
+      if (staffPresent) installSyncWake();
       return;
     }
     liveHasStaffSession = staffPresent;
@@ -1099,7 +1101,7 @@ export function startSyncEngine() {
     if (debounce) window.clearTimeout(debounce);
     if (liveTimer) window.clearTimeout(liveTimer);
     pendingLiveChanges.clear();
-    authListener.subscription.unsubscribe();
+    offVerifiedAuth();
     offTerminalWake();
     void syncWakeChannels?.stop();
     void liveChannels.stop();

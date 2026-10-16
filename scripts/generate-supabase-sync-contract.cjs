@@ -197,6 +197,8 @@ const out = [
  row_version bigint NOT NULL DEFAULT 1, tombstone boolean NOT NULL DEFAULT false, changed_at timestamptz NOT NULL DEFAULT now());`,
   `CREATE INDEX IF NOT EXISTS sync_change_feed_branch_cursor_idx ON public.sync_change_feed(organization_id,branch_id,cursor);`,
   `ALTER TABLE public.sync_change_feed ADD COLUMN IF NOT EXISTS terminal_id text;`,
+  `CREATE INDEX IF NOT EXISTS sync_feed_shared_cursor_idx ON public.sync_change_feed(organization_id,branch_id,cursor) WHERE terminal_id IS NULL;`,
+  `CREATE INDEX IF NOT EXISTS sync_feed_terminal_cursor_idx ON public.sync_change_feed(organization_id,branch_id,terminal_id,cursor) WHERE terminal_id IS NOT NULL;`,
   `ALTER TABLE public.sync_idempotency_receipts ENABLE ROW LEVEL SECURITY; ALTER TABLE public.sync_change_feed ENABLE ROW LEVEL SECURITY;`,
   `CREATE OR REPLACE FUNCTION public.pos_sync_validate_scope(p_organization_id text,p_branch_id text,p_terminal_id text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
 BEGIN
@@ -465,10 +467,21 @@ BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_ter
  IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
  RETURN QUERY WITH feed_page AS MATERIALIZED (
   SELECT candidate.cursor,candidate.table_name,candidate.entity_id,candidate.operation,candidate.row_version,candidate.tombstone
-  FROM public.sync_change_feed candidate
-  WHERE candidate.organization_id=p_organization_id AND candidate.branch_id IN (p_branch_id,'global')
-    AND (candidate.terminal_id IS NULL OR candidate.terminal_id=p_terminal_id) AND candidate.cursor>p_after_cursor
-  ORDER BY candidate.cursor LIMIT LEAST(GREATEST(p_limit,100),2000)
+  FROM (SELECT DISTINCT unnest(ARRAY[p_branch_id,'global']) AS branch_id) scopes
+  CROSS JOIN LATERAL (
+   (SELECT c.cursor,c.table_name,c.entity_id,c.operation,c.row_version,c.tombstone
+    FROM public.sync_change_feed c
+    WHERE c.organization_id=p_organization_id AND c.branch_id=scopes.branch_id
+      AND c.terminal_id IS NULL AND c.cursor>p_after_cursor
+    ORDER BY c.cursor LIMIT LEAST(GREATEST(p_limit,10),2000))
+   UNION ALL
+   (SELECT c.cursor,c.table_name,c.entity_id,c.operation,c.row_version,c.tombstone
+    FROM public.sync_change_feed c
+    WHERE c.organization_id=p_organization_id AND c.branch_id=scopes.branch_id
+      AND c.terminal_id=p_terminal_id AND c.terminal_id IS NOT NULL AND c.cursor>p_after_cursor
+    ORDER BY c.cursor LIMIT LEAST(GREATEST(p_limit,10),2000))
+  ) candidate
+  ORDER BY candidate.cursor LIMIT LEAST(GREATEST(p_limit,10),2000)
  )
  SELECT f.cursor,f.table_name,f.entity_id,f.operation,f.row_version,f.tombstone,CASE f.table_name ${rowCases} ELSE NULL END
  FROM feed_page f ORDER BY f.cursor;

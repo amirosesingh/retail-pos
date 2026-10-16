@@ -55,7 +55,9 @@ export async function validateStoredAuthSession(
   let current: Session | null;
   try {
     const loaded = await auth.getSession();
-    if (rejected(loaded.error)) return { state: "rejected", session: null };
+    if (loaded.error) return {
+      state: rejected(loaded.error) ? "rejected" : "unavailable", session: null,
+    };
     current = loaded.data.session;
   } catch {
     return { state: "unavailable", session: null };

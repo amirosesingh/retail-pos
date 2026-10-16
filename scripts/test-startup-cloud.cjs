@@ -10,7 +10,7 @@ const request=(path="/rest/v1/public_flags")=>({url:config.url+path,headers:{api
 // or downloaded dependencies are required for these focused behavior tests.
 function load(file, dependencies, exports) {
   const source=stripTypeScriptTypes(readFileSync(file,"utf8"))
-    .replace(/^import .*;\s*$/gm,"").replace(/\bexport /g,"");
+    .replace(/^import[\s\S]*?from\s+["'][^"']+["'];\s*$/gm,"").replace(/\bexport /g,"");
   return new Function(...Object.keys(dependencies),`${source}\nreturn {${exports.join(",")}};`)(...Object.values(dependencies));
 }
 
@@ -66,6 +66,9 @@ test("public flags recover after SQL readiness failure and share concurrent forc
 function terminalFixture(error=null, savedProject=config.url) {
   let logins=0,provisions=0;
   const deps={window:{},supabaseConfig:()=>config,awaitProfileHydrated:async()=>{},supabaseExternal:{auth:{getSession:async()=>({data:{session:null}}),signInWithPassword:async()=>{logins++;await Promise.resolve();return {error};}}},getDeviceSecret:async()=>({email:"terminal",password:"test",projectUrl:savedProject}),setDeviceSecret:async()=>{},readTerminalConfig:()=>({tokenId:"paired-terminal"}),deviceProofHash:async()=>"proof",getTerminalAccount:async()=>{provisions++;return {ok:true,email:"terminal",password:"fresh"};},logger:{log(){}}};
+  deps.externalClientSnapshot=()=>deps.supabaseExternal;
+  deps.discardRejectedExternalAuthSession=async()=>{};
+  deps.validateStoredAuthSession=async auth=>{const {data}=await auth.getSession();return {state:data.session?"verified":"signed-out",session:data.session};};
   return {...load("src/lib/terminal-session.ts",deps,["ensureTerminalSession"]),counts:()=>({logins,provisions}),deps};
 }
 
