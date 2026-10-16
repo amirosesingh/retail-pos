@@ -17,6 +17,8 @@ import {
 import { hasCentralAuthSession } from "@/lib/session-presence";
 import { noteVersions } from "@/lib/row-versions";
 import { readAllPages } from "@/lib/paged-read";
+import { retryDataRead } from "@/lib/read-retry";
+import { sessionEpoch } from "@/lib/session-epoch";
 import { localDb } from "@/core/local-db/local-db";
 import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 
@@ -88,7 +90,7 @@ export type ReadSource = "local" | "cloud";
  */
 const inFlight = new Map<string, Promise<{ rows: Row[]; source: ReadSource }>>();
 
-const readKey = (table: string, options: QueryOptions) => `${table}|${JSON.stringify(options)}`;
+const readKey = (table: string, options: QueryOptions) => `${sessionEpoch()}|${effectiveDatabaseMode()}|${hasCentralAuthSession()}|${table}|${JSON.stringify(options)}`;
 
 async function runQuery(
   table: string,
@@ -117,8 +119,8 @@ async function runQuery(
       throw new Error("The verified cloud staff session is still being restored.");
     }
   }
-  const build = (start: number, end: number) => {
-    let q = from(cloudClient, table).select(options.columns ?? "*", { count: "exact" });
+  const build = (start: number, end: number, withCount = false) => retryDataRead(async () => {
+    let q = from(cloudClient, table).select(options.columns ?? "*", withCount ? { count: "exact" } : {});
     // PostgREST uses `is.null`, not `eq.null`.  The latter can return no rows
     // (or fail outright) and leaves deleted/archived records stale in the UI.
     for (const [k, v] of Object.entries(options.match ?? {}))
@@ -143,12 +145,15 @@ async function runQuery(
       for (const column of CLOUD_PRIMARY_ORDER[table] ?? ["id"])
         q = q.order(column, { ascending: true });
     }
-    return q.range(start, end) as PromiseLike<{
+    const result = await q.range(start, end) as {
       data: Row[] | null;
       error: { message: string } | null;
       count?: number | null;
-    }>;
-  };
+      status?: number;
+    };
+    if (result.error) throw Object.assign(new Error(result.error.message), result.error, { status: result.status });
+    return result;
+  }, () => PUBLIC_READ_TABLES.has(table) || hasCentralAuthSession());
   // A caller that asked for a capped read gets exactly that; an uncapped
   // read is paged so the database's 1,000-row response cap cannot silently
   // truncate a whole table.

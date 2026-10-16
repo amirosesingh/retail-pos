@@ -121,18 +121,25 @@ async function loadTransferLines(ids: string[]): Promise<Row[]> {
   const pageSize = 1000;
   const rows: Row[] = [];
   // Keep both the SQL parameter list and the PostgREST URL bounded.
-  for (let start = 0; start < ids.length; start += 100) {
-    const batch = ids.slice(start, start + 100);
-    for (let offset = 0; ; offset += pageSize) {
-      const page = (await routedQuery("stock_transfer_items", {
-        in: { column: "transfer_id", values: batch },
-        orderBy: { column: "id", ascending: true },
-        offset,
-        limit: pageSize,
-      })) as Row[];
-      rows.push(...page);
-      if (page.length < pageSize) break;
-    }
+  for (let start = 0; start < ids.length; start += 300) {
+    // Three bounded groups hide network latency without flooding a phone's
+    // connection. Each group still reads every page and fails as a whole.
+    const groups = [0, 100, 200].map(offset => ids.slice(start + offset, start + offset + 100)).filter(batch => batch.length);
+    const results = await Promise.all(groups.map(async batch => {
+      const lines: Row[] = [];
+      for (let offset = 0; ; offset += pageSize) {
+        const page = (await routedQuery("stock_transfer_items", {
+          in: { column: "transfer_id", values: batch },
+          orderBy: { column: "id", ascending: true },
+          offset,
+          limit: pageSize,
+        })) as Row[];
+        lines.push(...page);
+        if (page.length < pageSize) break;
+      }
+      return lines;
+    }));
+    rows.push(...results.flat());
   }
   return rows;
 }

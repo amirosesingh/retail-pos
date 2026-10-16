@@ -146,6 +146,8 @@ import {
   type SettingsSectionId,
 } from "./settings-sections";
 import { localDb } from "@/core/local-db/local-db";
+import { businessReadsReady } from "./business-readiness";
+import { retryDataRead } from "./read-retry";
 import {
   batches,
   DEFAULT_BATCH_SIZE,
@@ -595,6 +597,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Nothing is fetched from the cloud until a cashier or supervisor session
   // exists — visitors never receive catalogue, member or sales data.
   const signedIn = Boolean(authUserId || terminalUser);
+  const readsReady = businessReadsReady(authReady, signedIn, effectiveDatabaseMode() === "local", authUserId);
+  const readIdentity = terminalUser?.userCode ?? authUserId;
   useEffect(() => {
     const name = state.settings.receipt.companyName?.trim();
     if (name && readBranding().company !== name) writeBranding({ company: name });
@@ -671,6 +675,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
         }
         return;
       }
+      if (!readsReady) {
+        if (!cancelled) { setReady(false); setLoadPhase("loading"); }
+        return;
+      }
       if (
         typeof navigator !== "undefined" &&
         !navigator.onLine &&
@@ -697,10 +705,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const pairedLocalSnapshot = effectiveDatabaseMode() === "local" &&
           !!localDb()?.snapshot && !!readTerminalConfig()?.locationId;
         const locationTask = canLoadCloudDirectory && !pairedLocalSnapshot
-          ? loadLocationDirectory() : null;
+          ? retryDataRead(async () => {
+            const directory = await loadLocationDirectory();
+            if (!directory.ok) throw directory.error;
+            return directory;
+          }, () => !cancelled).catch(error => ({ ok: false as const, error: error instanceof Error ? error : new Error(String(error)) }))
+          : null;
         let fullSnapshotApplied = false;
         const settingsRevision = settingsWrites.current.revision;
-        const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined, (name) => {
+        const loadSnapshot = () => loadPrimaryState(undefined, locationTask ?? undefined, (name) => {
           if (cancelled || fullSnapshotApplied || settingsWrites.current.pending ||
               settingsWrites.current.revision !== settingsRevision) return;
           setState((current) => ({ ...current, settings: {
@@ -708,6 +721,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
             receipt: { ...current.settings.receipt, companyName: name },
           } }));
         }, true);
+        const cloudTask = effectiveDatabaseMode() === "online"
+          ? retryDataRead(loadSnapshot, () => !cancelled) : loadSnapshot();
         // Observe a fast SQL failure immediately while cloud discovery is pending.
         void cloudTask.catch(() => undefined);
         const directory = locationTask ? await locationTask : null;
@@ -769,6 +784,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             /* offline or not permitted — the local list still works */
           });
       } catch (e) {
+        if (cancelled) return;
         void localDb()?.logConnection?.("renderer.bootstrap.failed", {
           scope: "initial-data",
           code: String((e as { code?: unknown })?.code ?? "ELOAD"),
@@ -785,7 +801,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.clearTimeout(watchdog);
     };
-  }, [signedIn, authReady, reloadTick]);
+  }, [signedIn, authReady, readsReady, readIdentity, reloadTick]);
 
   // Retry a failed initial read when the connection recovers. Do not restart
   // an active catalogue download or discard a successfully loaded snapshot.
@@ -800,7 +816,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // their persisted headers and lines separately so a reload does not turn a
   // dispatched delivery into an empty receiving page or a read-only deep link.
   useEffect(() => {
-    if (!signedIn || !state.currentStoreId) return;
+    if (!readsReady || !state.currentStoreId) return;
     let cancelled = false;
     let running = false;
     let queued = false;
@@ -862,7 +878,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       offSettings();
       offLocal?.();
     };
-  }, [signedIn, state.currentStoreId]);
+  }, [readsReady, readIdentity, state.currentStoreId]);
 
   useEffect(() => {
     if (!ready) return;
@@ -879,7 +895,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Global locks and empty override sets still need confirmation before
     // editing global settings, even before the first branch is created.
-    if (!signedIn) return;
+    if (!readsReady) return;
     let cancelled = false;
     const scopeKey = JSON.stringify(scopeIds);
     if (loadedScopeKey.current !== scopeKey) {
@@ -921,7 +937,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("online", onFocus);
     };
-  }, [signedIn, state.currentStoreId, scopeIds]);
+  }, [readsReady, readIdentity, state.currentStoreId, scopeIds]);
 
   // The directory may not have loaded yet (a cashier signs in with a PIN and
   // has no central-database account of their own). The terminal's own
@@ -1055,8 +1071,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setShiftChecked(false);
       return;
     }
-    void refreshActiveShift();
-  }, [signedIn, currentStore.id, refreshActiveShift]);
+    if (readsReady) void refreshActiveShift();
+  }, [signedIn, readsReady, readIdentity, currentStore.id, refreshActiveShift]);
 
   // A registered till trades in its own branch — pin the view to it as soon as
   // that branch exists in the directory, before any shift read runs.
@@ -1074,7 +1090,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Web, Android and iOS hold nothing locally, so returning to the app must re-read the
   // catalogue, members, prices and shift from the backend.
   useEffect(() => {
-    if (effectiveDatabaseMode() !== "online" || !signedIn) return;
+    if (effectiveDatabaseMode() !== "online" || !readsReady) return;
     let cancelled = false;
     let loading = false;
     let resumeTimer: number | undefined;
@@ -1129,7 +1145,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(APP_RESUME_EVENT, resume);
       if (removeNative) void removeNative();
     };
-  }, [signedIn, refreshActiveShift]);
+  }, [readsReady, readIdentity, refreshActiveShift]);
 
   // Electron can miss socket events while its window is minimized. Regaining
   // focus wakes the durable worker and re-reads the branch snapshot; the

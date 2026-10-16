@@ -1,16 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { orders, ranges, nullFilters, auth } = vi.hoisted(() => ({
+const { orders, ranges, nullFilters, auth, counts, page } = vi.hoisted(() => ({
   orders: [] as string[],
   ranges: [] as [number, number][],
   nullFilters: [] as string[],
   auth: { present: true, restored: true },
+  counts: [] as (string | undefined)[],
+  page: vi.fn<(from: number, to: number) => Promise<{ data: Record<string, unknown>[]; error: { message: string; code?: string } | null; count?: number }>>(),
 }));
 
 vi.mock("@/integrations/supabase/external-client", () => {
   const client = {
     from: () => ({
-      select: () => {
+      select: (_columns: string, options?: { count?: string }) => {
+        counts.push(options?.count);
         const query = {
           eq: () => query,
           is: (column: string) => {
@@ -25,7 +28,7 @@ vi.mock("@/integrations/supabase/external-client", () => {
           limit: () => query,
           range: (from: number, to: number) => {
             ranges.push([from, to]);
-            return Promise.resolve({ data: [], error: null, count: 0 });
+            return page(from, to);
           },
         };
         return query;
@@ -52,6 +55,7 @@ vi.mock("@/lib/offline-snapshot", () => ({ readSnapshot: () => null }));
 vi.mock("@/lib/row-versions", () => ({ noteVersions: () => undefined }));
 
 import { routedQuery } from "@/core/api/db-query";
+import { __resetSessionEpoch, bumpSessionEpoch } from "../session-epoch";
 
 describe("routed query ordering", () => {
   beforeEach(() => {
@@ -60,6 +64,42 @@ describe("routed query ordering", () => {
     nullFilters.splice(0);
     auth.present = true;
     auth.restored = true;
+    counts.splice(0);
+    page.mockReset().mockResolvedValue({ data: [], error: null, count: 0 });
+    __resetSessionEpoch();
+  });
+
+  it("does not count bounded reads and counts an uncapped table only once", async () => {
+    await routedQuery("stock_transfers", { limit: 500 });
+    expect(counts).toEqual([undefined]);
+    counts.splice(0);
+    page.mockResolvedValueOnce({ data: Array.from({ length: 1000 }, (_, id) => ({ id })), count: 1001, error: null })
+      .mockResolvedValueOnce({ data: [{ id: 1000 }], error: null });
+    expect(await routedQuery("products")).toHaveLength(1001);
+    expect(counts).toEqual(["exact", undefined]);
+  });
+
+  it("shares simultaneous reads only within the same signed-in generation", async () => {
+    let finish!: (value: { data: Record<string, unknown>[]; error: null }) => void;
+    page.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const first = routedQuery("stock_transfers", { limit: 500 });
+    const shared = routedQuery("stock_transfers", { limit: 500 });
+    const old = Promise.allSettled([first, shared]);
+    await vi.waitFor(() => expect(page).toHaveBeenCalledOnce());
+    bumpSessionEpoch();
+    page.mockResolvedValueOnce({ data: [{ id: "new-user-row" }], error: null });
+    expect(await routedQuery("stock_transfers", { limit: 500 })).toEqual([{ id: "new-user-row" }]);
+    finish({ data: [{ id: "old-user-row" }], error: null });
+    const results = await old;
+    expect(results.every(result => result.status === "rejected")).toBe(true);
+    expect(page).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a timed-out cloud page without losing its filters or pagination", async () => {
+    page.mockResolvedValueOnce({ data: [], error: { code: "57014", message: "statement timeout" } })
+      .mockResolvedValueOnce({ data: [{ id: "transfer" }], error: null });
+    expect(await routedQuery("stock_transfers", { offset: 500, limit: 500 })).toEqual([{ id: "transfer" }]);
+    expect(ranges).toEqual([[500, 999], [500, 999]]);
   });
 
   it("uses composite keys as stable ties without appending a nonexistent id", async () => {

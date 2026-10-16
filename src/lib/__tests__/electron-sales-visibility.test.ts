@@ -143,7 +143,8 @@ describe("Electron sales visibility", () => {
     const sync = readFileSync("src/lib/sync-engine.ts", "utf8");
     const database = readFileSync("src/core/api/pos-db.ts", "utf8");
 
-    expect(store).toContain("const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined, (name) =>");
+    expect(store).toContain("const loadSnapshot = () => loadPrimaryState(undefined, locationTask ?? undefined, (name) =>");
+    expect(store).toContain("? retryDataRead(loadSnapshot, () => !cancelled) : loadSnapshot()");
     expect(store).toContain(".then(() => loadPrimaryState(active ?? undefined))");
     expect(store).toContain(": loadLocalSales()");
     expect(store).not.toContain(".then(() => loadLocalSales())");

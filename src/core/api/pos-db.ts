@@ -1,3 +1,4 @@
+import { readCataloguePages } from "@/lib/catalogue-read";
 import { normalizeUuidFields } from "@/lib/uuid-fields";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "@/lib/points-redemption";
@@ -35,7 +36,7 @@ import {
 import { hydrateTerminalConfig, readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { isOperationalTable } from "@/lib/pos-auth-route";
 import { keyset, nextCursor, PAGE_SIZE, type Cursor, type Page } from "@/lib/keyset";
-import { MAX_ROWS, PAGE, readAllPages, type PagedRead, type PageResult } from "@/lib/paged-read";
+import { MAX_ROWS, readAllPages, type PagedRead } from "@/lib/paged-read";
 import { canonicalBranchId, canonicalStockMap } from "@/lib/branch-id";
 import { loadCashierToken, readCredentials } from "@/lib/pos-credentials";
 import { normalizeReceiptLogoLayout } from "@/lib/receipt-logo";
@@ -1272,51 +1273,15 @@ async function loadCompleteProductCatalogue(client: typeof supabase, showProgres
   try { return await readProductCatalogue(client, task.report); } finally { task.finish(); }
 }
 async function readProductCatalogue(client: typeof supabase, report: (completed: number, total: number | null) => void): Promise<PagedRead<Row>> {
-  type ProductPageQuery = PromiseLike<PageResult<Row>> & {
-    gt: (column: string, value: string) => PromiseLike<PageResult<Row>>;
-  };
-  const rows: Row[] = [];
-  let afterId = "";
-  let total: number | null = null;
-  for (;;) {
+  return readCataloguePages<Row>(async (afterId, limit) => {
     if (!hasStaffSession()) {
-      return {
-        data: null,
-        error: { message: "The verified staff session ended while loading the catalogue." },
-        total,
-        capped: false,
-      };
+      return { data: null, error: { message: "The verified staff session ended while loading the catalogue." } };
     }
-    const baseQuery = client
-      .from("products")
-      .select("*", total === null ? { count: "exact" } : {})
-      .is("deleted_at", null)
-      .order("id", { ascending: true })
-      .limit(PAGE) as unknown as ProductPageQuery;
-    const result: PageResult<Row> = await (afterId ? baseQuery.gt("id", afterId) : baseQuery);
-    if (result.error) return { data: null, error: result.error, total, capped: false };
-    if (total === null) total = typeof result.count === "number" ? result.count : null;
-    const page = (result.data as Row[] | null) ?? [];
-    rows.push(...page);
-    report(rows.length, total);
-    // A full final window is still complete when the exact count says we have
-    // reached the end (for example exactly 100,000 products).
-    if (total !== null && rows.length >= total)
-      return { data: rows.slice(0, total), error: null, total, capped: false };
-    if (page.length < PAGE)
-      return { data: rows, error: null, total: total ?? rows.length, capped: false };
-    if (rows.length >= MAX_ROWS)
-      return { data: rows.slice(0, MAX_ROWS), error: null, total, capped: true };
-    const lastId = page.at(-1)?.id;
-    if (typeof lastId !== "string" || !lastId)
-      return {
-        data: null,
-        error: { message: "Product catalogue pagination returned a row without an ID." },
-        total,
-        capped: false,
-      };
-    afterId = lastId;
-  }
+    let query = client.from("products").select("*")
+      .is("deleted_at", null).order("id", { ascending: true }).limit(limit);
+    if (afterId) query = query.gt("id", afterId);
+    return await query;
+  }, report);
 }
 
 export async function loadCloudState(

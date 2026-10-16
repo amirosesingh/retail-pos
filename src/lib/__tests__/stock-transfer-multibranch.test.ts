@@ -9,6 +9,41 @@ const store = (id: string, groupId: string): Store =>
   ({ id, code: id, name: id, groupId, address: "", phone: "", isActive: true }) as Store;
 
 describe("multi-branch stock transfer contract", () => {
+  it("loads transfer line groups with bounded concurrency and retains every page", async () => {
+    routedQuery.mockReset();
+    const headers = Array.from({ length: 350 }, (_, id) => ({ id: `transfer-${id}`, status: "draft" }));
+    let active = 0, peak = 0;
+    routedQuery.mockImplementation(async (table: string, options: { offset: number; in?: { values: string[] } }) => {
+      if (table === "stock_transfers") return headers;
+      active++; peak = Math.max(peak, active);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const ids = options.in!.values;
+        if (ids[0] === "transfer-0") {
+          if (options.offset === 1000) return [{ id: "last", transfer_id: ids[0], product_id: "last-product", quantity: 1 }];
+          return Array.from({ length: 1000 }, (_, index) => ({ id: `line-${index}`, transfer_id: ids[index % ids.length], product_id: `product-${index}`, quantity: 1 }));
+        }
+        return ids.map(id => ({ id: `line-${id}`, transfer_id: id, product_id: "product", quantity: 1 }));
+      } finally { active--; }
+    });
+    const result = await loadTransfers();
+    expect(peak).toBe(3);
+    expect(result).toHaveLength(350);
+    expect(result.reduce((total, row) => total + row.items.length, 0)).toBe(1251);
+    expect(result[0].items).toHaveLength(11);
+    expect(result[0].items.at(-1)?.productId).toBe("last-product");
+    expect(routedQuery).toHaveBeenCalledWith("stock_transfer_items", expect.objectContaining({ offset: 1000 }));
+  });
+
+  it("rejects the complete list if a parallel line group fails instead of exposing partial transfers", async () => {
+    routedQuery.mockReset();
+    routedQuery.mockImplementation(async (table: string, options: { in?: { values: string[] } }) => {
+      if (table === "stock_transfers") return Array.from({ length: 250 }, (_, id) => ({ id: `transfer-${id}` }));
+      if (options.in?.values[0] === "transfer-100") throw new Error("line query failed");
+      return [];
+    });
+    await expect(loadTransfers()).rejects.toThrow("line query failed");
+  });
   it("restores every page of persisted drafts and their lines", async () => {
     routedQuery.mockReset();
     const firstPage = Array.from({ length: 500 }, (_, index) => ({
