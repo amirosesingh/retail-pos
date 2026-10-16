@@ -1,4 +1,5 @@
 -- Retail POS local database update — 1.4.69
+-- Latest local migration: 018_sql_document_counters.sql
 -- Source: retail-pos-local-database.sql bundled with this application.
 -- Select your configured POS database. This file never switches databases.
 -- Back up the existing database before upgrading. No business rows are deleted.

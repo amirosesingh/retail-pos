@@ -67,6 +67,7 @@ jobs:
 
       - name: Test application and updater
         run: |
+          node scripts/windows-package-smoke.cjs
           npm test
           node --test scripts/test-update-install.cjs scripts/test-updater.cjs scripts/test-windows-publish.cjs scripts/test-update-history.cjs scripts/test-shutdown-sync.cjs
 

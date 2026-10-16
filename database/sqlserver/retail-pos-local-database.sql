@@ -3,7 +3,10 @@
   Generated from the migrations loaded by the POS application.
 
   Application version: 1.4.69
+  Latest local migration: 018_sql_document_counters.sql
   Target database: POS_Local
+
+  To upgrade an existing configured POS database, use retail-pos-local-update.sql.
 
   Run this file while connected to the local Microsoft SQL Server instance.
   It creates POS_Local when needed, selects it, and installs or updates the

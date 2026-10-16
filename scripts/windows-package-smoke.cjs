@@ -8,7 +8,14 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "ut
 const failures = [];
 const check = (condition, message) => { if (!condition) failures.push(message); };
 
-check(manifest.dependencies?.mssql === "12.7.2", "mssql must remain pinned to 12.7.2");
+const { sqlDriverFailures } = require("./windows-sql-driver-policy.cjs");
+try {
+  const lock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
+  const installed = JSON.parse(fs.readFileSync(path.join(root, "node_modules", "mssql", "package.json"), "utf8"));
+  failures.push(...sqlDriverFailures(manifest, lock, installed.version));
+} catch (error) {
+  failures.push(`cannot validate the selected SQL Server driver: ${error.message}`);
+}
 check(manifest.optionalDependencies?.msnodesqlv8 === "5.5.0", "msnodesqlv8 must remain an optional Windows-only dependency pinned to 5.5.0");
 check(manifest.devDependencies?.["@electron/rebuild"] === "4.2.0", "@electron/rebuild must remain pinned to 4.2.0");
 check((manifest.build?.asarUnpack ?? []).some((entry) => String(entry).includes("msnodesqlv8")), "msnodesqlv8 must be unpacked from the Electron ASAR");
@@ -51,6 +58,11 @@ if (packageDirectory) {
     const packagedManifest = JSON.parse(asar.extractFile(archive, "package.json").toString("utf8"));
     check(packagedManifest.version === manifest.version, "packaged version differs from the source manifest");
     check(packagedManifest.main === manifest.main, "packaged application entry point differs from the source manifest");
+    check(packagedManifest.dependencies?.mssql === manifest.dependencies?.mssql,
+      "packaged SQL Server driver selection differs from the source manifest");
+    const packagedDriver = JSON.parse(asar.extractFile(archive, "node_modules/mssql/package.json").toString("utf8"));
+    check(packagedDriver.version === manifest.dependencies?.mssql,
+      "packaged SQL Server driver version differs from the selected version");
   } catch (error) {
     failures.push(`cannot validate packaged ASAR: ${error.message}`);
   }
