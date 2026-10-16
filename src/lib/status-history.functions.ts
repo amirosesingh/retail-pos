@@ -54,6 +54,8 @@ export const recordStatusHistory = createServerFn({ method: "POST" })
         ...(data.accessToken ? { accessToken: data.accessToken } : {}),
       });
       scope = await resolveRelayScope(caller);
+      if (scope.kind === "terminal" || scope.stale || !scope.staffUserId)
+        throw new Error("Staff identity required");
     } catch {
       return { ok: false as const, error: "Not signed in" };
     }
@@ -67,15 +69,18 @@ export const recordStatusHistory = createServerFn({ method: "POST" })
       previous_status: t.previousStatus ?? null,
       new_status: t.newStatus,
       reason: t.reason ?? null,
-      actor_id: t.actorId ?? scope.label ?? null,
-      actor_name: t.actorName ?? null,
-      actor_role: t.actorRole ?? scope.role ?? null,
+      actor_id: scope.staffUserId ?? null,
+      actor_name: scope.actorName ?? null,
+      actor_role: scope.role,
       store_id: scope.isSupervisor ? (t.storeId ?? scope.storeId ?? null) : (scope.storeId ?? null),
-      branch_id: t.branchId ?? null,
-      terminal_id: t.terminalId ?? null,
+      branch_id: scope.storeId ?? null,
+      terminal_id: scope.terminalId ?? null,
       related_entity_type: t.relatedEntityType ?? null,
       related_entity_id: t.relatedEntityId ?? null,
-      metadata: (t.metadata ?? {}) as Record<string, import("./status-history.server").Json>,
+      metadata: { ...(t.metadata ?? {}), client_reported: true } as Record<
+        string,
+        import("./status-history.server").Json
+      >,
       client_event_id: t.clientEventId ?? null,
       occurred_at: t.occurredAt ?? now,
     }));
@@ -93,18 +98,18 @@ const readInput = z.object({
 export const loadStatusHistory = createServerFn({ method: "POST" })
   .validator((input: unknown) => readInput.parse(input))
   .handler(async ({ data }) => {
-    const { verifyRelayCaller } = await import("@/core/api/pos-relay.server");
     try {
-      await verifyRelayCaller({
-        ...(data.sessionToken ? { sessionToken: data.sessionToken } : {}),
-        ...(data.cashierToken ? { cashierToken: data.cashierToken } : {}),
-        ...(data.terminalToken ? { terminalToken: data.terminalToken } : {}),
-        ...(data.accessToken ? { accessToken: data.accessToken } : {}),
-      });
+      const { auditReadBranch } = await import("./audit-read-scope.server");
+      const storeId = await auditReadBranch(data, data.entityType);
+      const { readStatusHistory } = await import("./status-history.server");
+      const entries = await readStatusHistory(
+        data.entityType,
+        data.entityId,
+        data.limit ?? 200,
+        storeId,
+      );
+      return { ok: true as const, entries };
     } catch {
-      return { ok: false as const, error: "Not signed in", entries: [] };
+      return { ok: false as const, error: "History access denied", entries: [] };
     }
-    const { readStatusHistory } = await import("./status-history.server");
-    const entries = await readStatusHistory(data.entityType, data.entityId, data.limit ?? 200);
-    return { ok: true as const, entries };
   });

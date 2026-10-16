@@ -33,8 +33,6 @@ export type RelayOp =
  */
 export type RelayRpc = { kind: "rpc"; table: string; fn: string; args: Record<string, unknown> };
 
-
-
 /** Read requests the relay may answer for a proven till. */
 export type RelayRead =
   | { kind: "activeShift"; storeId: string }
@@ -42,7 +40,6 @@ export type RelayRead =
   | { kind: "cloudSchema" }
   | { kind: "cloudInventory" }
   | { kind: "cloudProbe"; table: string };
-
 
 /**
  * Only operational tables may be written through the relay. `stores` is
@@ -141,7 +138,6 @@ function readServiceKey(): string | undefined {
   const candidates = serviceKeyCandidates();
   return candidates.find((k) => !rejectedKeys.has(k)) ?? candidates[0];
 }
-
 
 export function serviceKey(): string {
   const key = readServiceKey();
@@ -328,7 +324,6 @@ export async function serviceRest(
   return last as Response;
 }
 
-
 const encodeValue = (value: unknown) =>
   value === null ? "is.null" : `eq.${encodeURIComponent(String(value))}`;
 
@@ -389,18 +384,41 @@ export async function runRelayRpc(
   scope: RelayScope,
 ): Promise<{ ok: boolean; error?: string; code?: string }> {
   if (op.fn === "pos_sale_commit") {
-    if (scope.role !== "admin" && scope.roleSlug !== "admin" && scope.permissions.can_process_sale !== true) {
-      return { ok: false, code: "PERMISSION_DENIED", error: "You are not allowed to process a sale." };
+    if (
+      scope.role !== "admin" &&
+      scope.roleSlug !== "admin" &&
+      scope.permissions.can_process_sale !== true
+    ) {
+      return {
+        ok: false,
+        code: "PERMISSION_DENIED",
+        error: "You are not allowed to process a sale.",
+      };
     }
     const sale = op.args._sale;
-    if (sale && typeof sale === "object" && String((sale as Record<string, unknown>).original_bill_number ?? "").startsWith("OLDPOS:") && scope.role !== "admin" && scope.roleSlug !== "admin")
-      return { ok: false, code: "PERMISSION_DENIED", error: "Only an administrator can enter an old POS exchange." };
-    const storeId = sale && typeof sale === "object" ? (sale as Record<string, unknown>).store_id : null;
+    if (
+      sale &&
+      typeof sale === "object" &&
+      String((sale as Record<string, unknown>).original_bill_number ?? "").startsWith("OLDPOS:") &&
+      scope.role !== "admin" &&
+      scope.roleSlug !== "admin"
+    )
+      return {
+        ok: false,
+        code: "PERMISSION_DENIED",
+        error: "Only an administrator can enter an old POS exchange.",
+      };
+    const storeId =
+      sale && typeof sale === "object" ? (sale as Record<string, unknown>).store_id : null;
     if (typeof storeId !== "string" || !storeId) {
       return { ok: false, code: "SCOPE_MISSING", error: "The sale branch is missing." };
     }
     if (!scope.isSupervisor && storeId !== scope.storeId) {
-      return { ok: false, code: "STORE_FORBIDDEN", error: "You can only sell for your own branch." };
+      return {
+        ok: false,
+        code: "STORE_FORBIDDEN",
+        error: "You can only sell for your own branch.",
+      };
     }
     const res = await serviceRest("rpc/pos_sale_commit", {
       method: "POST",
@@ -410,11 +428,16 @@ export async function runRelayRpc(
   }
   if (op.fn === "shift_cash_count_submit") {
     if (
-      scope.role !== "admin" && scope.roleSlug !== "admin" &&
+      scope.role !== "admin" &&
+      scope.roleSlug !== "admin" &&
       scope.permissions.can_shift_cash_count !== true &&
       scope.permissions.can_close_shift !== true
     ) {
-      return { ok: false, code: "PERMISSION_DENIED", error: "You are not allowed to submit a shift cash count." };
+      return {
+        ok: false,
+        code: "PERMISSION_DENIED",
+        error: "You are not allowed to submit a shift cash count.",
+      };
     }
     const shiftId = op.args.p_shift;
     if (typeof shiftId !== "string" || !shiftId)
@@ -428,7 +451,11 @@ export async function runRelayRpc(
     if (!owner) return { ok: false, code: "SCOPE_MISSING", error: "That shift no longer exists." };
     const storeId = owner.store_id;
     if (!scope.isSupervisor && storeId !== scope.storeId)
-      return { ok: false, code: "STORE_FORBIDDEN", error: "You can only count cash for your own branch." };
+      return {
+        ok: false,
+        code: "STORE_FORBIDDEN",
+        error: "You can only count cash for your own branch.",
+      };
     const res = await serviceRest("rpc/shift_cash_count_submit", {
       method: "POST",
       body: JSON.stringify(op.args),
@@ -438,7 +465,11 @@ export async function runRelayRpc(
 
   const spec = RELAY_RPCS[op.fn];
   if (!spec) return { ok: false, code: "TABLE_FORBIDDEN", error: `"${op.fn}" cannot be run` };
-  if (scope.role !== "admin" && scope.roleSlug !== "admin" && scope.permissions[spec.permission] !== true)
+  if (
+    scope.role !== "admin" &&
+    scope.roleSlug !== "admin" &&
+    scope.permissions[spec.permission] !== true
+  )
     return {
       ok: false,
       code: "PERMISSION_DENIED",
@@ -466,7 +497,10 @@ export async function runRelayRpc(
 
   // Attribution comes from the verified caller, never from editable renderer
   // text. Quantities and reasons remain the user's requested operation.
-  const actor = String(scope.actorName ?? scope.staffUserId ?? scope.label ?? "Staff").slice(0, 160);
+  const actor = String(scope.actorName ?? scope.staffUserId ?? scope.label ?? "Staff").slice(
+    0,
+    160,
+  );
   const actorField =
     op.fn === "stock_transfer_approve"
       ? "p_approved_by"
@@ -657,7 +691,12 @@ export async function verifyRelayCaller(input: {
       }
     })();
     if (session)
-      identity = { kind: "cashier", label: session.username, staffUserId: session.username };
+      identity = {
+        kind: "cashier",
+        label: session.username,
+        staffUserId: session.username,
+        storeId: session.storeId,
+      };
   }
 
   if (input.terminalToken) {
@@ -688,8 +727,12 @@ export async function verifyRelayCaller(input: {
   // Use Auth only when no person session identified the caller. PIN sign-in
   // can coexist with a terminal's machine Auth session; replacing the proven
   // cashier with that machine account loses the person's database permissions.
-  if (input.accessToken && (!identity || identity.kind === "terminal" ||
-    (identity.kind === "staff" && !identity.staffUserId))) {
+  if (
+    input.accessToken &&
+    (!identity ||
+      identity.kind === "terminal" ||
+      (identity.kind === "staff" && !identity.staffUserId))
+  ) {
     const res = await fetch(`${supabaseConfig().url}/auth/v1/user`, {
       headers: {
         apikey: supabaseConfig().key,
@@ -708,7 +751,7 @@ export async function verifyRelayCaller(input: {
           email: user.email ?? null,
           authUserId: user.id,
           // The device's own branch still applies unless the account names one.
-          storeId: claims?.storeId ?? terminalStore,
+          storeId: terminalStore,
           claims,
         };
       }
@@ -719,7 +762,9 @@ export async function verifyRelayCaller(input: {
     throw new RelayAuthenticationError("Your session has ended — please sign in again.");
 
   if (!identity)
-    throw new RelayAuthenticationError("This till could not prove who it is — sign in again or re-activate it.");
+    throw new RelayAuthenticationError(
+      "This till could not prove who it is — sign in again or re-activate it.",
+    );
 
   // A physical terminal's activation is the branch authority. A cashier or
   // administrator signed into that device may change permissions, but cannot

@@ -232,7 +232,7 @@ async function fetchAppUser(filter: string): Promise<AppUserRow | null> {
   if (!res.ok) return null; // transient failure: do not cache
   const rows = (await res.json()) as AppUserRow[];
   const row = rows[0];
-  const value = !row || row.is_active === false ? null : row;
+  const value = !row || row.is_active !== true ? null : row;
   userCache.set(filter, { at: Date.now(), row: value });
   return value;
 }
@@ -240,14 +240,7 @@ async function fetchAppUser(filter: string): Promise<AppUserRow | null> {
 const supervisorRole = (role: string | null, slug: string | null) =>
   role === "admin" || role === "manager" || slug === "admin" || slug === "supervisor";
 
-/**
- * Work out the caller's branch, identity and permissions.
- *
- * Fast path: the proof's own signed claims already answer it. Fallback: look
- * the account up in app_users (cached briefly). A caller whose claims name a
- * branch but whose account row is missing is not refused outright — the scope
- * is marked stale so the till is told to refresh instead of retrying forever.
- */
+/** Resolve current account authority using only a verified subject. */
 export async function resolveRelayScope(caller: {
   kind: "cashier" | "terminal" | "staff";
   label: string;
@@ -258,48 +251,35 @@ export async function resolveRelayScope(caller: {
   claims?: CallerClaims | null;
   terminalId?: string | null;
 }): Promise<RelayScope> {
-  const claims = caller.claims ?? null;
-  const fastEnough = claims && claims.storeId && claims.role && claims.permissions !== null;
-
+  // Authenticated claims identify a token, not current account authority.
+  // In particular, Supabase user_metadata is editable by the account holder.
   let row: AppUserRow | null = null;
-  if (!fastEnough) {
-    if (caller.authUserId)
-      row = await fetchAppUser(`auth_user_id=eq.${encodeURIComponent(caller.authUserId)}`);
-    if (!row && caller.staffUserId)
-      row = await fetchAppUser(`user_id=eq.${encodeURIComponent(caller.staffUserId)}`);
-    // An account created before the auth link existed is still findable by the
-    // address it signs in with.
-    if (!row && caller.email)
-      row = await fetchAppUser(`email=eq.${encodeURIComponent(caller.email)}`);
-    if (!row && caller.kind !== "terminal" && caller.label)
-      row = await fetchAppUser(`user_id=eq.${encodeURIComponent(caller.label)}`);
-    if (!row && caller.kind !== "terminal" && caller.label.includes("@"))
-      row = await fetchAppUser(`email=eq.${encodeURIComponent(caller.label)}`);
+  if (caller.authUserId) {
+    row = await fetchAppUser(`auth_user_id=eq.${encodeURIComponent(caller.authUserId)}`);
+  } else if (caller.kind !== "terminal" && caller.staffUserId) {
+    row = await fetchAppUser(`user_id=eq.${encodeURIComponent(caller.staffUserId)}`);
   }
-
-  const role = row?.role ?? claims?.role ?? null;
-  const roleSlug = row?.role_slug ?? claims?.roleSlug ?? null;
-  const permissions = row ? normalisePermissions(row.permissions) : (claims?.permissions ?? {});
-  const staffUserId = row?.user_id ?? caller.staffUserId ?? claims?.staffUserId ?? null;
-  const isSupervisor = supervisorRole(role, roleSlug);
-
+  const role = row?.role ?? null;
+  const roleSlug = row?.role_slug ?? null;
+  const branchMismatch = !!(
+    row?.store_id &&
+    caller.storeId &&
+    row.store_id.toLowerCase() !== caller.storeId.toLowerCase()
+  );
+  if (branchMismatch) throw new Error("This account is assigned to a different branch");
+  if (!row && caller.kind !== "terminal") throw new Error("Active staff account required");
   return {
     kind: caller.kind,
     label: caller.label,
-    // The proof's own branch wins: a terminal token is physically bound to a
-    // branch, and a session records the branch it was opened at.
-    storeId: caller.storeId ?? row?.store_id ?? claims?.storeId ?? null,
+    storeId: row?.store_id ?? caller.storeId ?? null,
     role,
     roleSlug,
-    permissions,
-    isSupervisor,
-    staffUserId,
-    actorName: row?.full_name ?? claims?.actorName ?? caller.label ?? null,
+    permissions: row ? normalisePermissions(row.permissions) : {},
+    isSupervisor: !!row && supervisorRole(role, roleSlug),
+    staffUserId: row?.user_id ?? null,
+    actorName: row?.full_name ?? caller.label ?? null,
     terminalId: caller.terminalId ?? null,
-    // No account row and no usable claims: the caller can still be identified
-    // but their permissions are unknown, so writes are refused as stale. A
-    // proven supervisor is never stale — their role already answers it.
-    stale: !row && !fastEnough && caller.kind === "staff" && !isSupervisor,
+    stale: branchMismatch || (!row && caller.kind !== "terminal"),
   };
 }
 
@@ -422,9 +402,7 @@ async function authorizeProductOp(
   }
 
   for (const payload of payloads) {
-    const id = String(
-      payload["id"] ?? (op.kind === "update" ? op.match["id"] : "") ?? "",
-    );
+    const id = String(payload["id"] ?? (op.kind === "update" ? op.match["id"] : "") ?? "");
     const before = existing.get(id);
     if (!before) {
       if (!allowed(scope, "can_add_new_product"))
@@ -443,9 +421,7 @@ async function authorizeProductOp(
       payload["is_archived"] !== undefined &&
       !sameJsonValue(payload["is_archived"], before["is_archived"])
     ) {
-      const permission = payload["is_archived"]
-        ? "can_archive_product"
-        : "can_restore_product";
+      const permission = payload["is_archived"] ? "can_archive_product" : "can_restore_product";
       if (!allowed(scope, permission))
         return deny("PERMISSION_DENIED", "Your account cannot change product archive status.");
     }
@@ -497,20 +473,39 @@ export async function authorizeRelayOp(
     return deny("PERMISSION_DENIED", "Global settings require an administrator.");
   if (["settings_overrides", "settings_locks"].includes(op.table))
     return authorizeSettingsMutation(op, scope);
-  if (op.table === SCOPED_SETTINGS_TABLE &&
-      (op.kind === "insert" || op.kind === "upsert") &&
-      op.rows.some(row => String(row.key ?? "").startsWith("pos_field:"))) {
+  if (
+    op.table === SCOPED_SETTINGS_TABLE &&
+    (op.kind === "insert" || op.kind === "upsert") &&
+    op.rows.some((row) => String(row.key ?? "").startsWith("pos_field:"))
+  ) {
     if (!settingsAdmin || scope.kind === "terminal" || scope.stale)
       return deny("PERMISSION_DENIED", "Global settings require a verified administrator.");
-    if (!op.rows.every(row => row.scope === "GLOBAL" && row.scope_id === "" &&
-        /^pos_field:[a-z][a-z0-9_]*$/.test(String(row.key ?? "")) &&
-        Object.prototype.hasOwnProperty.call(row, "value")))
-      return deny("PERMISSION_DENIED", "Only complete global POS settings fields may be saved together.");
-    const rows = op.rows.map(row => ({ scope: "GLOBAL", scope_id: "", key: row.key,
-      value: row.value, is_overridden: true, updated_by: scope.staffUserId ?? scope.actorName ?? null }));
-    return { ok: true, op: { ...op, rows, ...(op.kind === "upsert" ? { onConflict: "scope,scope_id,key" } : {}) } };
+    if (
+      !op.rows.every(
+        (row) =>
+          row.scope === "GLOBAL" &&
+          row.scope_id === "" &&
+          /^pos_field:[a-z][a-z0-9_]*$/.test(String(row.key ?? "")) &&
+          Object.prototype.hasOwnProperty.call(row, "value"),
+      )
+    )
+      return deny(
+        "PERMISSION_DENIED",
+        "Only complete global POS settings fields may be saved together.",
+      );
+    const rows = op.rows.map((row) => ({
+      scope: "GLOBAL",
+      scope_id: "",
+      key: row.key,
+      value: row.value,
+      is_overridden: true,
+      updated_by: scope.staffUserId ?? scope.actorName ?? null,
+    }));
+    return {
+      ok: true,
+      op: { ...op, rows, ...(op.kind === "upsert" ? { onConflict: "scope,scope_id,key" } : {}) },
+    };
   }
-
 
   if (scope.stale && !scope.isSupervisor)
     return deny(
@@ -520,22 +515,48 @@ export async function authorizeRelayOp(
 
   const isAdmin = scope.role === "admin" || scope.roleSlug === "admin";
   if (op.table === "sales" && !isAdmin && scope.kind !== "terminal") {
-    const rows = op.kind === "insert" || op.kind === "upsert" ? op.rows : op.kind === "update" ? [op.values] : [];
-    if (rows.some(row => String(row.original_bill_number ?? "").startsWith("OLDPOS:")))
+    const rows =
+      op.kind === "insert" || op.kind === "upsert"
+        ? op.rows
+        : op.kind === "update"
+          ? [op.values]
+          : [];
+    if (rows.some((row) => String(row.original_bill_number ?? "").startsWith("OLDPOS:")))
       return deny("PERMISSION_DENIED", "Only an administrator can enter an old POS exchange.");
   }
   if (op.table === "held_orders" && !isAdmin && scope.kind !== "terminal") {
-    const rows = op.kind === "insert" || op.kind === "upsert" ? op.rows : op.kind === "update" ? [op.values] : [];
-    if (op.kind === "delete") return deny("PERMISSION_DENIED", "Cancel the held bill instead of deleting it.");
+    const rows =
+      op.kind === "insert" || op.kind === "upsert"
+        ? op.rows
+        : op.kind === "update"
+          ? [op.values]
+          : [];
+    if (op.kind === "delete")
+      return deny("PERMISSION_DENIED", "Cancel the held bill instead of deleting it.");
     for (const row of rows) {
       const state = row.status ?? "held";
-      const bookingId = String(row.note ?? "").startsWith("booking:") ? String(row.note).slice(8) : null;
-      const bookingConversion = state === "completed" && bookingId && allowed(scope, "can_create_booking") && batchIds?.get("bookings")?.has(bookingId);
-      const permitted = bookingConversion || (state === "cancelled"
-        ? allowed(scope, "can_discard_held_order") || allowed(scope, "can_void_cart")
-        : state === "draft" ? allowed(scope, "can_process_sale") || allowed(scope, "can_reopen_held_order")
-        : allowed(scope, "can_hold_cart") || (String(row.note ?? "").startsWith("session-draft:") && allowed(scope, "can_process_sale")));
-      if (!permitted || (state === "completed" && !bookingConversion)) return deny("PERMISSION_DENIED", "Permission is required for this draft or held bill action.");
+      const bookingId = String(row.note ?? "").startsWith("booking:")
+        ? String(row.note).slice(8)
+        : null;
+      const bookingConversion =
+        state === "completed" &&
+        bookingId &&
+        allowed(scope, "can_create_booking") &&
+        batchIds?.get("bookings")?.has(bookingId);
+      const permitted =
+        bookingConversion ||
+        (state === "cancelled"
+          ? allowed(scope, "can_discard_held_order") || allowed(scope, "can_void_cart")
+          : state === "draft"
+            ? allowed(scope, "can_process_sale") || allowed(scope, "can_reopen_held_order")
+            : allowed(scope, "can_hold_cart") ||
+              (String(row.note ?? "").startsWith("session-draft:") &&
+                allowed(scope, "can_process_sale")));
+      if (!permitted || (state === "completed" && !bookingConversion))
+        return deny(
+          "PERMISSION_DENIED",
+          "Permission is required for this draft or held bill action.",
+        );
     }
   }
   if (op.table === "products") {
@@ -638,32 +659,52 @@ export async function authorizeRelayOp(
 }
 
 /** Settings ownership is checked with the proved role and paired branch. */
-export async function authorizeSettingsMutation(op: RelayOp, scope: RelayScope): Promise<{ok: true; op: RelayOp} | RelayDenial> {
+export async function authorizeSettingsMutation(
+  op: RelayOp,
+  scope: RelayScope,
+): Promise<{ ok: true; op: RelayOp } | RelayDenial> {
   const admin = scope.role === "admin" || scope.roleSlug === "admin";
-  if (scope.stale) return deny("SCOPE_STALE", "Sign in again to confirm your settings permissions.");
+  if (scope.stale)
+    return deny("SCOPE_STALE", "Sign in again to confirm your settings permissions.");
   if (scope.kind === "terminal" || (!admin && scope.permissions.can_access_pos_settings !== true))
     return deny("PERMISSION_DENIED", "Branch settings permission is required.");
   if (op.table === "settings_locks")
-    return admin ? {ok: true, op} : deny("PERMISSION_DENIED", "Only an administrator may change global locks.");
+    return admin
+      ? { ok: true, op }
+      : deny("PERMISSION_DENIED", "Only an administrator may change global locks.");
   if (op.table !== "settings_overrides")
     return deny("TABLE_FORBIDDEN", "Unsupported settings mutation.");
-  const rows = op.kind === "insert" || op.kind === "upsert" ? op.rows : [{...op.match, ...(op.kind === "update" ? op.values : {})}];
+  const rows =
+    op.kind === "insert" || op.kind === "upsert"
+      ? op.rows
+      : [{ ...op.match, ...(op.kind === "update" ? op.values : {}) }];
   for (const row of rows) {
     const tier = String(row.scope ?? "").toUpperCase();
     const id = String(row.scope_id ?? "");
     const section = String(row.section ?? "");
-    if (!["CLUSTER", "BRANCH", "TERMINAL"].includes(tier) || !id || !/^[a-zA-Z0-9_-]+$/.test(section))
-      return deny("PERMISSION_DENIED", "A complete, valid settings scope and section are required.");
+    if (
+      !["CLUSTER", "BRANCH", "TERMINAL"].includes(tier) ||
+      !id ||
+      !/^[a-zA-Z0-9_-]+$/.test(section)
+    )
+      return deny(
+        "PERMISSION_DENIED",
+        "A complete, valid settings scope and section are required.",
+      );
     if (!admin && (tier !== "BRANCH" || id !== scope.storeId))
       return deny("STORE_FORBIDDEN", "You may only edit this terminal's branch settings.");
     if (!admin) {
-      const response = await serviceRest(`settings_locks?select=locked&section=eq.${encodeURIComponent(section)}&limit=1`);
-      if (!response.ok) return deny("PERMISSION_DENIED", "Could not verify the administrator settings lock.");
-      const locks = await response.json() as Array<{locked?: boolean}>;
-      if (locks[0]?.locked) return deny("PERMISSION_DENIED", "This setting is locked by an administrator.");
+      const response = await serviceRest(
+        `settings_locks?select=locked&section=eq.${encodeURIComponent(section)}&limit=1`,
+      );
+      if (!response.ok)
+        return deny("PERMISSION_DENIED", "Could not verify the administrator settings lock.");
+      const locks = (await response.json()) as Array<{ locked?: boolean }>;
+      if (locks[0]?.locked)
+        return deny("PERMISSION_DENIED", "This setting is locked by an administrator.");
     }
   }
-  return {ok: true, op};
+  return { ok: true, op };
 }
 
 /**
@@ -676,7 +717,10 @@ function authorizeProductPriceOverride(
   scope: RelayScope,
 ): { ok: true; op: RelayOp } | RelayDenial {
   if (op.kind !== "insert" && op.kind !== "upsert")
-    return deny("PERMISSION_DENIED", "Branch price overrides must be saved as one complete record.");
+    return deny(
+      "PERMISSION_DENIED",
+      "Branch price overrides must be saved as one complete record.",
+    );
 
   const rows: Record<string, unknown>[] = [];
   for (const row of op.rows) {
@@ -691,7 +735,11 @@ function authorizeProductPriceOverride(
       !value ||
       typeof value !== "object" ||
       Array.isArray(value)
-    ) return deny("PERMISSION_DENIED", "Only a valid branch product-price override can be saved here.");
+    )
+      return deny(
+        "PERMISSION_DENIED",
+        "Only a valid branch product-price override can be saved here.",
+      );
     if (!scope.isSupervisor && branchId !== scope.storeId)
       return deny("STORE_FORBIDDEN", "You cannot change another branch's prices.");
 
@@ -713,9 +761,7 @@ function authorizeProductPriceOverride(
   }
   return {
     ok: true,
-    op: op.kind === "upsert"
-      ? { ...op, rows, onConflict: "scope,scope_id,key" }
-      : { ...op, rows },
+    op: op.kind === "upsert" ? { ...op, rows, onConflict: "scope,scope_id,key" } : { ...op, rows },
   };
 }
 

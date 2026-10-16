@@ -3,7 +3,11 @@
  * machine account, so writes made during a cashier PIN shift are accepted
  * normally instead of being refused by the row rules.
  */
-import { supabaseExternal } from "@/integrations/supabase/external-client";
+import {
+  externalClientSnapshot,
+  discardRejectedExternalAuthSession,
+} from "@/integrations/supabase/external-client";
+import { validateStoredAuthSession } from "./auth-session-guard";
 import { getTerminalAccount } from "./terminal-account.functions";
 import { getDeviceSecret, setDeviceSecret } from "./device-secrets";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
@@ -13,6 +17,16 @@ import { awaitProfileHydrated } from "./connection-profile";
 import { supabaseConfig } from "./external-supabase-config";
 
 type Account = { email: string; password: string; projectUrl?: string };
+const usableAccount = (value: unknown): value is Account => {
+  const account = value as Partial<Account> | null;
+  return Boolean(
+    account &&
+    typeof account.email === "string" &&
+    account.email.trim() &&
+    typeof account.password === "string" &&
+    account.password.length,
+  );
+};
 
 const SECRET = "terminal-account";
 
@@ -26,13 +40,17 @@ export async function provisionTerminalAccount(tokenId: string): Promise<Account
     return null;
   }
   const res = await getTerminalAccount({ data: { tokenId, proofHash } }).catch(() => null);
-  if (!res?.ok) {
+  if (!res?.ok || !usableAccount(res)) {
     logger.log("security", "Terminal cloud authentication retry required", "Terminal activation", {
-      reason: res?.error ?? "provisioning-request-failed",
+      reason: res && !res.ok ? res.error : "provisioning-request-failed",
     });
     return null;
   }
-  const account: Account = { email: res.email, password: res.password, projectUrl: supabaseConfig().url };
+  const account: Account = {
+    email: res.email,
+    password: res.password,
+    projectUrl: supabaseConfig().url,
+  };
   await setDeviceSecret(SECRET, account);
   return account;
 }
@@ -49,40 +67,68 @@ let attemptProject = "";
 export async function ensureTerminalSession(): Promise<boolean> {
   if (typeof window === "undefined") return false;
   let project: string;
-  try { await awaitProfileHydrated(); project = supabaseConfig().url; } catch { return false; }
+  try {
+    await awaitProfileHydrated();
+    project = supabaseConfig().url;
+  } catch {
+    return false;
+  }
   if (sessionAttempt) return sessionAttempt;
-  if (project !== attemptProject) { attemptProject = project; retryAfter = 0; }
+  if (project !== attemptProject) {
+    attemptProject = project;
+    retryAfter = 0;
+  }
   if (Date.now() < retryAfter) return false;
-  sessionAttempt = establishTerminalSession(project).then(ok => {
-    retryAfter = ok ? 0 : Date.now() + 30_000;
-    return ok;
-  }).finally(() => { sessionAttempt = null; });
+  sessionAttempt = establishTerminalSession(project)
+    .then((ok) => {
+      retryAfter = ok ? 0 : Date.now() + 30_000;
+      return ok;
+    })
+    .finally(() => {
+      sessionAttempt = null;
+    });
   return sessionAttempt;
 }
 
 async function establishTerminalSession(project: string): Promise<boolean> {
   if (typeof window === "undefined") return false;
   try {
-    const current = (await supabaseExternal.auth.getSession()).data.session;
-    if (current) return true;
+    const client = externalClientSnapshot();
+    const checked = await validateStoredAuthSession(client.auth, {
+      online: typeof navigator === "undefined" || navigator.onLine !== false,
+    });
+    if (supabaseConfig().url !== project) return false;
+    if (checked.state === "verified") return true;
+    // Connectivity never invalidates a cached account or rotates credentials.
+    if (checked.state === "unverified" || checked.state === "unavailable") return false;
+    if (checked.state === "rejected") await discardRejectedExternalAuthSession();
+    if (supabaseConfig().url !== project) return false;
 
     const tokenId = readTerminalConfig()?.tokenId;
     if (!tokenId) return false;
 
     let account = await getDeviceSecret<Account>(SECRET);
-    if (!account || account.projectUrl !== project) account = await provisionTerminalAccount(tokenId);
-    if (!account) return false;
+    if (!usableAccount(account) || account.projectUrl !== project)
+      account = await provisionTerminalAccount(tokenId);
+    if (!account || supabaseConfig().url !== project) return false;
 
-    const { error } = await supabaseExternal.auth.signInWithPassword({ email:account.email, password:account.password });
+    const { error } = await client.auth.signInWithPassword({
+      email: account.email,
+      password: account.password,
+    });
     if (!error) return true;
 
     // Only a credential rejection calls for rotation; an outage or disabled
     // account must not trigger another provisioning/login request immediately.
-    if (error.code !== "invalid_credentials" && !/invalid login credentials/i.test(error.message)) return false;
+    if (error.code !== "invalid_credentials" && !/invalid login credentials/i.test(error.message))
+      return false;
     // Credentials rotated or the account was rebuilt — re-provision once.
     const fresh = await provisionTerminalAccount(tokenId);
     if (!fresh) return false;
-    const retry = await supabaseExternal.auth.signInWithPassword({ email:fresh.email, password:fresh.password });
+    const retry = await client.auth.signInWithPassword({
+      email: fresh.email,
+      password: fresh.password,
+    });
     if (!retry.error) return true;
     logger.log("security", "Terminal cloud sign-in failed", "Terminal activation", {
       reason: retry.error.message,

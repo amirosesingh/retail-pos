@@ -411,6 +411,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
       const independentProof = checked.state === "rejected" ? await readCredentials() : null;
       if (!active || !isCurrentEpoch(startedAt)) { bootstrapped = true; return; }
+      // A rejected secondary Supabase account must not survive a valid PIN
+      // session and retry its dead refresh token on every subsequent launch.
+      if (checked.state === "rejected") await discardRejectedExternalAuthSession();
+      if (!active || !isCurrentEpoch(startedAt)) { bootstrapped = true; return; }
       bootstrapped = true;
       const next = checked.session;
       centralIdentityRef.current = next?.user?.id ?? null;

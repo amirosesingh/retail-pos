@@ -177,9 +177,10 @@ const asText = (v: unknown): string =>
 export async function listRecordEdits(
   kind: RecordKind,
   recordId: string,
+  storeId: string | null,
 ): Promise<RecordEditRow[]> {
   const res = await rest(
-    `record_edits?select=*&record_type=eq.${kind}&record_id=eq.${encodeURIComponent(recordId)}&order=created_at.desc&limit=50`,
+    `record_edits?select=*${storeId ? `&store_id=eq.${encodeURIComponent(storeId)}` : ""}&record_type=eq.${kind}&record_id=eq.${encodeURIComponent(recordId)}&order=created_at.desc&limit=50`,
   );
   if (!res.ok) return [];
   return ((await res.json()) as Row[]).map((r) => ({

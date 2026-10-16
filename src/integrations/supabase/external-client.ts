@@ -43,6 +43,15 @@ function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string, useDesktop = true): 
       headers.delete("Authorization");
     }
     headers.set("apikey", SUPABASE_PUBLISHABLE_KEY);
+    // These endpoints already deny anonymous access. Catch an Auth teardown /
+    // client-replacement race before it sends guaranteed-to-fail REST traffic.
+    // Public catalogue flags and membership endpoints retain their own rules.
+    const protectedPath = /^\/rest\/v1\/(?:products|stores|sales|sale_items|audit_logs|user_roles|app_users|activity_events|rpc\/current_app_user)(?:\/|$)/;
+    const bearer = headers.get("Authorization");
+    if (useDesktop && protectedPath.test(new URL(requestUrl).pathname) &&
+        (!bearer || bearer === `Bearer ${SUPABASE_PUBLISHABLE_KEY}`)) {
+      return Response.json({code:"PGRST301",message:"Sign in before accessing protected POS data."},{status:401});
+    }
     // A bearer here means a real user session; only those can "expire".
     const hadBearer = !!headers.get("Authorization");
     const transport = useDesktop ? desktopSupabaseFetch : fetchWithDeadline;

@@ -17,14 +17,29 @@ import { cashierTokenSync, sessionTokenSync } from "./pos-credentials";
 
 let authSession = false;
 let verifiedAccessToken: string | undefined;
+const authListeners = new Set<() => void>();
+export function subscribeCentralAuthSession(listener: () => void): () => void {
+  authListeners.add(listener);
+  return () => authListeners.delete(listener);
+}
 
 /**
  * AuthProvider is the authority for this flag. In particular, a persisted
  * token is not counted until its server-side session has been checked.
  */
 export function setCentralAuthSessionPresent(value: boolean, accessToken?: string): void {
+  const token = value ? accessToken : undefined;
+  const changed = authSession !== value || verifiedAccessToken !== token;
   authSession = value;
-  verifiedAccessToken = value ? accessToken : undefined;
+  verifiedAccessToken = token;
+  if (changed)
+    for (const listener of authListeners) {
+      try {
+        listener();
+      } catch {
+        /* One worker must not block other Auth owners. */
+      }
+    }
 }
 
 /** A persisted JWT counts only after AuthProvider has verified it server-side. */

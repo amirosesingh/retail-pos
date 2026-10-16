@@ -1525,7 +1525,7 @@ function authorizationServerUrl() {
 
 function registerIpc() {
   ipcPrivilege.install(ipcMain, {
-    isFirstRun: () => !terminalStore.read(),
+    isFirstRun: () => !terminalStore.wasProvisioned(),
     writeBarrier: closeWriteBarrier,
   });
   ipcMain.handle("admin:status", () => adminSession.status());

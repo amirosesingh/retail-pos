@@ -8,15 +8,15 @@
  */
 import { supabaseConfig } from "./external-supabase-config";
 import { serviceRest, serviceKey } from "@/core/api/pos-relay.server";
-import {
-  verifiedPinLinkProof,
-  type GenerateLinkPayload,
-} from "./verified-pin-proof";
+import { verifiedPinLinkProof, type GenerateLinkPayload } from "./verified-pin-proof";
 
 export const INTERNAL_EMAIL_DOMAIN = "pos-internal.local";
 
 export const internalEmail = (username: string) =>
-  `${username.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "")}@${INTERNAL_EMAIL_DOMAIN}`;
+  `${username
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "")}@${INTERNAL_EMAIL_DOMAIN}`;
 
 async function adminFetch(path: string, init: RequestInit = {}) {
   const key = serviceKey();
@@ -83,9 +83,7 @@ export async function requireSupervisor(accessToken: string): Promise<void> {
 
 /** Find an existing auth account for this address. */
 async function findUserId(email: string): Promise<string | null> {
-  const res = await adminFetch(
-    `admin/users?page=1&per_page=1&email=${encodeURIComponent(email)}`,
-  );
+  const res = await adminFetch(`admin/users?page=1&per_page=1&email=${encodeURIComponent(email)}`);
   if (!res.ok) return null;
   const body = (await res.json()) as { users?: { id: string; email?: string }[] };
   return body.users?.find((u) => u.email?.toLowerCase() === email)?.id ?? null;
@@ -138,7 +136,8 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
   let email: string;
   let secret: string;
   if (emailMode) {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(typed)) throw new Error("That email address is not valid");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(typed))
+      throw new Error("That email address is not valid");
     if (password.length < 8) throw new Error("A password must be at least 8 characters");
     email = typed;
     secret = password;
@@ -158,7 +157,12 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
   const metadata = {
     username,
     full_name: payload.displayName.trim() || username,
-    role: payload.baseRole === "admin" ? "admin" : payload.baseRole === "manager" ? "supervisor" : "cashier",
+    role:
+      payload.baseRole === "admin"
+        ? "admin"
+        : payload.baseRole === "manager"
+          ? "supervisor"
+          : "cashier",
     role_slug: payload.roleSlug,
     store_id: payload.branchId ?? null,
     active: payload.active,
@@ -175,7 +179,7 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
   });
 
   const userId: string | null = created.ok
-    ? ((await created.json()) as { id?: string }).id ?? null
+    ? (((await created.json()) as { id?: string }).id ?? null)
     : await findUserId(email);
   if (!created.ok) {
     if (!userId) {
@@ -224,9 +228,7 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
 
 /** Turn an account on or off everywhere at once. */
 /** Snapshot of an account, kept so the edit history can show before/after. */
-export async function readStaffSnapshot(
-  username: string,
-): Promise<Record<string, unknown> | null> {
+export async function readStaffSnapshot(username: string): Promise<Record<string, unknown> | null> {
   const res = await serviceRest(
     `app_users?user_id=eq.${encodeURIComponent(username.toLowerCase())}&select=user_id,full_name,email,role,role_slug,store_id,is_active&limit=1`,
   );
@@ -287,7 +289,8 @@ export async function updateStaffProfile(input: {
   if (credential) {
     if (terminalAccount && (credential.length < 4 || credential.length > 32))
       throw new Error("A till PIN or passcode must be 4 to 32 characters");
-    if (!terminalAccount && credential.length < 8) throw new Error("A password must be at least 8 characters");
+    if (!terminalAccount && credential.length < 8)
+      throw new Error("A password must be at least 8 characters");
   }
 
   const authUpdate = await adminFetch(`admin/users/${profile.auth_user_id}`, {
@@ -297,14 +300,22 @@ export async function updateStaffProfile(input: {
       user_metadata: {
         username: profile.user_id,
         full_name: input.displayName.trim(),
-        role: input.baseRole === "admin" ? "admin" : input.baseRole === "manager" ? "supervisor" : "cashier",
+        role:
+          input.baseRole === "admin"
+            ? "admin"
+            : input.baseRole === "manager"
+              ? "supervisor"
+              : "cashier",
         role_slug: input.roleSlug,
         store_id: input.branchId,
         active: input.active,
       },
     }),
   });
-  if (!authUpdate.ok) throw new Error((await authUpdate.text()).slice(0, 240) || "The login account could not be updated");
+  if (!authUpdate.ok)
+    throw new Error(
+      (await authUpdate.text()).slice(0, 240) || "The login account could not be updated",
+    );
 
   await serviceRpc("staff_account_upsert", {
     p_user_id: profile.user_id,
@@ -325,7 +336,9 @@ export async function updateStaffProfile(input: {
       p_pin: credential,
     });
   }
-  await serviceRest("user_roles?user_id=eq." + encodeURIComponent(profile.auth_user_id), { method: "DELETE" });
+  await serviceRest("user_roles?user_id=eq." + encodeURIComponent(profile.auth_user_id), {
+    method: "DELETE",
+  });
   const roleResult = await serviceRest("user_roles", {
     method: "POST",
     prefer: "return=minimal",
@@ -364,24 +377,13 @@ export async function permanentlyDeleteStaff(
   });
   const deleted = await adminFetch(`admin/users/${profile.auth_user_id}`, { method: "DELETE" });
   if (!deleted.ok && deleted.status !== 404) {
-    throw new Error((await deleted.text()).slice(0, 240) || "The login identity could not be deleted");
+    throw new Error(
+      (await deleted.text()).slice(0, 240) || "The login identity could not be deleted",
+    );
   }
 }
 
 type VerifiedPin = { username: string; fullName: string; storeId: string | null };
-
-/** Resolve the staff username behind whatever was typed: username or address. */
-async function usernameForIdentifier(identifier: string): Promise<string | null> {
-  const value = identifier.trim().toLowerCase();
-  if (!value.includes("@")) return null;
-  const res = await serviceRest(
-    `app_users?email=eq.${encodeURIComponent(value)}&select=user_id&limit=1`,
-  );
-  if (!res.ok) return null;
-  const rows = (await res.json()) as { user_id?: string }[];
-  const found = rows[0]?.user_id;
-  return found ? String(found) : null;
-}
 
 /** Check a PIN against whichever record holds it: the account, or the old cashier row. */
 async function verifyPin(username: string, pin: string): Promise<VerifiedPin | null> {
@@ -397,23 +399,13 @@ async function verifyPin(username: string, pin: string): Promise<VerifiedPin | n
       storeId: row.store_id ?? null,
     };
   }
-  // Someone typed the whole address (that is what the account list shows), so
-  // find the username it belongs to and check the PIN against that.
-  const byEmail = await usernameForIdentifier(username);
-  if (byEmail && byEmail.toLowerCase() !== username.trim().toLowerCase()) {
-    const second = (await serviceRpc("verify_terminal_pin", {
-      p_user_id: byEmail,
-      p_pin: pin,
-    })) as { user_id?: string; full_name?: string; store_id?: string | null }[] | null;
-    const hit = Array.isArray(second) ? second[0] : null;
-    if (hit?.user_id) {
-      return {
-        username: String(hit.user_id),
-        fullName: String(hit.full_name ?? hit.user_id),
-        storeId: hit.store_id ?? null,
-      };
-    }
-  }
+  // Only accounts not yet migrated may use the legacy adoption path.
+  // Retrying an existing account would double-count failures or revive it.
+  const existing = await serviceRest(
+    `app_users?or=(user_id.eq.${encodeURIComponent(username)},email.eq.${encodeURIComponent(username)})&select=id&limit=1`,
+  );
+  if (!existing.ok) throw new Error("Central database unavailable");
+  if (((await existing.json()) as unknown[]).length) return null;
   try {
     const legacy = (await serviceRpc("verify_cashier_pin", {
       p_username: username,
@@ -479,7 +471,10 @@ export async function ensurePinAccount(
   }
 
   if (!terminalAccount) {
-    return { ok: false, error: "This email account needs its login identity repaired by an administrator" };
+    return {
+      ok: false,
+      error: "This email account needs its login identity repaired by an administrator",
+    };
   }
 
   await provisionStaffAccount({
@@ -498,8 +493,7 @@ export async function ensurePinAccount(
 /** Bulk catch-up: copy every remaining cashier row across. */
 export async function migrateLegacyCashiers(): Promise<{ migrated: number }> {
   const rows = (await serviceRpc("legacy_cashiers_for_migration", {})) as
-    | { username?: string }[]
-    | null;
+    { username?: string }[] | null;
   let migrated = 0;
   for (const row of rows ?? []) {
     if (!row.username) continue;
@@ -512,8 +506,7 @@ export async function migrateLegacyCashiers(): Promise<{ migrated: number }> {
 /** Active staff this till may offer on its sign-in grid. */
 export async function listTerminalStaff(storeId: string | null) {
   const rows = (await serviceRpc("terminal_staff_list", { p_store_id: storeId })) as
-    | Record<string, unknown>[]
-    | null;
+    Record<string, unknown>[] | null;
   return (rows ?? []).map((r) => ({
     username: String(r["user_id"] ?? ""),
     fullName: String(r["full_name"] ?? r["user_id"] ?? ""),

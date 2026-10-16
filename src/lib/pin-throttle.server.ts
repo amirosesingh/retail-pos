@@ -10,8 +10,6 @@ import { serviceRest } from "@/core/api/pos-relay.server";
 
 export type ThrottleState = { locked: boolean; lockedUntil: string | null; attempts: number };
 
-const OPEN: ThrottleState = { locked: false, lockedUntil: null, attempts: 0 };
-
 async function rpc(name: string, body: Record<string, unknown>): Promise<unknown> {
   try {
     const res = await serviceRest(`rpc/${name}`, { method: "POST", body: JSON.stringify(body) });
@@ -23,7 +21,8 @@ async function rpc(name: string, body: Record<string, unknown>): Promise<unknown
 }
 
 function read(value: unknown): ThrottleState {
-  const row = (value ?? {}) as { locked?: boolean; locked_until?: string | null; attempts?: number };
+  if (!value || typeof value !== "object") throw new Error("Central PIN protection is unavailable");
+  const row = value as { locked?: boolean; locked_until?: string | null; attempts?: number };
   return {
     locked: row.locked === true,
     lockedUntil: row.locked_until ?? null,
@@ -40,13 +39,14 @@ export function minutesLeft(state: ThrottleState): number {
 
 /** True when this key is currently locked out. */
 export async function throttleStatus(key: string): Promise<ThrottleState> {
-  // A throttle that cannot be read must not block real work.
-  return read(await rpc("pin_throttle_status", { _key: key })) ?? OPEN;
+  return read(await rpc("pin_throttle_status", { _key: key }));
 }
 
 /** Record a wrong PIN and return the state after it. */
 export async function throttleFail(key: string): Promise<ThrottleState> {
-  return read(await rpc("pin_throttle_fail", { _key: key, _limit: 5, _window_secs: 900, _lock_secs: 300 }));
+  return read(
+    await rpc("pin_throttle_fail", { _key: key, _limit: 5, _window_secs: 900, _lock_secs: 300 }),
+  );
 }
 
 /** Clear the counter after a correct PIN. */

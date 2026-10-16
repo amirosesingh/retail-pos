@@ -15,6 +15,13 @@ const { app, safeStorage } = require("electron");
 const file = () => path.join(app.getPath("userData"), "terminal-config.json");
 const sealed = () => path.join(app.getPath("userData"), "terminal-config.bin");
 
+const marker = () => path.join(app.getPath("userData"), "terminal-provisioned");
+const markProvisioned = () => fs.writeFileSync(marker(), "1", { flag: "w" });
+function wasProvisioned() {
+  // Existing activation also counts when upgrading an older installation.
+  return fs.existsSync(marker()) || fs.existsSync(sealed()) || fs.existsSync(file());
+}
+
 const canSeal = () => {
   try {
     return safeStorage.isEncryptionAvailable();
@@ -61,6 +68,7 @@ function read() {
 function write(config) {
   try {
     if (!config) {
+      if (wasProvisioned()) markProvisioned();
       fs.rmSync(file(), { force: true });
       fs.rmSync(sealed(), { force: true });
       return { ok: true };
@@ -76,6 +84,7 @@ function write(config) {
       };
     }
     fs.writeFileSync(sealed(), safeStorage.encryptString(JSON.stringify(config)));
+    markProvisioned();
     // The plain copy must not linger once the vault holds the activation.
     fs.rmSync(file(), { force: true });
     return { ok: true };
@@ -90,4 +99,4 @@ function isSecure() {
   return canSeal();
 }
 
-module.exports = { read, write, isSecure };
+module.exports = { read, write, isSecure, wasProvisioned };

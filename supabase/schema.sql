@@ -17438,6 +17438,155 @@ $function$;
 REVOKE ALL ON FUNCTION public.reserve_stock_document_number(text,bigint,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.reserve_stock_document_number(text,bigint,text) TO service_role;
 
+-- Every PIN entrypoint shares this serialized, canonical account brake.
+CREATE OR REPLACE FUNCTION public.verify_terminal_pin(p_user_id text, p_pin text)
+RETURNS TABLE(user_id text, full_name text, role public.app_role, store_id text, email text)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $$
+DECLARE
+  account public.app_users%rowtype;
+  terminal public.cashiers%rowtype;
+  attempt_key text;
+  state jsonb;
+BEGIN
+  SELECT * INTO account FROM public.app_users a
+    WHERE lower(a.user_id) = lower(trim(p_user_id))
+       OR lower(a.email) = lower(trim(p_user_id))
+    ORDER BY (lower(a.user_id) = lower(trim(p_user_id))) DESC LIMIT 1;
+  attempt_key := 'terminal-pin:' || lower(coalesce(account.user_id, trim(p_user_id)));
+  PERFORM pg_advisory_xact_lock(hashtextextended(attempt_key, 0));
+  state := public.pin_throttle_status(attempt_key);
+  IF coalesce((state->>'locked')::boolean, true) THEN RETURN; END IF;
+  IF account.id IS NOT NULL AND account.is_active IS TRUE THEN
+    SELECT * INTO terminal FROM public.cashiers c
+      WHERE lower(c.username) = lower(account.user_id) AND c.is_active LIMIT 1;
+    IF coalesce(terminal.pin_hash, '') <> '' AND p_pin IS NOT NULL
+       AND terminal.pin_hash = extensions.crypt(p_pin, terminal.pin_hash) THEN
+      PERFORM public.pin_throttle_reset(attempt_key);
+      UPDATE public.app_users SET last_login_at = now() WHERE id = account.id;
+      UPDATE public.cashiers SET last_login_at = now() WHERE id = terminal.id;
+      RETURN QUERY SELECT account.user_id::text, account.full_name::text, account.role,
+        account.store_id::text, account.email::text;
+      RETURN;
+    END IF;
+  END IF;
+  PERFORM public.pin_throttle_fail(attempt_key, 5, 900, 300);
+END
+$$;
+REVOKE ALL ON FUNCTION public.verify_terminal_pin(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_terminal_pin(text,text) TO service_role;
+
+-- Legacy preparation is retained, with exactly the same account lock key.
+CREATE OR REPLACE FUNCTION public.verify_cashier_pin(p_username text, p_pin text)
+RETURNS TABLE(id uuid, username text, full_name text, store_id text, permissions jsonb)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $$
+DECLARE
+  v_row public.cashiers%rowtype;
+  canonical text;
+  attempt_key text;
+  state jsonb;
+BEGIN
+  SELECT a.user_id INTO canonical FROM public.app_users a
+    WHERE lower(a.user_id) = lower(trim(p_username)) OR lower(a.email) = lower(trim(p_username))
+    ORDER BY (lower(a.user_id) = lower(trim(p_username))) DESC LIMIT 1;
+  canonical := coalesce(canonical, trim(p_username));
+  attempt_key := 'terminal-pin:' || lower(canonical);
+  PERFORM pg_advisory_xact_lock(hashtextextended(attempt_key, 0));
+  state := public.pin_throttle_status(attempt_key);
+  IF coalesce((state->>'locked')::boolean, true) THEN RETURN; END IF;
+  SELECT * INTO v_row FROM public.cashiers c
+    WHERE lower(c.username) = lower(canonical) AND c.is_active LIMIT 1;
+  IF v_row.id IS NULL OR coalesce(v_row.pin_hash, '') = '' OR p_pin IS NULL
+     OR v_row.pin_hash <> extensions.crypt(p_pin, v_row.pin_hash) THEN
+    PERFORM public.pin_throttle_fail(attempt_key, 5, 900, 300);
+    RETURN;
+  END IF;
+  PERFORM public.pin_throttle_reset(attempt_key);
+  UPDATE public.cashiers SET last_login_at = now() WHERE public.cashiers.id = v_row.id;
+  RETURN QUERY SELECT v_row.id, v_row.username, v_row.full_name,
+    v_row.store_id, coalesce(v_row.permissions, '{}'::jsonb);
+END
+$$;
+REVOKE ALL ON FUNCTION public.verify_cashier_pin(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text,text) TO service_role;
+
+-- Legacy preparation is retained, with exactly the same account lock key.
+CREATE OR REPLACE FUNCTION public.verify_cashier_pin(p_username text, p_pin text)
+RETURNS TABLE(id uuid, username text, full_name text, store_id text, permissions jsonb)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $$
+DECLARE
+  v_row public.cashiers%rowtype;
+  canonical text;
+  attempt_key text;
+  state jsonb;
+BEGIN
+  SELECT a.user_id INTO canonical FROM public.app_users a
+    WHERE lower(a.user_id) = lower(trim(p_username)) OR lower(a.email) = lower(trim(p_username))
+    ORDER BY (lower(a.user_id) = lower(trim(p_username))) DESC LIMIT 1;
+  canonical := coalesce(canonical, trim(p_username));
+  attempt_key := 'terminal-pin:' || lower(canonical);
+  PERFORM pg_advisory_xact_lock(hashtextextended(attempt_key, 0));
+  state := public.pin_throttle_status(attempt_key);
+  IF coalesce((state->>'locked')::boolean, true) THEN RETURN; END IF;
+  SELECT * INTO v_row FROM public.cashiers c
+    WHERE lower(c.username) = lower(canonical) AND c.is_active
+      AND NOT EXISTS (SELECT 1 FROM public.app_users a
+        WHERE lower(a.user_id) = lower(canonical) AND a.is_active IS NOT TRUE)
+    LIMIT 1;
+  IF v_row.id IS NULL OR coalesce(v_row.pin_hash, '') = '' OR p_pin IS NULL
+     OR v_row.pin_hash <> extensions.crypt(p_pin, v_row.pin_hash) THEN
+    PERFORM public.pin_throttle_fail(attempt_key, 5, 900, 300);
+    RETURN;
+  END IF;
+  PERFORM public.pin_throttle_reset(attempt_key);
+  UPDATE public.cashiers SET last_login_at = now() WHERE public.cashiers.id = v_row.id;
+  RETURN QUERY SELECT v_row.id, v_row.username, v_row.full_name,
+    v_row.store_id, coalesce(v_row.permissions, '{}'::jsonb);
+END
+$$;
+REVOKE ALL ON FUNCTION public.verify_cashier_pin(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text,text) TO service_role;
+
+-- Direct authenticated inserts must carry the database-verified actor.
+-- Client timelines remain reports; only mutation-owned audit entries prove actions.
+CREATE OR REPLACE FUNCTION public.stamp_status_history_reporter()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+DECLARE reporter record;
+BEGIN
+  IF (SELECT auth.uid()) IS NOT NULL THEN
+    SELECT * INTO reporter FROM public.current_app_user();
+    IF reporter.user_id IS NULL OR reporter.is_active IS NOT TRUE THEN
+      RAISE EXCEPTION 'Active staff account required' USING ERRCODE='42501';
+    END IF;
+    IF reporter.role::text <> 'admin' THEN
+      IF reporter.store_id IS NULL OR
+         (NEW.store_id IS NOT NULL AND lower(NEW.store_id) <> lower(reporter.store_id)) THEN
+        RAISE EXCEPTION 'Branch scope required' USING ERRCODE='42501';
+      END IF;
+      NEW.store_id := reporter.store_id;
+    END IF;
+    NEW.actor_id := reporter.user_id;
+    NEW.actor_name := reporter.full_name;
+    NEW.actor_role := reporter.role::text;
+    NEW.branch_id := NEW.store_id;
+    NEW.terminal_id := NULL;
+  END IF;
+  NEW.metadata := coalesce(NEW.metadata, '{}'::jsonb) || '{"client_reported":true}'::jsonb;
+  RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION public.stamp_status_history_reporter() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS entity_status_history_reporter ON public.entity_status_history;
+CREATE TRIGGER entity_status_history_reporter BEFORE INSERT ON public.entity_status_history
+FOR EACH ROW EXECUTE FUNCTION public.stamp_status_history_reporter();
+
 -- Final public-schema privilege hardening
 -- This must remain after every routine definition in this canonical installer.
 -- ===========================================================================
@@ -19188,6 +19337,119 @@ WHERE e.entity_type = 'authorization_request' AND e.entity_id = r.id::text
   AND COALESCE(cardinality(e.cleared_by), 0) = 0
   AND ((e.event_type = 'approval_requested' AND r.status <> 'pending')
     OR (e.event_type = 'approval_granted' AND r.consumed_at IS NOT NULL));
+
+-- Pure JSON normalization reads no database rows and grants no branch access.
+GRANT EXECUTE ON FUNCTION public.canonical_stock_by_store(jsonb) TO authenticated;
+REVOKE ALL ON FUNCTION public.canonical_stock_by_store(jsonb) FROM PUBLIC, anon;
+
+-- Bound each branch/terminal stream before merging it in cursor order.
+CREATE INDEX IF NOT EXISTS sync_feed_shared_cursor_idx ON public.sync_change_feed(organization_id,branch_id,cursor) WHERE terminal_id IS NULL;
+CREATE INDEX IF NOT EXISTS sync_feed_terminal_cursor_idx ON public.sync_change_feed(organization_id,branch_id,terminal_id,cursor) WHERE terminal_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION public.pos_sync_pull(p_organization_id text, p_branch_id text, p_terminal_id text, p_after_cursor bigint DEFAULT 0, p_limit integer DEFAULT 500)
+ RETURNS TABLE(cursor bigint, table_name text, entity_id text, operation text, row_version bigint, tombstone boolean, row_data jsonb)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE v_me public.app_users%ROWTYPE;
+BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id); IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
+ IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+ IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
+ RETURN QUERY WITH feed_page AS MATERIALIZED (
+  SELECT candidate.cursor,candidate.table_name,candidate.entity_id,candidate.operation,candidate.row_version,candidate.tombstone
+  FROM (SELECT DISTINCT unnest(ARRAY[p_branch_id,'global']) AS branch_id) scopes
+  CROSS JOIN LATERAL (
+   (SELECT c.cursor,c.table_name,c.entity_id,c.operation,c.row_version,c.tombstone
+    FROM public.sync_change_feed c
+    WHERE c.organization_id=p_organization_id AND c.branch_id=scopes.branch_id
+      AND c.terminal_id IS NULL AND c.cursor>p_after_cursor
+    ORDER BY c.cursor LIMIT LEAST(GREATEST(p_limit,10),2000))
+   UNION ALL
+   (SELECT c.cursor,c.table_name,c.entity_id,c.operation,c.row_version,c.tombstone
+    FROM public.sync_change_feed c
+    WHERE c.organization_id=p_organization_id AND c.branch_id=scopes.branch_id
+      AND c.terminal_id=p_terminal_id AND c.terminal_id IS NOT NULL AND c.cursor>p_after_cursor
+    ORDER BY c.cursor LIMIT LEAST(GREATEST(p_limit,10),2000))
+  ) candidate
+  ORDER BY candidate.cursor LIMIT LEAST(GREATEST(p_limit,10),2000)
+ )
+ SELECT f.cursor,f.table_name,f.entity_id,f.operation,f.row_version,f.tombstone,CASE f.table_name WHEN 'coupon_campaigns' THEN (SELECT to_jsonb(x) FROM public."coupon_campaigns" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shifts' THEN (SELECT to_jsonb(x) FROM public."shifts" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'issued_vouchers' THEN (SELECT to_jsonb(x) FROM public."issued_vouchers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'activity_events' THEN (SELECT to_jsonb(x) FROM public."activity_events" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'app_users' THEN (SELECT to_jsonb(x) FROM public."app_users" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'audit_logs' THEN (SELECT to_jsonb(x) FROM public."audit_logs" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'booking_payments' THEN (SELECT to_jsonb(x) FROM public."booking_payments" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'bookings' THEN (SELECT to_jsonb(x) FROM public."bookings" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'branch_telemetry' THEN (SELECT to_jsonb(x) FROM public."branch_telemetry" x WHERE x."terminal_id"=((f.entity_id::jsonb)->>'terminal_id') LIMIT 1)
+    WHEN 'cashiers' THEN (SELECT to_jsonb(x) FROM public."cashiers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'coupon_events' THEN (SELECT to_jsonb(x) FROM public."coupon_events" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'drawer_events' THEN (SELECT to_jsonb(x) FROM public."drawer_events" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'held_orders' THEN (SELECT to_jsonb(x) FROM public."held_orders" x WHERE x."id"=((f.entity_id::jsonb)->>'id') LIMIT 1)
+    WHEN 'integration_settings' THEN (SELECT to_jsonb(x) FROM public."integration_settings" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'item_activity_logs' THEN (SELECT to_jsonb(x) FROM public."item_activity_logs" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'member_verifications' THEN (SELECT to_jsonb(x) FROM public."member_verifications" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'members' THEN (SELECT to_jsonb(x) - ARRAY['auth_user_id']::text[] FROM public."members" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'membership_tiers' THEN (SELECT to_jsonb(x) FROM public."membership_tiers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'offline_sync_audit_log' THEN (SELECT to_jsonb(x) FROM public."offline_sync_audit_log" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'payment_transactions' THEN (SELECT to_jsonb(x) FROM public."payment_transactions" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'payment_types' THEN (SELECT to_jsonb(x) FROM public."payment_types" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'pin_attempts' THEN (SELECT to_jsonb(x) FROM public."pin_attempts" x WHERE x."key"=((f.entity_id::jsonb)->>'key') LIMIT 1)
+    WHEN 'pos_settings' THEN (SELECT to_jsonb(x) FROM public."pos_settings" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::integer LIMIT 1)
+    WHEN 'product_barcodes' THEN (SELECT to_jsonb(x) FROM public."product_barcodes" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'product_categories' THEN (SELECT to_jsonb(x) FROM public."product_categories" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'products' THEN (SELECT to_jsonb(x) FROM public."products" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'promotions' THEN (SELECT to_jsonb(x) FROM public."promotions" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'public_flags' THEN (SELECT to_jsonb(x) FROM public."public_flags" x WHERE x."key"=((f.entity_id::jsonb)->>'key') LIMIT 1)
+    WHEN 'purchase_order_items' THEN (SELECT to_jsonb(x) FROM public."purchase_order_items" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'purchase_orders' THEN (SELECT to_jsonb(x) FROM public."purchase_orders" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'sale_items' THEN (SELECT to_jsonb(x) FROM public."sale_items" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'sales' THEN (SELECT to_jsonb(x) FROM public."sales" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'secure_settings' THEN (SELECT to_jsonb(x) FROM public."secure_settings" x WHERE x."key"=((f.entity_id::jsonb)->>'key') LIMIT 1)
+    WHEN 'security_findings' THEN (SELECT to_jsonb(x) FROM public."security_findings" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'settings_locks' THEN (SELECT to_jsonb(x) FROM public."settings_locks" x WHERE x."section"=((f.entity_id::jsonb)->>'section') LIMIT 1)
+    WHEN 'settings_overrides' THEN (SELECT to_jsonb(x) FROM public."settings_overrides" x WHERE x."scope"=((f.entity_id::jsonb)->>'scope') AND x."scope_id"=((f.entity_id::jsonb)->>'scope_id') AND x."section"=((f.entity_id::jsonb)->>'section') LIMIT 1)
+    WHEN 'shift_sessions' THEN (SELECT to_jsonb(x) FROM public."shift_sessions" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'sku_audit' THEN (SELECT to_jsonb(x) FROM public."sku_audit" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'staff_roles' THEN (SELECT to_jsonb(x) FROM public."staff_roles" x WHERE x."slug"=((f.entity_id::jsonb)->>'slug') LIMIT 1)
+    WHEN 'stock_adjustments' THEN (SELECT to_jsonb(x) FROM public."stock_adjustments" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'stock_delta_applied' THEN (SELECT to_jsonb(x) FROM public."stock_delta_applied" x WHERE x."movement_id"=((f.entity_id::jsonb)->>'movement_id')::uuid LIMIT 1)
+    WHEN 'stock_transfer_items' THEN (SELECT to_jsonb(x) FROM public."stock_transfer_items" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'stock_transfers' THEN (SELECT to_jsonb(x) FROM public."stock_transfers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'stores' THEN (SELECT to_jsonb(x) FROM public."stores" x WHERE x."id"=((f.entity_id::jsonb)->>'id') LIMIT 1)
+    WHEN 'suppliers' THEN (SELECT to_jsonb(x) FROM public."suppliers" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'sync_metadata' THEN (SELECT to_jsonb(x) FROM public."sync_metadata" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'system_audit_logs' THEN (SELECT to_jsonb(x) FROM public."system_audit_logs" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'terminal_commands' THEN (SELECT to_jsonb(x) FROM public."terminal_commands" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'terminal_tokens' THEN (SELECT to_jsonb(x) FROM public."terminal_tokens" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'uom_units' THEN (SELECT to_jsonb(x) FROM public."uom_units" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'user_roles' THEN (SELECT to_jsonb(x) FROM public."user_roles" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'whatsapp_queue' THEN (SELECT to_jsonb(x) FROM public."whatsapp_queue" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'terminal_recovery_secrets' THEN (SELECT to_jsonb(x) FROM public."terminal_recovery_secrets" x WHERE x."terminal_token_id"=((f.entity_id::jsonb)->>'terminal_token_id')::uuid LIMIT 1)
+    WHEN 'pos_store_settings' THEN (SELECT to_jsonb(x) FROM public."pos_store_settings" x WHERE x."store_id"=((f.entity_id::jsonb)->>'store_id') LIMIT 1)
+    WHEN 'settings_scoped' THEN (SELECT to_jsonb(x) FROM public."settings_scoped" x WHERE x."scope"=((f.entity_id::jsonb)->>'scope') AND x."scope_id"=((f.entity_id::jsonb)->>'scope_id') AND x."key"=((f.entity_id::jsonb)->>'key') LIMIT 1)
+    WHEN 'stock_count_drafts' THEN (SELECT to_jsonb(x) FROM public."stock_count_drafts" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'authorization_actions' THEN (SELECT to_jsonb(x) FROM public."authorization_actions" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'authorization_action_history' THEN (SELECT to_jsonb(x) FROM public."authorization_action_history" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'authorization_requests' THEN (SELECT to_jsonb(x) FROM public."authorization_requests" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'authorization_log' THEN (SELECT to_jsonb(x) FROM public."authorization_log" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'record_edits' THEN (SELECT to_jsonb(x) FROM public."record_edits" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shift_cash_counts' THEN (SELECT to_jsonb(x) FROM public."shift_cash_counts" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shift_close_events' THEN (SELECT to_jsonb(x) FROM public."shift_close_events" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shift_reconciliations' THEN (SELECT to_jsonb(x) FROM public."shift_reconciliations" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shift_variance_alerts' THEN (SELECT to_jsonb(x) FROM public."shift_variance_alerts" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'shift_notifications' THEN (SELECT to_jsonb(x) FROM public."shift_notifications" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'entity_status_history' THEN (SELECT to_jsonb(x) FROM public."entity_status_history" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'nav_pins' THEN (SELECT to_jsonb(x) FROM public."nav_pins" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)
+    WHEN 'store_groups' THEN (SELECT to_jsonb(x) FROM public."store_groups" x WHERE x."id"=((f.entity_id::jsonb)->>'id') LIMIT 1)
+    WHEN 'change_history' THEN (SELECT to_jsonb(x) FROM public."change_history" x WHERE x."id"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1) ELSE NULL END
+ FROM feed_page f ORDER BY f.cursor;
+END $function$;
+
+REVOKE ALL ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) TO service_role;
+NOTIFY pgrst, 'reload schema';
 
 -- Final public-schema privilege hardening after release 1.4.38 routine definitions.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC,anon,authenticated;

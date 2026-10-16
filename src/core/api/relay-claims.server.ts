@@ -25,8 +25,7 @@ export function normalisePermissions(raw: unknown): Record<string, boolean> {
   return effectivePagePermissions(out);
 }
 
-const str = (v: unknown): string | null =>
-  typeof v === "string" && v.trim() ? v.trim() : null;
+const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
 /** Read the interesting fields out of an already-verified token payload. */
 export function claimsFromPayload(payload: unknown): CallerClaims | null {
@@ -34,7 +33,6 @@ export function claimsFromPayload(payload: unknown): CallerClaims | null {
   const p = payload as Record<string, unknown>;
   const meta = {
     ...((p["app_metadata"] as Record<string, unknown> | undefined) ?? {}),
-    ...((p["user_metadata"] as Record<string, unknown> | undefined) ?? {}),
   };
   const pick = (key: string) => str(p[key]) ?? str(meta[key]);
   const storeId = pick("store_id") ?? pick("branch_id");

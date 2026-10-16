@@ -123,6 +123,16 @@ async function sendEmail(to: string, body: string) {
 
 /* ------------------------------ the flow -------------------------------- */
 
+async function memberContact(id: string): Promise<{ phone: string | null; email: string | null }> {
+  const res = await serviceRest(
+    `members?id=eq.${encodeURIComponent(id)}&select=phone,email&limit=1`,
+  );
+  if (!res.ok) throw new Error("Could not read the member contact");
+  const row = ((await res.json()) as { phone?: string | null; email?: string | null }[])[0];
+  if (!row) throw new Error("Member no longer exists");
+  return { phone: row.phone ?? null, email: row.email ?? null };
+}
+
 export async function startVerification(input: {
   memberId?: string | null;
   phone?: string | null;
@@ -130,6 +140,7 @@ export async function startVerification(input: {
   storeId?: string | null;
   sentBy: string;
 }): Promise<{ id: string; channel: VerifyChannel }> {
+  if (input.memberId) input = { ...input, ...(await memberContact(input.memberId)) };
   const config = await readVerificationConfig();
   const channel = config.channel;
   const target = channel === "email" ? input.email : input.phone;
@@ -184,11 +195,23 @@ export async function startVerification(input: {
 
 export async function confirmVerification(id: string, code: string): Promise<boolean> {
   const res = await serviceRest(
-    `member_verifications?select=id,member_id,channel,otp_code,expires_at,status,attempts&id=eq.${id}&limit=1`,
+    `member_verifications?select=id,member_id,phone,email,channel,otp_code,expires_at,status,attempts&id=eq.${id}&limit=1`,
   );
   if (!res.ok) throw new Error("Could not read the verification");
   const row = ((await res.json()) as Record<string, unknown>[])[0];
   if (!row) throw new Error("That verification is no longer available");
+  if (row["member_id"]) {
+    const current = await memberContact(String(row["member_id"]));
+    const key = row["channel"] === "email" ? "email" : "phone";
+    const normalize = (value: unknown) =>
+      key === "email"
+        ? String(value ?? "")
+            .trim()
+            .toLowerCase()
+        : String(value ?? "").replace(/\D/g, "");
+    if (!normalize(current[key]) || normalize(current[key]) !== normalize(row[key]))
+      throw new Error("Member contact changed — send a new code");
+  }
   if (row["status"] === "verified") return true;
   if (Number(row["attempts"] ?? 0) >= 5) throw new Error("Too many attempts — send a new code");
   if (new Date(String(row["expires_at"])).getTime() < Date.now()) {

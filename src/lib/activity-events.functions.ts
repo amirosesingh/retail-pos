@@ -41,6 +41,8 @@ export const pushActivityEvent = createServerFn({ method: "POST" })
         ...(data.accessToken ? { accessToken: data.accessToken } : {}),
       });
       scope = await resolveRelayScope(caller);
+      if (scope.kind === "terminal" || scope.stale || !scope.staffUserId)
+        throw new Error("Staff identity required");
     } catch {
       return { ok: false as const, error: "Not signed in" };
     }
@@ -53,18 +55,18 @@ export const pushActivityEvent = createServerFn({ method: "POST" })
     const res = await writeActivityEvent({
       event_type: data.type,
       severity: data.severity,
-      title: data.title,
+      title: `Reported activity: ${data.title}`,
       message: data.message ?? "",
-      actor_id: data.actorId ?? scope.label ?? null,
-      actor_name: data.actorName ?? null,
-      actor_role: data.actorRole ?? scope.role ?? null,
-      terminal_id: data.terminalId ?? null,
-      terminal_name: data.terminalName ?? null,
+      actor_id: scope.staffUserId ?? null,
+      actor_name: scope.actorName ?? null,
+      actor_role: scope.role,
+      terminal_id: scope.terminalId ?? null,
+      terminal_name: null,
       store_id: storeId,
       entity_type: data.entityType ?? null,
       entity_id: data.entityId ?? null,
       amount: data.amount ?? null,
-      meta: (data.meta ?? {}) as Record<string, unknown>,
+      meta: { ...(data.meta ?? {}), client_reported: true } as Record<string, unknown>,
       client_event_id: data.clientEventId ?? null,
       created_at: data.createdAt ?? new Date().toISOString(),
     });
@@ -78,11 +80,15 @@ const settingsInput = z.object({
   quietFrom: z.string().max(5),
   quietTo: z.string().max(5),
   channels: z.record(z.string(), z.enum(["off", "app", "whatsapp"])),
-  androidPush: z.object({
-    enabled: z.boolean(), events: z.array(z.string().max(60)).max(100),
-    recipients: z.array(z.string().max(64)).max(500), branches: z.array(z.string().max(64)).max(500),
-    criticalOnly: z.boolean(),
-  }).optional(),
+  androidPush: z
+    .object({
+      enabled: z.boolean(),
+      events: z.array(z.string().max(60)).max(100),
+      recipients: z.array(z.string().max(64)).max(500),
+      branches: z.array(z.string().max(64)).max(500),
+      criticalOnly: z.boolean(),
+    })
+    .optional(),
 });
 
 const callerProof = z.object({
@@ -101,19 +107,36 @@ export const loadNotificationSettings = createServerFn({ method: "POST" })
       if (scope.kind === "terminal" || (scope.role !== "admin" && scope.roleSlug !== "admin"))
         throw new Error("Only an administrator can manage global notification settings.");
       const { readNotificationSettings } = await import("./activity-events.server");
-      const {serviceRest}=await import("@/core/api/pos-relay.server");
-      const users=await serviceRest("app_users?is_active=eq.true&select=user_id,full_name&order=full_name.asc&limit=500");
-      if(!users.ok) throw new Error("Could not load notification recipients.");
-      let pushConfigured=false;
-      try {const {centralPushConfig}=await import("./central-push.server");centralPushConfig();pushConfigured=true;} catch { /* Not yet provisioned. */ }
-      return { ok: true as const, settings: await readNotificationSettings(), staff:await users.json() as {user_id:string;full_name:string}[],pushConfigured };
+      const { serviceRest } = await import("@/core/api/pos-relay.server");
+      const users = await serviceRest(
+        "app_users?is_active=eq.true&select=user_id,full_name&order=full_name.asc&limit=500",
+      );
+      if (!users.ok) throw new Error("Could not load notification recipients.");
+      let pushConfigured = false;
+      try {
+        const { centralPushConfig } = await import("./central-push.server");
+        centralPushConfig();
+        pushConfigured = true;
+      } catch {
+        /* Not yet provisioned. */
+      }
+      return {
+        ok: true as const,
+        settings: await readNotificationSettings(),
+        staff: (await users.json()) as { user_id: string; full_name: string }[],
+        pushConfigured,
+      };
     } catch (error) {
       return { ok: false as const, error: (error as Error).message };
     }
   });
 
 export const saveNotificationSettings = createServerFn({ method: "POST" })
-  .validator((input: unknown) => callerProof.extend({ settings: settingsInput, section: z.enum(["android", "whatsapp"]).optional() }).parse(input))
+  .validator((input: unknown) =>
+    callerProof
+      .extend({ settings: settingsInput, section: z.enum(["android", "whatsapp"]).optional() })
+      .parse(input),
+  )
   .handler(async ({ data }) => {
     try {
       const { requireCallerScope } = await import("./privileged-caller.server");
@@ -123,11 +146,12 @@ export const saveNotificationSettings = createServerFn({ method: "POST" })
     } catch (error) {
       return { ok: false as const, error: (error as Error).message };
     }
-    const { writeNotificationSettings, writeNotificationSection } = await import("./activity-events.server");
+    const { writeNotificationSettings, writeNotificationSection } =
+      await import("./activity-events.server");
     try {
       if (data.section) {
         const settings = await writeNotificationSection(data.settings, data.section);
-        return {ok: true as const, settings};
+        return { ok: true as const, settings };
       }
       await writeNotificationSettings(data.settings);
       return { ok: true as const, settings: data.settings };

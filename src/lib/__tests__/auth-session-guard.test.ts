@@ -15,6 +15,11 @@ function auth(overrides: Partial<AuthSessionApi> = {}): AuthSessionApi {
 }
 
 describe("persisted Supabase session validation", () => {
+  it("does not mistake a failed session restore for a signed-out account", async () => {
+    const api = auth({getSession:vi.fn(async()=>({data:{session:null},error:{status:503,message:"Service unavailable"}}))});
+    expect(await validateStoredAuthSession(api,{online:true})).toEqual({state:"unavailable",session:null});
+    expect(api.getUser).not.toHaveBeenCalled();expect(api.refreshSession).not.toHaveBeenCalled();
+  });
   it("logout prevents an older encrypted credential save from restoring the token", async () => {
     const storage = new Map<string,string>();
     vi.stubGlobal("window",{localStorage:{getItem:(key:string)=>storage.get(key)??null,
