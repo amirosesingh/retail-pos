@@ -20,6 +20,12 @@ describe("desktop release configuration", () => {
     const version = read(".github/workflows/version-release.yml");
     const bump = read("scripts/bump-version.cjs");
 
+    expect(version).toContain("workflow_dispatch:");
+    expect(version).not.toContain("branches: [main]");
+    expect(version).toContain("gh pr list --state open --base main");
+    expect(version).toContain("Role & permission regression checks");
+    expect(version.match(/if: steps.ready.outputs.release == 'true'/g)).toHaveLength(3);
+    expect(version).not.toContain("git pull --ff-only origin main");
     expect(version).toContain("version=$(node scripts/bump-version.cjs)");
     expect(version).toContain('while git rev-parse -q --verify "refs/tags/v$version"');
     expect(version).toContain("node scripts/bump-version.cjs --write");

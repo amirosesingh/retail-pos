@@ -110,3 +110,13 @@ disabled accounts, actor stamping and cross-branch rejection. No fixture or test
 counter was retained. Install the accompanying app update on web, Windows and
 Android for current account scope, caller-bound sessions and protected history
 reads. Database migrations do not replace client deployment.
+
+
+## Final release procedure
+
+Merge the complete PR batch first and wait for the final main-branch Security
+checks. Then manually run **Prepare release version** on `main`. Ordinary merges
+no longer create versions. The workflow refuses release preparation while any PR
+targeting `main` remains open or the final commit has not passed the regression
+workflow. Re-running it on an already-tagged release commit is a no-op. One
+immutable version tag starts both Windows and Android builds.
