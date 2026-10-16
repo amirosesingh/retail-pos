@@ -1275,3 +1275,11 @@ html[data-native-caption] .pos-dialog-content {
   top: calc(50% + 16px);
   max-height: calc(100dvh - 64px);
 }
+
+/* Compact phone-Web typography must not cause focus zoom on small fields.
+   Larger custom fields (for example PIN entry) retain their explicit size. */
+.pos-phone-web :is(input, textarea, select):is(.text-xs, .text-sm, .text-base) {
+  font-size: max(16px, 1em);
+  min-height: 44px;
+}
+.pos-phone-web button[type="submit"] { min-height: 44px; }

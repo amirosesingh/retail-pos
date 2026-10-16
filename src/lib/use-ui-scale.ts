@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { isTerminalApp } from "@/platform-config/platform";
 
 /**
  * Dynamic UI scale for the whole POS.
@@ -127,28 +128,43 @@ export function computeUiScale(width: number, height: number): number {
   return Number(clamp(Math.min(byWidth, byHeight), 0.85, 1.35).toFixed(3));
 }
 
+/** Phone browsers use a denser layout; saved text-size multipliers still apply. */
+export function computeUiTextSize(width: number, textScale: number, terminal = false): number {
+  const base = !terminal && width < 768 ? 14 : 16;
+  return Math.round(base * textScale);
+}
+
 /** Applies the effective scale + density to the document root. */
 export function useUiScale(): number {
   const { mode, scale: manual, textScale, density } = useUiScalePrefs();
   const [auto, setAuto] = useState(1);
+  const [viewportWidth, setViewportWidth] = useState(1440);
 
   useEffect(() => {
-    const apply = () => setAuto(computeUiScale(window.innerWidth, window.innerHeight));
+    const apply = () => {
+      setAuto(computeUiScale(window.innerWidth, window.innerHeight));
+      setViewportWidth(window.innerWidth);
+    };
     apply();
     window.addEventListener("resize", apply);
     return () => window.removeEventListener("resize", apply);
   }, []);
 
   const scale = mode === "manual" ? manual : auto;
+  const terminal = isTerminalApp();
+  const phoneWeb = !terminal && (viewportWidth < 768 ||
+    (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches));
 
   useEffect(() => {
     document.documentElement.style.setProperty("--pos-scale", String(scale));
     document.documentElement.style.setProperty("--pos-text-scale", String(textScale));
     // Text size drives the root font size, so headings, tables, dialogs and
     // menus all resize together — not just the scaled register shell.
-    document.documentElement.style.fontSize = `${Math.round(16 * textScale)}px`;
+    document.documentElement.style.fontSize = `${computeUiTextSize(viewportWidth, textScale, terminal)}px`;
+    document.documentElement.classList.toggle("pos-phone-web", phoneWeb);
     document.documentElement.classList.toggle("pos-compact", density === "compact");
-  }, [scale, textScale, density]);
+    return () => { document.documentElement.classList.remove("pos-phone-web"); };
+  }, [scale, textScale, density, viewportWidth, terminal, phoneWeb]);
 
   return scale;
 }
