@@ -21,7 +21,14 @@ describe("desktop release configuration", () => {
     const bump = read("scripts/bump-version.cjs");
 
     expect(version).toContain("workflow_dispatch:");
-    expect(version).not.toContain("branches: [main]");
+    expect(version).toContain("workflow_run:");
+    expect(version).toContain("workflows: [Security checks]");
+    expect(version).toContain("branches: [main]");
+    expect(version).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(version).toContain("github.event.workflow_run.head_repository.full_name == github.repository");
+    expect(version).toContain("contains(fromJSON('[\"push\",\"workflow_dispatch\"]'), github.event.workflow_run.event)");
+    expect(version).toContain('"$CHECKED_SHA" != "$sha"');
+    expect(read(".github/workflows/ci.yml")).toContain("workflow_dispatch:");
     expect(version).toContain("gh pr list --state open --base main");
     expect(version).toContain("Role & permission regression checks");
     expect(version.match(/if: steps.ready.outputs.release == 'true'/g)).toHaveLength(3);

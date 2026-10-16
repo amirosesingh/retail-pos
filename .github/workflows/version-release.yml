@@ -2,6 +2,10 @@ name: Prepare release version
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: [Security checks]
+    types: [completed]
+    branches: [main]
 
 concurrency:
   group: prepare-release-version
@@ -15,12 +19,18 @@ permissions:
 
 jobs:
   bump:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        contains(fromJSON('["push","workflow_dispatch"]'), github.event.workflow_run.event)))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
@@ -31,8 +41,14 @@ jobs:
         id: ready
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECKED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           sha=$(git rev-parse HEAD)
+          if [ -n "$CHECKED_SHA" ] && [ "$CHECKED_SHA" != "$sha" ]; then
+            echo "Main has advanced; wait for checks on the current commit."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           version=$(node -p "require('./package.json').version")
           tagged=$(git rev-parse -q --verify "refs/tags/v$version^{commit}" || true)
           if [ "$tagged" = "$sha" ]; then
@@ -42,8 +58,9 @@ jobs:
           fi
           open=$(gh pr list --state open --base main --json number --jq 'length')
           if [ "$open" -ne 0 ]; then
-            echo "Merge all open PRs targeting main before creating the final version."
-            exit 1
+            echo "Waiting for all open PRs targeting main to be merged."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           passed=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs" --jq '[.check_runs[] | select(.name == "Role & permission regression checks" and .status == "completed" and .conclusion == "success")] | length')
           if [ "$passed" -eq 0 ]; then
