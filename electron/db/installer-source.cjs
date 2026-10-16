@@ -32,6 +32,7 @@ function migrationBundleSql(appVersion="current") {
     : `BEGIN TRANSACTION;\nEXEC sys.sp_executesql ${literal(batch)};\nCOMMIT TRANSACTION;`).join('\n');
   // One outer batch prevents SSMS from continuing after a failed GO batch.
   return [`-- Retail POS local database update — ${String(appVersion).replace(/[^0-9A-Za-z._-]/g,"")}`,
+    `-- Latest local migration: ${migrations.at(-1)?.name ?? "none"}`,
     "-- Source: retail-pos-local-database.sql bundled with this application.",
     "-- Select your configured POS database. This file never switches databases.",
     "-- Back up the existing database before upgrading. No business rows are deleted.",

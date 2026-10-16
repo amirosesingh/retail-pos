@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-10T14:40:25.795Z",
+  "generatedAt": "2026-10-16T08:10:40.433Z",
   "tables": [
     {
       "cloudTable": "coupon_campaigns",

@@ -440,7 +440,10 @@ const installerHeader = `/*
   Generated from the migrations loaded by the POS application.
 
   Application version: ${applicationVersion}
+  Latest local migration: ${supplementalMigrationFiles.at(-1)}
   Target database: POS_Local
+
+  To upgrade an existing configured POS database, use retail-pos-local-update.sql.
 
   Run this file while connected to the local Microsoft SQL Server instance.
   It creates POS_Local when needed, selects it, and installs or updates the
