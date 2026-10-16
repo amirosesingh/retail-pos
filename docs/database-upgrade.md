@@ -91,3 +91,22 @@ The original stock-number migration was executed exactly as committed; the deplo
 The repair grants signed-in users only the immutable JSON stock-normalization helper. Anonymous helper access stays revoked. Stock-number reservation and sync pull remain service-only and keep their branch checks. Live verification used rollback-only reservations, confirmed a terminal could not pull another branch, and preserved all business rows and sync checkpoints.
 
 The accompanying app update clears rejected secondary Supabase sessions without clearing valid PIN credentials, validates cached machine accounts, prevents anonymous protected REST attempts, and opens protected Realtime subscriptions only after session verification. Existing installed clients need the updated web/Electron/Android release to use those client fixes.
+
+
+## Shared security boundary repair deployed 16 October 2026
+
+The `pos` project also has `20261016060050_enforce_shared_pin_lockout`,
+`20261016060232_reject_inactive_legacy_pin_accounts`, and
+`20261016060559_stamp_status_history_reporter` applied. Source filenames match
+these deployment versions. PIN verification stays service-only. Username and
+email aliases share one serialized five-failure account lock; legacy verification
+cannot bypass the lock or revive disabled accounts. Direct authenticated status
+history writes take actor identity from the active database account and reject
+another branch. Client history remains explicitly reported activity rather than
+proof of a committed business mutation.
+
+Rollback-only fixtures verified valid login, alias lockout, legacy lock enforcement,
+disabled accounts, actor stamping and cross-branch rejection. No fixture or test
+counter was retained. Install the accompanying app update on web, Windows and
+Android for current account scope, caller-bound sessions and protected history
+reads. Database migrations do not replace client deployment.

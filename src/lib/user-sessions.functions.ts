@@ -44,8 +44,9 @@ export const startDeviceSession = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { verifyRelayCaller } = await import("@/core/api/pos-relay.server");
     const { startSession } = await import("./session-guard.server");
+    let verified: Awaited<ReturnType<typeof verifyRelayCaller>>;
     try {
-      await verifyRelayCaller({
+      verified = await verifyRelayCaller({
         ...(data.cashierToken ? { cashierToken: data.cashierToken } : {}),
         ...(data.accessToken ? { accessToken: data.accessToken } : {}),
         ...(data.terminalToken ? { terminalToken: data.terminalToken } : {}),
@@ -55,13 +56,16 @@ export const startDeviceSession = createServerFn({ method: "POST" })
     }
 
     try {
+      const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
+      const scope = await resolveRelayScope(verified);
+      if (scope.stale) throw new Error("Your account or branch could not be verified");
       const { token, idleMinutes } = await startSession({
-        kind: data.kind,
-        label: data.label ?? null,
-        staffUserId: data.staffUserId ?? null,
-        cashierId: data.cashierId ?? null,
-        branchId: data.branchId ?? null,
-        terminalId: data.terminalId ?? null,
+        kind: verified.kind,
+        label: scope.actorName ?? verified.label,
+        staffUserId: scope.staffUserId,
+        cashierId: null,
+        branchId: scope.storeId,
+        terminalId: scope.terminalId,
         platform: data.platform ?? null,
       });
       return { ok: true as const, token, idleMinutes };

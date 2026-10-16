@@ -67,7 +67,7 @@ export function StatusHistoryList({
         >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className="font-medium">
-              {pretty(e.previous_status)} → {pretty(e.new_status)}
+              Reported: {pretty(e.previous_status)} → {pretty(e.new_status)}
             </span>
             <span className="text-xs text-muted-foreground">{when(e.occurred_at)}</span>
           </div>
@@ -154,7 +154,6 @@ export function StatusHistoryDialog({
         </DialogHeader>
 
         <StatusHistoryList entity={entity} entityId={entityId} active={open} />
-
       </DialogContent>
     </Dialog>
   );

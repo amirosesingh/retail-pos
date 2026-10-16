@@ -17,14 +17,12 @@ async function branchOf(column: "user_id" | "id", value: string) {
     );
     if (!res.ok) return null;
     const rows = (await res.json()) as
-      | { store_id: string | null; role: string | null; is_active: boolean | null }[]
-      | null;
+      { store_id: string | null; role: string | null; is_active: boolean | null }[] | null;
     return rows?.[0] ?? null;
   } catch {
     return null;
   }
 }
-
 
 export async function resolveCompareCaller(input: {
   accessToken?: string | undefined;
@@ -35,15 +33,19 @@ export async function resolveCompareCaller(input: {
     try {
       const { verifyPosStaff } = await import("./secure-settings.server");
       const staff = await verifyPosStaff(input.accessToken);
-      const row = await branchOf("user_id", staff.userId);
-      const own = row?.store_id ?? null;
+      const own = staff.storeId || null;
+      if (!staff.isAdmin && !own) throw new Error("A branch scope is required");
       return {
         ok: true,
         isAdmin: staff.isAdmin,
         storeId: staff.isAdmin ? (input.storeId ?? own) : own,
       };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : "Not signed in", storeId: null };
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "Not signed in",
+        storeId: null,
+      };
     }
   }
 
@@ -51,9 +53,14 @@ export async function resolveCompareCaller(input: {
     const { verifyCashierSession } = await import("./pos-session.server");
     const session = verifyCashierSession(input.cashierToken);
     if (session) {
-      const row = await branchOf("id", session.id);
-      if (row?.is_active === false) return { ok: false, error: "Account disabled", storeId: null };
-      return { ok: true, isAdmin: false, storeId: row?.store_id ?? null };
+      const row = await branchOf("user_id", session.username);
+      if (
+        row?.is_active !== true ||
+        !session.storeId ||
+        (row.store_id && row.store_id.toLowerCase() !== session.storeId.toLowerCase())
+      )
+        return { ok: false, error: "Account or branch unavailable", storeId: null };
+      return { ok: true, isAdmin: false, storeId: session.storeId };
     }
   }
 

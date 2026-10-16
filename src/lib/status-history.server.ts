@@ -57,6 +57,7 @@ export async function readStatusHistory(
   entityType: string,
   entityId: string,
   limit = 200,
+  storeId: string | null = null,
 ): Promise<StatusHistoryRecord[]> {
   const query = new URLSearchParams({
     entity_type: `eq.${entityType}`,
@@ -64,6 +65,7 @@ export async function readStatusHistory(
     order: "occurred_at.desc",
     limit: String(Math.min(Math.max(limit, 1), 500)),
   });
+  if (storeId) query.set("store_id", `eq.${storeId}`);
   const res = await serviceRest(`entity_status_history?${query.toString()}`);
   if (!res.ok) return [];
   return (await res.json()) as StatusHistoryRecord[];

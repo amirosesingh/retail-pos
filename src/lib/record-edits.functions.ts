@@ -238,9 +238,10 @@ export const getRecordEdits = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     try {
-      await assertCaller(data);
+      const { auditReadBranch } = await import("./audit-read-scope.server");
+      const storeId = await auditReadBranch(data);
       const { listRecordEdits } = await import("./record-edits.server");
-      return { ok: true as const, edits: await listRecordEdits(data.kind, data.recordId) };
+      return { ok: true as const, edits: await listRecordEdits(data.kind, data.recordId, storeId) };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300), edits: [] };
     }

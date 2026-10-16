@@ -33,7 +33,11 @@ export type CashierLoginResult =
   | {
       ok: false;
       error: string;
-      code?: "invalid_credentials" | "session_prepare_failed" | "identity_mismatch" | "central_unavailable";
+      code?:
+        | "invalid_credentials"
+        | "session_prepare_failed"
+        | "identity_mismatch"
+        | "central_unavailable";
     };
 
 export async function cashierLoginServer(input: {
@@ -57,7 +61,12 @@ export async function cashierLoginServer(input: {
     method: "POST",
     body: JSON.stringify({ p_user_id: username, p_pin: secret }),
   });
-  if (!res.ok) return { ok: false, code: "central_unavailable", error: "Could not reach the central database" };
+  if (!res.ok)
+    return {
+      ok: false,
+      code: "central_unavailable",
+      error: "Could not reach the central database",
+    };
 
   const rows = (await res.json()) as
     | {
@@ -66,31 +75,7 @@ export async function cashierLoginServer(input: {
         store_id: string | null;
       }[]
     | null;
-  let row = Array.isArray(rows) ? rows[0] : null;
-  // The account list shows the hidden address, so accept it as well as the
-  // bare username: resolve it to the username and check the PIN again.
-  if (!row && username.includes("@")) {
-    const lookup = await serviceRest(
-      `app_users?email=eq.${encodeURIComponent(username)}&select=user_id&limit=1`,
-    );
-    if (!lookup.ok) return { ok: false, code: "central_unavailable", error: "Could not reach the central database" };
-    const found = lookup.ok
-      ? ((await lookup.json()) as { user_id?: string }[])[0]?.user_id
-      : null;
-    if (found) {
-      const retry = await serviceRest("rpc/verify_terminal_pin", {
-        method: "POST",
-        body: JSON.stringify({ p_user_id: found, p_pin: secret }),
-      });
-      if (!retry.ok) return { ok: false, code: "central_unavailable", error: "Could not reach the central database" };
-      if (retry.ok) {
-        const again = (await retry.json()) as
-          | { user_id: string; full_name: string; store_id: string | null }[]
-          | null;
-        row = Array.isArray(again) ? (again[0] ?? null) : null;
-      }
-    }
-  }
+  const row = Array.isArray(rows) ? rows[0] : null;
   if (!row) {
     // A failed sign-in is recorded too — repeated failures are the signal.
     await writeSystemAudit({
@@ -109,7 +94,8 @@ export async function cashierLoginServer(input: {
   const profileResponse = await serviceRest(
     `app_users?user_id=eq.${encodeURIComponent(row.user_id)}&select=id,user_id,full_name,email,store_id,role,role_slug,permissions,is_active,auth_user_id&limit=1`,
   );
-  if (!profileResponse.ok) return { ok: false, code: "central_unavailable", error: "Could not load this staff account" };
+  if (!profileResponse.ok)
+    return { ok: false, code: "central_unavailable", error: "Could not load this staff account" };
   const profiles = (await profileResponse.json()) as {
     id: string;
     user_id: string;
@@ -126,7 +112,10 @@ export async function cashierLoginServer(input: {
   if (!profile?.is_active) return { ok: false, error: "Account deactivated" };
   const authEmail = profile.email?.trim().toLowerCase() ?? "";
   if (!authEmail || !profile.auth_user_id) {
-    return { ok: false, error: "This staff account needs its login identity repaired by an administrator" };
+    return {
+      ok: false,
+      error: "This staff account needs its login identity repaired by an administrator",
+    };
   }
   // A PIN is not necessarily this person's email-account password. Mint a
   // one-use proof instead of changing or guessing that password.

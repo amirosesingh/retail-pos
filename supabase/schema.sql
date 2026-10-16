@@ -17438,6 +17438,155 @@ $function$;
 REVOKE ALL ON FUNCTION public.reserve_stock_document_number(text,bigint,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.reserve_stock_document_number(text,bigint,text) TO service_role;
 
+-- Every PIN entrypoint shares this serialized, canonical account brake.
+CREATE OR REPLACE FUNCTION public.verify_terminal_pin(p_user_id text, p_pin text)
+RETURNS TABLE(user_id text, full_name text, role public.app_role, store_id text, email text)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $$
+DECLARE
+  account public.app_users%rowtype;
+  terminal public.cashiers%rowtype;
+  attempt_key text;
+  state jsonb;
+BEGIN
+  SELECT * INTO account FROM public.app_users a
+    WHERE lower(a.user_id) = lower(trim(p_user_id))
+       OR lower(a.email) = lower(trim(p_user_id))
+    ORDER BY (lower(a.user_id) = lower(trim(p_user_id))) DESC LIMIT 1;
+  attempt_key := 'terminal-pin:' || lower(coalesce(account.user_id, trim(p_user_id)));
+  PERFORM pg_advisory_xact_lock(hashtextextended(attempt_key, 0));
+  state := public.pin_throttle_status(attempt_key);
+  IF coalesce((state->>'locked')::boolean, true) THEN RETURN; END IF;
+  IF account.id IS NOT NULL AND account.is_active IS TRUE THEN
+    SELECT * INTO terminal FROM public.cashiers c
+      WHERE lower(c.username) = lower(account.user_id) AND c.is_active LIMIT 1;
+    IF coalesce(terminal.pin_hash, '') <> '' AND p_pin IS NOT NULL
+       AND terminal.pin_hash = extensions.crypt(p_pin, terminal.pin_hash) THEN
+      PERFORM public.pin_throttle_reset(attempt_key);
+      UPDATE public.app_users SET last_login_at = now() WHERE id = account.id;
+      UPDATE public.cashiers SET last_login_at = now() WHERE id = terminal.id;
+      RETURN QUERY SELECT account.user_id::text, account.full_name::text, account.role,
+        account.store_id::text, account.email::text;
+      RETURN;
+    END IF;
+  END IF;
+  PERFORM public.pin_throttle_fail(attempt_key, 5, 900, 300);
+END
+$$;
+REVOKE ALL ON FUNCTION public.verify_terminal_pin(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_terminal_pin(text,text) TO service_role;
+
+-- Legacy preparation is retained, with exactly the same account lock key.
+CREATE OR REPLACE FUNCTION public.verify_cashier_pin(p_username text, p_pin text)
+RETURNS TABLE(id uuid, username text, full_name text, store_id text, permissions jsonb)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $$
+DECLARE
+  v_row public.cashiers%rowtype;
+  canonical text;
+  attempt_key text;
+  state jsonb;
+BEGIN
+  SELECT a.user_id INTO canonical FROM public.app_users a
+    WHERE lower(a.user_id) = lower(trim(p_username)) OR lower(a.email) = lower(trim(p_username))
+    ORDER BY (lower(a.user_id) = lower(trim(p_username))) DESC LIMIT 1;
+  canonical := coalesce(canonical, trim(p_username));
+  attempt_key := 'terminal-pin:' || lower(canonical);
+  PERFORM pg_advisory_xact_lock(hashtextextended(attempt_key, 0));
+  state := public.pin_throttle_status(attempt_key);
+  IF coalesce((state->>'locked')::boolean, true) THEN RETURN; END IF;
+  SELECT * INTO v_row FROM public.cashiers c
+    WHERE lower(c.username) = lower(canonical) AND c.is_active LIMIT 1;
+  IF v_row.id IS NULL OR coalesce(v_row.pin_hash, '') = '' OR p_pin IS NULL
+     OR v_row.pin_hash <> extensions.crypt(p_pin, v_row.pin_hash) THEN
+    PERFORM public.pin_throttle_fail(attempt_key, 5, 900, 300);
+    RETURN;
+  END IF;
+  PERFORM public.pin_throttle_reset(attempt_key);
+  UPDATE public.cashiers SET last_login_at = now() WHERE public.cashiers.id = v_row.id;
+  RETURN QUERY SELECT v_row.id, v_row.username, v_row.full_name,
+    v_row.store_id, coalesce(v_row.permissions, '{}'::jsonb);
+END
+$$;
+REVOKE ALL ON FUNCTION public.verify_cashier_pin(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text,text) TO service_role;
+
+-- Legacy preparation is retained, with exactly the same account lock key.
+CREATE OR REPLACE FUNCTION public.verify_cashier_pin(p_username text, p_pin text)
+RETURNS TABLE(id uuid, username text, full_name text, store_id text, permissions jsonb)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $$
+DECLARE
+  v_row public.cashiers%rowtype;
+  canonical text;
+  attempt_key text;
+  state jsonb;
+BEGIN
+  SELECT a.user_id INTO canonical FROM public.app_users a
+    WHERE lower(a.user_id) = lower(trim(p_username)) OR lower(a.email) = lower(trim(p_username))
+    ORDER BY (lower(a.user_id) = lower(trim(p_username))) DESC LIMIT 1;
+  canonical := coalesce(canonical, trim(p_username));
+  attempt_key := 'terminal-pin:' || lower(canonical);
+  PERFORM pg_advisory_xact_lock(hashtextextended(attempt_key, 0));
+  state := public.pin_throttle_status(attempt_key);
+  IF coalesce((state->>'locked')::boolean, true) THEN RETURN; END IF;
+  SELECT * INTO v_row FROM public.cashiers c
+    WHERE lower(c.username) = lower(canonical) AND c.is_active
+      AND NOT EXISTS (SELECT 1 FROM public.app_users a
+        WHERE lower(a.user_id) = lower(canonical) AND a.is_active IS NOT TRUE)
+    LIMIT 1;
+  IF v_row.id IS NULL OR coalesce(v_row.pin_hash, '') = '' OR p_pin IS NULL
+     OR v_row.pin_hash <> extensions.crypt(p_pin, v_row.pin_hash) THEN
+    PERFORM public.pin_throttle_fail(attempt_key, 5, 900, 300);
+    RETURN;
+  END IF;
+  PERFORM public.pin_throttle_reset(attempt_key);
+  UPDATE public.cashiers SET last_login_at = now() WHERE public.cashiers.id = v_row.id;
+  RETURN QUERY SELECT v_row.id, v_row.username, v_row.full_name,
+    v_row.store_id, coalesce(v_row.permissions, '{}'::jsonb);
+END
+$$;
+REVOKE ALL ON FUNCTION public.verify_cashier_pin(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text,text) TO service_role;
+
+-- Direct authenticated inserts must carry the database-verified actor.
+-- Client timelines remain reports; only mutation-owned audit entries prove actions.
+CREATE OR REPLACE FUNCTION public.stamp_status_history_reporter()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+DECLARE reporter record;
+BEGIN
+  IF (SELECT auth.uid()) IS NOT NULL THEN
+    SELECT * INTO reporter FROM public.current_app_user();
+    IF reporter.user_id IS NULL OR reporter.is_active IS NOT TRUE THEN
+      RAISE EXCEPTION 'Active staff account required' USING ERRCODE='42501';
+    END IF;
+    IF reporter.role::text <> 'admin' THEN
+      IF reporter.store_id IS NULL OR
+         (NEW.store_id IS NOT NULL AND lower(NEW.store_id) <> lower(reporter.store_id)) THEN
+        RAISE EXCEPTION 'Branch scope required' USING ERRCODE='42501';
+      END IF;
+      NEW.store_id := reporter.store_id;
+    END IF;
+    NEW.actor_id := reporter.user_id;
+    NEW.actor_name := reporter.full_name;
+    NEW.actor_role := reporter.role::text;
+    NEW.branch_id := NEW.store_id;
+    NEW.terminal_id := NULL;
+  END IF;
+  NEW.metadata := coalesce(NEW.metadata, '{}'::jsonb) || '{"client_reported":true}'::jsonb;
+  RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION public.stamp_status_history_reporter() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS entity_status_history_reporter ON public.entity_status_history;
+CREATE TRIGGER entity_status_history_reporter BEFORE INSERT ON public.entity_status_history
+FOR EACH ROW EXECUTE FUNCTION public.stamp_status_history_reporter();
+
 -- Final public-schema privilege hardening
 -- This must remain after every routine definition in this canonical installer.
 -- ===========================================================================

@@ -36,6 +36,7 @@ function loadStore() {
   } as never;
   return require_(storePath) as {
     read: () => { tokenId?: string } | null;
+    wasProvisioned: () => boolean;
     write: (c: unknown) => { ok: boolean; error?: string };
   };
 }
@@ -51,6 +52,25 @@ afterEach(() => {
 });
 
 describe("desktop activation store", () => {
+  it("keeps provisioning complete after revocation and a module reload", () => {
+    const store = loadStore();
+    expect(store.wasProvisioned()).toBe(false);
+    expect(store.write(null).ok).toBe(true);
+    expect(store.wasProvisioned()).toBe(false);
+    expect(store.write({ tokenId: "t-1" }).ok).toBe(true);
+    expect(store.write(null).ok).toBe(true);
+    expect(loadStore().wasProvisioned()).toBe(true);
+    expect(loadStore().read()).toBeNull();
+  });
+
+  it("migrates provisioning state before removing an older activation", () => {
+    writeFileSync(join(dir, "terminal-config.bin"), "old activation");
+    const store = loadStore();
+    expect(store.wasProvisioned()).toBe(true);
+    expect(store.write(null).ok).toBe(true);
+    expect(store.wasProvisioned()).toBe(true);
+  });
+
   it("seals the activation and leaves no readable copy", () => {
     const store = loadStore();
     expect(store.write({ tokenId: "t-1", locationId: "b-1" }).ok).toBe(true);
