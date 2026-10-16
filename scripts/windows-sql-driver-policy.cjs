@@ -16,4 +16,15 @@ function sqlDriverFailures(manifest, lock, installedVersion) {
   return failures;
 }
 
-module.exports = { sqlDriverFailures };
+function packagedSqlDriverFailures(asar, archive, selectedVersion) {
+  // ASAR traverses directories using path.sep. A slash-separated literal is
+  // treated as one directory name on Windows even when the entry exists.
+  const path = require("node:path");
+  const filename = path.join("node_modules", "mssql", "package.json");
+  const driver = JSON.parse(asar.extractFile(archive, filename).toString("utf8"));
+  return driver.version === selectedVersion ? [] : [
+    "packaged SQL Server driver version differs from the selected version",
+  ];
+}
+
+module.exports = { sqlDriverFailures, packagedSqlDriverFailures };

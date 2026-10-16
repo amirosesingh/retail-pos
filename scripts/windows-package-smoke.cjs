@@ -8,7 +8,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "ut
 const failures = [];
 const check = (condition, message) => { if (!condition) failures.push(message); };
 
-const { sqlDriverFailures } = require("./windows-sql-driver-policy.cjs");
+const { sqlDriverFailures, packagedSqlDriverFailures } = require("./windows-sql-driver-policy.cjs");
 try {
   const lock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
   const installed = JSON.parse(fs.readFileSync(path.join(root, "node_modules", "mssql", "package.json"), "utf8"));
@@ -60,9 +60,7 @@ if (packageDirectory) {
     check(packagedManifest.main === manifest.main, "packaged application entry point differs from the source manifest");
     check(packagedManifest.dependencies?.mssql === manifest.dependencies?.mssql,
       "packaged SQL Server driver selection differs from the source manifest");
-    const packagedDriver = JSON.parse(asar.extractFile(archive, "node_modules/mssql/package.json").toString("utf8"));
-    check(packagedDriver.version === manifest.dependencies?.mssql,
-      "packaged SQL Server driver version differs from the selected version");
+    failures.push(...packagedSqlDriverFailures(asar, archive, manifest.dependencies?.mssql));
   } catch (error) {
     failures.push(`cannot validate packaged ASAR: ${error.message}`);
   }
