@@ -12,6 +12,9 @@ import { CloudOff, RefreshCw } from "lucide-react";
 import { useRouterState } from "@tanstack/react-router";
 
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
+import { useStartupGate } from "@/core/activation/registration-status";
+import { subscribeConfigReady, type ConfigReadiness } from "@/lib/platform-config-ready";
+import { needsSetupRecovery } from "@/lib/startup-recovery";
 
 import { isOnlineOnly } from "@/lib/live-mode";
 import { isRecoveryPath, onRecoveryScreen } from "@/lib/recovery-route";
@@ -40,7 +43,11 @@ export function OfflineGate({ children }: { children: ReactNode }) {
   </>;
 }
 
-function OfflineStatus() {
+export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
+  const startup = useStartupGate();
+  const [profile, setProfile] = useState<ConfigReadiness | null>(null);
+  useEffect(() => subscribeConfigReady(setProfile), []);
+  const needsRepair = needsSetupRecovery(profile, startup.registration);
   const live = isOnlineOnly();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // Emergency access repairs the connection this gate is waiting for, so it
@@ -58,7 +65,7 @@ function OfflineStatus() {
     };
   }, [recovery]);
 
-  if (!live || recovery) return null;
+  if ((!live && !force) || recovery) return null;
 
   // Still checking: the cloud icon alone, nothing else on screen.
   if (state === "connecting")
@@ -75,7 +82,7 @@ function OfflineStatus() {
       </div>
     );
 
-  if (state === "online") return null;
+  if (state === "online" && !force) return null;
 
   const browserOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   const verdict = cloudVerdict();
@@ -133,7 +140,7 @@ function OfflineStatus() {
         {/* The way back in when the address itself is what is wrong. Router
             navigation, never a page load: a hard load would restart the shell
             and put this gate straight back in front of the repair screen. */}
-        <EmergencyAccessLink />
+        {needsRepair && <EmergencyAccessLink />}
       </div>
     </div>
   );

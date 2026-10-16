@@ -74,6 +74,7 @@ vi.mock("@/lib/external-supabase-config", () => ({
 }));
 
 vi.mock("@/lib/sync-status", () => ({ setSyncState: () => {} }));
+vi.mock("@/platforms/mobile/mobile-storage", () => ({ hydrateNativeStorage: async () => {} }));
 
 // The sync kick must be observable and must never fire mid-commit.
 const syncRuns: string[] = [];
@@ -101,6 +102,7 @@ function installWindow() {
   };
   (globalThis as { window?: unknown }).window = globalThis;
   (globalThis as { localStorage?: unknown }).localStorage = localStorage;
+  Object.assign(globalThis, { dispatchEvent: () => true });
   (globalThis as { pos?: unknown }).pos = {
     backendUrl: async () => ({ ok: true, url: electronStore.backendUrl }),
     setBackendUrl: async (value: string) => {

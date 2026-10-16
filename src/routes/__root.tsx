@@ -35,6 +35,7 @@ import { RECOVERY_PATH } from "@/lib/recovery-route";
 import { ThemeProvider, themeBootScript } from "../lib/theme";
 import { publicConfigScript } from "../lib/public-config-script";
 import { NativeBoot } from "@/platforms/mobile/components/NativeBoot";
+import { NativeWindowFrame } from "@/components/shared/NativeWindowFrame";
 import { AndroidPushAgent } from "@/platforms/mobile/components/AndroidPushAgent";
 import { OfflineGate } from "@/platforms/mobile/components/OfflineGate";
 import {
@@ -314,9 +315,10 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        <NativeWindowFrame>
         <NativeBoot>
-          <OfflineGate>
-            <ConnectionProfileBoot>
+          <ConnectionProfileBoot>
+            <OfflineGate>
               {isCustomerPublicRoute(pathname) ? (
                 <>
                   <Outlet />
@@ -325,9 +327,10 @@ function RootComponent() {
               ) : (
                 <TillRuntime />
               )}
-            </ConnectionProfileBoot>
-          </OfflineGate>
+            </OfflineGate>
+          </ConnectionProfileBoot>
         </NativeBoot>
+        </NativeWindowFrame>
       </ThemeProvider>
     </QueryClientProvider>
   );

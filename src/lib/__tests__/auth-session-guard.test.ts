@@ -15,6 +15,16 @@ function auth(overrides: Partial<AuthSessionApi> = {}): AuthSessionApi {
 }
 
 describe("persisted Supabase session validation", () => {
+  it("releases desktop startup without trusting a stalled cloud session", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = auth({ getSession: () => new Promise(() => {}) });
+      const checking = validateStoredAuthSession(api, { online: true, timeoutMs: 8000 });
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(await checking).toEqual({ state: "unavailable", session: null });
+      expect(api.getUser).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
   it("does not mistake a failed session restore for a signed-out account", async () => {
     const api = auth({getSession:vi.fn(async()=>({data:{session:null},error:{status:503,message:"Service unavailable"}}))});
     expect(await validateStoredAuthSession(api,{online:true})).toEqual({state:"unavailable",session:null});

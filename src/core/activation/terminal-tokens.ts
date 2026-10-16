@@ -409,6 +409,7 @@ const EVENT = "pos:terminal-config-changed";
 const SEALED_NAME = "terminal.config";
 let cachedConfig: TerminalConfig | null = null;
 let hydrated = false;
+let hydration: Promise<TerminalConfig | null> | null = null;
 
 const parseConfig = (raw: string | null): TerminalConfig | null => {
   if (!raw) return null;
@@ -436,6 +437,13 @@ export const isTerminalConfigHydrated = () => hydrated;
 export async function hydrateTerminalConfig(): Promise<TerminalConfig | null> {
   if (typeof window === "undefined") return null;
   if (hydrated) return cachedConfig;
+  if (hydration) return hydration;
+  hydration = restoreSavedTerminalConfig();
+  try { return await hydration; }
+  finally { hydration = null; }
+}
+
+async function restoreSavedTerminalConfig(): Promise<TerminalConfig | null> {
   const legacy = parseConfig(window.localStorage.getItem(CONFIG_KEY));
   if (legacy) {
     cachedConfig = legacy;
@@ -456,8 +464,9 @@ export async function hydrateTerminalConfig(): Promise<TerminalConfig | null> {
     window.dispatchEvent(new CustomEvent(EVENT));
     return cachedConfig;
   }
+  let restoreError: unknown;
   try {
-    const sealed = await getDeviceSecret<TerminalConfig>(SEALED_NAME);
+    const sealed = await getDeviceSecret<TerminalConfig>(SEALED_NAME, true);
     if (sealed?.tokenId) {
       const shell = tokenPlatformForRuntime(terminalRuntimePlatform());
       cachedConfig = {
@@ -467,9 +476,22 @@ export async function hydrateTerminalConfig(): Promise<TerminalConfig | null> {
       applyTenantOverride(cachedConfig);
       await desktopBridge()?.writeTerminalConfig(cachedConfig).catch(() => undefined);
     }
-  } catch {
-    /* unreadable seal — treat as not activated */
+  } catch (error) {
+    restoreError = error;
   }
+  // Restore the native mirror before startup decides registration. The hook
+  // used to read this later, after an offline launch had already been blocked.
+  if (!cachedConfig && desktopBridge()) {
+    const result = await desktopBridge()!.readTerminalConfig();
+    if (!result?.ok) throw new Error("Could not restore the saved terminal registration. Retry opening the app.");
+    if (result.config?.tokenId) {
+      cachedConfig = parseConfig(JSON.stringify(result.config));
+      applyTenantOverride(cachedConfig);
+      restoreError = undefined;
+      await setDeviceSecret(SEALED_NAME, cachedConfig).catch(() => undefined);
+    }
+  }
+  if (restoreError) throw new Error("Could not restore the saved terminal registration. Your registration has not been removed.");
   hydrated = true;
   window.dispatchEvent(new CustomEvent(EVENT));
   return cachedConfig;

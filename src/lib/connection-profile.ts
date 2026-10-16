@@ -18,6 +18,7 @@ import { isTerminalApp } from "@/platform-config/platform";
 import { hydrateBackendUrl } from "./backend-config";
 import { initCloudConfigFromShell } from "./secure-cloud-config";
 import { hydrateTerminalConfig } from "@/core/activation/terminal-tokens";
+import { hydrateNativeStorage } from "@/platforms/mobile/mobile-storage";
 
 export type ProfileHydration = "idle" | "hydrating" | "hydrated";
 
@@ -47,15 +48,14 @@ export function hydrateConnectionProfile(): Promise<void> {
   if (inFlight) return inFlight;
   state = "hydrating";
   inFlight = (async () => {
+    // The root heartbeat can start before NativeBoot. It must join the same
+    // Preferences restore before any activation decryption or key generation.
+    await hydrateNativeStorage();
     // Terminal identity first. An older activation record also carries the
     // cloud pair that was current when the till was registered, and applying
     // it after the vault pair would silently point the till at the previous
     // project. Restoring it first lets the device's own saved connection win.
-    try {
-      await hydrateTerminalConfig();
-    } catch {
-      /* no readable activation — the saved connection stands on its own */
-    }
+    await hydrateTerminalConfig();
     // Missing values resolve normally. Unreadable storage must keep the boot
     // gate closed. Settle both reads before allowing another restore attempt.
     for (let attempt = 0; ; attempt++) {

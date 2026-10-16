@@ -77,7 +77,7 @@ describe("OTA bundle compatibility", () => {
     );
     expect(boot.indexOf(".then(() => applyPendingWebBundle())")).toBeGreaterThan(-1);
     expect(boot.indexOf(".then(() => applyPendingWebBundle())")).toBeLessThan(
-      boot.indexOf(".then(() => runDeviceCleanup())"),
+      boot.indexOf("void runDeviceCleanup()"),
     );
   });
 

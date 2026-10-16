@@ -1255,3 +1255,23 @@
   color: var(--settings-accent);
 }
 .settings-workspace .animate-spin { animation-duration: 1s; }
+/* Native captions reserve their own space even on login and recovery screens.
+   Dragging is restricted to this strip, never tables, popups or form controls. */
+.native-caption {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 32px;
+  z-index: 100;
+  background: #0b0b0c;
+  app-region: drag;
+}
+html[data-native-caption] body { padding-top: 32px; }
+html[data-native-caption] .min-h-screen { min-height: calc(100dvh - 32px); }
+html[data-native-caption] .h-screen { height: calc(100dvh - 32px); }
+html[data-native-caption] .h-dvh { height: calc(100dvh - 32px); }
+html[data-native-caption] .min-h-dvh { min-height: calc(100dvh - 32px); }
+html[data-native-caption] [data-sonner-toaster][data-y-position="top"] { top: calc(var(--offset-top, 24px) + 32px); }
+html[data-native-caption] .pos-dialog-content {
+  top: calc(50% + 16px);
+  max-height: calc(100dvh - 64px);
+}

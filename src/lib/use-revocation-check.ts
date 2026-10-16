@@ -85,16 +85,28 @@ export async function terminalVerdict(
     lookup?: typeof fetchTokenStatus;
     isOnline?: () => boolean;
     confirmDelayMs?: number;
+    timeoutMs?: number;
   } = {},
 ): Promise<TerminalVerdict> {
   const lookup = deps.lookup ?? fetchTokenStatus;
   const isOnline = deps.isOnline ?? (() => typeof navigator === "undefined" || navigator.onLine);
+  const boundedLookup = async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        lookup(tokenId),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Terminal verification timed out")), deps.timeoutMs ?? 8000);
+        }),
+      ]);
+    } finally { clearTimeout(timer); }
+  };
   // No link, no verdict: the till keeps selling exactly as it was.
   if (!isOnline()) return { outcome: "unknown" };
 
   let remote: Awaited<ReturnType<typeof fetchTokenStatus>>;
   try {
-    remote = await lookup(tokenId);
+    remote = await boundedLookup();
   } catch {
     return { outcome: "unknown" }; // transient error — try again on the next tick
   }
@@ -104,7 +116,7 @@ export async function terminalVerdict(
     await wait(deps.confirmDelayMs ?? MISSING_CONFIRM_MS);
     if (!isOnline()) return { outcome: "unknown" };
     try {
-      const again = await lookup(tokenId);
+      const again = await boundedLookup();
       if (!again) return { outcome: "missing" };
       remote = again;
     } catch {

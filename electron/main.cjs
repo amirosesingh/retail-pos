@@ -5,7 +5,7 @@ const os = require("node:os");
 const net = require("node:net");
 const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
-const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage } = require("electron");
+const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage, Menu } = require("electron");
 
 require("./window-rendering.cjs").configureWindowRendering(app);
 
@@ -816,6 +816,7 @@ function lockDownNavigation(win, route) {
 
 function instrument(win, route) {
   lockDownNavigation(win, route);
+  void win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {});
   // A page that painted is proof the build works, whatever screen it landed on
   // — setup, sign-in or the register. Only a window that never renders at all
   // counts as a failed launch.
@@ -837,6 +838,11 @@ function createWindows(initialRoute = "/") {
     backgroundColor: "#0b0b0c",
     // Native captions provide window controls on login and all POS screens.
     frame: true,
+    autoHideMenuBar: true,
+    ...(process.platform === "win32" ? {
+      titleBarStyle: "hidden",
+      titleBarOverlay: { color: "#0b0b0c", symbolColor: "#ffffff", height: 32 },
+    } : {}),
     transparent: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -2258,6 +2264,7 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const headers = { ...details.responseHeaders };
     // Cloudflare challenge/RUM responses can include their own report-only

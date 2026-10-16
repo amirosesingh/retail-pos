@@ -104,9 +104,13 @@ test("manual startup retry performs a new probe after the first launch check",as
   const slots=[];let index=0;let effects=[];let calls=0;
   const useState=initial=>{const slot=index++;if(!(slot in slots))slots[slot]=typeof initial==="function"?initial():initial;return[slots[slot],value=>{slots[slot]=typeof value==="function"?value(slots[slot]):value;}];};
   const useEffect=(effect)=>effects.push(effect);
-  const deps={useState,useEffect,isCloudConnected:()=>true,cloudVerdict:()=>"verified",hasProbedCloud:()=>true,checkHealth:async()=>{calls++;return{cloud:true};},isRegistered:async()=>"registered",subscribeConnectivity:()=>()=>{},cloudKeyStatus:async()=>({configured:true}),subscribeCloudKeys:()=>()=>{}};
+  let registration="registered",registrationListener;
+  const deps={useState,useEffect,isCloudConnected:()=>true,cloudVerdict:()=>"verified",hasProbedCloud:()=>true,checkHealth:async()=>{calls++;return{cloud:true};},isRegistered:async()=>registration,subscribeTerminalConfig:callback=>{registrationListener=callback;return()=>{};},subscribeConnectivity:()=>()=>{},cloudKeyStatus:async()=>({configured:true}),subscribeCloudKeys:()=>()=>{}};
   const hook=new Function(...Object.keys(deps),`${source};return useStartupGate;`)(...Object.values(deps));
   const render=async()=>{index=0;effects=[];const value=hook();for(const effect of effects)effect();await new Promise(resolve=>setImmediate(resolve));return value;};
   const initial=await render();assert.equal(calls,0);
   initial.refresh();await render();assert.equal(calls,1);
+  registration="not-registered";registrationListener();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(slots[0],"not-registered");
 });

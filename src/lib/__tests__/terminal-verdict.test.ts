@@ -19,6 +19,16 @@ const deps = (lookup: (id: string) => Promise<Status>) => ({
 });
 
 describe("terminalVerdict", () => {
+  it("releases an offline cold start when a network lookup never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const lookup = vi.fn(() => new Promise<Status>(() => {}));
+      const result = terminalVerdict("t1", { ...deps(lookup), timeoutMs: 8000 });
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(await result).toEqual({ outcome: "unknown" });
+      expect(lookup).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
   it("accepts a live registration", async () => {
     const r = await terminalVerdict("t1", deps(async () => row("used")));
     expect(r.outcome).toBe("ok");

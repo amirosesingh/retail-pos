@@ -43,6 +43,7 @@ import { awaitProfileHydrated } from "@/lib/connection-profile";
 import { hydrateTerminalConfig, readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { hasRequiredPlatformConfig, subscribeConfigReady } from "@/lib/platform-config-ready";
 import { isTerminalApp } from "@/platform-config/platform";
+import { isWindowsShell } from "@/platform-config/features";
 import { recordDiagnostic, reasonCode } from "@/lib/diagnostics";
 import {
   failureFromAuthError,
@@ -76,6 +77,7 @@ async function validateCentralAuthSession(online: boolean) {
   if (centralSessionCheck?.epoch === epoch && centralSessionCheck.online === online) return centralSessionCheck.promise;
   const promise = validateStoredAuthSession(supabase.auth, {
     online,
+    ...(isWindowsShell() ? { timeoutMs: 8000 } : {}),
     verifySession: async (current) => {
       const { verifySession } = await import("@/lib/session-verify.functions");
       const checked = await verifySession({

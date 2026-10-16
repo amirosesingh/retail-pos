@@ -34,7 +34,7 @@ export function CloudSetupGate() {
     // Configuration readiness is a local fact: it does not depend on whether
     // the device happens to be online, and there is no web fallback to hide
     // behind. Missing configuration means setup, every launch, until saved.
-    const offReady = subscribeConfigReady((state) => setOpen(!state.ready));
+    const offReady = subscribeConfigReady((state) => setOpen(state.state === "missing" || state.state === "incomplete"));
     // The desktop shell announces the missing keys as soon as the window shows.
     const offShell = window.pos?.onCloudSetupRequired?.(() => setOpen(true));
     return () => {

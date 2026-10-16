@@ -71,8 +71,8 @@ export async function setDeviceSecret(name: string, value: unknown): Promise<voi
   if (revisions.get(name) === revision) window.localStorage.setItem(PREFIX + name, toB64(packed));
 }
 
-/** Read a sealed value back, or null when it is absent or unreadable. */
-export async function getDeviceSecret<T>(name: string): Promise<T | null> {
+/** Strict startup reads distinguish an unreadable seal from an absent value. */
+export async function getDeviceSecret<T>(name: string, strict = false): Promise<T | null> {
   if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(PREFIX + name);
   if (!raw) return null;
@@ -84,7 +84,8 @@ export async function getDeviceSecret<T>(name: string): Promise<T | null> {
       packed.slice(12),
     );
     return JSON.parse(dec.decode(plain)) as T;
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return null;
   }
 }

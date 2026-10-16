@@ -40,6 +40,22 @@ const rejected = (error: AuthErrorLike | null | undefined) =>
  */
 export async function validateStoredAuthSession(
   auth: AuthSessionApi,
+  options: Parameters<typeof checkStoredAuthSession>[1] & { timeoutMs?: number },
+): Promise<AuthSessionCheck> {
+  if (options.timeoutMs === undefined) return checkStoredAuthSession(auth, options);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      checkStoredAuthSession(auth, options),
+      new Promise<AuthSessionCheck>(resolve => {
+        timer = setTimeout(() => resolve({ state: "unavailable", session: null }), options.timeoutMs);
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+async function checkStoredAuthSession(
+  auth: AuthSessionApi,
   options: {
     online: boolean;
     now?: number;
