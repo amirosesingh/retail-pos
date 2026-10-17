@@ -1,3 +1,5 @@
+import { approvalBranchLabel, approvalDisplayFields } from "@/lib/approval-display";
+import { ApprovalDiscountReview } from "@/platforms/web/components/pos/ApprovalDiscountReview";
 /**
  * Pending approvals.
  *
@@ -333,7 +335,7 @@ function ApprovalsPage() {
 
         {orderedRows.map((row, index) => {
           const mine = !!me && row.requestedBy.toLowerCase() === me.id.toLowerCase();
-          const payload = Object.entries(row.payload ?? {});
+          const payload = approvalDisplayFields(row.payload ?? {});
           const outcome = approvalOutcome(row);
           return (
             <Fragment key={row.id}>
@@ -362,8 +364,7 @@ function ApprovalsPage() {
                       </CardTitle>
                       <p className="text-xs text-muted-foreground">
                         {approvalReference(row)} · {row.requestedByName || "Staff member"} ·{" "}
-                        {pos?.stores.find((store) => store.id === row.storeId)?.name ??
-                          "All branches"}{" "}
+                        {approvalBranchLabel(row.storeId, pos?.stores ?? [])}{" "}
                         · {ago(row.createdAt)}
                       </p>
                     </div>
@@ -420,6 +421,10 @@ function ApprovalsPage() {
                   <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain p-5 sm:p-6">
                     {row.reason ? <p className="text-sm">“{row.reason}”</p> : null}
                     <dl className="grid gap-4 rounded-xl border border-border/60 bg-muted/15 p-4 text-sm sm:grid-cols-2 lg:grid-cols-3 [&_dd]:break-words [&_dd]:[overflow-wrap:anywhere] [&_dt]:mb-1 [&_dt]:text-xs">
+                      <div className="sm:col-span-2 lg:col-span-3">
+                        <dt className="text-muted-foreground">Requesting branch</dt>
+                        <dd className="text-base font-semibold">{approvalBranchLabel(row.storeId, pos?.stores ?? [])}</dd>
+                      </div>
                       <div>
                         <dt className="text-muted-foreground">Approval number</dt>
                         <dd className="font-mono font-semibold">{approvalReference(row)}</dd>
@@ -476,7 +481,7 @@ function ApprovalsPage() {
                       draft={amount[row.id] ?? ""}
                       mode={amountMode[row.id] ?? "total"}
                     />
-                    <TicketReview row={row} />
+                    <TicketReview row={row} stores={pos?.stores ?? []} />
                     {row.status === "pending" ? (
                       mine ? (
                         <div className="flex items-center justify-between gap-3">
@@ -715,29 +720,10 @@ function ApprovalAmountReview({
 }) {
   const requestedDiscounts = ticketDiscounts(row.payload);
   if (requestedDiscounts.length) {
-    const decisions = ticketDiscounts(row.approvedPayload, "approved_discounts");
-    return (
-      <div className="space-y-2 rounded-md border border-border p-3 text-xs">
-        <p className="font-semibold">Bill discount review</p>
-        {requestedDiscounts.map((entry) => {
-          const approved = decisions.find((decision) => decision.index === entry.index);
-          const format = (value: number) =>
-            entry.type === "percent" ? `${value}%` : `$${money(value)}`;
-          return (
-            <p key={entry.index}>
-              {entry.name}
-              {entry.index >= 0 ? ` × ${entry.qty}` : ""} · requested {format(entry.value)}
-              {entry.type === "amount" && entry.index >= 0 ? " per unit" : ""}
-              {approved
-                ? ` · ${approved.value === 0 ? "Rejected" : `Approved ${format(approved.value)}`}`
-                : entry.requiresApproval
-                  ? " · Needs approval"
-                  : " · Within cashier limit"}
-            </p>
-          );
-        })}
-      </div>
-    );
+    return <ApprovalDiscountReview payload={row.payload} approvedPayload={row.approvedPayload} />;
+  }
+  if (typeof row.payload["requested_discounts"] === "string") {
+    return <ApprovalDiscountReview payload={row.payload} approvedPayload={row.approvedPayload} />;
   }
   const typed = draft.trim() === "" ? null : Number(draft);
   const entered =
@@ -894,7 +880,7 @@ function ApprovalRouteReview({ row }: { row: AuthorizationRequest }) {
  * The whole ticket the cashier was ringing when the request was sent, so the
  * approver decides on what they can see rather than a bare number.
  */
-function TicketReview({ row }: { row: AuthorizationRequest }) {
+function TicketReview({ row, stores }: { row: AuthorizationRequest; stores: readonly { id: string; name: string; code?: string }[] }) {
   const t = row.snapshot;
   if (!t)
     return (
@@ -926,8 +912,8 @@ function TicketReview({ row }: { row: AuthorizationRequest }) {
             <dd>{new Date(t.capturedAt).toLocaleString()}</dd>
           </div>
           <div>
-            <dt className="text-muted-foreground">Store ID</dt>
-            <dd className="break-all">{t.storeId || row.storeId || "—"}</dd>
+            <dt className="text-muted-foreground">Branch</dt>
+            <dd className="break-words">{approvalBranchLabel(row.storeId || t.storeId, stores)}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Terminal ID</dt>
@@ -982,8 +968,8 @@ function TicketReview({ row }: { row: AuthorizationRequest }) {
           <p className="text-muted-foreground">Walk-in customer — no member was attached.</p>
         )}
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[34rem] text-xs">
+      <div className="responsive-table-region overflow-x-auto">
+        <table data-mobile-cards="true" className="responsive-table w-full text-xs">
           <thead className="text-muted-foreground">
             <tr>
               <th className="px-3 py-1 text-left font-normal">Item</th>
@@ -997,17 +983,17 @@ function TicketReview({ row }: { row: AuthorizationRequest }) {
             {lines.length ? (
               lines.map((l, i) => (
                 <tr key={`${l.sku}-${i}`} className="border-t border-border/40">
-                  <td className="px-3 py-1">
+                  <td data-label="Item" className="min-w-0 break-words px-3 py-1">
                     <span className="font-medium">{l.name || l.sku || "Unknown item"}</span>
                     {l.sku ? (
                       <span className="block text-[10px] text-muted-foreground">{l.sku}</span>
                     ) : null}
                     {l.priceOverridden ? " · price changed" : ""}
                   </td>
-                  <td className="px-3 py-1 text-right">{l.qty}</td>
-                  <td className="px-3 py-1 text-right">{money(l.unitPrice)}</td>
-                  <td className="px-3 py-1 text-right">{money(l.discount)}</td>
-                  <td className="px-3 py-1 text-right">{money(l.lineTotal)}</td>
+                  <td data-label="Quantity" className="px-3 py-1 text-right">{l.qty}</td>
+                  <td data-label="Unit price" className="px-3 py-1 text-right">{money(l.unitPrice)}</td>
+                  <td data-label="Discount" className="px-3 py-1 text-right">{money(l.discount)}</td>
+                  <td data-label="Total" className="px-3 py-1 text-right">{money(l.lineTotal)}</td>
                 </tr>
               ))
             ) : (
