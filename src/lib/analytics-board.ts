@@ -153,8 +153,8 @@ async function fetchBoardData(from: string, to: string): Promise<BoardData> {
     const directory = result.directory ?? [];
     const bills = result.bills ?? [];
     return {
-      storeDays: (result.storeDays ?? []) as unknown as StoreDayRow[],
-      itemDays: (result.itemDays ?? []) as unknown as ItemDayRow[],
+      storeDays: ((result.storeDays ?? []) as unknown as StoreDayRow[]).map(row => ({...row, store_id: row.store_id == null ? null : canonicalBranchId(row.store_id)})),
+      itemDays: ((result.itemDays ?? []) as unknown as ItemDayRow[]).map(row => ({...row, store_id: row.store_id == null ? null : canonicalBranchId(row.store_id)})),
       bills: bills.map(row => ({ store_id: canonicalBranchId(row.store_id), store_name: String(row.store_name_snapshot ?? ""),
         created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
         total: n(row.total_amount), discount_amount: n(row.discount_amount), coupon_discount: n(row.coupon_discount) })),
