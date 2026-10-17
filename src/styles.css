@@ -892,7 +892,7 @@
   line-height: 1.45;
 }
 
-.pos-scaled button:not([role="checkbox"]):not([role="radio"]),
+.pos-scaled button:not([role="checkbox"]):not([role="radio"]):not([role="switch"]):not([data-slot="toggle"]),
 .pos-scaled [role="button"],
 .pos-scaled input:not([type="checkbox"]):not([type="radio"]),
 .pos-scaled select {
@@ -906,7 +906,7 @@
   min-width: calc(28px * var(--pos-scale));
 }
 
-.pos-compact .pos-scaled button:not([role="checkbox"]):not([role="radio"]),
+.pos-compact .pos-scaled button:not([role="checkbox"]):not([role="radio"]):not([role="switch"]):not([data-slot="toggle"]),
 .pos-compact .pos-scaled [role="button"],
 .pos-compact .pos-scaled input:not([type="checkbox"]):not([type="radio"]),
 .pos-compact .pos-scaled select {
@@ -914,18 +914,41 @@
 }
 
 @media (pointer: coarse) {
-  .pos-scaled button:not([role="checkbox"]):not([role="radio"]),
+  .pos-scaled button:not([role="checkbox"]):not([role="radio"]):not([role="switch"]):not([data-slot="toggle"]),
   .pos-scaled [role="button"],
   .pos-scaled input:not([type="checkbox"]):not([type="radio"]) {
     min-height: max(44px, calc(40px * var(--pos-scale)));
   }
 }
 
-/* Radix renders the shadcn Switch as a button. Keep its intended track size
-   instead of inheriting the register's full-size action-button minimum. */
-.pos-scaled button[data-slot="switch"] {
-  min-height: 1.5rem;
-  width: 2.75rem;
+/* Switch tracks keep their component dimensions, including compact mode.
+   Pressed toggles follow the same minimum width as the surrounding buttons. */
+.pos-scaled button[data-slot="toggle"] {
+  min-height: calc(40px * var(--pos-scale));
+  min-width: calc(40px * var(--pos-scale));
+}
+.pos-compact .pos-scaled button[data-slot="toggle"] {
+  min-height: calc(34px * var(--pos-scale));
+  min-width: calc(34px * var(--pos-scale));
+}
+
+@media (pointer: coarse) {
+  button[data-slot="toggle"],
+  .pos-scaled button[data-slot="toggle"],
+  .pos-compact .pos-scaled button[data-slot="toggle"] {
+    min-height: max(44px, calc(40px * var(--pos-scale, 1)));
+    min-width: max(44px, calc(40px * var(--pos-scale, 1)));
+  }
+  /* Expand the hit area without stretching the switch track or thumb. */
+  button[data-slot="switch"]::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
 }
 
 /* Frameless Electron window: the strip below the OS overlay drags the window,
