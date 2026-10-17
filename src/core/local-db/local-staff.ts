@@ -52,7 +52,7 @@ export async function rememberLocalPin(username: string, pin: string): Promise<v
 }
 
 export type LocalPinResult =
-  | { ok: true; staff: LocalStaffLogin }
+  | { ok: true; staff: LocalStaffLogin; credentialMethod?: "pin" | "totp" }
   | { ok: false; reason: string; error: string };
 
 /** Check a PIN against the local database. */
@@ -96,6 +96,7 @@ export async function verifyLocalApprovalPin(username: string, pin: string): Pro
     if (res?.ok && res.staff) {
       return {
         ok: true,
+        credentialMethod: (res as { credentialMethod?: "pin" | "totp" }).credentialMethod ?? "pin",
         staff: {
           id: res.staff.id,
           username: res.staff.username,

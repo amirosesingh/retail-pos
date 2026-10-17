@@ -1,3 +1,4 @@
+import { preserveApprovalMethods } from "./approval-credentials";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import type { RelayScope } from "@/core/api/relay-policy.server";
@@ -80,14 +81,11 @@ export const setManagedStaffPermissions = createServerFn({ method: "POST" })
     try {
       const actor = await requireStaffManager(data);
       const { serviceRest } = await import("@/core/api/pos-relay.server");
-      const response = await serviceRest(
-        `app_users?user_id=eq.${encodeURIComponent(data.userId)}`,
-        {
-          method: "PATCH",
-          headers: { Prefer: "return=minimal" },
-          body: JSON.stringify({ permissions: data.permissions }),
-        },
-      );
+      const permissions = preserveApprovalMethods(data.permissions, null);
+      const response = await serviceRest("rpc/approval_token_state", {
+        method: "POST",
+        body: JSON.stringify({ p_op: "permissions", p_user_id: data.userId, p_secret: JSON.stringify(permissions) }),
+      });
       if (!response.ok) throw new Error((await response.text()).slice(0, 300));
       await audit({
         actor,

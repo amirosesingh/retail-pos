@@ -41,6 +41,7 @@ jobs:
         run: |
           npx tsc --noEmit
           npm run build
+          node scripts/verify-approval-build.cjs web dist/client
       - name: Dependency vulnerability audit
         run: npm audit --audit-level=high
       - name: Report findings to the app

@@ -13,6 +13,7 @@ const bodySchema = z.object({
     "save_rule",
     "set_pin",
     "verify_mutation",
+    "approval_credentials",
   ]),
   data: z.record(z.string(), z.unknown()),
 });
@@ -24,6 +25,10 @@ export async function handleAuthorizationRequest(request: Request): Promise<Resp
     if (new TextEncoder().encode(raw).byteLength > 512 * 1024)
       return Response.json({ ok: false, error: "Approval request is too large" }, { status: 413 });
     const body = bodySchema.parse(JSON.parse(raw));
+    if (body.action === "approval_credentials") {
+      const { handleApprovalCredentials } = await import("./approval-token-endpoint.server");
+      return handleApprovalCredentials(new Request(request.url, { method: "POST", body: JSON.stringify(body.data) }));
+    }
     const functions = await import("@/lib/authorization.functions");
     const result =
       body.action === "authorize_pin"

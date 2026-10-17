@@ -38,7 +38,7 @@ async function listSyncedStaff(pool, branchId) {
 }
 
 /** Verify the same bcrypt PIN hash Supabase synchronized into local SQL Server. */
-async function verifySyncedPin(pool, username, pin, branchId, purpose) {
+async function verifySyncedPin(pool, username, pin, branchId, purpose, options = {}) {
   if (!pool || !branchId) return { ok: false, reason: "unavailable" };
   const name = String(username ?? "").trim().toLowerCase();
   const secret = String(pin ?? "");
@@ -77,7 +77,12 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose) {
     return { ok: false, reason: "locked", lockedUntil: new Date(lockUntil).toISOString() };
   }
   const hash = String(row.pin_hash ?? "");
-  if (!hash || !await bcrypt.compare(secret, hash)) {
+  const switches = permissions(row.permissions);
+  const pinEnabled = purpose !== "approval" || switches.approval_pin_enabled !== false;
+  const validPin = pinEnabled && hash && await bcrypt.compare(secret, hash);
+  const validToken = !validPin && purpose === "approval" && switches.approval_totp_enabled === true &&
+    typeof options.verifyTotp === "function" && await options.verifyTotp(pool, String(row.username), secret, branchId);
+  if (!validPin && !validToken) {
     const failed = await pool.request().input("key", throttleKey)
       .input("maxAttempts", MAX_PIN_ATTEMPTS)
       .input("windowMinutes", PIN_WINDOW_MINUTES)
@@ -103,6 +108,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose) {
   );
   return {
     ok: true,
+    credentialMethod: validToken ? "totp" : "pin",
     staff: {
       id: String(row.id ?? row.username),
       username: String(row.username),
@@ -117,7 +123,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose) {
 
 const verifySyncedStaffPin = (pool, username, pin, branchId) =>
   verifySyncedPin(pool, username, pin, branchId, "terminal");
-const verifySyncedApprovalPin = (pool, username, pin, branchId) =>
-  verifySyncedPin(pool, username, pin, branchId, "approval");
+const verifySyncedApprovalPin = (pool, username, pin, branchId, options) =>
+  verifySyncedPin(pool, username, pin, branchId, "approval", options);
 
 module.exports = { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin };

@@ -1,3 +1,4 @@
+import { ApprovalTokenAgent } from "@/platform-config/approval-token";
 import { createRefreshQueue, subscribeBackgroundRefresh } from "@/lib/background-refresh";
 import { queryReadsChangedTables } from "@/lib/live-query-tables";
 import { notifyError } from "@/lib/notify";
@@ -359,6 +360,7 @@ function TillRuntime() {
           <RulesBridge>
             <AuditTracker />
             <AndroidPushAgent />
+            <ApprovalTokenAgent />
             <TelemetryAgent />
             <FirstRunSetup>
               <PrivilegeGate>

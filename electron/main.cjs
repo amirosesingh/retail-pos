@@ -90,6 +90,27 @@ function publishBusinessChange(change){
   }
 }
 
+const { createApprovalTokenVerifier } = require("./approval-token-verifier.cjs");
+const approvalVerifierKey = require("./approval-token-key.cjs").createApprovalKey({
+  safeStorage, directory: () => app.getPath("userData"), terminal: () => terminalStore.read(),
+  origin: () => `${authorizationServerUrl()}|${cloudCredentials.read()?.url ?? ""}`,
+});
+const approvalTokenVerifier = createApprovalTokenVerifier({
+  safeStorage, directory: () => app.getPath("userData"), terminal: () => terminalStore.read(),
+  branch: () => localBranchId(), origin: () => `${authorizationServerUrl()}|${cloudCredentials.read()?.url ?? ""}`,
+  fetchBundle: async terminalToken => {
+    const url = authorizationServerUrl(); if (!url) return null;
+    const abort = new AbortController(); const timer = setTimeout(() => abort.abort(), 10000);
+    try {
+      const response = await fetch(`${url}/api/v1/pos/sync?operation=authorization`, {
+        method: "POST", signal: abort.signal, headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "approval_credentials", data: { action: "bundle", data: { terminalToken } } }),
+      });
+      return response.ok ? approvalVerifierKey.openEnvelope(await response.json()) : null;
+    } finally { clearTimeout(timer); }
+  },
+});
+
 function localBranchId(){
   const terminal=terminalStore.read()??{};
   return [terminal.locationId,terminal.storeId,terminal.branchId,adminSession.branchId()]
@@ -262,6 +283,7 @@ async function runAutomaticSync() {
     return;
   }
   automaticSyncQueued = false;
+  void approvalTokenVerifier.refresh();
   const includeActivity = Date.now() - lastActivityFlush >= ACTIVITY_INTERVAL_MS;
   let result = await syncCoordinator.runNow({ branchId: localBranchId(), batchSize: 500, includeActivity });
   if (result.ok && includeActivity) lastActivityFlush = Date.now();
@@ -1957,9 +1979,31 @@ function registerIpc() {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
   });
+  ipcMain.handle("approval:enroll-verifier", async (_e, proof) => guard.guarded(async () => {
+    if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_manage_staff"))
+      return { ok: false, error: "Staff management permission is required" };
+    const input = guard.options(proof, { name: "approval verifier proof", max: 4 });
+    const data = {};
+    for (const key of ["sessionToken", "cashierToken", "accessToken"])
+      if (input[key]) data[key] = guard.text(input[key], { name: key, max: 4000 });
+    const url = authorizationServerUrl(); if (!url) return { ok: false, error: "Backend is not configured" };
+    const abort = new AbortController(); const timer = setTimeout(() => abort.abort(), 10000);
+    try {
+      const response = await fetch(`${url}/api/v1/pos/sync?operation=authorization`, {
+        method: "POST", signal: abort.signal, headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "approval_credentials", data: { action: "register_verifier", data: {
+          ...data, terminalToken: terminalStore.read()?.tokenId, publicKey: approvalVerifierKey.publicKey(),
+        } } }),
+      });
+      const result = await response.json();
+      if (result.ok) void approvalTokenVerifier.refresh(true);
+      return result;
+    } finally { clearTimeout(timer); }
+  }));
   ipcMain.handle("staff:verify-approval-pin", async (_e, username, pin) => {
     try {
-      return await verifySyncedApprovalPin(databaseManager.pool, username, pin, localBranchId());
+      if (!adminSession.hasPosAuthority()) return { ok: false, reason: "unavailable", error: "Sign in before authorizing an action" };
+      return await verifySyncedApprovalPin(databaseManager.pool, username, pin, localBranchId(), { verifyTotp: approvalTokenVerifier.verify });
     } catch (error) {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }

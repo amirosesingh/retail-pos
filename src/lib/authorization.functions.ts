@@ -440,7 +440,14 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     const roles = rule?.allowedRoles ?? ["admin", "manager"];
     const users = rule?.allowedUserIds ?? [];
 
-    const person = await verifyAuthorizationPin(authorizerId, data.pin, roles, users);
+    const { approvalPerson, verifyApprovalTotp } = await import("./approval-token-server");
+    const { approvalMethods } = await import("./approval-credentials");
+    const credentials = await approvalPerson(authorizerId);
+    const methods = approvalMethods(credentials?.permissions);
+    const pinPerson = methods.pin ? await verifyAuthorizationPin(authorizerId, data.pin, roles, users) : null;
+    const tokenPerson = !pinPerson && methods.totp ? await verifyApprovalTotp(authorizerId, data.pin, storeId, data.terminalToken) : null;
+    const person = pinPerson ?? tokenPerson;
+    const credentialMethod = tokenPerson ? "totp" : "pin";
     if (!person) {
       const after = await throttleFail(key);
       await writeLog({
@@ -522,6 +529,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         reason: data.reason ?? "",
         requested_amount: data.requestedAmount ?? null,
         self_authorization: data.selfAuthorization,
+        credential_method: credentialMethod,
         ...auditContext,
       },
     });

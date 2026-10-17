@@ -70,6 +70,14 @@ function storedRow() {
 }
 
 describe("client audit report trust boundary", () => {
+  it("labels token approvals accurately while retaining PIN audit labels", () => {
+    for (const mode of ["pin", "offline_pin"]) {
+      expect(auditReportFields({ new_value: JSON.stringify({ mode_used: mode, credential_method: "totp" }) }).method)
+        .toBe(mode === "pin" ? "Approval code" : "Approval code (offline)");
+      expect(auditReportFields({ new_value: JSON.stringify({ mode_used: mode, credential_method: "pin" }) }).method)
+        .toBe(mode === "pin" ? "Manager PIN" : "Manager PIN (offline)");
+    }
+  });
   it("neutralizes spreadsheet formulas in CSV exports", () => {
     const reportKit = readFileSync("src/platforms/web/components/pos/report-kit.tsx", "utf8");
     expect(reportKit).toContain('/^[\\t\\r\\n ]*[=+\\-@]/');

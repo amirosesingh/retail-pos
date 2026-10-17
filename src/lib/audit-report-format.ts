@@ -70,7 +70,9 @@ export function auditReportFields(row: AuditDisplayRow) {
       "—",
     location: text(detail.approval_location) || text(detail.target_module) || "POS",
     method:
-      detail.self_authorization === true
+      detail.credential_method === "totp"
+        ? mode === "offline_pin" ? "Approval code (offline)" : "Approval code"
+        : detail.self_authorization === true
         ? mode === "offline_pin"
           ? "Own PIN (offline)"
           : "Own PIN"

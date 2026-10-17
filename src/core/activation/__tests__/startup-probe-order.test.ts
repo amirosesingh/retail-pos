@@ -222,4 +222,23 @@ describe("start-up connection check", () => {
     expect((await check).cloud).toBe(true);
     expect(calls).toBe(1);
   });
+  it("retries automatically on resume and coalesces overlapping lifecycle events", async () => {
+    vi.useFakeTimers();
+    const browser = new EventTarget();
+    Object.assign(browser, { dispatchEvent: browser.dispatchEvent.bind(browser), setTimeout, clearTimeout, setInterval, clearInterval });
+    const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    vi.stubGlobal("window", browser); vi.stubGlobal("document", doc);
+    vi.stubGlobal("navigator", { onLine: true });
+    const health = await import("@/core/activation/connection-health");
+    health.resetHealthCache(); health.resetConnectivity();
+    stopMonitor = health.startConnectivityMonitor(60000);
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(health.connectivity()).toBe("online");
+    let calls = 0;
+    queryImpl = async () => ({ error: ++calls <= 2 ? { message: "Failed to fetch" } : null });
+    browser.dispatchEvent(new Event("focus")); browser.dispatchEvent(new Event("pageshow"));
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(health.connectivity()).toBe("online"); expect(calls).toBeGreaterThanOrEqual(3);
+  });
+
 });

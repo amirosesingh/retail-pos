@@ -699,6 +699,7 @@ export type PosBridge = {
     };
   }>;
   verifyApprovalPin?: PosBridge["verifyStaffPin"];
+  enrollApprovalVerifier?: (proof: { sessionToken?: string; cashierToken?: string; accessToken?: string }) => Promise<{ ok: boolean; error?: string }>;
   rememberStaffPin?: (username: string, pin: string) => Promise<{ ok: boolean }>;
   forgetStaffPin?: (username: string) => Promise<{ ok: boolean }>;
   /** Hosted PIN verification performed by Electron main, outside Chromium. */

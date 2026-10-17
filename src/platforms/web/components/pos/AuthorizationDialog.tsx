@@ -1,3 +1,4 @@
+import { nativeApprovalCredentials } from "@/platform-config/approval-token";
 /**
  * The one prompt shown when an action needs authorising.
  *
@@ -160,6 +161,7 @@ export function AuthorizationDialog({
       detail: {
         reason: note.trim(),
         offline: true,
+        credential_method: result.credentialMethod ?? "pin",
         self_authorization: !!prompt.selfAuthorizer,
         requested_amount: prompt.requestedAmount ?? null,
         approval_location: prompt.payload?.["approval_location"] ?? null,
@@ -343,7 +345,7 @@ export function AuthorizationDialog({
         <div className="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm sm:col-span-2">
           <div className="font-medium">Confirm as {prompt.selfAuthorizer.name}</div>
           <div className="text-xs text-muted-foreground">
-            Enter your own PIN. This approval will be recorded under your account.
+            {nativeApprovalCredentials ? "Enter your own authorization PIN or soft token." : "Enter your own PIN."} This approval will be recorded under your account.
           </div>
         </div>
       ) : (
@@ -362,7 +364,7 @@ export function AuthorizationDialog({
         </div>
       )}
       <div className={prompt?.selfAuthorizer ? "space-y-1 sm:col-span-2" : "space-y-1"}>
-        <Label htmlFor={`${fieldId}-pin`} className="text-sm">Approval PIN</Label>
+        <Label htmlFor={`${fieldId}-pin`} className="text-sm">{nativeApprovalCredentials ? "Authorization PIN or soft token" : "Approval PIN"}</Label>
         <Input
           id={`${fieldId}-pin`}
           name="authorizer-pin"
@@ -414,7 +416,7 @@ export function AuthorizationDialog({
         {prompt?.mode === "either" ? (
           <Tabs value={tab} onValueChange={(v) => setTab(v as "pin" | "request")}>
             <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1">
-              <TabsTrigger value="pin" className="min-h-10 min-w-0 whitespace-normal px-2">Enter a PIN</TabsTrigger>
+              <TabsTrigger value="pin" className="min-h-10 min-w-0 whitespace-normal px-2">{nativeApprovalCredentials ? "PIN or soft token" : "Enter a PIN"}</TabsTrigger>
               <TabsTrigger value="request" className="min-h-10 min-w-0 whitespace-normal px-2">Send for approval</TabsTrigger>
             </TabsList>
             <TabsContent value="pin" className="pt-3">
