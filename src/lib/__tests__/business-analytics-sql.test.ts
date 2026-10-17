@@ -9,7 +9,7 @@ beforeAll(async () => {
     insert into pos_settings values(1,'{"timeZone":"Asia/Singapore"}');
     create table sales(id text primary key,bill_number text,store_id text,cashier_name text,created_at timestamptz,
       payment_type text,is_refunded boolean,total_amount numeric,tax_amount numeric,rounding_adjustment numeric);
-    create table sale_items(id text primary key,sale_id text,product_id text,product_name text,quantity numeric,unit_price numeric,
+    create table sale_items(id text primary key,sale_id text,created_at timestamptz default now(),store_id text,product_id text,product_name text,quantity numeric,unit_price numeric,
       unit_cost numeric,is_foc boolean default false,is_return boolean default false,discount_percent numeric default 0,discount_amount numeric default 0,coupon_discount numeric default 0);
     create table products(id text primary key,category text,cost_price numeric);
     insert into products values('p','Items',40),('q','Items',10),('r','Items',0);
@@ -44,7 +44,7 @@ beforeAll(async () => {
     if (!definition) throw new Error(`Missing previous reporting view ${name}`);
     await db.exec(definition);
   }
-  const migration = readFileSync("supabase/migrations/20261017080148_reconcile_business_analytics.sql", "utf8");
+  const migration = readFileSync("supabase/migrations/20261017083528_reconcile_business_analytics.sql", "utf8");
   await db.exec(migration);
   await db.exec(migration); // Safe to reapply after an interrupted deployment.
 

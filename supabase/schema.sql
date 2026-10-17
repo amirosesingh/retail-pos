@@ -19464,14 +19464,16 @@ END $release_hardening$;
 -- Required by personal-settings RLS ownership policies.
 GRANT EXECUTE ON FUNCTION public.settings_private_key() TO authenticated;
 
--- Business Overview reconciliation (20261017080148).
+-- Business Overview reconciliation (20261017083528).
 -- Read-only reporting definitions. No transaction rows or access policies are changed.
 CREATE OR REPLACE VIEW public.v_sale_line_facts WITH (security_invoker = true) AS
 WITH region AS (
   SELECT coalesce((SELECT name FROM pg_timezone_names
     WHERE name = (SELECT integration_settings->>'timeZone' FROM public.pos_settings WHERE id=1)), 'UTC') AS zone
 ), raw AS (
-  SELECT si.*, p.cost_price AS fallback_cost, s.bill_number,s.store_id,s.cashier_name,s.created_at,s.payment_type,s.is_refunded,
+  SELECT si.id,si.sale_id,si.product_id,si.product_name,si.quantity,si.unit_price,si.unit_cost,
+    si.is_foc,si.is_return,si.discount_percent,si.discount_amount,si.coupon_discount,
+    p.cost_price AS fallback_cost, s.bill_number,s.store_id,s.cashier_name,s.created_at,s.payment_type,s.is_refunded,
     (s.created_at AT TIME ZONE region.zone)::date AS sale_day,
     to_char(s.created_at AT TIME ZONE region.zone,'YYYY-MM') AS sale_month,
     round((s.total_amount-coalesce(s.tax_amount,0)-coalesce(s.rounding_adjustment,0))::numeric,2) AS net_total,
