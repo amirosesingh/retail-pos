@@ -66,7 +66,7 @@ import { describeLog } from "@/lib/audit-format";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { getRecentRecordEdits } from "@/lib/record-edits.functions";
+import { getRecentRecordEdits } from "@/lib/record-edits-client";
 import type { RecordEditRow } from "@/lib/record-edits.server";
 import { branchDisplayName } from "@/lib/human-readable";
 

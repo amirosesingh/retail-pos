@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth, useAuthOptional } from "@/lib/pos-auth";
 import { verifyLocalPin } from "@/core/local-db/local-staff";
-import { verifyManagerPin } from "@/lib/pos-rules.functions";
+import { verifyManagerPin } from "@/lib/pos-rules-client";
 import {
   PERMISSION_LABELS,
   resolvePermission,

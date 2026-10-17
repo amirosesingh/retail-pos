@@ -8,7 +8,7 @@ import {
   clearSecureSetting,
   listSecureSettings,
   saveSecureSetting,
-} from "@/lib/secure-settings.functions";
+} from "@/lib/secure-settings-client";
 
 type Key =
   | "whatsapp_token"

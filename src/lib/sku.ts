@@ -12,7 +12,7 @@
  */
 import { supabaseConfig } from "@/lib/external-supabase-config";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { reserveSkuLease } from "@/lib/sku.functions";
+import { reserveSkuLease } from "@/lib/sku-client";
 export type SkuMode = "auto" | "manual";
 
 export type SkuSettings = {

@@ -6,7 +6,7 @@ import { isAndroid } from "@/platform-config/platform";
 import { getDeviceSecret, setDeviceSecret } from "@/lib/device-secrets";
 import { PHONE_PUSH_BINDING, type PhonePushBinding } from "@/lib/android-push-device";
 import { supabaseConfig, hasSupabaseConfig } from "@/lib/external-supabase-config";
-import { updateAndroidPushDevice } from "@/lib/android-push.functions";
+import { updateAndroidPushDevice } from "@/lib/android-push-client";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import {
   Dialog,

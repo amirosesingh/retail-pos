@@ -13,7 +13,7 @@ import { resetGateway } from "@/lib/verification-gateway";
 import {
   getVerificationSettings,
   saveVerificationSettings,
-} from "@/lib/verification.functions";
+} from "@/lib/verification-client";
 
 type Channel = "email" | "sms" | "whatsapp";
 

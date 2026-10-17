@@ -10,7 +10,7 @@
  * and flushed on the next successful write.
  */
 import { readBusinessValue, writeBusinessValue } from "./business-storage";
-import { pushActivityEvent } from "./activity-events.functions";
+import { pushActivityEvent } from "./activity-events-client";
 import { readCredentials } from "./pos-credentials";
 import { posFetch } from "./server-origin";
 import { supabaseExternal } from "@/integrations/supabase/external-client";

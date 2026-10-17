@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from "react";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { loadStoreGroupsForCaller, saveStoreGroupForCaller } from "@/lib/store-groups.functions";
+import { loadStoreGroupsForCaller, saveStoreGroupForCaller } from "@/lib/store-groups-client";
 
 export type StoreGroup = {
   id: string;

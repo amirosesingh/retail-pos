@@ -35,7 +35,7 @@ export async function removePhonePushBinding() {
   const binding = await getDeviceSecret<PhonePushBinding>(PHONE_PUSH_BINDING);
   try {
     if (binding) {
-      const { updateAndroidPushDevice } = await import("./android-push.functions");
+      const { updateAndroidPushDevice } = await import("./android-push-client");
       const { getPosCallerAuth } = await import("./pos-caller-auth");
       await updateAndroidPushDevice({
         data: { ...(await getPosCallerAuth()), ...binding, action: "remove" },

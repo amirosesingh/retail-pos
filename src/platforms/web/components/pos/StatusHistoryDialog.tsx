@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { loadStatusHistory } from "@/lib/status-history.functions";
+import { loadStatusHistory } from "@/lib/status-history-client";
 import { readCredentials } from "@/lib/pos-credentials";
 import type { HistoryEntity } from "@/lib/status-history";
 

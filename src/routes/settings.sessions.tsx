@@ -5,7 +5,7 @@ import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsF
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { adminAccessToken } from "@/lib/admin-session";
-import { listDeviceSessions, revokeDeviceSessions } from "@/lib/user-sessions.functions";
+import { listDeviceSessions, revokeDeviceSessions } from "@/lib/user-sessions-client";
 import { isConnectionError } from "@/core/local-db/db-mode";
 
 type Row = {

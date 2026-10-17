@@ -25,7 +25,7 @@ const managedStaffRow = z.object({
   pin_length: z.number().nullable(),
   pin_set_at: z.string().nullable(),
   last_login_at: z.string().nullable(),
-  created_at: z.string(),
+  created_at: z.string().nullable(),
 });
 
 async function requireStaffManager(data: CallerProof) {

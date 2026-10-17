@@ -9,7 +9,7 @@
 import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
 import type { Sale, Shift } from "@/core/types/pos-types";
 import { getPosCallerAuth } from "./pos-caller-auth";
-import { sendWhatsAppBill } from "./whatsapp.functions";
+import { sendWhatsAppBill } from "./whatsapp-client";
 import { routedQuery } from "@/core/api/db-query";
 import { shiftAlertSettingsSchema } from "./shift-alert-settings-schema";
 import { runOpLive } from "./sync-engine";
@@ -55,7 +55,7 @@ export async function readAlertSettings(): Promise<ShiftAlertSettings> {
   return parsed.success ? parsed.data : DEFAULT_ALERT_SETTINGS;
 }
 export async function writeAlertSettings(next: ShiftAlertSettings) {
-  const { saveGlobalShiftAlerts } = await import("./shift-alert-settings.functions");
+  const { saveGlobalShiftAlerts } = await import("./shift-alert-settings-client");
   await saveGlobalShiftAlerts({ data: { ...await getPosCallerAuth(), settings: next } });
 }
 

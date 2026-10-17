@@ -12,7 +12,7 @@ import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import {
   confirmMemberVerification,
   startMemberVerification,
-} from "@/lib/verification.functions";
+} from "@/lib/verification-client";
 import { looksOffline, parkGovernanceRow } from "@/lib/governance-offline";
 
 type Props = {

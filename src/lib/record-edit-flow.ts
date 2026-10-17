@@ -17,7 +17,7 @@ import {
   resumeRecordEdit,
   whoAmI,
   withdrawRecordEdit,
-} from "@/lib/record-edits.functions";
+} from "@/lib/record-edits-client";
 
 export type RecordKind = "stock_count" | "purchase_order" | "sale";
 

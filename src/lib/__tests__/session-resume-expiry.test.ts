@@ -104,7 +104,7 @@ describe("logout scope", () => {
 
   it("validates restored browser sessions behind the app server boundary", () => {
     const auth = readFileSync("src/lib/pos-auth.tsx", "utf8");
-    expect(auth).toContain('import("@/lib/session-verify.functions")');
+    expect(auth).toContain('import("@/lib/session-verify-client")');
     expect(auth).toContain("data: { accessToken: current.access_token }");
     expect(auth).toContain("validateCentralAuthSession(");
     expect(auth).toContain('if (authCheck.state === "verified")');

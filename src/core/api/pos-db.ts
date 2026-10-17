@@ -2278,7 +2278,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[]): Promise<Commit
 
 /** Read the authoritative bill and its version before opening an admin correction. */
 export async function loadBillForCorrection(sale:Sale):Promise<Sale>{
-  const [{loadPostedSaleForCorrection},{getPosCallerAuth}]=await Promise.all([import("@/lib/sale-corrections.functions"),import("@/lib/pos-caller-auth")]);
+  const [{loadPostedSaleForCorrection},{getPosCallerAuth}]=await Promise.all([import("@/lib/sale-corrections-client"),import("@/lib/pos-caller-auth")]);
   const response=await loadPostedSaleForCorrection({data:{...await getPosCallerAuth(),saleId:sale.id,storeId:sale.storeId}});
   if(!response.ok)throw new Error(response.error);
   const rows=JSON.parse(response.receiptJson) as Row[];
@@ -2296,7 +2296,7 @@ export async function correctSaleInPlace(previous: Sale, corrected: Sale, reason
   const payload = {saleId:previous.id,storeId:previous.storeId,expectedVersion:previous.rowVersion ?? 0,clientKey,reason,
     totals:{subtotal_amount:corrected.subtotal,discount_amount:corrected.discount,tax_amount:corrected.tax,total_amount:corrected.total,coupon_discount:corrected.couponDiscount ?? 0},items};
   const local=localDb();
-  const [{correctPostedSale},{getPosCallerAuth}]=await Promise.all([import("@/lib/sale-corrections.functions"),import("@/lib/pos-caller-auth")]);
+  const [{correctPostedSale},{getPosCallerAuth}]=await Promise.all([import("@/lib/sale-corrections-client"),import("@/lib/pos-caller-auth")]);
   const result=await correctPostedSale({data:{...await getPosCallerAuth(),...payload}});
   if(!result.ok) throw new Error(result.error);
   const receipt=JSON.parse(result.receiptJson) as {sale:Row;items:Row[]};
@@ -2564,7 +2564,7 @@ export const db = {
   /** Correct the tender recorded against a completed bill (e.g. card -> cash). */
   async updateSalePayment(saleId: string, method: PaymentMethod, branchId: string, _payments?: Sale["payments"]) {
     const [{ correctSaleTender }, { getPosCallerAuth }] = await Promise.all([
-      import("@/lib/tender-correction.functions"), import("@/lib/pos-caller-auth"),
+      import("@/lib/tender-correction-client"), import("@/lib/pos-caller-auth"),
     ]);
     const credentials = await getPosCallerAuth();
     const result = await correctSaleTender({ data: { ...credentials, saleId, storeId: branchId, method } });

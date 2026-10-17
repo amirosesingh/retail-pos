@@ -24,7 +24,7 @@ import {
 import { type MetaRole } from "@/lib/pos-users";
 import { clearStoredCredentials, readCredentials, saveCashierToken } from "@/lib/pos-credentials";
 import { issueCashierSession } from "@/lib/pos-session.functions";
-import { startDeviceSession, endDeviceSession } from "@/lib/user-sessions.functions";
+import { startDeviceSession, endDeviceSession } from "@/lib/user-sessions-client";
 import { loadSessionToken, saveSessionToken } from "@/lib/pos-credentials";
 import { toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
 import { activeBranchId, activeBranchName, bindTerminalBranch } from "@/lib/active-branch";
@@ -82,7 +82,7 @@ async function validateCentralAuthSession(online: boolean) {
     online,
     ...(isWindowsShell() ? { timeoutMs: 8000 } : {}),
     verifySession: async (current) => {
-      const { verifySession } = await import("@/lib/session-verify.functions");
+      const { verifySession } = await import("@/lib/session-verify-client");
       const checked = await verifySession({
         data: { accessToken: current.access_token },
       });
@@ -1241,7 +1241,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (document.visibilityState === "hidden" || navigator.onLine === false) return null;
         const proof = await readCredentials();
         if (!current()) return null;
-        const { readSessionPermissions } = await import("./session-permissions.functions");
+        const { readSessionPermissions } = await import("./session-permissions-client");
         const result = await readSessionPermissions({ data: proof, signal: AbortSignal.timeout(8_000) });
         if (!current()) return null;
         // Electron independently verifies the same proof in its main process.
@@ -1390,7 +1390,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
         if (!creds.cashierToken && !creds.terminalToken && !creds.accessToken) return;
-        const { verifySession } = await import("@/lib/session-verify.functions");
+        const { verifySession } = await import("@/lib/session-verify-client");
         const res = await verifySession({ data: creds });
         if (!alive || res.ok || !isCurrentEpoch(startedAt)) return;
         if (res.reason === "revoked" || res.reason === "branch_missing") {

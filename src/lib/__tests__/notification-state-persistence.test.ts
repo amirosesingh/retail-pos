@@ -9,7 +9,7 @@ const localBridge = { current: null as null | { query: ReturnType<typeof vi.fn> 
 const commitOps = vi.fn(async () => "local");
 vi.mock("../server-origin", () => ({ posFetch }));
 vi.mock("../pos-credentials", () => ({ readCredentials }));
-vi.mock("../activity-events.functions", () => ({ pushActivityEvent: vi.fn() }));
+vi.mock("../activity-events-client", () => ({ pushActivityEvent: vi.fn() }));
 vi.mock("@/core/local-db/local-db", () => ({ localDb: () => localBridge.current }));
 vi.mock("@/core/api/pos-db", () => ({ commitOps }));
 
