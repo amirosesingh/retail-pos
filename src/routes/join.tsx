@@ -152,7 +152,7 @@ function JoinPage() {
             </header>
 
             <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-muted p-3 text-sm font-medium">
-              <Mail className="size-4" /> Supabase email OTP verification
+              <Mail className="size-4" /> Email verification
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -294,7 +294,7 @@ function JoinPage() {
               </p>
             ) : null}
             <p className="mt-4 text-center text-xs text-muted-foreground">
-              Supabase Auth verifies your email. Your phone remains the unique membership number.
+              Verify your email with a one-time code. Your phone remains your unique membership number.
             </p>
           </>
         )}
