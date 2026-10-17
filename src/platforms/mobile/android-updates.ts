@@ -11,6 +11,7 @@ import { APP_VERSION } from "@/lib/app-updates";
 import { isNative, isAndroid } from "@/platform-config/platform";
 import {
   describeNetworkError,
+  httpExists,
   firstReachableUrl,
   httpGetBase64,
   httpGetJson,
@@ -70,20 +71,21 @@ type Latest = {
   notes: string | null;
 };
 
-async function fetchLatest(): Promise<Latest> {
+export async function fetchLatest(): Promise<Latest> {
   // Preferred path: the single self-hosted manifest.
   const manifest = await fetchManifest();
   if (manifest) {
     const target = resolvePlatformTarget(manifest, "android");
-    const file =
-      target?.url.split("/").pop() || `Retail-${manifest.version}.apk`;
-    return {
-      version: manifest.version,
-      file,
-      feed: FEEDS[0]!,
-      url: target?.kind === "apk" ? target.url : null,
-      notes: manifest.releaseNotes ?? null,
-    };
+    if (target?.kind === "apk" && await withTimeout(httpExists(target.url)).catch(() => false)) {
+      const file = target.url.split("/").pop() || `Retail-${manifest.version}.apk`;
+      return {
+        version: manifest.version,
+        file,
+        feed: FEEDS[0]!,
+        url: target.url,
+        notes: manifest.releaseNotes ?? null,
+      };
+    }
   }
 
   // Legacy per-folder feeds, for phones pointed at an older bucket layout.

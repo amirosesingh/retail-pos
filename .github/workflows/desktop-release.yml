@@ -125,7 +125,7 @@ jobs:
             cat upload/latest.yml
             exit 1
           fi
-          node -e "const fs=require('fs');fs.writeFileSync('upload/manifest.json',JSON.stringify({version:'$v',buildNumber:Number('${{ steps.meta.outputs.build_number }}'),releaseNotes:'Release $v',apkUrl:'$base/latest/android/Retail-$v.apk',bundleEpoch:Number('$epoch'),windowsUrl:'$base/latest/Retail%20Setup%20$v.exe'}))"
+          node -e "const fs=require('fs');fs.writeFileSync('upload/manifest.json',JSON.stringify({version:'$v',buildNumber:Number('${{ steps.meta.outputs.build_number }}'),releaseNotes:'Release $v',apkUrl:'$base/releases/${{ steps.meta.outputs.release_id }}/android/Retail-$v.apk',bundleEpoch:Number('$epoch'),windowsUrl:'$base/latest/Retail%20Setup%20$v.exe'}))"
           ls -la upload
 
       - name: Deploy to Cloudflare R2

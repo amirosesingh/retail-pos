@@ -74,7 +74,8 @@ describe("desktop release configuration", () => {
       expect(workflow).toContain("apkUrl");
       expect(workflow).not.toContain("bundleUrl");
       expect(workflow).toContain("windowsUrl");
-      expect(workflow + read("scripts/publish-windows-release.cjs")).toMatch(/s3:\/\/updatelccms\/pos-app\/manifest.json|upload\(path.join\(directory, 'manifest.json'\), 'manifest.json'/);
+      expect(read("scripts/publish-windows-release.cjs")).toContain("promoteSharedManifest");
+      expect(read("scripts/publish-update-manifest.cjs")).toContain("upload(file, 'manifest.json', false)");
     }
     expect(read(".github/workflows/android-apk.yml")).not.toContain("web-latest.zip");
   });

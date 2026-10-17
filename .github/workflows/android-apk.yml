@@ -180,8 +180,8 @@ jobs:
           # Unified cross-platform manifest read by Android, Windows and web.
           base="https://updatecms.luckycharmsdnbhd.com/pos-app"
           build="${{ steps.meta.outputs.build_number }}"
-          printf '{"version":"%s","buildNumber":%s,"releaseNotes":"%s","apkUrl":"%s/latest/android/Retail-%s.apk","bundleEpoch":%s,"windowsUrl":"%s/latest/Retail%%20Setup%%20%s.exe"}\n' \
-            "$v" "$build" "Release $v" "$base" "$v" "$epoch" "$base" "$v" > release-assets/manifest.json
+          printf '{"version":"%s","buildNumber":%s,"releaseNotes":"%s","apkUrl":"%s/releases/%s/android/Retail-%s.apk","bundleEpoch":%s,"windowsUrl":"%s/latest/Retail%%20Setup%%20%s.exe"}\n' \
+            "$v" "$build" "Release $v" "$base" "$rid" "$v" "$epoch" "$base" "$v" > release-assets/manifest.json
           cp release-assets/manifest.json latest/manifest.json 2>/dev/null || { mkdir -p latest && cp release-assets/manifest.json latest/manifest.json; }
 
 
@@ -211,14 +211,16 @@ jobs:
           aws s3 sync versioned/android "s3://updatelccms/pos-app/releases/$rid/android" \
             --endpoint-url "$R2_ENDPOINT" --cache-control "public,max-age=31536000,immutable"
           aws s3 sync latest/android s3://updatelccms/pos-app/latest/android \
-            --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache" --delete
+            --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache"
           aws s3 sync latest/android s3://updatelccms/pos-app/android \
-            --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache" --delete
-          # The Windows publisher owns the shared manifest and only promotes it
-          # after verifying the Windows installer. Android publishes its own feed.
+            --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache"
+          # Keep old numbered APKs for devices holding an earlier feed response.
           aws s3 cp "s3://updatelccms/pos-app/latest/android/Retail-${{ steps.meta.outputs.version }}.apk" /tmp/published-android.apk \
             --endpoint-url "$R2_ENDPOINT" --no-progress
           cmp "release-assets/Retail-${{ steps.meta.outputs.version }}.apk" /tmp/published-android.apk
+          # The second successful platform publishes the shared pointer. If
+          # either artifact is missing, the previous complete release stays live.
+          R2_VERIFY_ORIGIN=true node scripts/publish-update-manifest.cjs release-assets/manifest.json
 
       # Windows owns shared release retention. Never recursively prune shared
       # release directories here: they contain Windows recovery artifacts too.
