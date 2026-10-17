@@ -77,7 +77,7 @@ function Dashboard() {
   const storeIds = useMemo(() => [currentStore.id], [currentStore.id]);
   // Include a boundary day on both sides: report loading uses device-local
   // midnight, while dashboard buckets use the configured business timezone.
-  const { sales, loading: reportLoading } = useReportSales(state.sales, storeIds,
+  const { sales, loading: reportLoading, error: reportError } = useReportSales(state.sales, storeIds,
     posDayKey(new Date(Date.parse(`${today}T12:00:00`) - 14 * 86_400_000)),
     posDayKey(new Date(Date.parse(`${today}T12:00:00`) + 86_400_000)));
   const todaySales = sales.filter((s) => posDayKey(s.createdAt) === today);
@@ -174,6 +174,7 @@ function Dashboard() {
           </p>
         </header>
 
+        {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
         <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
           <Kpi label="Revenue today" value={money(revenue)} highlight />
           <Kpi label="Gross revenue" value={money(profit.revenue)} />

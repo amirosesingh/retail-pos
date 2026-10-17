@@ -1,3 +1,4 @@
+import { sameBranchId } from "@/lib/branch-id";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -7,9 +8,9 @@ import { Label } from "@/components/ui/label";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
-import { money, usePos } from "@/lib/pos-store";
+import { money, stockAt, usePos } from "@/lib/pos-store";
 import { useReportSales } from "@/lib/use-report-sales";
-import { lineCost, saleLineRevenues, saleNetRevenue } from "@/core/pricing/profit";
+import { profitOf, lineCost, saleLineRevenues, saleNetRevenue } from "@/core/pricing/profit";
 import {
   ReportHeader,
   StatCard,
@@ -81,7 +82,7 @@ function BusinessReport() {
   const arrivedByProduct = useMemo(() => {
     const dates = new Map<string, string>();
     for (const invoice of arrivals.data ?? []) {
-      if (storeId !== "all" && invoice.storeId && invoice.storeId !== storeId) continue;
+      if (storeId !== "all" && invoice.storeId && !sameBranchId(invoice.storeId, storeId)) continue;
       const arrived = invoice.entryDate || invoice.createdAt;
       for (const line of invoice.lines) {
         if (!line.productId || !arrived) continue;
@@ -98,7 +99,7 @@ function BusinessReport() {
       history.sales.filter(
         (s) =>
           inRange(s.createdAt, from, to) &&
-          (storeId === "all" || s.storeId === storeId) &&
+          (storeId === "all" || sameBranchId(s.storeId, storeId)) &&
           !s.refunded,
       ),
     [history.sales, from, to, storeId],
@@ -140,8 +141,8 @@ function BusinessReport() {
       const product = state.products.find((p) => p.id === r.id);
       const onHand = product
         ? storeId === "all"
-          ? Object.values(product.stockByStore).reduce((a, b) => a + b, 0)
-          : (product.stockByStore[storeId] ?? 0)
+          ? stores.reduce((sum, store) => sum + stockAt(product, store.id), 0)
+          : stockAt(product, storeId)
         : 0;
       const perDay = r.qty / days;
       return {
@@ -155,7 +156,7 @@ function BusinessReport() {
       };
     });
     return out.sort((a, b) => b.profit - a.profit);
-  }, [sales, state.products, storeId, days, arrivedByProduct]);
+  }, [sales, state.products, stores, storeId, days, arrivedByProduct]);
 
   const cashiers = useMemo(() => {
     const map = new Map<string, CashierRow>();
@@ -183,11 +184,10 @@ function BusinessReport() {
   }, [sales, state.products]);
 
   const totals = useMemo(() => {
-    const revenue = products.reduce((a, r) => a + r.revenue, 0);
-    const profit = products.reduce((a, r) => a + r.profit, 0);
+    const { revenue, profit } = profitOf(sales, state.products);
     const slow = products.filter((r) => r.daysCover > 60).length;
     return { revenue, profit, margin: revenue ? (profit / revenue) * 100 : 0, slow };
-  }, [products]);
+  }, [products, sales, state.products]);
 
   const prodPage = usePagination(products);
   const cashPage = usePagination(cashiers);

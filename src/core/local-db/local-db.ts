@@ -657,7 +657,7 @@ export type PosBridge = {
     code?: string;
   }>;
   /** Main-process notification emitted after a durable local aggregate commit. */
-  analytics?: (from: string, to: string) => Promise<{ ok: boolean; error?: string; storeDays?: LocalSaleRow[]; itemDays?: LocalSaleRow[]; bills?: LocalSaleRow[]; directory?: LocalSaleRow[] }>;
+  analytics?: (from: string, to: string, timeZone?: string) => Promise<{ ok: boolean; error?: string; storeDays?: LocalSaleRow[]; itemDays?: LocalSaleRow[]; bills?: LocalSaleRow[]; directory?: LocalSaleRow[] }>;
   onReadProgress?: (cb: (progress: { table: string; completed: number }) => void) => () => void;
   onBusinessChanged?: (
     cb: (change: {

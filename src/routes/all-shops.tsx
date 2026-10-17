@@ -160,6 +160,7 @@ function AllShops() {
   return (
     <AppShell>
       <div className="mx-auto w-full max-w-[1600px] space-y-5 p-4 sm:p-6">
+        {history.error && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {history.error}</p>}
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">All shops</h1>

@@ -5,8 +5,7 @@ import type { Sale } from "@/core/types/pos-types";
 import { uniqueSales } from "./sale-identity";
 import { canonicalBranchId } from "./branch-id";
 
-const dayStart = (value: string) => Date.parse(`${value}T00:00:00`);
-const dayEnd = (value: string) => Date.parse(`${value}T23:59:59.999`);
+import { effectiveTimeZone, inPosDayRange, reportScanStart as dayStart, reportScanEnd as dayEnd } from "./time-zone";
 
 /**
  * Date-bounded, keyset-paged report history.
@@ -22,6 +21,7 @@ export function useReportSales(
   to: string,
   enabled = true,
 ): { sales: Sale[]; loading: boolean; refreshing: boolean; error: string } {
+  const reportZone = effectiveTimeZone();
   const seedRows = useMemo(() => {
     const start = dayStart(from);
     const end = dayEnd(to);
@@ -29,10 +29,10 @@ export function useReportSales(
     return seed.filter((sale) => {
       const at = Date.parse(sale.createdAt);
       return (
-        at >= start && at <= end && (!stores.size || stores.has(canonicalBranchId(sale.storeId)))
+        at >= start && at <= end && inPosDayRange(sale.createdAt, from, to, reportZone) && (!stores.size || stores.has(canonicalBranchId(sale.storeId)))
       );
     });
-  }, [seed, storeIds, from, to]);
+  }, [seed, storeIds, from, to, reportZone]);
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     if (!enabled) return;
@@ -59,7 +59,7 @@ export function useReportSales(
   const [error, setError] = useState("");
   const storeKey = storeIds.filter(Boolean).sort().join("|");
 
-  const rangeKey = JSON.stringify([storeKey, from, to]);
+  const rangeKey = JSON.stringify([storeKey, from, to, reportZone]);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,7 +82,8 @@ export function useReportSales(
             if (cancelled) return;
             for (const sale of page.rows) {
               const at = Date.parse(sale.createdAt);
-              if (at >= start && at <= end) found.push(sale);
+              if (at >= start && at <= end && inPosDayRange(sale.createdAt, from, to, reportZone) &&
+                (!storeKey || ids.some(id => canonicalBranchId(id) === canonicalBranchId(sale.storeId)))) found.push(sale);
             }
             const oldest = page.rows.at(-1);
             if (!page.hasMore || !page.cursor || !oldest || Date.parse(oldest.createdAt) < start)
@@ -102,7 +103,7 @@ export function useReportSales(
     return () => {
       cancelled = true;
     };
-  }, [from, to, storeKey, rangeKey, revision, enabled]);
+  }, [from, to, storeKey, rangeKey, revision, enabled, reportZone]);
 
   const sales = useMemo(() => {
     // Live committed state wins over an older page snapshot (for example a refund).

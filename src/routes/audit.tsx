@@ -1,3 +1,4 @@
+import { posDayKey, inPosDayRange } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -55,6 +56,7 @@ import {
   auditToCsv,
   logger,
   useAuditLogs,
+  useAuditHistoryError,
   useSyncState,
   type AuditLog,
 } from "@/lib/audit-log";
@@ -117,7 +119,6 @@ const effectiveCategory = (log: AuditLog) =>
 
 const categoryLabel = (log: AuditLog) => AUDIT_CATEGORY_LABELS[effectiveCategory(log)] ?? log.category;
 
-const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
 const isMistakeOrCorrection = (row: AuditLog) =>
   /error|fail|blocked|reject|mistake|correct|override|variance|void|refund|cancel|duplicate|unknown/i.test(
@@ -144,10 +145,11 @@ const changedFields = (edit: RecordEditRow) => {
 };
 
 function AuditPage() {
-  const { can, staff, isAdmin } = useAuth();
-  const { stores } = usePos();
-  const logs = useAuditLogs();
+  const { can, staff, isAdmin, user } = useAuth();
+  const { stores, currentStore } = usePos();
+  const logs = useAuditLogs(can("can_view_audit_trail"));
   const sync = useSyncState();
+  const historyError = useAuditHistoryError();
   const [range, setRange] = useState<RangeKey>("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -172,7 +174,7 @@ function AuditPage() {
       return;
     }
     let alive = true;
-    void (async () => {
+    const refresh = async () => {
       try {
         const auth = await getPosCallerAuth();
         const result = await getRecentRecordEdits({ data: { ...auth, limit: 200 } });
@@ -193,11 +195,19 @@ function AuditPage() {
       } finally {
         if (alive) setCorrectionsLoading(false);
       }
-    })();
+    };
+    setCorrections([]);
+    setCorrectionsLoading(true);
+    void refresh();
+    const onFocus = () => { void refresh(); };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onFocus);
     return () => {
       alive = false;
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onFocus);
     };
-  }, [canViewAuditTrail]);
+  }, [canViewAuditTrail, user?.staffId, currentStore.id]);
 
   const modules = useMemo(
     () => Array.from(new Set(logs.map((l) => l.module).filter(Boolean))).sort(),
@@ -206,17 +216,15 @@ function AuditPage() {
 
   const rows = useMemo(() => {
     const now = new Date();
-    const today = dayStart(now);
-    const yesterday = today - 86_400_000;
+    const today = posDayKey(now);
+    const yesterday = new Date(`${today}T12:00:00Z`);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const yesterdayDay = yesterday.toISOString().slice(0, 10);
     const text = q.trim().toLowerCase();
     return logs.filter((l) => {
-      const t = new Date(l.at).getTime();
-      if (range === "today" && t < today) return false;
-      if (range === "yesterday" && (t < yesterday || t >= today)) return false;
-      if (range === "custom") {
-        if (from && t < new Date(`${from}T00:00:00`).getTime()) return false;
-        if (to && t > new Date(`${to}T23:59:59`).getTime()) return false;
-      }
+      if (range === "today" && posDayKey(l.at) !== today) return false;
+      if (range === "yesterday" && posDayKey(l.at) !== yesterdayDay) return false;
+      if (range === "custom" && !inPosDayRange(l.at, from, to)) return false;
       if (who !== "all" && l.staffId !== who) return false;
       const cat = effectiveCategory(l);
       if (category !== "all" && cat !== category) return false;
@@ -278,11 +286,12 @@ function AuditPage() {
   return (
     <AppShell>
       <div className="space-y-5 p-6">
+        {historyError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Audit history incomplete: {historyError}</p>}
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Activity Trails</h1>
             <p className="text-sm text-muted-foreground">
-              {rows.length} of {logs.length} events · local-first telemetry
+              {rows.length} of {logs.length} events · includes up to 2,000 recent saved events
             </p>
           </div>
           <div className="flex items-center gap-2">

@@ -1,3 +1,4 @@
+import { effectiveTimeZone } from "@/lib/time-zone";
 import { branchChartColor, ANALYTICS_COLORS } from "@/lib/analytics-design";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
@@ -29,6 +30,7 @@ import { useAuth } from "@/lib/pos-auth";
 import { AnalyticsErrorPanel } from "@/platforms/web/components/pos/AnalyticsErrorPanel";
 import {
   fetchBoard,
+  boardTradingPeriods,
   shopSlices,
   topCategories,
   topItems,
@@ -63,8 +65,8 @@ export const Route = createFileRoute("/analytics")({
 const shift = (days: number) => isoDay(new Date(Date.now() - days * 86_400_000));
 
 function LiveBoard() {
-  const { allStores } = usePos();
-  const { can, isAdmin } = useAuth();
+  const { allStores, stores, currentStore } = usePos();
+  const { can, isAdmin, user } = useAuth();
   const allowed = isAdmin || can("can_view_sales_reports");
   const canExport = can("can_export_reports");
 
@@ -86,7 +88,7 @@ function LiveBoard() {
   };
 
   const query = useQuery({
-    queryKey: ["analytics-board", from, to],
+    queryKey: ["analytics-board", user?.staffId, currentStore.id, stores.map(store => store.id).sort().join("|"), effectiveTimeZone(), from, to],
     queryFn: () => fetchBoard(from, to),
     enabled: allowed,
     meta: {
@@ -158,8 +160,7 @@ function LiveBoard() {
     const cost = shops.reduce((a, s) => a + s.cost, 0);
     const bills = shops.reduce((a, s) => a + s.bills, 0);
     const given = shops.reduce((a, s) => a + s.givenAway, 0);
-    const days = new Set(trend.map((t) => t.label.slice(0, 10))).size || 1;
-    const months = new Set((data?.storeDays ?? []).map((r) => r.sale_month)).size || 1;
+    const { days, months } = boardTradingPeriods(data?.storeDays ?? [], filter);
     return {
       revenue,
       profit: revenue - cost,
@@ -171,7 +172,7 @@ function LiveBoard() {
       perMonth: revenue / months,
       days,
     };
-  }, [shops, trend, data]);
+  }, [shops, filter, data]);
 
   const exportRows = () =>
     downloadReport("live-business-board", [

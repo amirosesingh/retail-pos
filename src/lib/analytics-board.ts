@@ -6,6 +6,7 @@ import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
  * reporting views so one page load never pulls every sale line into the till.
  */
 import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
+import { reportScanStart, reportScanEnd, inPosDayRange, effectiveTimeZone } from "./time-zone";
 import { canonicalBranchId } from "./branch-id";
 
 export type StoreDayRow = {
@@ -93,8 +94,6 @@ export function resolveStoreNames(
 
 const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0) || 0);
 
-/** `to` is inclusive, so the upper bound is pushed to the end of that day. */
-const endOfDay = (to: string) => `${to}T23:59:59.999`;
 
 export type BoardIssue = {
   /** Table or view that was refused. */
@@ -147,15 +146,16 @@ export function fetchBoard(from: string, to: string): Promise<BoardData> {
 }
 async function fetchBoardData(from: string, to: string): Promise<BoardData> {
   const bridge = localDb();
-  if (effectiveDatabaseMode() === "local" && bridge?.analytics) {
-    const result = await bridge.analytics(from, to);
+  if (effectiveDatabaseMode() === "local") {
+    if (!bridge?.analytics) throw new Error("Local SQL analytics are unavailable. Check the terminal database connection.");
+    const result = await bridge.analytics(from, to, effectiveTimeZone());
     if (!result.ok) throw new Error(result.error ?? "Could not read the local sales report.");
     const directory = result.directory ?? [];
     const bills = result.bills ?? [];
     return {
       storeDays: (result.storeDays ?? []) as unknown as StoreDayRow[],
       itemDays: (result.itemDays ?? []) as unknown as ItemDayRow[],
-      bills: bills.map(row => ({ store_id: String(row.store_id), store_name: String(row.store_name_snapshot ?? ""),
+      bills: bills.map(row => ({ store_id: canonicalBranchId(row.store_id), store_name: String(row.store_name_snapshot ?? ""),
         created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
         total: n(row.total_amount), discount_amount: n(row.discount_amount), coupon_discount: n(row.coupon_discount) })),
       storeNames: resolveStoreNames(directory.map(row => ({ id: row.id, name: row.name, code: row.code })), bills.map(row => ({ store_id: row.store_id, store_name_snapshot: row.store_name_snapshot }))),
@@ -172,7 +172,7 @@ async function fetchBoardData(from: string, to: string): Promise<BoardData> {
       .gte("sale_day",from).lte("sale_day",to).order("sale_day").order("store_id").order("product_id").order("product_name").range(start,end)),
     readAllPages((start,end,count) => supabase.from("sales")
       .select("store_id, store_name_snapshot, created_at, total_amount, discount_amount, coupon_discount",{count:count ? "exact" : undefined})
-      .gte("created_at",from).lte("created_at",endOfDay(to)).order("created_at").order("id").range(start,end)),
+      .eq("is_refunded",false).gte("created_at",new Date(reportScanStart(from)).toISOString()).lte("created_at",new Date(reportScanEnd(to)).toISOString()).order("created_at").order("id").range(start,end)),
     readAllPages((start,end,count) => supabase.from("stores")
       .select("id,name,code,is_active",{count:count ? "exact" : undefined}).order("id").range(start,end)),
   ]);
@@ -213,7 +213,7 @@ async function fetchBoardData(from: string, to: string): Promise<BoardData> {
       cost: n(r.cost),
       profit: n(r.profit),
     })),
-    bills: (billRes.data ?? []).map((r) => ({
+    bills: (billRes.data ?? []).filter(r => inPosDayRange(String(r.created_at), from, to)).map((r) => ({
       store_id: r.store_id == null ? null : canonicalBranchId(r.store_id),
       store_name: r.store_name_snapshot,
       created_at: String(r.created_at),
@@ -312,11 +312,11 @@ export function shopSlices(
       cost,
       profit,
       marginPct: revenue ? r2((profit / revenue) * 100) : 0,
-      itemDiscount: r2(s.itemDiscount),
+      itemDiscount: r2(Math.max(0, s.itemDiscount - s.focValue)),
       billDiscount: r2(billOnly),
       coupon: r2(s.coupon),
       focValue: r2(s.focValue),
-      givenAway: r2(s.itemDiscount + billOnly + s.coupon + s.focValue),
+      givenAway: r2(Math.max(0, s.itemDiscount - s.focValue) + billOnly + s.coupon + s.focValue),
     };
   });
   const total = rows.reduce((a, s) => a + s.revenue, 0);
@@ -401,4 +401,13 @@ export function trendSeries(rows: StoreDayRow[], grain: "daily" | "monthly"): Tr
   return [...by.values()]
     .map((p) => ({ ...p, revenue: r2(p.revenue), profit: r2(p.profit) }))
     .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** A chart grouping never changes the number of trading days or months. */
+export function boardTradingPeriods(rows: StoreDayRow[], storeIds?: Set<string>) {
+  const selected = rows.filter(row => !storeIds || storeIds.has(canonicalBranchId(row.store_id)));
+  return {
+    days: new Set(selected.map(row => row.sale_day)).size || 1,
+    months: new Set(selected.map(row => row.sale_month)).size || 1,
+  };
 }

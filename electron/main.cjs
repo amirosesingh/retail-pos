@@ -1843,10 +1843,10 @@ function registerIpc() {
     const snapshot = await operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
     return { ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) };
   }));
-  ipcMain.handle("business:analytics", (_e, from, to) => guard.guarded(async () => {
+  ipcMain.handle("business:analytics", (_e, from, to, timeZone) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports"))
       return { ok: false, code: "PERMISSION_DENIED", error: "Sales report permission is required." };
-    return readAnalytics(databaseManager, localBranchId(), guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }));
+    return readAnalytics(databaseManager, localBranchId(), guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }), guard.text(timeZone || "UTC", { name: "time zone", max: 80 }));
   }));
   ipcMain.handle("business:query", (_e, table, options) => guard.guarded(async () => {
     try {

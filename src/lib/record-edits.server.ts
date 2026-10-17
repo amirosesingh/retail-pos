@@ -210,7 +210,7 @@ export async function listRecentRecordEdits(
   const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 500);
   const branch = storeId ? `&store_id=eq.${encodeURIComponent(storeId)}` : "";
   const res = await rest(`record_edits?select=*${branch}&order=created_at.desc&limit=${safeLimit}`);
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`Could not load correction history (HTTP ${res.status}).`);
   return ((await res.json()) as Row[]).map((r) => ({
     id: String(r["id"] ?? ""),
     record_type: String(r["record_type"] ?? ""),

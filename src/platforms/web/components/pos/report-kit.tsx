@@ -1,3 +1,4 @@
+import { posDayKey, inPosDayRange } from "@/lib/time-zone";
 import { beginDataTask } from "@/lib/data-progress";
 import { notifyError } from "@/lib/notify";
 import {
@@ -116,25 +117,16 @@ export function ReportTable({ className, children, ...props }: ComponentProps<ty
 }
 
 /** Shared date-range state helpers for every report page. */
-export const isoDay = (d: Date) =>
-  [
-    d.getFullYear(),
-    String(d.getMonth() + 1).padStart(2, "0"),
-    String(d.getDate()).padStart(2, "0"),
-  ].join("-");
+export const isoDay = posDayKey;
 
 export function defaultRange(days = 30) {
-  const to = new Date();
-  const from = new Date(Date.now() - days * 86_400_000);
-  return { from: isoDay(from), to: isoDay(to) };
+  const to = posDayKey();
+  const from = new Date(`${to}T12:00:00Z`);
+  from.setUTCDate(from.getUTCDate() - Math.max(0, Math.trunc(days) - 1));
+  return { from: from.toISOString().slice(0, 10), to };
 }
 
-export const inRange = (iso: string, from: string, to: string) => {
-  const date = new Date(iso);
-  if (!Number.isFinite(date.getTime())) return false;
-  const day = isoDay(date);
-  return (!from || day >= from) && (!to || day <= to);
-};
+export const inRange = inPosDayRange;
 
 export const stamp = (iso: string) =>
   new Date(iso).toLocaleString([], {

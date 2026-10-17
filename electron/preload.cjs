@@ -42,7 +42,7 @@ contextBridge.exposeInMainWorld("pos", {
   writeBatch: (context, ops) => invoke("business:write-batch", context, ops),
   commitAggregate: (aggregate) => invoke("business:commit-aggregate", aggregate),
   snapshot: (options) => invoke("business:snapshot", options),
-  analytics: (from, to) => invoke("business:analytics", from, to),
+  analytics: (from, to, timeZone) => invoke("business:analytics", from, to, timeZone),
   query: (table, options) => invoke("business:query", table, options),
   saveAuthorizationRule: (value) => invoke("business:save-authorization-rule", value),
   shiftExpectedTotals: (shiftId) => invoke("business:shift-expected", shiftId),
