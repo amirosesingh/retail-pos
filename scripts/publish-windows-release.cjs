@@ -165,8 +165,7 @@ async function publish(directory, version, releaseId) {
   // All referenced installers have been verified before any mutable pointer changes.
   upload(historyFile, 'releases.json', false);
   if (digest(await remote(`${PUBLIC}/releases.json`)) !== digest(fs.readFileSync(historyFile))) throw new Error('Release history verification failed.');
-  upload(path.join(directory, 'manifest.json'), 'manifest.json', false);
-  upload(path.join(directory, 'manifest.json'), 'latest/manifest.json', false);
+  await require('./publish-update-manifest.cjs').promoteSharedManifest(path.join(directory, 'manifest.json'), { remote, upload });
   upload(path.join(directory, 'latest.yml'), 'latest/latest.yml', false); // publish stable pointer LAST
   if (digest(await remote(`${PUBLIC}/latest/latest.yml`)) !== digest(fs.readFileSync(path.join(directory, 'latest.yml')))) throw new Error('Published metadata verification failed; inspect CDN caching.');
   // Only known history entries are pruned. Keep all small historical blockmaps for old installed versions.
@@ -179,7 +178,7 @@ async function publish(directory, version, releaseId) {
   }
   console.log(`Published verified Windows ${version} at ${PREFIX}/releases/${releaseId}; retained ${plan.retain.length} releases (five minimum plus recovery/download grace).`);
 }
-module.exports = { validateRelease, retention, preflight, publish, remote };
+module.exports = { validateRelease, retention, preflight, publish, remote, upload };
 if (require.main === module) {
   const version = require('../package.json').version;
   (process.argv.includes('--preflight') ? preflight(version) : publish('upload', version, process.env.RELEASE_ID)).catch(error => { console.error(error.message); process.exitCode = 1; });

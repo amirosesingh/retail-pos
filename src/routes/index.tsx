@@ -117,7 +117,7 @@ import { NO_SALE_REASON_MAX, NO_SALE_REASON_MIN, recordNoSale } from "@/lib/draw
 import { logger } from "@/lib/audit-log";
 import { DiscountPad } from "@/platforms/web/components/pos/DiscountPad";
 import { useManagerGate, type GateRequest } from "@/lib/manager-gate";
-import { authorizationBinding, discountApprovalPercent, discountNeedsApproval, ticketDiscounts, type TicketDiscount, type AuthPayload } from "@/lib/authorization";
+import { authorizationBinding, ticketDiscountApprovalPercent, markTicketDiscountApprovals, ticketDiscounts, type TicketDiscount, type AuthPayload } from "@/lib/authorization";
 import { lineDiscountTotal } from "@/core/types/pos-types";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { parsePositiveAmount } from "@/core/pricing/amount";
@@ -616,25 +616,25 @@ function Register() {
     getTotal: (paymentMethod) => applyRounding(totals.total, state.settings.integrations.rounding, paymentMethod).total,
   });
 
+  const [discountReviewRequested, setDiscountReviewRequested] = useState(false);
   const charging = useRef(false);
-  const openPayment = async (preset?: Parameters<typeof openTenderPayment>[0]) => {
+  const openPayment = async (preset?: Parameters<typeof openTenderPayment>[0], reviewOnly = false) => {
     if (charging.current || !lines.length || tillLocked || !can("can_process_sale")) return;
     charging.current = true;
     try {
-      const discounts: TicketDiscount[] = lines.flatMap((line,index) => {
+      let discounts: TicketDiscount[] = lines.flatMap((line,index) => {
         if (!line.discount || line.qty <= 0) return [];
         const base = Math.max(0, Math.abs(line.price) - Math.abs(line.couponDiscount || 0) / Math.max(1,Math.abs(line.qty)));
         const entry: TicketDiscount = {index,productId:line.productId,name:line.name,qty:line.qty,price:line.price,
           type:line.discountType ?? "amount",value:line.discount,base,requiresApproval:false};
-        entry.requiresApproval = discountNeedsApproval(entry,rules.max_cashier_discount_percent,rules.max_cart_discount_amount);
         return [entry];
       });
       if (cartDiscount > 0) {
         const entry: TicketDiscount = {index:-1,productId:"",name:"Whole bill",qty:1,price:0,
           type:cartDiscountType,value:cartDiscount,base:Math.max(0,r2(totals.subtotal-totals.lineDiscount)),requiresApproval:false};
-        entry.requiresApproval = discountNeedsApproval(entry,rules.max_cashier_discount_percent,rules.max_cart_discount_amount);
         discounts.push(entry);
       }
+      discounts = markTicketDiscountApprovals(discounts, rules.max_cashier_discount_percent, rules.max_cart_discount_amount);
       const currentApproval = appliedApprovalRef.current;
       const snapshot = ticketSnapshot.current();
       const covered = currentApproval?.actionKey === "discount_over_limit" && snapshot &&
@@ -643,17 +643,25 @@ function Register() {
         const grant = await askManager({action:"discount_over_limit",title:"Approve bill discounts",
           reason:"Review the whole bill and approve the requested discounts before payment.",
           storeId:currentStore.id,requestedBy:activeCashier,
-          requestedAmount:Math.max(...discounts.map(discountApprovalPercent)),
+          requestedAmount:ticketDiscountApprovalPercent(discounts),
           requesterDirectLimit:rules.max_cashier_discount_percent,valueUnit:"percent",
           payload:{discount_scope:"ticket",requested_discounts:JSON.stringify(discounts)},
           detail:discounts.map(entry => `${entry.name}: ${entry.type === "percent" ? `${entry.value}%` : money(entry.value)}`).join("; ").slice(0,400),
         });
         if (grant === null) return;
       }
-      openTenderPayment(preset);
+      if (!reviewOnly) openTenderPayment(preset);
     } catch (error) { notifyError(error,"Opening payment"); }
     finally { charging.current = false; }
   };
+
+  const reviewDiscountsRef = useRef(openPayment);
+  reviewDiscountsRef.current = openPayment;
+  useEffect(() => {
+    if (!discountReviewRequested) return;
+    setDiscountReviewRequested(false);
+    void reviewDiscountsRef.current(undefined, true);
+  }, [discountReviewRequested]);
 
   const [waNumber, setWaNumber] = useState("");
   const [waSending, setWaSending] = useState(false);
@@ -4331,13 +4339,14 @@ function Register() {
               );
               return;
             }
-            // Discounts are entered here; the complete bill is authorised on Charge.
+            // Review the resulting ticket after React has applied the discount.
             if (target === "bill") {
               setCartDiscount(v);
               setCartDiscountType(t);
             } else if (typeof target === "number") {
               patchLine(target, { discount: v, discountType: t });
             }
+            setDiscountReviewRequested(true);
           })();
         }}
       />

@@ -109,6 +109,8 @@ const CHANNEL_LEVELS = {
   "staff:roster": OPEN,
   "staff:cache-roster": OPEN,
   "staff:verify-pin": OPEN,
+  "staff:verify-approval-pin": OPEN, // signed-in operator may present an approver credential
+  "approval:enroll-verifier": OPEN, // permission checked in allowed() and again by the backend
   "staff:sign-in": OPEN,
   "staff:enroll": OPEN,
   // Pre-login bridge: the hosted endpoint still verifies the PIN and applies
@@ -418,6 +420,12 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  if (channel === "staff:verify-approval-pin" || channel === "approval:enroll-verifier") {
+    if (!adminSession.hasPosAuthority()) return false;
+    if (channel === "approval:enroll-verifier" && !adminSession.hasPermission("can_manage_staff")) return false;
+    adminSession.touch();
+    return true;
+  }
   const notificationOps = channel === "business:commit-aggregate" ? args[0]?.operations
     : channel === "business:write-batch" ? args[1] : null;
   if (Array.isArray(notificationOps) && notificationOps.length > 0 && notificationOps.every(op =>

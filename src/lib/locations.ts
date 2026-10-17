@@ -166,7 +166,7 @@ export function archiveBlockers(
     };
   const items = products
     .map((p) => ({ name: p.name, qty: stockAtLocation(p, id) }))
-    .filter((x) => x.qty > 0)
+    .filter((x) => x.qty !== 0)
     .sort((a, b) => b.qty - a.qty);
   if (items.length)
     return {

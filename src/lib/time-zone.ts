@@ -87,14 +87,14 @@ export function formatDate(value: string | number | Date, extra: Intl.DateTimeFo
 }
 
 /** Stable YYYY-MM-DD key in the configured trading zone. */
-export function posDayKey(value: string | number | Date = new Date()): string {
+export function posDayKey(value: string | number | Date = new Date(), timeZone = zone): string {
   const d = asDate(value);
   if (Number.isNaN(d.getTime())) return "";
   const parts = new Intl.DateTimeFormat("en-US", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-    ...(zone ? { timeZone: zone } : {}),
+    ...(timeZone ? { timeZone } : {}),
   }).formatToParts(d);
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((entry) => entry.type === type)?.value ?? "";
@@ -113,4 +113,18 @@ export function posHour(value: string | number | Date): number {
     .formatToParts(d)
     .find((entry) => entry.type === "hour")?.value;
   return Math.min(23, Math.max(0, Number(hour) || 0));
+}
+
+/** Date-only report comparisons use the configured business day on every platform. */
+export function inPosDayRange(value: string | number | Date, from: string, to: string, timeZone?: string): boolean {
+  const day = posDayKey(value, timeZone);
+  return !!day && (!from || day >= from) && (!to || day <= to);
+}
+
+/** Generous UTC scan boundary; callers still filter by the exact business day. */
+export function reportScanStart(day: string): number {
+  return Date.parse(`${day}T00:00:00Z`) - 86_400_000;
+}
+export function reportScanEnd(day: string): number {
+  return Date.parse(`${day}T00:00:00Z`) + 2 * 86_400_000 - 1;
 }

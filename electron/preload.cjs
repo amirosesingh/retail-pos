@@ -42,7 +42,7 @@ contextBridge.exposeInMainWorld("pos", {
   writeBatch: (context, ops) => invoke("business:write-batch", context, ops),
   commitAggregate: (aggregate) => invoke("business:commit-aggregate", aggregate),
   snapshot: (options) => invoke("business:snapshot", options),
-  analytics: (from, to) => invoke("business:analytics", from, to),
+  analytics: (from, to, timeZone) => invoke("business:analytics", from, to, timeZone),
   query: (table, options) => invoke("business:query", table, options),
   saveAuthorizationRule: (value) => invoke("business:save-authorization-rule", value),
   shiftExpectedTotals: (shiftId) => invoke("business:shift-expected", shiftId),
@@ -110,6 +110,7 @@ contextBridge.exposeInMainWorld("pos", {
   rememberStaffPin: (username, pin) => invoke("staff:enroll", username, pin),
   signInStaffPin: (username, pin) => invoke("staff:sign-in", username, pin),
   verifyStaffPin: (username, pin) => invoke("staff:verify-pin", username, pin),
+  enrollApprovalVerifier: (proof) => invoke("approval:enroll-verifier", proof),
   verifyApprovalPin: (username, pin) => invoke("staff:verify-approval-pin", username, pin),
   cashierLogin: (username, pin) => invoke("auth:cashier-login", { username, pin }),
   telemetry: {

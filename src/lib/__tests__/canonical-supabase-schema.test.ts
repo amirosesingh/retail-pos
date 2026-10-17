@@ -179,6 +179,8 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261016060050_enforce_shared_pin_lockout.sql",
       "supabase/migrations/20261016060232_reject_inactive_legacy_pin_accounts.sql",
       "supabase/migrations/20261016060559_stamp_status_history_reporter.sql",
+      "supabase/migrations/20261017083528_reconcile_business_analytics.sql",
+      "supabase/migrations/20261017121938_private_approval_tokens.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

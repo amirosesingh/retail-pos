@@ -20,6 +20,11 @@ vi.mock("react", () => ({
     ];
   },
   useMemo: (fn: () => unknown) => fn(),
+  useRef: (initial: unknown) => {
+    const index = harness.cursor++;
+    if (!(index in harness.values)) harness.values[index] = { current: initial };
+    return harness.values[index];
+  },
   useEffect: (fn: () => void | (() => void), deps: unknown[]) => {
     const index = harness.effectCursor++;
     const old = harness.effects[index];
@@ -37,6 +42,10 @@ vi.mock("../sync-engine", () => ({ subscribeSalesChange: (fn: () => void) => { h
 vi.mock("../data-progress", () => ({
   beginDataTask: () => ({ report: vi.fn(), finish: vi.fn() }),
 }));
+vi.mock("../background-refresh", () => ({ subscribeBackgroundRefresh: (fn: () => void) => {
+  harness.focus = fn;
+  return () => { harness.focus = null; };
+} }));
 import { useReportSales } from "../use-report-sales";
 const sale = {
   id: "sale-1",
@@ -112,6 +121,29 @@ describe("report refresh stability", () => {
     load.mockImplementation(() => new Promise(() => {}));
     expect(render("branch-b").sales).toEqual([]);
     expect(render("branch-a", "2026-10-11").sales).toEqual([]);
+  });
+  it("finishes a slow read before applying one queued live refresh", async () => {
+    let finish!: (value: typeof page) => void;
+    load.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render();
+    harness.focus?.(); harness.focus?.();
+    render();
+    expect(load).toHaveBeenCalledTimes(1);
+    load.mockResolvedValue(page);
+    finish(page); await Promise.resolve(); await Promise.resolve();
+    render(); await Promise.resolve(); await Promise.resolve();
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(render().sales).toEqual([sale]);
+  });
+  it("ignores an old branch response that arrives after switching branches", async () => {
+    let finish!: (value: typeof page) => void;
+    load.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render();
+    const other = { ...sale, id: "sale-b", storeId: "branch-b" };
+    load.mockResolvedValueOnce({ ...page, rows: [other] });
+    render("branch-b"); await Promise.resolve(); await Promise.resolve();
+    finish(page); await Promise.resolve(); await Promise.resolve();
+    expect(render("branch-b").sales).toEqual([other]);
   });
   it("keeps the last valid rows and reports an unsuccessful refresh", async () => {
     await loaded();

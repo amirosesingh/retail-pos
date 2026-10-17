@@ -346,10 +346,14 @@ function publish(next: Connectivity) {
  * elapsed; until then it waits. There is no upper cap — a slow network keeps
  * the connecting cloud on screen for as long as the probe really takes.
  */
+let resumeRecovery = false;
+let resumeGeneration = 0;
+let resumeWork: Promise<void> | null = null;
+
 function settle(next: Exclude<Connectivity, "connecting">) {
   resolvedOnce = true;
   pendingResolved = next;
-  if (minElapsed) publish(next);
+  if (minElapsed && !(resumeRecovery && next === "offline")) publish(next);
 }
 
 function startMinTimer() {
@@ -357,7 +361,7 @@ function startMinTimer() {
   minTimer = setTimeout(() => {
     minTimer = undefined;
     minElapsed = true;
-    if (pendingResolved) publish(pendingResolved);
+    if (pendingResolved && !(resumeRecovery && pendingResolved === "offline")) publish(pendingResolved);
   }, MIN_CONNECTING_MS);
 }
 
@@ -413,9 +417,23 @@ export function startConnectivityMonitor(intervalMs = 20_000): () => void {
   heartbeatTimer = setInterval(() => void heartbeat(), intervalMs);
   const nudge = () => void heartbeat();
   const resume = () => {
-    if (document.visibilityState === "hidden") return;
+    if (document.visibilityState === "hidden" || resumeWork) return;
     window.dispatchEvent(new CustomEvent(APP_RESUME_EVENT));
-    void heartbeat();
+    const generation = ++resumeGeneration;
+    resumeRecovery = true;
+    if (connectivityState === "offline") publish("connecting");
+    resumeWork = (async () => {
+      for (let attempt = 0; attempt < 3 && active && generation === resumeGeneration; attempt++) {
+        await heartbeat();
+        if (verdict === "verified" || verdict === "unconfigured" || verdict === "rejected") break;
+        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+      }
+    })().finally(() => {
+      if (generation !== resumeGeneration) return;
+      resumeRecovery = false;
+      resumeWork = null;
+      if (active && pendingResolved) publish(pendingResolved);
+    });
   };
   window.addEventListener("online", nudge);
   window.addEventListener("offline", nudge);
@@ -438,6 +456,7 @@ export function startConnectivityMonitor(intervalMs = 20_000): () => void {
     });
   return () => {
     active = false;
+    resumeGeneration++; resumeRecovery = false; resumeWork = null;
     monitoring = false;
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     heartbeatTimer = undefined;
@@ -454,6 +473,7 @@ export function startConnectivityMonitor(intervalMs = 20_000): () => void {
 
 /** Test seam: back to the pre-startup "connecting" state. */
 export function resetConnectivity() {
+  resumeGeneration++; resumeRecovery = false; resumeWork = null;
   connectivityState = "connecting";
   resolvedOnce = false;
   minElapsed = false;

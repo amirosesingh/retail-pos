@@ -226,6 +226,8 @@ let sqlLogs: AuditLog[] = [];
 let visibleLogs: AuditLog[] = [];
 let loaded = false;
 let sqlHistoryLoaded = false;
+let historyInFlight: string | null = null;
+let historyError = "";
 const listeners = new Set<() => void>();
 
 let actor = {
@@ -238,7 +240,15 @@ let actor = {
 
 /** Tell the logger which employee is currently on the terminal. */
 export const setAuditActor = (next: Partial<typeof actor>) => {
+  const previous = JSON.stringify(actor);
   actor = { ...actor, ...next };
+  if (previous !== JSON.stringify(actor)) {
+    sqlLogs = [];
+    historyError = "";
+    sqlHistoryLoaded = false;
+    refreshVisibleLogs();
+    listeners.forEach(listener => listener());
+  }
 };
 
 function load() {
@@ -491,15 +501,17 @@ export function startAuditSync() {
 }
 
 const EMPTY_AUDIT_LOGS:AuditLog[]=[];
-export function useAuditLogs() {
-  // The renderer cache is deliberately small. On Windows, hydrate a bounded
-  // history from SQL Server so reports survive restarts without expanding
-  // browser storage or loading an unbounded audit table into memory.
+export function useAuditLogs(hydrate = isTerminalApp()) {
+  const scope = `${actor.staffId}|${actor.storeId}|${actor.authUserId}|${actor.role}`;
   useEffect(() => {
-    if (sqlHistoryLoaded || !isTerminalApp()) return;
-    sqlHistoryLoaded = true;
-    void dbRouterAuditHistory();
-  }, []);
+    if (!hydrate || !hasSignedInIdentity()) return;
+    const refresh = () => { if (document.visibilityState !== "hidden") void dbRouterAuditHistory(); };
+    if (!sqlHistoryLoaded) refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    return () => { clearInterval(timer); window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh); };
+  }, [hydrate, scope]);
   return useSyncExternalStore(
     logger.subscribe,
     () => logger.all(),
@@ -508,8 +520,14 @@ export function useAuditLogs() {
 }
 
 async function dbRouterAuditHistory(): Promise<void> {
+  const scope = `${actor.staffId}|${actor.storeId}|${actor.authUserId}|${actor.role}`;
+  if (historyInFlight === scope || !hasSignedInIdentity()) return;
+  historyInFlight = scope;
   try {
     const rows = await db.queryAuditLogs(2000);
+    if (scope !== `${actor.staffId}|${actor.storeId}|${actor.authUserId}|${actor.role}`) return;
+    sqlHistoryLoaded = true;
+    historyError = "";
     load();
     const existing = new Set(logs.map((row) => row.id));
     const mapped = rows
@@ -542,14 +560,23 @@ async function dbRouterAuditHistory(): Promise<void> {
           deviceTime: typeof details.deviceTime === "string" ? details.deviceTime : createdAt,
         };
       });
-    if (!mapped.length) return;
     sqlLogs = mapped;
     refreshVisibleLogs();
     listeners.forEach((listener) => listener());
-  } catch {
-    // The current renderer cache remains usable when local SQL is unavailable.
-    sqlHistoryLoaded = false;
+  } catch (error) {
+    // Keep visible cached events, but tell the reader that history is incomplete.
+    if (scope === `${actor.staffId}|${actor.storeId}|${actor.authUserId}|${actor.role}`) {
+      sqlHistoryLoaded = false;
+      historyError = error instanceof Error ? error.message : "Saved audit history could not be loaded.";
+      listeners.forEach(listener => listener());
+    }
+  } finally {
+    if (historyInFlight === scope) historyInFlight = null;
   }
+}
+
+export function useAuditHistoryError() {
+  return useSyncExternalStore(logger.subscribe, () => historyError, () => "");
 }
 
 export function useSyncState() {

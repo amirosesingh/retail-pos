@@ -1,3 +1,6 @@
+import { NativeApprovalMethods } from "@/platform-config/approval-methods";
+import { nativeApprovalCredentials } from "@/platform-config/approval-token";
+import { approvalMethods } from "@/lib/approval-credentials";
 import { PERMISSION_EDITOR_IDS } from "@/lib/permission-editor";
 import { PermissionHierarchy } from "./PermissionHierarchy";
 import { StaffIdleTimeout } from "./StaffIdleTimeout";
@@ -81,6 +84,8 @@ type Row = {
   pin_length: number;
   pin_set_at: string | null;
   approval_pin_eligible: boolean;
+  approval_pin_enabled: boolean;
+  approval_totp_enabled: boolean;
   last_login_at: string | null;
 };
 
@@ -230,6 +235,8 @@ export function StaffManager() {
             pin_length: Number(r["pin_length"] ?? 0),
             pin_set_at: (r["pin_set_at"] as string | null) ?? null,
             approval_pin_eligible: r.approval_pin_eligible === true,
+            approval_pin_enabled: nativeApprovalCredentials ? approvalMethods(r.permissions).pin : true,
+            approval_totp_enabled: nativeApprovalCredentials ? approvalMethods(r.permissions).totp : false,
             last_login_at: (r["last_login_at"] as string | null) ?? null,
           };
         }),
@@ -626,12 +633,16 @@ export function StaffManager() {
       >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Authorisation PIN</DialogTitle>
+            <DialogTitle>{nativeApprovalCredentials ? "Approval credentials" : "Authorisation PIN"}</DialogTitle>
             <DialogDescription>
               A 4–6 digit PIN for {pinFor?.full_name}, used only to approve gated actions at a till.
               It does not change how they sign in, and it is never shown again.
             </DialogDescription>
           </DialogHeader>
+          {nativeApprovalCredentials && <NativeApprovalMethods person={pinFor} disabled={offline} onUpdated={(userId, patch) => {
+            setPinFor(current => current?.user_id === userId ? { ...current, ...patch } : current);
+            setRows(current => current.map(row => row.user_id === userId ? { ...row, ...patch } : row));
+          }} />}
           <div className="flex gap-2">
             <Input
               autoFocus

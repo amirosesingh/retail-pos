@@ -33,7 +33,8 @@ describe("sales realtime refresh", () => {
     expect(store).not.toContain("loadCloudProduct(change.entityId!)");
     expect(store).toContain('App.addListener("appStateChange"');
     expect(store).toContain('window.addEventListener("focus", resume)');
-    expect(store).toContain('window.addEventListener("focus", focus)');
+    expect(store).toContain("subscribeBackgroundRefresh");
+    expect(engine).toContain("queueLiveChange({ reason: `pull:${table}`");
     expect(store).toContain("if (cancelled) void handle.remove()");
   });
 

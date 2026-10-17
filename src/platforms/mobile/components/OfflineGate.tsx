@@ -1,3 +1,4 @@
+import { ApprovalTokenButton } from "@/platform-config/approval-token";
 /**
  * Connection gate for the browser and Android builds.
  *
@@ -141,6 +142,7 @@ export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
         {/* The way back in when the address itself is what is wrong. Router
             navigation, never a page load: a hard load would restart the shell
             and put this gate straight back in front of the repair screen. */}
+        <ApprovalTokenButton />
         {needsRepair && <EmergencyAccessLink />}
       </div>
     </div>

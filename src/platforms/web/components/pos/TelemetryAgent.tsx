@@ -1,3 +1,4 @@
+import { requestBackgroundRefresh } from "@/lib/background-refresh";
 /**
  * Quiet background reporter.
  *
@@ -32,8 +33,7 @@ export function TelemetryAgent() {
     let stopped = false;
 
     const refreshCatalogue = async () => {
-      // Reload once the queue is clear so every screen picks up the fresh copy.
-      window.setTimeout(() => window.location.reload(), 1500);
+      requestBackgroundRefresh();
     };
 
     const beat = async () => {

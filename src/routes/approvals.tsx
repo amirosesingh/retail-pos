@@ -1,3 +1,4 @@
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { approvalBranchLabel, approvalDisplayFields, approvalDecisionText } from "@/lib/approval-display";
 import { ApprovalDiscountReview } from "@/platforms/web/components/pos/ApprovalDiscountReview";
 /**
@@ -8,7 +9,7 @@ import { ApprovalDiscountReview } from "@/platforms/web/components/pos/ApprovalD
  * authenticated. Everything decided here is written to the authorisation log.
  */
 import { createFileRoute } from "@tanstack/react-router";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Clock3, Eye, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -44,13 +45,13 @@ export const Route = createFileRoute("/approvals")({
   component: ApprovalsPage,
   head: () => ({
     meta: [
-      { title: "Pending Approvals · Till" },
+      { title: "Approvals · Till" },
       {
         name: "description",
         content:
           "Review and decide authorisation requests raised at the tills — refunds, price overrides and edits to posted records.",
       },
-      { property: "og:title", content: "Pending Approvals · Till" },
+      { property: "og:title", content: "Approvals · Till" },
       {
         property: "og:description",
         content: "Approve or reject sensitive till actions waiting on authorisation.",
@@ -142,7 +143,10 @@ function ApprovalsPage() {
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
   const [allBranches, setAllBranches] = useState(false);
   const scopeDefaultedFor = useRef<string | null>(null);
-  const [history, setHistory] = useState(false);
+  const [status, setStatus] = useState<AuthorizationRequest["status"] | "all">("pending");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [hasMore, setHasMore] = useState(false);
   const [note, setNote] = useState<Record<string, string>>({});
   // What the approver is granting, when it differs from what was asked.
   const [amount, setAmount] = useState<Record<string, string>>({});
@@ -155,16 +159,6 @@ function ApprovalsPage() {
   const [openRequestId, setOpenRequestId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const orderedRows = useMemo(
-    () =>
-      [...rows].sort((a, b) => {
-        const statusOrder = Number(a.status !== "pending") - Number(b.status !== "pending");
-        return statusOrder || b.createdAt.localeCompare(a.createdAt);
-      }),
-    [rows],
-  );
-  const firstDecided = orderedRows.findIndex((row) => row.status !== "pending");
-
   const loadSequence = useRef(0);
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current;
@@ -176,7 +170,7 @@ function ApprovalsPage() {
           ...auth,
           storeId,
           allBranches,
-          status: history ? "all" : "pending",
+          status, page, pageSize,
         },
       });
       if (sequence !== loadSequence.current) return;
@@ -185,6 +179,8 @@ function ApprovalsPage() {
       setRows(Array.isArray(res.requests) ? (res.requests as AuthorizationRequest[]) : []);
       const nextMe = res.ok ? (res.me ?? null) : null;
       setMe(nextMe);
+      if (res.ok && res.pageInfo) { setHasMore(res.pageInfo.hasMore); setPage(res.pageInfo.page); }
+      else setHasMore(false);
       // Apply the default once for each verified person/role. Refreshes must
       // preserve an admin's deliberate switch back to the current branch.
       if (nextMe) {
@@ -200,11 +196,17 @@ function ApprovalsPage() {
       setError((e as Error).message);
     }
     if (sequence === loadSequence.current) setLoading(false);
-  }, [storeId, allBranches, history]);
+  }, [storeId, allBranches, status, page, pageSize]);
+
+  useEffect(() => { setPage(1); }, [storeId]);
 
   useEffect(() => {
+    setRows([]);
+    setHasMore(false);
     void load();
   }, [load]);
+
+  useEffect(() => () => { loadSequence.current += 1; }, [load]);
 
   // The queue is decided from another screen, so it refreshes on its own and
   // whenever this window is looked at again.
@@ -302,9 +304,9 @@ function ApprovalsPage() {
       <div className="mx-auto w-full max-w-4xl space-y-4 p-4">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold">Pending approvals</h1>
+            <h1 className="text-xl font-semibold">Approvals</h1>
             <p className="text-sm text-muted-foreground">
-              Actions waiting on someone who is allowed to authorise them.
+              Review pending requests and completed decisions.
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -312,7 +314,7 @@ function ApprovalsPage() {
               <Switch
                 id="all-branches"
                 checked={allBranches}
-                onCheckedChange={setAllBranches}
+                onCheckedChange={value => { setAllBranches(value); setPage(1); }}
                 disabled={me?.role !== "admin"}
               />
               <Label htmlFor="all-branches" className="text-xs">
@@ -325,6 +327,23 @@ function ApprovalsPage() {
           </div>
         </header>
 
+        <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border p-3">
+          <div className="space-y-1">
+            <Label htmlFor="approval-status">Status</Label>
+            <Select value={status} onValueChange={value => {
+              setStatus(value as typeof status); setPage(1); setOpenRequestId(null);
+            }}>
+              <SelectTrigger id="approval-status" className="w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {(["pending", "approved", "rejected", "expired", "cancelled", "all"] as const).map(value =>
+                  <SelectItem key={value} value={value}>{value === "all" ? "All statuses" : value[0].toUpperCase() + value.slice(1)}</SelectItem>,
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="pb-2 text-sm text-muted-foreground">Showing {status === "all" ? "all" : status} requests</p>
+        </div>
+
         {error ? (
           <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
             {error}
@@ -336,34 +355,19 @@ function ApprovalsPage() {
             <CardContent className="flex flex-col items-center gap-2 p-10 text-center">
               <Clock3 className="size-6 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">
-                {history
-                  ? "No approval requests have been recorded for this branch."
-                  : "Nothing is waiting for a decision right now."}
+                {`No ${status === "all" ? "approval" : status} requests found in this branch scope.`}
               </p>
             </CardContent>
           </Card>
         ) : null}
 
-        {orderedRows.map((row, index) => {
+        {rows.map((row) => {
           const mine = !!me && row.requestedBy.toLowerCase() === me.id.toLowerCase();
           const payload = approvalDisplayFields(row.payload ?? {});
           const outcome = approvalOutcome(row);
           const decisionText = approvalDecisionText(row);
           return (
-            <Fragment key={row.id}>
-              {index === firstDecided ? (
-                <div className="mt-6 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 p-3">
-                  <div>
-                    <p className="text-sm font-semibold">Decided approvals</p>
-                    <p className="text-xs text-muted-foreground">
-                      Completed decisions are kept below as bill-linked approval certificates.
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={() => setHistory(false)}>
-                    Hide decided
-                  </Button>
-                </div>
-              ) : null}
+            <div key={row.id}>
               <Dialog
                 open={openRequestId === row.id}
                 onOpenChange={(open) => setOpenRequestId(open ? row.id : null)}
@@ -704,25 +708,24 @@ function ApprovalsPage() {
                   </div>
                 </DialogContent>
               </Dialog>
-            </Fragment>
+            </div>
           );
         })}
 
-        {firstDecided < 0 ? (
-          <div className="mt-6 flex items-center justify-between gap-3 rounded-md border border-dashed border-border p-3">
-            <div>
-              <p className="text-sm font-semibold">Decided approvals</p>
-              <p className="text-xs text-muted-foreground">
-                {history
-                  ? "No decided approvals were found for this branch."
-                  : "Open the completed decision history and its bill-linked details."}
-              </p>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => setHistory((value) => !value)}>
-              {history ? "Hide decided" : "Include decided"}
-            </Button>
+        <div className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between" aria-label="Approval pagination">
+          <div className="flex items-center gap-2">
+            <Label htmlFor="approval-page-size">Requests per page</Label>
+            <Select value={String(pageSize)} onValueChange={value => { setPageSize(Number(value)); setPage(1); }}>
+              <SelectTrigger id="approval-page-size" className="w-20"><SelectValue /></SelectTrigger>
+              <SelectContent>{[10, 25, 50, 100].map(size => <SelectItem key={size} value={String(size)}>{size}</SelectItem>)}</SelectContent>
+            </Select>
           </div>
-        ) : null}
+          <div className="flex items-center justify-between gap-3">
+            <Button variant="outline" size="sm" disabled={loading || page <= 1} onClick={() => setPage(value => value - 1)}>Previous</Button>
+            <span className="text-sm" aria-live="polite">Page {page}</span>
+            <Button variant="outline" size="sm" disabled={loading || !hasMore} onClick={() => setPage(value => value + 1)}>Next</Button>
+          </div>
+        </div>
       </div>
     </AppShell>
   );

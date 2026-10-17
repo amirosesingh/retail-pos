@@ -230,7 +230,7 @@ export function ManagerGateProvider({
           return { ok: false, grantToken: null };
         }
         // An approval request cannot travel now, so a PIN is the only route.
-        if (allowance === "manager_pin" || mode === "request") promptMode = "pin";
+        promptMode = "pin";
       }
 
       // 3 · PIN, an approval request, or the configured choice of both.

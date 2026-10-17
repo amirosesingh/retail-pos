@@ -1,3 +1,5 @@
+import { localDb } from "@/core/local-db/local-db";
+import { createRefreshQueue, subscribeBackgroundRefresh } from "./background-refresh";
 import { normalizeUuidFields } from "./uuid-fields";
 import { sameRecordId } from "./sale-identity";
 import { subscribeDataChange } from "./sync-engine";
@@ -277,7 +279,7 @@ export function useHeldOrders(storeId?: string): HeldOrder[] {
   );
   useEffect(() => {
     let active = true;
-    const sync = async () => {
+    const queue = createRefreshQueue(async () => {
       let loaded: HeldOrder[] | null = null;
       {
         const requestSequence = ++electronReadSequence;
@@ -298,14 +300,17 @@ export function useHeldOrders(storeId?: string): HeldOrder[] {
         const current = loaded ?? readHeldOrders();
         setOrders(storeId ? current.filter((order) => order.storeId === storeId) : current);
       }
-    };
-    void sync();
-    const refresh = () => void sync();
+    });
+    const refresh = () => void queue.refresh();
+    refresh();
+    const offCatchup = subscribeBackgroundRefresh(refresh, 60_000, Boolean(localDb()));
     const offData = subscribeDataChange(change => { if (change.table === "held_orders") refresh(); });
     window.addEventListener(EVENT, refresh);
     window.addEventListener("storage", refresh);
     return () => {
       active = false;
+      queue.stop();
+      offCatchup();
       offData();
       window.removeEventListener(EVENT, refresh);
       window.removeEventListener("storage", refresh);

@@ -484,7 +484,7 @@ async function pullDeltaForSession(): Promise<{merged: number}> {
         const rows = (page.data ?? []) as unknown as Array<Record<string, unknown>>;
         for (const row of rows) {
           const entityId = String(row.id ?? "").trim() || null;
-          announceDataChange({ reason: `pull:${table}`, table, storeId: null, entityId });
+          queueLiveChange({ reason: `pull:${table}`, table, storeId: null, entityId });
         }
         tableChanged += rows.length;
         if (rows.length < 500) break;

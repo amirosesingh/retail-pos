@@ -6,13 +6,13 @@
  * reads that file, compares versions, downloads the APK and hands it to
  * Android's installer. Nothing here runs on web or Electron.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { APP_VERSION } from "@/lib/app-updates";
 import { isNative, isAndroid } from "@/platform-config/platform";
 import {
   describeNetworkError,
+  httpExists,
   firstReachableUrl,
-  httpGetBase64,
   httpGetJson,
 } from "@/platforms/mobile/native-http";
 import { compareVersions, fetchManifest, resolvePlatformTarget, withTimeout } from "@/lib/update-manifest";
@@ -70,20 +70,21 @@ type Latest = {
   notes: string | null;
 };
 
-async function fetchLatest(): Promise<Latest> {
+export async function fetchLatest(): Promise<Latest> {
   // Preferred path: the single self-hosted manifest.
   const manifest = await fetchManifest();
   if (manifest) {
     const target = resolvePlatformTarget(manifest, "android");
-    const file =
-      target?.url.split("/").pop() || `Retail-${manifest.version}.apk`;
-    return {
-      version: manifest.version,
-      file,
-      feed: FEEDS[0]!,
-      url: target?.kind === "apk" ? target.url : null,
-      notes: manifest.releaseNotes ?? null,
-    };
+    if (target?.kind === "apk" && await withTimeout(httpExists(target.url)).catch(() => false)) {
+      const file = target.url.split("/").pop() || `Retail-${manifest.version}.apk`;
+      return {
+        version: manifest.version,
+        file,
+        feed: FEEDS[0]!,
+        url: target.url,
+        notes: manifest.releaseNotes ?? null,
+      };
+    }
   }
 
   // Legacy per-folder feeds, for phones pointed at an older bucket layout.
@@ -117,23 +118,56 @@ async function fetchLatest(): Promise<Latest> {
  * never opens on a half-written file. Returns the content URI so the caller
  * can offer a manual "Tap to install" if the intent was refused.
  */
-async function downloadAndInstall(
+export async function downloadAndInstall(
   url: string,
   file: string,
   onProgress: (pct: number) => void,
 ): Promise<{ uri: string; opened: boolean; error?: string }> {
   const { Filesystem, Directory } = await import("@capacitor/filesystem");
 
-  const base64 = await httpGetBase64(url, onProgress);
-
-  // ExternalCache is readable by the installer; Cache (internal) is not.
+  // Stream to disk natively: transferring the entire APK as base64 through
+  // the webview duplicates it in memory and supplies no byte progress.
   const directory = Directory.ExternalCache ?? Directory.Cache;
-  await Filesystem.writeFile({ path: file, data: base64, directory, recursive: true });
-
-  // Flush check: the stream must be closed and the file complete before the
-  // installer is handed the URI.
-  const stat = await Filesystem.stat({ path: file, directory });
-  if (!stat?.size) throw new Error("The update file did not finish saving on this device.");
+  let expectedBytes = 0;
+  let receivedBytes = 0;
+  const listener = await Filesystem.addListener("progress", progress => {
+    if (progress.url !== url) return;
+    receivedBytes = progress.bytes;
+    expectedBytes = progress.contentLength;
+    if (expectedBytes > 0) onProgress(Math.min(99, Math.floor(receivedBytes / expectedBytes * 100)));
+  });
+  try {
+    onProgress(0);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await Filesystem.downloadFile({
+          url, path: file, directory, recursive: true, progress: true,
+          connectTimeout: 15000, readTimeout: 60000,
+          headers: { "Accept-Encoding": "identity" },
+        });
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String((error as { message?: unknown })?.message ?? error);
+        if (attempt >= 2 || !/software caused connection abort|connection (?:abort|reset)|socket|timed? ?out|network is unreachable|unable to resolve host/i.test(message)) throw error;
+        await Filesystem.deleteFile({ path: file, directory }).catch(() => {});
+        expectedBytes = 0;
+        receivedBytes = 0;
+        onProgress(0);
+        await new Promise(resolve => setTimeout(resolve, 750 * (attempt + 1)));
+      }
+    }
+    const stat = await Filesystem.stat({ path: file, directory });
+    if (!stat?.size || (expectedBytes > 0 && stat.size !== expectedBytes) ||
+      (receivedBytes > 0 && stat.size < receivedBytes)) {
+      throw new Error("The update file did not finish saving on this device. Retry the download.");
+    }
+  } catch (error) {
+    await Filesystem.deleteFile({ path: file, directory }).catch(() => {});
+    throw error;
+  } finally {
+    await listener.remove().catch(() => {});
+  }
+  onProgress(100);
 
   const { uri } = await Filesystem.getUri({ path: file, directory });
   try {
@@ -160,6 +194,7 @@ export async function openInstaller(uri: string): Promise<void> {
 
 export function useAndroidUpdates() {
   const [state, setState] = useState<AndroidUpdateState>(INITIAL);
+  const downloadInFlight = useRef(false);
 
   const check = useCallback(async () => {
     if (!isNative() || !isAndroid()) return;
@@ -188,6 +223,8 @@ export function useAndroidUpdates() {
   }, []);
 
   const install = useCallback(async () => {
+    if (downloadInFlight.current) return;
+    downloadInFlight.current = true;
     setState((s) => ({ ...s, downloading: true, percent: 0, error: null }));
     try {
       const file = state.file;
@@ -217,6 +254,8 @@ export function useAndroidUpdates() {
         downloading: false,
         error: describeNetworkError(err),
       }));
+    } finally {
+      downloadInFlight.current = false;
     }
   }, [state.file, state.feed, state.url]);
 

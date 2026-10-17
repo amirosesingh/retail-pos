@@ -109,8 +109,8 @@ describe("approval bill details", () => {
     expect(page).toContain("Total approval to grant");
     expect(page).toContain("Extra above cashier limit");
     expect(page).toContain("This request was created without a bill snapshot");
-    expect(page).toContain("Decided approvals");
-    expect(page).toContain("Include decided");
+    expect(page).toContain("All statuses");
+    expect(page).toContain("Approval pagination");
     expect(page).toContain("Bill number");
     expect(page).toContain("Purpose");
     expect(page).toContain("After discount");

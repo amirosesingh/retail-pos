@@ -32,6 +32,7 @@ import { paymentsLabel } from "@/core/types/pos-types";
 import { formatTime, posDayKey, posHour } from "@/lib/time-zone";
 import { defaultReviewThresholds } from "@/lib/pos-seed";
 import { sameBranchId } from "@/lib/branch-id";
+import { cashierReviewTotals, hasSplitPayments } from "@/lib/cashier-review";
 import { inventoryMetrics } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
 import { useAuth } from "@/lib/pos-auth";
@@ -76,7 +77,7 @@ function Dashboard() {
   const storeIds = useMemo(() => [currentStore.id], [currentStore.id]);
   // Include a boundary day on both sides: report loading uses device-local
   // midnight, while dashboard buckets use the configured business timezone.
-  const { sales, loading: reportLoading } = useReportSales(state.sales, storeIds,
+  const { sales, loading: reportLoading, error: reportError } = useReportSales(state.sales, storeIds,
     posDayKey(new Date(Date.parse(`${today}T12:00:00`) - 14 * 86_400_000)),
     posDayKey(new Date(Date.parse(`${today}T12:00:00`) + 86_400_000)));
   const todaySales = sales.filter((s) => posDayKey(s.createdAt) === today);
@@ -134,58 +135,17 @@ function Dashboard() {
   const todayDrawer = drawer.filter(
     (d) => posDayKey(d.at) === today && sameBranchId(d.storeId, currentStore.id),
   );
-  const splitSales = live.filter(
-    (sale) =>
-      (sale.payments?.length ?? 0) > 1 || sale.payments?.some((payment) => payment.bankName),
-  );
+  const splitSales = live.filter(sale => hasSplitPayments(sale.payments));
 
   /** Per-cashier behaviour with fixed thresholds plus relative outliers. */
   const cashiers = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        name: string;
-        bills: number;
-        revenue: number;
-        refunds: number;
-        refundValue: number;
-        discount: number;
-        noSale: number;
-      }
-    >();
-    const get = (name: string) => {
-      if (!map.has(name))
-        map.set(name, {
-          name,
-          bills: 0,
-          revenue: 0,
-          refunds: 0,
-          refundValue: 0,
-          discount: 0,
-          noSale: 0,
-        });
-      return map.get(name)!;
-    };
-    todaySales.forEach((s) => {
-      const c = get(s.cashier || "Unknown");
-      c.bills += 1;
-      c.discount += s.discount;
-      if (s.refunded) {
-        c.refunds += 1;
-        c.refundValue += Math.abs(s.total);
-      } else {
-        c.revenue += s.total;
-      }
-    });
-    todayDrawer.forEach((d) => (get(d.staffName || "Unknown").noSale += 1));
-    const rows = Array.from(map.values());
-    const avgDiscountPct =
-      rows.length > 0
-        ? rows.reduce((a, r) => a + (r.revenue > 0 ? (r.discount / r.revenue) * 100 : 0), 0) /
-          rows.length
-        : 0;
+    const rows = cashierReviewTotals(todaySales, todayDrawer);
+    const originalTotal = rows.reduce((sum, row) => sum + row.original, 0);
+    const avgDiscountPct = originalTotal > 0
+      ? rows.reduce((sum, row) => sum + row.discount, 0) / originalTotal * 100
+      : 0;
     return rows.map((r) => {
-      const discountPct = r.revenue > 0 ? (r.discount / r.revenue) * 100 : 0;
+      const discountPct = r.discountPct;
       const flags: string[] = [];
       if (r.refunds > thresholds.maxRefunds) flags.push(`${r.refunds} refunds`);
       if (r.refundValue > thresholds.maxRefundValue) flags.push(`${money(r.refundValue)} refunded`);
@@ -211,6 +171,7 @@ function Dashboard() {
           </p>
         </header>
 
+        {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
         <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
           <Kpi label="Revenue today" value={money(revenue)} highlight />
           <Kpi label="Gross revenue" value={money(profit.revenue)} />
@@ -334,13 +295,19 @@ function Dashboard() {
               </Badge>
             )}
           </div>
+          <p className="px-5 pb-3 text-xs text-muted-foreground">
+            Completed sales only. Discount % = total discount ÷ original bill value before discounts.
+            Final totals include applicable tax and rounding; refunded bills are shown separately.
+          </p>
           <Separator />
           <Table loading={reportLoading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Cashier</TableHead>
                 <TableHead className="text-right">Bills</TableHead>
-                <TableHead className="text-right">Revenue</TableHead>
+                <TableHead className="text-right">Original bill value</TableHead>
+                <TableHead className="text-right">Discount amount</TableHead>
+                <TableHead className="text-right">Final bill total</TableHead>
                 <TableHead className="text-right">Refunds</TableHead>
                 <TableHead className="text-right">Discount %</TableHead>
                 <TableHead className="text-right">No-sale</TableHead>
@@ -350,8 +317,24 @@ function Dashboard() {
             <TableBody>
               {cashiers.map((c) => (
                 <TableRow key={c.name}>
-                  <TableCell>{c.name}</TableCell>
+                  <TableCell>
+                    <span>{c.name}</span>
+                    <details className="mt-1 min-w-48 max-w-sm text-xs">
+                      <summary className="cursor-pointer text-muted-foreground">View bills</summary>
+                      <ul className="mt-2 space-y-2">
+                        {todaySales.filter(sale => (sale.cashier || "Unknown") === c.name).map(sale => (
+                          <li key={sale.id} className="rounded-md border p-2">
+                            <p className="font-medium">{sale.receiptNo}{sale.refunded ? " · Refunded" : ""}</p>
+                            <p>Original {money(sale.subtotal)} · Discount {money(sale.discount)} ({(sale.subtotal > 0 ? sale.discount / sale.subtotal * 100 : 0).toFixed(1)}%)</p>
+                            <p>After discount {money(sale.subtotal - sale.discount)} · Final {money(sale.total)}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </TableCell>
                   <TableCell className="numeric text-right">{c.bills}</TableCell>
+                  <TableCell className="numeric text-right">{money(c.original)}</TableCell>
+                  <TableCell className="numeric text-right">{money(c.discount)}</TableCell>
                   <TableCell className="numeric text-right">{money(c.revenue)}</TableCell>
                   <TableCell className="numeric text-right">
                     {c.refunds} · {money(c.refundValue)}
@@ -369,7 +352,7 @@ function Dashboard() {
               ))}
               {!cashiers.length && (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                     No trading recorded today.
                   </TableCell>
                 </TableRow>
@@ -416,7 +399,8 @@ function Dashboard() {
         </section>
 
         <section className="rounded-lg border border-border bg-card">
-          <h2 className="px-5 py-3 text-sm font-semibold">Split payments today</h2>
+          <h2 className="px-5 pt-3 text-sm font-semibold">Split payments today</h2>
+          <p className="px-5 pb-3 pt-1 text-xs text-muted-foreground">Bills paid in two or more parts, such as cash and card.</p>
           <Separator />
           <Table loading={reportLoading}>
             <TableHeader>

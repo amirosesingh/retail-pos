@@ -21,6 +21,8 @@ export type SoldLine = {
   price: number;
   unitDiscount: number;
   discount: number;
+  /** Item coupon already included in the line discount total. */
+  couponDiscount?: number;
   taxRate: number;
   tax: number;
   revenue: number;
@@ -63,6 +65,7 @@ const lineOf = (
     price: l.price,
     unitDiscount,
     discount: lineDiscountTotal(l) * (l.qty < 0 ? -1 : 1),
+    couponDiscount: Math.min(Math.abs(l.price * l.qty), Math.abs(l.couponDiscount || 0)) * (l.qty < 0 ? -1 : 1),
     taxRate: l.taxRate ?? 0,
     tax,
     revenue,
@@ -103,12 +106,14 @@ export const sumLines = (rows: SoldLine[]) => {
 
 /** Everything the shop gave away on a set of bills. */
 export const savingsOf = (sales: Sale[], rows: SoldLine[]) => {
-  const lineDiscount = r2(rows.filter((r) => !r.foc).reduce((a, r) => a + r.discount, 0));
-  const focValue = r2(rows.filter((r) => r.foc).reduce((a, r) => a + r.price * r.qty, 0));
-  const coupon = r2(sales.reduce((a, s) => a + (s.couponDiscount ?? 0), 0));
-  const billDiscount = r2(
-    Math.max(sales.reduce((a, s) => a + s.discount, 0) - lineDiscount - coupon, 0),
-  );
+  const manual = (row: SoldLine) => row.discount - (row.couponDiscount ?? 0);
+  const lineDiscount = r2(rows.filter(row => !row.foc).reduce((sum, row) => sum + manual(row), 0));
+  const focValue = r2(rows.filter(row => row.foc).reduce((sum, row) => sum + row.price * row.qty, 0));
+  const allCoupons = sales.reduce((sum, sale) => sum + (sale.couponDiscount ?? 0), 0);
+  const giftCoupons = rows.filter(row => row.foc).reduce((sum, row) => sum + (row.couponDiscount ?? 0), 0);
+  const coupon = r2(Math.max(0, allCoupons - giftCoupons));
+  const billDiscount = r2(Math.max(sales.reduce((sum, sale) => sum + sale.discount, 0) -
+    rows.reduce((sum, row) => sum + manual(row), 0) - allCoupons, 0));
   return {
     lineDiscount,
     billDiscount,

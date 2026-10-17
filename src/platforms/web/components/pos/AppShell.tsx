@@ -1,3 +1,4 @@
+import { ApprovalTokenButton } from "@/platform-config/approval-token";
 import { useAdminWebActivation } from "@/lib/use-admin-web-activation";
 import { isLocationSetupRoute } from "@/lib/app-shell-routes";
 import { usePersonalAppearance, usePersonalAppearanceSync } from "@/lib/personal-appearance";
@@ -539,6 +540,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 </span>
                 <ConnectionStatusButton />
                 <SystemAlertsButton />
+                <ApprovalTokenButton />
                 <ActivityBell />
 
                 {terminal.config && (

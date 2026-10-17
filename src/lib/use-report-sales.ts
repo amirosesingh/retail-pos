@@ -1,12 +1,12 @@
+import { subscribeBackgroundRefresh } from "./background-refresh";
 import { subscribeSalesChange } from "./sync-engine";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSalesPage } from "@/core/api/pos-db";
 import type { Sale } from "@/core/types/pos-types";
 import { uniqueSales } from "./sale-identity";
 import { canonicalBranchId } from "./branch-id";
 
-const dayStart = (value: string) => Date.parse(`${value}T00:00:00`);
-const dayEnd = (value: string) => Date.parse(`${value}T23:59:59.999`);
+import { effectiveTimeZone, inPosDayRange, reportScanStart as dayStart, reportScanEnd as dayEnd } from "./time-zone";
 
 /**
  * Date-bounded, keyset-paged report history.
@@ -22,6 +22,7 @@ export function useReportSales(
   to: string,
   enabled = true,
 ): { sales: Sale[]; loading: boolean; refreshing: boolean; error: string } {
+  const reportZone = effectiveTimeZone();
   const seedRows = useMemo(() => {
     const start = dayStart(from);
     const end = dayEnd(to);
@@ -29,29 +30,31 @@ export function useReportSales(
     return seed.filter((sale) => {
       const at = Date.parse(sale.createdAt);
       return (
-        at >= start && at <= end && (!stores.size || stores.has(canonicalBranchId(sale.storeId)))
+        at >= start && at <= end && inPosDayRange(sale.createdAt, from, to, reportZone) && (!stores.size || stores.has(canonicalBranchId(sale.storeId)))
       );
     });
-  }, [seed, storeIds, from, to]);
+  }, [seed, storeIds, from, to, reportZone]);
   const [revision, setRevision] = useState(0);
+  const refreshState = useRef({ running: false, queued: false });
   useEffect(() => {
     if (!enabled) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = () => {
+      if (refreshState.current.running) refreshState.current.queued = true;
+      else setRevision(value => value + 1);
+    };
     const off = subscribeSalesChange(() => {
       if (timer) return;
       timer = setTimeout(() => {
         timer = undefined;
-        setRevision((value) => value + 1);
+        refresh();
       }, 100);
     });
-    const refresh = () => setRevision((value) => value + 1);
-    window.addEventListener("focus", refresh);
-    window.addEventListener("online", refresh);
+    const offCatchup = subscribeBackgroundRefresh(refresh);
     return () => {
       off();
       if (timer) clearTimeout(timer);
-      window.removeEventListener("focus", refresh);
-      window.removeEventListener("online", refresh);
+      offCatchup();
     };
   }, [enabled]);
   const [loaded, setLoaded] = useState<{ key: string; rows: Sale[] } | null>(null);
@@ -59,7 +62,7 @@ export function useReportSales(
   const [error, setError] = useState("");
   const storeKey = storeIds.filter(Boolean).sort().join("|");
 
-  const rangeKey = JSON.stringify([storeKey, from, to]);
+  const rangeKey = JSON.stringify([storeKey, from, to, reportZone]);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +70,8 @@ export function useReportSales(
     const ids = storeKey ? storeKey.split("|") : [""];
     const start = dayStart(from);
     const end = dayEnd(to);
+    const work = { running: true, queued: false };
+    refreshState.current = work;
     setLoading(true);
     setError("");
 
@@ -82,7 +87,8 @@ export function useReportSales(
             if (cancelled) return;
             for (const sale of page.rows) {
               const at = Date.parse(sale.createdAt);
-              if (at >= start && at <= end) found.push(sale);
+              if (at >= start && at <= end && inPosDayRange(sale.createdAt, from, to, reportZone) &&
+                (!storeKey || ids.some(id => canonicalBranchId(id) === canonicalBranchId(sale.storeId)))) found.push(sale);
             }
             const oldest = page.rows.at(-1);
             if (!page.hasMore || !page.cursor || !oldest || Date.parse(oldest.createdAt) < start)
@@ -96,13 +102,17 @@ export function useReportSales(
         if (!cancelled)
           setError((reason as Error).message || "Could not load the full report history");
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          work.running = false;
+          setLoading(false);
+          if (work.queued) setRevision(value => value + 1);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [from, to, storeKey, rangeKey, revision, enabled]);
+  }, [from, to, storeKey, rangeKey, revision, enabled, reportZone]);
 
   const sales = useMemo(() => {
     // Live committed state wins over an older page snapshot (for example a refund).

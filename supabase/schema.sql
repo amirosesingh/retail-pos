@@ -19451,6 +19451,83 @@ REVOKE ALL ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) FROM 
 GRANT EXECUTE ON FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) TO service_role;
 NOTIFY pgrst, 'reload schema';
 
+
+-- 20261017121938_private_approval_tokens
+-- Credential secrets stay outside the exposed schema and all POS sync tables.
+CREATE SCHEMA IF NOT EXISTS pos_private;
+REVOKE ALL ON SCHEMA pos_private FROM PUBLIC, anon, authenticated;
+CREATE TABLE IF NOT EXISTS pos_private.approval_tokens (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL REFERENCES public.app_users(user_id) ON DELETE CASCADE,
+  terminal_id uuid NOT NULL REFERENCES public.terminal_tokens(id) ON DELETE CASCADE,
+  secret_ciphertext text NOT NULL,
+  last_used_step bigint NOT NULL DEFAULT -1,
+  UNIQUE (user_id, terminal_id)
+);
+ALTER TABLE pos_private.approval_tokens ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON pos_private.approval_tokens FROM PUBLIC, anon, authenticated;
+CREATE TABLE IF NOT EXISTS pos_private.approval_verifiers (
+  terminal_id uuid PRIMARY KEY REFERENCES public.terminal_tokens(id) ON DELETE CASCADE,
+  public_key text NOT NULL
+);
+ALTER TABLE pos_private.approval_verifiers ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON pos_private.approval_verifiers FROM PUBLIC, anon, authenticated;
+CREATE OR REPLACE FUNCTION public.approval_token_state(
+  p_op text, p_user_id text, p_terminal_id uuid DEFAULT NULL,
+  p_secret text DEFAULT NULL, p_step bigint DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE answer jsonb;
+BEGIN
+  IF p_op = 'register_verifier' THEN
+    IF p_terminal_id IS NULL OR length(coalesce(p_secret,'')) < 300 THEN RAISE EXCEPTION 'Invalid verifier enrollment'; END IF;
+    INSERT INTO pos_private.approval_verifiers(terminal_id,public_key) VALUES(p_terminal_id,p_secret)
+    ON CONFLICT (terminal_id) DO UPDATE SET public_key=EXCLUDED.public_key;
+    answer := 'true'::jsonb;
+  ELSIF p_op = 'get_verifier' THEN
+    SELECT jsonb_build_object('public_key',v.public_key) INTO answer FROM pos_private.approval_verifiers v WHERE v.terminal_id=p_terminal_id;
+  ELSIF p_op = 'enroll' THEN
+    IF p_terminal_id IS NULL OR length(coalesce(p_secret,'')) < 40 THEN RAISE EXCEPTION 'Invalid enrollment'; END IF;
+    INSERT INTO pos_private.approval_tokens(user_id,terminal_id,secret_ciphertext)
+    VALUES(p_user_id,p_terminal_id,p_secret) ON CONFLICT (user_id,terminal_id) DO NOTHING;
+    SELECT to_jsonb(t) INTO answer FROM pos_private.approval_tokens t WHERE t.user_id=p_user_id AND t.terminal_id=p_terminal_id;
+  ELSIF p_op = 'permissions' THEN
+    UPDATE public.app_users a SET permissions=(p_secret::jsonb - 'approval_pin_enabled' - 'approval_totp_enabled') ||
+      CASE WHEN a.permissions ? 'approval_pin_enabled' THEN jsonb_build_object('approval_pin_enabled',a.permissions->'approval_pin_enabled') ELSE '{}'::jsonb END ||
+      CASE WHEN a.permissions ? 'approval_totp_enabled' THEN jsonb_build_object('approval_totp_enabled',a.permissions->'approval_totp_enabled') ELSE '{}'::jsonb END
+      WHERE a.user_id=p_user_id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Staff account not found'; END IF;
+    answer := 'true'::jsonb;
+  ELSIF p_op = 'set_methods' THEN
+    IF jsonb_typeof((p_secret::jsonb)->'pin') <> 'boolean' OR jsonb_typeof((p_secret::jsonb)->'totp') <> 'boolean' THEN RAISE EXCEPTION 'Invalid credential methods'; END IF;
+    UPDATE public.app_users a SET permissions=coalesce(a.permissions,'{}'::jsonb) || jsonb_build_object(
+      'approval_pin_enabled', (p_secret::jsonb)->'pin', 'approval_totp_enabled', (p_secret::jsonb)->'totp'
+    ) WHERE a.user_id=p_user_id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Staff account not found'; END IF;
+    IF NOT ((p_secret::jsonb)->>'totp')::boolean THEN DELETE FROM pos_private.approval_tokens t WHERE t.user_id=p_user_id; END IF;
+    answer := 'true'::jsonb;
+  ELSIF p_op = 'read_branch' THEN
+    SELECT coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb) INTO answer
+      FROM pos_private.approval_tokens t JOIN public.app_users a ON a.user_id=t.user_id
+      JOIN public.terminal_tokens k ON k.id=t.terminal_id
+      WHERE a.is_active AND a.permissions->>'approval_totp_enabled'='true'
+        AND (a.store_id IS NULL OR lower(a.store_id::text)=lower(p_user_id))
+        AND k.revoked_at IS NULL AND k.status::text IN ('active','used')
+        AND (a.store_id IS NULL OR lower(k.location_id::text)=lower(p_user_id));
+  ELSIF p_op = 'read' THEN
+    SELECT coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb) INTO answer FROM pos_private.approval_tokens t WHERE t.user_id=p_user_id;
+  ELSIF p_op = 'consume' THEN
+    UPDATE pos_private.approval_tokens t SET last_used_step=p_step
+      WHERE t.user_id=p_user_id AND t.terminal_id=p_terminal_id AND t.last_used_step<p_step;
+    answer := to_jsonb(FOUND);
+  ELSIF p_op = 'revoke' THEN
+    DELETE FROM pos_private.approval_tokens t WHERE t.user_id=p_user_id;
+    answer := 'true'::jsonb;
+  ELSE RAISE EXCEPTION 'Unknown credential operation'; END IF;
+  RETURN answer;
+END $$;
+REVOKE ALL ON FUNCTION public.approval_token_state(text,text,uuid,text,bigint) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.approval_token_state(text,text,uuid,text,bigint) TO service_role;
+
 -- Final public-schema privilege hardening after release 1.4.38 routine definitions.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC,anon,authenticated;
 DO $release_hardening$
@@ -19463,3 +19540,80 @@ END $release_hardening$;
 
 -- Required by personal-settings RLS ownership policies.
 GRANT EXECUTE ON FUNCTION public.settings_private_key() TO authenticated;
+
+-- Business Overview reconciliation (20261017083528).
+-- Read-only reporting definitions. No transaction rows or access policies are changed.
+CREATE OR REPLACE VIEW public.v_sale_line_facts WITH (security_invoker = true) AS
+WITH region AS (
+  SELECT coalesce((SELECT name FROM pg_timezone_names
+    WHERE name = (SELECT integration_settings->>'timeZone' FROM public.pos_settings WHERE id=1)), 'UTC') AS zone
+), raw AS (
+  SELECT si.id,si.sale_id,si.product_id,si.product_name,si.quantity,si.unit_price,si.unit_cost,
+    si.is_foc,si.is_return,si.discount_percent,si.discount_amount,si.coupon_discount,
+    p.cost_price AS fallback_cost, s.bill_number,s.store_id,s.cashier_name,s.created_at,s.payment_type,s.is_refunded,
+    (s.created_at AT TIME ZONE region.zone)::date AS sale_day,
+    to_char(s.created_at AT TIME ZONE region.zone,'YYYY-MM') AS sale_month,
+    round((s.total_amount-coalesce(s.tax_amount,0)-coalesce(s.rounding_adjustment,0))::numeric,2) AS net_total,
+    abs(si.unit_price*si.quantity)::numeric AS gross,
+    least(abs(si.unit_price*si.quantity),abs(coalesce(si.coupon_discount,0)))::numeric AS coupon
+  FROM public.sale_items si JOIN public.sales s ON s.id=si.sale_id LEFT JOIN public.products p ON p.id=si.product_id CROSS JOIN region
+  WHERE NOT coalesce(s.is_refunded,false)
+), discounted AS (
+  SELECT raw.*, round(least(gross-coupon, greatest(0,
+    CASE WHEN discount_percent>0 THEN (gross-coupon)*least(discount_percent,100)/100.0
+    ELSE coalesce(discount_amount,0)*abs(quantity) END))::numeric,2) AS own_discount
+  FROM raw
+), weights AS (
+  SELECT discounted.*, CASE WHEN is_foc THEN 0 ELSE
+    (gross-coupon-own_discount)*(CASE WHEN quantity<0 THEN -1 ELSE 1 END) END AS weight
+  FROM discounted
+), totals AS (
+  SELECT weights.*, sum(weight) OVER (PARTITION BY sale_id) AS weight_total,
+    max(id::text) FILTER (WHERE weight<>0) OVER (PARTITION BY sale_id) AS last_line
+  FROM weights
+), allocated AS (
+  SELECT totals.*, round((CASE WHEN weight_total<>0 THEN weight/weight_total*net_total ELSE 0 END)::numeric,2) AS allocated_revenue
+  FROM totals
+)
+SELECT id AS line_id,sale_id,bill_number,store_id,cashier_name,created_at,sale_day,sale_month,
+  payment_type,is_refunded,product_id,product_name,quantity,unit_price,unit_cost,is_foc,is_return,
+  round((CASE WHEN quantity<>0 THEN own_discount/abs(quantity) ELSE 0 END)::numeric,2) AS unit_discount,
+  own_discount*(CASE WHEN quantity<0 THEN -1 ELSE 1 END) AS line_discount,
+  CASE WHEN id::text=last_line THEN net_total-sum(allocated_revenue) OVER (PARTITION BY sale_id)+allocated_revenue
+       ELSE allocated_revenue END AS line_revenue,
+  round((coalesce(unit_cost,fallback_cost,0)*quantity)::numeric,2) AS line_cost
+FROM allocated;
+
+CREATE OR REPLACE VIEW public.v_daily_store_sales WITH (security_invoker = true) AS
+WITH region AS (
+  SELECT coalesce((SELECT name FROM pg_timezone_names
+    WHERE name = (SELECT integration_settings->>'timeZone' FROM public.pos_settings WHERE id=1)), 'UTC') AS zone
+), facts AS (
+  SELECT sale_id,sum(line_cost) AS cost,sum(line_discount) AS discount,
+    sum(CASE WHEN is_foc THEN unit_price*quantity ELSE 0 END) AS foc_value,sum(quantity) AS units
+  FROM public.v_sale_line_facts GROUP BY sale_id
+)
+SELECT (s.created_at AT TIME ZONE region.zone)::date AS sale_day,
+  to_char(s.created_at AT TIME ZONE region.zone,'YYYY-MM') AS sale_month,s.store_id,
+  count(*) AS bills,
+  round(sum(s.total_amount-coalesce(s.tax_amount,0)-coalesce(s.rounding_adjustment,0))::numeric,2) AS revenue,
+  round(sum(coalesce(f.cost,0))::numeric,2) AS cost,
+  round(sum(s.total_amount-coalesce(s.tax_amount,0)-coalesce(s.rounding_adjustment,0)-coalesce(f.cost,0))::numeric,2) AS profit,
+  round(sum(coalesce(f.discount,0))::numeric,2) AS discount,
+  round(sum(coalesce(f.foc_value,0))::numeric,2) AS foc_value,
+  round(sum(coalesce(f.units,0))::numeric,2) AS units
+FROM public.sales s LEFT JOIN facts f ON f.sale_id=s.id CROSS JOIN region
+WHERE NOT coalesce(s.is_refunded,false)
+GROUP BY (s.created_at AT TIME ZONE region.zone)::date,to_char(s.created_at AT TIME ZONE region.zone,'YYYY-MM'),s.store_id;
+
+CREATE OR REPLACE VIEW public.v_daily_item_sales WITH (security_invoker = true) AS
+SELECT f.sale_day,f.sale_month,f.store_id,f.product_id,f.product_name,
+  round(sum(f.quantity)::numeric,2) AS units,round(sum(f.line_revenue),2) AS revenue,
+  round(sum(f.line_cost),2) AS cost,round(sum(f.line_revenue-f.line_cost),2) AS profit,
+  coalesce(nullif(btrim(p.category),''),'Uncategorized') AS product_category
+FROM public.v_sale_line_facts f LEFT JOIN public.products p ON p.id=f.product_id
+GROUP BY f.sale_day,f.sale_month,f.store_id,f.product_id,f.product_name,coalesce(nullif(btrim(p.category),''),'Uncategorized');
+
+REVOKE ALL ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales FROM anon;
+GRANT SELECT ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales TO authenticated;
+GRANT ALL ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales TO service_role;

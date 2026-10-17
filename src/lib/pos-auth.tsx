@@ -998,6 +998,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         if (!isCurrentEpoch(startedAt)) return;
       }
+      const { clearApprovalToken } = await import("@/platform-config/approval-token-client");
+      await clearApprovalToken().catch(() => { /* Cleared session proof also invalidates the saved token binding. */ });
       // Quiesce the UI and every cloud background job before revoking tokens.
       // Otherwise timers can send authenticated work at the same instant the
       // logout request invalidates that session, producing a burst of 401/403s.
