@@ -49,6 +49,7 @@ const { applyMigrations, ensureDatabase, migrationBundleSql } = require("./db/mi
 const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
+let sessionAdoptionRevision = 0;
 const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = require("./synced-staff-login.cjs");
 
 const databaseConfig = createSecureConfig({ app, safeStorage, configStore });
@@ -1535,7 +1536,7 @@ function registerIpc() {
     writeBarrier: closeWriteBarrier,
   });
   ipcMain.handle("admin:status", () => adminSession.status());
-  ipcMain.handle("admin:lock", () => { adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
+  ipcMain.handle("admin:lock", () => { sessionAdoptionRevision++; adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
   ipcMain.handle("admin:recovery-unlock", async (_event, username, pin) => guard.guarded(async () => {
     const user = guard.text(username, { name: "username", max: 160 });
     const secret = guard.text(pin, { name: "password or PIN", max: 128 });
@@ -1651,13 +1652,18 @@ function registerIpc() {
     return { ok: true };
   });
   ipcMain.handle("admin:adopt-session", async (_e, value, rawTerminal) => guard.guarded(async () => {
+    const revision = ++sessionAdoptionRevision;
+    const initialIdentity = adminSession.identity();
     const proof=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
     if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return{ok:false,error:"A verified signed-in user is required."};
     const authorizationUrl=authorizationServerUrl();
     if(!authorizationUrl)return{ok:false,error:"Configure the hosted POS backend address before connecting the local database."};
-    const response=await fetch(`${authorizationUrl}/api/v1/pos/ipc-adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(proof)});
+    const response=await fetch(`${authorizationUrl}/api/v1/pos/ipc-adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(proof),signal:AbortSignal.timeout(8_000)});
     const result=await response.json().catch(()=>({ok:false,error:"Authorization failed."}));
     if(!response.ok||!result.ok)return{ok:false,error:result.error??"Authorization failed."};
+    const currentIdentity = adminSession.identity();
+    if (revision !== sessionAdoptionRevision || initialIdentity?.subject !== currentIdentity?.subject || initialIdentity?.source !== currentIdentity?.source)
+      return {ok:false,error:"The signed-in user changed while permissions were refreshing."};
     // The hosted backend has now verified this live POS identity. This is the
     // safe point to repair the native activation mirror that boot hydration
     // could not write before a staff session existed.

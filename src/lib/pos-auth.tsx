@@ -1,5 +1,7 @@
 import { createSessionTransition } from "./session-transition";
 import { terminalUserPermissions } from "./terminal-user-permissions";
+import { createPermissionRefresh } from "./permission-refresh";
+import { subscribeDataChange, subscribeSettingsChange } from "./sync-engine";
 import { normalizeUuidFields } from "./uuid-fields";
 import { preserveSessionDrafts } from "./session-draft";
 import {
@@ -185,6 +187,7 @@ export type AppUserProfile = {
   user_id: string;
   full_name: string;
   role: AppRole;
+  role_slug?: string | null;
   store_id: string | null;
   email: string;
   permissions: Partial<StaffPermissions> | null;
@@ -1110,7 +1113,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const email = account.email ?? "";
     const meta = account.user_metadata ?? {};
-    const metaRole = (meta["role"] as MetaRole | undefined) ?? null;
+    const metaRole = appUser
+      ? ((appUser.role_slug ?? fromDbRole(appUser.role)) as MetaRole)
+      : (meta["role"] as MetaRole | undefined) ?? null;
     const isTrueAdmin =
       roles.includes("admin") ||
       appUser?.role === "admin" ||
@@ -1222,6 +1227,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // at the next sign-in. Re-checked on a timer and whenever the screen is
   // brought back into view; with no connection the check simply does not run.
   const centralUserId = session?.user?.id ?? null;
+  const terminalUserCode = terminalUser?.userCode ?? null;
+  useEffect(() => {
+    if (typeof window === "undefined" || (!terminalUserCode && (!centralUserId || !centralAuthVerified))) return;
+    const startedAt = sessionEpoch();
+    const current = () => isCurrentEpoch(startedAt);
+    let nativeProfile: string | null = null;
+    const refresh = createPermissionRefresh({
+      current,
+      read: async () => {
+        if (document.visibilityState === "hidden" || navigator.onLine === false) return null;
+        const proof = await readCredentials();
+        if (!current()) return null;
+        const { readSessionPermissions } = await import("./session-permissions.functions");
+        const result = await readSessionPermissions({ data: proof, signal: AbortSignal.timeout(8_000) });
+        if (!current()) return null;
+        // Electron independently verifies the same proof in its main process.
+        // Never pass a permission matrix from the renderer to native authority.
+        const profileSignature = result.status === "ok" ? JSON.stringify(result.profile) : null;
+        if (result.status === "ok" && profileSignature !== nativeProfile && isWindowsShell() && window.sqlAdmin?.adoptSession) {
+          const adopted = await window.sqlAdmin.adoptSession(proof, readTerminalConfig());
+          if (!adopted.ok) return null;
+          nativeProfile = profileSignature;
+        }
+        return result;
+      },
+      apply: async (result) => {
+        if (!result) return;
+        if (result.status === "revoked" || result.status === "branch_changed") {
+          notifySessionExpired(startedAt);
+          return;
+        }
+        if (result.status !== "ok") return;
+        const profile = normalizeUuidFields(result.profile);
+        if (terminalUserCode) {
+          // Never substitute the terminal's machine account for its PIN user.
+          if (profile.user_id !== terminalUserCode) return;
+          setTerminalUser((previous) => {
+            if (!previous || previous.userCode !== terminalUserCode || !current()) return previous;
+            const next = { ...previous, name: profile.full_name, email: profile.email,
+              role: profile.role, roleSlug: profile.role_slug, storeId: profile.store_id,
+              permissions: profile.permissions ?? {} };
+            if (JSON.stringify(next) === JSON.stringify(previous)) return previous;
+            try { window.sessionStorage.setItem(TERMINAL_KEY, JSON.stringify(next)); } catch { /* optional session mirror */ }
+            return next;
+          });
+        } else {
+          setAppUser((previous) => JSON.stringify(previous) === JSON.stringify(profile) ? previous : profile);
+          setRoles((previous) => previous.length === 1 && previous[0] === profile.role ? previous : [profile.role]);
+        }
+      },
+    });
+    const check = () => { void refresh.refresh(); };
+    const changed = (change: { table: string }) => {
+      if (["app_users", "cashiers", "staff_roles", "user_roles"].includes(change.table)) check();
+    };
+    const offData = subscribeDataChange(changed);
+    const offSettings = subscribeSettingsChange(changed);
+    // Notifications give fast updates; polling covers missed events and devices
+    // without a realtime subscription. Reconnect/resume checks run immediately.
+    const timer = window.setInterval(check, 10_000);
+    window.addEventListener("online", check);
+    window.addEventListener("focus", check);
+    window.addEventListener(APP_RESUME_EVENT, check);
+    document.addEventListener("visibilitychange", check);
+    check();
+    return () => {
+      refresh.stop(); offData(); offSettings(); window.clearInterval(timer);
+      window.removeEventListener("online", check);
+      window.removeEventListener("focus", check);
+      window.removeEventListener(APP_RESUME_EVENT, check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [terminalUserCode, centralUserId, centralAuthVerified]);
   useEffect(() => {
     // A PIN/offline terminal user has no Supabase bearer. Its status is
     // enforced by the signed device session, not by an authenticated-only RPC.
