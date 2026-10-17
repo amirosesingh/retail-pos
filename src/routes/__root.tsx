@@ -47,7 +47,7 @@ import {
 import { subscribeSyncConfig, syncConfig } from "@/lib/sync-config";
 import { DesktopUpdateBanner, DesktopCloseSyncStatus } from "@/platforms/windows/components/DesktopUpdateBanner";
 import { AndroidUpdateBanner } from "@/platforms/mobile/components/AndroidUpdateBanner";
-import { usePublicHostLanding } from "../lib/coupon-hosts";
+import { PublicHostBoundary } from "@/platforms/web/components/pos/PublicHostBoundary";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { bypassPersistentAppShell, isCustomerPublicRoute } from "@/lib/app-shell-routes";
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
@@ -248,7 +248,6 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
   const pathname = useLocation({ select: (location) => location.pathname });
-  usePublicHostLanding();
   useNativeBackNavigation(router);
 
   // One long-lived owner for connectivity on every platform. Platform-specific
@@ -319,6 +318,7 @@ function RootComponent() {
         <NativeBoot>
           <ConnectionProfileBoot>
             <OfflineGate>
+              <PublicHostBoundary pathname={pathname}>
               {isCustomerPublicRoute(pathname) ? (
                 <>
                   <Outlet />
@@ -327,6 +327,7 @@ function RootComponent() {
               ) : (
                 <TillRuntime />
               )}
+              </PublicHostBoundary>
             </OfflineGate>
           </ConnectionProfileBoot>
         </NativeBoot>

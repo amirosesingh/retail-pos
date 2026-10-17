@@ -167,7 +167,8 @@ CNAME  redeem   -> your Pages deployment
 Member signup URL: ${integrations.memberDomain}/join
 Voucher redemption URL: ${integrations.redeemDomain}/c/<token>
 
-Both subdomains serve the same build; only the landing path differs.`;
+Both customer subdomains share the database. They do not show the POS login.
+Switching one off keeps its unavailable page at the same address. The POS stays on its own domain.`;
 
   return (
     <div className="w-full max-w-full space-y-5">
@@ -277,13 +278,13 @@ Both subdomains serve the same build; only the landing path differs.`;
         <div className="grid gap-2 sm:grid-cols-2">
           <DomainSwitch
             label="Member signup subdomain"
-            hint="Turns the public /join page on or off."
+            hint="Controls public member signup. The POS stays on its current address."
             flagKey={MEMBER_FLAG}
             enabled={flags.member}
           />
           <DomainSwitch
             label="Voucher redemption subdomain"
-            hint="Turns the public claim and voucher pages on or off."
+            hint="Controls public claim and voucher pages, independently of membership and the POS."
             flagKey={REDEEM_FLAG}
             enabled={flags.redeem}
           />
