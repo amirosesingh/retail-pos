@@ -1,5 +1,6 @@
+import { subscribeBackgroundRefresh } from "./background-refresh";
 import { subscribeSalesChange } from "./sync-engine";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSalesPage } from "@/core/api/pos-db";
 import type { Sale } from "@/core/types/pos-types";
 import { uniqueSales } from "./sale-identity";
@@ -34,24 +35,26 @@ export function useReportSales(
     });
   }, [seed, storeIds, from, to, reportZone]);
   const [revision, setRevision] = useState(0);
+  const refreshState = useRef({ running: false, queued: false });
   useEffect(() => {
     if (!enabled) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = () => {
+      if (refreshState.current.running) refreshState.current.queued = true;
+      else setRevision(value => value + 1);
+    };
     const off = subscribeSalesChange(() => {
       if (timer) return;
       timer = setTimeout(() => {
         timer = undefined;
-        setRevision((value) => value + 1);
+        refresh();
       }, 100);
     });
-    const refresh = () => setRevision((value) => value + 1);
-    window.addEventListener("focus", refresh);
-    window.addEventListener("online", refresh);
+    const offCatchup = subscribeBackgroundRefresh(refresh);
     return () => {
       off();
       if (timer) clearTimeout(timer);
-      window.removeEventListener("focus", refresh);
-      window.removeEventListener("online", refresh);
+      offCatchup();
     };
   }, [enabled]);
   const [loaded, setLoaded] = useState<{ key: string; rows: Sale[] } | null>(null);
@@ -67,6 +70,8 @@ export function useReportSales(
     const ids = storeKey ? storeKey.split("|") : [""];
     const start = dayStart(from);
     const end = dayEnd(to);
+    const work = { running: true, queued: false };
+    refreshState.current = work;
     setLoading(true);
     setError("");
 
@@ -97,7 +102,11 @@ export function useReportSales(
         if (!cancelled)
           setError((reason as Error).message || "Could not load the full report history");
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          work.running = false;
+          setLoading(false);
+          if (work.queued) setRevision(value => value + 1);
+        }
       }
     })();
     return () => {

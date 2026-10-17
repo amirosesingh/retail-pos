@@ -1,3 +1,4 @@
+import { createRefreshQueue, requestBackgroundRefresh, subscribeBackgroundRefresh } from "./background-refresh";
 import { stockCountChanges } from "./stock-count-plan";
 import { retainUnchangedFields } from "./live-state";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
@@ -868,12 +869,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const offLocal = localDb()?.onBusinessChanged?.((change) => {
       if (change.kind === "transfer") wake();
     });
-    window.addEventListener("focus", wake);
-    window.addEventListener("online", wake);
+    const offCatchup = subscribeBackgroundRefresh(wake, 60_000, effectiveDatabaseMode() !== "online");
     return () => {
       cancelled = true;
-      window.removeEventListener("focus", wake);
-      window.removeEventListener("online", wake);
+      offCatchup();
       offData();
       offSettings();
       offLocal?.();
@@ -1145,35 +1144,43 @@ export function PosProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(APP_RESUME_EVENT, resume);
       if (removeNative) void removeNative();
     };
-  }, [readsReady, readIdentity, refreshActiveShift]);
+  }, [readsReady, readIdentity, state.currentStoreId, refreshActiveShift]);
 
-  // Electron can miss socket events while its window is minimized. Regaining
-  // focus wakes the durable worker and re-reads the branch snapshot; the
-  // worker remains responsible for ordered push/pull convergence.
+  // Sparse reconciliation also covers relayed/PIN sessions and missed row hints.
+  // Never reset readiness: mounted tables, dialogs and checkout drafts stay intact.
   useEffect(() => {
-    if (effectiveDatabaseMode() === "online" || !signedIn) return;
-    const focus = () => {
-      const bridge = localDb();
-      const active =
-        activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
-      void Promise.resolve(bridge?.sync?.auto?.())
-        .catch(() => undefined)
-        .then(() => loadPrimaryState(active ?? undefined))
-        .then((cloud) => setState((current) => applyCloud(current, cloud, pendingSalesRef.current)))
-        .catch(() => {
-          /* The local snapshot remains authoritative while sync recovers. */
-        });
+    if (!readsReady) return;
+    let cancelled = false;
+    let revision = 0;
+    const refresh = createRefreshQueue(async () => {
+      const started = revision;
+      const branch = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
+      const cloud = await loadPrimaryState(branch);
+      if (cancelled) return;
+      if (started !== revision) { void refresh.refresh(); return; }
+      setState(current => applyCloud(current, cloud, pendingSalesRef.current));
+    });
+    const wake = async () => {
+      // Keep the existing native worker wake; reads still come from SQL Server.
+      if (effectiveDatabaseMode() !== "online")
+        await Promise.resolve(localDb()?.sync?.auto?.()).catch(() => undefined);
+      if (!cancelled) void refresh.refresh();
     };
-    window.addEventListener("focus", focus);
-    window.addEventListener("online", focus);
-    return () => {
-      window.removeEventListener("focus", focus);
-      window.removeEventListener("online", focus);
-    };
-  }, [signedIn]);
+    const offCatchup = subscribeBackgroundRefresh(() => void wake(), 300_000, effectiveDatabaseMode() !== "online", effectiveDatabaseMode() !== "online");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const offData = subscribeDataChange(change => {
+      revision += 1;
+      if (change.storeId && state.currentStoreId && !sameBranchId(change.storeId, state.currentStoreId)) return;
+      if (change.entityId && !["product_barcodes", "stores"].includes(change.table)) return;
+      if (!["products", "product_barcodes", "members", "promotions", "shifts", "stores"].includes(change.table)) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = undefined; void refresh.refresh(); }, 200);
+    });
+    return () => { cancelled = true; refresh.stop(); offCatchup(); offData(); if (timer) clearTimeout(timer); };
+  }, [readsReady, readIdentity, state.currentStoreId]);
 
   useEffect(() => {
-    if (!signedIn) return;
+    if (!readsReady) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ids = new Set<string>();
@@ -1194,16 +1201,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
       },200);
     });
     return () => { active = false; off(); if (timer) clearTimeout(timer); };
-  }, [signedIn]);
+  }, [readsReady, readIdentity, state.currentStoreId]);
 
   // Reload only changed bookings; local payments also wake their parent balances.
   useEffect(() => {
-    if (!signedIn) return;
+    if (!readsReady) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ids = new Set<string>();
     let all = false;
-    const off = subscribeDataChange(change => {
+    const changedBooking = (change: { table: string; entityId?: string | null }) => {
       if (!["bookings","booking_payments"].includes(change.table)) return;
       if (change.table === "bookings" && change.entityId) ids.add(change.entityId); else all = true;
       if (timer) clearTimeout(timer);
@@ -1221,24 +1228,30 @@ export function PosProvider({ children }: { children: ReactNode }) {
           });
         }).catch(cause => { if (active) dbError("Refreshing bookings",cause); });
       },200);
-    });
-    return () => { active = false; off(); if (timer) clearTimeout(timer); };
-  }, [signedIn]);
+    };
+    const off = subscribeDataChange(changedBooking);
+    const offCatchup = subscribeBackgroundRefresh(() => changedBooking({ table: "bookings" }), 60_000, effectiveDatabaseMode() !== "online");
+    return () => { active = false; off(); offCatchup(); if (timer) clearTimeout(timer); };
+  }, [readsReady, readIdentity, state.currentStoreId]);
 
   // Catalogue, member and promotion events carry the changed row identity.
   // Pull only that row so a barcode or price edit never downloads the complete
   // master dataset or interrupts scanning and checkout.
   useEffect(() => {
-    if (!signedIn) return;
+    if (!readsReady) return;
+    let active = true;
     const timers = new Map<string, number>();
     const pendingProductIds = new Set<string>();
+    const versions = new Map<string, number>();
     const unsubscribe = subscribeDataChange((change) => {
       if (
-        !change.entityId ||
+        !change.entityId || change.table === "product_barcodes" ||
         !["products", "product_barcodes", "members", "promotions"].includes(change.table)
       )
         return;
-      const kind = change.table === "product_barcodes" ? "products" : change.table;
+      const kind = change.table;
+      const versionKey = `${kind}:${canonicalBranchId(change.entityId)}`;
+      versions.set(versionKey, (versions.get(versionKey) ?? 0) + 1);
       if (kind === "products") {
         pendingProductIds.add(change.entityId);
         const previous = timers.get("products:batch");
@@ -1249,9 +1262,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
             timers.delete("products:batch");
             const ids = [...pendingProductIds];
             pendingProductIds.clear();
+            const requested = new Map(ids.map(id => [canonicalBranchId(id), versions.get(`products:${canonicalBranchId(id)}`)]));
             void loadCloudProducts(ids)
-              .then((records) => {
-                const changed = new Set(ids.map(canonicalBranchId));
+              .then((incoming) => {
+                if (!active) return;
+                const changed = new Set(ids.map(canonicalBranchId).filter(id => requested.get(id) === versions.get(`products:${id}`)));
+                const records = incoming.filter(record => changed.has(canonicalBranchId(record.id)));
                 const byId = new Map(records.map((record) => [canonicalBranchId(record.id), record]));
                 setState((current) => {
                   const known = new Set(current.products.map(product => canonicalBranchId(product.id)));
@@ -1281,12 +1297,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
         key,
         window.setTimeout(() => {
           timers.delete(key);
+          const requestedVersion = versions.get(versionKey);
           const read =
             kind === "members"
               ? loadCloudMember(change.entityId!)
               : loadCloudPromotion(change.entityId!);
           void read
             .then((record) => {
+              if (!active || requestedVersion !== versions.get(versionKey)) return;
               setState((current) => {
                 if (kind === "members") {
                   const members = record
@@ -1315,16 +1333,18 @@ export function PosProvider({ children }: { children: ReactNode }) {
       );
     });
     return () => {
+      active = false;
       for (const timer of timers.values()) window.clearTimeout(timer);
       unsubscribe();
     };
-  }, [signedIn]);
+  }, [readsReady, readIdentity, state.currentStoreId]);
 
   // A committed sale is announced by the existing shared Realtime channel.
   // The event is only a notification: always fetch the complete canonical
   // transaction graph rather than assembling a sale from a partial payload.
   useEffect(() => {
-    if (!signedIn) return;
+    if (!readsReady) return;
+    let cancelled = false;
     let timer: number | undefined;
     const unsubscribe = subscribeSalesChange((change) => {
       const active =
@@ -1340,15 +1360,18 @@ export function PosProvider({ children }: { children: ReactNode }) {
           effectiveDatabaseMode() === "online"
             ? active
               ? loadSalesPage(active, null, 500).then(({ rows }) => {
+                  if (cancelled) return;
                   setState((current) =>
                     applySalesSnapshot(current, rows, active, pendingSalesRef.current, true),
                   );
                 })
               : loadCloudState().then((cloud) => {
+                  if (cancelled) return;
                   setState((current) => applyCloud(current, cloud, pendingSalesRef.current));
                 })
             : loadLocalSales()
                 .then((rows) => {
+                  if (cancelled) return;
                   setState((current) =>
                     applySalesSnapshot(current, rows, active, pendingSalesRef.current, true),
                   );
@@ -1359,16 +1382,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
       }, 250);
     });
     return () => {
+      cancelled = true;
       if (timer) window.clearTimeout(timer);
       unsubscribe();
     };
-  }, [signedIn]);
+  }, [readsReady, readIdentity, state.currentStoreId]);
 
   // The Electron main process confirms a transaction only after SQL Server has
   // committed it. Re-read just the local receipt set on that signal so every
   // renderer reflects the sale without a restart or a successful cloud push.
   useEffect(() => {
-    if (effectiveDatabaseMode() === "online" || !signedIn) return;
+    if (effectiveDatabaseMode() === "online" || !readsReady) return;
     const bridge = localDb();
     if (!bridge?.onBusinessChanged) return;
     let cancelled = false;
@@ -1399,7 +1423,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       }
     };
     const unsubscribe = bridge.onBusinessChanged((change) => {
-      if (change.kind === "branch" || change.kind === "refund") {
+      if (change.kind === "refund") { requestBackgroundRefresh(); return; }
+      if (change.kind === "branch") {
         // First verified login can repair an older activation that stored only
         // the token. Re-run the complete local snapshot now that Main can
         // enforce the correct branch predicate.
@@ -1416,7 +1441,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unsubscribe();
     };
-  }, [signedIn]);
+  }, [readsReady, readIdentity, state.currentStoreId]);
 
   // Refresh shared settings after remote edits and reconnects, with polling
   // when Realtime is unavailable. Never overwrite an edit with an older read.

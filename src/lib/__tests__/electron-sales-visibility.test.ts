@@ -145,7 +145,8 @@ describe("Electron sales visibility", () => {
 
     expect(store).toContain("const loadSnapshot = () => loadPrimaryState(undefined, locationTask ?? undefined, (name) =>");
     expect(store).toContain("? retryDataRead(loadSnapshot, () => !cancelled) : loadSnapshot()");
-    expect(store).toContain(".then(() => loadPrimaryState(active ?? undefined))");
+    expect(store).toContain("const cloud = await loadPrimaryState(branch)");
+    expect(store).toContain("localDb()?.sync?.auto?.()");
     expect(store).toContain(": loadLocalSales()");
     expect(store).not.toContain(".then(() => loadLocalSales())");
     expect(database).toContain("branch_id: s.storeId");

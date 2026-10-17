@@ -1,3 +1,4 @@
+import { createRefreshQueue, subscribeBackgroundRefresh } from "@/lib/background-refresh";
 import { queryReadsChangedTables } from "@/lib/live-query-tables";
 import { notifyError } from "@/lib/notify";
 import { subscribeDataChange } from "@/lib/sync-engine";
@@ -299,16 +300,26 @@ function RootComponent() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tables = new Set<string>();
+    const refresh = createRefreshQueue(async () => {
+      const changed = new Set(tables); tables.clear();
+      await queryClient.invalidateQueries({ refetchType: "active", predicate: query => queryReadsChangedTables(query.meta, changed) });
+    }, cause => notifyError(cause, "Refreshing live data"));
+    const offCatchup = subscribeBackgroundRefresh(() => {
+      for (const query of queryClient.getQueryCache().getAll()) {
+        if (query.isActive() && Array.isArray(query.meta?.tables))
+          for (const table of query.meta.tables) if (typeof table === "string") tables.add(table);
+      }
+      if (tables.size) void refresh.refresh();
+    });
     const off = subscribeDataChange((change) => {
       tables.add(change.table);
       if (timer) return;
       timer = setTimeout(() => {
         timer = undefined;
-        const changed = new Set(tables); tables.clear();
-        void queryClient.invalidateQueries({refetchType:"active", predicate: query => queryReadsChangedTables(query.meta, changed)}).catch(cause => notifyError(cause, "Refreshing live data"));
+        void refresh.refresh();
       }, 100);
     });
-    return () => { off(); if (timer) clearTimeout(timer); };
+    return () => { off(); offCatchup(); refresh.stop(); if (timer) clearTimeout(timer); };
   }, [queryClient]);
 
   return (
