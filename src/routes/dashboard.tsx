@@ -32,7 +32,7 @@ import { paymentsLabel } from "@/core/types/pos-types";
 import { formatTime, posDayKey, posHour } from "@/lib/time-zone";
 import { defaultReviewThresholds } from "@/lib/pos-seed";
 import { sameBranchId } from "@/lib/branch-id";
-import { cashierReviewTotals } from "@/lib/cashier-review";
+import { cashierReviewTotals, hasSplitPayments } from "@/lib/cashier-review";
 import { inventoryMetrics } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
 import { useAuth } from "@/lib/pos-auth";
@@ -135,10 +135,7 @@ function Dashboard() {
   const todayDrawer = drawer.filter(
     (d) => posDayKey(d.at) === today && sameBranchId(d.storeId, currentStore.id),
   );
-  const splitSales = live.filter(
-    (sale) =>
-      (sale.payments?.length ?? 0) > 1 || sale.payments?.some((payment) => payment.bankName),
-  );
+  const splitSales = live.filter(sale => hasSplitPayments(sale.payments));
 
   /** Per-cashier behaviour with fixed thresholds plus relative outliers. */
   const cashiers = useMemo(() => {
@@ -402,7 +399,8 @@ function Dashboard() {
         </section>
 
         <section className="rounded-lg border border-border bg-card">
-          <h2 className="px-5 py-3 text-sm font-semibold">Split payments today</h2>
+          <h2 className="px-5 pt-3 text-sm font-semibold">Split payments today</h2>
+          <p className="px-5 pb-3 pt-1 text-xs text-muted-foreground">Bills paid in two or more parts, such as cash and card.</p>
           <Separator />
           <Table loading={reportLoading}>
             <TableHeader>

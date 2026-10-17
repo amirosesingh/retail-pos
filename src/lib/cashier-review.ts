@@ -1,4 +1,4 @@
-import type { Sale } from "@/core/types/pos-types";
+import type { Payment, Sale } from "@/core/types/pos-types";
 import { r2 } from "@/core/types/pos-types";
 
 type ReviewSale = Pick<Sale, "cashier" | "subtotal" | "discount" | "total" | "refunded">;
@@ -32,4 +32,9 @@ export function cashierReviewTotals(sales: ReviewSale[], drawer: ReviewDrawer[])
   return [...map.values()].map(row => ({ ...row,
     discountPct: row.original > 0 ? row.discount / row.original * 100 : 0,
   }));
+}
+
+/** A bank name describes a tender; only multiple paid tenders make a split bill. */
+export function hasSplitPayments(payments: readonly Payment[] | undefined): boolean {
+  return (payments ?? []).filter(payment => Number.isFinite(payment.amount) && payment.amount > 0).length > 1;
 }
