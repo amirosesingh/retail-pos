@@ -7,7 +7,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { ticketDiscounts, discountApprovalPercent } from "./authorization";
+import { ticketDiscounts, ticketDiscountApprovalPercent } from "./authorization";
 
 const caller = z.object({
   sessionToken: z.string().min(10).optional(),
@@ -602,7 +602,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
             if (entry.index === -1) return entry.productId !== "";
             const line = snapshot.lines[entry.index];
             return !line || line.sku !== entry.productId || line.qty !== entry.qty || line.unitPrice !== entry.price || line.discount !== entry.value;
-          }) || data.requestedAmount !== Math.max(...discounts.map(discountApprovalPercent))) {
+          }) || data.requestedAmount !== ticketDiscountApprovalPercent(discounts)) {
             return { ok: false as const, error: "Discounts must match the exact items on this bill" };
           }
         } else if (data.payload["discount_scope"] !== "bill") {
@@ -955,7 +955,7 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
           return { ok: false as const, error: "Each approved discount must be between zero and the requested value" };
       }
       const requestedDecisionAmount = data.approve && requestedDiscounts.length
-        ? Math.max(...approvedDiscounts.map(discountApprovalPercent))
+        ? ticketDiscountApprovalPercent(approvedDiscounts, requestedDiscounts)
         : data.approve
         ? (data.approvedAmount ?? existing.requestedAmount ?? null)
         : existing.requestedAmount;

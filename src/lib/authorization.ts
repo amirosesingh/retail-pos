@@ -666,6 +666,33 @@ export function discountNeedsApproval(entry: TicketDiscount, percentLimit: numbe
     (entry.type === "amount" && entry.value * Math.abs(entry.qty) > amountLimit);
 }
 
+/** Bill discounts apply after item discounts. Check the effective rate on each
+ * item as well as the bill itself, so a discounted item cannot hide in a larger bill. */
+export function ticketDiscountApprovalPercent(entries: TicketDiscount[], requestedEntries = entries): number {
+  const bill = entries.find(entry => entry.index === -1);
+  const itemAmount = (entry: TicketDiscount) =>
+    (entry.type === "percent" ? entry.base * entry.value / 100 : entry.value) * Math.abs(entry.qty);
+  // Reducing an item discount increases the balance on which a bill amount is
+  // applied. Use that new balance when checking the approver's authority.
+  const restoredBase = requestedEntries.filter(entry => entry.index >= 0).reduce((sum, entry) => {
+    const approved = entries.find(candidate => candidate.index === entry.index);
+    return sum + itemAmount(entry) - (approved ? itemAmount(approved) : 0);
+  }, 0);
+  const billPercent = bill ? discountApprovalPercent({ ...bill, base: Math.max(0, bill.base + restoredBase) }) : 0;
+  return Math.max(0, billPercent, ...entries.filter(entry => entry.index >= 0).map(entry => {
+    const itemPercent = discountApprovalPercent(entry);
+    return itemPercent + (100 - itemPercent) * billPercent / 100;
+  }));
+}
+
+export function markTicketDiscountApprovals(entries: TicketDiscount[], percentLimit: number, amountLimit: number): TicketDiscount[] {
+  const combinedOverLimit = ticketDiscountApprovalPercent(entries) > percentLimit + 1e-9;
+  return entries.map(entry => ({ ...entry, requiresApproval:
+    discountNeedsApproval(entry, percentLimit, amountLimit) ||
+    (entry.index === -1 && entry.value > 0 && combinedOverLimit),
+  }));
+}
+
 /** Stable binding carried by a signed grant and checked again by the mutation. */
 export function authorizationBinding(payload: AuthPayload = {}, snapshotHash = ""): string {
   const material =
