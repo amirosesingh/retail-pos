@@ -411,15 +411,15 @@ function ApprovalsPage() {
                     </div>
                   </CardContent>
                 </Card>
-                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
-                  <DialogHeader>
+                <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
+                  <DialogHeader className="shrink-0 px-5 pb-4 pt-5 pr-12 sm:px-6 sm:pr-12">
                     <DialogTitle>
                       {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey} · {row.status}
                     </DialogTitle>
                   </DialogHeader>
-                  <div className="space-y-3">
+                  <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain p-5 sm:p-6">
                     {row.reason ? <p className="text-sm">“{row.reason}”</p> : null}
-                    <dl className="grid gap-x-4 gap-y-1 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-2">
+                    <dl className="grid gap-4 rounded-xl border border-border/60 bg-muted/15 p-4 text-sm sm:grid-cols-2 lg:grid-cols-3 [&_dd]:break-words [&_dd]:[overflow-wrap:anywhere] [&_dt]:mb-1 [&_dt]:text-xs">
                       <div>
                         <dt className="text-muted-foreground">Approval number</dt>
                         <dd className="font-mono font-semibold">{approvalReference(row)}</dd>
@@ -455,11 +455,11 @@ function ApprovalsPage() {
                     </dl>
                     {row.approvalRoute ? <ApprovalRouteReview row={row} /> : null}
                     {payload.length ? (
-                      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/50 p-3 text-xs">
+                      <dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-x-4 gap-y-3 rounded-xl bg-muted/30 p-4 text-sm">
                         {payload.map(([k, v]) => (
                           <div key={k} className="contents">
                             <dt className="text-muted-foreground">{k.replace(/_/g, " ")}</dt>
-                            <dd className="font-medium">
+                            <dd className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">
                               {humanizeText(String(v), {
                                 stores: pos?.stores,
                                 products: pos?.state.products,
@@ -493,7 +493,7 @@ function ApprovalsPage() {
                           </Button>
                         </div>
                       ) : (
-                        <div className="space-y-3 rounded-md border border-border/60 p-3">
+                        <div className="space-y-4 rounded-xl border border-border/60 bg-muted/15 p-4">
                           <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1">
                               <Label htmlFor={`approval-note-${row.id}`} className="text-xs">
@@ -643,7 +643,7 @@ function ApprovalsPage() {
                               </div>
                             )}
                           </div>
-                          <div className="flex flex-wrap justify-end gap-2">
+                          <div className="flex flex-col-reverse gap-2 border-t border-border/60 pt-4 sm:flex-row sm:justify-end">
                             <Button
                               size="sm"
                               disabled={busy === row.id || Boolean(amountInvalid[row.id])}
