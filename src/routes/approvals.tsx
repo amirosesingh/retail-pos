@@ -141,6 +141,7 @@ function ApprovalsPage() {
   const [rows, setRows] = useState<AuthorizationRequest[]>([]);
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
   const [allBranches, setAllBranches] = useState(false);
+  const scopeDefaultedFor = useRef<string | null>(null);
   const [history, setHistory] = useState(false);
   const [note, setNote] = useState<Record<string, string>>({});
   // What the approver is granting, when it differs from what was asked.
@@ -182,7 +183,17 @@ function ApprovalsPage() {
       setError(res.ok ? "" : (res.error ?? ""));
       // A refused reply may carry no list at all; never hand undefined on.
       setRows(Array.isArray(res.requests) ? (res.requests as AuthorizationRequest[]) : []);
-      setMe(res.ok ? (res.me ?? null) : null);
+      const nextMe = res.ok ? (res.me ?? null) : null;
+      setMe(nextMe);
+      // Apply the default once for each verified person/role. Refreshes must
+      // preserve an admin's deliberate switch back to the current branch.
+      if (nextMe) {
+        const identity = `${nextMe.id}:${nextMe.role}`;
+        if (scopeDefaultedFor.current !== identity) {
+          scopeDefaultedFor.current = identity;
+          setAllBranches(nextMe.role === "admin");
+        }
+      }
     } catch (e) {
       if (sequence !== loadSequence.current) return;
       setRows([]);
