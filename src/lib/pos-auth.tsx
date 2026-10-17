@@ -1,3 +1,4 @@
+import { createSessionTransition } from "./session-transition";
 import { normalizeUuidFields } from "./uuid-fields";
 import { preserveSessionDrafts } from "./session-draft";
 import {
@@ -271,6 +272,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileReady, setProfileReady] = useState(false);
   const [authEnabled, setAuthEnabled] = useState(() => !isTerminalApp());
   const [authClientGeneration, setAuthClientGeneration] = useState(0);
+  const [sessionTransition] = useState(createSessionTransition);
   const [terminalUser, setTerminalUser] = useState<TerminalUser | null>(null);
   const [appUser, setAppUser] = useState<AppUserProfile | null>(null);
   const [sessionState, setSessionState] = useState<SessionState>("signed-out");
@@ -539,6 +541,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string) => {
+      await sessionTransition.wait();
       if (!email.trim() || !password) return {
         ok: false, code: "invalid-credentials" as const,
         error: "Enter your username or email and password.",
@@ -647,7 +650,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return { ok: true };
     },
-    [setCentralSessionVerified],
+    [setCentralSessionVerified, sessionTransition],
   );
 
   const cashierLogin = useCallback(
@@ -659,6 +662,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       error?: string;
       code?: LoginFailure | "session-open-failed";
     }> => {
+      await sessionTransition.wait();
       const code = usernameFromAddress(userId);
       if (!code) return { ok: false, error: "Enter your username" };
       // Accounts are provisioned with a 4-32 character credential, so the till
@@ -968,7 +972,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return { ok: true };
     },
-    [],
+    [sessionTransition],
   );
 
   /**
@@ -979,7 +983,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * The terminal's own registration and activation are untouched — only the
    * person is signed out. `reason` names the state for the caller.
    */
-  const endSession = useCallback(
+  const finishSession = useCallback(
     async (reason: "logged-out" | "locked" | "expired", startedAt = sessionEpoch()) => {
       if (!isCurrentEpoch(startedAt)) return;
       if (reason !== "expired") {
@@ -1048,6 +1052,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [setCentralSessionVerified, terminalUser?.userCode, appUser?.user_id],
   );
 
+  // The form can become visible while server revocation and Auth sign-out are
+  // still pending. Keep its next login behind that entire teardown so the old
+  // sign-out cannot erase the newly authenticated user's session.
+  const endSession = useCallback(
+    (reason: "logged-out" | "locked" | "expired", startedAt = sessionEpoch()) =>
+      sessionTransition.end(() => finishSession(reason, startedAt)),
+    [finishSession, sessionTransition],
+  );
   const logout = useCallback(async () => {
     await endSession("logged-out");
   }, [endSession]);
