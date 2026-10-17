@@ -47,7 +47,6 @@ export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
   const startup = useStartupGate();
   const [profile, setProfile] = useState<ConfigReadiness | null>(null);
   useEffect(() => subscribeConfigReady(setProfile), []);
-  const needsRepair = needsSetupRecovery(profile, startup.registration);
   const live = isOnlineOnly();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // Emergency access repairs the connection this gate is waiting for, so it
@@ -87,6 +86,8 @@ export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
   const browserOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   const verdict = cloudVerdict();
   const diagnosis = cloudDiagnosis();
+  const needsRepair = needsSetupRecovery(profile, startup.registration,
+    !browserOffline && (verdict === "unconfigured" || diagnosis.issue === "configuration"));
   const title = browserOffline
     ? "No internet connection"
     : verdict === "unconfigured" || diagnosis.issue === "configuration"

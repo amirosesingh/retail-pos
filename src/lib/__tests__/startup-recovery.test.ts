@@ -14,4 +14,8 @@ describe("offline setup recovery visibility", () => {
       expect(needsSetupRecovery(profile(state), "registered")).toBe(true);
     expect(needsSetupRecovery(profile("ready"), "not-registered")).toBe(true);
   });
+  it("allows repair after an explicit configuration rejection even on a registered terminal", () => {
+    for (const state of ["ready", "failed", "hydrating"] as const)
+      expect(needsSetupRecovery(profile(state), "registered", true)).toBe(true);
+  });
 });
