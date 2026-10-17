@@ -7,11 +7,17 @@ on:
         description: "Optional: load a hosted site instead of the offline app baked into the APK"
         required: false
         default: ""
-  push:
-    tags: ["v*"]
+  workflow_call:
+    inputs:
+      build_only:
+        type: boolean
+        default: true
+      app_url:
+        type: string
+        default: ""
 
 concurrency:
-  group: pos-release
+  group: pos-release-${{ inputs.build_only && format('android-{0}', github.ref) || 'publish' }}
   cancel-in-progress: false
 
 permissions:
@@ -194,10 +200,20 @@ jobs:
           if-no-files-found: error
           path: release-assets/*.apk
 
+      - name: Upload verified Android publish artifacts
+        if: inputs.build_only && !inputs.app_url
+        uses: actions/upload-artifact@v4
+        with:
+          name: Retail-android-publish
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          path: release-assets/*
+
       # A hosted-shell build points the APK at someone else's running site, so
       # it is a test build only and must never reach the release channel.
       - name: Deploy to Cloudflare R2
-        if: ${{ !inputs.app_url && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ !inputs.build_only && !inputs.app_url && startsWith(github.ref, 'refs/tags/v') }}
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -226,7 +242,7 @@ jobs:
       # release directories here: they contain Windows recovery artifacts too.
 
       - name: Attach APK to the GitHub release
-        if: ${{ !inputs.app_url && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ !inputs.build_only && !inputs.app_url && startsWith(github.ref, 'refs/tags/v') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
