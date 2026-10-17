@@ -1,7 +1,7 @@
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { approvalBranchLabel, approvalDisplayFields } from "../approval-display";
+import { approvalBranchLabel, approvalDisplayFields, approvalDecisionText } from "../approval-display";
 import { ApprovalDiscountReview } from "@/platforms/web/components/pos/ApprovalDiscountReview";
 import type { TicketDiscount } from "../authorization";
 const id = "a611a328-2217-4d77-944a-5f6a637d123b";
@@ -31,5 +31,17 @@ describe("readable approval details", () => {
   const html = renderToStaticMarkup(h(ApprovalDiscountReview,{payload:{requested_discounts:'[{"invalid":true}]'},approvedPayload:{}}));
   expect(html).toContain("could not be read");
   expect(html).not.toContain("invalid");
+ });
+});
+
+
+describe("recorded approval decision identity", () => {
+ it.each(["approved", "rejected"])("shows the recorded user for %s tickets", status => {
+  expect(approvalDecisionText({status, decidedByName:" Jane Manager ", decidedBy:"user-id"})).toBe(`${status === "approved" ? "Approved" : "Rejected"} by Jane Manager`);
+ });
+ it("uses the recorded ID for old rows and never invents the current user", () => {
+  expect(approvalDecisionText({status:"approved",decidedByName:" ",decidedBy:"recorded-user-id"})).toBe("Approved by recorded-user-id");
+  expect(approvalDecisionText({status:"rejected",decidedByName:null,decidedBy:null})).toBe("Rejected by User not recorded");
+  expect(approvalDecisionText({status:"pending",decidedByName:null,decidedBy:null})).toBeNull();
  });
 });

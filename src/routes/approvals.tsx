@@ -1,4 +1,4 @@
-import { approvalBranchLabel, approvalDisplayFields } from "@/lib/approval-display";
+import { approvalBranchLabel, approvalDisplayFields, approvalDecisionText } from "@/lib/approval-display";
 import { ApprovalDiscountReview } from "@/platforms/web/components/pos/ApprovalDiscountReview";
 /**
  * Pending approvals.
@@ -337,6 +337,7 @@ function ApprovalsPage() {
           const mine = !!me && row.requestedBy.toLowerCase() === me.id.toLowerCase();
           const payload = approvalDisplayFields(row.payload ?? {});
           const outcome = approvalOutcome(row);
+          const decisionText = approvalDecisionText(row);
           return (
             <Fragment key={row.id}>
               {index === firstDecided ? (
@@ -367,6 +368,7 @@ function ApprovalsPage() {
                         {approvalBranchLabel(row.storeId, pos?.stores ?? [])}{" "}
                         · {ago(row.createdAt)}
                       </p>
+                      {decisionText && <p className="mt-2 break-words text-sm font-medium [overflow-wrap:anywhere]">{decisionText}</p>}
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -419,6 +421,12 @@ function ApprovalsPage() {
                     </DialogTitle>
                   </DialogHeader>
                   <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain p-5 sm:p-6">
+                    {decisionText && <section className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-4" aria-label="Approval decision">
+                      <p className="break-words font-semibold [overflow-wrap:anywhere]">{decisionText}</p>
+                      {row.decidedAt && <p className="text-sm text-muted-foreground">{new Date(row.decidedAt).toLocaleString()}</p>}
+                      {row.decisionNote && <p className="whitespace-pre-wrap break-words text-sm">{row.decisionNote}</p>}
+                    </section>}
+
                     {row.reason ? <p className="text-sm">“{row.reason}”</p> : null}
                     <dl className="grid gap-4 rounded-xl border border-border/60 bg-muted/15 p-4 text-sm sm:grid-cols-2 lg:grid-cols-3 [&_dd]:break-words [&_dd]:[overflow-wrap:anywhere] [&_dt]:mb-1 [&_dt]:text-xs">
                       <div className="sm:col-span-2 lg:col-span-3">
