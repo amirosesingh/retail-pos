@@ -1,4 +1,5 @@
 import { createSessionTransition } from "./session-transition";
+import { terminalUserPermissions } from "./terminal-user-permissions";
 import { normalizeUuidFields } from "./uuid-fields";
 import { preserveSessionDrafts } from "./session-draft";
 import {
@@ -58,7 +59,6 @@ import {
   FULL_PERMISSIONS,
   NO_PERMISSIONS,
   WAREHOUSE_PERMISSIONS,
-  SUPERVISOR_PERMISSIONS,
   PERMISSION_GROUPS,
   PERMISSION_KEYS,
   PERMISSION_LABELS,
@@ -1092,8 +1092,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // `role` is the stable database level; roleSlug also covers older
       // centrally-managed admin/supervisor role definitions during migration.
       const isLocalAdmin = terminalUser.role === "admin" || terminalUser.roleSlug === "admin";
-      const isLocalSupervisor =
-        isLocalAdmin || terminalUser.role === "manager" || terminalUser.roleSlug === "supervisor";
       return {
         staffId: terminalUser.userCode,
         name: terminalUser.name,
@@ -1107,11 +1105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               : ((terminalUser.roleSlug as MetaRole | null | undefined) ?? "cashier"),
         roles: [terminalUser.role],
         storeId: isLocalAdmin ? null : terminalUser.storeId,
-        permissions: isLocalAdmin
-          ? FULL_PERMISSIONS
-          : isLocalSupervisor
-            ? SUPERVISOR_PERMISSIONS
-            : normalizePermissions(terminalUser.permissions ?? {}, "cashier"),
+        permissions: terminalUserPermissions(terminalUser),
       };
     }
     const email = account.email ?? "";
