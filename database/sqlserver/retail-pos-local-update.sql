@@ -1,4 +1,4 @@
--- Retail POS local database update — 1.4.71
+-- Retail POS local database update — 1.4.72
 -- Latest local migration: 018_sql_document_counters.sql
 -- Source: retail-pos-local-database.sql bundled with this application.
 -- Select your configured POS database. This file never switches databases.
@@ -11967,7 +11967,7 @@ DECLARE @Missing int = @Required - @Present;
 
 SELECT
   DB_NAME() AS database_name,
-  N''1.4.71'' AS application_version,
+  N''1.4.72'' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -13209,7 +13209,7 @@ EXEC(N''SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;'');
 
-PRINT N''Retail POS 1.4.71: POS_Local installation and validation completed successfully.'';';
+PRINT N''Retail POS 1.4.72: POS_Local installation and validation completed successfully.'';';
 COMMIT TRANSACTION;
 END TRY
 BEGIN CATCH
