@@ -1371,6 +1371,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           centralSessionVerifiedRef.current,
           authCheck.session?.access_token,
         );
+        if (authCheck.state === "rejected") {
+          // Remove a rejected secondary Auth session even when a separate POS
+          // person session remains valid. Otherwise every resume retries the
+          // same dead JWT and its settings/data readers keep failing.
+          await discardRejectedExternalAuthSession();
+          if (!alive || !isCurrentEpoch(startedAt)) return;
+        }
         const creds = await readCredentials();
         const hasIndependentPosProof = Boolean(
           creds.sessionToken || creds.cashierToken || creds.terminalToken,

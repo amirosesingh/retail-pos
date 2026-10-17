@@ -7,6 +7,8 @@
 import { isTerminalApp } from "@/platform-config/platform";
 import { posFetch } from "./server-origin";
 import {
+  listManagedStaffAccounts as listManagedStaffAccountsFn,
+  setManagedStaffPermissions as setManagedStaffPermissionsFn,
   deleteStaffAccount as deleteStaffAccountFn,
   migrateCashiersToAccounts as migrateCashiersToAccountsFn,
   saveStaffAccount as saveStaffAccountFn,
@@ -72,3 +74,9 @@ export const deleteStaffAccount = (
     input.data,
     deleteStaffAccountFn as DirectCall,
   );
+
+export const listManagedStaffAccounts = (input: NonNullable<Parameters<typeof listManagedStaffAccountsFn>[0]>) =>
+  callHosted<Awaited<ReturnType<typeof listManagedStaffAccountsFn>>>("list", input.data, listManagedStaffAccountsFn as DirectCall);
+
+export const setManagedStaffPermissions = (input: NonNullable<Parameters<typeof setManagedStaffPermissionsFn>[0]>) =>
+  callHosted<Awaited<ReturnType<typeof setManagedStaffPermissionsFn>>>("permissions", input.data, setManagedStaffPermissionsFn as DirectCall);

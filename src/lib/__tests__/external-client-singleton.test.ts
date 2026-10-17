@@ -149,6 +149,10 @@ describe("external Supabase client ownership", () => {
       "sales",
       "audit_logs",
       "user_roles",
+      "settings_overrides",
+      "settings_locks",
+      "stock_transfers",
+      "staff_roles",
       "rpc/current_app_user",
     ]) {
       const result = await fetcher(`https://tenant-a.example.co/rest/v1/${path}`);

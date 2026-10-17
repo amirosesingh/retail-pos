@@ -62,7 +62,7 @@ import { broadcastSettingsChange, subscribeDataChange, syncNow } from "@/lib/syn
 import { isExternalEmail, isInternalAddress } from "@/lib/internal-domains";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { setStaffAuthorizationPin } from "@/lib/authorization-client";
-import { listManagedStaffAccounts, setManagedStaffPermissions } from "@/lib/staff-admin.functions";
+import { listManagedStaffAccounts, setManagedStaffPermissions } from "@/lib/staff-admin-client";
 import {
   createStaffMember,
   looksLikeEmail,

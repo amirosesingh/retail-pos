@@ -3612,10 +3612,12 @@ BEGIN
       SELECT c.conname,
              a.attname   AS child_column,
              pt.relname  AS parent_table,
+             pn.nspname AS parent_schema,
              pa.attname  AS parent_column
       FROM pg_constraint c
       JOIN pg_class ct ON ct.oid = c.conrelid
       JOIN pg_class pt ON pt.oid = c.confrelid
+      JOIN pg_namespace pn ON pn.oid = pt.relnamespace
       JOIN unnest(c.conkey)  WITH ORDINALITY AS ck(attnum, ord) ON true
       JOIN unnest(c.confkey) WITH ORDINALITY AS pk(attnum, ord) ON pk.ord = ck.ord
       JOIN pg_attribute a  ON a.attrelid  = c.conrelid  AND a.attnum  = ck.attnum
@@ -3626,8 +3628,8 @@ BEGIN
     LOOP
       EXECUTE format(
         'SELECT count(*) FROM public.%I ch WHERE ch.%I IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM public.%I pr WHERE pr.%I = ch.%I)',
-        _t, _fk.child_column, _fk.parent_table, _fk.parent_column, _fk.child_column
+           AND NOT EXISTS (SELECT 1 FROM %I.%I pr WHERE pr.%I = ch.%I)',
+        _t, _fk.child_column, _fk.parent_schema, _fk.parent_table, _fk.parent_column, _fk.child_column
       ) INTO _orphans;
 
       _links := _links || jsonb_build_object(
