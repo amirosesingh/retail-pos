@@ -117,7 +117,9 @@ const listInput = caller.extend({
   requestId: z.string().uuid().optional(),
   storeId: z.string().max(64).optional(),
   allBranches: z.boolean().default(false),
-  status: z.string().max(20).default("pending"),
+  status: z.enum(["pending", "approved", "rejected", "expired", "cancelled", "all"]).default("pending"),
+  page: z.number().int().min(1).max(10000).optional(),
+  pageSize: z.union([z.literal(10), z.literal(25), z.literal(50), z.literal(100)]).default(25),
 });
 
 const decideInput = caller.extend({
@@ -869,32 +871,36 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
       // Fetch broadly on the trusted server, then return only branch-bound or
       // explicitly routed rows. This lets a named cross-branch approver see
       // their ticket without granting general cross-branch browsing.
-      const all = await listRequests({
-        allBranches: true,
-        status: data.status,
-        requestId: data.requestId,
-      });
       const rulesByStore = new Map<string, ReturnType<typeof resolveRules>>();
-      for (const branch of new Set(all.map((request) => request.storeId))) {
-        rulesByStore.set(branch, resolveRules(await loadRuleRows(branch), branch));
-      }
-      // Someone only sees what they could act on, plus their own requests.
-      const visible = all.filter((r) => {
-        const sameBranch = r.storeId === requestedStoreId;
-        const branchVisible = (data.allBranches && who.canAccessAllBranches) || sameBranch;
-        return canViewAuthorizationRequest(
-          rulesByStore.get(r.storeId)?.[r.actionKey],
-          { userId: who.id, role: who.role },
-          r,
-          branchVisible,
-          Date.now(),
-          data.status === "all" && who.canAccessAllBranches,
-        );
+      const filterVisible = async (all: import("./authorization").AuthorizationRequest[]) => {
+        for (const branch of new Set(all.map(request => request.storeId))) {
+          if (!rulesByStore.has(branch))
+            rulesByStore.set(branch, resolveRules(await loadRuleRows(branch), branch));
+        }
+        return all.filter(r => {
+          if (data.status !== "all" && r.status !== data.status) return false;
+          const sameBranch = r.storeId === requestedStoreId;
+          const branchVisible = (data.allBranches && who.canAccessAllBranches) || sameBranch;
+          return canViewAuthorizationRequest(
+            rulesByStore.get(r.storeId)?.[r.actionKey],
+            { userId: who.id, role: who.role }, r, branchVisible, Date.now(),
+            data.status !== "pending" && who.canAccessAllBranches,
+          );
+        });
+      };
+      const read = (offset: number, limit: number) => listRequests({
+        allBranches: true, status: data.status, requestId: data.requestId, offset, limit,
       });
+      const { readApprovalPage } = await import("./approval-pagination");
+      const result = data.page
+        ? await readApprovalPage(read, filterVisible, data.page, data.pageSize)
+        : { requests: await filterVisible(await read(0, 100)), pageInfo: undefined };
+      const visible = result.requests;
       const visibleBranches = new Set(visible.map((request) => request.storeId));
       return {
         ok: true as const,
         requests: visible,
+        pageInfo: result.pageInfo,
         me: { id: who.id, role: who.role },
         rules: Array.from(rulesByStore.entries())
           .filter(([branch]) => visibleBranches.has(branch))

@@ -258,12 +258,14 @@ export async function listRequests(opts: {
   allBranches: boolean;
   status?: string;
   limit?: number;
+  offset?: number;
 }): Promise<AuthorizationRequest[]> {
   const parts = [
     "select=*",
-    `order=created_at.desc`,
+    `order=created_at.desc,id.desc`,
     `limit=${Math.min(Math.max(opts.limit ?? 100, 1), 300)}`,
   ];
+  if (opts.offset) parts.push(`offset=${Math.max(0, Math.floor(opts.offset))}`);
   if (!opts.allBranches && opts.storeId) {
     parts.push(`or=(store_id.eq.${encodeURIComponent(opts.storeId)},store_id.eq.)`);
   }
