@@ -1,13 +1,14 @@
+import { PermissionHierarchy } from "./PermissionHierarchy";
+import { PERMISSION_EDITOR_IDS } from "@/lib/permission-editor";
+import { roleStartingPermissions } from "@/lib/role-defaults";
 /**
- * Roles and what each one is allowed to do, as a single matrix.
+ * Saved role presets, grouped by the same pages as per-person permissions.
  *
  * Built-in roles keep their names and can never be removed; custom roles are
  * free to add, edit and delete while nobody holds them.
  */
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ChevronDown,
-  ChevronRight,
   Loader2,
   Maximize2,
   Minimize2,
@@ -19,7 +20,6 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -39,11 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import {
-  PERMISSION_GROUPS,
-  PERMISSION_LABELS,
   STAFF_ROLES,
-  rolePermissions,
-  type PermissionKey,
   type StaffPermissions,
   type StaffRole,
 } from "@/lib/permissions";
@@ -75,9 +71,10 @@ export function RoleManager() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [base, setBase] = useState<StaffRole>("cashier");
-  const [openGroups, setOpenGroups] = useState<Set<string>>(
-    () => new Set(PERMISSION_GROUPS.map((group) => group.id)),
-  );
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set());
+  const [editingRole, setEditingRole] = useState<string | null>(null);
+  const [permissionSearch, setPermissionSearch] = useState("");
+  const savingRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -102,10 +99,9 @@ export function RoleManager() {
     [load],
   );
 
-  const columns = useMemo(() => roles, [roles]);
-
-  const toggle = async (role: RoleDef, key: PermissionKey, value: boolean) => {
-    const next: StaffPermissions = { ...role.permissions, [key]: value };
+  const changePermissions = async (role: RoleDef, next: StaffPermissions) => {
+    if (savingRef.current || role.baseLevel === "admin") return;
+    savingRef.current = true;
     setRoles((rs) => rs.map((r) => (r.slug === role.slug ? { ...r, permissions: next } : r)));
     setSaving(role.slug);
     try {
@@ -115,6 +111,7 @@ export function RoleManager() {
       notifyError(e, "That permission could not be saved");
       void load();
     } finally {
+      savingRef.current = false;
       setSaving(null);
     }
   };
@@ -122,7 +119,7 @@ export function RoleManager() {
   const create = async () => {
     setCreating(true);
     try {
-      const role = await createCustomRole(name, rolePermissions(base), base);
+      const role = await createCustomRole(name, roleStartingPermissions(roles, base), base);
       await propagateRoleChange("staff role created");
       toast.success(`${role.name} created`);
       setOpen(false);
@@ -152,11 +149,11 @@ export function RoleManager() {
         <div>
           <h2 className="text-sm font-semibold">Roles &amp; permissions</h2>
           <p className="text-xs text-muted-foreground">
-            Every role is a column. Tick a box to grant that ability to everyone on the role.
+            Configure the default permissions assigned when a person receives a role. Individual staff permissions and branch assignments remain separate. Changes save as you edit.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading || saving !== null}>
             {loading ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
@@ -164,7 +161,7 @@ export function RoleManager() {
             )}
             Refresh
           </Button>
-          <Button size="sm" onClick={() => setOpen(true)}>
+          <Button size="sm" disabled={saving !== null} onClick={() => setOpen(true)}>
             <Plus className="size-4" /> New role
           </Button>
         </div>
@@ -172,116 +169,29 @@ export function RoleManager() {
 
       <Separator />
 
-      <div className="flex justify-end gap-2">
-        <Button
-          size="icon"
-          variant="ghost"
-          className="bg-transparent shadow-none"
-          aria-label={
-            openGroups.size === PERMISSION_GROUPS.length
-              ? "Collapse all permission groups"
-              : "Expand all permission groups"
-          }
-          title={openGroups.size === PERMISSION_GROUPS.length ? "Collapse all" : "Expand all"}
-          onClick={() =>
-            setOpenGroups((current) =>
-              current.size === PERMISSION_GROUPS.length
-                ? new Set()
-                : new Set(PERMISSION_GROUPS.map((group) => group.id)),
-            )
-          }
-        >
-          {openGroups.size === PERMISSION_GROUPS.length ? (
-            <Minimize2 className="size-4" />
-          ) : (
-            <Maximize2 className="size-4" />
-          )}
-        </Button>
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] text-sm">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="w-[42%] py-2 text-left font-medium">Permission</th>
-              {columns.map((r) => (
-                <th key={r.slug} className="px-2 py-2 text-center align-bottom">
-                  <div className="flex flex-col items-center gap-1">
-                    <span className="text-xs font-medium">{r.name}</span>
-                    {r.isCore ? (
-                      <Badge variant="outline" className="text-[10px]">
-                        Built-in
-                      </Badge>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-1 text-[10px] text-destructive"
-                        onClick={() => void remove(r)}
-                      >
-                        <Trash2 className="size-3" /> Delete
-                      </Button>
-                    )}
-                  </div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {PERMISSION_GROUPS.map((group) => {
-              const expanded = openGroups.has(group.id);
-              return (
-                <Fragment key={group.id}>
-                  <tr key={`g-${group.id}`} className="bg-muted/40">
-                    <td
-                      colSpan={columns.length + 1}
-                      className="p-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
-                    >
-                      <button
-                        type="button"
-                        className="flex w-full items-center justify-between px-2 py-1.5 text-left"
-                        aria-expanded={expanded}
-                        onClick={() =>
-                          setOpenGroups((current) => {
-                            const next = new Set(current);
-                            if (expanded) next.delete(group.id);
-                            else next.add(group.id);
-                            return next;
-                          })
-                        }
-                      >
-                        <span>{group.label}</span>
-                        {expanded ? (
-                          <ChevronDown className="size-3" />
-                        ) : (
-                          <ChevronRight className="size-3" />
-                        )}
-                      </button>
-                    </td>
-                  </tr>
-                  {expanded &&
-                    group.keys.map((key) => (
-                      <tr key={key} className="border-b border-border/60">
-                        <td className="py-2 pr-2">{PERMISSION_LABELS[key as PermissionKey]}</td>
-                        {columns.map((r) => (
-                          <td key={`${r.slug}-${key}`} className="px-2 py-2 text-center">
-                            <Checkbox
-                              checked={!!r.permissions[key as PermissionKey]}
-                              disabled={saving === r.slug}
-                              onCheckedChange={(v) =>
-                                void toggle(r, key as PermissionKey, v === true)
-                              }
-                              aria-label={`${r.name}: ${PERMISSION_LABELS[key as PermissionKey]}`}
-                            />
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="space-y-3">
+        {roles.map(role => {
+          const expanded = editingRole === role.slug;
+          return <section key={role.slug} className="overflow-hidden rounded-xl border border-border">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+              <button type="button" className="min-w-0 space-y-1 text-left" aria-expanded={expanded} onClick={() => { setEditingRole(expanded ? null : role.slug); setOpenGroups(new Set()); setPermissionSearch(""); }}>
+                <span className="block font-medium">{role.name}</span>
+                <span className="block text-xs text-muted-foreground">{expanded ? "Hide default permissions" : "Edit default permissions"} · Base level: {role.baseLevel}</span>
+              </button>
+              <div className="flex items-center gap-2">
+                {role.isCore ? <Badge variant="outline">Built-in</Badge> : <Button variant="ghost" size="sm" className="text-destructive" disabled={saving !== null} onClick={() => void remove(role)}><Trash2 className="size-4" /> Delete</Button>}
+                {saving === role.slug && <Loader2 aria-label="Saving role permissions" className="size-4 animate-spin" />}
+              </div>
+            </div>
+            {expanded && <div className="space-y-4 border-t border-border p-3 sm:p-4">
+              <div className="flex items-center gap-2"><Input aria-label={`Search ${role.name} permissions`} placeholder="Search pages or permissions…" value={permissionSearch} onChange={event => setPermissionSearch(event.target.value)} />
+                <Button variant="ghost" size="icon" aria-label={openGroups.size === PERMISSION_EDITOR_IDS.length ? "Collapse all permission groups" : "Expand all permission groups"} onClick={() => setOpenGroups(current => current.size === PERMISSION_EDITOR_IDS.length ? new Set() : new Set(PERMISSION_EDITOR_IDS))}>{openGroups.size === PERMISSION_EDITOR_IDS.length ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}</Button>
+              </div>
+              <PermissionHierarchy permissions={role.permissions} onChange={permissions => void changePermissions(role, permissions)} admin={role.baseLevel === "admin"} busy={saving !== null} search={permissionSearch} expanded={openGroups} onExpandedChange={setOpenGroups} />
+            </div>}
+          </section>;
+        })}
+        {!loading && roles.length === 0 && <p className="text-sm text-muted-foreground">No roles are available.</p>}
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -289,7 +199,7 @@ export function RoleManager() {
           <DialogHeader>
             <DialogTitle>New role</DialogTitle>
             <DialogDescription>
-              Pick a starting level; every toggle stays editable in the matrix afterwards.
+              Start with the saved permissions for a built-in level. Review its pages and permissions after creating the role. Admin-level roles retain full access.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

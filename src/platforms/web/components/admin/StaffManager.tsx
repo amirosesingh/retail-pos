@@ -1,4 +1,4 @@
-import { PERMISSION_EDITOR_IDS, PERMISSION_SECTIONS } from "@/lib/permission-editor";
+import { PERMISSION_EDITOR_IDS } from "@/lib/permission-editor";
 import { PermissionHierarchy } from "./PermissionHierarchy";
 import { StaffIdleTimeout } from "./StaffIdleTimeout";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -162,7 +162,7 @@ export function StaffManager() {
   const [permissionSearch, setPermissionSearch] = useState("");
   const [permissionsFor, setPermissionsFor] = useState<Row | null>(null);
   const [permissionGroupsOpen, setPermissionGroupsOpen] = useState<Set<string>>(
-    () => new Set(PERMISSION_SECTIONS.map(section => `section:${section.id}`)),
+    () => new Set<string>(),
   );
   const [deleteFor, setDeleteFor] = useState<Row | null>(null);
   const [confirmation, setConfirmation] = useState("");
@@ -571,7 +571,7 @@ export function StaffManager() {
                         title="Edit permissions"
                         disabled={offline}
                         onClick={() => {
-                          setPermissionGroupsOpen(new Set(PERMISSION_SECTIONS.map(section => `section:${section.id}`)));
+                          setPermissionGroupsOpen(new Set());
                           setPermissionSearch("");
                           setPermissionsFor({ ...row, permissions: { ...row.permissions } });
                         }}
@@ -762,6 +762,7 @@ export function StaffManager() {
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">{editing && editing.role_slug === form.roleSlug ? "Keeping this role preserves the person’s current permissions. Use Edit permissions to adjust them." : "This role’s saved default permissions will be assigned when you save. Branch assignment is managed separately."}</p>
             </div>
             <div className="space-y-1">
               <Label>Branch *</Label>

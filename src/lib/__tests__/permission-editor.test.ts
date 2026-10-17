@@ -79,3 +79,14 @@ describe("related permission controls", () => {
   expect(permissionRelatedKeys("inventory")).toContain("can_view_sales_reports");
  });
 });
+
+
+describe("collapsed permission hierarchy", () => {
+ it("shows main section headings without expanding pages or their controls by default", () => {
+  const html = renderToStaticMarkup(h(PermissionHierarchy,{permissions:NO_PERMISSIONS,onChange:()=>{},admin:false,busy:false,search:"",expanded:new Set<string>(),onExpandedChange:()=>{}}));
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).not.toContain('aria-expanded="true"');
+  expect(html).not.toContain("Visible information");
+  expect(html).not.toContain("Related shared controls");
+ });
+});
