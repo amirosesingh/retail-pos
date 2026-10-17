@@ -1,8 +1,8 @@
+import { inventoryMetrics } from "@/lib/inventory-metrics";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatedMetric } from "./AnimatedMetric";
 import { useReportSales } from "@/lib/use-report-sales";
-import { stockAtLocation } from "@/lib/locations";
 import { dailyPaymentSummary } from "@/lib/daily-payment-summary";
 import { methodLabel } from "@/core/types/pos-types";
 import { SellingShortcuts } from "./SellingShortcuts";
@@ -264,10 +264,8 @@ export function TerminalWorkspaceHome() {
   const completedSales = todaySales.filter((sale) => !sale.refunded);
   const todayRevenue = completedSales.reduce((sum, sale) => sum + sale.total, 0);
   const paymentSummary = dailyPaymentSummary(completedSales);
-  const lowStock = state.products.filter(
-    (product) =>
-      !product.archived && stockAtLocation(product, currentStore.id) <= product.reorderLevel,
-  ).length;
+  const stockMetrics = inventoryMetrics(state.products, currentStore.id);
+  const lowStock = stockMetrics.lowStock;
   const archivedProducts = state.products.filter((product) => product.archived === true).length;
   const activeProducts = state.products.length - archivedProducts;
   const PurposeIcon = detail.icon;
@@ -357,7 +355,8 @@ export function TerminalWorkspaceHome() {
                 value={<AnimatedMetric value={lowStock} />}
                 hint={
                   <>
-                    <span className="block">Active items at or below reorder level</span>
+                    <span className="block">Positive stock at or below reorder level</span>
+                    <span className="block">{stockMetrics.outOfStock} out of stock · {stockMetrics.negativeStock} negative stock</span>
                     <span className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-border/60 pt-2">
                       <span>
                         Active{" "}

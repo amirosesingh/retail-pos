@@ -94,12 +94,22 @@ export function useAppUpdates() {
     const bridge = updateBridge();
     if (!bridge) return;
     setSupported(true);
-    void bridge.updateStatus().then((s) => s && setState(s));
-    return bridge.onUpdateStatus((s) => {
+    let active = true;
+    let received = false;
+    const unsubscribe = bridge.onUpdateStatus((s) => {
+      if (!active) return;
+      received = true;
       setState(s);
       if (s.status === "current" || s.status === "ready" || s.status === "error")
         setLastChecked(new Date());
     });
+    // A slow initial IPC reply must not overwrite a newer downloaded event.
+    void bridge.updateStatus().then(s => {
+      if (active && !received && s) setState(s);
+    }).catch(error => {
+      if (active && !received) setState(current => ({ ...current, status: "error", stage: "check", error: error instanceof Error ? error.message : String(error) }));
+    });
+    return () => { active = false; unsubscribe(); };
   }, []);
 
   const check = useCallback(async () => {
@@ -110,15 +120,21 @@ export function useAppUpdates() {
     try {
       const found = await fetchManifest();
       setManifest(found);
+    } catch (error) {
+      setState(current => ({ ...current, status: "error", stage: "check", error: error instanceof Error ? error.message : String(error) }));
     } finally {
       setManifestChecking(false);
       setLastChecked(new Date());
     }
     const bridge = updateBridge();
     if (!bridge) return;
-    const next = await bridge.checkForUpdates();
-    setLastChecked(new Date());
-    if (next) setState(next);
+    try {
+      const next = await bridge.checkForUpdates();
+      setLastChecked(new Date());
+      if (next) setState(next);
+    } catch (error) {
+      setState(current => ({ ...current, status: "error", stage: "check", error: error instanceof Error ? error.message : String(error) }));
+    }
   }, []);
 
   const runInstall = useCallback(async (downloadFirst: boolean) => {

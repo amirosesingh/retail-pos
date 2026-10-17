@@ -69,6 +69,7 @@ import { closeCustomerDisplay } from "@/lib/customer-display";
 import { reportAppReady } from "@/lib/app-health";
 import { hydrateConnectionProfile, isConnectionProfileHydrated } from "@/lib/connection-profile";
 import { CloudSetupGate } from "@/platforms/web/components/pos/CloudSetupGate";
+import { OfflineStatus } from "@/platforms/mobile/components/OfflineGate";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { LocationBootGuard } from "@/platforms/web/components/pos/LocationBootGuard";
 import { activeLocations } from "@/lib/locations";
@@ -288,6 +289,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     (isDesktop() || isNative()) && Boolean(terminal.config) && !terminal.verified;
   if (
     terminal.hydrating ||
+    ((isDesktop() || isNative()) && startup.loading) ||
     !profileHydrated ||
     awaitingVerdict ||
     ((isDesktop() || isNative()) && startup.probing)
@@ -306,7 +308,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       offlineCapable: hasFeature("offlineFirst"),
     });
     // Step 1 — no usable database connection: ask for the URL and key.
-    if (decision === "connect-database" || decision === "offline-blocked")
+    if (decision === "offline-blocked") return <OfflineStatus force />;
+    if (decision === "connect-database" && startup.verdict === "rejected" && startup.cloudConfigured)
+      return <OfflineStatus force />;
+    if (decision === "connect-database")
       return (
         <ConnectDatabaseScreen
           cloudConfigured={startup.verdict !== "unconfigured"}

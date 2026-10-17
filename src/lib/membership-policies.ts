@@ -1,0 +1,22 @@
+/** Keep published wording and the enrollment migration's versions in step. */
+export const MEMBERSHIP_TERMS_VERSION = "2026-10-17.1";
+export const MEMBERSHIP_PRIVACY_VERSION = "2026-10-17.1";
+
+export const MEMBERSHIP_TERMS = [
+  { title: "Your membership", text: "This programme is operated by the retailer where you join (the store). Give accurate contact details and use only a phone number and email address you are entitled to use. Your mobile number identifies your membership. Contact the store if your contact details change." },
+  { title: "Account access", text: "Keep verification codes private. Do not share another person's membership or claim rewards without permission. Tell the store promptly if you suspect misuse or lose access to your registered contact details." },
+  { title: "Rewards and offers", text: "Points, discounts, vouchers and other benefits follow the rules displayed for that benefit or offer, including any eligibility, expiry, minimum spend and exclusions. Joining does not guarantee a particular reward. Rewards are not cash unless an offer expressly says otherwise." },
+  { title: "Purchases and corrections", text: "Keep your receipt for purchase enquiries. Points and rewards may be adjusted to reflect refunds, cancelled purchases or errors. Membership does not change your rights concerning goods, services or refunds under applicable law." },
+  { title: "Misuse and programme changes", text: "The store may investigate suspected fraud or misuse and restrict an affected membership where justified. Programme benefits and rules may change; the terms shown for an issued offer continue to apply to that offer unless a correction is needed or the law requires otherwise. Ask the store about a change or disputed adjustment." },
+  { title: "Your choices and contact", text: "Promotional messages are optional and are not a condition of membership. You may ask the store to stop marketing or close your membership. Contact the store's counter or use the contact details on your receipt for membership questions and complaints." },
+] as const;
+
+export const MEMBERSHIP_PRIVACY = [
+  { title: "Who handles your information", text: "The retailer operating this membership programme is responsible for its use of your membership information. Contact the store's counter or the contact details on your receipt for privacy enquiries." },
+  { title: "Information collected", text: "Signup collects your name, mobile number and email address. Address, postal code and date of birth are optional. Your phone country code helps format your number. The programme also records your membership identifier, verification status, purchase history, points, rewards and your consent choices." },
+  { title: "How information is used", text: "Information is used to create and verify your membership, identify you at checkout, provide purchase history and benefits, handle enquiries and refunds, prevent misuse and meet applicable recordkeeping duties. Optional birthday and address information can support relevant benefits and services." },
+  { title: "Marketing is your choice", text: "If you separately opt in, the store may use your email address and mobile number to send offers and promotions by email or SMS. Leaving the marketing box unchecked does not prevent you from joining. Verification codes and essential membership messages are separate from promotional marketing. Contact the store to withdraw marketing consent at any time." },
+  { title: "Service providers and security", text: "Authorised staff and service providers supporting authentication, hosting, retail operations and communications may process information needed for those services. Cloud providers may process information outside your country. Access controls and verification help protect information, but no online service can guarantee absolute security." },
+  { title: "Retention and your requests", text: "Information is kept for as long as needed for membership services and applicable recordkeeping obligations. You may contact the store to request access, correction, closure or deletion, or to withdraw consent. Some purchase and accounting records may need to be retained. The store may verify your identity before acting on a request." },
+  { title: "Updates", text: "The version of this notice and the membership terms accepted at signup is recorded with the acceptance time and marketing choice. Ask the store if you need a copy or have questions about a later policy update." },
+] as const;

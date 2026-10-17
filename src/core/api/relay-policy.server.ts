@@ -219,22 +219,24 @@ type AppUserRow = {
 const SELECT_APP_USER = "select=user_id,full_name,store_id,role,role_slug,permissions,is_active";
 
 /**
- * Short-lived cache so a burst of queued operations from one till costs a
- * single lookup instead of one per operation.
+ * Share concurrent lookups, but never reuse completed account authority.
+ * A timed cache would keep accepting a permission after it was revoked.
  */
-const CACHE_TTL_MS = 30_000;
-const userCache = new Map<string, { at: number; row: AppUserRow | null }>();
+const userLookups = new Map<string, Promise<AppUserRow | null>>();
 
 async function fetchAppUser(filter: string): Promise<AppUserRow | null> {
-  const hit = userCache.get(filter);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.row;
-  const res = await serviceRest(`app_users?${filter}&${SELECT_APP_USER}&limit=1`);
-  if (!res.ok) return null; // transient failure: do not cache
-  const rows = (await res.json()) as AppUserRow[];
-  const row = rows[0];
-  const value = !row || row.is_active !== true ? null : row;
-  userCache.set(filter, { at: Date.now(), row: value });
-  return value;
+  const pending = userLookups.get(filter);
+  if (pending) return pending;
+  const lookup = (async () => {
+    const res = await serviceRest(`app_users?${filter}&${SELECT_APP_USER}&limit=1`);
+    if (!res.ok) return null;
+    const rows = (await res.json()) as AppUserRow[];
+    const row = rows[0];
+    return !row || row.is_active !== true ? null : row;
+  })();
+  userLookups.set(filter, lookup);
+  try { return await lookup; }
+  finally { if (userLookups.get(filter) === lookup) userLookups.delete(filter); }
 }
 
 const supervisorRole = (role: string | null, slug: string | null) =>

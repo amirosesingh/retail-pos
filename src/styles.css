@@ -892,7 +892,7 @@
   line-height: 1.45;
 }
 
-.pos-scaled button:not([role="checkbox"]):not([role="radio"]),
+.pos-scaled button:not([role="checkbox"]):not([role="radio"]):not([role="switch"]):not([data-slot="toggle"]),
 .pos-scaled [role="button"],
 .pos-scaled input:not([type="checkbox"]):not([type="radio"]),
 .pos-scaled select {
@@ -906,7 +906,7 @@
   min-width: calc(28px * var(--pos-scale));
 }
 
-.pos-compact .pos-scaled button:not([role="checkbox"]):not([role="radio"]),
+.pos-compact .pos-scaled button:not([role="checkbox"]):not([role="radio"]):not([role="switch"]):not([data-slot="toggle"]),
 .pos-compact .pos-scaled [role="button"],
 .pos-compact .pos-scaled input:not([type="checkbox"]):not([type="radio"]),
 .pos-compact .pos-scaled select {
@@ -914,18 +914,41 @@
 }
 
 @media (pointer: coarse) {
-  .pos-scaled button:not([role="checkbox"]):not([role="radio"]),
+  .pos-scaled button:not([role="checkbox"]):not([role="radio"]):not([role="switch"]):not([data-slot="toggle"]),
   .pos-scaled [role="button"],
   .pos-scaled input:not([type="checkbox"]):not([type="radio"]) {
     min-height: max(44px, calc(40px * var(--pos-scale)));
   }
 }
 
-/* Radix renders the shadcn Switch as a button. Keep its intended track size
-   instead of inheriting the register's full-size action-button minimum. */
-.pos-scaled button[data-slot="switch"] {
-  min-height: 1.5rem;
-  width: 2.75rem;
+/* Switch tracks keep their component dimensions, including compact mode.
+   Pressed toggles follow the same minimum width as the surrounding buttons. */
+.pos-scaled button[data-slot="toggle"] {
+  min-height: calc(40px * var(--pos-scale));
+  min-width: calc(40px * var(--pos-scale));
+}
+.pos-compact .pos-scaled button[data-slot="toggle"] {
+  min-height: calc(34px * var(--pos-scale));
+  min-width: calc(34px * var(--pos-scale));
+}
+
+@media (pointer: coarse) {
+  button[data-slot="toggle"],
+  .pos-scaled button[data-slot="toggle"],
+  .pos-compact .pos-scaled button[data-slot="toggle"] {
+    min-height: max(44px, calc(40px * var(--pos-scale, 1)));
+    min-width: max(44px, calc(40px * var(--pos-scale, 1)));
+  }
+  /* Expand the hit area without stretching the switch track or thumb. */
+  button[data-slot="switch"]::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
 }
 
 /* Frameless Electron window: the strip below the OS overlay drags the window,
@@ -1255,3 +1278,31 @@
   color: var(--settings-accent);
 }
 .settings-workspace .animate-spin { animation-duration: 1s; }
+/* Native captions reserve their own space even on login and recovery screens.
+   Dragging is restricted to this strip, never tables, popups or form controls. */
+.native-caption {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 32px;
+  z-index: 100;
+  background: #0b0b0c;
+  app-region: drag;
+}
+html[data-native-caption] body { padding-top: 32px; }
+html[data-native-caption] .min-h-screen { min-height: calc(100dvh - 32px); }
+html[data-native-caption] .h-screen { height: calc(100dvh - 32px); }
+html[data-native-caption] .h-dvh { height: calc(100dvh - 32px); }
+html[data-native-caption] .min-h-dvh { min-height: calc(100dvh - 32px); }
+html[data-native-caption] [data-sonner-toaster][data-y-position="top"] { top: calc(var(--offset-top, 24px) + 32px); }
+html[data-native-caption] .pos-dialog-content {
+  top: calc(50% + 16px);
+  max-height: calc(100dvh - 64px);
+}
+
+/* Compact phone-Web typography must not cause focus zoom on small fields.
+   Larger custom fields (for example PIN entry) retain their explicit size. */
+.pos-phone-web :is(input, textarea, select):is(.text-xs, .text-sm, .text-base) {
+  font-size: max(16px, 1em);
+  min-height: 44px;
+}
+.pos-phone-web button[type="submit"] { min-height: 44px; }

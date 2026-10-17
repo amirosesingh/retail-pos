@@ -5,7 +5,7 @@ const os = require("node:os");
 const net = require("node:net");
 const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
-const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage } = require("electron");
+const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage, Menu } = require("electron");
 
 require("./window-rendering.cjs").configureWindowRendering(app);
 
@@ -49,6 +49,7 @@ const { applyMigrations, ensureDatabase, migrationBundleSql } = require("./db/mi
 const { discoverLocalSqlServers } = require("./db/local-server-discovery.cjs");
 const ipcPrivilege = require("./ipc-privilege.cjs");
 const adminSession = require("./admin-session.cjs");
+let sessionAdoptionRevision = 0;
 const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = require("./synced-staff-login.cjs");
 
 const databaseConfig = createSecureConfig({ app, safeStorage, configStore });
@@ -816,6 +817,7 @@ function lockDownNavigation(win, route) {
 
 function instrument(win, route) {
   lockDownNavigation(win, route);
+  void win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {});
   // A page that painted is proof the build works, whatever screen it landed on
   // — setup, sign-in or the register. Only a window that never renders at all
   // counts as a failed launch.
@@ -837,6 +839,11 @@ function createWindows(initialRoute = "/") {
     backgroundColor: "#0b0b0c",
     // Native captions provide window controls on login and all POS screens.
     frame: true,
+    autoHideMenuBar: true,
+    ...(process.platform === "win32" ? {
+      titleBarStyle: "hidden",
+      titleBarOverlay: { color: "#0b0b0c", symbolColor: "#ffffff", height: 32 },
+    } : {}),
     transparent: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -1529,7 +1536,7 @@ function registerIpc() {
     writeBarrier: closeWriteBarrier,
   });
   ipcMain.handle("admin:status", () => adminSession.status());
-  ipcMain.handle("admin:lock", () => { adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
+  ipcMain.handle("admin:lock", () => { sessionAdoptionRevision++; adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
   ipcMain.handle("admin:recovery-unlock", async (_event, username, pin) => guard.guarded(async () => {
     const user = guard.text(username, { name: "username", max: 160 });
     const secret = guard.text(pin, { name: "password or PIN", max: 128 });
@@ -1645,13 +1652,18 @@ function registerIpc() {
     return { ok: true };
   });
   ipcMain.handle("admin:adopt-session", async (_e, value, rawTerminal) => guard.guarded(async () => {
+    const revision = ++sessionAdoptionRevision;
+    const initialIdentity = adminSession.identity();
     const proof=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
     if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return{ok:false,error:"A verified signed-in user is required."};
     const authorizationUrl=authorizationServerUrl();
     if(!authorizationUrl)return{ok:false,error:"Configure the hosted POS backend address before connecting the local database."};
-    const response=await fetch(`${authorizationUrl}/api/v1/pos/ipc-adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(proof)});
+    const response=await fetch(`${authorizationUrl}/api/v1/pos/ipc-adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(proof),signal:AbortSignal.timeout(8_000)});
     const result=await response.json().catch(()=>({ok:false,error:"Authorization failed."}));
     if(!response.ok||!result.ok)return{ok:false,error:result.error??"Authorization failed."};
+    const currentIdentity = adminSession.identity();
+    if (revision !== sessionAdoptionRevision || initialIdentity?.subject !== currentIdentity?.subject || initialIdentity?.source !== currentIdentity?.source)
+      return {ok:false,error:"The signed-in user changed while permissions were refreshing."};
     // The hosted backend has now verified this live POS identity. This is the
     // safe point to repair the native activation mirror that boot hydration
     // could not write before a staff session existed.
@@ -2258,6 +2270,7 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const headers = { ...details.responseHeaders };
     // Cloudflare challenge/RUM responses can include their own report-only

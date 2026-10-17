@@ -10,7 +10,6 @@
  */
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { localDb } from "@/core/local-db/local-db";
-import { hydrateTerminalConfig } from "@/core/activation/terminal-tokens";
 import { hasSupabaseConfig } from "@/lib/external-supabase-config";
 import { awaitProfileHydrated } from "@/lib/connection-profile";
 import { clearConnectivityIssue } from "@/lib/session-expiry";
@@ -105,7 +104,6 @@ export const cloudDiagnosis = (): CloudDiagnosis => diagnosis;
 const cloudTimeout = () => (isWindowsShell() ? CLOUD_TIMEOUT_DESKTOP : CLOUD_TIMEOUT_WEB_MOBILE);
 
 async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
-  await hydrateTerminalConfig();
   if (signal?.aborted) return "unreachable";
   // The device's own saved connection is the authority and is restored
   // asynchronously. Probing before it lands tests either nothing at all or the
@@ -114,7 +112,8 @@ async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
   try {
     await awaitProfileHydrated();
   } catch {
-    /* the restore is best-effort; the checks below still hold */
+    if (!signal?.aborted) diagnosis = { issue: "transport" };
+    return "unreachable";
   }
   if (signal?.aborted) return "unreachable";
   if (!hasSupabaseConfig()) {
@@ -239,7 +238,7 @@ export function checkHealth(force = false): Promise<HealthReport> {
   if (!force && fresh(cached)) return Promise.resolve(cached);
   if (inflight) return inflight;
   inflight = (async () => {
-    const budget = probedOnce ? cloudTimeout() : CLOUD_TIMEOUT_FIRST;
+    const budget = probedOnce || isWindowsShell() ? cloudTimeout() : CLOUD_TIMEOUT_FIRST;
     const [firstCloud, local] = await Promise.all([
       probeCloudWithin(budget),
       withTimeout(probeLocal(), LOCAL_TIMEOUT),
@@ -247,7 +246,9 @@ export function checkHealth(force = false): Promise<HealthReport> {
     // A single slow answer must not be recorded as "cannot be reached": that
     // verdict sends a configured terminal back to the connection screen.
     let cloud = firstCloud;
-    if (!cloud && verdict === "unreachable") cloud = await probeCloudWithin(budget);
+    if (!cloud && !local && verdict === "unreachable" &&
+        !(typeof navigator !== "undefined" && navigator.onLine === false))
+      cloud = await probeCloudWithin(budget);
     probedOnce = true;
     settleVerdict(cloud);
     const report: HealthReport = { cloud, local, anyOnline: cloud || local, at: Date.now() };

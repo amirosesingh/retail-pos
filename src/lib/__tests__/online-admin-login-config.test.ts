@@ -7,11 +7,13 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 describe("Supervisor/Admin online login configuration", () => {
   it("restores activation before applying the current device connection profile", () => {
     const boot = read("src/platforms/mobile/components/NativeBoot.tsx");
-    const activation = boot.indexOf(".then(() => hydrateTerminalConfig())");
+    const hydration = read("src/lib/connection-profile.ts");
+    const activation = hydration.indexOf("await hydrateTerminalConfig()");
     const profile = boot.indexOf(".then(() => hydrateConnectionProfile())");
 
     expect(activation).toBeGreaterThan(-1);
-    expect(profile).toBeGreaterThan(activation);
+    expect(profile).toBeGreaterThan(boot.indexOf("void hydrateNativeStorage()"));
+    expect(hydration.indexOf("initCloudConfigFromShell(),")).toBeGreaterThan(activation);
   });
 
   it("waits for the device connection profile before password authentication", () => {

@@ -4,6 +4,7 @@ import { useDebounced } from "@/hooks/use-debounced";
 
 import {
   Archive,
+  MoreHorizontal,
   ArrowLeftRight,
   Combine,
   FileSpreadsheet,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -74,7 +76,7 @@ import type { Product } from "@/core/types/pos-types";
 import { nextSku, peekSku, readSkuSettings } from "@/lib/sku";
 import { localTerminalId } from "@/lib/shift-hours";
 import { cn } from "@/lib/utils";
-import { inventoryMetrics } from "@/lib/inventory-metrics";
+import { inventoryMetrics, isLowStock, needsCostReview, productMargin } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
 
 export const Route = createFileRoute("/inventory")({
@@ -172,6 +174,7 @@ function Inventory() {
   const [advanced, setAdvanced] = useState(false);
   const [columnControlsTarget, setColumnControlsTarget] = useState<HTMLDivElement | null>(null);
   const [skuFilter, setSkuFilter] = useState("");
+  const [costReviewOnly, setCostReviewOnly] = useState(false);
   const [stockFilter, setStockFilter] = useState("all");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
@@ -237,12 +240,14 @@ function Inventory() {
       if (skuNeedle && !`${p.sku} ${p.barcode}`.toLowerCase().includes(skuNeedle)) return false;
       const branchStock = stockAt(p, state.currentStoreId);
       if (stockFilter === "in" && branchStock <= 0) return false;
-      if (stockFilter === "out" && branchStock > 0) return false;
-      if (stockFilter === "low" && branchStock > p.reorderLevel) return false;
+      if (stockFilter === "out" && branchStock !== 0) return false;
+      if (stockFilter === "low" && !isLowStock(branchStock, p.reorderLevel)) return false;
+      if (stockFilter === "negative" && branchStock >= 0) return false;
+      if (showMoney && costReviewOnly && !needsCostReview(p.cost)) return false;
       if (minPrice !== "" && p.price < Number(minPrice)) return false;
       if (maxPrice !== "" && p.price > Number(maxPrice)) return false;
-      const margin = p.price ? ((p.price - p.cost) / p.price) * 100 : 0;
-      if (minMargin !== "" && margin < Number(minMargin)) return false;
+      const margin = productMargin(p.price, p.cost);
+      if (minMargin !== "" && (margin === null || margin < Number(minMargin))) return false;
       if (!needle) return true;
       // Cheapest fields first — most searches stop on the name.
       return `${p.name} ${p.sku} ${p.barcode} ${(p.barcodes ?? []).join(" ")} ${(p.variants ?? [])
@@ -262,6 +267,8 @@ function Inventory() {
     settledQuery,
     skuFilter,
     stockFilter,
+    costReviewOnly,
+    showMoney,
     minPrice,
     maxPrice,
     minMargin,
@@ -303,6 +310,7 @@ function Inventory() {
       ),
     [state.products, state.settings, state.currentStoreId],
   );
+  const costReviewCount = catalogProducts.filter(product => (showArchived ? product.archived === true : product.archived !== true) && needsCostReview(product.cost)).length;
   const metrics = useMemo(
     () => inventoryMetrics(catalogProducts, currentStore.id),
     [catalogProducts, currentStore.id],
@@ -322,7 +330,7 @@ function Inventory() {
                 </>
               )}
               <span className="text-warning">
-                <AnimatedMetric value={metrics.lowStock} /> below reorder level
+                <AnimatedMetric value={metrics.lowStock} /> at or below reorder level (positive stock)
               </span>
             </p>
           </div>
@@ -337,36 +345,29 @@ function Inventory() {
               />
               <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2" aria-label="Advanced product filters" title="Advanced filters" onClick={() => setAdvanced(true)}><SlidersHorizontal className="size-4" /></Button>
             </div>
-            <Button variant={showArchived ? "default" : "outline"} onClick={() => { setShowArchived(value => !value); setSelected([]); }}><Archive className="size-4" />{showArchived ? "Showing archived" : "Show archived"}</Button>
             <div ref={setColumnControlsTarget} className="flex items-center" />
-            {canBulk && (
-              <Button variant="outline" onClick={() => setImportOpen(true)}>
-                📥 Bulk Import from Excel
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              onClick={() => {
-                const duplicates = findDuplicateProductCodes(state.products);
-                setDuplicateRows(duplicates);
-                if (!duplicates.length) {
-                  toast.success("No duplicate SKU or barcode values found");
-                  return;
-                }
-                setDuplicateOpen(true);
-              }}
-            >
-              Check duplicate codes
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                void exportProductsXlsx(rows, stores, `products-${currentStore.code}`);
-                toast.success(`Exporting ${rows.length} products to Excel`);
-              }}
-            >
-              <FileSpreadsheet className="size-4" /> Export to Excel
-            </Button>
+            {showMoney && (costReviewCount > 0 || costReviewOnly) && <Button variant={costReviewOnly ? "default" : "outline"} onClick={() => { setCostReviewOnly(value => !value); setSelected([]); }}>
+              {costReviewOnly ? "Clear cost review" : `Review costs · ${costReviewCount}`}
+            </Button>}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button variant="outline"><MoreHorizontal className="size-4" /> Actions</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
+                <DropdownMenuItem onSelect={() => { setShowArchived(value => !value); setSelected([]); }}><Archive className="size-4" />{showArchived ? "Show active products" : "Show archived products"}</DropdownMenuItem>
+                {canBulk && <DropdownMenuItem onSelect={() => setImportOpen(true)}>Import from Excel</DropdownMenuItem>}
+                <DropdownMenuItem onSelect={() => {
+                  const duplicates = findDuplicateProductCodes(state.products);
+                  setDuplicateRows(duplicates);
+                  if (!duplicates.length) toast.success("No duplicate SKU or barcode values found");
+                  else setDuplicateOpen(true);
+                }}>Check duplicate codes</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => {
+                  void exportProductsXlsx(rows, stores, `products-${currentStore.code}`)
+                    .then(() => toast.success(`Exported ${rows.length} products to Excel`))
+                    .catch(error => notifyError(error, "Exporting products"));
+                }}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {canOpenEditor && (
               <Dialog
                 open={!!draft}
@@ -865,6 +866,7 @@ function Inventory() {
             )}
           </div>
         </header>
+        {showMoney && costReviewOnly && <p role="status" className="rounded-xl border px-4 py-3 text-sm text-muted-foreground">Showing items with missing, zero or invalid cost. Open an item to review it using your existing edit permissions. Zero may be intentional for a free item; no costs are changed automatically.</p>}
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
           <InventoryKpi label="Active products" value={metrics.products} />
@@ -958,6 +960,7 @@ function Inventory() {
                     { value: "in", label: "In stock" },
                     { value: "low", label: "Low stock" },
                     { value: "out", label: "Out of stock" },
+                    { value: "negative", label: "Negative stock" },
                   ]}
                 />
               </div>
@@ -1096,7 +1099,7 @@ function Inventory() {
         )}
 
         <div className="rounded-lg border border-border bg-card">
-          <Table columnControls controlsTarget={columnControlsTarget}>
+          <Table columnControls layoutControls controlsTarget={columnControlsTarget}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
@@ -1146,12 +1149,12 @@ function Inventory() {
                   <TableCell className="text-muted-foreground">{p.category}</TableCell>
                   <TableCell className="text-muted-foreground">{p.subCategory || "—"}</TableCell>
                   {showMoney && (
-                    <TableCell className="numeric text-right">{money(p.cost)}</TableCell>
+                    <TableCell className="numeric text-right">{Number.isFinite(p.cost) ? money(p.cost) : "—"}{needsCostReview(p.cost) && <span className="ml-1 text-xs text-warning" title="Cost is missing, zero or invalid. Zero may be intentional.">Review</span>}</TableCell>
                   )}
                   <TableCell className="numeric text-right">{money(p.price)}</TableCell>
                   {showMoney && (
                     <TableCell className="numeric text-right text-accent">
-                      {p.price ? `${Math.round(((p.price - p.cost) / p.price) * 100)}%` : "—"}
+                      {productMargin(p.price, p.cost) === null ? "—" : `${Math.round(productMargin(p.price, p.cost)!)}%`}
                     </TableCell>
                   )}
                   {canEcom && (
@@ -1177,7 +1180,7 @@ function Inventory() {
                       <Badge
                         variant="outline"
                         className={`numeric justify-center ${
-                          stockAt(p, currentStore.id) <= p.reorderLevel
+                          stockAt(p, currentStore.id) <= 0 || isLowStock(stockAt(p, currentStore.id), p.reorderLevel)
                             ? "border-warning/50 text-warning"
                             : ""
                         }`}

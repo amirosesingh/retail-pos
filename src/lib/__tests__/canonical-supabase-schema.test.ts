@@ -30,6 +30,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/membership/migrations/20261003190000_member_directory_revision_overlap.sql",
       "supabase/membership/migrations/20261003200000_commit_ordered_member_directory.sql",
       "supabase/membership/migrations/20261004223000_complete_claimed_member_enrollment.sql",
+      "supabase/membership/migrations/20261017120000_membership_signup_consents.sql",
       "supabase/migrations/20260925102835_fix_payment_transaction_idempotency.sql",
       "supabase/migrations/20260925105427_fix_pos_sale_commit_stock_alias.sql",
       "supabase/migrations/20260925105919_persist_pos_sale_payment_idempotency.sql",

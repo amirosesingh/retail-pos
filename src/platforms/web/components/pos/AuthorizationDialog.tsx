@@ -5,7 +5,7 @@
  * approve is standing there), an approval request (nobody is), or both. The
  * PIN itself is only ever checked inside the database.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Send, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -89,6 +89,7 @@ export function AuthorizationDialog({
   prompt: AuthorizationPrompt | null;
   onFinish: (outcome: PromptOutcome) => void;
 }) {
+  const fieldId = useId();
   const [tab, setTab] = useState<"pin" | "request">("pin");
   const [authorizerId, setAuthorizerId] = useState("");
   const [pin, setPin] = useState("");
@@ -337,9 +338,9 @@ export function AuthorizationDialog({
   const activeMode = prompt?.mode === "either" ? tab : prompt?.mode;
 
   const pinPane = (
-    <div className="space-y-3">
+    <div className="grid gap-4 sm:grid-cols-2">
       {prompt?.selfAuthorizer ? (
-        <div className="rounded-md border border-border/60 bg-muted/30 p-3 text-sm">
+        <div className="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm sm:col-span-2">
           <div className="font-medium">Confirm as {prompt.selfAuthorizer.name}</div>
           <div className="text-xs text-muted-foreground">
             Enter your own PIN. This approval will be recorded under your account.
@@ -347,9 +348,11 @@ export function AuthorizationDialog({
         </div>
       ) : (
         <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Authoriser ID</Label>
+          <Label htmlFor={`${fieldId}-authorizer`} className="text-sm">Authoriser ID</Label>
           <Input
+            id={`${fieldId}-authorizer`}
             name="authorizer-id"
+            className="h-11"
             autoComplete="off"
             autoFocus
             value={authorizerId}
@@ -358,12 +361,13 @@ export function AuthorizationDialog({
           />
         </div>
       )}
-      <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">PIN</Label>
+      <div className={prompt?.selfAuthorizer ? "space-y-1 sm:col-span-2" : "space-y-1"}>
+        <Label htmlFor={`${fieldId}-pin`} className="text-sm">Approval PIN</Label>
         <Input
+          id={`${fieldId}-pin`}
           name="authorizer-pin"
           autoComplete="one-time-code"
-          className="numeric"
+          className="numeric h-11 tracking-[0.2em]"
           type="password"
           inputMode="numeric"
           value={pin}
@@ -383,7 +387,7 @@ export function AuthorizationDialog({
         it. Nothing happens to the sale until then.
       </p>
       {prompt?.snapshot ? (
-        <div className="rounded-md border border-border/60 bg-muted/30 p-2 text-[11px]">
+        <div className="space-y-2 rounded-xl border border-border/60 bg-muted/30 p-4 text-sm">
           <p className="font-medium">
             {prompt.snapshot.lines.length} item(s) · total {prompt.snapshot.total.toFixed(2)}
           </p>
@@ -398,19 +402,20 @@ export function AuthorizationDialog({
 
   return (
     <Dialog open={!!prompt} onOpenChange={(o) => !o && onFinish({ kind: "cancelled" })}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ShieldCheck className="size-4 text-primary" /> {prompt?.title ?? "Authorisation"}
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+        <DialogHeader className="shrink-0 px-5 pb-4 pt-5 pr-12 sm:px-6 sm:pr-12">
+          <DialogTitle className="flex items-start gap-2 leading-snug">
+            <ShieldCheck className="mt-0.5 size-5 shrink-0 text-primary" /> {prompt?.title ?? "Authorisation"}
           </DialogTitle>
           <DialogDescription>{prompt?.reason}</DialogDescription>
         </DialogHeader>
 
+        <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain p-5 sm:p-6">
         {prompt?.mode === "either" ? (
           <Tabs value={tab} onValueChange={(v) => setTab(v as "pin" | "request")}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="pin">Enter a PIN</TabsTrigger>
-              <TabsTrigger value="request">Send for approval</TabsTrigger>
+            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1">
+              <TabsTrigger value="pin" className="min-h-10 min-w-0 whitespace-normal px-2">Enter a PIN</TabsTrigger>
+              <TabsTrigger value="request" className="min-h-10 min-w-0 whitespace-normal px-2">Send for approval</TabsTrigger>
             </TabsList>
             <TabsContent value="pin" className="pt-3">
               {pinPane}
@@ -426,18 +431,21 @@ export function AuthorizationDialog({
         )}
 
         <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">
+          <Label htmlFor={`${fieldId}-reason`} className="text-sm">
             Reason {prompt?.requireReason ? "(required)" : "(optional)"}
           </Label>
           <Textarea
-            rows={2}
+            id={`${fieldId}-reason`}
+            className="min-h-24 resize-y"
+            rows={3}
             value={note}
             onChange={(e) => setNote(e.target.value.slice(0, 400))}
             placeholder="Why is this needed?"
           />
         </div>
 
-        <DialogFooter>
+        </div>
+        <DialogFooter className="shrink-0 border-t border-border/70 bg-muted/15 px-5 py-4 sm:px-6">
           <Button variant="outline" onClick={() => onFinish({ kind: "cancelled" })} disabled={busy}>
             Cancel
           </Button>

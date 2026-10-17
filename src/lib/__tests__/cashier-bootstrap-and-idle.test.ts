@@ -150,7 +150,7 @@ describe("cashier location bootstrap", () => {
       "const locationTask = canLoadCloudDirectory && !pairedLocalSnapshot",
     );
     expect(store).toContain(
-      "const cloudTask = loadPrimaryState(undefined, locationTask ?? undefined, (name) =>",
+      "const loadSnapshot = () => loadPrimaryState(undefined, locationTask ?? undefined, (name) =>",
     );
     expect(store.indexOf('markStartupStage("essential-pos-ready")')).toBeLessThan(
       store.indexOf("const loaded = await cloudTask"),

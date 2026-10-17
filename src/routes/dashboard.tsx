@@ -1,3 +1,4 @@
+import { productVisibleAt } from "@/lib/branch-policy";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useReportSales } from "@/lib/use-report-sales";
@@ -87,8 +88,8 @@ function Dashboard() {
   const margin = profit.marginPct;
   const refunds = todaySales.filter((s) => s.refunded);
   const stock = useMemo(
-    () => inventoryMetrics(state.products, currentStore.id),
-    [state.products, currentStore.id],
+    () => inventoryMetrics(state.products.filter(product => productVisibleAt(state.settings, product, currentStore.id)), currentStore.id),
+    [state.products, state.settings, currentStore.id],
   );
 
   /** Revenue against gross profit, hour by hour. */

@@ -24,6 +24,8 @@ type Prefs = {
 
 let prefs: { value: Prefs } | null = null;
 let installed = false;
+let hydrated = false;
+let hydration: Promise<void> | null = null;
 
 /**
  * The plugin handle is kept inside a wrapper object: a Capacitor plugin Proxy
@@ -72,32 +74,39 @@ function install(store: Prefs) {
  * Restore saved preferences, drop every business key an older offline build
  * may have written, and start mirroring. Must finish before the app renders.
  */
-export async function hydrateNativeStorage(): Promise<void> {
-  if (typeof window === "undefined" || !isNative()) return;
+export function hydrateNativeStorage(): Promise<void> {
+  if (typeof window === "undefined" || !isNative() || hydrated) return Promise.resolve();
+  if (!hydration) hydration = restoreNativeStorage().then(() => { hydrated = true; }).finally(() => { hydration = null; });
+  return hydration;
+}
+
+async function restoreNativeStorage(): Promise<void> {
   // Business data must never survive on the phone, whether or not the
   // Preferences plugin is available this session.
   purgeBusinessKeys();
   const loaded = await loadPrefs();
-  if (!loaded) return;
+  if (!loaded) throw new Error("Saved device settings are temporarily unavailable.");
   const store = loaded.value;
-  try {
-    const { keys } = await store.keys();
-    for (const key of keys) {
-      if (!isPersistentKey(key)) {
-        // Left over from the previous offline-first build.
-        await store.remove({ key }).catch(() => {});
-        continue;
-      }
-      const { value } = await store.get({ key });
-      if (value !== null) window.localStorage.setItem(key, value);
+  const { keys } = await store.keys();
+  // Read the complete identity before publishing any part of it. A partial
+  // restore can pair an activation ciphertext with the wrong device key.
+  const restored = await Promise.all(keys.filter(isPersistentKey).map(async key => {
+    const { value } = await store.get({ key });
+    return { key, value };
+  }));
+  for (const { key, value } of restored) {
+    if (value !== null) window.localStorage.setItem(key, value);
+  }
+  for (const key of keys) {
+    if (!isPersistentKey(key)) {
+      // Left over from the previous offline-first build.
+      await store.remove({ key }).catch(() => {});
     }
-    for (const key of Object.keys(window.localStorage)) {
-      if (!isPersistentKey(key) || keys.includes(key)) continue;
-      const value = window.localStorage.getItem(key);
-      if (value !== null) await store.set({ key, value });
-    }
-  } catch {
-    /* fall back to plain localStorage for this session */
+  }
+  for (const key of Object.keys(window.localStorage)) {
+    if (!isPersistentKey(key) || keys.includes(key)) continue;
+    const value = window.localStorage.getItem(key);
+    if (value !== null) await store.set({ key, value });
   }
   install(store);
 }

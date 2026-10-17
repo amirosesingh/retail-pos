@@ -20,6 +20,10 @@ describe("Windows till rendering", () => {
       .toBeLessThan(main.indexOf("app.whenReady()"));
     expect(main).toContain("transparent: false");
     expect(main).toContain("frame: true");
+    expect(main).toContain("Menu.setApplicationMenu(null)");
+    expect(main).toContain('titleBarStyle: "hidden"');
+    expect(main).toContain('titleBarOverlay: { color: "#0b0b0c", symbolColor: "#ffffff", height: 32 }');
+    expect(main).toContain("setVisualZoomLevelLimits(1, 1)");
     const styles = readFileSync("src/styles.css", "utf8");
     expect(styles).not.toContain("-webkit-app-region: drag;");
     expect(styles).toContain("html, body {");

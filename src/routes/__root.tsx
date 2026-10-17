@@ -35,6 +35,7 @@ import { RECOVERY_PATH } from "@/lib/recovery-route";
 import { ThemeProvider, themeBootScript } from "../lib/theme";
 import { publicConfigScript } from "../lib/public-config-script";
 import { NativeBoot } from "@/platforms/mobile/components/NativeBoot";
+import { NativeWindowFrame } from "@/components/shared/NativeWindowFrame";
 import { AndroidPushAgent } from "@/platforms/mobile/components/AndroidPushAgent";
 import { OfflineGate } from "@/platforms/mobile/components/OfflineGate";
 import {
@@ -46,7 +47,7 @@ import {
 import { subscribeSyncConfig, syncConfig } from "@/lib/sync-config";
 import { DesktopUpdateBanner, DesktopCloseSyncStatus } from "@/platforms/windows/components/DesktopUpdateBanner";
 import { AndroidUpdateBanner } from "@/platforms/mobile/components/AndroidUpdateBanner";
-import { usePublicHostLanding } from "../lib/coupon-hosts";
+import { PublicHostBoundary } from "@/platforms/web/components/pos/PublicHostBoundary";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { bypassPersistentAppShell, isCustomerPublicRoute } from "@/lib/app-shell-routes";
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
@@ -247,7 +248,6 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
   const pathname = useLocation({ select: (location) => location.pathname });
-  usePublicHostLanding();
   useNativeBackNavigation(router);
 
   // One long-lived owner for connectivity on every platform. Platform-specific
@@ -314,9 +314,11 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        <NativeWindowFrame>
         <NativeBoot>
-          <OfflineGate>
-            <ConnectionProfileBoot>
+          <ConnectionProfileBoot>
+            <OfflineGate>
+              <PublicHostBoundary pathname={pathname}>
               {isCustomerPublicRoute(pathname) ? (
                 <>
                   <Outlet />
@@ -325,9 +327,11 @@ function RootComponent() {
               ) : (
                 <TillRuntime />
               )}
-            </ConnectionProfileBoot>
-          </OfflineGate>
+              </PublicHostBoundary>
+            </OfflineGate>
+          </ConnectionProfileBoot>
         </NativeBoot>
+        </NativeWindowFrame>
       </ThemeProvider>
     </QueryClientProvider>
   );

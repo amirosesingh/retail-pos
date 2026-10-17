@@ -1,3 +1,4 @@
+import { inventoryMetrics, isLowStock } from "@/lib/inventory-metrics";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { Download, Search } from "lucide-react";
@@ -85,8 +86,9 @@ function AllShops() {
     const shift = state.shifts.find(
       (s) => sameBranchId(s.storeId, store.id) && s.status !== "CLOSED" && !s.closedAt,
     );
-    const stockValue = state.products.reduce((a, p) => a + p.cost * stockAt(p, store.id), 0);
-    const low = state.products.filter((p) => stockAt(p, store.id) <= p.reorderLevel).length;
+    const metrics = inventoryMetrics(state.products.filter(product => productVisibleAt(state.settings, product, store.id)), store.id);
+    const stockValue = metrics.costValue;
+    const low = metrics.lowStock;
     return {
       store,
       revenue: sales.reduce((a, s) => a + saleNetRevenue(s), 0),
@@ -126,7 +128,7 @@ function AllShops() {
       !`${p.name} ${p.sku} ${p.barcode} ${p.category}`.toLowerCase().includes(query.toLowerCase())
     )
       return false;
-    if (lowOnly && !stockStores.some((s) => stockAt(p, s.id) <= p.reorderLevel)) return false;
+    if (lowOnly && (p.archived === true || !stockStores.some((s) => productVisibleAt(state.settings, p, s.id) && isLowStock(stockAt(p, s.id), p.reorderLevel)))) return false;
     return true;
   });
   const pager = usePagination(rows, 25);
@@ -373,7 +375,7 @@ function AllShops() {
                     {per.map(({ store, qty }) => (
                       <TableCell
                         key={store.id}
-                        className={`numeric text-right ${qty <= p.reorderLevel ? "text-warning" : ""}`}
+                        className={`numeric text-right ${qty <= 0 ? "text-destructive" : isLowStock(qty, p.reorderLevel) ? "text-warning" : ""}`}
                       >
                         {qty}
                       </TableCell>

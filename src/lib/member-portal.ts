@@ -1,5 +1,6 @@
 import type { Session } from "@supabase/supabase-js";
 import { memberPortalClientSnapshot } from "@/integrations/supabase/external-client";
+import { MEMBERSHIP_TERMS_VERSION, MEMBERSHIP_PRIVACY_VERSION } from "./membership-policies";
 
 export type MemberPortalProfile = {
   id: string;
@@ -54,6 +55,8 @@ const rpcClient = () => client() as unknown as PortalRpcClient;
 function message(error: { message?: string } | null, fallback: string): string {
   const raw = error?.message?.trim();
   if (!raw) return fallback;
+  if (raw.includes("MEMBERSHIP_TERMS_ACCEPTANCE_REQUIRED")) return "Please accept the membership terms and acknowledge the privacy notice.";
+  if (raw.includes("MEMBERSHIP_POLICY_VERSION_CHANGED")) return "The membership policies have changed. Please refresh and read the latest version.";
   if (raw.includes("MEMBERSHIP_CONTACT_AMBIGUOUS")) {
     return "More than one membership uses this contact. Please ask the store to merge the duplicate records.";
   }
@@ -131,7 +134,14 @@ export async function enrollMemberPortal(input: {
   dateOfBirth?: string;
   countryCode?: string;
   postalCode?: string;
+  termsAccepted: boolean;
+  marketingConsent: boolean;
 }): Promise<MemberPortalProfile> {
+  if (!input.termsAccepted) throw new Error("Please accept the membership terms and acknowledge the privacy notice.");
+  const policy = await rpcClient().rpc("membership_signup_policy_version");
+  const versions = policy.data as { terms_version?: string; privacy_version?: string } | null;
+  if (policy.error || versions?.terms_version !== MEMBERSHIP_TERMS_VERSION || versions?.privacy_version !== MEMBERSHIP_PRIVACY_VERSION)
+    throw new Error("Membership signup is being updated. Please refresh this page or contact the store.");
   const result = await rpcClient().rpc("membership_portal_enroll_details", {
     p_profile: {
       full_name: input.fullName.trim(),
@@ -140,6 +150,10 @@ export async function enrollMemberPortal(input: {
       date_of_birth: input.dateOfBirth || null,
       country_code: input.countryCode?.trim().toUpperCase() || null,
       postal_code: input.postalCode?.trim() || null,
+      terms_accepted: input.termsAccepted,
+      terms_version: MEMBERSHIP_TERMS_VERSION,
+      privacy_version: MEMBERSHIP_PRIVACY_VERSION,
+      marketing_consent: input.marketingConsent === true,
     },
   });
   if (result.error) throw new Error(message(result.error, "Could not create your membership."));

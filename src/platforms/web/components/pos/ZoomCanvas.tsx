@@ -16,7 +16,6 @@ import { RegisterZoomFitContext } from "@/lib/register-zoom-context";
 import {
   REGISTER_ZOOM_MAX,
   REGISTER_ZOOM_MIN,
-  setUiScalePrefs,
   useUiScalePrefs,
 } from "@/lib/use-ui-scale";
 
@@ -39,27 +38,6 @@ export function ZoomCanvas({ children, className }: { children: ReactNode; class
     return () => observer.disconnect();
   }, [fitWorkspace]);
   const { registerZoom } = useUiScalePrefs();
-  const scaleRef = useRef(registerZoom);
-  scaleRef.current = registerZoom;
-
-  // Ctrl/Cmd + wheel and trackpad pinch (which arrives as a ctrlKey wheel).
-  // React's onWheel is passive, so the listener has to be attached natively.
-  useEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-    const apply = (next: number) =>
-      setUiScalePrefs({
-        registerZoom: Number(clamp(next, REGISTER_ZOOM_MIN, REGISTER_ZOOM_MAX).toFixed(3)),
-      });
-    const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1);
-      apply(scaleRef.current * Math.exp(-dy * 0.0015));
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
 
   const scale = clamp(registerZoom, REGISTER_ZOOM_MIN, REGISTER_ZOOM_MAX);
   const inverse = `${(100 / scale).toFixed(4)}%`;

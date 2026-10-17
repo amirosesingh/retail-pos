@@ -22,6 +22,7 @@ import { usePublicFlags } from "@/lib/public-flags";
 import { internationalPhone, PHONE_COUNTRIES } from "@/lib/phone-countries";
 import { PublicPageClosed } from "@/platforms/web/components/pos/PublicPageClosed";
 import { isTerminalApp } from "@/platform-config/platform";
+import { MembershipConsent } from "@/platforms/web/components/pos/MembershipConsent";
 
 export const Route = createFileRoute("/join")({
   beforeLoad: () => {
@@ -52,6 +53,8 @@ function JoinPage() {
   const [member, setMember] = useState<MemberPortalProfile | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
 
   const validationError = () => {
     if (name.trim().length < 2) return "Enter your full name.";
@@ -62,6 +65,7 @@ function JoinPage() {
       return "Enter a valid mobile number.";
     }
     if (dateOfBirth && new Date(dateOfBirth) > new Date()) return "Enter a valid date of birth.";
+    if (!termsAccepted) return "Please read and accept the membership terms and acknowledge the privacy notice.";
     return "";
   };
 
@@ -83,6 +87,8 @@ function JoinPage() {
   };
 
   const verifyAndCreate = async () => {
+    const invalid = validationError();
+    if (invalid) return setError(invalid);
     if (code.length !== 6) return;
     setBusy(true);
     setError("");
@@ -98,6 +104,8 @@ function JoinPage() {
         dateOfBirth,
         countryCode,
         postalCode,
+        termsAccepted,
+        marketingConsent,
       });
       setMember(profile);
       setStep("done");
@@ -152,7 +160,7 @@ function JoinPage() {
             </header>
 
             <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-muted p-3 text-sm font-medium">
-              <Mail className="size-4" /> Supabase email OTP verification
+              <Mail className="size-4" /> Email verification
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -233,6 +241,8 @@ function JoinPage() {
               </Field>
             </div>
 
+            <MembershipConsent accepted={termsAccepted} marketing={marketingConsent} disabled={busy}
+              onAccepted={setTermsAccepted} onMarketing={setMarketingConsent} />
             {step === "verify" ? (
               <div className="mt-5 space-y-3 rounded-xl border bg-muted/30 p-4">
                 <div>
@@ -256,7 +266,7 @@ function JoinPage() {
                 </InputOTP>
                 <Button
                   className="w-full"
-                  disabled={busy || code.length !== 6}
+                  disabled={busy || code.length !== 6 || !termsAccepted}
                   onClick={() => void verifyAndCreate()}
                 >
                   {busy ? (
@@ -294,7 +304,7 @@ function JoinPage() {
               </p>
             ) : null}
             <p className="mt-4 text-center text-xs text-muted-foreground">
-              Supabase Auth verifies your email. Your phone remains the unique membership number.
+              Verify your email with a one-time code. Your phone remains your unique membership number.
             </p>
           </>
         )}

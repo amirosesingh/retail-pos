@@ -1,3 +1,5 @@
+import { approvalBranchLabel, approvalDisplayFields, approvalDecisionText } from "@/lib/approval-display";
+import { ApprovalDiscountReview } from "@/platforms/web/components/pos/ApprovalDiscountReview";
 /**
  * Pending approvals.
  *
@@ -139,6 +141,7 @@ function ApprovalsPage() {
   const [rows, setRows] = useState<AuthorizationRequest[]>([]);
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
   const [allBranches, setAllBranches] = useState(false);
+  const scopeDefaultedFor = useRef<string | null>(null);
   const [history, setHistory] = useState(false);
   const [note, setNote] = useState<Record<string, string>>({});
   // What the approver is granting, when it differs from what was asked.
@@ -180,7 +183,17 @@ function ApprovalsPage() {
       setError(res.ok ? "" : (res.error ?? ""));
       // A refused reply may carry no list at all; never hand undefined on.
       setRows(Array.isArray(res.requests) ? (res.requests as AuthorizationRequest[]) : []);
-      setMe(res.ok ? (res.me ?? null) : null);
+      const nextMe = res.ok ? (res.me ?? null) : null;
+      setMe(nextMe);
+      // Apply the default once for each verified person/role. Refreshes must
+      // preserve an admin's deliberate switch back to the current branch.
+      if (nextMe) {
+        const identity = `${nextMe.id}:${nextMe.role}`;
+        if (scopeDefaultedFor.current !== identity) {
+          scopeDefaultedFor.current = identity;
+          setAllBranches(nextMe.role === "admin");
+        }
+      }
     } catch (e) {
       if (sequence !== loadSequence.current) return;
       setRows([]);
@@ -333,8 +346,9 @@ function ApprovalsPage() {
 
         {orderedRows.map((row, index) => {
           const mine = !!me && row.requestedBy.toLowerCase() === me.id.toLowerCase();
-          const payload = Object.entries(row.payload ?? {});
+          const payload = approvalDisplayFields(row.payload ?? {});
           const outcome = approvalOutcome(row);
+          const decisionText = approvalDecisionText(row);
           return (
             <Fragment key={row.id}>
               {index === firstDecided ? (
@@ -362,10 +376,10 @@ function ApprovalsPage() {
                       </CardTitle>
                       <p className="text-xs text-muted-foreground">
                         {approvalReference(row)} · {row.requestedByName || "Staff member"} ·{" "}
-                        {pos?.stores.find((store) => store.id === row.storeId)?.name ??
-                          "All branches"}{" "}
+                        {approvalBranchLabel(row.storeId, pos?.stores ?? [])}{" "}
                         · {ago(row.createdAt)}
                       </p>
+                      {decisionText && <p className="mt-2 break-words text-sm font-medium [overflow-wrap:anywhere]">{decisionText}</p>}
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -411,15 +425,25 @@ function ApprovalsPage() {
                     </div>
                   </CardContent>
                 </Card>
-                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
-                  <DialogHeader>
+                <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
+                  <DialogHeader className="shrink-0 px-5 pb-4 pt-5 pr-12 sm:px-6 sm:pr-12">
                     <DialogTitle>
                       {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey} · {row.status}
                     </DialogTitle>
                   </DialogHeader>
-                  <div className="space-y-3">
+                  <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain p-5 sm:p-6">
+                    {decisionText && <section className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-4" aria-label="Approval decision">
+                      <p className="break-words font-semibold [overflow-wrap:anywhere]">{decisionText}</p>
+                      {row.decidedAt && <p className="text-sm text-muted-foreground">{new Date(row.decidedAt).toLocaleString()}</p>}
+                      {row.decisionNote && <p className="whitespace-pre-wrap break-words text-sm">{row.decisionNote}</p>}
+                    </section>}
+
                     {row.reason ? <p className="text-sm">“{row.reason}”</p> : null}
-                    <dl className="grid gap-x-4 gap-y-1 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-2">
+                    <dl className="grid gap-4 rounded-xl border border-border/60 bg-muted/15 p-4 text-sm sm:grid-cols-2 lg:grid-cols-3 [&_dd]:break-words [&_dd]:[overflow-wrap:anywhere] [&_dt]:mb-1 [&_dt]:text-xs">
+                      <div className="sm:col-span-2 lg:col-span-3">
+                        <dt className="text-muted-foreground">Requesting branch</dt>
+                        <dd className="text-base font-semibold">{approvalBranchLabel(row.storeId, pos?.stores ?? [])}</dd>
+                      </div>
                       <div>
                         <dt className="text-muted-foreground">Approval number</dt>
                         <dd className="font-mono font-semibold">{approvalReference(row)}</dd>
@@ -455,11 +479,11 @@ function ApprovalsPage() {
                     </dl>
                     {row.approvalRoute ? <ApprovalRouteReview row={row} /> : null}
                     {payload.length ? (
-                      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/50 p-3 text-xs">
+                      <dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-x-4 gap-y-3 rounded-xl bg-muted/30 p-4 text-sm">
                         {payload.map(([k, v]) => (
                           <div key={k} className="contents">
                             <dt className="text-muted-foreground">{k.replace(/_/g, " ")}</dt>
-                            <dd className="font-medium">
+                            <dd className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">
                               {humanizeText(String(v), {
                                 stores: pos?.stores,
                                 products: pos?.state.products,
@@ -476,7 +500,7 @@ function ApprovalsPage() {
                       draft={amount[row.id] ?? ""}
                       mode={amountMode[row.id] ?? "total"}
                     />
-                    <TicketReview row={row} />
+                    <TicketReview row={row} stores={pos?.stores ?? []} />
                     {row.status === "pending" ? (
                       mine ? (
                         <div className="flex items-center justify-between gap-3">
@@ -493,7 +517,7 @@ function ApprovalsPage() {
                           </Button>
                         </div>
                       ) : (
-                        <div className="space-y-3 rounded-md border border-border/60 p-3">
+                        <div className="space-y-4 rounded-xl border border-border/60 bg-muted/15 p-4">
                           <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1">
                               <Label htmlFor={`approval-note-${row.id}`} className="text-xs">
@@ -643,7 +667,7 @@ function ApprovalsPage() {
                               </div>
                             )}
                           </div>
-                          <div className="flex flex-wrap justify-end gap-2">
+                          <div className="flex flex-col-reverse gap-2 border-t border-border/60 pt-4 sm:flex-row sm:justify-end">
                             <Button
                               size="sm"
                               disabled={busy === row.id || Boolean(amountInvalid[row.id])}
@@ -715,29 +739,10 @@ function ApprovalAmountReview({
 }) {
   const requestedDiscounts = ticketDiscounts(row.payload);
   if (requestedDiscounts.length) {
-    const decisions = ticketDiscounts(row.approvedPayload, "approved_discounts");
-    return (
-      <div className="space-y-2 rounded-md border border-border p-3 text-xs">
-        <p className="font-semibold">Bill discount review</p>
-        {requestedDiscounts.map((entry) => {
-          const approved = decisions.find((decision) => decision.index === entry.index);
-          const format = (value: number) =>
-            entry.type === "percent" ? `${value}%` : `$${money(value)}`;
-          return (
-            <p key={entry.index}>
-              {entry.name}
-              {entry.index >= 0 ? ` × ${entry.qty}` : ""} · requested {format(entry.value)}
-              {entry.type === "amount" && entry.index >= 0 ? " per unit" : ""}
-              {approved
-                ? ` · ${approved.value === 0 ? "Rejected" : `Approved ${format(approved.value)}`}`
-                : entry.requiresApproval
-                  ? " · Needs approval"
-                  : " · Within cashier limit"}
-            </p>
-          );
-        })}
-      </div>
-    );
+    return <ApprovalDiscountReview payload={row.payload} approvedPayload={row.approvedPayload} />;
+  }
+  if (typeof row.payload["requested_discounts"] === "string") {
+    return <ApprovalDiscountReview payload={row.payload} approvedPayload={row.approvedPayload} />;
   }
   const typed = draft.trim() === "" ? null : Number(draft);
   const entered =
@@ -894,7 +899,7 @@ function ApprovalRouteReview({ row }: { row: AuthorizationRequest }) {
  * The whole ticket the cashier was ringing when the request was sent, so the
  * approver decides on what they can see rather than a bare number.
  */
-function TicketReview({ row }: { row: AuthorizationRequest }) {
+function TicketReview({ row, stores }: { row: AuthorizationRequest; stores: readonly { id: string; name: string; code?: string }[] }) {
   const t = row.snapshot;
   if (!t)
     return (
@@ -926,8 +931,8 @@ function TicketReview({ row }: { row: AuthorizationRequest }) {
             <dd>{new Date(t.capturedAt).toLocaleString()}</dd>
           </div>
           <div>
-            <dt className="text-muted-foreground">Store ID</dt>
-            <dd className="break-all">{t.storeId || row.storeId || "—"}</dd>
+            <dt className="text-muted-foreground">Branch</dt>
+            <dd className="break-words">{approvalBranchLabel(row.storeId || t.storeId, stores)}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Terminal ID</dt>
@@ -982,8 +987,8 @@ function TicketReview({ row }: { row: AuthorizationRequest }) {
           <p className="text-muted-foreground">Walk-in customer — no member was attached.</p>
         )}
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[34rem] text-xs">
+      <div className="responsive-table-region overflow-x-auto">
+        <table data-mobile-cards="true" className="responsive-table w-full text-xs">
           <thead className="text-muted-foreground">
             <tr>
               <th className="px-3 py-1 text-left font-normal">Item</th>
@@ -997,17 +1002,17 @@ function TicketReview({ row }: { row: AuthorizationRequest }) {
             {lines.length ? (
               lines.map((l, i) => (
                 <tr key={`${l.sku}-${i}`} className="border-t border-border/40">
-                  <td className="px-3 py-1">
+                  <td data-label="Item" className="min-w-0 break-words px-3 py-1">
                     <span className="font-medium">{l.name || l.sku || "Unknown item"}</span>
                     {l.sku ? (
                       <span className="block text-[10px] text-muted-foreground">{l.sku}</span>
                     ) : null}
                     {l.priceOverridden ? " · price changed" : ""}
                   </td>
-                  <td className="px-3 py-1 text-right">{l.qty}</td>
-                  <td className="px-3 py-1 text-right">{money(l.unitPrice)}</td>
-                  <td className="px-3 py-1 text-right">{money(l.discount)}</td>
-                  <td className="px-3 py-1 text-right">{money(l.lineTotal)}</td>
+                  <td data-label="Quantity" className="px-3 py-1 text-right">{l.qty}</td>
+                  <td data-label="Unit price" className="px-3 py-1 text-right">{money(l.unitPrice)}</td>
+                  <td data-label="Discount" className="px-3 py-1 text-right">{money(l.discount)}</td>
+                  <td data-label="Total" className="px-3 py-1 text-right">{money(l.lineTotal)}</td>
                 </tr>
               ))
             ) : (

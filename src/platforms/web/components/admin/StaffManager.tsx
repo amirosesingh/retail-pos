@@ -1,15 +1,8 @@
-import {
-  PERMISSION_PAGES,
-  pageKey,
-  pageEnabled,
-  setPageFeatures,
-  setPageVisibility,
-} from "@/lib/permission-pages";
+import { PERMISSION_EDITOR_IDS } from "@/lib/permission-editor";
+import { PermissionHierarchy } from "./PermissionHierarchy";
 import { StaffIdleTimeout } from "./StaffIdleTimeout";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ChevronDown,
-  ChevronRight,
   Copy,
   Eye,
   EyeOff,
@@ -30,7 +23,6 @@ import { branchDisplayName } from "@/lib/human-readable";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -54,12 +46,9 @@ import { ADMIN_OFFLINE_MESSAGE } from "@/lib/admin-session";
 import { isConnectionError } from "@/core/local-db/db-mode";
 import { notifyError } from "@/lib/notify";
 import {
-  PERMISSION_GROUPS,
-  PERMISSION_LABELS,
   fromDbRole,
   normalizePermissions,
   rolePermissions,
-  type PermissionKey,
   type StaffPermissions,
   type StaffRole,
 } from "@/lib/permissions";
@@ -173,7 +162,7 @@ export function StaffManager() {
   const [permissionSearch, setPermissionSearch] = useState("");
   const [permissionsFor, setPermissionsFor] = useState<Row | null>(null);
   const [permissionGroupsOpen, setPermissionGroupsOpen] = useState<Set<string>>(
-    () => new Set(PERMISSION_PAGES.map((group) => group.id)),
+    () => new Set<string>(),
   );
   const [deleteFor, setDeleteFor] = useState<Row | null>(null);
   const [confirmation, setConfirmation] = useState("");
@@ -582,7 +571,7 @@ export function StaffManager() {
                         title="Edit permissions"
                         disabled={offline}
                         onClick={() => {
-                          setPermissionGroupsOpen(new Set(PERMISSION_PAGES.map((g) => g.id)));
+                          setPermissionGroupsOpen(new Set());
                           setPermissionSearch("");
                           setPermissionsFor({ ...row, permissions: { ...row.permissions } });
                         }}
@@ -773,6 +762,7 @@ export function StaffManager() {
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">{editing && editing.role_slug === form.roleSlug ? "Keeping this role preserves the person’s current permissions. Use Edit permissions to adjust them." : "This role’s saved default permissions will be assigned when you save. Branch assignment is managed separately."}</p>
             </div>
             <div className="space-y-1">
               <Label>Branch *</Label>
@@ -872,24 +862,24 @@ export function StaffManager() {
                 variant="ghost"
                 className="bg-transparent shadow-none"
                 aria-label={
-                  permissionGroupsOpen.size === PERMISSION_PAGES.length
+                  permissionGroupsOpen.size === PERMISSION_EDITOR_IDS.length
                     ? "Collapse all permission groups"
                     : "Expand all permission groups"
                 }
                 title={
-                  permissionGroupsOpen.size === PERMISSION_PAGES.length
+                  permissionGroupsOpen.size === PERMISSION_EDITOR_IDS.length
                     ? "Collapse all"
                     : "Expand all"
                 }
                 onClick={() =>
                   setPermissionGroupsOpen((current) =>
-                    current.size === PERMISSION_PAGES.length
+                    current.size === PERMISSION_EDITOR_IDS.length
                       ? new Set()
-                      : new Set(PERMISSION_PAGES.map((group) => group.id)),
+                      : new Set(PERMISSION_EDITOR_IDS),
                   )
                 }
               >
-                {permissionGroupsOpen.size === PERMISSION_PAGES.length ? (
+                {permissionGroupsOpen.size === PERMISSION_EDITOR_IDS.length ? (
                   <Minimize2 className="size-4" />
                 ) : (
                   <Maximize2 className="size-4" />
@@ -903,57 +893,15 @@ export function StaffManager() {
             <Input className="min-w-48 flex-1" aria-label="Search permissions" placeholder="Search pages or permissions…" value={permissionSearch} onChange={event => setPermissionSearch(event.target.value)} />
             <Button variant="outline" disabled={permissionsFor.role === "admin" || busy === "permissions"} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: { ...(roles.find(role => role.slug === permissionsFor.role_slug)?.permissions ?? rolePermissions(permissionsFor.role)) } })}>Reset to role defaults</Button>
           </div>}
-          <div className="space-y-3">
-            {permissionsFor &&
-              PERMISSION_PAGES.filter(group => !permissionSearch.trim() || `${group.label} ${group.keys.map(key => PERMISSION_LABELS[key]).join(" ")}`.toLowerCase().includes(permissionSearch.trim().toLowerCase())).map((group) => {
-                const open = !!permissionSearch.trim() || permissionGroupsOpen.has(group.id);
-                const admin = permissionsFor.role === "admin";
-                const enabled = admin || pageEnabled(permissionsFor.permissions, group.id);
-                return (
-                  <section key={group.id} className="rounded-lg border border-border">
-                    <div className="flex flex-wrap items-center justify-between gap-3 p-3">
-                      <button type="button" className="flex items-center gap-2 text-left text-sm font-semibold" aria-expanded={open}
-                        onClick={() => setPermissionGroupsOpen(current => { const next = new Set(current); if (open) next.delete(group.id); else next.add(group.id); return next; })}>
-                        {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}{group.label}
-                      </button>
-                      <label className="flex items-center gap-2 text-xs font-medium">
-                        Open page
-                        <Switch checked={enabled} disabled={admin} aria-label={`${group.label} page visibility`}
-                          onCheckedChange={checked => setPermissionsFor({ ...permissionsFor, permissions: setPageVisibility(permissionsFor.permissions, group.id, checked) })} />
-                      </label>
-                    </div>
-                    {open && enabled && (
-                      <div className="space-y-3 border-t border-border p-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-xs text-muted-foreground">Page access grants no actions. Shared permissions are marked below; changes apply everywhere that permission is used. Hiding a page preserves your selected permissions.</span>
-                          {group.keys.length > 0 && <div className="flex gap-1">
-                            <Button size="sm" variant="ghost" disabled={admin} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: setPageFeatures(permissionsFor.permissions, group.id, true) })}>Select all</Button>
-                            <Button size="sm" variant="ghost" disabled={admin} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: setPageFeatures(permissionsFor.permissions, group.id, false) })}>Deselect all</Button>
-                          </div>}
-                        </div>
-                        {(["Visible information", "Allowed actions"] as const).map(section => {
-                          const isView = (key: PermissionKey) => key.startsWith("can_view_") || key.endsWith("_view");
-                          const keys = group.keys.filter(key => (section === "Visible information") === isView(key));
-                          if (!keys.length) return null;
-                          return <div key={section} className="space-y-3">
-                            <h4 className="text-sm font-semibold">{section}</h4>
-                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                              {keys.map(key => <label key={key} className="flex items-start gap-2 text-sm">
-                                <Checkbox className="mt-0.5 size-4 shrink-0" checked={admin || permissionsFor.permissions[key]} disabled={admin || busy === "permissions"}
-                                  onCheckedChange={checked => setPermissionsFor({ ...permissionsFor, permissions: { ...permissionsFor.permissions, [key]: checked === true } })} />
-                                <span>{PERMISSION_LABELS[key]}{PERMISSION_PAGES.filter(page => page.keys.includes(key)).length > 1 && <span className="block text-xs text-muted-foreground">Shared with {PERMISSION_PAGES.filter(page => page.id !== group.id && page.keys.includes(key)).map(page => page.label).join(", ")}</span>}</span>
-                              </label>)}
-                            </div>
-                          </div>;
-                        })}
-                        {!group.keys.length && <p className="text-xs text-muted-foreground">This page has no separate configurable actions.</p>}
-                      </div>
-                    )}
-                    {open && !enabled && <p className="border-t border-border p-3 text-xs text-muted-foreground">Page access is off. Selected permissions are preserved; shared actions can still work on other enabled pages.</p>}
-                  </section>
-                );
-              })}
-          </div>
+          {permissionsFor && <PermissionHierarchy
+            permissions={permissionsFor.permissions}
+            onChange={permissions => setPermissionsFor({ ...permissionsFor, permissions })}
+            admin={permissionsFor.role === "admin"}
+            busy={busy === "permissions"}
+            search={permissionSearch}
+            expanded={permissionGroupsOpen}
+            onExpandedChange={setPermissionGroupsOpen}
+          />}
           <DialogFooter>
             <Button variant="outline" onClick={() => setPermissionsFor(null)}>
               Cancel

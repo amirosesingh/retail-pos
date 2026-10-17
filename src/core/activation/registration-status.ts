@@ -22,6 +22,7 @@ import {
   isRegistered,
   type RegistrationState,
 } from "@/core/activation/activation-record";
+import { subscribeTerminalConfig } from "@/core/activation/terminal-tokens";
 
 export type { RegistrationState };
 
@@ -95,13 +96,16 @@ export function useStartupGate(): StartupGate {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const read = async () => {
       const state = await isRegistered();
       if (cancelled) return;
       setRegistration(state);
-    })();
+    };
+    void read();
+    const off = subscribeTerminalConfig(() => { void read(); });
     return () => {
       cancelled = true;
+      off();
     };
   }, [tick]);
 
