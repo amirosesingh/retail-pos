@@ -573,6 +573,8 @@ type TableProps = React.HTMLAttributes<HTMLTableElement> & {
   /** Opt-in controls for operational tables; all rows must be supplied. */
   managed?: boolean;
   columnControls?: boolean;
+  /** Inventory opts into layout choices without changing other tables. */
+  layoutControls?: boolean;
   controlsTarget?: HTMLElement | null;
   summaryFormats?: Record<string, (value: number) => string>;
   /** Collapse each row into a labelled card below tablet width. */
@@ -582,7 +584,8 @@ type TableProps = React.HTMLAttributes<HTMLTableElement> & {
 };
 
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
-  ({ className, children, loading = false, loadingLabel, mobileCards = true, clientDataControls = true, managed = false, columnControls = false, controlsTarget, summaryFormats = {}, ...props }, ref) => {
+  ({ className, children, loading = false, loadingLabel, mobileCards = true, clientDataControls = true, managed = false, columnControls = false, layoutControls = false, controlsTarget, summaryFormats = {}, ...props }, ref) => {
+    const [layout, setLayout] = React.useState<"auto" | "table" | "compact">("auto");
     const [hiddenColumns, setHiddenColumns] = React.useState<number[]>([]);
     const internalRef = React.useRef<HTMLTableElement>(null);
     React.useImperativeHandle(ref, () => internalRef.current as HTMLTableElement, []);
@@ -700,14 +703,19 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
         resizeBy,
       ],
     );
-    const columnMenu = (<DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm"><Columns3 className="size-4" /> Columns</Button></DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
+    const columnMenu = (<DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm"><Columns3 className="size-4" /> {layoutControls ? "View" : "Columns"}</Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-80 max-w-[calc(100vw-2rem)] overflow-y-auto">
+              {layoutControls && <>
+                <DropdownMenuLabel>Layout</DropdownMenuLabel>
+                {([ ["auto", "Responsive cards"], ["table", "Table"], ["compact", "Compact table"] ] as const).map(([value, label]) => <DropdownMenuCheckboxItem key={value} checked={layout === value} onSelect={event => event.preventDefault()} onCheckedChange={() => setLayout(value)}>{label}</DropdownMenuCheckboxItem>)}
+                <DropdownMenuSeparator />
+              </>}
               <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
               {labels.map((label, column) => label && <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} disabled={column === 0 || /^(actions?|open)$/i.test(label)} onSelect={event => event.preventDefault()} onCheckedChange={checked => {
                 setHiddenColumns(current => checked ? current.filter(value => value !== column) : [...current, column]);
                 if (!checked) { setFilter(column, ""); if (activeFilter === column) setActiveFilter(null); }
               }}>{label}</DropdownMenuCheckboxItem>)}
-              <DropdownMenuSeparator /><DropdownMenuItem onSelect={() => setHiddenColumns([])}>Show all columns</DropdownMenuItem>
+              <DropdownMenuSeparator /><DropdownMenuItem onSelect={() => { setHiddenColumns([]); if (layoutControls) { setLayout("auto"); setWidths({}); } }}>{layoutControls ? "Reset view" : "Show all columns"}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>);
     return (
@@ -727,8 +735,8 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
         <div className="responsive-table-region relative min-w-0 w-full max-w-full overflow-x-auto overscroll-x-contain">
           <table
             ref={internalRef}
-            data-mobile-cards={mobileCards ? "true" : "false"}
-            className={cn("responsive-table w-full caption-bottom text-sm", className)}
+            data-mobile-cards={mobileCards && (!layoutControls || layout === "auto") ? "true" : "false"}
+            className={cn("responsive-table w-full caption-bottom text-sm", layoutControls && layout === "compact" && "[&_td]:py-1.5 [&_th]:h-9", className)}
             {...props}
             aria-busy={loading || props["aria-busy"]}
           >

@@ -1,3 +1,4 @@
+import { MinimalUpdatePanel } from "./MinimalUpdatePanel";
 import {
   CheckCircle2,
   ClipboardCopy,
@@ -53,7 +54,7 @@ export function TileRow({
       {icon && <span className="shrink-0 text-primary">{icon}</span>}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{label}</p>
-        {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
+        {hint && <p className="mt-0.5 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">{hint}</p>}
         {children}
       </div>
       {value !== undefined && (
@@ -100,13 +101,12 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 function DesktopUpdateCard() {
+  const updates = useAppUpdates();
   const {
     state,
     supported,
     check,
     download,
-    downloadAndInstall,
-    install,
     lastChecked,
     manifestChecking,
     manifestVersion,
@@ -119,7 +119,7 @@ function DesktopUpdateCard() {
     failureReport,
     installing,
     installError,
-  } = useAppUpdates();
+  } = updates;
 
   const [copied, setCopied] = useState(false);
   const [history, setHistory] = useState<Awaited<ReturnType<NonNullable<NonNullable<ReturnType<typeof updateBridge>>["updateHistory"]>>> | null>(null);
@@ -148,6 +148,10 @@ function DesktopUpdateCard() {
 
   return (
     <div className="space-y-4">
+      <MinimalUpdatePanel updates={updates} />
+      <details className="rounded-2xl border bg-card p-4">
+        <summary className="cursor-pointer text-sm font-medium">Advanced · release history and diagnostics</summary>
+        <div className="mt-4 space-y-4">
       {supported && history && <TileGroup title="Retained Windows releases">
         {!history.ok && <TileRow label="History unavailable" hint={history.error} />}
         {history.ok && history.releases.length === 0 && <TileRow label="No retained releases listed yet" />}
@@ -247,11 +251,6 @@ function DesktopUpdateCard() {
           {busy ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
           Check for updates now
         </Button>
-        {supported && state.status === "ready" && (
-          <Button className="touch-target" disabled={installing} onClick={() => void install()}>
-            {installing ? "Synchronizing and preparing installation…" : "Update & Restart"}
-          </Button>
-        )}
         {supported && (state.status === "available" || (state.status === "error" && !!state.available)) && (
           <>
             <Button
@@ -262,13 +261,7 @@ function DesktopUpdateCard() {
             >
               Retry download
             </Button>
-            <Button
-              className="touch-target"
-              disabled={busy}
-              onClick={() => void downloadAndInstall()}
-            >
-              Download and install
-            </Button>
+
           </>
         )}
         {supported && (
@@ -315,6 +308,8 @@ function DesktopUpdateCard() {
           ? "Updates download automatically in the background. Choose Update & Restart when ready, or continue working and install on the next safe restart. Your open shift, logs, terminal registration and local database are preserved."
           : "The browser build always serves the newest files. Downloads here are for the Windows till installer."}
       </p>
+        </div>
+      </details>
     </div>
   );
 }
@@ -335,6 +330,19 @@ function AndroidUpdateCard() {
 
   return (
     <div className="space-y-4">
+      <section className="space-y-4 rounded-2xl border bg-card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><p className="font-medium">{status}</p><p className="text-sm text-muted-foreground">Installed v{state.installed}{state.latest ? ` · Latest v${state.latest}` : ""}</p></div>
+          {state.readyUri ? <Button disabled={state.downloading} onClick={() => void installDownloaded()}>Install update</Button>
+            : available ? <Button disabled={state.downloading || state.checking} onClick={() => void install()}>{state.downloading ? "Downloading…" : "Download update"}</Button>
+            : <Button variant="outline" disabled={state.checking || state.downloading} onClick={() => void check()}>Check for updates</Button>}
+        </div>
+        {state.downloading && <Progress value={state.percent} aria-label="Update download progress" />}
+        {state.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
+        {state.notes && <details><summary className="cursor-pointer text-sm">What’s new</summary><p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{state.notes}</p></details>}
+        <p className="text-xs text-muted-foreground">Android will ask you to confirm installation.</p>
+      </section>
+      <details className="rounded-2xl border bg-card p-4"><summary className="cursor-pointer text-sm font-medium">Advanced · version and update source</summary><div className="mt-4 space-y-4">
       <TileGroup title="Version">
         <TileRow
           icon={<Smartphone className="size-4" />}
@@ -416,6 +424,7 @@ function AndroidUpdateCard() {
         Updates are delivered as Android-signed APK files. The app downloads the APK from your own
         server and opens Android&rsquo;s installer — no app store needed.
       </p>
+      </div></details>
     </div>
   );
 }

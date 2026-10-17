@@ -1,6 +1,15 @@
 import type { Product } from "@/core/types/pos-types";
 import { canonicalBranchId, canonicalStockMap } from "./branch-id";
 
+export const isLowStock = (quantity: number, reorderLevel: number): boolean =>
+  quantity > 0 && quantity <= reorderLevel;
+
+/** Legacy empty costs normalize to zero; zero-cost items require review, not automatic edits. */
+export const needsCostReview = (cost: number): boolean => !Number.isFinite(cost) || cost <= 0;
+
+export const productMargin = (price: number, cost: number): number | null =>
+  price > 0 && Number.isFinite(price) && !needsCostReview(cost) ? ((price - cost) / price) * 100 : null;
+
 export type InventoryMetrics = {
   products: number;
   categories: number;
@@ -37,7 +46,7 @@ export function inventoryMetrics(products: readonly Product[], branchId: string)
     metrics.retailValue += product.price * quantity;
     if (quantity < 0) metrics.negativeStock += 1;
     if (quantity === 0) metrics.outOfStock += 1;
-    if (quantity >= 0 && quantity <= product.reorderLevel) metrics.lowStock += 1;
+    if (isLowStock(quantity, product.reorderLevel)) metrics.lowStock += 1;
   }
   metrics.categories = categories.size;
   metrics.potentialProfit = metrics.retailValue - metrics.costValue;

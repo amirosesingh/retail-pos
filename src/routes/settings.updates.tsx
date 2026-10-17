@@ -27,15 +27,18 @@ export const Route = createFileRoute("/settings/updates")({
       title="Software updates"
       description="New versions download quietly in the background and install when you restart — a shift is never interrupted."
     >
-      {/* Wide screens get a workspace + system-health rail; phones stack. */}
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      {/* Keep the primary action prominent; device diagnostics remain available. */}
+      <div className="mx-auto w-full max-w-3xl space-y-5">
         <div className="min-w-0">
           <AppUpdateSettings />
         </div>
-        <aside className="min-w-0 space-y-6 xl:sticky xl:top-4 xl:self-start">
-          <TerminalStatusCard />
-          <SystemHealthCard />
-        </aside>
+        <details className="rounded-2xl border bg-card p-4">
+          <summary className="cursor-pointer text-sm font-medium">Device and system status</summary>
+          <aside className="mt-4 min-w-0 space-y-5">
+            <TerminalStatusCard />
+            <SystemHealthCard />
+          </aside>
+        </details>
       </div>
     </SettingsFrame>
   ),
