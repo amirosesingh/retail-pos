@@ -16,6 +16,26 @@ OTPs, sessions and authentication data remain only in the membership project.
 Phone SMS delivery is not required. There is no separate membership outbox
 table.
 
+## Email verification codes
+
+The signup page uses `signInWithOtp({ email })` and verifies the entered code
+with `verifyOtp({ email, token, type: "email" })`. This API also supports magic
+links; the email template determines what the customer receives.
+
+In the **membership** project's Authentication → Emails, use
+`templates/verification-code.html` for both **Confirm sign up** (new members)
+and **Magic link or OTP** (returning members). Suggested subject:
+`Your membership verification code`. Both templates display `{{ .Token }}`
+and contain no confirmation link. Do not change password-reset, invitation or
+staff/POS email templates. Keep email confirmation enabled and set the email
+OTP length to six digits to match the signup form. Template files in Git do
+not automatically update hosted Supabase settings.
+
+Hosted projects may require custom SMTP before template editing is enabled.
+Configure an authorised mail provider in the membership project if prompted;
+never commit SMTP credentials. Verify delivery to an authorised test mailbox
+for both a new and returning member before considering email delivery tested.
+
 ## Signup policies and consent
 
 `20261017120000_membership_signup_consents.sql` adds private, owner-readable
