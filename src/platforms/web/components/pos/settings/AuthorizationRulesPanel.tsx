@@ -60,8 +60,6 @@ import {
 
 const ROLE_CHOICES = ["admin", "manager", "staff"];
 const REQUESTER_ROLE_CHOICES = ["cashier", ...ROLE_CHOICES];
-const SELECTABLE_AUTH_MODES = AUTH_MODES.filter((mode) => mode.value !== "either");
-type SelectableAuthMode = Exclude<AuthMode, "either">;
 type AuthorizationPerson = { id: string; name: string; role: string; storeId?: string };
 type EditingRule = {
   action: AuthActionDef;
@@ -90,9 +88,6 @@ const AUTHORITY_UNIT: Partial<Record<string, string>> = {
 
 const methodLabel = (mode: AuthMode) =>
   AUTH_MODES.find((candidate) => candidate.value === mode)?.label ?? "No authorisation";
-
-const displayedMode = (mode: AuthMode): SelectableAuthMode =>
-  mode === "either" ? "request" : mode;
 
 function RoleChoices({
   id,
@@ -507,7 +502,7 @@ function RuleConfigurationDialog({
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   <span className="inline-flex items-center gap-1.5">
                     Authorization method
-                    <HelpTip text="Choose whether this action needs no approval, a manager PIN at the till, or a request that another person decides." />
+                    <HelpTip text="Choose whether this action needs no approval, a manager PIN at the till, a request that another person decides, or either method." />
                   </span>
                 </p>
                 <p className="mt-1 text-base font-semibold">{methodLabel(rule.mode)}</p>
@@ -515,13 +510,6 @@ function RuleConfigurationDialog({
                   {AUTH_MODES.find((mode) => mode.value === rule.mode)?.blurb}
                 </p>
               </section>
-
-              {editing.previousMode === "either" ? (
-                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
-                  This older rule currently allows either a PIN or an approval request. Saving will
-                  use {methodLabel(rule.mode)} only; all detailed settings will remain available.
-                </p>
-              ) : null}
 
               {approvalRequestBecomingInactive ? (
                 <p className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
@@ -967,13 +955,13 @@ export function AuthorizationRulesPanel({
     [],
   );
 
-  const openConfiguration = (action: AuthActionDef, mode?: SelectableAuthMode) => {
+  const openConfiguration = (action: AuthActionDef, mode?: AuthMode) => {
     if (!mayEdit) return;
     const existing = rules[action.key] ?? defaultRule(action.key);
     setEditing({
       action,
       previousMode: existing.mode,
-      rule: { ...existing, mode: mode ?? displayedMode(existing.mode) },
+      rule: { ...existing, mode: mode ?? existing.mode },
     });
   };
 
@@ -1083,7 +1071,6 @@ export function AuthorizationRulesPanel({
                 (action) => action.group === group.id && WIRED_ACTIONS.has(action.key),
               ).map((action) => {
                 const rule = rules[action.key] ?? defaultRule(action.key);
-                const legacyEither = rule.mode === "either";
                 return (
                   <div
                     key={action.key}
@@ -1107,17 +1094,17 @@ export function AuthorizationRulesPanel({
                         <ThemedSelect
                           ariaLabel={`${action.label} authorization`}
                           className="h-9 w-full"
-                          value={displayedMode(rule.mode)}
+                          value={rule.mode}
                           onChange={(value) =>
-                            openConfiguration(action, value as SelectableAuthMode)
+                            openConfiguration(action, value as AuthMode)
                           }
-                          options={SELECTABLE_AUTH_MODES.map((mode) => ({
+                          options={AUTH_MODES.map((mode) => ({
                             value: mode.value,
                             label: mode.label,
                           }))}
                         />
                       </div>
-                      {rule.mode !== "none" || legacyEither ? (
+                      {rule.mode !== "none" ? (
                         <Button
                           type="button"
                           size="sm"

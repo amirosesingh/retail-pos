@@ -34,8 +34,8 @@ export const AUTH_MODES: { value: AuthMode; label: string; blurb: string }[] = [
   },
   {
     value: "either",
-    label: "Either",
-    blurb: "The person chooses a PIN on the spot or sends it for approval.",
+    label: "PIN or approval request",
+    blurb: "Choose an authorised PIN at the till or send an approval request. Offline PIN approval requires the branch offline rules to allow it.",
   },
 ];
 
