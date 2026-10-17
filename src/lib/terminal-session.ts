@@ -8,7 +8,7 @@ import {
   discardRejectedExternalAuthSession,
 } from "@/integrations/supabase/external-client";
 import { validateStoredAuthSession } from "./auth-session-guard";
-import { getTerminalAccount } from "./terminal-account.functions";
+import { getTerminalAccount } from "./terminal-account-client";
 import { getDeviceSecret, setDeviceSecret } from "./device-secrets";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { deviceProofHash } from "@/core/activation/device-proof";

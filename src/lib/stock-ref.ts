@@ -163,7 +163,7 @@ export async function nextStockRef(
       return build(cfg, branchCode, at, reserved.sequence!, series);
     }
     const prefix = build(cfg, branchCode, at, 1, series).replace(/-0*1$/, "");
-    const { reserveCloudStockReference } = await import("./stock-ref.functions");
+    const { reserveCloudStockReference } = await import("./stock-ref-client");
     const { getPosCallerAuth } = await import("./pos-caller-auth");
     const result = await reserveCloudStockReference({
       data: {

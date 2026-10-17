@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { listMemberVerifications } from "@/lib/verification.functions";
+import { listMemberVerifications } from "@/lib/verification-client";
 
 export const Route = createFileRoute("/verifications")({
   head: () => ({

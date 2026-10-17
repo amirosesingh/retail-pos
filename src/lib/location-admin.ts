@@ -1,4 +1,4 @@
-import { deleteEmptyLocation, type LocationDeleteResult } from "./location-admin.functions";
+import { deleteEmptyLocation, type LocationDeleteResult } from "./location-admin-client";
 import { getPosCallerAuth } from "./pos-caller-auth";
 
 export async function permanentlyDeleteEmptyLocation(

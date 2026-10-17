@@ -115,5 +115,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="v${{ steps.version.outputs.version }}"
-          gh workflow run desktop-release.yml --ref "$tag"
-          gh workflow run android-apk.yml --ref "$tag"
+          gh workflow run platform-release.yml --ref "$tag"

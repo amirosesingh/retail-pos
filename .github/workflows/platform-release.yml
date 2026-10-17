@@ -1,0 +1,116 @@
+name: Windows and Android release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: pos-platform-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/desktop-release.yml
+    with:
+      build_only: true
+    secrets: inherit
+
+  android:
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/android-apk.yml
+    with:
+      build_only: true
+    secrets: inherit
+
+  publish:
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pos-release-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Resolve verified release identity
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(node -p "require('./package.json').version")
+          test "$GITHUB_REF_NAME" = "v$v"
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+          short=$(echo "$GITHUB_SHA" | cut -c1-7)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "release_id=v$v-$short" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: Retail-windows-publish
+          path: upload
+      - uses: actions/download-artifact@v4
+        with:
+          name: Retail-android-publish
+          path: release-assets
+      - name: Validate matching platform artifacts
+        run: node scripts/verify-platform-release.cjs upload release-assets
+      - name: Upload and verify Android package
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RELEASE_ID: ${{ steps.meta.outputs.release_id }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          R2_VERIFY_ORIGIN: "true"
+        run: node scripts/verify-platform-release.cjs --publish-android release-assets
+      - name: Publish verified Windows package and shared update pointers
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RELEASE_ID: ${{ steps.meta.outputs.release_id }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          R2_VERIFY_ORIGIN: "true"
+        run: node scripts/publish-windows-release.cjs
+      - name: Publish Android compatibility pointers
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          v="$RELEASE_VERSION"
+          for prefix in latest/android android; do
+            for name in "Retail-$v.apk" Retail-latest.apk; do
+              aws s3 cp "release-assets/Retail-$v.apk" "s3://updatelccms/pos-app/$prefix/$name" \
+                --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache"
+            done
+            aws s3 cp release-assets/latest.json "s3://updatelccms/pos-app/$prefix/latest.json" \
+              --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache"
+          done
+      - name: Attach both packages to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            upload/*.exe
+            upload/*.blockmap
+            upload/latest.yml
+            upload/release.json
+            upload/releases.json
+            release-assets/*.apk
+            release-assets/latest.json

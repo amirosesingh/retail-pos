@@ -111,7 +111,7 @@ export function noteOperatorActivity(at = Date.now()): void {
     .then(({ loadSessionToken }) => loadSessionToken())
     .then((sessionToken) => {
       if (!sessionToken) return;
-      return import("@/lib/user-sessions.functions").then(({ recordDeviceActivity }) =>
+      return import("@/lib/user-sessions-client").then(({ recordDeviceActivity }) =>
         recordDeviceActivity({ data: { sessionToken } }),
       );
     })

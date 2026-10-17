@@ -27,7 +27,7 @@ import { useAuth } from "@/lib/pos-auth";
 import { usePos } from "@/lib/pos-store";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { RULE_GROUPS, type PosRules, type PosRuleKey } from "@/lib/pos-rules";
-import { savePosRules } from "@/lib/pos-rules.functions";
+import { savePosRules } from "@/lib/pos-rules-client";
 import { queueRulesSave } from "@/lib/pos-rules-offline";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { posFetch, serverOrigin } from "@/lib/server-origin";

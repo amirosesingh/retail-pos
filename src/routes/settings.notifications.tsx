@@ -13,7 +13,7 @@ import { EVENT_CATALOG } from "@/lib/activity-events";
 import {
   loadNotificationSettings,
   saveNotificationSettings,
-} from "@/lib/activity-events.functions";
+} from "@/lib/activity-events-client";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { defaultAndroidPushRules, type AndroidPushRules } from "@/lib/android-push-policy";
 import { usePos } from "@/lib/pos-store";

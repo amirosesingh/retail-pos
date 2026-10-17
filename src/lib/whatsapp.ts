@@ -1,5 +1,5 @@
 import { logger } from "./audit-log";
-import { sendWhatsAppBill } from "./whatsapp.functions";
+import { sendWhatsAppBill } from "./whatsapp-client";
 import { listQueuedMessages, queueMessage, resolveMessage } from "./whatsapp-queue";
 import { db } from "@/core/api/pos-db";
 import { getPosCallerAuth } from "./pos-caller-auth";

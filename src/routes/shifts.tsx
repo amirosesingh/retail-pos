@@ -46,7 +46,7 @@ import { usePosRules } from "@/lib/pos-rules.tsx";
 import { useManagerGate } from "@/lib/manager-gate";
 import { ShiftCloseDialog } from "@/platforms/web/components/pos/ShiftCloseDialog";
 import { logSystemAction } from "@/lib/system-audit";
-import { correctClosedShift } from "@/lib/shift-corrections.functions";
+import { correctClosedShift } from "@/lib/shift-corrections-client";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import type { Shift } from "@/core/types/pos-types";
 

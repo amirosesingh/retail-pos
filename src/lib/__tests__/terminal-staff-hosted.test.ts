@@ -12,10 +12,11 @@ describe("terminal staff administration", () => {
 
     expect(client).toContain('posFetch("/api/v1/pos/sync?operation=staff_admin"');
     expect(client).toContain("if (!isTerminalApp())");
-    for (const action of ['"save"', '"set_active"', '"migrate"', '"update"', '"delete"']) {
+    for (const action of ['"save"', '"set_active"', '"migrate"', '"update"', '"delete"', '"list"', '"permissions"']) {
       expect(client).toContain(action);
     }
     expect(staff).toContain('from "@/lib/staff-admin-client"');
+    expect(source("src/platforms/web/components/admin/StaffManager.tsx")).toContain('from "@/lib/staff-admin-client"');
     expect(route).toContain('searchParams.get("operation") === "staff_admin"');
     expect(route).toContain("handleStaffAdminRequest(request)");
   });

@@ -11,7 +11,7 @@
  * database and pushed on the next successful sync, so a change made offline
  * still has a permanent history entry.
  */
-import { recordStatusHistory } from "./status-history.functions";
+import { recordStatusHistory } from "./status-history-client";
 import { parkGovernanceRow } from "./governance-offline";
 import { readCredentials } from "./pos-credentials";
 

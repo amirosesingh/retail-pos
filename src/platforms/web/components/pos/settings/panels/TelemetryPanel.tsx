@@ -31,7 +31,7 @@ import {
   type TelemetryHistoryRow,
   type TelemetryRow,
 } from "@/lib/telemetry";
-import { clearTelemetryHistory } from "@/lib/telemetry.functions";
+import { clearTelemetryHistory } from "@/lib/telemetry-client";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 
 import {

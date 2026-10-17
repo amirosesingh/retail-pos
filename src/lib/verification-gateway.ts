@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import { getPosCallerAuth } from "./pos-caller-auth";
-import { getVerificationSettings } from "./verification.functions";
+import { getVerificationSettings } from "./verification-client";
 
 export type GatewayConfig = { channel: string; strict: boolean; active: boolean };
 

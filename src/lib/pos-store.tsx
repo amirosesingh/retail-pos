@@ -1811,7 +1811,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // Do not let Electron exit until the closing records have either reached
       // the server or been parked durably in the terminal database.
       const summaryWritten = localDb() ? Promise.resolve() : (async () => {
-        const { publishCompleteShiftSummary } = await import("./shift-summary.functions");
+        const { publishCompleteShiftSummary } = await import("./shift-summary-client");
         const { getPosCallerAuth } = await import("./pos-caller-auth");
         // Electron already stores a complete SQL aggregate in the cash-count
         // transaction. After the final sync, central SQL can confirm all bills.

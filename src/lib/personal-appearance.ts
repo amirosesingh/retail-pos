@@ -49,7 +49,7 @@ async function flush(key: string, owner: string, epoch: number): Promise<void> {
     try {
       const credentials = await readCredentials();
       if (!isCurrentEpoch(epoch)) return;
-      const { savePersonalAppearance } = await import("./personal-appearance.functions");
+      const { savePersonalAppearance } = await import("./personal-appearance-client");
       await savePersonalAppearance({ data: { ...credentials, owner, profile: entry.profile } });
       if (read(key).revision === entry.revision) publish(key, { ...entry, pending: false });
     } catch { /* Retain only this user's appearance changes; retry on edit or reconnect. */ }
@@ -90,7 +90,7 @@ export function usePersonalAppearanceSync(key: string, owner: string) {
       try {
         const credentials = await readCredentials();
         if (cancelled || !isCurrentEpoch(epoch)) return;
-        const { loadPersonalAppearance } = await import("./personal-appearance.functions");
+        const { loadPersonalAppearance } = await import("./personal-appearance-client");
         const result = await loadPersonalAppearance({ data: { ...credentials, owner } });
         if (!cancelled && isCurrentEpoch(epoch) && result.owner === owner && result.profile && read(key).revision === revision && !read(key).pending)
           publish(key, { profile: result.profile, pending: false, revision });

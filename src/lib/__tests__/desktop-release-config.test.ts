@@ -44,8 +44,10 @@ describe("desktop release configuration", () => {
       'git push --atomic origin HEAD:main "refs/tags/$tag:refs/tags/$tag"',
     );
     expect(version).not.toContain('git push origin HEAD:main');
-    expect(version).toContain('gh workflow run desktop-release.yml --ref "$tag"');
-    expect(version).toContain('gh workflow run android-apk.yml --ref "$tag"');
+    expect(version).toContain('gh workflow run platform-release.yml --ref "$tag"');
+    const platforms = read(".github/workflows/platform-release.yml");
+    expect(platforms).toContain("uses: ./.github/workflows/desktop-release.yml");
+    expect(platforms).toContain("uses: ./.github/workflows/android-apk.yml");
     expect(version).toContain("[release]");
     expect(version).toContain("actions: write");
 

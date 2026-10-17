@@ -18,6 +18,10 @@ export const Route = createFileRoute("/api/v1/pos/sync")({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        if (new URL(request.url).searchParams.get("operation") === "app_function") {
+          const { handleHostedFunctionRequest } = await import("@/lib/hosted-function-endpoint.server");
+          return withCors(await handleHostedFunctionRequest(request), request);
+        }
         if (new URL(request.url).searchParams.get("operation") === "authorization") {
           const { handleAuthorizationRequest } =
             await import("@/lib/authorization-endpoint.server");
