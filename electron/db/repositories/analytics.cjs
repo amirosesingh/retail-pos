@@ -16,12 +16,12 @@ async function readAnalytics(connectionManager, branchId, from, to, timeZone = "
         WHERE s.store_id=@branch AND COALESCE(s.is_refunded,0)=0;
       ;WITH raw AS (
         SELECT s.sale_day,s.sale_month,s.store_id,si.sale_id,si.id,si.product_id,si.product_name,
-          si.quantity,si.unit_price,si.is_foc,si.unit_cost,
+          si.quantity,si.unit_price,si.is_foc,si.unit_cost,p.cost_price fallback_cost,
           ROUND(s.total_amount-COALESCE(s.tax_amount,0)-COALESCE(s.rounding_adjustment,0),2) net_total,
           ABS(si.unit_price*si.quantity) gross,
           CASE WHEN ABS(COALESCE(si.coupon_discount,0))>ABS(si.unit_price*si.quantity) THEN ABS(si.unit_price*si.quantity) ELSE ABS(COALESCE(si.coupon_discount,0)) END coupon,
           si.discount_percent,si.discount_amount
-        FROM dbo.sale_items si JOIN #bills s ON s.id=si.sale_id
+        FROM dbo.sale_items si JOIN #bills s ON s.id=si.sale_id LEFT JOIN dbo.products p ON p.id=si.product_id
       ), discounted AS (
         SELECT raw.*,ROUND(CASE WHEN own.value>gross-coupon THEN gross-coupon WHEN own.value<0 THEN 0 ELSE own.value END,2) own_discount
         FROM raw CROSS APPLY (SELECT CASE WHEN discount_percent>0 THEN (gross-coupon)*(CASE WHEN discount_percent>100 THEN 100 ELSE discount_percent END)/100.0 ELSE COALESCE(discount_amount,0)*ABS(quantity) END value) own
@@ -36,7 +36,7 @@ async function readAnalytics(connectionManager, branchId, from, to, timeZone = "
       SELECT sale_day,sale_month,store_id,sale_id,product_id,product_name,quantity,unit_price,is_foc,
         own_discount*(CASE WHEN quantity<0 THEN -1 ELSE 1 END) line_discount,
         CASE WHEN CAST(id AS varchar(64))=last_line THEN net_total-SUM(allocated_revenue) OVER(PARTITION BY sale_id)+allocated_revenue ELSE allocated_revenue END line_revenue,
-        ROUND(COALESCE(unit_cost,0)*quantity,2) line_cost
+        ROUND(COALESCE(unit_cost,fallback_cost,0)*quantity,2) line_cost
       INTO #facts FROM allocated;
       SELECT b.sale_day,b.sale_month,b.store_id,COUNT(*) bills,
         SUM(b.total_amount-COALESCE(b.tax_amount,0)-COALESCE(b.rounding_adjustment,0)) revenue,

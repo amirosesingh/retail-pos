@@ -19471,13 +19471,13 @@ WITH region AS (
   SELECT coalesce((SELECT name FROM pg_timezone_names
     WHERE name = (SELECT integration_settings->>'timeZone' FROM public.pos_settings WHERE id=1)), 'UTC') AS zone
 ), raw AS (
-  SELECT si.*, s.bill_number,s.store_id,s.cashier_name,s.created_at,s.payment_type,s.is_refunded,
+  SELECT si.*, p.cost_price AS fallback_cost, s.bill_number,s.store_id,s.cashier_name,s.created_at,s.payment_type,s.is_refunded,
     (s.created_at AT TIME ZONE region.zone)::date AS sale_day,
     to_char(s.created_at AT TIME ZONE region.zone,'YYYY-MM') AS sale_month,
     round((s.total_amount-coalesce(s.tax_amount,0)-coalesce(s.rounding_adjustment,0))::numeric,2) AS net_total,
     abs(si.unit_price*si.quantity)::numeric AS gross,
     least(abs(si.unit_price*si.quantity),abs(coalesce(si.coupon_discount,0)))::numeric AS coupon
-  FROM public.sale_items si JOIN public.sales s ON s.id=si.sale_id CROSS JOIN region
+  FROM public.sale_items si JOIN public.sales s ON s.id=si.sale_id LEFT JOIN public.products p ON p.id=si.product_id CROSS JOIN region
   WHERE NOT coalesce(s.is_refunded,false)
 ), discounted AS (
   SELECT raw.*, round(least(gross-coupon, greatest(0,
@@ -19502,7 +19502,7 @@ SELECT id AS line_id,sale_id,bill_number,store_id,cashier_name,created_at,sale_d
   own_discount*(CASE WHEN quantity<0 THEN -1 ELSE 1 END) AS line_discount,
   CASE WHEN id::text=last_line THEN net_total-sum(allocated_revenue) OVER (PARTITION BY sale_id)+allocated_revenue
        ELSE allocated_revenue END AS line_revenue,
-  round((coalesce(unit_cost,0)*quantity)::numeric,2) AS line_cost
+  round((coalesce(unit_cost,fallback_cost,0)*quantity)::numeric,2) AS line_cost
 FROM allocated;
 
 CREATE OR REPLACE VIEW public.v_daily_store_sales WITH (security_invoker = true) AS

@@ -11,7 +11,8 @@ beforeAll(async () => {
       payment_type text,is_refunded boolean,total_amount numeric,tax_amount numeric,rounding_adjustment numeric);
     create table sale_items(id text primary key,sale_id text,product_id text,product_name text,quantity numeric,unit_price numeric,
       unit_cost numeric,is_foc boolean default false,is_return boolean default false,discount_percent numeric default 0,discount_amount numeric default 0,coupon_discount numeric default 0);
-    create table products(id text primary key,category text);
+    create table products(id text primary key,category text,cost_price numeric);
+    insert into products values('p','Items',40),('q','Items',10),('r','Items',0);
     insert into sales values ('one','B1','a','Cashier','2026-10-16T17:00:00Z','cash',false,84.7,7.7,0),
       ('refunded','R','a','Cashier','2026-10-17T01:00:00Z','cash',true,80,0,0),
       ('foc','F','a','Cashier','2026-10-17T02:00:00Z','cash',false,0,0,0),
@@ -20,7 +21,7 @@ beforeAll(async () => {
       ('exchange','E','a','Cashier','2026-10-17T05:00:00Z','cash',false,40,0,0),
       ('rounded','D','a','Cashier','2026-10-17T06:00:00Z','cash',false,1,0,0);
     insert into sale_items(id,sale_id,product_id,product_name,quantity,unit_price,unit_cost,discount_percent,discount_amount,coupon_discount,is_foc) values
-      ('1','one','p','Item',1,100,40,20,0,0,false),
+      ('1','one','p','Item',1,100,null,20,0,0,false),
       ('2','refunded','p','Item',1,100,40,20,0,0,false),
       ('3','foc','p','Gift',1,10,2,0,10,0,true),
       ('4','coupon','p','Item',1,100,40,20,0,10,false),
@@ -69,6 +70,10 @@ describe("Business Overview SQL reconciliation", () => {
     const gift = (await db.query<{line_revenue: string; line_cost: string}>("select line_revenue,line_cost from v_sale_line_facts where sale_id='foc'")).rows[0];
     expect(Number(gift.line_revenue)).toBe(0); expect(Number(gift.line_cost)).toBe(2);
     expect(Number((await db.query<{cost: string}>("select sum(line_cost) cost from v_sale_line_facts where sale_id='exchange'")).rows[0].cost)).toBe(30);
+  });
+  it("uses catalogue cost only for missing captured costs, preserving explicit zero costs", async () => {
+    expect(Number((await db.query<{cost: string}>("select line_cost cost from v_sale_line_facts where sale_id='one'")).rows[0].cost)).toBe(40);
+    expect(Number((await db.query<{cost: string}>("select sum(line_cost) cost from v_sale_line_facts where sale_id='rounded'")).rows[0].cost)).toBe(0);
   });
   it("balances allocation rounding exactly to the cent", async () => {
     expect(Number((await db.query<{revenue: string}>("select sum(line_revenue) revenue from v_sale_line_facts where sale_id='rounded'")).rows[0].revenue)).toBe(1);
