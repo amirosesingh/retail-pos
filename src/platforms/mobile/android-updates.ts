@@ -112,8 +112,8 @@ export async function fetchLatest(): Promise<Latest> {
 /**
  * Download the APK and open Android's package installer.
  *
- * The file goes into the app's *external* cache: the package installer is a
- * different app, so it cannot read anything in private internal storage. The
+ * The file goes into app cache, exposed to the installer by FileOpener's
+ * FileProvider with a temporary read grant. The
  * write is confirmed with a stat before the intent fires, so the installer
  * never opens on a half-written file. Returns the content URI so the caller
  * can offer a manual "Tap to install" if the intent was refused.
@@ -127,7 +127,10 @@ export async function downloadAndInstall(
 
   // Stream to disk natively: transferring the entire APK as base64 through
   // the webview duplicates it in memory and supplies no byte progress.
-  const directory = Directory.ExternalCache ?? Directory.Cache;
+  // Filesystem 8 exposes ExternalCache for modern file operations, but its
+  // legacy Android downloader only supports CACHE (not EXTERNAL_CACHE).
+  // Passing ExternalCache produces a null File and "Error downloading file: null".
+  const directory = Directory.Cache;
   let expectedBytes = 0;
   let receivedBytes = 0;
   const listener = await Filesystem.addListener("progress", progress => {

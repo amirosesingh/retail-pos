@@ -513,11 +513,15 @@ export function StaffManager() {
                     <Badge variant="outline">
                       {terminal ? "Terminal PIN sign-in" : "Email & password"}
                     </Badge>
-                    {row.approval_pin_eligible && (
+                    {row.approval_pin_eligible ? (
                       <p className="mt-1 text-xs text-muted-foreground">
                         {row.pin_set_at
                           ? `Approval PIN · ${row.pin_length || 6} digits`
                           : "Approval PIN not set"}
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {row.is_active ? "No PIN-enabled approval rule" : "Inactive account"}
                       </p>
                     )}
                   </td>
@@ -557,11 +561,12 @@ export function StaffManager() {
                       >
                         <Pencil className="size-4" />
                       </Button>
-                      {row.approval_pin_eligible && (
                         <Button
-                          size="icon"
+                          size="sm"
                           variant="ghost"
-                          title="Set authorisation PIN"
+                          title={!row.is_active ? "Activate this account first" : !row.approval_pin_eligible
+                            ? "Assign this user to an enabled PIN or PIN-or-request approval rule in POS Rules & Enforcement"
+                            : nativeApprovalCredentials ? "Configure approval credentials" : "Set authorisation PIN"}
                           disabled={offline || !row.approval_pin_eligible}
                           onClick={() => {
                             setPinFor(row);
@@ -570,8 +575,8 @@ export function StaffManager() {
                           }}
                         >
                           <ShieldCheck className="size-4" />
+                          {nativeApprovalCredentials ? "Approval credentials" : "Approval PIN"}
                         </Button>
-                      )}
                       <Button
                         size="icon"
                         variant="ghost"

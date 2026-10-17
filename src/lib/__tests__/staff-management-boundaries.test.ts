@@ -4,6 +4,13 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("staff management boundaries", () => {
+  it("keeps approval credential actions discoverable without bypassing eligibility", () => {
+    const screen = read("src/platforms/web/components/admin/StaffManager.tsx");
+    expect(screen).toContain('nativeApprovalCredentials ? "Approval credentials" : "Approval PIN"');
+    expect(screen).toContain('disabled={offline || !row.approval_pin_eligible}');
+    expect(screen).toContain('"No PIN-enabled approval rule"');
+    expect(screen).not.toMatch(/row\.approval_pin_eligible &&\s*\(\s*<Button/);
+  });
   it("uses the configured staff-management permission at the page and PIN mutation", () => {
     const route = read("src/routes/staff.tsx");
     const authorization = read("src/lib/authorization.functions.ts");
