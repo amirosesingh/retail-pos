@@ -36,7 +36,7 @@ describe("staff management boundaries", () => {
     expect(engine).toContain("retryScheduled: boolean");
     expect(accounts).toContain('propagateStaffChange("staff approval PIN changed"');
     expect(accounts).toContain('propagateStaffChange("staff permissions changed"');
-    expect(accounts).toContain('propagateStaffChange("staff account status changed"');
+    expect(accounts).toContain('propagateStaffChange("staff account saved"');
     expect(roles).toContain('broadcastSettingsChange("staff_roles")');
     expect(accounts).toContain("subscribeDataChange");
     expect(roles).toContain("subscribeDataChange");
@@ -66,4 +66,15 @@ describe("staff management boundaries", () => {
     expect(endpoint).toContain("permissions: z.record(z.string(), z.boolean())");
     expect(server).toContain("p_permissions: payload.permissions ?? null");
   });
+});
+
+it("keeps compact account controls in the editor rather than extra table columns", () => {
+  const screen = read("src/platforms/web/components/admin/StaffManager.tsx");
+  expect(screen).not.toContain("<th>Status</th>");
+  expect(screen).not.toContain("setIdleFor");
+  expect(screen).toContain('aria-label={nativeApprovalCredentials ? "Approval credentials" : "Approval PIN"}');
+  expect(screen).toContain('id="staff-active"');
+  expect(screen).toContain('text-[10px] leading-4');
+  expect(screen).toContain("Disabled</Badge>");
+  expect(screen).not.toContain("min-w-[620px]");
 });

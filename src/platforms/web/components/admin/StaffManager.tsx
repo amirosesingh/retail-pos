@@ -67,7 +67,6 @@ import {
   createStaffMember,
   looksLikeEmail,
   permanentlyDeleteStaffMember,
-  toggleStaffStatus,
   updateStaffMember,
 } from "@/lib/staff-admin";
 
@@ -177,7 +176,6 @@ export function StaffManager() {
   const [pinValue, setPinValue] = useState("");
   const [showPinValue, setShowPinValue] = useState(false);
 
-  const [idleFor, setIdleFor] = useState<Row | null>(null);
 
   async function saveAuthPin() {
     if (!pinFor || !/^\d{4,6}$/.test(pinValue)) return;
@@ -373,22 +371,6 @@ export function StaffManager() {
     }
   };
 
-  const setActive = async (row: Row, active: boolean) => {
-    setBusy(row.user_id);
-    try {
-      await toggleStaffStatus(row.user_id, active);
-      toast.success(active ? "Account activated" : "Account deactivated");
-      await Promise.all([
-        load(),
-        propagateStaffChange("staff account status changed", ["app_users", "cashiers"]),
-      ]);
-    } catch (error) {
-      toast.error("Account status could not be changed", { description: friendlyError(error) });
-    } finally {
-      setBusy("");
-    }
-  };
-
   const savePermissions = async () => {
     if (!permissionsFor) return;
     setBusy("permissions");
@@ -488,68 +470,53 @@ export function StaffManager() {
         />
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[620px] text-sm">
-          <thead>
+        <table className="block w-full text-sm sm:table">
+          <thead className="hidden sm:table-header-group">
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
               <th className="py-2">Staff</th>
               <th>Sign-in</th>
               <th>Last login</th>
-              <th>Status</th>
               <th className="text-right">Actions</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="grid gap-3 sm:table-row-group">
             {filtered.map((row) => {
               const terminal = isInternalAddress(row.email);
               return (
-                <tr key={row.user_id} className="border-b border-border/60">
-                  <td className="py-3 pr-3">
-                    <p className="font-medium">{row.full_name}</p>
+                <tr key={row.user_id} className="grid grid-cols-2 gap-2 rounded-lg border border-border/60 p-3 sm:table-row sm:rounded-none sm:border-x-0 sm:border-t-0 sm:p-0">
+                  <td className="col-span-2 min-w-0 sm:table-cell sm:py-3 sm:pr-3">
+                    <div className="flex flex-wrap items-center gap-1.5"><p className="break-words font-medium">{row.full_name}</p>{!row.is_active && <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4 text-muted-foreground">Disabled</Badge>}</div>
                     <p className="text-xs text-muted-foreground">{row.user_id}</p>
                     <div className="mt-1 flex flex-wrap gap-1">
-                      <Badge variant="secondary">{roles.find((role) => role.slug === row.role_slug)?.name ?? row.role_slug}</Badge>
-                      <Badge variant="outline">{row.store_id ? stores.find((store) => store.id === row.store_id)?.name ?? "Assigned branch" : "All branches"}</Badge>
+                      <Badge variant="secondary" className="px-1.5 py-0 text-[10px] leading-4">{roles.find((role) => role.slug === row.role_slug)?.name ?? row.role_slug}</Badge>
+                      <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4">{row.store_id ? stores.find((store) => store.id === row.store_id)?.name ?? "Assigned branch" : "All branches"}</Badge>
                     </div>
                   </td>
-                  <td className="pr-3">
-                    <Badge variant="outline">
+                  <td className="min-w-0 sm:table-cell sm:pr-3">
+                    <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4">
                       {terminal ? "Terminal PIN sign-in" : "Email & password"}
                     </Badge>
                   </td>
 
-                  <td className="pr-3 text-xs text-muted-foreground">
+                  <td className="min-w-0 text-[11px] text-muted-foreground sm:table-cell sm:pr-3"><span className="block text-[10px] sm:hidden">Last login</span>
                     {row.last_login_at ? new Date(row.last_login_at).toLocaleString() : "Never"}
                   </td>
-                  <td className="pr-3">
-                    <Switch
-                      checked={row.is_active}
-                      disabled={busy === row.user_id || row.auth_user_id === authUserId}
-                      onCheckedChange={(active) => void setActive(row, active)}
-                      aria-label={`${row.full_name} active`}
-                    />
-                  </td>
-                  <td>
+                  <td className="col-span-2 sm:table-cell">
                     <div className="flex justify-end gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={offline}
-                        onClick={() => setIdleFor(row)}
-                      >
-                        Idle limit
-                      </Button>
                       <Button
                         size="icon"
                         variant="ghost"
                         title="Edit account"
+                        aria-label={`Edit ${row.full_name}`}
                         disabled={offline}
                         onClick={() => openEdit(row)}
                       >
                         <Pencil className="size-4" />
                       </Button>
                         <Button
-                          size="sm"
+                          size="icon"
                           variant="ghost"
+                          aria-label={nativeApprovalCredentials ? "Approval credentials" : "Approval PIN"}
                           title={!row.is_active ? "Activate this account first" : !row.approval_pin_eligible
                             ? "Assign this user to an enabled PIN or PIN-or-request approval rule in POS Rules & Enforcement"
                             : nativeApprovalCredentials ? "Configure approval credentials" : "Set authorisation PIN"}
@@ -561,12 +528,12 @@ export function StaffManager() {
                           }}
                         >
                           <ShieldCheck className="size-4" />
-                          {nativeApprovalCredentials ? "Approval credentials" : "Approval PIN"}
                         </Button>
                       <Button
                         size="icon"
                         variant="ghost"
                         title="Edit permissions"
+                        aria-label={`Permissions for ${row.full_name}`}
                         disabled={offline}
                         onClick={() => {
                           setPermissionGroupsOpen(new Set());
@@ -581,6 +548,7 @@ export function StaffManager() {
                           size="icon"
                           variant="ghost"
                           title="Delete inactive account"
+                          aria-label={`Delete ${row.full_name}`}
                           disabled={offline || row.auth_user_id === authUserId}
                           onClick={() => {
                             setDeleteFor(row);
@@ -597,7 +565,7 @@ export function StaffManager() {
             })}
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={5} className="py-8 text-center text-muted-foreground">
+                <td colSpan={4} className="py-8 text-center text-muted-foreground">
                   No matching staff accounts.
                 </td>
               </tr>
@@ -606,12 +574,7 @@ export function StaffManager() {
         </table>
       </div>
 
-      {idleFor && (
-        <StaffIdleTimeout
-          person={{ key: idleFor.user_id, name: idleFor.full_name, kind: "account" }}
-          onClose={() => setIdleFor(null)}
-        />
-      )}
+
       <Dialog
         open={!!pinFor}
         onOpenChange={(open) => {
@@ -688,7 +651,7 @@ export function StaffManager() {
           if (!busy) setFormOpen(open);
         }}
       >
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editing ? "Edit account" : "Create account"}</DialogTitle>
             <DialogDescription>
@@ -697,9 +660,15 @@ export function StaffManager() {
                 : "Use a username for terminal PIN sign-in or a real email for password sign-in."}
             </DialogDescription>
           </DialogHeader>
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+            <Label className="text-xs" htmlFor="staff-active">Account enabled</Label>
+            <Switch id="staff-active" checked={form.active}
+              disabled={busy === "save" || (!!editing && editing.auth_user_id === authUserId)}
+              onCheckedChange={(active) => setForm({ ...form, active })} />
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1 sm:col-span-2">
-              <Label htmlFor="staff-name">Display name *</Label>
+              <Label className="text-xs" htmlFor="staff-name">Display name *</Label>
               <Input
                 id="staff-name"
                 maxLength={120}
@@ -710,7 +679,7 @@ export function StaffManager() {
               {!nameValid && <p className="text-xs text-destructive">Display name is required.</p>}
             </div>
             <div className="space-y-1">
-              <Label htmlFor="staff-identifier">Username or email *</Label>
+              <Label className="text-xs" htmlFor="staff-identifier">Username or email *</Label>
               <Input
                 id="staff-identifier"
                 disabled={!!editing}
@@ -723,7 +692,7 @@ export function StaffManager() {
               )}
             </div>
             <div className="space-y-1">
-              <Label htmlFor="staff-credential">
+              <Label className="text-xs" htmlFor="staff-credential">
                 {emailMode ? "Password" : "PIN or passcode (4–32)"}
                 {editing ? "" : " *"}
               </Label>
@@ -748,7 +717,7 @@ export function StaffManager() {
               )}
             </div>
             <div className="space-y-1">
-              <Label>Role *</Label>
+              <Label className="text-xs">Role *</Label>
               <Select
                 value={form.roleSlug}
                 onValueChange={(roleSlug) => setForm({ ...form, roleSlug })}
@@ -767,7 +736,7 @@ export function StaffManager() {
               <p className="text-xs text-muted-foreground">{editing && editing.role_slug === form.roleSlug ? "Keeping this role preserves the person’s current permissions. Use Edit permissions to adjust them." : "This role’s saved default permissions will be assigned when you save. Branch assignment is managed separately."}</p>
             </div>
             <div className="space-y-1">
-              <Label>Branch *</Label>
+              <Label className="text-xs">Branch *</Label>
               <Select
                 value={form.branchId}
                 onValueChange={(branchId) => setForm({ ...form, branchId })}
@@ -793,14 +762,8 @@ export function StaffManager() {
                 <p className="text-xs text-destructive">Choose a branch, or “All branches”.</p>
               )}
             </div>
-            <label className="flex items-center justify-between rounded-md border border-border p-3 text-sm sm:col-span-2">
-              Active immediately
-              <Switch
-                checked={form.active}
-                onCheckedChange={(active) => setForm({ ...form, active })}
-              />
-            </label>
           </div>
+          {editing && <StaffIdleTimeout person={{key: editing.user_id, name: editing.full_name, kind: "account"}} />}
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)} disabled={busy === "save"}>
               Cancel
