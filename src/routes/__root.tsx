@@ -1,4 +1,5 @@
 import { ApprovalTokenAgent } from "@/platform-config/approval-token";
+import { VIEWPORT_FIT } from "@/platform-config/viewport";
 import { RELEASE_CHANNEL } from "@/lib/release-channel";
 import { createRefreshQueue, subscribeBackgroundRefresh } from "@/lib/background-refresh";
 import { queryReadsChangedTables } from "@/lib/live-query-tables";
@@ -194,7 +195,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         name: "viewport",
         content:
-          "width=device-width, initial-scale=1.0, minimum-scale=0.5, maximum-scale=2.0, user-scalable=yes, viewport-fit=cover",
+          `width=device-width, initial-scale=1.0, minimum-scale=0.5, maximum-scale=2.0, user-scalable=yes, viewport-fit=${VIEWPORT_FIT}`,
       },
       { title: "Retail — Register, Shifts & Inventory" },
       {
@@ -254,11 +255,13 @@ function RootComponent() {
   const router = useRouter();
   const pathname = useLocation({ select: (location) => location.pathname });
   useNativeBackNavigation(router);
+  const customerDisplay = pathname === "/display";
 
   // One long-lived owner for connectivity on every platform. Platform-specific
   // configuration remains separate; this only owns the shared heartbeat
   // lifecycle so temporary screens can never stop it when they unmount.
   useEffect(() => {
+    if (customerDisplay) return;
     let appliedHeartbeat = syncConfig().heartbeatMs;
     let stop = startConnectivityMonitor(appliedHeartbeat);
     const offConfig = subscribeSyncConfig(() => {
@@ -272,12 +275,13 @@ function RootComponent() {
       offConfig();
       stop();
     };
-  }, []);
+  }, [customerDisplay]);
 
   // A confirmed reconnect or foreground resume wakes every data mechanism in
   // one place. The current URL stays intact while active queries and route
   // data refreshes quietly; queued mutations are allowed to continue automatically.
   useEffect(() => {
+    if (customerDisplay) return;
     let refreshing = false;
     const recover = () => {
       if (refreshing || connectivity() !== "online") return;
@@ -298,10 +302,11 @@ function RootComponent() {
       window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
       window.removeEventListener(APP_RESUME_EVENT, recover);
     };
-  }, [queryClient]);
+  }, [queryClient, customerDisplay]);
 
   // Coalesce a committed sync page into one active-query refresh.
   useEffect(() => {
+    if (customerDisplay) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tables = new Set<string>();
     const refresh = createRefreshQueue(async () => {
@@ -324,12 +329,13 @@ function RootComponent() {
       }, 100);
     });
     return () => { off(); offCatchup(); refresh.stop(); if (timer) clearTimeout(timer); };
-  }, [queryClient]);
+  }, [queryClient, customerDisplay]);
 
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <NativeWindowFrame>
+        {customerDisplay ? <Outlet /> : <>
         {/* Beta testers can update before provisioning a terminal or signing in. */}
         {RELEASE_CHANNEL === "beta" && <AppUpdateNotices />}
         <NativeBoot>
@@ -350,6 +356,7 @@ function RootComponent() {
           </ConnectionProfileBoot>
         </NativeBoot>
         <Toaster position="top-right" closeButton />
+        </>}
         </NativeWindowFrame>
       </ThemeProvider>
     </QueryClientProvider>

@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { installNativeZoomLock } from "../native-zoom";
 
 describe("native zoom lock", () => {
+  it("fits Android within reported system bars instead of covering navigation controls", () => {
+    const viewport = { getAttribute: () => "old", setAttribute: vi.fn() };
+    const target = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
+    installNativeZoomLock(target as unknown as Window, { querySelector: () => viewport } as unknown as Document, "contain")();
+    expect(viewport.setAttribute.mock.calls[0][1]).toContain("viewport-fit=contain");
+    expect(viewport.setAttribute).toHaveBeenLastCalledWith("content", "old");
+  });
   it("blocks pinch and zoom shortcuts while preserving scrolling, typing and saved display scaling", () => {
     const listeners = new Map<string, (event: never) => void>();
     const target = {

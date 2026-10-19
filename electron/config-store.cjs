@@ -6,7 +6,8 @@
  * explicit admin "Reset / erase configuration" removes it.
  *
  * The payload is sealed with the operating system's key store when that is
- * available. When it is not (headless Linux, no keyring), the settings are
+ * available. Windows refuses to save without its vault. On non-Windows hosts
+ * without a keyring (for example headless Linux), the settings are
  * still written — as plain JSON with owner-only file permissions — because a
  * till that forgets its database on every reboot is worse than a readable
  * config file on a machine the operator already controls.
@@ -28,22 +29,25 @@ function encryptionAvailable() {
 }
 
 /** Whole configuration object; `{}` when nothing has been stored yet. */
-function readAll() {
+function readAll(options = {}) {
   try {
     const raw = fs.readFileSync(filePath(), "utf8");
     const envelope = JSON.parse(raw);
     if (envelope && envelope.sealed === true && typeof envelope.data === "string") {
-      if (!encryptionAvailable()) return {};
+      if (!encryptionAvailable()) throw new Error("The Windows configuration vault is not ready.");
       return JSON.parse(safeStorage.decryptString(Buffer.from(envelope.data, "base64"))) ?? {};
     }
     return envelope && typeof envelope === "object" ? (envelope.data ?? envelope) : {};
-  } catch {
+  } catch (error) {
+    if (options.strict && error.code !== "ENOENT") throw error;
     return {};
   }
 }
 
 function writeAll(value) {
   try {
+    if (process.platform === "win32" && !encryptionAvailable())
+      throw new Error("The Windows configuration vault is not ready. Settings were not changed.");
     const json = JSON.stringify(value ?? {});
     const body = encryptionAvailable()
       ? { sealed: true, data: safeStorage.encryptString(json).toString("base64") }
@@ -61,14 +65,17 @@ const get = (key) => {
 };
 
 function set(key, value) {
-  const all = readAll();
-  if (value === null || value === undefined) delete all[key];
-  else all[key] = value;
-  return writeAll(all);
+  try {
+    const all = readAll({ strict: true });
+    if (value === null || value === undefined) delete all[key];
+    else all[key] = value;
+    return writeAll(all);
+  } catch (error) { return { ok: false, error: error.message }; }
 }
 
 function merge(patch) {
-  return writeAll({ ...readAll(), ...(patch ?? {}) });
+  try { return writeAll({ ...readAll({ strict: true }), ...(patch ?? {}) }); }
+  catch (error) { return { ok: false, error: error.message }; }
 }
 
 /** The ONLY way configuration ever leaves the machine. Admin-triggered. */
@@ -81,4 +88,6 @@ function reset() {
   }
 }
 
-module.exports = { readAll, writeAll, get, set, merge, reset, filePath, encryptionAvailable };
+const getStrict = (key) => readAll({ strict: true })[key] ?? null;
+
+module.exports = { getStrict, readAll, writeAll, get, set, merge, reset, filePath, encryptionAvailable };

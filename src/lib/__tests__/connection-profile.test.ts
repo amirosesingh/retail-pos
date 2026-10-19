@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 
 const secure = vi.hoisted(() => new Map<string, string>());
-const vault = vi.hoisted(() => ({ fail: false }));
+const vault = vi.hoisted(() => ({ fail: false, dropKey: false }));
 const shell = vi.hoisted(() => ({ mobile: true, windows: false }));
 const net = vi.hoisted(() => ({
   backendOk: true,
@@ -43,6 +43,7 @@ vi.mock("capacitor-secure-storage-plugin", () => ({
       return { value };
     },
     set: async ({ key, value }: { key: string; value: string }) => {
+      if (vault.dropKey && key === "pos.cloud.key") { vault.dropKey = false; return { value: false }; }
       secure.set(key, value);
       return { value: true };
     },
@@ -156,6 +157,7 @@ describe("connection profile", () => {
   beforeEach(() => {
     installWindow();
     secure.clear();
+    vault.dropKey = false;
     electronStore.backendUrl = "";
     electronStore.cloudUrl = "";
     electronStore.cloudKey = "";
@@ -198,6 +200,20 @@ describe("connection profile", () => {
     expect((await cloudKeyStatus()).configured).toBe(true);
     const ready = await hasRequiredPlatformConfig();
     expect(ready.ready).toBe(true);
+  });
+
+  it("keeps the Android backend only in secure storage and migrates its old plain copy", async () => {
+    window.localStorage.setItem("pos.backend.url", "https://old.example.com");
+    expect(await backendUrl()).toBe("https://old.example.com");
+    expect(secure.get("pos.backend.url")).toBe("https://old.example.com");
+    expect(window.localStorage.getItem("pos.backend.url")).toBeNull();
+    await saveBackendUrl("https://new.example.com");
+    expect(window.localStorage.getItem("pos.backend.url")).toBeNull();
+    restart();
+    const network = vi.spyOn(globalThis, "fetch");
+    expect(await backendUrl()).toBe("https://new.example.com");
+    expect(network).not.toHaveBeenCalled();
+    network.mockRestore();
   });
 
   it("keeps the backend address across a restart even on its own", async () => {
@@ -304,6 +320,18 @@ describe("connection profile", () => {
     // Give the dynamic import inside afterCredentialsSaved a tick.
     await new Promise((r) => setTimeout(r, 0));
     expect(syncRuns).toEqual(["credentials-saved"]);
+  });
+
+  it("rolls back all connection values when secure storage does not retain a new API key", async () => {
+    await saveConnectionProfile({ supabaseUrl: "https://tenant-a.example.co", supabaseKey: KEY_A, backendUrl: "https://a.example.com" });
+    vault.dropKey = true;
+    const result = await saveConnectionProfile({ supabaseUrl: "https://tenant-b.example.co", supabaseKey: "test-publishable-key-b", backendUrl: "https://b.example.com" });
+    expect(result).toMatchObject({ ok: false, stage: "save" });
+    restart();
+    expect(secure.get("pos.cloud.url")).toBe("https://tenant-a.example.co");
+    expect(secure.get("pos.cloud.key")).toBe(KEY_A);
+    expect(await backendUrl()).toBe("https://a.example.com");
+    expect(await hasRequiredPlatformConfig()).toMatchObject({ ready: true });
   });
 
   it("never fails a save because the backend test only warns", async () => {

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -39,4 +40,13 @@ describe("customer display window ownership", () => {
 
     expect(removeItem).toHaveBeenCalledWith(DISPLAY_STORAGE_KEY);
   });
+});
+
+// The display receives basket broadcasts; it must never open staff setup or updater UI.
+it("renders the customer route outside terminal connection, auth and update gates", () => {
+  const root = readFileSync("src/routes/__root.tsx", "utf8");
+  expect(root).toContain('const customerDisplay = pathname === "/display"');
+  expect(root).toContain('{customerDisplay ? <Outlet /> : <>');
+  expect(root.indexOf('{customerDisplay ? <Outlet /> : <>')).toBeLessThan(root.indexOf('<NativeBoot>'));
+  expect(root).toContain('if (customerDisplay) return;');
 });

@@ -859,12 +859,12 @@ function createWindows(initialRoute = "/") {
     height: 900,
     show: false,
     backgroundColor: "#0b0b0c",
-    // Native captions provide window controls on login and all POS screens.
-    frame: true,
+    // Windows caption controls are rendered in the app and use existing window IPC.
+    frame: process.platform !== "win32",
     autoHideMenuBar: true,
     ...(process.platform === "win32" ? {
       titleBarStyle: "hidden",
-      titleBarOverlay: { color: "#0b0b0c", symbolColor: "#ffffff", height: 32 },
+      titleBarOverlay: false,
     } : {}),
     transparent: false,
     webPreferences: {
@@ -2270,7 +2270,7 @@ function registerIpc() {
   ipcMain.handle("settings:set", (_e, key, value) => configStore.set(`setting:${String(key)}`, value));
 
   ipcMain.handle("server-keys:status", () => ({ ok: true, ...serverKeys.status() }));
-  ipcMain.handle("backend:get", () => ({ ok: true, url: String(configStore.get("backendUrl") ?? "").trim() }));
+  ipcMain.handle("backend:get", () => ({ ok: true, url: String(configStore.getStrict("backendUrl") ?? "").trim() }));
   ipcMain.handle("backend:set", (_e, value) => {
     const next = String(value ?? "").trim().replace(/\/+$/, "");
     if (next && !/^https:\/\/.+/i.test(next)) return { ok: false, error: "Enter a full address starting with https://" };

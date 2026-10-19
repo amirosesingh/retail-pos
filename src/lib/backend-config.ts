@@ -17,9 +17,8 @@ import { isWindowsShell, isMobileShell } from "@/platform-config/features";
 
 /**
  * Android keeps the address in the same secure store as the cloud pair, so a
- * start-up purge of `localStorage` can never take it away. The plain key is
- * still written as a fast read-through copy and is listed as device state in
- * `live-mode.ts`, so the Preferences mirror keeps it across launches too.
+ * start-up purge of `localStorage` can never take it away. Legacy plain copies are migrated into the secure store, then removed.
+ * The live address is kept in memory, not duplicated in Preferences.
  */
 export const BACKEND_STORAGE_KEY = "pos.backend.url";
 const STORAGE_KEY = BACKEND_STORAGE_KEY;
@@ -94,10 +93,9 @@ export async function backendUrl(): Promise<string> {
     const res = await bridge()?.backendUrl?.();
     if (!res?.ok) throw new Error("Could not restore the saved backend address.");
     const saved = clean(res?.url);
-    if (saved) return saved;
+    return saved;
   } else if (isMobileShell()) {
-    // Secure storage is the authority on the phone; the plain copy is only a
-    // read-through cache that a start-up purge is allowed to lose.
+    // Secure storage is authoritative; a legacy plain copy is migrated below.
     const loaded = await secureStore();
     if (!loaded) throw new Error("Secure connection storage is temporarily unavailable.");
     if (loaded) {
@@ -109,13 +107,19 @@ export async function backendUrl(): Promise<string> {
           if (/^(Item with given key does not exist|not found)$/i.test(message)) return "";
           throw new Error("Could not read the saved backend address.");
         });
-      if (value) return value;
+      if (value) {
+        try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* Legacy cleanup is best effort. */ }
+        return value;
+      }
     }
-    try {
-      const saved = clean(window.localStorage.getItem(STORAGE_KEY));
-      if (saved) return saved;
-    } catch {
-      /* storage unavailable — the device has no address */
+    let legacy = "";
+    try { legacy = clean(window.localStorage.getItem(STORAGE_KEY)); } catch { /* No legacy copy. */ }
+    if (legacy) {
+      const result = await loaded.value.set({ key: STORAGE_KEY, value: legacy });
+      const verified = clean((await loaded.value.get({ key: STORAGE_KEY })).value);
+      if (result.value === false || verified !== legacy) throw new Error("Could not secure the saved backend address.");
+      try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* Keep the verified secure copy. */ }
+      return legacy;
     }
   } else if (isTerminalApp()) {
     try {
@@ -146,21 +150,24 @@ export async function saveBackendUrl(value: string): Promise<BackendSaveResult> 
     const res = await bridge()
       ?.setBackendUrl?.(next)
       .catch((e: unknown) => ({ ok: false, error: (e as Error).message }));
-    if (res && res.ok === false) return res;
+    if (!res?.ok) return { ok: false, error: res?.error ?? "Could not save the backend address securely." };
   } else {
     if (isMobileShell()) {
       const loaded = await secureStore();
       if (!loaded) return { ok: false, error: "Secure storage is unavailable on this device." };
       try {
-        if (next) await loaded.value.set({ key: STORAGE_KEY, value: next });
-        else await loaded.value.remove({ key: STORAGE_KEY }).catch(() => ({ value: true }));
+        if (next) {
+          const result = await loaded.value.set({ key: STORAGE_KEY, value: next });
+          const verified = clean((await loaded.value.get({ key: STORAGE_KEY })).value);
+          if (result.value === false || verified !== next) throw new Error("Could not verify the saved backend address.");
+        } else await loaded.value.remove({ key: STORAGE_KEY }).catch(() => ({ value: true }));
       } catch (e) {
         return { ok: false, error: (e as Error).message };
       }
     }
     try {
-      if (next) window.localStorage.setItem(STORAGE_KEY, next);
-      else window.localStorage.removeItem(STORAGE_KEY);
+      if (isMobileShell() || !next) window.localStorage.removeItem(STORAGE_KEY);
+      else window.localStorage.setItem(STORAGE_KEY, next);
     } catch (e) {
       // On the phone the sealed copy is already written, so this is only the
       // read-through cache failing: not a reason to report a failed save.
