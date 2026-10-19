@@ -73,7 +73,7 @@ function Transfers() {
   const productsById = useMemo(() => new Map(state.products.map(product => [product.id, product])), [state.products]);
 
   const storeOf = (id: string) => stores.find((s) => s.id === id);
-  const productOf = (id: string) => state.products.find((p) => p.id === id) ?? null;
+  const productOf = (id: string) => productsById.get(id) ?? null;
 
   const mine = useMemo(
     () =>

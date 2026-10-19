@@ -1,5 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { ShieldAlert } from "lucide-react";
+import { useVisibility } from "@/lib/ui-visibility";
+import { Button } from "@/components/ui/button";
+import { RoleAccessPanel } from "@/platforms/web/components/admin/RoleAccessPanel";
+import { createFileRoute, useSearch, Link } from "@tanstack/react-router";
+import { ShieldAlert, Users, ShieldCheck, Eye, ArrowLeft } from "lucide-react";
 
 import { RoleManager } from "@/platforms/web/components/admin/RoleManager";
 import { StaffManager } from "@/platforms/web/components/admin/StaffManager";
@@ -8,6 +11,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/pos-auth";
 
 export const Route = createFileRoute("/staff")({
+  validateSearch: (search: Record<string, unknown>): { tab?: "accounts" | "roles" | "access" } => ({
+    tab: search.tab === "access" || search.tab === "roles" ? search.tab : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Staff Accounts — Retail" },
@@ -25,7 +31,10 @@ export const Route = createFileRoute("/staff")({
 });
 
 export function StaffPermissionsPanel() {
-  const { can } = useAuth();
+  const { can, isAdmin } = useAuth();
+  const { visibleRoute } = useVisibility();
+  const accessAllowed = (isAdmin || can("can_access_pos_settings")) && visibleRoute("/settings/access");
+  const search = useSearch({ strict: false });
 
   if (!can("can_manage_staff")) {
     return (
@@ -44,15 +53,17 @@ export function StaffPermissionsPanel() {
   return (
       <main className="space-y-5 p-4 sm:p-6">
         <header>
+          <Button variant="ghost" size="sm" asChild className="mb-2"><Link to="/settings" search={{ cat: "people" }}><ArrowLeft className="size-4" />Back to Settings</Link></Button>
           <h1 className="text-2xl font-semibold">Staff &amp; Permissions</h1>
           <p className="text-sm text-muted-foreground">
             Accounts, access status, roles and feature permissions in one place.
           </p>
         </header>
-        <Tabs defaultValue="accounts">
-          <TabsList>
-            <TabsTrigger value="accounts">Accounts</TabsTrigger>
-            <TabsTrigger value="roles">Roles &amp; permissions</TabsTrigger>
+        <Tabs key={search.tab ?? "accounts"} defaultValue={search.tab ?? "accounts"}>
+          <TabsList className="max-w-full justify-start overflow-x-auto scrollbar-none">
+            <TabsTrigger value="accounts"><Users className="mr-1.5 size-4" aria-hidden />Accounts</TabsTrigger>
+            <TabsTrigger value="roles"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Roles &amp; permissions</TabsTrigger>
+            {accessAllowed && <TabsTrigger value="access"><Eye className="mr-1.5 size-4" aria-hidden />Role &amp; access</TabsTrigger>}
           </TabsList>
           <TabsContent value="accounts" className="pt-4">
             <StaffManager />
@@ -60,6 +71,7 @@ export function StaffPermissionsPanel() {
           <TabsContent value="roles" className="pt-4">
             <RoleManager />
           </TabsContent>
+          <TabsContent value="access" className="pt-4"><RoleAccessPanel /></TabsContent>
         </Tabs>
       </main>
   );

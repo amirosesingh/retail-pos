@@ -40,6 +40,7 @@ export const Route = createFileRoute("/settings/")({
     const raw = search as Record<string, unknown>;
     const legacy = typeof raw["card"] === "string" ? raw["card"] : raw["section"];
     if (typeof legacy !== "string" || !legacy) return;
+    if (legacy === "access") throw redirect({ to: "/staff", search: { tab: "access" }, replace: true });
     const card = settingsCard(legacy);
     if (!card) throw redirect({ to: "/settings", search: {} });
     throw redirect({

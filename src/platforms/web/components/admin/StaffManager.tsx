@@ -96,6 +96,7 @@ type Form = {
   username: string;
   email: string;
   credential: string;
+  confirmCredential: string;
 
   roleSlug: string;
   branchId: string;
@@ -107,6 +108,7 @@ const EMPTY: Form = {
   username: "",
   email: "",
   credential: "",
+      confirmCredential: "",
 
   roleSlug: "cashier",
   // Empty until the administrator makes an explicit branch choice.
@@ -179,11 +181,12 @@ export function StaffManager() {
   // gated action, so administrators and supervisors need one too.
   const [pinFor, setPinFor] = useState<Row | null>(null);
   const [pinValue, setPinValue] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
   const [showPinValue, setShowPinValue] = useState(false);
 
 
   async function saveAuthPin() {
-    if (!pinFor || !/^\d{4,6}$/.test(pinValue)) return;
+    if (!pinFor || !/^\d{4,6}$/.test(pinValue) || pinValue !== confirmPin) return;
     setBusy("auth-pin");
     try {
       const auth = await getPosCallerAuth();
@@ -198,7 +201,7 @@ export function StaffManager() {
         ]);
         toast.success(`Authorisation PIN set for ${pinFor.full_name}`);
         setPinFor(null);
-        setPinValue("");
+        setPinValue(""); setConfirmPin("");
         setShowPinValue(false);
       }
     } catch (e) {
@@ -302,6 +305,7 @@ export function StaffManager() {
       username: row.login_username || row.user_id,
       email: isExternalEmail(row.email) ? row.email : "",
       credential: "",
+      confirmCredential: "",
 
       roleSlug: row.role_slug,
       branchId: row.store_id ?? "all",
@@ -331,7 +335,8 @@ export function StaffManager() {
   const branchId = form.branchId === "all" ? null : form.branchId;
   const branchLabel = branchId ? branchDisplayName(stores, branchId) : "All branches";
 
-  const canSave = nameValid && identifierValid && emailValid && credentialValid && branchValid && !!selectedRole;
+  const credentialMatches = form.credential === form.confirmCredential;
+  const canSave = credentialMatches && nameValid && identifierValid && emailValid && credentialValid && branchValid && !!selectedRole;
 
   const save = async () => {
     if (!canSave || !selectedRole) return;
@@ -544,7 +549,7 @@ export function StaffManager() {
                           disabled={offline || !row.approval_pin_eligible}
                           onClick={() => {
                             setPinFor(row);
-                            setPinValue("");
+                            setPinValue(""); setConfirmPin("");
                             setShowPinValue(false);
                           }}
                         >
@@ -601,7 +606,7 @@ export function StaffManager() {
         onOpenChange={(open) => {
           if (!open) {
             setPinFor(null);
-            setPinValue("");
+            setPinValue(""); setConfirmPin("");
             setShowPinValue(false);
           }
         }}
@@ -645,19 +650,27 @@ export function StaffManager() {
               Generate
             </Button>
           </div>
+          <div className="space-y-1">
+            <Label htmlFor="confirm-approval-pin">Confirm authorisation PIN</Label>
+            <Input id="confirm-approval-pin" type="password" inputMode="numeric" maxLength={6}
+              autoComplete="new-password" value={confirmPin}
+              onChange={event => setConfirmPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
+              aria-invalid={!!confirmPin && pinValue !== confirmPin} />
+            {confirmPin && pinValue !== confirmPin && <p className="text-xs text-destructive">The PINs must match.</p>}
+          </div>
           <DialogFooter>
             <Button
               variant="outline"
               onClick={() => {
                 setPinFor(null);
-                setPinValue("");
+                setPinValue(""); setConfirmPin("");
                 setShowPinValue(false);
               }}
             >
               Cancel
             </Button>
             <Button
-              disabled={!/^\d{4,6}$/.test(pinValue) || busy === "auth-pin"}
+              disabled={!/^\d{4,6}$/.test(pinValue) || pinValue !== confirmPin || busy === "auth-pin"}
               onClick={() => void saveAuthPin()}
             >
               {busy === "auth-pin" && <Loader2 className="size-4 animate-spin" />}Save PIN
@@ -672,7 +685,7 @@ export function StaffManager() {
           if (!busy) setFormOpen(open);
         }}
       >
-        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editing ? "Edit account" : "Create account"}</DialogTitle>
             <DialogDescription>
@@ -687,8 +700,8 @@ export function StaffManager() {
               disabled={busy === "save" || (!!editing && editing.auth_user_id === authUserId)}
               onCheckedChange={(active) => setForm({ ...form, active })} />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1 sm:col-span-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1 col-span-2">
               <Label className="text-xs" htmlFor="staff-name">Display name *</Label>
               <Input
                 id="staff-name"
@@ -744,6 +757,14 @@ export function StaffManager() {
               )}
             </div>
             <div className="space-y-1">
+              <Label className="text-xs" htmlFor="staff-confirm-credential">Confirm {emailMode ? "password" : "PIN / passcode"}</Label>
+              <Input id="staff-confirm-credential" type="password" autoComplete="new-password"
+                maxLength={emailMode ? 200 : 32} value={form.confirmCredential}
+                aria-invalid={!!form.confirmCredential && !credentialMatches}
+                onChange={e => setForm({ ...form, confirmCredential: e.target.value })} />
+              {form.confirmCredential && !credentialMatches && <p className="text-xs text-destructive">The entries must match.</p>}
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs">Role *</Label>
               <Select
                 value={form.roleSlug}
@@ -760,7 +781,7 @@ export function StaffManager() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">{editing && editing.role_slug === form.roleSlug ? "Keeping this role preserves the person’s current permissions. Use Edit permissions to adjust them." : "This role’s saved default permissions will be assigned when you save. Branch assignment is managed separately."}</p>
+              <p className="text-xs text-muted-foreground">{editing && editing.role_slug === form.roleSlug ? "Current permissions are preserved." : "Uses this role’s saved permissions."}</p>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Branch *</Label>
@@ -782,8 +803,7 @@ export function StaffManager() {
               </Select>
               {branchValid ? (
                 <p className="text-xs text-muted-foreground">
-                  Pick “All branches” for staff who work at any till; every sale is still stamped
-                  with the terminal’s branch.
+                  All branches uses the terminal’s branch for each sale.
                 </p>
               ) : (
                 <p className="text-xs text-destructive">Choose a branch, or “All branches”.</p>

@@ -55,6 +55,31 @@
 }
 
 /* Keep dialog grids and dense tables inside the visible device viewport. */
+.pos-popup-surface {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--popover-foreground);
+}
+.pos-popup-surface .pos-popup-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.pos-popup-surface :is(.pos-text-field, .pos-select-field, [data-control-size]) {
+  min-height: 2.25rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+}
+.pos-popup-surface .pos-text-area { font-size: 0.875rem; border-radius: 0.5rem; }
+.pos-popup-surface [data-control-size="icon"] { min-width: 2.25rem; }
+.pos-popup-surface > * { min-width: 0; }
+@media (max-width: 639px) {
+  .pos-popup-surface .pos-popup-title { font-size: max(16px, 1rem); }
+  .pos-popup-surface :is(.pos-text-field, .pos-select-field, [data-control-size]) { min-height: 44px; }
+  .pos-popup-surface [data-control-size="icon"] { min-width: 44px; }
+  /* Native-size text avoids browser focus zoom; labels remain compact. */
+  .pos-popup-surface :is(.pos-text-field, .pos-text-area, .pos-select-field) { font-size: max(16px, 1rem); }
+}
 .pos-dialog-content {
   max-height: calc(100dvh - 1rem);
 }

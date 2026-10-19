@@ -5,7 +5,6 @@ const read = (path: string) => readFileSync(path, "utf8");
 
 describe("settings save actions", () => {
   const independentlySaved = [
-    "settings.access.tsx",
     "settings.branch-telemetry.tsx",
     "settings.database.tsx",
     "settings.mobile-terminals.tsx",
@@ -20,6 +19,16 @@ describe("settings save actions", () => {
 
   it.each(independentlySaved)("does not add an unrelated global save bar to %s", (file) => {
     expect(read(`src/routes/${file}`)).toContain("showSaveBar={false}");
+  });
+
+  it("keeps moved role access independently saved and permission guarded", () => {
+    const panel = read("src/platforms/web/components/admin/RoleAccessPanel.tsx");
+    expect(panel).not.toContain("SettingsFrame");
+    expect(panel).toContain('can("can_manage_staff")');
+    expect(panel).toContain("setHidden");
+    expect(panel).toContain('can("can_access_pos_settings")');
+    expect(panel).toContain('visibleRoute("/settings/access")');
+    expect(read("src/routes/settings.access.tsx")).toContain('search: { tab: "access" }');
   });
 
   it("keeps database recovery editable before scoped settings tables are available", () => {
