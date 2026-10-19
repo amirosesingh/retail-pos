@@ -1,4 +1,6 @@
 import { ApprovalTokenButton } from "@/platform-config/approval-token";
+import { OfflineLoginInterface } from "@/platform-config/offline-interface";
+import { isNative } from "@/platform-config/platform";
 /**
  * Connection gate for the browser and Android builds.
  *
@@ -68,6 +70,8 @@ export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
   if ((!live && !force) || recovery) return null;
 
   // Still checking: the cloud icon alone, nothing else on screen.
+  if (state === "connecting" && isNative() && typeof navigator !== "undefined" && navigator.onLine === false)
+    return <OfflineLoginInterface />;
   if (state === "connecting")
     return (
       <div
@@ -89,6 +93,11 @@ export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
   const diagnosis = cloudDiagnosis();
   const needsRepair = needsSetupRecovery(profile, startup.registration,
     !browserOffline && (verdict === "unconfigured" || diagnosis.issue === "configuration"));
+  // Show the packaged sign-in interface during a network outage, while keeping
+  // the online-only runtime hidden and inert. Configuration/auth failures retain
+  // their existing recovery UI; an outage never grants offline sign-in.
+  if (isNative() && !needsRepair && (browserOffline || verdict === "unreachable"))
+    return <OfflineLoginInterface />;
   const title = browserOffline
     ? "No internet connection"
     : verdict === "unconfigured" || diagnosis.issue === "configuration"

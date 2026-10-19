@@ -11,8 +11,10 @@ import {
   DEFAULT_THEME_PALETTE,
   type ThemePalette,
 } from "./theme-palettes";
+import { restoreAccentFromStorage } from "./accent";
 import {
   THEME_PALETTE_STORAGE_KEY,
+  INTERFACE_PREFERENCES_RESTORED,
   persistThemePalette,
   readStoredPalette,
 } from "./theme-storage";
@@ -74,16 +76,21 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    const stored = readStoredTheme();
-    if (stored === "light" || stored === "dark" || stored === "system") setThemeState(stored);
-    setPaletteState(readStoredPalette());
+    const restore = () => {
+      const stored = readStoredTheme();
+      if (stored === "light" || stored === "dark" || stored === "system") setThemeState(stored);
+      setPaletteState(readStoredPalette());
+      restoreAccentFromStorage();
+    };
+    restore();
+    window.addEventListener(INTERFACE_PREFERENCES_RESTORED, restore);
 
 
     setPrefersDark(systemDark());
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = (e: MediaQueryListEvent) => setPrefersDark(e.matches);
     mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    return () => { mq.removeEventListener("change", onChange); window.removeEventListener(INTERFACE_PREFERENCES_RESTORED, restore); };
   }, []);
 
   const resolved: "light" | "dark" =

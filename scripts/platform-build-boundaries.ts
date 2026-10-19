@@ -36,7 +36,10 @@ export function enforceShellBoundary(platform: BuildPlatform): Plugin {
   return {
     name: "enforce-shell-build-boundary",
     generateBundle() {
-      const excluded = excludedShellModules(platform);
+      const excluded = [...excludedShellModules(platform), ...(platform === "android" ? [] : [
+        "platforms/mobile/components/OfflineInterface",
+        "platforms/mobile/update-download",
+      ])];
       for (const id of this.getModuleIds()) {
         const normalized = id.replaceAll("\\", "/").split("?")[0];
         if (excluded.some(path => normalized.endsWith(`/src/${path}.tsx`) || normalized.endsWith(`/src/${path}.ts`))) {

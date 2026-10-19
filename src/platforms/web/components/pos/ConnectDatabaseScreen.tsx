@@ -6,8 +6,8 @@
  * the device has no working database connection and no valid registration.
  * Terminal activation is a separate step that follows it.
  */
-import { useNavigate } from "@tanstack/react-router";
-import { CloudCog, LifeBuoy, Loader2, RefreshCw } from "lucide-react";
+import { CloudCog, Loader2, RefreshCw } from "lucide-react";
+import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,6 @@ export function ConnectDatabaseScreen({
   cloudConfigured: boolean;
   onRetry: () => void;
 }) {
-  const navigate = useNavigate();
   const [checking, setChecking] = useState(false);
   const [offline, setOffline] = useState(false);
   useEffect(() => {
@@ -103,14 +102,7 @@ export function ConnectDatabaseScreen({
             )}
             Test and continue
           </Button>
-            <Button
-              variant="outline"
-              className="border-border bg-muted text-foreground hover:bg-accent"
-              onClick={() => void navigate({ to: "/recovery" })}
-            >
-              <LifeBuoy className="size-4" />
-              Emergency access
-            </Button>
+            <EmergencyAccessLink className="border-border bg-muted text-foreground hover:bg-accent" />
         </div>}
       </div>
     </div>

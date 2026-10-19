@@ -8,10 +8,13 @@
  * front of the repair screen.
  */
 import { Link } from "@tanstack/react-router";
-import { LifeBuoy } from "lucide-react";
+import { LifeBuoy, MoreVertical } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { isTerminalApp } from "@/platform-config/platform";
+import { isMobileShell } from "@/platform-config/features";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 
 export function EmergencyAccessLink({
   className,
@@ -21,6 +24,14 @@ export function EmergencyAccessLink({
   label?: string;
 }) {
   if (!isTerminalApp()) return null;
+  if (isMobileShell()) return <div className="fixed right-3 top-[calc(env(safe-area-inset-top,0px)+0.75rem)] z-50">
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" aria-label="More recovery options"><MoreVertical className="size-5" /></Button></DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem asChild><Link to="/recovery"><LifeBuoy className="mr-2 size-4" />{label}</Link></DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </div>;
   return (
     <Link
       to="/recovery"

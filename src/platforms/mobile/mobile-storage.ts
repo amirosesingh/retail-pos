@@ -12,6 +12,7 @@
  */
 import { isNative } from "@/platform-config/platform";
 import { isPersistentKey } from "@/lib/live-mode";
+import { INTERFACE_PREFERENCES_RESTORED } from "@/lib/theme-storage";
 
 const PREFIX = "pos.";
 
@@ -109,6 +110,7 @@ async function restoreNativeStorage(): Promise<void> {
     if (value !== null) await store.set({ key, value });
   }
   install(store);
+  window.dispatchEvent(new Event(INTERFACE_PREFERENCES_RESTORED));
 }
 
 /** Remove every non-preference key the app may have cached on this device. */

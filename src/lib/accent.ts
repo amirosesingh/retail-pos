@@ -68,6 +68,12 @@ export function applyAccent(hex: string | null) {
 
 function ensureHydrated() {
   if (hydrated || typeof window === "undefined") return;
+  restoreAccentFromStorage(false);
+}
+
+/** Native preferences can arrive after the first interface render. */
+export function restoreAccentFromStorage(notify = true) {
+  if (typeof window === "undefined") return;
   hydrated = true;
   try {
     accent = clean(window.localStorage.getItem(KEY));
@@ -75,6 +81,7 @@ function ensureHydrated() {
     accent = null;
   }
   applyAccent(accent);
+  if (notify) for (const listener of listeners) listener();
 }
 
 export function setAccent(hex: string | null) {

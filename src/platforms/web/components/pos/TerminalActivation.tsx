@@ -37,6 +37,8 @@ import { CameraScanner } from "@/platforms/web/components/pos/CameraScanner";
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { useBranding } from "@/lib/branding";
 import { isNative } from "@/platform-config/platform";
+import { TerminalRegistrationDetails } from "@/components/shared/TerminalRegistrationDetails";
+import { serverOrigin } from "@/lib/server-origin";
 
 const qrDataUrl = (value: string) => {
   const qr = qrcode(0, "M");
@@ -67,10 +69,12 @@ function Frame({ children, bare }: { children: React.ReactNode; bare?: boolean }
 export function TerminalActivation({
   onActivated,
   embedded = false,
+  onActivationStarted,
 }: {
   onActivated: (c: TerminalConfig) => void;
   /** Render as a plain card (Emergency Access hub) instead of a full screen. */
   embedded?: boolean;
+  onActivationStarted?: () => void;
 }) {
   // Pairing is a cloud round-trip: offline it must stay quiet instead of
   // reporting a verification failure every three seconds.
@@ -116,6 +120,7 @@ export function TerminalActivation({
     async (value: string) => {
       const trimmed = value.trim();
       if (!trimmed) return setError("Paste or scan the activation code first.");
+      onActivationStarted?.();
       setBusy(true);
       setError("");
       try {
@@ -131,7 +136,7 @@ export function TerminalActivation({
         setBusy(false);
       }
     },
-    [],
+    [onActivationStarted],
   );
 
   // While the operator waits, keep asking whether an administrator approved
@@ -145,6 +150,7 @@ export function TerminalActivation({
     const tick = async () => {
       if (pending) return;
       pending = true;
+      onActivationStarted?.();
       try {
         const config = await activateWithTokenId(pairing);
         if (config && !stopped) {
@@ -174,7 +180,7 @@ export function TerminalActivation({
       stopped = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [pairing, online, done, showPairing, pairingStopped]);
+  }, [pairing, online, done, showPairing, pairingStopped, onActivationStarted]);
 
   if (done) {
     return (
@@ -191,24 +197,10 @@ export function TerminalActivation({
           </div>
         </div>
 
-        <dl className="mt-4 space-y-2 rounded-lg border border-border bg-surface-2 p-4 text-sm">
-          <div className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">Terminal</dt>
-            <dd className="truncate font-medium">{done.deviceName || "This terminal"}</dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">Terminal ID</dt>
-            <dd className="truncate font-mono text-xs">{done.tokenId}</dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">Branch</dt>
-            <dd className="truncate font-medium">{done.locationName || done.locationId || "—"}</dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">Status</dt>
-            <dd className="font-medium text-emerald-600 dark:text-emerald-400">Active</dd>
-          </div>
-        </dl>
+        <div className="mt-4 space-y-3">
+          <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Activation verified → Registration approved → Ready to sign in</p>
+          <TerminalRegistrationDetails details={{ ...done, backendUrl: done.backendUrl || serverOrigin() }} />
+        </div>
 
         <Button className="mt-4 w-full" onClick={() => onActivated(done)}>
           Continue

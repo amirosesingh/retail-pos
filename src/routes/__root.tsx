@@ -37,6 +37,7 @@ import { FirstRunSetup } from "@/platforms/web/components/pos/FirstRunSetup";
 import { LifeBuoy } from "lucide-react";
 import { RECOVERY_PATH, isRecoveryPath } from "@/lib/recovery-route";
 import { ThemeProvider, themeBootScript } from "../lib/theme";
+import { NativeConnectionIndicator } from "@/platform-config/offline-interface";
 import { publicConfigScript } from "../lib/public-config-script";
 import { NativeBoot } from "@/platforms/mobile/components/NativeBoot";
 import { NativeWindowFrame } from "@/components/shared/NativeWindowFrame";
@@ -336,6 +337,7 @@ function RootComponent() {
       <ThemeProvider>
         <NativeWindowFrame>
         {customerDisplay ? <Outlet /> : <>
+        <NativeConnectionIndicator />
         {/* Beta testers can update before provisioning a terminal or signing in. */}
         {RELEASE_CHANNEL === "beta" && <AppUpdateNotices />}
         <NativeBoot>
