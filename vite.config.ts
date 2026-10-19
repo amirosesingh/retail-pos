@@ -6,6 +6,7 @@ import { defineConfig, searchForWorkspaceRoot } from "vite";
 import type { Plugin } from "vite";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { shellAliases, enforceShellBoundary } from "./scripts/platform-build-boundaries";
 import webOnlyEnv from "./scripts/web-only-env-names.json" with { type: "json" };
 
 // Managed checkouts can resolve dependencies from a parent node_modules.
@@ -77,6 +78,8 @@ const isMobile = Boolean(process.env["MOBILE_BUILD"]);
  */
 export const WEB_ONLY_ENV_NAMES = webOnlyEnv.webOnly.filter((name) => name.startsWith("VITE_"));
 
+if (isMobile && isDesktop) throw new Error("Choose one build target: Android or Windows.");
+const buildPlatform = isMobile ? "android" : isDesktop ? "windows" : "web";
 const isTerminalBuild = isMobile || isDesktop;
 const isBetaBuild = process.env.POS_RELEASE_CHANNEL === "beta" || process.env.WORKERS_CI_BRANCH === "beta";
 
@@ -107,11 +110,11 @@ export default defineConfig({
   css: { transformer: "lightningcss" },
   resolve: {
     // Native approval UI/Keystore enrollment never enter website client chunks.
-    alias: isTerminalBuild ? [
+    alias: [...shellAliases(buildPlatform), ...(isTerminalBuild ? [
       { find: "@/platform-config/approval-token", replacement: resolve("src/platforms/mobile/components/ApprovalToken.tsx") },
       { find: "@/platform-config/approval-token-client", replacement: resolve("src/lib/approval-token-client.ts") },
       { find: "@/platform-config/approval-methods", replacement: resolve("src/platforms/mobile/components/NativeApprovalMethods.tsx") },
-    ] : [],
+    ] : [])],
     tsconfigPaths: true,
     dedupe: [
       "react",
@@ -122,6 +125,7 @@ export default defineConfig({
     ],
   },
   plugins: [
+    enforceShellBoundary(buildPlatform),
     stripThirdPartyRscMarkers(),
     tanstackStart({ server: { entry: "server" } }),
     nitro(

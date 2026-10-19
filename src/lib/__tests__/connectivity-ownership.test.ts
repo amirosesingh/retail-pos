@@ -46,9 +46,9 @@ describe("connectivity lifecycle ownership", () => {
 
   it("opens Android setup only after local settings are confirmed absent", () => {
     expect(gate).toContain('isNative() && (profile?.state === "missing" || profile?.state === "incomplete")');
-    expect(gate.indexOf("<ConnectDatabaseScreen")).toBeLessThan(gate.indexOf('const browserOffline'));
+    expect(gate.indexOf("return renderSetup(profile)")).toBeLessThan(gate.indexOf('const browserOffline'));
     expect(gate).toContain('isNative() && profile === null');
-    expect(gate).toContain('cloudConfigured={profile.have.supabaseKey}');
+    expect(root).toContain('cloudConfigured={profile.have.supabaseKey}');
   });
 
   it("distinguishes offline, timeout, service and configuration messages", () => {

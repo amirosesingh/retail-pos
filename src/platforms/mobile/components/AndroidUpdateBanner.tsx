@@ -2,8 +2,10 @@
  * Quiet "new version ready" strip for the Android till, fed by the same
  * update bucket the Windows app uses.
  */
-import { Download, X } from "lucide-react";
+import { useState } from "react";
+import { Download, Loader2, X } from "lucide-react";
 
+import { RELEASE_CHANNEL } from "@/lib/release-channel";
 import { Button } from "@/components/ui/button";
 import {
   dismissAndroidUpdate,
@@ -13,6 +15,7 @@ import {
 
 export function AndroidUpdateBanner() {
   const { state, available, install, installDownloaded } = useAndroidUpdates();
+  const [dismissed, setDismissed] = useState<string | null>(null);
 
   if (!state.supported) return null;
 
@@ -20,7 +23,7 @@ export function AndroidUpdateBanner() {
   // again rather than leaving the counter with a downloaded file and no way in.
   if (state.readyUri) {
     return (
-      <div className="fixed inset-x-0 bottom-0 z-50 flex items-center gap-3 border-t border-border bg-card px-4 py-3 shadow-lg">
+      <div role="status" aria-live="polite" className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+1.75rem)] z-50 flex items-center gap-3 border-t border-border bg-card px-4 py-3 shadow-lg">
         <Download className="h-4 w-4 shrink-0 text-primary" />
         <div className="min-w-0 flex-1 text-sm">
           <p className="font-medium text-foreground">Update downloaded</p>
@@ -36,13 +39,13 @@ export function AndroidUpdateBanner() {
   }
 
   if (!available || !state.latest) return null;
-  if (isAndroidUpdateDismissed(state.latest)) return null;
+  if (dismissed === state.latest || isAndroidUpdateDismissed(state.latest)) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-50 flex items-center gap-3 border-t border-border bg-card px-4 py-3 shadow-lg">
+    <div role="status" aria-live="polite" className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+1.75rem)] z-50 flex items-center gap-3 border-t border-border bg-card px-4 py-3 shadow-lg">
       <Download className="h-4 w-4 shrink-0 text-primary" />
       <div className="min-w-0 flex-1 text-sm">
-        <p className="font-medium text-foreground">Version {state.latest} is available</p>
+        <p className="font-medium text-foreground">{RELEASE_CHANNEL === "beta" ? "Beta update" : "Update"} {state.latest} is available</p>
         <p className="truncate text-xs text-muted-foreground">
           {state.downloading
             ? `Downloading… ${state.percent}%`
@@ -50,13 +53,15 @@ export function AndroidUpdateBanner() {
         </p>
       </div>
       <Button size="sm" onClick={() => void install()} disabled={state.downloading}>
-        {state.downloading ? "Downloading" : "Update"}
+        {state.downloading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Download className="size-4" aria-hidden />}
+        {state.downloading ? `${state.percent}%` : "Download"}
       </Button>
       <Button
         size="icon"
         variant="ghost"
+        disabled={state.downloading}
         aria-label="Dismiss update"
-        onClick={() => dismissAndroidUpdate(state.latest!)}
+        onClick={() => { dismissAndroidUpdate(state.latest!); setDismissed(state.latest); }}
       >
         <X className="h-4 w-4" />
       </Button>

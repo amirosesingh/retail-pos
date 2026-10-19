@@ -45,6 +45,7 @@ import {
   APP_RESUME_EVENT,
   CONNECTIVITY_RESTORED_EVENT,
   connectivity,
+  heartbeat,
   startConnectivityMonitor,
 } from "@/core/activation/connection-health";
 import { subscribeSyncConfig, syncConfig } from "@/lib/sync-config";
@@ -329,14 +330,17 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <NativeWindowFrame>
+        {/* Beta testers can update before provisioning a terminal or signing in. */}
+        {RELEASE_CHANNEL === "beta" && <AppUpdateNotices />}
         <NativeBoot>
           <ConnectionProfileBoot>
-            <OfflineGate>
+            <OfflineGate renderSetup={(profile) => (
+              <ConnectDatabaseScreen cloudConfigured={profile.have.supabaseKey} onRetry={() => { void heartbeat(); }} />
+            )}>
               <PublicHostBoundary pathname={pathname}>
               {isCustomerPublicRoute(pathname) ? (
                 <>
                   <Outlet />
-                  <Toaster position="top-right" closeButton />
                 </>
               ) : (
                 <TillRuntime />
@@ -345,10 +349,15 @@ function RootComponent() {
             </OfflineGate>
           </ConnectionProfileBoot>
         </NativeBoot>
+        <Toaster position="top-right" closeButton />
         </NativeWindowFrame>
       </ThemeProvider>
     </QueryClientProvider>
   );
+}
+
+function AppUpdateNotices() {
+  return <><AndroidUpdateBanner /><DesktopUpdateBanner /></>;
 }
 
 /** Till-only runtime. Never mount this on customer-facing URLs. */
@@ -370,10 +379,8 @@ function TillRuntime() {
               </PrivilegeGate>
             </FirstRunSetup>
 
-            <AndroidUpdateBanner />
-            <DesktopUpdateBanner />
+            {RELEASE_CHANNEL !== "beta" && <AppUpdateNotices />}
             <DesktopCloseSyncStatus />
-            <Toaster position="top-right" closeButton />
             <ErrorNotifier />
           </RulesBridge>
         </PosProvider>
