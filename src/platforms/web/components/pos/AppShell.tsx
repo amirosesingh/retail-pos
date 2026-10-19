@@ -537,7 +537,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 </span>
                 <MobileStatusSheet />
                 {isMobile && <ActivityBell />}
-                <UpdateHeaderButton className="hidden sm:inline-flex" />
+                {isMobile && <UpdateHeaderButton />}
                 <span className="hidden sm:inline-flex">
                   <ThemeToggle />
                 </span>
@@ -564,7 +564,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                     {terminal.config.locationName || currentStore.name}
                   </Badge>
                 )}
-                <UpdateHeaderButton className="hidden lg:inline-flex" />
+                {!isMobile && <UpdateHeaderButton />}
                 <ThemeToggle />
                 <ProfileMenu />
               </header>

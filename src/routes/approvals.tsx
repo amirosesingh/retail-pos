@@ -351,16 +351,20 @@ function ApprovalsPage() {
         ) : null}
 
         {!loading && !error && rows.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center gap-2 p-10 text-center">
-              <Clock3 className="size-6 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                {`No ${status === "all" ? "approval" : status} requests found in this branch scope.`}
+          <Card role="status" className="border-dashed bg-muted/10 shadow-none">
+            <CardContent className="flex flex-col items-center gap-2 px-4 py-8 text-center sm:py-10">
+              <span className="mb-1 grid size-10 place-items-center rounded-full bg-muted"><Clock3 className="size-5 text-muted-foreground" /></span>
+              <p className="text-sm font-medium">
+                {status === "pending" ? "No pending approval requests" : `No ${status === "all" ? "approval" : status} requests`}
+              </p>
+              <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+                {status === "pending" ? "New requests for this branch scope will appear here automatically." : "Try another status or branch scope to view other requests."}
               </p>
             </CardContent>
           </Card>
         ) : null}
 
+        <div role="region" aria-label="Approval requests" tabIndex={rows.length ? 0 : undefined} className="no-scrollbar max-h-[65dvh] space-y-3 overflow-y-auto overscroll-contain scroll-smooth motion-reduce:scroll-auto">
         {rows.map((row) => {
           const mine = !!me && row.requestedBy.toLowerCase() === me.id.toLowerCase();
           const payload = approvalDisplayFields(row.payload ?? {});
@@ -373,7 +377,7 @@ function ApprovalsPage() {
                 onOpenChange={(open) => setOpenRequestId(open ? row.id : null)}
               >
                 <Card>
-                  <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
+                  <CardHeader className="flex flex-col items-start justify-between gap-3 pb-2 sm:flex-row">
                     <div>
                       <CardTitle className="text-base">
                         {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey}
@@ -400,7 +404,7 @@ function ApprovalsPage() {
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardContent className="grid gap-2 pt-0 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                  <CardContent className="grid grid-cols-2 gap-3 pt-0 text-xs lg:grid-cols-4 [&>div]:min-w-0 [&_p]:break-words">
                     <div>
                       <p className="text-muted-foreground">Bill number</p>
                       <p className="font-semibold">{requestBillNumber(row)}</p>
@@ -711,6 +715,7 @@ function ApprovalsPage() {
             </div>
           );
         })}
+        </div>
 
         <div className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between" aria-label="Approval pagination">
           <div className="flex items-center gap-2">
