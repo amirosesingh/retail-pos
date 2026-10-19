@@ -1,0 +1,56 @@
+name: PR destination labels
+
+on:
+  pull_request:
+    branches: [beta, main]
+    types: [opened, reopened, edited, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-channel-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  label:
+    # Fork PR tokens cannot edit labels. Never check out or execute PR code.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_BRANCH: ${{ github.base_ref }}
+      EVENT_ACTION: ${{ github.event.action }}
+    steps:
+      - name: Mark the destination without merging or deploying
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$BASE_BRANCH" in
+            beta) channel=beta; opposite=production; prefix=BETA ;;
+            main) channel=production; opposite=beta; prefix=PRODUCTION ;;
+            *) exit 0 ;;
+          esac
+          endpoint="repos/$GH_REPO"
+          metadata=$(gh api "$endpoint/pulls/$PR_NUMBER")
+          title=$(jq -r '.title' <<< "$metadata")
+          clean=$(jq -r '.title | sub("^\\[(BETA|PRODUCTION)\\][[:space:]]*"; "")' <<< "$metadata")
+          wanted="[$prefix] $clean"
+          if [ "$title" != "$wanted" ]; then
+            gh api --method PATCH "$endpoint/pulls/$PR_NUMBER" -f title="$wanted" >/dev/null
+          fi
+          has_label() { jq -e --arg label "$1" 'any(.labels[]; .name == $label)' <<< "$metadata" >/dev/null; }
+          add_label() { gh api --method POST "$endpoint/issues/$PR_NUMBER/labels" -f "labels[]=$1" >/dev/null; }
+          remove_label() { gh api --method DELETE "$endpoint/issues/$PR_NUMBER/labels/$1" >/dev/null; }
+          if ! has_label "$channel"; then add_label "$channel"; fi
+          if has_label "$opposite"; then remove_label "$opposite"; fi
+          if [ "$channel" = beta ]; then
+            if has_label awaiting-owner-approval; then remove_label awaiting-owner-approval; fi
+          elif [ "$EVENT_ACTION" != edited ] || jq -e '.changes.base != null' "$GITHUB_EVENT_PATH" >/dev/null; then
+            if ! has_label awaiting-owner-approval; then add_label awaiting-owner-approval; fi
+          fi
+          # A bot's title edit produces another edited event; every mutation is
+          # conditional, so an already correct PR makes no further changes.

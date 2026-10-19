@@ -32,6 +32,19 @@ For now beta uses the existing production database and access rules. Beta sales
 and other writes are real business data. This setup does not create a test
 database or apply migrations.
 
-Promotion is manual: after the owner's approval, open/review a PR from `beta`
-to `main`. Only merging to `main` runs the existing stable version/release flow.
+Every fix/feature starts on a branch based on `beta`, with a `[BETA]` PR targeting
+`beta` and the `beta` label. Internal PRs are automatically labeled and prefixed
+by their destination; fork PRs require manual labels because their tokens are
+read-only. Both beta and production PRs appear in GitHub's same PR list. A merged
+beta PR moves to the Closed/Merged list; it does not become a production PR.
+
+Promotion is manual: after beta testing, open a separate `[PRODUCTION]` PR from
+`beta` to `main`, labeled `production` and `awaiting-owner-approval`. Merge only
+after the owner explicitly approves that specific promotion. Passing checks and
+labels do not constitute approval. New commits invalidate prior approval; the
+label workflow marks updated production PRs as awaiting approval again. Never
+enable auto-merge into `main`.
+
+These are workflow instructions and status labels, not a GitHub branch-protection
+rule. Only merging to `main` runs the existing stable version/release flow.
 Beta publication does not merge, promote, or create a stable version.
