@@ -34,7 +34,7 @@ import { ConnectDatabaseScreen } from "@/platforms/web/components/pos/ConnectDat
 import { isTerminalApp } from "@/platform-config/platform";
 import { FirstRunSetup } from "@/platforms/web/components/pos/FirstRunSetup";
 import { LifeBuoy } from "lucide-react";
-import { RECOVERY_PATH } from "@/lib/recovery-route";
+import { RECOVERY_PATH, isRecoveryPath } from "@/lib/recovery-route";
 import { ThemeProvider, themeBootScript } from "../lib/theme";
 import { publicConfigScript } from "../lib/public-config-script";
 import { NativeBoot } from "@/platforms/mobile/components/NativeBoot";
@@ -45,6 +45,7 @@ import {
   APP_RESUME_EVENT,
   CONNECTIVITY_RESTORED_EVENT,
   connectivity,
+  heartbeat,
   startConnectivityMonitor,
 } from "@/core/activation/connection-health";
 import { subscribeSyncConfig, syncConfig } from "@/lib/sync-config";
@@ -54,7 +55,7 @@ import { PublicHostBoundary } from "@/platforms/web/components/pos/PublicHostBou
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { bypassPersistentAppShell, isCustomerPublicRoute } from "@/lib/app-shell-routes";
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
-import { hasRequiredPlatformConfig, type ConfigReadiness } from "@/lib/platform-config-ready";
+import { hasRequiredPlatformConfig, subscribeConfigReady, type ConfigReadiness } from "@/lib/platform-config-ready";
 import { hydrateConnectionProfile, isConnectionProfileHydrated } from "@/lib/connection-profile";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { staleAssetRecoveryScript } from "@/lib/stale-asset-recovery";
@@ -329,26 +330,50 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <NativeWindowFrame>
+        {/* Beta testers can update before provisioning a terminal or signing in. */}
+        {RELEASE_CHANNEL === "beta" && <AppUpdateNotices />}
         <NativeBoot>
           <ConnectionProfileBoot>
+            <TerminalConnectionSetup>
             <OfflineGate>
               <PublicHostBoundary pathname={pathname}>
               {isCustomerPublicRoute(pathname) ? (
                 <>
                   <Outlet />
-                  <Toaster position="top-right" closeButton />
                 </>
               ) : (
                 <TillRuntime />
               )}
               </PublicHostBoundary>
             </OfflineGate>
+            </TerminalConnectionSetup>
           </ConnectionProfileBoot>
         </NativeBoot>
+        <Toaster position="top-right" closeButton />
         </NativeWindowFrame>
       </ThemeProvider>
     </QueryClientProvider>
   );
+}
+
+/** Local configuration is decided before network gating on terminal apps only. */
+function TerminalConnectionSetup({ children }: { children: ReactNode }) {
+  const pathname = useLocation({ select: location => location.pathname });
+  const [profile, setProfile] = useState<ConfigReadiness | null>(null);
+  useEffect(() => {
+    if (!isTerminalApp()) return;
+    return subscribeConfigReady(setProfile);
+  }, []);
+  if (!isTerminalApp() || isRecoveryPath(pathname)) return children;
+  if (!profile) return <TillLoader message="Checking saved terminal settings…" />;
+  if (profile.state === "missing" || profile.state === "incomplete") {
+    return <ConnectDatabaseScreen cloudConfigured={profile.have.supabaseKey} onRetry={() => { void heartbeat(); }} />;
+  }
+  return children;
+}
+
+function AppUpdateNotices() {
+  return <><AndroidUpdateBanner /><DesktopUpdateBanner /></>;
 }
 
 /** Till-only runtime. Never mount this on customer-facing URLs. */
@@ -370,10 +395,8 @@ function TillRuntime() {
               </PrivilegeGate>
             </FirstRunSetup>
 
-            <AndroidUpdateBanner />
-            <DesktopUpdateBanner />
+            {RELEASE_CHANNEL !== "beta" && <AppUpdateNotices />}
             <DesktopCloseSyncStatus />
-            <Toaster position="top-right" closeButton />
             <ErrorNotifier />
           </RulesBridge>
         </PosProvider>

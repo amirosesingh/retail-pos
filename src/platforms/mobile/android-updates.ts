@@ -199,9 +199,11 @@ export async function openInstaller(uri: string): Promise<void> {
 export function useAndroidUpdates() {
   const [state, setState] = useState<AndroidUpdateState>(INITIAL);
   const downloadInFlight = useRef(false);
+  const checkInFlight = useRef(false);
 
   const check = useCallback(async () => {
-    if (!isNative() || !isAndroid()) return;
+    if (!isNative() || !isAndroid() || checkInFlight.current || downloadInFlight.current) return;
+    checkInFlight.current = true;
     setState((s) => ({ ...s, checking: true, error: null }));
     try {
       const { version, file, feed, url, notes } = await fetchLatest();
@@ -221,6 +223,7 @@ export function useAndroidUpdates() {
         lastChecked: new Date(),
       }));
     } finally {
+      checkInFlight.current = false;
       // Whatever happened above, the card must never stay on "Checking…".
       setState((s) => ({ ...s, checking: false }));
     }
@@ -268,7 +271,15 @@ export function useAndroidUpdates() {
     setState((s) => ({ ...s, supported: true }));
     void check();
     const timer = setInterval(() => void check(), SIX_HOURS);
-    return () => clearInterval(timer);
+    const reconnect = () => { void check(); };
+    const foreground = () => { if (document.visibilityState === "visible") reconnect(); };
+    window.addEventListener("online", reconnect);
+    document.addEventListener("visibilitychange", foreground);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("online", reconnect);
+      document.removeEventListener("visibilitychange", foreground);
+    };
   }, [check]);
 
   /** Manual retry for the "Update downloaded — tap to install" prompt. */
