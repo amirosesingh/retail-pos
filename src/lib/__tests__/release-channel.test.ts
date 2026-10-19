@@ -10,3 +10,12 @@ it.each(["stable", "beta"])("%s accepts only its own update channel", async chan
   expect(release.acceptsReleaseVersion("1.4.75-alpha.1")).toBe(false);
   expect(release.DEFAULT_UPDATE_BASE.endsWith("/beta")).toBe(channel === "beta");
 });
+
+it("orders beta updates numerically and stable after prereleases", async () => {
+  const { compareVersions } = await import("../update-manifest");
+  expect(compareVersions("1.4.75-beta.10", "1.4.75-beta.9")).toBe(1);
+  expect(compareVersions("1.4.75", "1.4.75-beta.10")).toBe(1);
+  expect(compareVersions("1.4.75-beta.1", "1.4.75")).toBe(-1);
+  expect(compareVersions("1.4.9", "1.4.10")).toBe(-1);
+  expect(compareVersions("1.4.75+build.1", "1.4.75+build.2")).toBe(0);
+});
