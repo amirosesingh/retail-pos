@@ -1,12 +1,12 @@
 import { useState, type ReactNode } from "react";
-import { Loader2, Lock, LogOut, WifiOff } from "lucide-react";
+import { Loader2, Lock, LogOut } from "lucide-react";
 import { toast } from "sonner";
-import { money, usePos } from "@/lib/pos-store";
+import { usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { shiftDuration } from "@/lib/shift-hours";
+import { BranchShiftBanner } from "./BranchShiftBanner";
 import { parsePositiveAmount } from "@/core/pricing/amount";
 import { permissionMessage } from "@/platforms/web/components/pos/PermissionGate";
 import { notifyError } from "@/lib/notify";
@@ -44,7 +44,6 @@ export function ShiftGuard({ children }: { children: ReactNode }) {
   const branchLabel = terminalStoreName?.trim() || currentStore?.name?.trim() || "this terminal";
 
   if (activeShift) {
-    const opened = new Date(activeShift.openedAt);
     const closing = (activeShift.state ?? "ACTIVE") !== "ACTIVE";
     if (closing) {
       return (
@@ -62,19 +61,7 @@ export function ShiftGuard({ children }: { children: ReactNode }) {
     }
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-success/30 bg-success/10 px-4 py-1.5 text-[11px] text-success">
-          <span className="font-semibold">Shift open</span>
-          <span>
-            Opened {opened.toLocaleDateString()} at {opened.toLocaleTimeString()}
-          </span>
-          <span>Float {money(activeShift.openingFloat)}</span>
-          <span>Running {shiftDuration(activeShift)}</span>
-          {shiftReadError && (
-            <span className="flex items-center gap-1 text-warning-foreground">
-              <WifiOff className="size-3" /> Reconnecting — trading continues
-            </span>
-          )}
-        </div>
+        <BranchShiftBanner />
         <div className="flex min-h-0 flex-1">{children}</div>
       </div>
     );
@@ -83,11 +70,7 @@ export function ShiftGuard({ children }: { children: ReactNode }) {
   if (bypass) {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-warning/30 bg-warning/10 px-4 py-1.5 text-[11px] text-warning-foreground">
-          <Lock className="size-3" />
-          <span className="font-semibold">No shift open at {branchLabel}</span>
-          <span>Your account can use the terminal without one.</span>
-        </div>
+        <BranchShiftBanner />
         <div className="flex min-h-0 flex-1">{children}</div>
       </div>
     );
