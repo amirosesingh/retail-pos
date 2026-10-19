@@ -161,7 +161,7 @@ function AnalyticsBoard() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="summary-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <StatCard
             tone="revenue"
             label="Revenue"
@@ -424,7 +424,7 @@ function AnalyticsBoard() {
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">What we gave away</h2>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="summary-grid grid gap-3 sm:grid-cols-2">
               <StatCard
                 tone="discount"
                 label="Item discounts"

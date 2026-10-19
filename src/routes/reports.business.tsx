@@ -280,7 +280,7 @@ function BusinessReport() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        <div className="grid gap-4 sm:grid-cols-4">
+        <div className="summary-grid grid gap-4 sm:grid-cols-4">
           <StatCard label="Revenue" value={money(totals.revenue)} />
           <StatCard label="Gross profit" value={money(totals.profit)} />
           <StatCard label="Margin" value={`${totals.margin.toFixed(1)}%`} />

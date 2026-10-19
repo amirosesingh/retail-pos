@@ -161,6 +161,7 @@ function Inventory() {
   const [variantCost, setVariantCost] = useState("");
   const [variantPrice, setVariantPrice] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [expandedProducts, setExpandedProducts] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [blocked, setBlocked] = useState<BlockedDelete[]>([]);
@@ -1102,7 +1103,7 @@ function Inventory() {
         )}
 
         <div className="rounded-lg border border-border bg-card">
-          <Table columnControls layoutControls controlsTarget={columnControlsTarget}>
+          <Table className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
@@ -1126,8 +1127,8 @@ function Inventory() {
             </TableHeader>
             <TableBody>
               {pageRows.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>
+                <TableRow key={p.id} data-expanded={expandedProducts.includes(p.id)}>
+                  <TableCell className="inventory-selection">
                     <Checkbox
                       checked={selected.includes(p.id)}
                       onCheckedChange={(v) => toggle(p.id, !!v)}
@@ -1135,33 +1136,35 @@ function Inventory() {
                     />
                   </TableCell>
                   <TableCell>
-                    <button
-                      className="text-left font-medium hover:text-primary"
-                      disabled={!canEditDetails && !canPrice && !canAdjustStock && !canLinkBarcode}
-                      onClick={() => {
-                        setBranchPriceOnly(false);
-                        setDraft(p);
-                      }}
-                    >
-                      {p.name}
-                    </button>
-                    <div className="numeric text-[11px] text-muted-foreground">
-                      {p.sku} · {p.barcode}
+                    <div className="min-w-0">
+                      <button
+                        className="text-left font-medium hover:text-primary"
+                        disabled={!canEditDetails && !canPrice && !canAdjustStock && !canLinkBarcode}
+                        onClick={() => {
+                          setBranchPriceOnly(false);
+                          setDraft(p);
+                        }}
+                      >
+                        {p.name}
+                      </button>
+                      <div className="numeric text-[11px] text-muted-foreground">
+                        {p.sku} · {p.barcode}
+                      </div>
                     </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{p.category}</TableCell>
-                  <TableCell className="text-muted-foreground">{p.subCategory || "—"}</TableCell>
+                  <TableCell className="inventory-detail text-muted-foreground">{p.category}</TableCell>
+                  <TableCell className="inventory-detail text-muted-foreground">{p.subCategory || "—"}</TableCell>
                   {showMoney && (
-                    <TableCell className="numeric text-right">{Number.isFinite(p.cost) ? money(p.cost) : "—"}{needsCostReview(p.cost) && <span className="ml-1 text-xs text-warning" title="Cost is missing, zero or invalid. Zero may be intentional.">Review</span>}</TableCell>
+                    <TableCell className="inventory-detail numeric text-right">{Number.isFinite(p.cost) ? money(p.cost) : "—"}{needsCostReview(p.cost) && <span className="ml-1 text-xs text-warning" title="Cost is missing, zero or invalid. Zero may be intentional.">Review</span>}</TableCell>
                   )}
                   <TableCell className="numeric text-right">{money(p.price)}</TableCell>
                   {showMoney && (
-                    <TableCell className="numeric text-right text-accent">
+                    <TableCell className="inventory-detail numeric text-right text-accent">
                       {productMargin(p.price, p.cost) === null ? "—" : `${Math.round(productMargin(p.price, p.cost)!)}%`}
                     </TableCell>
                   )}
                   {canEcom && (
-                    <TableCell className="text-center">
+                    <TableCell className="inventory-detail text-center">
                       <Switch
                         checked={!!p.ecomVisible}
                         onCheckedChange={async (v) => {
@@ -1199,7 +1202,17 @@ function Inventory() {
                       currentStoreId={currentStore.id}
                     />
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="inventory-actions text-right">
+                    <Button
+                      className="inventory-details-toggle"
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`${expandedProducts.includes(p.id) ? "Less" : "More"} details for ${p.name}`}
+                      aria-expanded={expandedProducts.includes(p.id)}
+                      onClick={() => setExpandedProducts(ids => ids.includes(p.id) ? ids.filter(id => id !== p.id) : [...ids, p.id])}
+                    >
+                      {expandedProducts.includes(p.id) ? "Less details" : "More details"}
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"
@@ -1215,6 +1228,7 @@ function Inventory() {
                         variant="ghost"
                         disabled={deleting.includes(p.id)}
                         title={deleting.includes(p.id) ? "Archiving…" : "Archive"}
+                        aria-label={`Archive ${p.name}`}
                         onClick={async () => {
                           setDeleting((d) => [...d, p.id]);
                           try {

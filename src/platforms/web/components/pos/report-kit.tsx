@@ -305,7 +305,7 @@ export function StatCard({
 }) {
   return (
     <div
-      className="report-stat min-w-0 rounded-2xl border border-border bg-card p-5"
+      className="summary-card report-stat min-w-0 rounded-2xl border border-border bg-card p-5"
       style={tone ? { borderTopColor: ANALYTICS_COLORS[tone] } : undefined}
     >
       <p className="text-sm font-medium text-muted-foreground">{label}</p>

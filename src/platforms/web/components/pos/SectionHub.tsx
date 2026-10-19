@@ -51,17 +51,17 @@ export function SectionHub({ groupId }: { groupId: string }) {
             You do not have access to anything in this section.
           </p>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="section-hub-grid grid grid-cols-2 gap-2 sm:gap-3">
             {items.map((item) => (
               <div
                 key={navItemKey(item)}
-                className="group flex items-start gap-1 rounded-2xl border border-border/80 bg-card p-3 shadow-xs transition-colors hover:border-primary/40 hover:bg-muted/25"
+                className="section-hub-card group flex min-w-0 items-start gap-1 rounded-2xl border border-border/80 bg-card p-3 shadow-xs transition-colors hover:border-primary/40 hover:bg-muted/25"
               >
                 <Link
                   to={item.to}
                   hash={item.hash}
                   search={item.section ? { section: item.section } : {}}
-                  className="flex min-w-0 flex-1 items-start gap-3 rounded-xl p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="section-hub-link flex min-w-0 flex-1 items-start gap-3 rounded-xl p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span className="shrink-0 rounded-xl bg-primary/10 p-2.5 text-primary">
                     <item.icon aria-hidden="true" className="size-5" />

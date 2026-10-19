@@ -314,7 +314,7 @@ function LiveBoard() {
           <AnalyticsErrorPanel error={query.error} onRetry={() => void query.refetch()} />
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+        <div className="summary-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
           <StatCard label="Revenue" value={money(totals.revenue)} hint={`${totals.bills} bills`} />
           <StatCard
             label="Gross profit"

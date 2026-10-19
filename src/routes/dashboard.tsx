@@ -172,7 +172,7 @@ function Dashboard() {
         </header>
 
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
-        <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
+        <div className="summary-grid grid gap-4 md:grid-cols-4 xl:grid-cols-7">
           <Kpi label="Revenue today" value={money(revenue)} highlight />
           <Kpi label="Gross revenue" value={money(profit.revenue)} />
           <Kpi label="Total COGS" value={money(profit.cogs)} />
@@ -192,7 +192,7 @@ function Dashboard() {
               Current active catalogue and on-hand value at this branch.
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+          <div className="summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
             <Kpi label="Products" value={<AnimatedMetric value={stock.products} />} />
             <Kpi label="Categories" value={<AnimatedMetric value={stock.categories} />} />
             <Kpi label="On-hand units" value={<AnimatedMetric value={stock.units} />} />
@@ -447,7 +447,7 @@ function Kpi({
   danger?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-card px-4 py-3">
+    <div className="summary-card rounded-lg border border-border bg-card px-4 py-3">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p
         className={`numeric text-xl font-semibold ${highlight ? "text-primary" : ""} ${danger ? "text-destructive" : ""}`}

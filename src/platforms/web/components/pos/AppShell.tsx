@@ -1,3 +1,4 @@
+import { useIsMobile } from "@/hooks/use-mobile";
 import { ApprovalTokenButton } from "@/platform-config/approval-token";
 import { useAdminWebActivation } from "@/lib/use-admin-web-activation";
 import { isLocationSetupRoute } from "@/lib/app-shell-routes";
@@ -108,6 +109,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function AppShellFrame({ children }: { children: ReactNode }) {
+  const isMobile = useIsMobile();
   useAdminWebActivation();
   useEffect(() => startSyncEngine(), []);
   useEffect(() => localDb()?.onBeforeClose?.(() => flushTicketDrafts().then(() => undefined)), []);
@@ -534,6 +536,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   <LiveClock compact />
                 </span>
                 <MobileStatusSheet />
+                {isMobile && <ActivityBell />}
                 <UpdateHeaderButton className="hidden sm:inline-flex" />
                 <span className="hidden sm:inline-flex">
                   <ThemeToggle />
@@ -550,7 +553,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 <ConnectionStatusButton />
                 <SystemAlertsButton />
                 <ApprovalTokenButton />
-                <ActivityBell />
+                {!isMobile && <ActivityBell />}
 
                 {terminal.config && (
                   <Badge

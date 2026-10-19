@@ -243,7 +243,7 @@ function AllShops() {
                 Visible to administrators only
               </span>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="summary-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <Kpi label="Revenue · selected dates" value={money(live.revenue)} />
               <Kpi label="Gross profit" value={money(live.profit)} />
               <Kpi label="Bills" value={String(live.bills)} />
@@ -418,7 +418,7 @@ function AllShops() {
 
 function Kpi({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <div className="summary-card rounded-lg border border-border bg-card p-4">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="numeric mt-1 text-xl font-semibold">{value}</p>
     </div>

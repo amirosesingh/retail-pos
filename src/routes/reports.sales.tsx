@@ -135,7 +135,7 @@ export function BillsReport() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="summary-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <StatCard
             label="Completed bills"
             value={String(rows.filter((sale) => !sale.refunded).length)}

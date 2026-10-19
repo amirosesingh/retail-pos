@@ -1,12 +1,13 @@
+import { visibleActivityRows } from "@/lib/notification-visibility";
 import { activeBranchId } from "@/lib/active-branch";
 /** Shared, durable notification acknowledgements; business records remain unchanged. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Bell, Check, LoaderCircle, X } from "lucide-react";
+import { Bell, Check, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AnimatedList } from "@/components/ui/animated-list";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/pos-auth";
 import {
@@ -64,7 +65,9 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const [, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [missing, setMissing] = useState(false);
-  const [clearAllBusy, setClearAllBusy] = useState(false);
+  const preferenceScope = `${meKey}:${activeBranchId() ?? ""}`;
+  const preferenceScopeRef = useRef(preferenceScope);
+  preferenceScopeRef.current = preferenceScope;
   const [preferenceBusy, setPreferenceBusy] = useState<Set<string>>(() => new Set());
   const preferenceBusyRef = useRef(new Set<string>());
   const announcedIdsRef = useRef(new Set<string>());
@@ -76,33 +79,35 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const refreshLatest = useRef<() => Promise<void>>(async () => undefined);
 
   const updatePreference = useCallback(
-    async (id: string, action: () => Promise<boolean>, failure: string) => {
-      if (preferenceBusyRef.current.has(id)) return;
-      preferenceBusyRef.current.add(id);
+    async (ids: string[], action: () => Promise<boolean>, failure: string) => {
+      const keys = ids.map(id => `${preferenceScope}:${id}`);
+      if (!ids.length || keys.some(key => preferenceBusyRef.current.has(key))) return false;
+      // Only the current displayed batch is hidden. New arrivals remain visible.
+      keys.forEach(key => preferenceBusyRef.current.add(key));
       setPreferenceBusy(new Set(preferenceBusyRef.current));
+      ids.forEach(id => toast.dismiss(`activity-${id}`));
       try {
         const saved = await action();
+        if (!mounted.current || preferenceScopeRef.current !== preferenceScope) return saved;
         if (!saved) {
           toast.error(failure);
         } else {
-          toast.dismiss(`activity-${id}`);
-          // Reflect the local dismissal immediately. The underlying business
-          // event remains immutable and other terminals receive the acknowledgement.
-          setRows((current) =>
-            current.map((row) => {
-              if (row.id !== id) return row;
-              return { ...row, clearedBy: [...new Set([...row.clearedBy, meKey])] };
-            }),
-          );
+          setRows(current => current.map(row => ids.includes(row.id)
+            ? { ...row, clearedBy: [...new Set([...row.clearedBy, meKey])] }
+            : row));
         }
+        return saved;
       } catch {
-        toast.error(failure);
+        if (mounted.current && preferenceScopeRef.current === preferenceScope) toast.error(failure);
+        return false;
       } finally {
-        preferenceBusyRef.current.delete(id);
-        setPreferenceBusy(new Set(preferenceBusyRef.current));
+        keys.forEach(key => preferenceBusyRef.current.delete(key));
+        // Removing the temporary overlay restores failures; successful records
+        // stay cleared through the existing durable acknowledgement pipeline.
+        if (mounted.current) setPreferenceBusy(new Set(preferenceBusyRef.current));
       }
     },
-    [meKey],
+    [meKey, preferenceScope],
   );
 
   const openActivity = useCallback(
@@ -122,9 +127,9 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
                   ? "/shifts"
                   : "/alerts");
       if (!route) return;
-      const saved = await clearActivityEntry(meKey, row.id);
-      if (!saved) {
-        toast.error("Could not clear notification. Check the connection and try again.");
+      const saved = await updatePreference([row.id], () => clearActivityEntry(meKey, row.id),
+        "Could not clear notification. Check the connection and try again.");
+      if (!saved || !mounted.current || preferenceScopeRef.current !== preferenceScope) {
         return;
       }
       setRows((current) => current.filter((item) => item.id !== row.id));
@@ -132,7 +137,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       setOpen(false);
       void navigate({ to: route });
     },
-    [meKey, navigate],
+    [meKey, navigate, updatePreference, preferenceScope],
   );
 
   const refresh = useCallback(async () => {
@@ -185,7 +190,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
           onDismiss: () => {
             if (!mounted.current || generation !== refreshGeneration.current || clearedIds(meKey).includes(row.id)) return;
             void updatePreference(
-              row.id,
+              [row.id],
               () => clearActivityEntry(meKey, row.id),
               "Could not clear notification. Your notification remains available in the bell.",
             );
@@ -252,18 +257,17 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     };
   }, [showActivity, refresh, meKey]);
 
-  const visibleRows = useMemo(() => {
-    const hidden = new Set(cleared);
-    return rows.filter(
-      (r) => !hidden.has(r.id) && !r.clearedBy.length && r.meta["auditOnly"] !== true,
-    );
-  }, [rows, cleared]);
+  const visibleRows = useMemo(
+    () => visibleActivityRows(rows, cleared, preferenceBusy, preferenceScope),
+    [rows, cleared, preferenceBusy, preferenceScope],
+  );
   const badge = unseenEvents(visibleRows, meKey).length;
+  const saving = [...preferenceBusy].some(key => key.startsWith(`${preferenceScope}:`));
 
   if (!allowed) return null;
 
   return (
-    <Popover
+    <Dialog
       open={open}
       onOpenChange={(v) => {
         setOpen(v);
@@ -273,7 +277,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         }
       }}
     >
-      <PopoverTrigger asChild>
+      <DialogTrigger asChild>
         <Button
           variant="ghost"
           size="icon"
@@ -290,23 +294,15 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
             </span>
           )}
         </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-[min(26rem,calc(100vw-1rem))] p-0">
-        <div className="flex items-center justify-between border-b border-border px-3 py-2">
-          <p className="text-sm font-medium">Notifications</p>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            aria-label="Close notifications"
-            onClick={() => setOpen(false)}
-          >
-            <X className="size-4" />
-          </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg gap-0 overflow-hidden p-0 sm:p-0">
+        <div className="border-b border-border/60 px-4 py-4 pr-12">
+          <DialogTitle className="flex items-center gap-2 text-base"><Bell className="size-4 text-primary" /> Notifications</DialogTitle>
+          <DialogDescription className="mt-1 text-xs">Recent activity and updates for your branch.</DialogDescription>
         </div>
 
-        <div className="max-h-80 overflow-y-auto">
+        {saving && <p role="status" className="px-4 pt-3 text-xs text-muted-foreground">Saving changes…</p>}
+        <div className="min-h-32 max-h-[65dvh] overflow-y-auto overscroll-contain p-3">
           {showActivity && visibleRows.length > 0 && (
             <div className="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
               <span className="text-[10px] font-medium text-muted-foreground">
@@ -316,34 +312,14 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
                 type="button"
                 size="sm"
                 variant="ghost"
-                className="h-6 px-2 text-[10px]"
-                disabled={clearAllBusy}
-                onClick={() => {
-                  setClearAllBusy(true);
-                  void clearAllActivityEntries(
-                    meKey,
-                    visibleRows.map((row) => row.id),
-                  )
-                    .then(async (saved) => {
-                      if (!saved) {
-                        toast.error(
-                          "Could not clear notifications. Check the connection and try again.",
-                        );
-                        return;
-                      }
-                      setRows((current) =>
-                        current.map((row) =>
-                          visibleRows.some((visible) => visible.id === row.id)
-                            ? { ...row, clearedBy: [...new Set([...row.clearedBy, meKey])] }
-                            : row,
-                        ),
-                      );
-                      for (const row of visibleRows) toast.dismiss(`activity-${row.id}`);
-                    })
-                    .finally(() => setClearAllBusy(false));
-                }}
+                className="h-9 px-3 text-xs"
+                onClick={() => void updatePreference(
+                  visibleRows.map(row => row.id),
+                  () => clearAllActivityEntries(meKey, visibleRows.map(row => row.id)),
+                  "Some notifications could not be cleared. They have been restored; please try again.",
+                )}
               >
-                {clearAllBusy ? "Clearing…" : "Clear all"}
+                Clear all
               </Button>
             </div>
           )}
@@ -363,13 +339,13 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
               getKey={activityKey}
               empty={
                 <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                  No notifications.
+                  {saving ? "Notifications cleared from this view. Saving…" : "You’re all caught up."}
                 </p>
               }
               renderItem={(r) => (
                 <div
                   className={cn(
-                    "activity-notification-row border-b border-border/60 px-3 py-2 last:border-0",
+                    "activity-notification-row mb-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 last:mb-0",
                     (typeof r.meta["route"] === "string" ||
                       r.entityType === "authorization_request" ||
                       r.entityType === "stock_request" ||
@@ -393,24 +369,24 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="ml-auto h-6 touch-manipulation gap-1 px-2 text-[10px] text-muted-foreground"
-                      disabled={preferenceBusy.has(r.id)}
-                      aria-busy={preferenceBusy.has(r.id)}
+                      className="ml-auto h-9 touch-manipulation gap-1 px-2 text-xs text-muted-foreground"
+                      disabled={preferenceBusy.has(`${preferenceScope}:${r.id}`)}
+                      aria-busy={preferenceBusy.has(`${preferenceScope}:${r.id}`)}
                       onClick={(event) => {
                         event.stopPropagation();
                         void updatePreference(
-                          r.id,
+                          [r.id],
                           () => clearActivityEntry(meKey, r.id),
                           "Could not clear notification. Check the connection and try again.",
                         );
                       }}
                     >
-                      {preferenceBusy.has(r.id) ? (
+                      {preferenceBusy.has(`${preferenceScope}:${r.id}`) ? (
                         <LoaderCircle className="size-3 animate-spin" />
                       ) : (
                         <Check className="size-3" />
                       )}
-                      {preferenceBusy.has(r.id) ? "Saving…" : "Clear"}
+                      {preferenceBusy.has(`${preferenceScope}:${r.id}`) ? "Saving…" : "Clear"}
                     </Button>
                   </div>
                   {r.message && (
@@ -431,7 +407,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
             />
           )}
         </div>
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   );
 }
