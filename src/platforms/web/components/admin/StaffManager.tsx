@@ -522,6 +522,11 @@ export function StaffManager() {
                     ) : (
                       <p className="mt-1 text-xs text-muted-foreground">
                         {row.is_active ? "No PIN-enabled approval rule" : "Inactive account"}
+                        {row.is_active && (
+                          <span className="mt-1 block max-w-xs whitespace-normal">
+                            In POS Rules &amp; Enforcement, assign this user to an enabled PIN or PIN-or-request approval rule.
+                          </span>
+                        )}
                       </p>
                     )}
                   </td>
