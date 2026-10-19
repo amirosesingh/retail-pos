@@ -1,3 +1,4 @@
+import { formatDate, formatTime } from "@/lib/time-zone";
 /**
  * The one place the current date and time is always visible.
  *
@@ -42,13 +43,8 @@ export function LiveClock({ className, compact }: { className?: string; compact?
 
   if (now === null) return null;
   const d = new Date(now);
-  const date = d.toLocaleDateString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-  const time = d.toLocaleTimeString(undefined, { hour12: false });
+  const date = formatDate(d);
+  const time = formatTime(d);
 
   return (
     <div

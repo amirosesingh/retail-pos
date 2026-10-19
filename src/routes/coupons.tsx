@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Copy, Link2, Loader2, Plus, Send, TicketPercent, Trash2 } from "lucide-react";
@@ -305,8 +306,8 @@ function CouponsPage() {
                         <div className="text-xs text-muted-foreground">{scopeLabel(c)}</div>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {c.startsAt ? new Date(c.startsAt).toLocaleDateString() : "Now"} →{" "}
-                        {c.expiresAt ? new Date(c.expiresAt).toLocaleDateString() : "No end"}
+                        {c.startsAt ? posDisplayDate(new Date(c.startsAt)) : "Now"} →{" "}
+                        {c.expiresAt ? posDisplayDate(new Date(c.expiresAt)) : "No end"}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {c.claimsCount}
@@ -314,7 +315,7 @@ function CouponsPage() {
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{tally.redeemed}</TableCell>
                       <TableCell>
-                        <Badge variant={statusTone[stat] ?? "secondary"}>{stat}</Badge>
+                        <Badge status={stat} variant={statusTone[stat] ?? "secondary"}>{stat}</Badge>
                         {c.isWelcome ? (
                           <Badge variant="outline" className="ml-1">
                             Welcome

@@ -6,7 +6,6 @@
  * instead of the machine's own. Stored values stay absolute ISO timestamps.
  */
 let zone = "";
-let dateOrder: "dmy" | "mdy" | "ymd" = "dmy";
 let hour12 = false;
 let personalLanguage = "en";
 export function setPersonalLanguage(language: string) {
@@ -41,14 +40,14 @@ export function setPosTimeZone(next: string | undefined) {
 }
 
 /** Date order and clock chosen in Region & time settings. */
-export function setPosFormats(date: string | undefined, time: string | undefined) {
-  dateOrder = date === "mdy" || date === "ymd" ? date : "dmy";
+export function setPosFormats(_date: string | undefined, time: string | undefined) {
+  // Keep the legacy date argument for callers; displayed dates use DD-MM-YYYY.
   hour12 = time === "12h";
 }
 
-/** The locale that renders the chosen date order without inventing one. */
+/** The language used for clock labels. */
 const localeForOrder = () =>
-  personalLanguage !== "en" ? personalLanguage : dateOrder === "mdy" ? "en-US" : dateOrder === "ymd" ? "en-CA" : "en-GB";
+  personalLanguage !== "en" ? personalLanguage : "en-GB";
 
 export function posTimeZone(): string {
   return zone;
@@ -71,7 +70,8 @@ const asDate = (value: string | number | Date) =>
 export function formatDateTime(value: string | number | Date, extra: Intl.DateTimeFormatOptions = {}) {
   const d = asDate(value);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString(localeForOrder(), opts(extra));
+  const { dateStyle: _dateStyle, timeStyle: _timeStyle, ...fields } = extra;
+  return `${formatDate(d, fields)} ${formatTime(d, { hour: "2-digit", minute: "2-digit", second: "2-digit", ...fields })}`;
 }
 
 export function formatTime(value: string | number | Date, extra: Intl.DateTimeFormatOptions = {}) {
@@ -83,7 +83,12 @@ export function formatTime(value: string | number | Date, extra: Intl.DateTimeFo
 export function formatDate(value: string | number | Date, extra: Intl.DateTimeFormatOptions = {}) {
   const d = asDate(value);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString(localeForOrder(), opts(extra));
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    ...opts({}), ...(extra.timeZone ? { timeZone: extra.timeZone } : {}), ...(typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? { timeZone: "UTC" } : {}), calendar: "gregory", numberingSystem: "latn",
+    day: "2-digit", month: "2-digit", year: "numeric",
+  }).formatToParts(d);
+  const part = (name: string) => parts.find(p => p.type === name)?.value ?? "";
+  return `${part("day")}-${part("month")}-${part("year")}`;
 }
 
 /** Stable YYYY-MM-DD key in the configured trading zone. */

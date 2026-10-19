@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Voucher register for a coupon campaign.
  *
@@ -53,7 +54,7 @@ const tone: Record<string, "default" | "secondary" | "destructive" | "outline"> 
   Disabled: "destructive",
 };
 
-const when = (iso?: string | null) => (iso ? new Date(iso).toLocaleString() : "—");
+const when = (iso?: string | null) => (iso ? posDisplayDateTime(new Date(iso)) : "—");
 
 export function CampaignVouchers({
   campaigns,

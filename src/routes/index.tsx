@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime, formatDate as posDisplayDate } from "@/lib/time-zone";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { draftTicketId } from "@/lib/session-draft";
 import { LegacyExchangeForm } from "@/platforms/web/components/pos/LegacyExchangeForm";
@@ -2159,7 +2160,7 @@ function Register() {
                         l.job?.stencil ? "stencil" : "",
                         l.job?.overgrip ? "overgrip" : "",
                         l.job?.promisedAt
-                          ? `ready ${new Date(l.job.promisedAt).toLocaleString()}`
+                          ? `ready ${posDisplayDateTime(new Date(l.job.promisedAt))}`
                           : "",
                       ]
                         .filter(Boolean)
@@ -3335,7 +3336,7 @@ function Register() {
           {billHit && (
             <div className="space-y-3">
               <p className="numeric text-xs text-muted-foreground">
-                {billHit.receiptNo} · {new Date(billHit.createdAt).toLocaleString()} ·{" "}
+                {billHit.receiptNo} · {posDisplayDateTime(new Date(billHit.createdAt))} ·{" "}
                 {money(billHit.total)} · {billHit.cashier}
                 {billHit.exchangedToReceiptNo
                   ? ` · already exchanged to ${billHit.exchangedToReceiptNo}`
@@ -4162,7 +4163,7 @@ function Register() {
                       <p className="text-[11px] text-muted-foreground">
                         {discountLabel(v.campaign)} · {scopeLabel(v.campaign)}
                         {v.voucher.expiresAt || v.campaign.expiresAt
-                          ? ` · until ${new Date(v.voucher.expiresAt ?? v.campaign.expiresAt!).toLocaleDateString()}`
+                          ? ` · until ${posDisplayDate(new Date(v.voucher.expiresAt ?? v.campaign.expiresAt!))}`
                           : ""}
                       </p>
                       {usable ? null : (

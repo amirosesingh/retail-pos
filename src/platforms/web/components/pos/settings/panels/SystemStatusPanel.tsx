@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useEffect, useState } from "react";
 import { Activity, ClipboardCopy, Copy, Eraser, PlugZap, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -248,7 +249,7 @@ Switching one off keeps its unavailable page at the same address. The POS stays 
               {errors.map((e) => (
                 <div key={e.id} className="text-[11px]">
                   <p className="font-mono">
-                    {new Date(e.at).toLocaleString()} · {e.service} · {e.code}
+                    {posDisplayDateTime(new Date(e.at))} · {e.service} · {e.code}
                   </p>
                   <p className="text-muted-foreground">{e.detail}</p>
                 </div>

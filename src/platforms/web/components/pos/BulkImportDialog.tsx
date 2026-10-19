@@ -668,7 +668,7 @@ export function BulkImportDialog({
                           />
                         </TableCell>
                         <TableCell className="min-w-36">
-                          <Badge
+                          <Badge status={r.status}
                             variant={
                               r.status === "ready" || r.status === "new_product"
                                 ? "outline"

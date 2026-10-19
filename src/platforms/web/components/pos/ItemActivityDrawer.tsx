@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Item activity: when the record was created, every stock movement recorded
  * against it, and the transfer lines it appeared on. Read-only history.
@@ -189,7 +190,7 @@ export function ItemActivityDrawer({
                 {product.sku} · {product.barcode}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Created {created ? new Date(created).toLocaleString() : "—"}
+                Created {created ? posDisplayDateTime(new Date(created)) : "—"}
               </p>
               <p className="text-xs text-muted-foreground">
                 {product.category}
@@ -222,7 +223,7 @@ export function ItemActivityDrawer({
                     </div>
                     <p className="text-xs text-muted-foreground">{r.detail}</p>
                     <p className="text-[11px] text-muted-foreground">
-                      {new Date(r.at).toLocaleString()} · {r.by}
+                      {posDisplayDateTime(new Date(r.at))} · {r.by}
                       {r.impact ? ` · ${money(r.impact)}` : ""}
                     </p>
                   </li>

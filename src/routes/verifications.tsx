@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, ShieldCheck } from "lucide-react";
@@ -136,18 +137,18 @@ function Verifications() {
             <tbody>
               {filtered.map((r) => (
                 <tr key={r.id} className="border-t border-border">
-                  <td className="numeric px-3 py-2">{new Date(r.created_at).toLocaleString()}</td>
+                  <td className="numeric px-3 py-2">{posDisplayDateTime(new Date(r.created_at))}</td>
                   <td className="px-3 py-2">{r.phone || r.email || "—"}</td>
                   <td className="px-3 py-2">{CHANNEL_LABEL[r.channel] ?? r.channel}</td>
                   <td className="px-3 py-2">
-                    <Badge variant="outline" className={statusTone(r.status)}>
+                    <Badge status={r.status} variant="outline" className={statusTone(r.status)}>
                       {r.status}
                     </Badge>
                   </td>
                   <td className="numeric px-3 py-2">{r.attempts}</td>
                   <td className="px-3 py-2">{r.sent_by ?? "—"}</td>
                   <td className="numeric px-3 py-2">
-                    {r.verified_at ? new Date(r.verified_at).toLocaleString() : "—"}
+                    {r.verified_at ? posDisplayDateTime(new Date(r.verified_at)) : "—"}
                   </td>
                 </tr>
               ))}

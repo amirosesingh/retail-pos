@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { posDayKey, inPosDayRange } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
@@ -466,7 +467,7 @@ function AuditPage() {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm">{describeLog(l)}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                        <span className="numeric">{new Date(l.at).toLocaleString()}</span>
+                        <span className="numeric">{posDisplayDateTime(new Date(l.at))}</span>
                         <Badge variant="outline" className="text-[10px]">
                           {categoryLabel(l)}
                         </Badge>
@@ -525,7 +526,7 @@ function AuditPage() {
                 {pager.pageItems.map((l) => (
                   <TableRow key={l.id}>
                     <TableCell className="numeric whitespace-nowrap text-muted-foreground">
-                      {new Date(l.at).toLocaleString()}
+                      {posDisplayDateTime(new Date(l.at))}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       {l.staffName}
@@ -605,7 +606,7 @@ function AuditPage() {
                     className="numeric whitespace-nowrap text-muted-foreground"
                     data-sort-value={edit.created_at}
                   >
-                    {new Date(edit.created_at).toLocaleString()}
+                    {posDisplayDateTime(new Date(edit.created_at))}
                   </TableCell>
                   <TableCell>
                     <span className="capitalize">{edit.record_type.replaceAll("_", " ")}</span>
@@ -646,7 +647,7 @@ function AuditPage() {
           <DialogHeader>
             <DialogTitle>{detail?.action}</DialogTitle>
             <DialogDescription>
-              {detail && new Date(detail.at).toLocaleString()} · {detail?.module}
+              {detail && posDisplayDateTime(new Date(detail.at))} · {detail?.module}
             </DialogDescription>
           </DialogHeader>
           {detail && (
@@ -726,7 +727,7 @@ function AuditPage() {
               Correction · {correctionDetail?.reference || "Related record"}
             </DialogTitle>
             <DialogDescription>
-              {correctionDetail && new Date(correctionDetail.created_at).toLocaleString()} ·
+              {correctionDetail && posDisplayDateTime(new Date(correctionDetail.created_at))} ·
               original values remain in the audit history
             </DialogDescription>
           </DialogHeader>

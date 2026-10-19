@@ -371,7 +371,7 @@ function CouponReport() {
                   <TableCell>{r.staff}</TableCell>
                   <TableCell className="numeric text-right">{money(r.value)}</TableCell>
                   <TableCell>
-                    <Badge variant={r.status === "Removed" ? "outline" : "secondary"}>
+                    <Badge status={r.status} variant={r.status === "Removed" ? "outline" : "secondary"}>
                       {r.status}
                     </Badge>
                   </TableCell>

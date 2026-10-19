@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { withReadDeadline } from "@/lib/read-retry";
 import { notifyError } from "@/lib/notify";
 import { NativeApprovalMethods } from "@/platform-config/approval-methods";
@@ -503,8 +504,8 @@ export function StaffManager() {
             {filtered.map((row) => {
               const terminal = isInternalAddress(row.email);
               return (
-                <tr key={row.user_id} className="grid grid-cols-2 gap-2 rounded-lg border border-border/60 p-3 sm:table-row sm:rounded-none sm:border-x-0 sm:border-t-0 sm:p-0">
-                  <td className="col-span-2 min-w-0 sm:table-cell sm:py-3 sm:pr-3">
+                <tr key={row.user_id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 rounded-lg border border-border/60 p-3 sm:table-row sm:rounded-none sm:border-x-0 sm:border-t-0 sm:p-0">
+                  <td className="col-start-1 min-w-0 sm:table-cell sm:py-3 sm:pr-3">
                     <div className="flex flex-wrap items-center gap-1.5"><p className="break-words font-medium">{row.full_name}</p>{!row.is_active && <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4 text-muted-foreground">Disabled</Badge>}</div>
                     <p className="text-xs text-muted-foreground">{row.login_username || row.user_id}</p>
                     <div className="mt-1 flex flex-wrap gap-1">
@@ -512,17 +513,17 @@ export function StaffManager() {
                       <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4">{row.store_id ? stores.find((store) => store.id === row.store_id)?.name ?? "Assigned branch" : "All branches"}</Badge>
                     </div>
                   </td>
-                  <td className="min-w-0 sm:table-cell sm:pr-3">
+                  <td className="col-start-1 min-w-0 sm:table-cell sm:pr-3">
                     <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4">
                       {terminal ? "Terminal PIN sign-in" : "Email & password"}
                     </Badge>
                   </td>
 
-                  <td className="min-w-0 text-[11px] text-muted-foreground sm:table-cell sm:pr-3"><span className="block text-[10px] sm:hidden">Last login</span>
-                    {row.last_login_at ? new Date(row.last_login_at).toLocaleString() : "Never"}
+                  <td className="col-start-1 min-w-0 text-[11px] text-muted-foreground sm:table-cell sm:pr-3"><span className="block text-[10px] sm:hidden">Last login</span>
+                    {row.last_login_at ? posDisplayDateTime(new Date(row.last_login_at)) : "Not recorded"}
                   </td>
-                  <td className="col-span-2 sm:table-cell">
-                    <div className="flex justify-end gap-1">
+                  <td className="col-start-2 row-start-1 row-end-4 self-start sm:table-cell">
+                    <div className="flex flex-col items-center gap-1 sm:flex-row sm:justify-end">
                       <Button
                         size="icon"
                         variant="ghost"

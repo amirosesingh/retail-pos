@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Lock, WifiOff } from "lucide-react";
@@ -43,7 +44,7 @@ export function BranchShiftBanner() {
     <div role="status" className={`flex flex-wrap items-center gap-x-4 gap-y-1 border-b px-4 py-1.5 text-[11px] ${shift ? "border-success/30 bg-success/10 text-success" : "border-border bg-muted/40 text-muted-foreground"}`}>
       {shift && opened ? <>
         <span className="font-semibold">Shift {shift.state && shift.state !== "ACTIVE" ? "closing" : "open"} · {label}</span>
-        <span>Opened {opened.toLocaleDateString()} at {opened.toLocaleTimeString()}</span>
+        <span>Opened {posDisplayDate(opened)} at {opened.toLocaleTimeString()}</span>
         <span>Float {money(shift.openingFloat)}</span>
         <span>Running {shiftDuration(shift)}</span>
         {error && <span className="flex items-center gap-1 text-warning"><WifiOff className="size-3" /> Reconnecting — showing last known status</span>}

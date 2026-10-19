@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Relational health of the operational tables.
  *
@@ -258,7 +259,7 @@ export async function runRelationalHealth(): Promise<RelationalReport> {
 
 export function formatRelationalReport(report: RelationalReport): string {
   if (report.error) return `Relational check failed: ${report.error}`;
-  const lines = [`Operational table links — ${new Date(report.at).toLocaleString()}`, ""];
+  const lines = [`Operational table links — ${posDisplayDateTime(new Date(report.at))}`, ""];
   for (const t of report.tables) {
     lines.push(`${t.label} (${t.table}) — ${STATUS_LABEL[t.status]}, ${t.rows} rows`);
     for (const l of t.links) {

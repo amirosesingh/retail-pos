@@ -29,6 +29,30 @@ async function adminFetch(path: string, init: RequestInit = {}) {
   return fetch(`${supabaseConfig().url}/auth/v1/${path}`, { ...init, headers });
 }
 
+/** Called only after staff-management authorization; return timestamps, never Auth profiles. */
+export async function staffLastSignIns(ids: string[]): Promise<Map<string, string>> {
+  const pending = new Set(ids.map(id => id.toLowerCase()));
+  const result = new Map<string, string>();
+  if (!pending.size) return result;
+  const signal = AbortSignal.timeout(3000);
+  try {
+    for (let page = 1; page <= 20 && pending.size; page++) {
+      const response = await adminFetch(`admin/users?page=${page}&per_page=1000`, { signal });
+      if (!response.ok) break;
+      const body = await response.json() as { users?: { id?: string; last_sign_in_at?: string }[] };
+      if (!Array.isArray(body.users)) break;
+      for (const user of body.users) {
+        const id = user.id?.toLowerCase();
+        if (!id || !pending.has(id)) continue;
+        pending.delete(id);
+        if (user.last_sign_in_at && Number.isFinite(Date.parse(user.last_sign_in_at))) result.set(id, user.last_sign_in_at);
+      }
+      if (body.users.length < 1000) break;
+    }
+  } catch { /* Optional metadata must never prevent staff administration. */ }
+  return result;
+}
+
 /**
  * Create a one-use Auth proof after another server-side credential has already
  * been verified. This never sends email and, unlike changing the Auth

@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { BadgeCheck, CircleSlash, Clock, Loader2, TriangleAlert } from "lucide-react";
@@ -128,7 +129,7 @@ function VoucherPage() {
                   <p className="text-xs text-muted-foreground">
                     Used{" "}
                     {view.voucher.redeemedAt
-                      ? new Date(view.voucher.redeemedAt).toLocaleString()
+                      ? posDisplayDateTime(new Date(view.voucher.redeemedAt))
                       : "at the till"}
                     .
                   </p>
@@ -140,7 +141,7 @@ function VoucherPage() {
                 <div>
                   <p className="text-sm font-medium text-card-foreground">This voucher expired</p>
                   <p className="text-xs text-muted-foreground">
-                    Expired {expiresAt?.toLocaleString()}.
+                    Expired {(expiresAt ? posDisplayDateTime(expiresAt) : undefined)}.
                   </p>
                 </div>
               </div>

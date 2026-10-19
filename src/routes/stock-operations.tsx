@@ -1,3 +1,5 @@
+import { reconcileLiveRows } from "@/lib/live-state";
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { notifyError } from "@/lib/notify";
 /**
  * Stock Operations — the only place stock quantities change by hand.
@@ -69,6 +71,7 @@ function StockOperationsPage() {
   const [records, setRecords] = useState<StockRecordRow[]>([]);
   const [loading, setLoading] = useState(false);
   const refreshSequence = useRef(0);
+  const loadedScope = useRef<string | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [branchFilter, setBranchFilter] = useState<string>("current");
@@ -90,13 +93,17 @@ function StockOperationsPage() {
 
   const refresh = useCallback(async () => {
     const sequence = ++refreshSequence.current;
-    setLoading(true);
+    const scope = `${branchFilter}:${currentStore.id}`;
+    const initial = loadedScope.current !== scope;
+    setLoading(initial);
+    if (initial) setRecords([]);
     try {
       const list = (await db.listStockCountRecords({
         storeId: branchFilter === ALL ? null : currentStore.id,
       })) as unknown as StockRecordRow[];
       if (sequence !== refreshSequence.current) return;
-      setRecords(list);
+      loadedScope.current = scope;
+      setRecords(previous => reconcileLiveRows(previous, list));
       setViewing(current => current ? list.find(row => row.id === current.id) ?? current : null);
       setReadError(null);
     } catch (error) {
@@ -377,21 +384,21 @@ function StockOperationsPage() {
                       <p className="break-all font-mono text-sm font-medium">{r.reference || "—"}</p>
                       <p className="mt-1 text-xs text-muted-foreground">{r.store_code || r.store_id || "—"}</p>
                     </div>
-                    <Badge variant="outline" className="shrink-0 text-[10px] capitalize">{r.status}</Badge>
+                    <Badge status={r.status} variant="outline" className="shrink-0 text-[10px] capitalize">{r.status}</Badge>
                   </div>
-                  <dl className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="relative grid grid-cols-[1fr_1fr_6rem] items-start gap-2 text-xs">
                     <div><dt className="text-muted-foreground">Items</dt><dd className="numeric font-medium">{r.line_count ?? 0}</dd></div>
                     <div><dt className="text-muted-foreground">Impact</dt><dd className="numeric font-medium">{money(Number(r.total_impact ?? 0))}</dd></div>
-                  </dl>
-                  <details className="text-xs">
-                    <summary className="w-fit cursor-pointer rounded py-2 font-medium text-primary">More details</summary>
-                    <dl className="grid grid-cols-2 gap-3 py-2 [&_dd]:break-words [&_dt]:text-muted-foreground">
-                      <div><dt>Created</dt><dd>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</dd></div>
+                  <details className="col-span-3 text-xs">
+                    <summary className="absolute right-0 top-0 cursor-pointer rounded py-2 text-right font-medium text-primary">More details</summary>
+                    <dl className="col-span-3 grid grid-cols-2 gap-3 py-2 [&_dd]:break-words [&_dt]:text-muted-foreground">
+                      <div><dt>Created</dt><dd>{r.created_at ? posDisplayDateTime(new Date(r.created_at)) : "—"}</dd></div>
                       <div><dt>Created by</dt><dd>{r.staff_name || "—"}</dd></div>
-                      <div><dt>Posted</dt><dd>{r.posted_at ? new Date(r.posted_at).toLocaleString() : "—"}</dd></div>
+                      <div><dt>Posted</dt><dd>{r.posted_at ? posDisplayDateTime(new Date(r.posted_at)) : "—"}</dd></div>
                       <div><dt>Posted by</dt><dd>{r.posted_by || "—"}</dd></div>
                     </dl>
                   </details>
+                  </div>
                   <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2">{recordActions(r)}</div>
                 </article>)}
               </div>
@@ -415,7 +422,7 @@ function StockOperationsPage() {
                       <TableRow key={r.id} summaryValues={{ Items: Number(r.line_count ?? 0), "Net impact": Number(r.total_impact ?? 0) }}>
                         <TableCell className="font-mono">{r.reference || "—"}</TableCell>
                         <TableCell>
-                          <Badge
+                          <Badge status={r.status}
                             variant="outline"
                             className={`capitalize ${
                               r.status === "posted"
@@ -431,11 +438,11 @@ function StockOperationsPage() {
                         <TableCell
                           title={
                             r.posted_at
-                              ? `Posted ${new Date(r.posted_at).toLocaleString()}`
+                              ? `Posted ${posDisplayDateTime(new Date(r.posted_at))}`
                               : undefined
                           }
                         >
-                          {r.created_at ? new Date(r.created_at).toLocaleString() : "—"}
+                          {r.created_at ? posDisplayDateTime(new Date(r.created_at)) : "—"}
                         </TableCell>
                         <TableCell>{r.store_code || r.store_id || "—"}</TableCell>
                         <TableCell className="numeric text-right">{r.line_count ?? 0}</TableCell>

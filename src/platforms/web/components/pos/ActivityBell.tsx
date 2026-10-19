@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { visibleActivityRows } from "@/lib/notification-visibility";
 import { activeBranchId } from "@/lib/active-branch";
 /** Shared, durable notification acknowledgements; business records remain unchanged. */
@@ -34,7 +35,7 @@ const NOTIFICATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
 const when = (iso: string) => {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? "" : posDisplayDateTime(d);
 };
 
 export function ActivityBell({ compact: _compact }: { compact?: boolean }) {

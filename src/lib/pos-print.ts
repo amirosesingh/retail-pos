@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { receiptBarcode } from "./receipt-barcode";
 import { tenderTotals, shiftSalesOf } from "./shift-close";
 import type {
@@ -111,7 +112,7 @@ const dateTokens = (iso?: string): ReceiptTokenContext => {
   const d = iso ? new Date(iso) : new Date();
   if (Number.isNaN(d.getTime())) return { date: "", time: "" };
   return {
-    date: d.toLocaleDateString(),
+    date: posDisplayDate(d),
     time: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
   };
 };
@@ -482,7 +483,7 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
     <table>
       <tr><td>Receipt</td><td class="r b">${sale.correctedAt ? "Corrected " : ""}${esc(sale.receiptNo)}</td></tr>
       ${sale.exchangeOfReceiptNo ? `<tr><td>Original receipt</td><td class="r b">${esc(sale.exchangeOfReceiptNo)}</td></tr>` : ""}
-      <tr><td>Date</td><td class="r">${new Date(sale.createdAt).toLocaleString()}</td></tr>
+      <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date(sale.createdAt))}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(sale.cashier)}</td></tr>
     </table>
     <hr>
@@ -546,8 +547,8 @@ function shiftBody(
   return `${header(kind === "xreport" ? "X REPORT (MID-SHIFT)" : "Z REPORT (SHIFT CLOSE)")}
     <table>
       <tr><td>Cashier</td><td class="r">${esc(shift.cashier)}</td></tr>
-      <tr><td>Opened</td><td class="r">${new Date(shift.openedAt).toLocaleString()}</td></tr>
-      <tr><td>Closed</td><td class="r">${shift.closedAt ? new Date(shift.closedAt).toLocaleString() : "—"}</td></tr>
+      <tr><td>Opened</td><td class="r">${posDisplayDateTime(new Date(shift.openedAt))}</td></tr>
+      <tr><td>Closed</td><td class="r">${shift.closedAt ? posDisplayDateTime(new Date(shift.closedAt)) : "—"}</td></tr>
     </table><hr>
     ${
       access.financialSummary
@@ -605,7 +606,7 @@ function memberBody(member: Member, sales: Sale[]) {
         ? mine
             .map(
               (s) =>
-                `<tr><td>${esc(s.receiptNo)}<div class="muted">${new Date(s.createdAt).toLocaleDateString()}</div></td><td class="r">${fmt(s.total)}</td></tr>`,
+                `<tr><td>${esc(s.receiptNo)}<div class="muted">${posDisplayDate(new Date(s.createdAt))}</div></td><td class="r">${fmt(s.total)}</td></tr>`,
             )
             .join("")
         : `<tr><td class="muted">No purchases recorded yet</td></tr>`
@@ -730,7 +731,7 @@ export function printTestReceipt() {
   const body = `${header("TEST RECEIPT")}
     <table>
       <tr><td>Printer test</td><td class="r b">OK</td></tr>
-      <tr><td>Date</td><td class="r">${new Date().toLocaleString()}</td></tr>
+      <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date())}</td></tr>
       <tr><td>Print width</td><td class="r">${width}mm</td></tr>
     </table>
     <hr>
@@ -829,13 +830,13 @@ function bookingBody(booking: Booking, member: Member | null, pay: PaymentDetail
   const paidRows = booking.payments
     .map(
       (p) =>
-        `<tr><td>${new Date(p.at).toLocaleDateString()} · ${esc(p.method.toUpperCase())}</td><td class="r">${fmt(p.amount)}</td></tr>`,
+        `<tr><td>${posDisplayDate(new Date(p.at))} · ${esc(p.method.toUpperCase())}</td><td class="r">${fmt(p.amount)}</td></tr>`,
     )
     .join("");
   return `${header("BOOKING / PAY LATER SLIP")}
     <table>
       <tr><td>Booking</td><td class="r b">${esc(booking.ref)}</td></tr>
-      <tr><td>Date</td><td class="r">${new Date(booking.createdAt).toLocaleString()}</td></tr>
+      <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date(booking.createdAt))}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(booking.cashier)}</td></tr>
       ${booking.customerName ? `<tr><td>Customer</td><td class="r">${esc(booking.customerName)}</td></tr>` : ""}
       ${booking.customerPhone ? `<tr><td>Phone</td><td class="r">${esc(booking.customerPhone)}</td></tr>` : ""}
@@ -884,7 +885,7 @@ function bookingPaymentBody(booking: Booking, payment: BookingPayment) {
   return `${header("PART PAYMENT RECEIPT")}
     <table>
       <tr><td>Booking</td><td class="r b">${esc(booking.ref)}</td></tr>
-      <tr><td>Date</td><td class="r">${new Date(payment.at).toLocaleString()}</td></tr>
+      <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date(payment.at))}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(payment.cashier)}</td></tr>
       ${booking.customerName ? `<tr><td>Customer</td><td class="r">${esc(booking.customerName)}</td></tr>` : ""}
     </table>
@@ -959,10 +960,10 @@ function jobCardRows(booking: Booking) {
       ? `<tr><td>Grommet / grip</td><td class="r">${esc(j.grommetNotes)}</td></tr>`
       : "",
     j.droppedOffAt
-      ? `<tr><td>Dropped off</td><td class="r">${esc(new Date(j.droppedOffAt).toLocaleString())}</td></tr>`
+      ? `<tr><td>Dropped off</td><td class="r">${esc(posDisplayDateTime(new Date(j.droppedOffAt)))}</td></tr>`
       : "",
     j.promisedAt
-      ? `<tr><td>Ready by</td><td class="r b">${esc(new Date(j.promisedAt).toLocaleString())}</td></tr>`
+      ? `<tr><td>Ready by</td><td class="r b">${esc(posDisplayDateTime(new Date(j.promisedAt)))}</td></tr>`
       : "",
     booking.jobStatus
       ? `<tr><td>Status</td><td class="r">${esc(booking.jobStatus.toUpperCase())}</td></tr>`
@@ -996,7 +997,7 @@ export function printJobTag(booking: Booking) {
           ? `<tr class="b big"><td>Tension</td><td class="r">${esc(String(j?.tensionMain ?? "—"))}/${esc(String(j?.tensionCross ?? j?.tensionMain ?? "—"))} ${esc(unit)}</td></tr>`
           : ""
       }
-      ${j?.promisedAt ? `<tr><td>Ready by</td><td class="r b">${esc(new Date(j.promisedAt).toLocaleString())}</td></tr>` : ""}
+      ${j?.promisedAt ? `<tr><td>Ready by</td><td class="r b">${esc(posDisplayDateTime(new Date(j.promisedAt)))}</td></tr>` : ""}
       <tr><td>Status</td><td class="r">${esc((booking.jobStatus ?? "received").toUpperCase())}</td></tr>
     </table>
     ${j?.grommetNotes ? `<div class="muted">${esc(j.grommetNotes)}</div>` : ""}
@@ -1036,7 +1037,7 @@ function transferBody(transfer: Transfer, products: Product[], from: Store, to: 
   return `${header(label)}
     <table>
       <tr><td>Reference</td><td class="r b">${esc(transfer.ref)}</td></tr>
-      <tr><td>Date</td><td class="r">${new Date(transfer.createdAt).toLocaleString()}</td></tr>
+      <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date(transfer.createdAt))}</td></tr>
       <tr><td>Status</td><td class="r">${esc((TRANSFER_STATUS_LABELS[transfer.status] ?? transfer.status).toUpperCase())}</td></tr>
       <tr><td>Raised by</td><td class="r">${esc(transfer.createdBy)}</td></tr>
     </table><hr>

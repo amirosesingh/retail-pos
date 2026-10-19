@@ -1,3 +1,5 @@
+import { reconcileLiveRows } from "@/lib/live-state";
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { approvalBranchLabel, approvalDisplayFields, approvalDecisionText } from "@/lib/approval-display";
 import { ApprovalDiscountReview } from "@/platforms/web/components/pos/ApprovalDiscountReview";
@@ -160,9 +162,11 @@ function ApprovalsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const loadSequence = useRef(0);
+  const loadedScope = useRef("");
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current;
-    setLoading(true);
+    const scope = JSON.stringify([storeId, allBranches, status, page, pageSize]);
+    setLoading(loadedScope.current !== scope);
     try {
       const auth = await getPosCallerAuth();
       const res = await listAuthorizationRequests({
@@ -176,7 +180,10 @@ function ApprovalsPage() {
       if (sequence !== loadSequence.current) return;
       setError(res.ok ? "" : (res.error ?? ""));
       // A refused reply may carry no list at all; never hand undefined on.
-      setRows(Array.isArray(res.requests) ? (res.requests as AuthorizationRequest[]) : []);
+      if (res.ok) {
+        loadedScope.current = scope;
+        setRows(previous => reconcileLiveRows(previous, Array.isArray(res.requests) ? res.requests as AuthorizationRequest[] : []));
+      } else setRows([]);
       const nextMe = res.ok ? (res.me ?? null) : null;
       setMe(nextMe);
       if (res.ok && res.pageInfo) { setHasMore(res.pageInfo.hasMore); setPage(res.pageInfo.page); }
@@ -192,7 +199,6 @@ function ApprovalsPage() {
       }
     } catch (e) {
       if (sequence !== loadSequence.current) return;
-      setRows([]);
       setError((e as Error).message);
     }
     if (sequence === loadSequence.current) setLoading(false);
@@ -395,7 +401,7 @@ function ApprovalsPage() {
                         aria-label={`Open ${row.status} approval details`}
                         onClick={() => setOpenRequestId(row.id)}
                       >
-                        <Badge className={STATUS_TONE[row.status] ?? ""} variant="secondary">
+                        <Badge status={row.status} className={STATUS_TONE[row.status] ?? ""} variant="secondary">
                           {row.status}
                         </Badge>
                       </button>
@@ -442,7 +448,7 @@ function ApprovalsPage() {
                   <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain p-5 sm:p-6">
                     {decisionText && <section className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-4" aria-label="Approval decision">
                       <p className="break-words font-semibold [overflow-wrap:anywhere]">{decisionText}</p>
-                      {row.decidedAt && <p className="text-sm text-muted-foreground">{new Date(row.decidedAt).toLocaleString()}</p>}
+                      {row.decidedAt && <p className="text-sm text-muted-foreground">{posDisplayDateTime(new Date(row.decidedAt))}</p>}
                       {row.decisionNote && <p className="whitespace-pre-wrap break-words text-sm">{row.decisionNote}</p>}
                     </section>}
 
@@ -462,11 +468,11 @@ function ApprovalsPage() {
                       </div>
                       <div>
                         <dt className="text-muted-foreground">Created</dt>
-                        <dd>{new Date(row.createdAt).toLocaleString()}</dd>
+                        <dd>{posDisplayDateTime(new Date(row.createdAt))}</dd>
                       </div>
                       <div>
                         <dt className="text-muted-foreground">Expires</dt>
-                        <dd>{new Date(row.expiresAt).toLocaleString()}</dd>
+                        <dd>{posDisplayDateTime(new Date(row.expiresAt))}</dd>
                       </div>
                       <div>
                         <dt className="text-muted-foreground">Terminal</dt>
@@ -475,13 +481,13 @@ function ApprovalsPage() {
                       {row.decidedAt ? (
                         <div>
                           <dt className="text-muted-foreground">Decision time</dt>
-                          <dd>{new Date(row.decidedAt).toLocaleString()}</dd>
+                          <dd>{posDisplayDateTime(new Date(row.decidedAt))}</dd>
                         </div>
                       ) : null}
                       {row.consumedAt ? (
                         <div>
                           <dt className="text-muted-foreground">Grant used</dt>
-                          <dd>{new Date(row.consumedAt).toLocaleString()}</dd>
+                          <dd>{posDisplayDateTime(new Date(row.consumedAt))}</dd>
                         </div>
                       ) : null}
                     </dl>
@@ -875,7 +881,7 @@ function ApprovalRouteReview({ row }: { row: AuthorizationRequest }) {
   const escalation = route.escalationApprovers.map((person) => `${person.name} (${person.role})`);
   const escalatesAt =
     route.escalationAfterMinutes && route.escalationAfterMinutes > 0
-      ? new Date(Date.parse(row.createdAt) + route.escalationAfterMinutes * 60_000).toLocaleString()
+      ? posDisplayDateTime(new Date(Date.parse(row.createdAt) + route.escalationAfterMinutes * 60_000))
       : null;
   return (
     <dl className="grid gap-x-4 gap-y-2 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-2">
@@ -936,7 +942,7 @@ function TicketReview({ row, stores }: { row: AuthorizationRequest; stores: read
           </div>
           <div>
             <dt className="text-muted-foreground">Captured</dt>
-            <dd>{new Date(t.capturedAt).toLocaleString()}</dd>
+            <dd>{posDisplayDateTime(new Date(t.capturedAt))}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Branch</dt>

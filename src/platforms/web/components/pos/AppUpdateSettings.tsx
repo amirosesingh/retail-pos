@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { MinimalUpdatePanel } from "./MinimalUpdatePanel";
 import {
   CheckCircle2,
@@ -156,7 +157,7 @@ function DesktopUpdateCard() {
         {!history.ok && <TileRow label="History unavailable" hint={history.error} />}
         {history.ok && history.releases.length === 0 && <TileRow label="No retained releases listed yet" />}
         {history.releases.map(release => <TileRow key={release.version} label={`v${release.version}`}
-          hint={[release.released ? new Date(release.released).toLocaleDateString() : "", release.notes].filter(Boolean).join(" · ")}
+          hint={[release.released ? posDisplayDate(new Date(release.released)) : "", release.notes].filter(Boolean).join(" · ")}
           value={release.version === version ? "Installed" : "Retained"} />)}
       </TileGroup>}
       <TileGroup title="Version">
@@ -190,7 +191,7 @@ function DesktopUpdateCard() {
             )
           }
           label={status}
-          hint={lastChecked ? `Last checked ${lastChecked.toLocaleString()}` : "Not checked yet"}
+          hint={lastChecked ? `Last checked ${posDisplayDateTime(lastChecked)}` : "Not checked yet"}
           value={
             state.available && state.status !== "current" ? (
               <span className="numeric text-primary">→ v{state.available}</span>
@@ -375,7 +376,7 @@ function AndroidUpdateCard() {
           }
           label={status}
           hint={
-            state.lastChecked ? `Last checked ${state.lastChecked.toLocaleString()}` : "Not checked yet"
+            state.lastChecked ? `Last checked ${posDisplayDateTime(state.lastChecked)}` : "Not checked yet"
           }
           value={
             available && state.latest ? (

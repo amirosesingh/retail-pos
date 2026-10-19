@@ -146,7 +146,7 @@ function RequestsIndex() {
                   <TableCell className="numeric text-right">{totals.Sent}</TableCell>
                   {showCosts && <TableCell className="numeric text-right">{totals["Unpriced lines"] ? "Cost unavailable" : money(totals["Requested estimate"])}</TableCell>}
                   <TableCell>
-                    <Badge variant="outline">{TRANSFER_STATUS_LABELS[t.status]}</Badge>
+                    <Badge status={t.status} variant="outline">{TRANSFER_STATUS_LABELS[t.status]}</Badge>
                   </TableCell>
                   <TableCell>
                     <Button asChild size="sm" variant="ghost">
