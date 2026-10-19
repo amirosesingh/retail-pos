@@ -15,6 +15,19 @@ Cloudflare's connected beta branch uses a Worker version preview, with a Beta
 badge and beta update feed. Production routes stay assigned to the production
 deployment. Preview URLs are enabled in `wrangler.jsonc`.
 
+The dedicated `retail-pos-beta-domains` routing Worker serves only
+`beta-pos.luckycharmsdnbhd.com`, `beta-member.luckycharmsdnbhd.com`, and
+`beta-redeem.luckycharmsdnbhd.com`, forwarding to the fixed beta version alias.
+It has no database credentials. Beta public links use those domains without
+editing the production domains in shared settings. External request origins
+remain external so upstream CSRF checks still apply.
+
+Cloudflare's non-production Version command must use `wrangler versions upload`,
+never `wrangler deploy`. Production builds/deploys wait for the final
+`chore: release vX.Y.Z [release]` commit. An earlier merge build is skipped;
+the final version commit builds and deploys once. The release workflow creates
+that marker even when versioned files were already prepared in the PR.
+
 For now beta uses the existing production database and access rules. Beta sales
 and other writes are real business data. This setup does not create a test
 database or apply migrations.

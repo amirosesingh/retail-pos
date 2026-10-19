@@ -1,0 +1,13 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "retail-pos-beta-domains",
+  "main": "index.mjs",
+  "compatibility_date": "2026-01-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "beta-pos.luckycharmsdnbhd.com", "custom_domain": true },
+    { "pattern": "beta-member.luckycharmsdnbhd.com", "custom_domain": true },
+    { "pattern": "beta-redeem.luckycharmsdnbhd.com", "custom_domain": true }
+  ]
+}

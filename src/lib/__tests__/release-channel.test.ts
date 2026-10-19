@@ -9,6 +9,10 @@ it.each(["stable", "beta"])("%s accepts only its own update channel", async chan
   expect(release.acceptsReleaseVersion("1.4.75")).toBe(channel === "stable");
   expect(release.acceptsReleaseVersion("1.4.75-alpha.1")).toBe(false);
   expect(release.DEFAULT_UPDATE_BASE.endsWith("/beta")).toBe(channel === "beta");
+  const { releasePublicHosts } = await import("../release-public-hosts");
+  const production = { member: "member.luckycharmsdnbhd.com", redeem: "redeem.luckycharmsdnbhd.com" };
+  expect(releasePublicHosts(production).member).toBe(channel === "beta" ? "beta-member.luckycharmsdnbhd.com" : production.member);
+  expect(production.member).toBe("member.luckycharmsdnbhd.com");
 });
 
 it("orders beta updates numerically and stable after prereleases", async () => {

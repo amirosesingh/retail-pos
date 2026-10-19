@@ -6,6 +6,7 @@
  * have loaded (or when nothing is configured) the current origin is used, so
  * the pages always work on the main domain and in the preview.
  */
+import { releasePublicHosts } from "./release-public-hosts";
 type PublicHosts = { member: string; redeem: string };
 
 let hosts: PublicHosts = { member: "", redeem: "" };
@@ -20,7 +21,7 @@ export function toHostname(value: string): string {
 
 /** Called whenever settings load or an admin saves new domains. */
 export function setPublicHosts(memberDomain: string, redeemDomain: string) {
-  const next = { member: toHostname(memberDomain), redeem: toHostname(redeemDomain) };
+  const next = releasePublicHosts({ member: toHostname(memberDomain), redeem: toHostname(redeemDomain) });
   if (next.member === hosts.member && next.redeem === hosts.redeem) return;
   hosts = next;
 }
