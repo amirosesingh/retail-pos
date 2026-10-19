@@ -1,3 +1,4 @@
+import { TransferLoadError } from "@/platforms/web/components/pos/TransferWorkspace";
 import { sameBranchId } from "@/lib/branch-id";
 /**
  * One stock request, in full.
@@ -57,7 +58,7 @@ function RequestDetail() {
   const { id } = Route.useParams();
   const { state, stores, currentStore, approveTransfer, rejectTransfer } = usePos();
   const { can } = useAuth();
-  const { transfer, live, loading } = useTransferRecord(id);
+  const { transfer, live, loading, error: loadError, retry } = useTransferRecord(id);
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
 
@@ -67,6 +68,8 @@ function RequestDetail() {
         <p className="p-10 text-center text-sm text-muted-foreground">Loading request…</p>
       </AppShell>
     );
+
+  if (loadError) return <AppShell><TransferLoadError error={loadError} onRetry={retry} /></AppShell>;
 
   if (!transfer)
     return (

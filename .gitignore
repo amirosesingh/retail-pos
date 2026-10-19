@@ -43,3 +43,6 @@ capacitor-shell/
 .env
 .env.*
 !.env.example
+
+# Web route graph excludes native installer settings.
+/src/routeTree.web.gen.ts

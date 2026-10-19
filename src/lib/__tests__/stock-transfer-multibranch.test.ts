@@ -3,12 +3,24 @@ import { describe, expect, it, vi } from "vitest";
 import type { Store } from "@/core/types/pos-types";
 const { routedQuery } = vi.hoisted(() => ({ routedQuery: vi.fn() }));
 vi.mock("@/core/api/db-query", () => ({ routedQuery }));
-import { loadTransfers, scopeBetween } from "@/lib/stock-transfers";
+import { loadTransfer, loadTransfers, scopeBetween } from "@/lib/stock-transfers";
 
 const store = (id: string, groupId: string): Store =>
   ({ id, code: id, name: id, groupId, address: "", phone: "", isActive: true }) as Store;
 
 describe("multi-branch stock transfer contract", () => {
+  it("distinguishes a detail read failure from a missing record", async () => {
+    routedQuery.mockReset();
+    routedQuery.mockRejectedValueOnce(new Error("Network error"));
+    await expect(loadTransfer("note", { throwOnError: true })).rejects.toThrow("Network error");
+    routedQuery.mockResolvedValueOnce([]);
+    await expect(loadTransfer("note", { throwOnError: true })).resolves.toBeNull();
+  });
+  it("does not display a partly loaded note when line loading fails", async () => {
+    routedQuery.mockReset();
+    routedQuery.mockResolvedValueOnce([{ id: "note", status: "draft" }]).mockRejectedValueOnce(new Error("Line read failed"));
+    await expect(loadTransfer("note", { throwOnError: true })).rejects.toThrow("Line read failed");
+  });
   it("loads transfer line groups with bounded concurrency and retains every page", async () => {
     routedQuery.mockReset();
     const headers = Array.from({ length: 350 }, (_, id) => ({ id: `transfer-${id}`, status: "draft" }));

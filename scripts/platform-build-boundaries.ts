@@ -16,12 +16,20 @@ const windowsOnly = [
   "platforms/windows/components/LocalDatabaseWizard",
   "platforms/windows/components/LocalDatabaseOperations",
 ];
+const updaterOnly = [
+  "routes/settings.updates",
+  "platform-config/native-update-settings",
+  "platforms/web/components/pos/AppUpdateSettings",
+  "platforms/web/components/pos/MinimalUpdatePanel",
+  "lib/app-updates",
+];
 const terminalOnly = [
   "components/shared/EmergencyAccessLink",
   "platforms/web/components/pos/RecoveryHub",
   "platforms/web/components/pos/EmergencyPinGate",
   "platforms/web/components/pos/TerminalActivation",
   "platforms/web/components/pos/ConnectDatabaseScreen",
+  "platforms/web/components/pos/UpdateHeaderButton",
 ];
 
 export function excludedShellModules(platform: BuildPlatform) {
@@ -31,7 +39,9 @@ export function excludedShellModules(platform: BuildPlatform) {
 export function shellAliases(platform: BuildPlatform) {
   return excludedShellModules(platform).map(path => ({
     find: new RegExp(`^.*(?:^|/)${path}(?:\\.tsx?)?$`),
-    replacement: resolve(terminalOnly.includes(path)
+    replacement: resolve(path.endsWith("UpdateHeaderButton")
+      ? "src/platform-config/unsupported-update-header.tsx"
+      : terminalOnly.includes(path)
       ? "src/platform-config/unsupported-terminal-setup.tsx"
       : path.endsWith("NativeWindowFrame") && platform === "android"
       ? "src/platforms/mobile/components/NativeWindowFrame.tsx"
@@ -48,7 +58,7 @@ export function enforceShellBoundary(platform: BuildPlatform): Plugin {
   return {
     name: "enforce-shell-build-boundary",
     generateBundle() {
-      const excluded = [...excludedShellModules(platform), ...(platform === "android" ? [] : [
+      const excluded = [...excludedShellModules(platform), ...(platform === "web" ? updaterOnly : []), ...(platform === "android" ? [] : [
         "platforms/mobile/components/OfflineInterface",
         "platforms/mobile/update-download",
       ])];

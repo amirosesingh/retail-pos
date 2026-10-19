@@ -488,13 +488,11 @@ export function StaffManager() {
         />
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[860px] text-sm">
+        <table className="w-full min-w-[620px] text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
               <th className="py-2">Staff</th>
               <th>Sign-in</th>
-              <th>Role</th>
-              <th>Branch</th>
               <th>Last login</th>
               <th>Status</th>
               <th className="text-right">Actions</th>
@@ -508,34 +506,17 @@ export function StaffManager() {
                   <td className="py-3 pr-3">
                     <p className="font-medium">{row.full_name}</p>
                     <p className="text-xs text-muted-foreground">{row.user_id}</p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      <Badge variant="secondary">{roles.find((role) => role.slug === row.role_slug)?.name ?? row.role_slug}</Badge>
+                      <Badge variant="outline">{row.store_id ? stores.find((store) => store.id === row.store_id)?.name ?? "Assigned branch" : "All branches"}</Badge>
+                    </div>
                   </td>
                   <td className="pr-3">
                     <Badge variant="outline">
                       {terminal ? "Terminal PIN sign-in" : "Email & password"}
                     </Badge>
-                    {row.approval_pin_eligible ? (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {row.pin_set_at
-                          ? `Approval PIN · ${row.pin_length || 6} digits`
-                          : "Approval PIN not set"}
-                      </p>
-                    ) : (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {row.is_active ? "No PIN-enabled approval rule" : "Inactive account"}
-                        {row.is_active && (
-                          <span className="mt-1 block max-w-xs whitespace-normal">
-                            In POS Rules &amp; Enforcement, assign this user to an enabled PIN or PIN-or-request approval rule.
-                          </span>
-                        )}
-                      </p>
-                    )}
                   </td>
-                  <td className="pr-3">
-                    {roles.find((role) => role.slug === row.role_slug)?.name ?? row.role_slug}
-                  </td>
-                  <td className="pr-3">
-                    {stores.find((store) => store.id === row.store_id)?.name ?? "All branches"}
-                  </td>
+
                   <td className="pr-3 text-xs text-muted-foreground">
                     {row.last_login_at ? new Date(row.last_login_at).toLocaleString() : "Never"}
                   </td>
@@ -616,7 +597,7 @@ export function StaffManager() {
             })}
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-muted-foreground">
+                <td colSpan={5} className="py-8 text-center text-muted-foreground">
                   No matching staff accounts.
                 </td>
               </tr>

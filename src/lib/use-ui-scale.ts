@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { isTerminalApp } from "@/platform-config/platform";
+import { isTerminalApp, usesMobileTypography } from "@/platform-config/platform";
 import { INTERFACE_PREFERENCES_RESTORED } from "./theme-storage";
 
 /**
@@ -135,9 +135,9 @@ export function computeUiScale(width: number, height: number): number {
   return Number(clamp(Math.min(byWidth, byHeight), 0.85, 1.35).toFixed(3));
 }
 
-/** Phone browsers use a denser layout; saved text-size multipliers still apply. */
-export function computeUiTextSize(width: number, textScale: number, terminal = false): number {
-  const base = !terminal && width < 768 ? 14 : 16;
+/** Phone browsers and packaged phones use denser text; saved multipliers still apply. */
+export function computeUiTextSize(width: number, textScale: number, terminal = false, mobile = false): number {
+  const base = (!terminal || mobile) && width < 768 ? 14 : 16;
   return Math.round(base * textScale);
 }
 
@@ -167,7 +167,7 @@ export function useUiScale(): number {
     document.documentElement.style.setProperty("--pos-text-scale", String(textScale));
     // Text size drives the root font size, so headings, tables, dialogs and
     // menus all resize together — not just the scaled register shell.
-    document.documentElement.style.fontSize = `${computeUiTextSize(viewportWidth, textScale, terminal)}px`;
+    document.documentElement.style.fontSize = `${computeUiTextSize(viewportWidth, textScale, terminal, usesMobileTypography())}px`;
     document.documentElement.classList.toggle("pos-phone-web", phoneWeb);
     document.documentElement.classList.toggle("pos-compact", density === "compact");
     return () => { document.documentElement.classList.remove("pos-phone-web"); };

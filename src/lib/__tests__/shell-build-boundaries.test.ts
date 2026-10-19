@@ -53,3 +53,28 @@ it("rejects native setup/recovery in web builds and Windows caption code in Andr
     expect(error).toHaveBeenCalledOnce();
   }
 });
+
+for (const module of [
+  "routes/settings.updates", "platform-config/native-update-settings",
+  "platforms/web/components/pos/AppUpdateSettings", "platforms/web/components/pos/MinimalUpdatePanel", "lib/app-updates",
+]) {
+  it(`excludes ${module} from web bundles while retaining native support`, () => {
+    for (const platform of ["web", "android", "windows"] as const) {
+      const error = vi.fn();
+      const hook = enforceShellBoundary(platform).generateBundle as (...args: unknown[]) => void;
+      hook.call({getModuleIds: () => [`/repo/src/${module}.tsx`], error});
+      expect(error).toHaveBeenCalledTimes(platform === "web" ? 1 : 0);
+    }
+  });
+}
+it("removes the updater route and navigation in the web build rather than runtime hiding", async () => {
+  const { UPDATE_SETTINGS_CARDS, UPDATE_SETTINGS_VISIBILITY } = await import("@/platform-config/update-settings");
+  expect(UPDATE_SETTINGS_CARDS).toEqual([]);
+  expect(UPDATE_SETTINGS_VISIBILITY).toEqual([]);
+  const config = readFileSync("vite.config.ts", "utf8");
+  expect(config).toContain('generatedRouteTree: "./routeTree.web.gen.ts"');
+  expect(config).toContain('routeFileIgnorePattern: "settings\\\\.updates\\\\.tsx$"');
+  const alias = shellAliases("web").find(item => item.find.test("@/platforms/web/components/pos/UpdateHeaderButton"))!;
+  expect(alias.replacement.replaceAll("\\", "/")).toContain("unsupported-update-header.tsx");
+  expect(shellAliases("android").some(item => item.find.test("@/platforms/web/components/pos/UpdateHeaderButton"))).toBe(false);
+});

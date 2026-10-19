@@ -26,6 +26,8 @@ import {
 } from "@/components/ui/table";
 import { money, usePos, stockAt } from "@/lib/pos-store";
 import { loadTransfer } from "@/lib/stock-transfers";
+import { Button } from "@/components/ui/button";
+import { subscribeBackgroundRefresh } from "@/lib/background-refresh";
 import { TRANSFER_STATUS_LABELS, type Transfer } from "@/core/types/pos-types";
 
 export const statusStyle: Record<string, string> = {
@@ -56,29 +58,50 @@ export const when = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "â
 export function useTransferRecord(id: string) {
   const { state } = usePos();
   const inState = state.transfers.find((t) => t.id === id) ?? null;
-  const [fetched, setFetched] = useState<Transfer | null>(null);
+  const [fetched, setFetched] = useState<{ id: string; transfer: Transfer | null } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (inState) return;
     let live = true;
     setLoading(true);
-    void loadTransfer(id).then((t) => {
+    setError(null);
+    void loadTransfer(id, { throwOnError: true }).then((t) => {
       if (!live) return;
-      setFetched(t);
+      setFetched({ id, transfer: t });
+    }).catch((cause: unknown) => {
+      if (live) setError(cause instanceof Error ? cause.message : "The transfer could not be loaded.");
+    }).finally(() => {
+      if (!live) return;
       setLoading(false);
     });
     return () => {
       live = false;
     };
-  }, [id, inState]);
+  }, [id, inState, attempt]);
+  useEffect(() => {
+    if (!error || inState) return;
+    return subscribeBackgroundRefresh(() => setAttempt(value => value + 1));
+  }, [error, inState]);
 
   return {
-    transfer: inState ?? fetched,
+    transfer: inState ?? (fetched?.id === id ? fetched.transfer : null),
     /** Actions only run against a note the till is holding. */
     live: Boolean(inState),
-    loading: !inState && loading,
+    loading: !inState && !error && (loading || fetched?.id !== id),
+    error: inState ? null : error,
+    retry: () => setAttempt(value => value + 1),
   };
+}
+
+export function TransferLoadError({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return <div role="alert" className="space-y-3 rounded-lg border border-border bg-card p-6 text-center">
+    <p className="font-medium">This stock movement could not be loaded</p>
+    <p className="break-words text-sm text-muted-foreground">{error}</p>
+    <Button variant="outline" onClick={onRetry}>Retry</Button>
+  </div>;
 }
 
 export function WorkspaceHeader({

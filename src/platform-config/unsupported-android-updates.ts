@@ -1,4 +1,4 @@
-import { APP_VERSION } from "@/lib/app-updates";
+import { APP_VERSION } from "@/version";
 import type { AndroidUpdateState } from "@/platforms/mobile/android-updates";
 
 /** Other targets keep their existing web/desktop updater; no APK installer is bundled. */

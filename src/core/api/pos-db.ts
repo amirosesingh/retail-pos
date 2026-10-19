@@ -1631,9 +1631,19 @@ async function localOpenShift(storeId: string): Promise<Shift | null | undefined
 
 export async function loadShiftsByIds(ids: string[]): Promise<Shift[]> {
   const rows: Row[] = [];
-  for (let start=0; start<ids.length; start+=500) rows.push(...await routedQuery("shifts", {
-    in:{column:"id",values:ids.slice(start,start+500)},limit:500,
-  }));
+  if (!ids.length) return [];
+  const local = effectiveDatabaseMode() === "local";
+  const client = local ? null : await authenticatedExternalClientSnapshot();
+  if (!local && !client) throw new Error("The verified cloud staff session is still being restored.");
+  for (let start = 0; start < ids.length; start += 500) {
+    const batch = ids.slice(start, start + 500);
+    if (local) rows.push(...await routedQuery("shifts", { in: { column: "id", values: batch }, limit: 500 }));
+    else {
+      const result = await client!.rpc("shift_rows_secure" as never, { p_ids: batch } as never);
+      if (result.error) throw result.error;
+      rows.push(...((result.data ?? []) as Row[]));
+    }
+  }
   return rows.map(rowToShift);
 }
 

@@ -5,9 +5,9 @@ import { desktopSupabaseFetch } from "@/lib/desktop-supabase-fetch";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 import { supabaseConfig } from "@/lib/external-supabase-config";
-import { inspectResponse, noteConnectivityIssue } from "@/lib/session-expiry";
+import { inspectResponse, noteConnectivityIssue, clearConnectivityIssue } from "@/lib/session-expiry";
 import { externalAuthStorage } from "./auth-storage";
-import { sessionEpoch } from "@/lib/session-epoch";
+import { sessionEpoch, isCurrentEpoch } from "@/lib/session-epoch";
 import { centralAuthAccessToken } from "@/lib/session-presence";
 import { cashierTokenSync, sessionTokenSync } from "@/lib/pos-credentials";
 
@@ -60,6 +60,7 @@ function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string, useDesktop = true): 
         typeof Request !== "undefined" && input instanceof Request
           ? await transport(new Request(input, { ...init, headers }))
           : await transport(input, { ...init, headers });
+      if (res.ok && isCurrentEpoch(startedAt)) clearConnectivityIssue();
       // Secondary Auth failures must not revoke a separately verified PIN
       // session, nor may a late response revoke a newer sign-in/token.
       const currentBearer = centralAuthAccessToken();
@@ -68,7 +69,7 @@ function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string, useDesktop = true): 
       return res;
     } catch (e) {
       // Network failure / timeout: warn, never sign out.
-      noteConnectivityIssue();
+      if (isCurrentEpoch(startedAt) && (e as { name?: string })?.name !== "AbortError") noteConnectivityIssue();
       throw e;
     }
   };
