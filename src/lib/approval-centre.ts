@@ -1,3 +1,4 @@
+import { subscribeOwnedPostgresChanges } from "./owned-postgres-subscription";
 /**
  * The one place the till talks to the approvals queue.
  *
@@ -19,7 +20,6 @@ import { activeBranchId } from "./active-branch";
 import { localDb } from "@/core/local-db/local-db";
 
 export const CENTRE_POLL_MS = 45_000;
-let approvalChannelSequence = 0;
 
 export type CentreView = {
   /** requests this person may decide */
@@ -182,29 +182,12 @@ export function subscribeApprovals(onChange: () => void | Promise<void>): () => 
   // reconciliation poll. Without a Supabase staff JWT, a filtered Postgres
   // subscription is rejected before RLS as an "invalid column" error.
   if (!hasStaffSession()) return () => cleanups.forEach((cleanup) => cleanup());
-  try {
-    // ActivityBell and the approvals page can be mounted together. Distinct
-    // topics keep one subscriber from replacing the other's channel.
-    const channel = supabaseExternal.channel(`pos-approval-centre:${++approvalChannelSequence}`);
-    const branchId = activeBranchId();
-    if (branchId) {
-      channel.on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "authorization_requests",
-          filter: `store_id=eq.${branchId}`,
-        },
-        changed,
-      );
-    }
-    channel.subscribe();
-    cleanups.push(() => {
-      void supabaseExternal.removeChannel(channel);
-    });
-  } catch {
-    // Keep the local and polling fallback alive when realtime is unavailable.
-  }
+  const branchId = activeBranchId();
+  if (branchId) cleanups.push(subscribeOwnedPostgresChanges(
+    supabaseExternal,
+    "pos-approval-centre",
+    { event: "*", schema: "public", table: "authorization_requests", filter: `store_id=eq.${branchId}` },
+    changed,
+  ));
   return () => cleanups.forEach((cleanup) => cleanup());
 }

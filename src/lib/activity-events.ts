@@ -1,3 +1,4 @@
+import { subscribeOwnedPostgresChanges } from "./owned-postgres-subscription";
 /**
  * Activity notifications.
  *
@@ -800,27 +801,13 @@ export function subscribeActivityEvents(onChange: () => void): () => void {
   // lack of privilege misleadingly as "invalid column for filter store_id".
   // Local SQL notifications plus the reconciliation poll remain authoritative.
   if (!hasStaffSession()) return () => cleanups.forEach((cleanup) => cleanup());
-  try {
-    const channel = supabaseExternal.channel("pos-activity-notifications");
-    const branchId = activeBranchId();
-    if (branchId) {
-      channel.on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "activity_events",
-          filter: `store_id=eq.${branchId}`,
-        },
-        () => onChange(),
-      );
-    }
-    channel.subscribe();
-    cleanups.push(() => {
-      void supabaseExternal.removeChannel(channel);
-    });
-  } catch {
-    // Local SQL notifications still work when the cloud channel is offline.
-  }
+  const branchId = activeBranchId();
+  // Local SQL notifications still work if cloud setup or cleanup fails.
+  if (branchId) cleanups.push(subscribeOwnedPostgresChanges(
+    supabaseExternal,
+    "pos-activity-notifications",
+    { event: "*", schema: "public", table: "activity_events", filter: `store_id=eq.${branchId}` },
+    onChange,
+  ));
   return () => cleanups.forEach((cleanup) => cleanup());
 }

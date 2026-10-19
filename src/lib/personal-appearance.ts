@@ -1,3 +1,4 @@
+import { subscribeOwnedPostgresChanges } from "./owned-postgres-subscription";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useAuth } from "./pos-auth";
 import { readCredentials } from "./pos-credentials";
@@ -110,14 +111,17 @@ export function usePersonalAppearanceSync(key: string, owner: string) {
     })();
     window.addEventListener("online", refresh);
     window.addEventListener("focus", refresh);
-    const channel = hasStaffSession() ? supabaseExternal.channel(`appearance:${owner}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "settings_scoped", filter: `scope_id=eq.${owner}` }, () => { void refresh(); })
-      .subscribe() : null;
+    const stopRealtime = hasStaffSession() ? subscribeOwnedPostgresChanges(
+      supabaseExternal,
+      "appearance",
+      { event: "*", schema: "public", table: "settings_scoped", filter: `scope_id=eq.${owner}` },
+      () => { void refresh(); },
+    ) : () => undefined;
     return () => {
       cancelled = true;
       window.removeEventListener("online", refresh);
       window.removeEventListener("focus", refresh);
-      if (channel) void supabaseExternal.removeChannel(channel);
+      stopRealtime();
     };
   }, [key, owner]);
 }
