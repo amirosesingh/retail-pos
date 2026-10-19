@@ -291,7 +291,7 @@ function AuditPage() {
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Activity Trails</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               {rows.length} of {logs.length} events · includes up to 2,000 recent saved events
             </p>
           </div>

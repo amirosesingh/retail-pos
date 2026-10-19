@@ -156,7 +156,7 @@ function HoldTickets() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Hold tickets</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               {tickets.length} parked ticket{tickets.length === 1 ? "" : "s"} at {currentStore.name}{" "}
               · signed in as {user?.name}
             </p>

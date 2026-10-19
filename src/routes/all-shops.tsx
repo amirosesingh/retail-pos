@@ -165,7 +165,7 @@ function AllShops() {
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">All shops</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Sales from {from} to {to}. Stock quantities and shift status show the current state.
             </p>
           </div>

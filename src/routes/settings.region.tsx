@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Label } from "@/components/ui/label";
@@ -65,7 +66,14 @@ function RegionPage() {
       <div className="space-y-5">
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Country</Label>
+            <div className="flex items-center gap-1">
+              <Label className="text-xs text-muted-foreground">Country</Label>
+              <HelpTip
+                text={
+                  <>Picking a country sets a matching time zone; you can still change it below.</>
+                }
+              />
+            </div>
             <Select
               value={it.country ?? ""}
               onValueChange={(code) => {
@@ -84,9 +92,6 @@ function RegionPage() {
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-[11px] text-muted-foreground">
-              Picking a country sets a matching time zone; you can still change it below.
-            </p>
           </div>
 
           <div className="space-y-1">
@@ -111,7 +116,9 @@ function RegionPage() {
 
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Date format</Label>
-            <p className="rounded-md border border-border px-3 py-2 text-sm">DD-MM-YYYY · 31-12-2026</p>
+            <p className="rounded-md border border-border px-3 py-2 text-sm">
+              DD-MM-YYYY · 31-12-2026
+            </p>
           </div>
 
           <div className="space-y-1">

@@ -117,7 +117,7 @@ function Transfers() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Stock movements</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Requests and transfers touching{" "}
               <span className="text-primary">{currentStore.name}</span>
             </p>

@@ -70,7 +70,7 @@ function ReceivingIndex() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Goods receiving</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Stock arriving at <span className="text-primary">{currentStore.name}</span>. Counts are
               blind: type what is physically in the box, not what the sender wrote.
             </p>

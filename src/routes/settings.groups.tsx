@@ -118,7 +118,7 @@ function GroupSettings() {
       <div className="mx-auto w-full max-w-7xl space-y-5 p-6">
         <header>
           <h1 className="text-2xl font-semibold tracking-tight">Groups &amp; clusters</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground page-description">
             Branches and warehouses belong to a group. A transfer between two different groups
             always needs approval.
           </p>

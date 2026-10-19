@@ -174,7 +174,7 @@ function AlertsHistory() {
           </span>
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Alert History</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Every system alert, with branch, item, quantity, delivery state and full details.
             </p>
           </div>

@@ -156,7 +156,7 @@ function NotificationsReport() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="mr-auto">
             <h1 className="text-2xl font-semibold tracking-tight">Activity & notifications</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Every recorded sign-in, shift, sale, drawer open and staff change, with WhatsApp
               delivery status.
             </p>

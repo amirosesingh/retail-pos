@@ -311,7 +311,7 @@ function ApprovalsPage() {
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold">Approvals</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Review pending requests and completed decisions.
             </p>
           </div>

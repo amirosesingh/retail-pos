@@ -325,7 +325,7 @@ function BookingsPage() {
               <CalendarClock className="size-5 shrink-0 text-primary" />
               <span className="truncate">Bookings, jobs &amp; pay later</span>
             </h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Reserved goods and racket stringing jobs at {currentStore.name}. Stock stays held
               until collection or cancellation.
             </p>

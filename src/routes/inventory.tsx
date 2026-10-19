@@ -323,7 +323,7 @@ function Inventory() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Inventory · {currentStore.name}</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               <AnimatedMetric value={metrics.products} /> active products ·{" "}
               {showStockValue && (
                 <>

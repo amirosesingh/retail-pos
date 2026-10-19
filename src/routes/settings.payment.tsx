@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   SettingsFrame,
@@ -97,11 +98,17 @@ function PaymentForm() {
       <div className="space-y-3 rounded-md border border-border p-3">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm">Payment QR on customer display</p>
-            <p className="text-xs text-muted-foreground">
-              Paste your bank / e-wallet QR payload (EMVCo, UPI, PromptPay, DuitNow) or a payment
-              link.
-            </p>
+            <div className="flex items-center gap-1">
+              <p className="text-sm">Payment QR on customer display</p>
+              <HelpTip
+                text={
+                  <>
+                    Paste your bank / e-wallet QR payload (EMVCo, UPI, PromptPay, DuitNow) or a
+                    payment link.
+                  </>
+                }
+              />
+            </div>
           </div>
           <Switch
             aria-label="Payment QR on customer display"
@@ -135,17 +142,23 @@ function PaymentForm() {
           </div>
         </div>
         <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">QR payload</Label>
+          <div className="flex items-center gap-1">
+            <Label className="text-xs text-muted-foreground">QR payload</Label>
+            <HelpTip
+              text={
+                <>
+                  Dynamic mode replaces {"{amount}"} and {"{reference}"} with the live bill total
+                  and receipt number at checkout.
+                </>
+              }
+            />
+          </div>
           <Textarea
             rows={3}
             placeholder="00020101021226...  or  https://pay.example.com?amt={amount}&ref={reference}"
             value={paymentQr.payload}
             onChange={(e) => setPaymentQr({ payload: e.target.value })}
           />
-          <p className="text-[11px] text-muted-foreground">
-            Dynamic mode replaces {"{amount}"} and {"{reference}"} with the live bill total and
-            receipt number at checkout.
-          </p>
         </div>
       </div>
     </div>

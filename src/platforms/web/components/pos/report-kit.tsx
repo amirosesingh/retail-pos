@@ -250,7 +250,7 @@ export function ReportHeader({
               <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
             </>
           )}
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">{subtitle}</p>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground page-description">{subtitle}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {toolbar}

@@ -185,7 +185,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.documentElement.lang = appearance.profile.language;
     setPersonalLanguage(appearance.profile.language);
-    return () => { setPersonalLanguage("en"); document.documentElement.lang = "en"; };
+    return () => {
+      setPersonalLanguage("en");
+      document.documentElement.lang = "en";
+    };
   }, [appearance.profile.language]);
   // Terminal-wide font / control scaling preference.
   useUiScale();
@@ -294,11 +297,16 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // Persist the activation summary until Continue. Saving the verified config
   // causes background startup checks, which previously unmounted it immediately.
   if ((isDesktop() || isNative()) && activationFlowOpen && !terminal.revoked)
-    return <TerminalActivation onActivationStarted={beginActivationReview} onActivated={() => {
-      setActivationFlowOpen(false);
-      clearRevocation();
-      startup.refresh();
-    }} />;
+    return (
+      <TerminalActivation
+        onActivationStarted={beginActivationReview}
+        onActivated={() => {
+          setActivationFlowOpen(false);
+          clearRevocation();
+          startup.refresh();
+        }}
+      />
+    );
   if (!ready) return <TillLoader message="Restoring your workspace…" />;
   if (
     terminal.hydrating ||
@@ -371,8 +379,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   ).length;
 
   // Receipt identity wins; the locally captured install name is the fallback.
-  const companyName = (typeof state.settings.receipt.companyName === "string"
-    ? state.settings.receipt.companyName.trim() : "") || branding.company;
+  const companyName =
+    (typeof state.settings.receipt.companyName === "string"
+      ? state.settings.receipt.companyName.trim()
+      : "") || branding.company;
 
   // The sidebar and the route guard below run exactly the same test, so a link
   // that is shown always opens, and a link that is hidden cannot be reached by
@@ -384,14 +394,25 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   };
 
   const Brand = ({ mini }: { mini?: boolean }) => (
-    <div className={cn("flex items-center gap-2 px-3 py-4 transition-[gap,padding] duration-[var(--motion-normal)] motion-reduce:transition-none", mini && "gap-0 px-3.5")}>
+    <div
+      className={cn(
+        "flex items-center gap-2 px-3 py-4 transition-[gap,padding] duration-[var(--motion-normal)] motion-reduce:transition-none",
+        mini && "gap-0 px-3.5",
+      )}
+    >
       <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
         <ReceiptText className="size-5" />
       </div>
-      <div aria-hidden={mini || undefined} className={cn("min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:transition-none", mini ? "max-w-0 -translate-x-2 opacity-0" : "max-w-48 translate-x-0 opacity-100")}>
-          <p className="truncate text-sm font-semibold leading-tight">{companyName}</p>
-          <p className="text-[11px] text-muted-foreground">{branding.terminal}</p>
-        </div>
+      <div
+        aria-hidden={mini || undefined}
+        className={cn(
+          "min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:transition-none",
+          mini ? "max-w-0 -translate-x-2 opacity-0" : "max-w-48 translate-x-0 opacity-100",
+        )}
+      >
+        <p className="truncate text-sm font-semibold leading-tight">{companyName}</p>
+        <p className="text-[11px] text-muted-foreground">{branding.terminal}</p>
+      </div>
     </div>
   );
 
@@ -399,11 +420,16 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // is registered to one.
   const mayPickStore = canSwitchStores || (isNative() && isAdmin);
 
-  const StorePicker = () =>
+  const StorePicker = ({ compact = false }: { compact?: boolean } = {}) =>
     mayPickStore ? (
       <Select value={currentStore.id} onValueChange={setCurrentStore}>
-        <SelectTrigger className="h-9 w-full text-xs">
-          <Store className="size-3.5 text-muted-foreground" />
+        <SelectTrigger
+          className={cn(
+            "h-9 w-full gap-2 text-xs [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>span]:text-left",
+            compact && "sidebar-branch-picker",
+          )}
+        >
+          <Store className="size-3.5 shrink-0 text-muted-foreground" />
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -480,7 +506,16 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 header={
                   <>
                     {Brand({ mini: collapsed })}
-                    <div inert={collapsed || undefined} aria-hidden={collapsed || undefined} className={cn("overflow-hidden px-3 transition-[max-height,opacity,padding] duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:transition-none", collapsed ? "max-h-0 pb-0 opacity-0" : "max-h-16 pb-3 opacity-100")}><div className="w-54">{StorePicker()}</div></div>
+                    <div
+                      inert={collapsed || undefined}
+                      aria-hidden={collapsed || undefined}
+                      className={cn(
+                        "overflow-hidden px-3 transition-[max-height,opacity,padding] duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:transition-none",
+                        collapsed ? "max-h-0 pb-0 opacity-0" : "max-h-16 pb-3 opacity-100",
+                      )}
+                    >
+                      <div className="w-54">{StorePicker()}</div>
+                    </div>
                   </>
                 }
               />
@@ -513,7 +548,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                         <>
                           <Brand />
                           <div className="px-3 pb-3">
-                            <StorePicker />
+                            <StorePicker compact />
                           </div>
                         </>
                       }
@@ -589,11 +624,11 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                       ? isSupervisor || can("can_access_pos_settings")
                       : reportsHome
                         ? can("can_view_sales_reports") || can("can_view_audit_trail")
-                      : required === null
-                        ? true
-                        : required === "unknown"
-                          ? isAdmin
-                          : can(required);
+                        : required === null
+                          ? true
+                          : required === "unknown"
+                            ? isAdmin
+                            : can(required);
                   if (allowed && visibleRoute(location.pathname))
                     return <AppShellContext.Provider value>{children}</AppShellContext.Provider>;
                   if (allowed) return <PermissionDenied title="Hidden for your role" flag={null} />;

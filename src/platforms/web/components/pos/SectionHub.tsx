@@ -42,7 +42,7 @@ export function SectionHub({ groupId }: { groupId: string }) {
           </span>
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{group.label}</h1>
-            {group.blurb && <p className="text-sm text-muted-foreground">{group.blurb}</p>}
+            {group.blurb && <p className="text-sm text-muted-foreground page-description">{group.blurb}</p>}
           </div>
         </header>
 

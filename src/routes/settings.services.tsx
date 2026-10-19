@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 /**
  * Bookable services, e.g. racket re-stringing.
  *
@@ -59,11 +60,17 @@ function ServicesForm() {
     <div className="space-y-3">
       <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
         <div>
-          <p className="text-sm">Ask what the racket job is for</p>
-          <p className="text-xs text-muted-foreground">
-            Shows the service picker and labour charge box on a racket service job. General bookings
-            never carry a service fee — they are priced from the cart alone.
-          </p>
+          <div className="flex items-center gap-1">
+            <p className="text-sm">Ask what the racket job is for</p>
+            <HelpTip
+              text={
+                <>
+                  Shows the service picker and labour charge box on a racket service job. General
+                  bookings never carry a service fee — they are priced from the cart alone.
+                </>
+              }
+            />
+          </div>
         </div>
         <Switch
           aria-label="Ask what the racket job is for"
@@ -76,10 +83,10 @@ function ServicesForm() {
 
       <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
         <div>
-          <p className="text-sm">Allow a typed-in service</p>
-          <p className="text-xs text-muted-foreground">
-            For one-off jobs that are not on the list.
-          </p>
+          <div className="flex items-center gap-1">
+            <p className="text-sm">Allow a typed-in service</p>
+            <HelpTip text={<>For one-off jobs that are not on the list.</>} />
+          </div>
         </div>
         <Switch
           aria-label="Allow a typed-in service"

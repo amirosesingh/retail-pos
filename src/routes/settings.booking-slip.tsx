@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
@@ -51,7 +52,17 @@ function BookingSlipForm() {
     <div className="space-y-6">
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-3">
-          <Label htmlFor="booking-terms">Terms &amp; conditions</Label>
+          <div className="flex items-center gap-1">
+            <Label htmlFor="booking-terms">Terms &amp; conditions</Label>
+            <HelpTip
+              text={
+                <>
+                  Each line prints as its own line on the slip. Keep lines short so they fit the
+                  paper width.
+                </>
+              }
+            />
+          </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">Print on booking slips</span>
             <Switch
@@ -71,15 +82,18 @@ function BookingSlipForm() {
           }
           onChange={(e) => patch({ terms: e.target.value })}
         />
-        <p className="text-xs text-muted-foreground">
-          Each line prints as its own line on the slip. Keep lines short so they fit the paper
-          width.
-        </p>
       </div>
 
       <div className="space-y-2 border-t border-border pt-4">
         <div className="flex items-center justify-between gap-3">
-          <Label htmlFor="signature-caption">Customer signature block</Label>
+          <div className="flex items-center gap-1">
+            <Label htmlFor="signature-caption">Customer signature block</Label>
+            <HelpTip
+              text={
+                <>Prints the caption, a signature rule with the customer name, and a date line.</>
+              }
+            />
+          </div>
           <Switch
             aria-label="Print customer signature block"
             checked={cfg.showSignature}
@@ -92,17 +106,14 @@ function BookingSlipForm() {
           placeholder="I accept the terms above and confirm the racket details are correct."
           onChange={(e) => patch({ signatureCaption: e.target.value })}
         />
-        <p className="text-xs text-muted-foreground">
-          Prints the caption, a signature rule with the customer name, and a date line.
-        </p>
       </div>
 
       <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
         <div>
-          <Label>Repeat terms on part-payment receipts</Label>
-          <p className="text-xs text-muted-foreground">
-            Off by default — the part-payment slip stays short.
-          </p>
+          <div className="flex items-center gap-1">
+            <Label>Repeat terms on part-payment receipts</Label>
+            <HelpTip text={<>Off by default — the part-payment slip stays short.</>} />
+          </div>
         </div>
         <Switch
           aria-label="Repeat terms on part-payment receipts"

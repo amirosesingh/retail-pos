@@ -228,7 +228,7 @@ function LiveBoard() {
               ← Reports &amp; Analytics
             </Link>
             <h1 className="text-2xl font-semibold tracking-tight">Live Business Board</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               {data?.localOnly
                 ? "This terminal’s branch — reports calculated from local SQL Server. Group-wide reports are available on the web."
                 : "Every shop combined — categories, item drilldown, revenue share and margin. Refreshes every minute."}

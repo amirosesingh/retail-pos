@@ -55,6 +55,12 @@
 }
 
 /* Keep dialog grids and dense tables inside the visible device viewport. */
+.page-description {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
 .pos-popup-surface {
   font-size: 0.875rem;
   line-height: 1.5;
@@ -79,6 +85,14 @@
   .pos-popup-surface [data-control-size="icon"] { min-width: 44px; }
   /* Native-size text avoids browser focus zoom; labels remain compact. */
   .pos-popup-surface :is(.pos-text-field, .pos-text-area, .pos-select-field) { font-size: max(16px, 1rem); }
+  /* The sidebar branch picker is a button, not a text input needing zoom protection. */
+  .pos-popup-surface .pos-select-field.sidebar-branch-picker {
+    min-height: 40px;
+    height: 40px;
+    padding: 6px 10px;
+    font-size: 12px;
+    line-height: 1.25;
+  }
 }
 .pos-dialog-content {
   max-height: calc(100dvh - 1rem);

@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import {
@@ -62,11 +63,17 @@ function RoundingForm() {
   return (
     <section className="space-y-4 rounded-lg border border-border p-4">
       <div>
-        <h2 className="text-sm font-semibold">Billing &amp; totals</h2>
-        <p className="text-[11px] text-muted-foreground">
-          Rounding applies to the final amount the customer pays. Line-item prices are never
-          changed.
-        </p>
+        <div className="flex items-center gap-1">
+          <h2 className="text-sm font-semibold">Billing &amp; totals</h2>
+          <HelpTip
+            text={
+              <>
+                Rounding applies to the final amount the customer pays. Line-item prices are never
+                changed.
+              </>
+            }
+          />
+        </div>
       </div>
 
       <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
@@ -124,10 +131,17 @@ function RoundingForm() {
           </div>
           <div className="flex items-center justify-between rounded-md border border-border px-3 py-2 md:col-span-2">
             <div>
-              <p className="text-sm font-medium">Show rounding on receipt</p>
-              <p className="text-[11px] text-muted-foreground">
-                Printed only when rounding lowers the bill. A round-up is always applied silently.
-              </p>
+              <div className="flex items-center gap-1">
+                <p className="text-sm font-medium">Show rounding on receipt</p>
+                <HelpTip
+                  text={
+                    <>
+                      Printed only when rounding lowers the bill. A round-up is always applied
+                      silently.
+                    </>
+                  }
+                />
+              </div>
             </div>
             <Switch
               checked={rounding.showOnReceipt}
@@ -147,12 +161,18 @@ function TaxForm() {
     <section className="space-y-4 rounded-lg border border-border p-4">
       <div>
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-sm font-semibold">Tax</h2>
+          <div className="flex items-center gap-1">
+            <h2 className="text-sm font-semibold">Tax</h2>
+            <HelpTip
+              text={
+                <>
+                  One effective percentage is applied to every taxable item at this settings scope.
+                </>
+              }
+            />
+          </div>
           <ScopeBadge path="tax.enabled" />
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          One effective percentage is applied to every taxable item at this settings scope.
-        </p>
       </div>
       <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
         <div>

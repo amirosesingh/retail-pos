@@ -101,7 +101,7 @@ function Verifications() {
             <h1 className="flex items-center gap-2 text-2xl font-semibold">
               <ShieldCheck className="size-5 text-primary" /> Member verification log
             </h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Every code sent and what happened to it. The codes themselves are never stored in a
               readable form, so only the outcome is shown here.
             </p>

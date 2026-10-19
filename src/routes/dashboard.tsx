@@ -167,7 +167,7 @@ function Dashboard() {
       <div className="space-y-6 p-6">
         <header>
           <h1 className="text-2xl font-semibold">Live dashboard · {currentStore.name}</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground page-description">
             Today&apos;s revenue, margin, peak trading hours and behaviour flags.
           </p>
         </header>
