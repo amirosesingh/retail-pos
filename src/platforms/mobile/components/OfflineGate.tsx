@@ -1,3 +1,6 @@
+import { Toaster } from "sonner";
+import { ConnectDatabaseScreen } from "@/platforms/web/components/pos/ConnectDatabaseScreen";
+import { isNative } from "@/platform-config/platform";
 import { ApprovalTokenButton } from "@/platform-config/approval-token";
 /**
  * Connection gate for the browser and Android builds.
@@ -67,8 +70,17 @@ export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
 
   if ((!live && !force) || recovery) return null;
 
+  // Only a completed local restore can identify first-run setup. Network loss,
+  // unreadable storage and rejected credentials must never reset registration.
+  if (isNative() && (profile?.state === "missing" || profile?.state === "incomplete")) {
+    return <>
+      <ConnectDatabaseScreen cloudConfigured={profile.have.supabaseKey} onRetry={() => { void heartbeat(); }} />
+      <Toaster position="top-right" closeButton />
+    </>;
+  }
+
   // Still checking: the cloud icon alone, nothing else on screen.
-  if (state === "connecting")
+  if (state === "connecting" || (isNative() && profile === null))
     return (
       <div
         className="flex min-h-screen items-center justify-center bg-background"

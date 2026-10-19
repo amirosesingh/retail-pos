@@ -44,6 +44,13 @@ describe("connectivity lifecycle ownership", () => {
     expect(store).toContain("APP_RESUME_EVENT");
   });
 
+  it("opens Android setup only after local settings are confirmed absent", () => {
+    expect(gate).toContain('isNative() && (profile?.state === "missing" || profile?.state === "incomplete")');
+    expect(gate.indexOf("<ConnectDatabaseScreen")).toBeLessThan(gate.indexOf('const browserOffline'));
+    expect(gate).toContain('isNative() && profile === null');
+    expect(gate).toContain('cloudConfigured={profile.have.supabaseKey}');
+  });
+
   it("distinguishes offline, timeout, service and configuration messages", () => {
     expect(gate).toContain("No internet connection. Please check your connection and try again.");
     expect(gate).toContain("The central service is taking too long to respond");

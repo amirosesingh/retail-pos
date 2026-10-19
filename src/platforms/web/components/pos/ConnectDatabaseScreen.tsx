@@ -53,31 +53,31 @@ export function ConnectDatabaseScreen({
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#0f172a] p-6 text-slate-100">
-      <div className="w-full max-w-lg space-y-4 rounded-2xl border border-slate-700/70 bg-slate-900/80 p-6">
+    <div className="flex min-h-screen items-center justify-center bg-background p-4 text-foreground sm:p-6">
+      <div className="w-full max-w-lg space-y-4 rounded-2xl border border-border bg-card p-6">
         <div className="flex items-center gap-3">
-          <div className="flex size-11 items-center justify-center rounded-xl bg-sky-500/15 text-sky-400 ring-1 ring-sky-500/40">
+          <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/20">
             <CloudCog className="size-6" />
           </div>
           <div>
             <h1 className="text-lg font-semibold">Connect to the database</h1>
-            <p className="text-xs text-slate-400">Step 1 of 2 · then activate this terminal</p>
+            <p className="text-xs text-muted-foreground">Step 1 of 2 · then activate this terminal</p>
           </div>
         </div>
 
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-muted-foreground">
           {cloudConfigured
             ? "The saved database details are not answering right now. Check the address and key below, or try again once the network is back."
             : "Enter the central database address and publishable key for your company. They are sealed in this device's secure store."}
         </p>
 
-        <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-4">
+        <div className="rounded-xl border border-border bg-muted/40 p-4">
           <CloudConnectionPanel onConnected={continueStartup} />
         </div>
 
         <div className="flex flex-wrap gap-2">
           <Button
-            className="bg-sky-500 text-slate-950 hover:bg-sky-400"
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
             disabled={checking}
             onClick={() => void continueStartup()}
           >
@@ -91,7 +91,7 @@ export function ConnectDatabaseScreen({
           {hasSavedConfiguration && (
             <Button
               variant="outline"
-              className="border-slate-700 bg-slate-800/60 text-slate-100 hover:bg-slate-800"
+              className="border-border bg-muted text-foreground hover:bg-accent"
               onClick={() => void navigate({ to: "/recovery" })}
             >
               <LifeBuoy className="size-4" />

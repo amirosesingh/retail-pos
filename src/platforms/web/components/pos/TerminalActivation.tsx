@@ -50,14 +50,14 @@ function Frame({ children, bare }: { children: React.ReactNode; bare?: boolean }
   // inside the Emergency Access hub as one card among several.
   if (bare) {
     return (
-      <div className="rounded-xl border border-slate-700/70 bg-slate-900/80 p-4 text-slate-100">
+      <div className="rounded-xl border border-border bg-card p-4 text-foreground">
         {children}
       </div>
     );
   }
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#0f172a] p-6 text-slate-100">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-700/70 bg-slate-900/80 p-6 shadow-[0_0_60px_-15px_rgba(56,189,248,0.45)]">
+    <div className="flex min-h-screen items-center justify-center bg-background p-4 text-foreground sm:p-6">
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-sm">
         {children}
       </div>
     </div>
@@ -90,6 +90,8 @@ export function TerminalActivation({
   // hydrate a different QR than the server drew and blow up the page.
   const [pairing, setPairing] = useState<PairingRequest | null>(null);
   useEffect(() => {
+    // Android consumes activation codes; only a Windows till displays a pairing request.
+    if (mobile) return;
     let cancelled = false;
     void getPairingRequest()
       .then((request) => {
@@ -104,7 +106,7 @@ export function TerminalActivation({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mobile]);
   const pairQr = useMemo(
     () => (pairing ? qrDataUrl(encodePairingRequest(pairing)) : ""),
     [pairing],
@@ -218,25 +220,25 @@ export function TerminalActivation({
   return (
     <Frame bare={embedded}>
       <div className="flex items-center gap-3">
-        <div className="flex size-11 items-center justify-center rounded-xl bg-sky-500/15 text-sky-400 ring-1 ring-sky-500/40">
+        <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/20">
           <ShieldCheck className="size-6" />
         </div>
         <div>
           <h1 className="text-lg font-semibold">Activate this {mobile ? "phone or tablet" : "Windows till"}</h1>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-muted-foreground">
             {branding.company} · {branding.terminal}
           </p>
         </div>
       </div>
 
-      <p className="mt-4 text-sm text-slate-400">
+      <p className="mt-4 text-sm text-muted-foreground">
         Ask a supervisor or administrator for {mobile ? "a mobile terminal" : "a Windows till"} activation code
         for this location. Scan the QR code or paste the text block below. This code registers the
         device; each staff member signs in with their own account afterward.
       </p>
 
       <Tabs defaultValue="scan" className="mt-4">
-        <TabsList className="grid w-full grid-cols-2 bg-slate-800/60">
+        <TabsList className="grid w-full grid-cols-2 bg-muted">
           <TabsTrigger value="scan">
             <Camera className="size-4" /> Scan QR
           </TabsTrigger>
@@ -257,7 +259,7 @@ export function TerminalActivation({
               />
               <Button
                 variant="ghost"
-                className="w-full text-slate-300"
+                className="w-full text-foreground"
                 onClick={() => setScanning(false)}
               >
                 Cancel scanning
@@ -266,7 +268,7 @@ export function TerminalActivation({
           ) : (
             <Button
               variant="outline"
-              className="w-full border-slate-700 bg-slate-800/60 text-slate-100 hover:bg-slate-800"
+              className="w-full border-border bg-muted text-foreground hover:bg-accent"
               onClick={() => setScanning(true)}
             >
               <Camera className="size-4" /> Scan the activation QR code
@@ -275,7 +277,7 @@ export function TerminalActivation({
         </TabsContent>
 
         <TabsContent value="manual" className="mt-4 space-y-2">
-          <Label htmlFor="activation-code" className="text-xs text-slate-400">
+          <Label htmlFor="activation-code" className="text-xs text-muted-foreground">
             One-time activation token
           </Label>
           <Textarea
@@ -285,11 +287,11 @@ export function TerminalActivation({
             rows={4}
             spellCheck={false}
             placeholder="ENC_V1:…"
-            className="border-slate-700 bg-slate-950/60 font-mono text-xs text-slate-100"
+            className="border-border bg-background font-mono text-xs text-foreground"
           />
           <Button
             variant="ghost"
-            className="w-full text-slate-300"
+            className="w-full text-foreground"
             onClick={async () => {
               try {
                 const text = await navigator.clipboard.readText();
@@ -304,20 +306,20 @@ export function TerminalActivation({
         </TabsContent>
       </Tabs>
 
-      {!mobile && <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/50">
+      {!mobile && <div className="mt-4 rounded-xl border border-border bg-muted/40">
         <button
           type="button"
           onClick={() => setShowPairing((v) => !v)}
-          className="flex w-full items-center justify-between p-3 text-sm font-medium text-slate-200"
+          className="flex w-full items-center justify-between p-3 text-sm font-medium text-foreground"
         >
           <span className="flex items-center gap-2">
-            <Smartphone className="size-4 text-sky-400" /> Pair from the phone app
+            <Smartphone className="size-4 text-primary" /> Pair from the phone app
           </span>
           <ChevronDown className={`size-4 transition ${showPairing ? "rotate-180" : ""}`} />
         </button>
         {showPairing && (
-          <div className="border-t border-slate-800 p-3">
-            <p className="text-xs text-slate-400">
+          <div className="border-t border-border p-3">
+            <p className="text-xs text-muted-foreground">
               Scan this code from Settings → Terminal activation on the Android app and approve it.
               This till registers itself — nothing to type or copy.
             </p>
@@ -329,12 +331,12 @@ export function TerminalActivation({
                   className="size-32 rounded-lg bg-white p-1"
                 />
               ) : (
-                <div className="grid size-32 place-items-center rounded-lg border border-slate-700 bg-slate-900">
-                  <Loader2 className="size-5 animate-spin text-slate-500" />
+                <div className="grid size-32 place-items-center rounded-lg border border-border bg-card">
+                  <Loader2 className="size-5 animate-spin text-muted-foreground" />
                 </div>
               )}
-              <div className="text-[11px] text-slate-500">
-                <p className="font-mono break-all text-slate-400">
+              <div className="text-[11px] text-muted-foreground">
+                <p className="font-mono break-all text-muted-foreground">
                   {pairing ? `${pairing.tokenId.slice(0, 8)}…` : "Preparing…"}
                 </p>
                 <p className="mt-2 flex items-center gap-1">
@@ -352,7 +354,7 @@ export function TerminalActivation({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="mt-2 border-slate-700 bg-slate-900"
+                    className="mt-2 border-border bg-card"
                     onClick={() => {
                       clearPairingRequest();
                       setPairing(null);
@@ -378,21 +380,21 @@ export function TerminalActivation({
       </div>}
 
       {!online && (
-        <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950/50 p-3 text-sm text-slate-400">
+        <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
           No connection to the central database right now. Activation needs one — this screen will
           pick up automatically as soon as the link is back.
         </div>
       )}
 
       {error && (
-        <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-destructive">
           <ShieldAlert className="mt-0.5 size-4 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
       <Button
-        className="mt-4 h-11 w-full bg-sky-500 text-slate-950 hover:bg-sky-400"
+        className="mt-4 h-11 w-full bg-primary text-primary-foreground hover:bg-primary/90"
         disabled={busy || !online}
         onClick={() => void submit(code)}
       >
@@ -400,7 +402,7 @@ export function TerminalActivation({
         Activate terminal
       </Button>
 
-      <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-slate-500">
+      <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
         <ScanLine className="size-3.5" /> The code links this machine to one location.
       </p>
 
@@ -408,7 +410,7 @@ export function TerminalActivation({
           configured yet — still needs the repair screen. Never a dead end. */}
       {!embedded && (
         <div className="mt-4 flex justify-center">
-          <EmergencyAccessLink className="border-slate-700 bg-slate-800/60 text-slate-200 hover:bg-slate-800" />
+          <EmergencyAccessLink className="border-border bg-muted text-foreground hover:bg-accent" />
         </div>
       )}
     </Frame>
@@ -428,17 +430,17 @@ export function TerminalRevokedScreen({
         <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-red-500/15 text-red-400 ring-1 ring-red-500/40">
           <ShieldAlert className="size-7" />
         </div>
-        <h1 className="mt-4 text-lg font-semibold text-red-300">
+        <h1 className="mt-4 text-lg font-semibold text-destructive">
           {missing
             ? "This terminal is no longer registered on the database."
             : "This device's authorization has been revoked by the master administrator."}
         </h1>
-        <p className="mt-2 text-sm text-slate-400">
+        <p className="mt-2 text-sm text-muted-foreground">
           {missing
             ? "Its registration record was removed, so the register is locked and cloud sync is blocked. Ask an administrator for a new activation code."
             : "Cloud sync is blocked and the register is locked. Contact head office for a new activation code."}
         </p>
-        <p className="mt-5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+        <p className="mt-5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-destructive">
           This lock cannot be dismissed on the terminal. An administrator must register the
           device again through the controlled recovery process.
         </p>
