@@ -45,3 +45,26 @@ test("workflow keeps checks automatic but publishes paired beta apps only by req
   assert.equal(workflow.jobs.windows.with.release_channel, "beta");
   assert.ok(workflow.jobs.prepare.steps.find(step => step.run === "node scripts/check-beta-publication.cjs"));
 });
+
+for (const name of ["android-apk.yml", "desktop-release.yml"]) {
+  test(`${name} resolves explicit beta tags without weakening stable tag validation`, () => {
+    const { spawnSync } = require("node:child_process");
+    const os = require("node:os"), path = require("node:path");
+    const workflow = yaml.load(fs.readFileSync(`.github/workflows/${name}`, "utf8"));
+    const job = Object.values(workflow.jobs)[0];
+    const source = job.steps.find(step => step.name === "Resolve release identity").run;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "beta-identity-"));
+    const output = path.join(directory, "identity.txt");
+    const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "bash";
+    const version = require("../package.json").version;
+    try {
+      for (const [channel, ref, expected] of [["beta", "beta-publish-20261019-050000", 0], ["stable", `v${version}`, 0], ["stable", "v0.0.0", 1]]) {
+        const script = source.replaceAll("${{ startsWith(github.ref, 'refs/tags/') }}", "true").replaceAll("${{ github.ref_name }}", ref).replaceAll("${{ inputs.beta_number }}", "10");
+        const result = spawnSync(bash, ["-e", "-c", script], { encoding: "utf8", env: { ...process.env, RELEASE_CHANNEL: channel, BETA_VERSION: "1.4.75-beta.10", GITHUB_SHA: sha, GITHUB_OUTPUT: output.replaceAll("\\", "/") } });
+        assert.equal(result.status, expected, result.stderr || result.stdout);
+        if (channel === "beta") assert.match(fs.readFileSync(output, "utf8"), /tag=beta-v1\.4\.75-beta\.10/);
+        if (fs.existsSync(output)) fs.unlinkSync(output);
+      }
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+}
