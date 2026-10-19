@@ -34,7 +34,7 @@ jobs:
           npm run verify:sync-registry
           node scripts/audit-supabase-install-order.cjs
       - name: Updater lifecycle and release retention checks
-        run: node --test scripts/test-updater.cjs scripts/test-windows-publish.cjs scripts/test-update-history.cjs scripts/test-shutdown-sync.cjs scripts/test-report-days.cjs scripts/test-beta-release.cjs scripts/test-beta-domains.cjs scripts/test-beta-retention.cjs scripts/test-beta-publication.cjs
+        run: node --test scripts/test-updater.cjs scripts/test-windows-publish.cjs scripts/test-update-history.cjs scripts/test-shutdown-sync.cjs scripts/test-report-days.cjs scripts/test-beta-release.cjs scripts/test-beta-domains.cjs scripts/test-beta-retention.cjs scripts/test-beta-publication.cjs scripts/test-android-update-setup.cjs
       - name: Lint
         run: npm run lint
       - name: Typecheck & build

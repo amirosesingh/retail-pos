@@ -116,6 +116,7 @@ jobs:
           npx cap sync android
           node scripts/android-permissions.cjs
           node scripts/android-push-setup.cjs
+          node scripts/android-update-setup.cjs
 
       - name: Validate Android signing secrets
         env:
