@@ -37,6 +37,7 @@ import {
   trendSeries,
   type ItemDayRow,
 } from "@/lib/analytics-board";
+import { AnalyticsCardRail } from "@/platforms/web/components/pos/AnalyticsCardRail";
 import { canonicalBranchId } from "@/lib/branch-id";
 
 export const Route = createFileRoute("/analytics")({
@@ -220,7 +221,7 @@ function LiveBoard() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="min-w-0 space-y-5 p-3 sm:p-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <Link to="/reports" className="text-xs text-muted-foreground hover:text-foreground">
@@ -314,7 +315,7 @@ function LiveBoard() {
           <AnalyticsErrorPanel error={query.error} onRetry={() => void query.refetch()} />
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+        <div aria-label="Business totals" className="summary-grid grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
           <StatCard label="Revenue" value={money(totals.revenue)} hint={`${totals.bills} bills`} />
           <StatCard
             label="Gross profit"
@@ -349,9 +350,9 @@ function LiveBoard() {
 
         {!empty && !query.isLoading && (
           <>
-            <div className="grid items-stretch gap-4 xl:grid-cols-12">
+            <div className="min-w-0">
               <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
-                <div className="mb-3 flex items-center justify-between">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-sm font-semibold">Top categories — all shops combined</h2>
                   <div className="flex gap-1">
                     <Button
@@ -370,13 +371,13 @@ function LiveBoard() {
                     </Button>
                   </div>
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2">
+                <AnalyticsCardRail title="Categories">
                   {combinedCategories.map((category) => (
                     <button
                       key={category.name}
                       type="button"
                       onClick={() => setSelectedCategory(category.name)}
-                      className={`group flex min-w-0 items-center gap-3 rounded-lg border p-3 text-left transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-primary/60 ${
+                      className={`group flex min-h-24 w-full min-w-0 items-center gap-3 rounded-lg border p-3 text-left transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-primary/60 ${
                         selectedCategory === category.name
                           ? "border-primary bg-primary/10"
                           : "border-border bg-card"
@@ -404,30 +405,10 @@ function LiveBoard() {
                       No category sales in this range.
                     </p>
                   )}
-                </div>
+                </AnalyticsCardRail>
               </section>
 
-              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-5">
-                <h2 className="mb-3 text-sm font-semibold">Revenue share by shop</h2>
-                <ResponsiveContainer width="100%" height={260}>
-                  <PieChart>
-                    <Pie
-                      data={shops}
-                      dataKey="revenue"
-                      nameKey="name"
-                      innerRadius={70}
-                      outerRadius={92}
-                      paddingAngle={2}
-                    >
-                      {shops.map((s) => (
-                        <Cell key={s.storeId} fill={branchChartColor(s.storeId)} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(v) => money(Number(v ?? 0))} />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </section>
+
             </div>
 
             {selectedCategory && (
@@ -477,9 +458,7 @@ function LiveBoard() {
             )}
 
             <section className="rounded-lg border border-border p-4">
-              <h2 className="mb-3 text-sm font-semibold">Top categories per shop</h2>
-              <div className="max-h-[34rem] overflow-y-auto overscroll-contain pr-2">
-                <div className="grid auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <AnalyticsCardRail title="Top categories per shop">
                   {shops.map((shop) => {
                     const rows = topCategories(
                       itemRows.filter((r) => (r.store_id ?? "") === shop.storeId),
@@ -489,7 +468,7 @@ function LiveBoard() {
                     return (
                       <div
                         key={shop.storeId}
-                        className="min-h-48 rounded-md border border-border p-3"
+                        className="min-h-72 rounded-md border border-border p-3"
                       >
                         <p className="truncate text-sm font-semibold" title={shop.name}>
                           {shop.name}
@@ -524,13 +503,33 @@ function LiveBoard() {
                       </div>
                     );
                   })}
-                </div>
-              </div>
+              </AnalyticsCardRail>
             </section>
 
-            <div className="grid items-stretch gap-4 xl:grid-cols-12">
-              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <AnalyticsCardRail title="Business graphs">
+              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
+                <h2 className="mb-3 min-h-36 text-sm font-semibold">Revenue share by shop</h2>
+                <ResponsiveContainer width="100%" height={270}>
+                  <PieChart>
+                    <Pie
+                      data={shops}
+                      dataKey="revenue"
+                      nameKey="name"
+                      innerRadius={70}
+                      outerRadius={92}
+                      paddingAngle={2}
+                    >
+                      {shops.map((s) => (
+                        <Cell key={s.storeId} fill={branchChartColor(s.storeId)} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v) => money(Number(v ?? 0))} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </section>
+              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
+                <div className="mb-3 flex min-h-36 flex-wrap content-start items-center justify-between gap-2">
                   <div>
                     <h2 className="text-sm font-semibold">Financial performance by shop</h2>
                     <p className="text-xs text-muted-foreground">
@@ -653,8 +652,8 @@ function LiveBoard() {
                 </ResponsiveContainer>
               </section>
 
-              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-5">
-                <h2 className="mb-3 text-sm font-semibold">Where the money went</h2>
+              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
+                <h2 className="mb-3 min-h-36 text-sm font-semibold">Where the money went</h2>
                 <ResponsiveContainer width="100%" height={270}>
                   <BarChart data={shops} barCategoryGap="30%">
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -687,10 +686,9 @@ function LiveBoard() {
                   </BarChart>
                 </ResponsiveContainer>
               </section>
-            </div>
 
             <section className="rounded-lg border border-border p-4">
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3 flex min-h-36 flex-wrap content-start items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold">Revenue and profit trend</h2>
                 <div className="flex gap-1">
                   <Button
@@ -709,7 +707,7 @@ function LiveBoard() {
                   </Button>
                 </div>
               </div>
-              <ResponsiveContainer width="100%" height={260}>
+              <ResponsiveContainer width="100%" height={270}>
                 <LineChart data={trend}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="label" fontSize={11} />
@@ -735,6 +733,7 @@ function LiveBoard() {
                 </LineChart>
               </ResponsiveContainer>
             </section>
+            </AnalyticsCardRail>
           </>
         )}
       </div>

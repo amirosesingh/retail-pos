@@ -306,7 +306,7 @@ export function TerminalWorkspaceHome() {
             </div>
           </header>
 
-          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <section className="summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {visible("workspace.shiftStatus") && (
               <Metric
                 label="Shift"
@@ -384,7 +384,7 @@ export function TerminalWorkspaceHome() {
                 <p className="text-sm text-muted-foreground">Your everyday tools, one step away.</p>
               </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="workspace-actions grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3">
               {visibleActions.map((action, index) => (
                 <Link
                   key={`${action.to}-${action.label}`}
@@ -392,14 +392,14 @@ export function TerminalWorkspaceHome() {
                   search={action.sell ? { sell: true } : {}}
                   className="group rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 >
-                  <Card className="h-full transition-[border-color,background-color] duration-[var(--motion-fast)] group-hover:border-primary/40 group-hover:bg-muted/25 motion-reduce:transition-none">
-                    <CardHeader className="flex flex-row items-center gap-3 pb-2">
+                  <Card className="workspace-action-card h-full transition-[border-color,background-color] duration-[var(--motion-fast)] group-hover:border-primary/40 group-hover:bg-muted/25 motion-reduce:transition-none">
+                    <CardHeader className="workspace-action-header flex flex-row items-center gap-3 pb-2">
                       <span
                         className={`rounded-xl p-2.5 ${["bg-category-1/10 text-category-1", "bg-category-2/10 text-category-2", "bg-category-3/10 text-category-3", "bg-category-4/10 text-category-4"][index % 4]}`}
                       >
                         <action.icon className="size-5" />
                       </span>
-                      <CardTitle className="flex-1 text-base leading-snug">
+                      <CardTitle className="workspace-action-title flex-1 text-base leading-snug">
                         {action.label}
                       </CardTitle>
                       <ArrowUpRight
@@ -407,7 +407,7 @@ export function TerminalWorkspaceHome() {
                         className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary"
                       />
                     </CardHeader>
-                    <CardContent className="text-sm text-muted-foreground">
+                    <CardContent className="workspace-action-content text-sm text-muted-foreground">
                       {action.description}
                     </CardContent>
                   </Card>
@@ -437,15 +437,15 @@ function Metric({
   payments?: { method: string; amount: number }[];
 }) {
   return (
-    <Card>
-      <CardContent className="p-5">
+    <Card className="workspace-metric">
+      <CardContent className="p-3 xl:p-5">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm font-medium text-muted-foreground">{label}</p>
           <span className={`rounded-xl p-2 ${tone}`}>
             <Icon aria-hidden="true" className="size-4" />
           </span>
         </div>
-        <p className="mt-3 break-words text-3xl font-semibold tracking-tight tabular-nums">
+        <p className="mt-2 break-words text-xl font-semibold tracking-tight tabular-nums xl:mt-3 xl:text-3xl">
           {value}
         </p>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{hint}</p>

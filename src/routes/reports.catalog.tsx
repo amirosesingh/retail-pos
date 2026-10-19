@@ -97,7 +97,7 @@ function CatalogReport() {
           </div>
         </ReportHeader>
 
-        <div className="grid gap-4 sm:grid-cols-4">
+        <div className="summary-grid grid gap-4 sm:grid-cols-4">
           <StatCard label="Changes" value={String(rows.length)} />
           <StatCard label="Products added" value={String(created)} />
           <StatCard label="Price edits" value={String(priced)} />

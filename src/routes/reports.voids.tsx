@@ -227,7 +227,7 @@ function VoidsReport() {
           </div>
         </ReportHeader>
 
-        <div className="grid gap-4 sm:grid-cols-4">
+        <div className="summary-grid grid gap-4 sm:grid-cols-4">
           <StatCard label="Events" value={String(rows.length)} />
           <StatCard label="Cart voids" value={String(voids)} />
           <StatCard label="Refunds" value={String(refunds)} />

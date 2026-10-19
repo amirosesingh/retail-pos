@@ -48,7 +48,8 @@ export function MergeProductsDialog({
 
   useEffect(() => {
     if (!open || products.length < 2) {
-      setBlocks([]);
+      setBlocks(current => current.length ? [] : current);
+      setChecking(false);
       return;
     }
     let live = true;

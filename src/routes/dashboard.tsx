@@ -16,6 +16,7 @@ import {
 import { AlertTriangle } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
+import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 import { Separator } from "@/components/ui/separator";
 import {
   Table,
@@ -172,7 +173,7 @@ function Dashboard() {
         </header>
 
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
-        <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
+        <div className="summary-grid grid gap-4 md:grid-cols-4 xl:grid-cols-7">
           <Kpi label="Revenue today" value={money(revenue)} highlight />
           <Kpi label="Gross revenue" value={money(profit.revenue)} />
           <Kpi label="Total COGS" value={money(profit.cogs)} />
@@ -192,7 +193,7 @@ function Dashboard() {
               Current active catalogue and on-hand value at this branch.
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+          <div className="summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
             <Kpi label="Products" value={<AnimatedMetric value={stock.products} />} />
             <Kpi label="Categories" value={<AnimatedMetric value={stock.categories} />} />
             <Kpi label="On-hand units" value={<AnimatedMetric value={stock.units} />} />
@@ -212,10 +213,26 @@ function Dashboard() {
           </div>
         </section>
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <section className="rounded-lg border border-border bg-card p-4">
-            <h2 className="mb-3 text-sm font-semibold">Revenue · last 14 days</h2>
-            <div className="h-64">
+        <Carousel
+          opts={{ align: "start", containScroll: "trimSnaps" }}
+          aria-label="Live dashboard graphs"
+          // Keep arrow keys inside charts available for Recharts data-point navigation.
+          // Previous/next buttons provide keyboard navigation between graph cards.
+          onKeyDownCapture={() => undefined}
+          className="min-w-0"
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold">Trading graphs</h2>
+            <div className="flex items-center gap-1">
+              <CarouselPrevious className="static translate-y-0" aria-label="Previous graph" />
+              <CarouselNext className="static translate-y-0" aria-label="Next graph" />
+            </div>
+          </div>
+          <CarouselContent className="touch-pan-y">
+          <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
+          <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
+            <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">Revenue · last 14 days</h2>
+            <div className="min-h-0 min-w-0 flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={daily}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -233,12 +250,14 @@ function Dashboard() {
               </ResponsiveContainer>
             </div>
           </section>
+          </CarouselItem>
 
-          <section className="rounded-lg border border-border bg-card p-4">
-            <h2 className="mb-3 text-sm font-semibold">
+          <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
+          <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
+            <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
               Transactions by hour · peak {peak.bills > 0 ? peak.hour : "—"}
             </h2>
-            <div className="h-64">
+            <div className="min-h-0 min-w-0 flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hourly}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -255,13 +274,14 @@ function Dashboard() {
               </ResponsiveContainer>
             </div>
           </section>
-        </div>
+          </CarouselItem>
 
-        <section className="rounded-lg border border-border bg-card p-4">
-          <h2 className="mb-3 text-sm font-semibold">
+        <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
+          <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
+          <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
             Profit by hour · gross profit {money(profit.profit)} today
           </h2>
-          <div className="h-64">
+          <div className="min-h-0 min-w-0 flex-1">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={profitByHour}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -284,6 +304,10 @@ function Dashboard() {
             </ResponsiveContainer>
           </div>
         </section>
+          </CarouselItem>
+
+          </CarouselContent>
+        </Carousel>
 
         <section className="rounded-lg border border-border bg-card">
           <div className="flex items-center gap-2 px-5 py-3">
@@ -447,7 +471,7 @@ function Kpi({
   danger?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-card px-4 py-3">
+    <div className="summary-card rounded-lg border border-border bg-card px-4 py-3">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p
         className={`numeric text-xl font-semibold ${highlight ? "text-primary" : ""} ${danger ? "text-destructive" : ""}`}

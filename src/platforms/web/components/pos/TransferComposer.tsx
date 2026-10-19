@@ -175,7 +175,7 @@ export function TransferComposer({
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 [&>*]:min-w-0 [&>*]:break-words">
         <Fact
           label={kind === "request" ? "Requesting branch" : "Sending branch"}
           value={`${currentStore.code} · ${currentStore.name}`}

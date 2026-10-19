@@ -161,6 +161,7 @@ function Inventory() {
   const [variantCost, setVariantCost] = useState("");
   const [variantPrice, setVariantPrice] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [expandedProducts, setExpandedProducts] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [blocked, setBlocked] = useState<BlockedDelete[]>([]);
@@ -335,39 +336,42 @@ function Inventory() {
             </p>
           </div>
           <div className="flex w-full flex-wrap gap-2 lg:w-auto lg:justify-end">
-            <div className="relative min-w-0 flex-1 sm:flex-none">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search products"
-                className="w-full pl-9 pr-11 sm:w-64"
-              />
-              <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2" aria-label="Advanced product filters" title="Advanced filters" onClick={() => setAdvanced(true)}><SlidersHorizontal className="size-4" /></Button>
+            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+              <div className="relative min-w-0 flex-1 sm:flex-none">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search products"
+                  className="w-full pl-9 pr-11 sm:w-64"
+                />
+                <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2" aria-label="Advanced product filters" title="Advanced filters" onClick={() => setAdvanced(true)}><SlidersHorizontal className="size-4" /></Button>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button variant="outline" className="size-9 shrink-0 px-0 lg:w-auto lg:px-4" aria-label="Inventory actions" title="Inventory actions"><MoreHorizontal className="size-4" /><span className="hidden lg:inline">Actions</span></Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
+                  <DropdownMenuItem onSelect={() => { setShowArchived(value => !value); setSelected([]); }}><Archive className="size-4" />{showArchived ? "Show active products" : "Show archived products"}</DropdownMenuItem>
+                  {canBulk && <DropdownMenuItem onSelect={() => setImportOpen(true)}>Import from Excel</DropdownMenuItem>}
+                  <DropdownMenuItem onSelect={() => {
+                    const duplicates = findDuplicateProductCodes(state.products);
+                    setDuplicateRows(duplicates);
+                    if (!duplicates.length) toast.success("No duplicate SKU or barcode values found");
+                    else setDuplicateOpen(true);
+                  }}>Check duplicate codes</DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => {
+                    void exportProductsXlsx(rows, stores, `products-${currentStore.code}`)
+                      .then(() => toast.success(`Exported ${rows.length} products to Excel`))
+                      .catch(error => notifyError(error, "Exporting products"));
+                  }}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <div ref={setColumnControlsTarget} className="flex items-center" />
             {showMoney && (costReviewCount > 0 || costReviewOnly) && <Button variant={costReviewOnly ? "default" : "outline"} onClick={() => { setCostReviewOnly(value => !value); setSelected([]); }}>
               {costReviewOnly ? "Clear cost review" : `Review costs · ${costReviewCount}`}
             </Button>}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="outline"><MoreHorizontal className="size-4" /> Actions</Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
-                <DropdownMenuItem onSelect={() => { setShowArchived(value => !value); setSelected([]); }}><Archive className="size-4" />{showArchived ? "Show active products" : "Show archived products"}</DropdownMenuItem>
-                {canBulk && <DropdownMenuItem onSelect={() => setImportOpen(true)}>Import from Excel</DropdownMenuItem>}
-                <DropdownMenuItem onSelect={() => {
-                  const duplicates = findDuplicateProductCodes(state.products);
-                  setDuplicateRows(duplicates);
-                  if (!duplicates.length) toast.success("No duplicate SKU or barcode values found");
-                  else setDuplicateOpen(true);
-                }}>Check duplicate codes</DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => {
-                  void exportProductsXlsx(rows, stores, `products-${currentStore.code}`)
-                    .then(() => toast.success(`Exported ${rows.length} products to Excel`))
-                    .catch(error => notifyError(error, "Exporting products"));
-                }}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+
             {canOpenEditor && (
               <Dialog
                 open={!!draft}
@@ -868,7 +872,7 @@ function Inventory() {
         </header>
         {showMoney && costReviewOnly && <p role="status" className="rounded-xl border px-4 py-3 text-sm text-muted-foreground">Showing items with missing, zero or invalid cost. Open an item to review it using your existing edit permissions. Zero may be intentional for a free item; no costs are changed automatically.</p>}
 
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+        <section aria-label="Inventory summary" className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3 xl:grid-cols-8">
           <InventoryKpi label="Active products" value={metrics.products} />
           <InventoryKpi label="Categories" value={metrics.categories} />
           <InventoryKpi label="On-hand units" value={metrics.units} />
@@ -1099,7 +1103,7 @@ function Inventory() {
         )}
 
         <div className="rounded-lg border border-border bg-card">
-          <Table columnControls layoutControls controlsTarget={columnControlsTarget}>
+          <Table className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
@@ -1123,8 +1127,8 @@ function Inventory() {
             </TableHeader>
             <TableBody>
               {pageRows.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>
+                <TableRow key={p.id} data-expanded={expandedProducts.includes(p.id)}>
+                  <TableCell className="inventory-selection">
                     <Checkbox
                       checked={selected.includes(p.id)}
                       onCheckedChange={(v) => toggle(p.id, !!v)}
@@ -1132,33 +1136,35 @@ function Inventory() {
                     />
                   </TableCell>
                   <TableCell>
-                    <button
-                      className="text-left font-medium hover:text-primary"
-                      disabled={!canEditDetails && !canPrice && !canAdjustStock && !canLinkBarcode}
-                      onClick={() => {
-                        setBranchPriceOnly(false);
-                        setDraft(p);
-                      }}
-                    >
-                      {p.name}
-                    </button>
-                    <div className="numeric text-[11px] text-muted-foreground">
-                      {p.sku} · {p.barcode}
+                    <div className="min-w-0">
+                      <button
+                        className="text-left font-medium hover:text-primary"
+                        disabled={!canEditDetails && !canPrice && !canAdjustStock && !canLinkBarcode}
+                        onClick={() => {
+                          setBranchPriceOnly(false);
+                          setDraft(p);
+                        }}
+                      >
+                        {p.name}
+                      </button>
+                      <div className="numeric text-[11px] text-muted-foreground">
+                        {p.sku} · {p.barcode}
+                      </div>
                     </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{p.category}</TableCell>
-                  <TableCell className="text-muted-foreground">{p.subCategory || "—"}</TableCell>
+                  <TableCell className="inventory-detail text-muted-foreground">{p.category}</TableCell>
+                  <TableCell className="inventory-detail text-muted-foreground">{p.subCategory || "—"}</TableCell>
                   {showMoney && (
-                    <TableCell className="numeric text-right">{Number.isFinite(p.cost) ? money(p.cost) : "—"}{needsCostReview(p.cost) && <span className="ml-1 text-xs text-warning" title="Cost is missing, zero or invalid. Zero may be intentional.">Review</span>}</TableCell>
+                    <TableCell className="inventory-detail numeric text-right">{Number.isFinite(p.cost) ? money(p.cost) : "—"}{needsCostReview(p.cost) && <span className="ml-1 text-xs text-warning" title="Cost is missing, zero or invalid. Zero may be intentional.">Review</span>}</TableCell>
                   )}
                   <TableCell className="numeric text-right">{money(p.price)}</TableCell>
                   {showMoney && (
-                    <TableCell className="numeric text-right text-accent">
+                    <TableCell className="inventory-detail numeric text-right text-accent">
                       {productMargin(p.price, p.cost) === null ? "—" : `${Math.round(productMargin(p.price, p.cost)!)}%`}
                     </TableCell>
                   )}
                   {canEcom && (
-                    <TableCell className="text-center">
+                    <TableCell className="inventory-detail text-center">
                       <Switch
                         checked={!!p.ecomVisible}
                         onCheckedChange={async (v) => {
@@ -1196,7 +1202,17 @@ function Inventory() {
                       currentStoreId={currentStore.id}
                     />
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="inventory-actions text-right">
+                    <Button
+                      className="inventory-details-toggle"
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`${expandedProducts.includes(p.id) ? "Less" : "More"} details for ${p.name}`}
+                      aria-expanded={expandedProducts.includes(p.id)}
+                      onClick={() => setExpandedProducts(ids => ids.includes(p.id) ? ids.filter(id => id !== p.id) : [...ids, p.id])}
+                    >
+                      {expandedProducts.includes(p.id) ? "Less details" : "More details"}
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"
@@ -1212,6 +1228,7 @@ function Inventory() {
                         variant="ghost"
                         disabled={deleting.includes(p.id)}
                         title={deleting.includes(p.id) ? "Archiving…" : "Archive"}
+                        aria-label={`Archive ${p.name}`}
                         onClick={async () => {
                           setDeleting((d) => [...d, p.id]);
                           try {
@@ -1384,9 +1401,9 @@ function InventoryKpi({
   const color =
     tone === "danger" && value > 0 ? "text-destructive" : tone === "warning" ? "text-warning" : "";
   return (
-    <div className="rounded-lg border border-border bg-card px-4 py-3">
+    <div className="flex min-h-20 min-w-0 flex-col justify-center rounded-lg border border-border bg-card px-3 py-3 sm:px-4">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`text-xl font-semibold ${color}`}>
+      <p className={`break-words text-lg font-semibold leading-tight sm:text-xl ${color}`}>
         <AnimatedMetric
           value={value}
           format={moneyValue ? (current) => money(current) : undefined}

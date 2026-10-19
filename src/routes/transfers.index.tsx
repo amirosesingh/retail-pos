@@ -112,7 +112,7 @@ function Transfers() {
 
   return (
     <AppShell>
-      <div className="space-y-6 p-6">
+      <div className="min-w-0 space-y-4 p-3 sm:space-y-6 sm:p-6">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Stock movements</h1>
@@ -121,7 +121,7 @@ function Transfers() {
               <span className="text-primary">{currentStore.name}</span>
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
             <Button asChild variant="outline">
               <Link to="/requests/new" search={{ items: undefined, draft: undefined }}>
                 <ArrowLeftRight className="size-4" /> Request stock
@@ -135,7 +135,7 @@ function Transfers() {
           </div>
         </header>
 
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="summary-grid grid grid-cols-2 gap-3 md:grid-cols-4">
           <Metric label="Awaiting my approval" value={String(toApprove.length)} />
           <Metric label="Approved · to send" value={String(toDispatch.length)} />
           <Metric label="Incoming in transit" value={String(inbound.length)} highlight />
