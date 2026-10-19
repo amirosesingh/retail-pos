@@ -22,9 +22,20 @@ describe("phone preference restore", () => {
       removeItem: { configurable: true, writable: true, value: (key: string) => { delete store[key]; } },
       clear: { configurable: true, writable: true, value: () => {} },
     });
-    vi.stubGlobal("window", { localStorage: ls });
+    vi.stubGlobal("window", { localStorage: ls, dispatchEvent: vi.fn() });
   });
   afterEach(() => vi.unstubAllGlobals());
+  it("restores appearance and branding offline before notifying the interface", async () => {
+    vault.values.set("pos.theme", "dark");
+    vault.values.set("pos.color-theme", "ocean");
+    vault.values.set("pos.branding", JSON.stringify({ company: "Saved Store" }));
+    const { hydrateNativeStorage } = await import("@/platforms/mobile/mobile-storage");
+    await hydrateNativeStorage();
+    expect(store["pos.theme"]).toBe("dark");
+    expect(store["pos.color-theme"]).toBe("ocean");
+    expect(store["pos.branding"]).toContain("Saved Store");
+    expect(window.dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "pos:interface-preferences-restored" }));
+  });
   it("keeps identity untouched when one persisted value cannot be read, then retries", async () => {
     store["pos.device.key"] = "current-device-key";
     vault.get.mockRejectedValueOnce(new Error("Preferences unavailable"));

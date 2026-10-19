@@ -22,6 +22,7 @@ import { CloudStateIcon } from "@/platforms/web/components/pos/status/SystemStat
 import type { StatusTone } from "@/lib/system-status";
 import { cn } from "@/lib/utils";
 import { isOnlineOnly } from "@/lib/live-mode";
+import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 
 const TONE: Record<StatusTone, { bar: string; text: string; label: string }> = {
   connecting: {
@@ -103,9 +104,9 @@ export function TillLoader({
 
       <p className={cn("text-xs", style.text)}>{style.label}</p>
       {!isOnlineOnly() && state !== "connecting" && health && (
-        <p className="text-xs text-muted-foreground">
+        <div className="space-y-2 text-center"><p className="text-xs text-muted-foreground">
           Terminal database {health.local ? "ready" : "unavailable"}
-        </p>
+        </p>{!health.local && <EmergencyAccessLink />}</div>
       )}
 
       {stalled && (

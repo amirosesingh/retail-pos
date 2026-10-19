@@ -6,7 +6,7 @@ import { setPersonalLanguage } from "@/lib/time-zone";
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
 import { LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { usePos } from "@/lib/pos-store";
 import { useAuth, type PermissionFlag } from "@/lib/pos-auth";
 import { Link, useLocation } from "@tanstack/react-router";
@@ -134,6 +134,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // Set when the operator chooses to carry on from the terminal's own copy
   // after the first load could not reach the central database.
   const [offlineBypass, setOfflineBypass] = useState(false);
+  const [activationFlowOpen, setActivationFlowOpen] = useState(false);
+  const beginActivationReview = useCallback(() => setActivationFlowOpen(true), []);
   // The saved connection profile is read out of platform storage, which takes
   // a moment. Until it is back, this device's configuration is unknown — not
   // absent — so no start-up decision may be taken on it.
@@ -276,7 +278,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     };
   }, [profileHydrated]);
 
-  if (!ready) return <TillLoader message="Restoring your workspace…" />;
   // Every activated terminal, including a browser-based till, must finish
   // unsealing its tenant configuration before any data read or write starts.
   // The connection profile is part of that: showing setup while it is still
@@ -288,6 +289,15 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // registration, so a deleted terminal never reaches the sales screen.
   const awaitingVerdict =
     (isDesktop() || isNative()) && Boolean(terminal.config) && !terminal.verified;
+  // Persist the activation summary until Continue. Saving the verified config
+  // causes background startup checks, which previously unmounted it immediately.
+  if ((isDesktop() || isNative()) && activationFlowOpen && !terminal.revoked)
+    return <TerminalActivation onActivationStarted={beginActivationReview} onActivated={() => {
+      setActivationFlowOpen(false);
+      clearRevocation();
+      startup.refresh();
+    }} />;
+  if (!ready) return <TillLoader message="Restoring your workspace…" />;
   if (
     terminal.hydrating ||
     ((isDesktop() || isNative()) && startup.loading) ||
@@ -323,6 +333,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     if (decision === "activate")
       return (
         <TerminalActivation
+          onActivationStarted={beginActivationReview}
           onActivated={() => {
             clearRevocation();
             startup.refresh();

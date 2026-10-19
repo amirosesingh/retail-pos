@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBranding } from "@/lib/branding";
-import { isLocalWebCashierTest, isTerminalApp } from "@/platform-config/platform";
+import { isLocalWebCashierTest, isNative, isTerminalApp } from "@/platform-config/platform";
+import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { CashierPinLogin } from "@/platforms/web/components/auth/CashierPinLogin";
 import { isExternalEmail, usernameFromAddress } from "@/lib/internal-domains";
 import { isConfigurationFailure, type LoginFailure } from "@/lib/login-failure";
@@ -140,7 +141,7 @@ export function TerminalLogin() {
               {error && (
                 <div className="space-y-2">
                   <p className="text-sm text-destructive">{error}</p>
-                  {failure && isConfigurationFailure(failure) && (
+                  {failure && isConfigurationFailure(failure) && (isNative() ? <EmergencyAccessLink /> : (
                     <Button
                       type="button"
                       variant="outline"
@@ -151,7 +152,7 @@ export function TerminalLogin() {
                     >
                       Open connection settings
                     </Button>
-                  )}
+                  ))}
                 </div>
               )}
 

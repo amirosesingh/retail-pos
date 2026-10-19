@@ -1,58 +1,60 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ download: vi.fn(), stat: vi.fn(), remove: vi.fn(), deleteFile: vi.fn(), open: vi.fn(), progress: null as null | ((event: {url: string; bytes: number; contentLength: number}) => void) }));
-vi.mock("@capacitor/filesystem", () => ({ Directory: { ExternalCache: "EXTERNAL_CACHE", Cache: "CACHE" }, Filesystem: {
-  addListener: vi.fn(async (_event, listener) => { mocks.progress = listener; return { remove: mocks.remove }; }),
-  downloadFile: mocks.download, stat: mocks.stat, deleteFile: mocks.deleteFile,
-  getUri: vi.fn(async () => ({ uri: "file:///cache/update.apk" })),
-} }));
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ start: vi.fn(), status: vi.fn(), open: vi.fn() }));
+vi.mock("@capacitor/core", async original => ({ ...await original<typeof import("@capacitor/core")>(),
+  registerPlugin: () => ({ start: mocks.start, status: mocks.status }) }));
 vi.mock("@capacitor-community/file-opener", () => ({ FileOpener: { open: mocks.open } }));
 import { downloadAndInstall } from "@/platforms/mobile/android-updates";
-const url = "https://updatecms.luckycharmsdnbhd.com/update.apk";
+import { downloadPercent } from "@/platforms/mobile/update-download";
+const url = "https://updatecms.luckycharmsdnbhd.com/pos-app/latest/android/Retail-1.4.76.apk";
+const file = "Retail-1.4.76.apk";
+const pending = { status: "downloading", url, file, bytes: 45, total: 100 };
+const complete = { ...pending, status: "complete", bytes: 100, uri: "file:///external/Download/Retail-1.4.76.apk" };
 beforeEach(() => {
-  vi.clearAllMocks();
-  mocks.remove.mockResolvedValue(undefined); mocks.deleteFile.mockResolvedValue(undefined); mocks.open.mockResolvedValue(undefined);
-  mocks.stat.mockResolvedValue({size: 100});
-  mocks.download.mockImplementation(async (options) => {
-    // Match the installed Android legacy implementation's supported directories.
-    if (options.directory !== "CACHE") throw new Error("Error downloading file: null");
-    mocks.progress?.({url, bytes: 45, contentLength: 100});
-    mocks.progress?.({url, bytes: 100, contentLength: 100});
-  });
+  vi.clearAllMocks(); vi.useFakeTimers();
+  mocks.open.mockResolvedValue(undefined);
+  mocks.start.mockResolvedValue(pending);
+  mocks.status.mockResolvedValue(complete);
 });
-describe("Android native APK download", () => {
-  it("uses a supported cache directory and reports real progress before installation", async () => {
+afterEach(() => { vi.useRealTimers(); });
+
+describe("Android background APK download", () => {
+  it("reattaches at saved progress and opens only the completed APK", async () => {
     const progress = vi.fn();
-    expect(await downloadAndInstall(url, "update.apk", progress)).toMatchObject({opened: true});
-    expect(mocks.download).toHaveBeenCalledWith(expect.objectContaining({url, path: "update.apk", directory: "CACHE", progress: true, readTimeout: 60000}));
-    expect(mocks.stat).toHaveBeenCalledWith({ path: "update.apk", directory: "CACHE" });
-    expect(progress.mock.calls.flat()).toEqual([0,45,99,100]);
-    expect(mocks.open).toHaveBeenCalledOnce(); expect(mocks.remove).toHaveBeenCalledOnce();
+    const download = downloadAndInstall(url, file, progress);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await download).toMatchObject({ opened: true, uri: complete.uri });
+    expect(mocks.start).toHaveBeenCalledExactlyOnceWith({ url, file });
+    expect(progress.mock.calls.flat()).toEqual([45, 100]);
+    expect(mocks.open).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ filePath: complete.uri }));
   });
-  it("removes partial files and listeners on network failure without opening installer", async () => {
-    mocks.download.mockRejectedValueOnce(new Error("HTTP 403"));
-    await expect(downloadAndInstall(url, "update.apk", vi.fn())).rejects.toThrow("HTTP 403");
-    expect(mocks.deleteFile).toHaveBeenCalledOnce(); expect(mocks.remove).toHaveBeenCalledOnce(); expect(mocks.open).not.toHaveBeenCalled();
+  it("keeps paused network jobs instead of restarting their bytes", async () => {
+    mocks.status.mockResolvedValueOnce({ ...pending, status: "paused" });
+    const progress = vi.fn();
+    const download = downloadAndInstall(url, file, progress);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await download).toMatchObject({ opened: true });
+    expect(mocks.start).toHaveBeenCalledTimes(1);
+    expect(progress.mock.calls.flat()).toEqual([45, 45, 100]);
   });
-  it("retries a software connection abort from a clean file", async () => {
-    mocks.download.mockRejectedValueOnce(new Error("Software caused connection abort"));
-    expect(await downloadAndInstall(url, "update.apk", vi.fn())).toMatchObject({opened: true});
-    expect(mocks.download).toHaveBeenCalledTimes(2);
-    expect(mocks.deleteFile).toHaveBeenCalledOnce();
+  it("recovers an already completed download without downloading again", async () => {
+    mocks.start.mockResolvedValue(complete);
+    expect(await downloadAndInstall(url, file, vi.fn())).toMatchObject({ opened: true });
+    expect(mocks.status).not.toHaveBeenCalled();
   });
-  it("stops after three aborted attempts and never opens installer", async () => {
-    mocks.download.mockRejectedValue(new Error("Software caused connection abort"));
-    await expect(downloadAndInstall(url, "update.apk", vi.fn())).rejects.toThrow("connection abort");
-    expect(mocks.download).toHaveBeenCalledTimes(3);
+  it("never installs failed or replaced jobs", async () => {
+    mocks.start.mockResolvedValueOnce({ ...pending, status: "failed", error: "Not enough storage" });
+    await expect(downloadAndInstall(url, file, vi.fn())).rejects.toThrow("Not enough storage");
+    mocks.start.mockResolvedValueOnce({ ...pending, file: "another.apk" });
+    await expect(downloadAndInstall(url, file, vi.fn())).rejects.toThrow("has changed");
     expect(mocks.open).not.toHaveBeenCalled();
   });
-  it("refuses incomplete downloaded files", async () => {
-    mocks.stat.mockResolvedValue({size: 45});
-    await expect(downloadAndInstall(url, "update.apk", vi.fn())).rejects.toThrow("did not finish saving");
-    expect(mocks.open).not.toHaveBeenCalled();
-  });
-  it("keeps a complete APK available when Android declines the installer", async () => {
+  it("keeps the complete file available if installer permission is denied", async () => {
+    mocks.start.mockResolvedValue(complete);
     mocks.open.mockRejectedValueOnce(new Error("Permission needed"));
-    expect(await downloadAndInstall(url, "update.apk", vi.fn())).toMatchObject({opened: false, uri: "file:///cache/update.apk", error: "Permission needed"});
-    expect(mocks.deleteFile).not.toHaveBeenCalled();
+    expect(await downloadAndInstall(url, file, vi.fn())).toMatchObject({ opened: false, uri: complete.uri, error: "Permission needed" });
+  });
+  it("does not report completion before Android confirms it", () => {
+    expect(downloadPercent({ ...pending, status: "downloading", bytes: 100 })).toBe(99);
+    expect(downloadPercent({ status: "downloading", bytes: 100, total: -1 })).toBe(0);
   });
 });

@@ -38,3 +38,18 @@ it("keeps update notices outside connection and staff gates with one mount each"
   expect(root.indexOf('RELEASE_CHANNEL === "beta" && <AppUpdateNotices />')).toBeLessThan(root.indexOf("<NativeBoot>"));
   expect(root.indexOf("<NativeBoot>")).toBeLessThan(root.indexOf("<OfflineGate"));
 });
+
+it("rejects native setup/recovery in web builds and Windows caption code in Android", () => {
+  for (const [platform, module] of [
+    ["web", "platforms/web/components/pos/TerminalActivation"],
+    ["web", "platforms/web/components/pos/RecoveryHub"],
+    ["web", "platforms/web/components/pos/EmergencyPinGate"],
+    ["web", "components/shared/EmergencyAccessLink"],
+    ["android", "components/shared/NativeWindowFrame"],
+  ] as const) {
+    const error = vi.fn();
+    const hook = enforceShellBoundary(platform).generateBundle as (...args: unknown[]) => void;
+    hook.call({ getModuleIds: () => [`/repo/src/${module}.tsx`], error });
+    expect(error).toHaveBeenCalledOnce();
+  }
+});

@@ -1,0 +1,40 @@
+name: Android native compile check
+on:
+  pull_request:
+    branches: [beta, main]
+    paths:
+      - 'native/android/**'
+      - 'scripts/android-update-setup.cjs'
+      - '.github/workflows/android-native-check.yml'
+      - '.github/workflows/android-apk.yml'
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: npm ci
+      - name: Generate native project without release signing or publishing
+        run: |
+          mkdir -p capacitor-shell
+          printf '<!doctype html><title>Native compile check</title>' > capacitor-shell/index.html
+          npx cap add android
+          npx cap sync android
+          node scripts/android-permissions.cjs
+          node scripts/android-update-setup.cjs
+      - name: Compile native app and plugins
+        working-directory: android
+        run: bash gradlew :app:compileDebugJavaWithJavac --no-daemon

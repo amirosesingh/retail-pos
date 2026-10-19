@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { isTerminalApp } from "@/platform-config/platform";
+import { INTERFACE_PREFERENCES_RESTORED } from "./theme-storage";
 
 /**
  * Dynamic UI scale for the whole POS.
@@ -106,9 +107,15 @@ export function setUiScalePrefs(patch: Partial<UiScalePrefs>) {
 
 const subscribe = (fn: () => void) => {
   ensureHydrated();
+  if (!listeners.size && typeof window !== "undefined") window.addEventListener(INTERFACE_PREFERENCES_RESTORED, restoreScale);
   listeners.add(fn);
-  return () => listeners.delete(fn);
+  return () => {
+    listeners.delete(fn);
+    if (!listeners.size && typeof window !== "undefined") window.removeEventListener(INTERFACE_PREFERENCES_RESTORED, restoreScale);
+  };
 };
+
+function restoreScale() { prefs = load(); emit(); }
 
 export function useUiScalePrefs(): UiScalePrefs {
   return useSyncExternalStore(

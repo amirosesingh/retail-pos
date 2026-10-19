@@ -110,7 +110,10 @@ export default defineConfig({
   css: { transformer: "lightningcss" },
   resolve: {
     // Native approval UI/Keystore enrollment never enter website client chunks.
-    alias: [...shellAliases(buildPlatform), ...(isMobile ? [{ find: "@/platform-config/viewport", replacement: resolve("src/platforms/mobile/viewport.ts") }] : []), ...(isTerminalBuild ? [
+    alias: [...shellAliases(buildPlatform), ...(isMobile ? [
+      { find: "@/platform-config/offline-interface", replacement: resolve("src/platforms/mobile/components/OfflineInterface.tsx") },
+      { find: "@/platform-config/viewport", replacement: resolve("src/platforms/mobile/viewport.ts") },
+    ] : []), ...(isTerminalBuild ? [
       { find: "@/platform-config/approval-token", replacement: resolve("src/platforms/mobile/components/ApprovalToken.tsx") },
       { find: "@/platform-config/approval-token-client", replacement: resolve("src/lib/approval-token-client.ts") },
       { find: "@/platform-config/approval-methods", replacement: resolve("src/platforms/mobile/components/NativeApprovalMethods.tsx") },

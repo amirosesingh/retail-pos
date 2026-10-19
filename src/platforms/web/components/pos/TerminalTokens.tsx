@@ -15,6 +15,9 @@ import {
 } from "lucide-react";
 import qrcode from "qrcode-generator";
 import { toast } from "sonner";
+import { TerminalRegistrationDetails, type RegistrationDetails } from "@/components/shared/TerminalRegistrationDetails";
+import { supabaseConfig } from "@/lib/external-supabase-config";
+import { serverOrigin } from "@/lib/server-origin";
 import { describeError } from "@/lib/notify";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -126,10 +129,19 @@ export function TerminalTokens({
   const [pairTokenId, setPairTokenId] = useState("");
   const [pairProofHash, setPairProofHash] = useState("");
   const [pairDialogOpen, setPairDialogOpen] = useState(false);
+  const [issuedDetails, setIssuedDetails] = useState<RegistrationDetails | null>(null);
+  const [pairChecking, setPairChecking] = useState(false);
+  const [pairLookupError, setPairLookupError] = useState("");
+  const [pairExisting, setPairExisting] = useState<Awaited<ReturnType<typeof fetchTokenStatus>>>(null);
+  const pairLookupSequence = useRef(0);
   /** This device's own token — never offer to revoke the terminal you are on. */
   const selfTokenId = useMemo(() => readTerminalConfig()?.tokenId ?? "", []);
 
   const closePairDialog = () => {
+    pairLookupSequence.current += 1;
+    setPairChecking(false);
+    setPairLookupError("");
+    setPairExisting(null);
     setPairDialogOpen(false);
     setPairTokenId("");
     setPairProofHash("");
@@ -219,6 +231,8 @@ export function TerminalTokens({
   }, [stores, locationId]);
 
   const generate = async () => {
+    if (pairTokenId && (pairChecking || pairExisting || pairLookupError))
+      return toast.error("Review the scanned terminal registration before issuing a code.");
     if (!locationId) return toast.error("Choose a location first");
     if (!deviceName.trim()) return toast.error("Enter a terminal / device name");
     const store = stores.find((x) => x.id === locationId);
@@ -240,6 +254,9 @@ export function TerminalTokens({
         ...(pairProofHash ? { claimProof: pairProofHash } : {}),
       });
       setCode(issued);
+      setIssuedDetails({ tokenId: token.id, deviceName: token.deviceName, locationId: store.id,
+        locationName, supabaseUrl: supabaseConfig().url,
+        backendUrl: serverOrigin() || (typeof window !== "undefined" ? window.location.origin : "") });
       setCodeTokenId(token.id);
       setCodeIssuedAt(Date.now());
       setNow(Date.now());
@@ -356,7 +373,7 @@ export function TerminalTokens({
           </div>
           <Button
             className="h-9"
-            disabled={issuing || !locationId || !deviceName.trim()}
+            disabled={issuing || pairChecking || Boolean(pairExisting) || Boolean(pairLookupError) || !locationId || !deviceName.trim()}
             onClick={() => void generate()}
           >
             {issuing ? (
@@ -390,7 +407,7 @@ export function TerminalTokens({
           {pairScan && (
             <div className="mt-3">
               <CameraScanner
-                onScan={(value) => {
+                onScan={async (value) => {
                   const request = decodePairingRequest(value);
                   if (!request) {
                     toast.error("That is not a terminal pairing code");
@@ -398,10 +415,24 @@ export function TerminalTokens({
                   }
                   setPairTokenId(request.tokenId);
                   setPairProofHash(request.proofHash);
-                  setDeviceName((current) => current || request.deviceName);
+                  setDeviceName(request.deviceName);
                   setPairScan(false);
                   setPairDialogOpen(true);
-                  toast.success("Pairing request captured — review the terminal assignment");
+                  setPairChecking(true);
+                  setPairExisting(null);
+                  setPairLookupError("");
+                  const sequence = ++pairLookupSequence.current;
+                  try {
+                    const existing = await fetchTokenStatus(request.tokenId);
+                    if (sequence !== pairLookupSequence.current) return;
+                    setPairExisting(existing);
+                    if (existing) setLocationId(existing.locationId);
+                  } catch {
+                    if (sequence === pairLookupSequence.current)
+                      setPairLookupError("Could not verify this terminal. Check the connection and scan again.");
+                  } finally {
+                    if (sequence === pairLookupSequence.current) setPairChecking(false);
+                  }
                 }}
                 onClose={() => setPairScan(false)}
               />
@@ -417,6 +448,7 @@ export function TerminalTokens({
             <p className="mt-1 text-xs text-muted-foreground">
               The code was redeemed and can never be used again. The list below is up to date.
             </p>
+            {issuedDetails && <div className="mt-3"><TerminalRegistrationDetails details={issuedDetails} /></div>}
             <Button
               variant="outline"
               size="sm"
@@ -434,6 +466,7 @@ export function TerminalTokens({
 
         {code && !claimed && (
           <div className="mt-5 grid gap-4 rounded-lg border border-border bg-surface-2 p-4 sm:grid-cols-[auto_minmax(0,1fr)]">
+            {issuedDetails && <div className="sm:col-span-2"><p className="mb-2 text-xs font-medium">Approved assignment — waiting for terminal activation</p><TerminalRegistrationDetails details={issuedDetails} /></div>}
             <img
               src={qr}
               alt="Activation code QR"
@@ -489,6 +522,10 @@ export function TerminalTokens({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            <p role="status" className="text-sm text-muted-foreground">{pairChecking ? "Checking terminal registration…" : pairLookupError || (pairExisting ?
+              pairExisting.status === "revoked" ? "This registration was revoked. Use the registered-terminal controls to review it." :
+              pairExisting.isClaimed ? "This terminal is already registered to the branch below." : "This request is already approved. Waiting for the terminal to activate." :
+              "QR verified. Choose the branch, review the backend, then approve.")}</p>
             <div className="rounded-md border bg-muted/40 p-3 text-xs">
               <p className="font-medium">Scanned pairing request</p>
               <p className="mt-1 break-all font-mono text-muted-foreground">{pairTokenId}</p>
@@ -516,13 +553,16 @@ export function TerminalTokens({
                 }))}
               />
             </div>
+            <TerminalRegistrationDetails details={{ tokenId: pairTokenId, deviceName,
+              locationName: pairExisting?.locationName || locationName, supabaseUrl: supabaseConfig().url,
+              backendUrl: serverOrigin() || (typeof window !== "undefined" ? window.location.origin : "") }} />
           </div>
           <DialogFooter>
             <Button variant="outline" disabled={issuing} onClick={closePairDialog}>
               Cancel
             </Button>
             <Button
-              disabled={issuing || !locationId || !deviceName.trim() || !pairProofHash}
+              disabled={issuing || pairChecking || Boolean(pairExisting) || Boolean(pairLookupError) || !locationId || !deviceName.trim() || !pairProofHash}
               onClick={() => void generate()}
             >
               {issuing ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}

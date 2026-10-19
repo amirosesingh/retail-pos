@@ -25,6 +25,7 @@ export const UI_STORAGE_KEYS = [
   "pos.theme",
   "pos.color-theme",
   "pos.accent-color",
+  "pos.branding",
   // Retired spellings, still listed so an older device's values are not purged
   // before the read-through migration has had a chance to move them.
   "pos.ui.scale",
