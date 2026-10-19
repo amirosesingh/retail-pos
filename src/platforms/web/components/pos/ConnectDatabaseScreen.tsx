@@ -29,6 +29,17 @@ export function ConnectDatabaseScreen({
 }) {
   const navigate = useNavigate();
   const [checking, setChecking] = useState(false);
+  const [offline, setOffline] = useState(false);
+  useEffect(() => {
+    const update = () => setOffline(navigator.onLine === false);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
   const [hasSavedConfiguration, setHasSavedConfiguration] = useState(cloudConfigured);
 
   // Waiting for setup details is a normal first run, not a failed launch — tell
@@ -70,6 +81,10 @@ export function ConnectDatabaseScreen({
             ? "The saved database details are not answering right now. Check the address and key below, or try again once the network is back."
             : "Enter the central database address and publishable key for your company. They are sealed in this device's secure store."}
         </p>
+
+        {offline && <p role="status" className="rounded-lg border border-border bg-muted p-3 text-sm text-muted-foreground">
+          No internet connection. You can enter your connection details here. Connect to the internet to test, save and activate this terminal.
+        </p>}
 
         <div className="rounded-xl border border-border bg-muted/40 p-4">
           <CloudConnectionPanel onConnected={continueStartup} />

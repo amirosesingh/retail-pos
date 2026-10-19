@@ -1,4 +1,3 @@
-import { isNative } from "@/platform-config/platform";
 import { ApprovalTokenButton } from "@/platform-config/approval-token";
 /**
  * Connection gate for the browser and Android builds.
@@ -29,9 +28,7 @@ import {
   type Connectivity,
 } from "@/core/activation/connection-health";
 
-type SetupRenderer = (profile: ConfigReadiness) => ReactNode;
-
-export function OfflineGate({ children, renderSetup }: { children: ReactNode; renderSetup?: SetupRenderer }) {
+export function OfflineGate({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [state, setState] = useState<Connectivity>(connectivity());
   const bypass = !isOnlineOnly() || isRecoveryPath(pathname) || onRecoveryScreen();
@@ -43,11 +40,11 @@ export function OfflineGate({ children, renderSetup }: { children: ReactNode; re
   // Hidden content is unavailable for interaction until connectivity returns.
   return <>
     <div hidden={!available} inert={!available} style={{ display: available ? "contents" : "none" }}>{(mounted || available) && children}</div>
-    {!available && <OfflineStatus renderSetup={renderSetup} />}
+    {!available && <OfflineStatus />}
   </>;
 }
 
-export function OfflineStatus({ force = false, renderSetup }: { force?: boolean; renderSetup?: SetupRenderer } = {}) {
+export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
   const startup = useStartupGate();
   const [profile, setProfile] = useState<ConfigReadiness | null>(null);
   useEffect(() => subscribeConfigReady(setProfile), []);
@@ -70,14 +67,8 @@ export function OfflineStatus({ force = false, renderSetup }: { force?: boolean;
 
   if ((!live && !force) || recovery) return null;
 
-  // Only a completed local restore can identify first-run setup. Network loss,
-  // unreadable storage and rejected credentials must never reset registration.
-  if (isNative() && (profile?.state === "missing" || profile?.state === "incomplete") && renderSetup) {
-    return renderSetup(profile);
-  }
-
   // Still checking: the cloud icon alone, nothing else on screen.
-  if (state === "connecting" || (isNative() && profile === null))
+  if (state === "connecting")
     return (
       <div
         className="flex min-h-screen items-center justify-center bg-background"

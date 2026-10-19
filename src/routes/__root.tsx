@@ -34,7 +34,7 @@ import { ConnectDatabaseScreen } from "@/platforms/web/components/pos/ConnectDat
 import { isTerminalApp } from "@/platform-config/platform";
 import { FirstRunSetup } from "@/platforms/web/components/pos/FirstRunSetup";
 import { LifeBuoy } from "lucide-react";
-import { RECOVERY_PATH } from "@/lib/recovery-route";
+import { RECOVERY_PATH, isRecoveryPath } from "@/lib/recovery-route";
 import { ThemeProvider, themeBootScript } from "../lib/theme";
 import { publicConfigScript } from "../lib/public-config-script";
 import { NativeBoot } from "@/platforms/mobile/components/NativeBoot";
@@ -55,7 +55,7 @@ import { PublicHostBoundary } from "@/platforms/web/components/pos/PublicHostBou
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { bypassPersistentAppShell, isCustomerPublicRoute } from "@/lib/app-shell-routes";
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
-import { hasRequiredPlatformConfig, type ConfigReadiness } from "@/lib/platform-config-ready";
+import { hasRequiredPlatformConfig, subscribeConfigReady, type ConfigReadiness } from "@/lib/platform-config-ready";
 import { hydrateConnectionProfile, isConnectionProfileHydrated } from "@/lib/connection-profile";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { staleAssetRecoveryScript } from "@/lib/stale-asset-recovery";
@@ -334,9 +334,8 @@ function RootComponent() {
         {RELEASE_CHANNEL === "beta" && <AppUpdateNotices />}
         <NativeBoot>
           <ConnectionProfileBoot>
-            <OfflineGate renderSetup={(profile) => (
-              <ConnectDatabaseScreen cloudConfigured={profile.have.supabaseKey} onRetry={() => { void heartbeat(); }} />
-            )}>
+            <TerminalConnectionSetup>
+            <OfflineGate>
               <PublicHostBoundary pathname={pathname}>
               {isCustomerPublicRoute(pathname) ? (
                 <>
@@ -347,6 +346,7 @@ function RootComponent() {
               )}
               </PublicHostBoundary>
             </OfflineGate>
+            </TerminalConnectionSetup>
           </ConnectionProfileBoot>
         </NativeBoot>
         <Toaster position="top-right" closeButton />
@@ -354,6 +354,22 @@ function RootComponent() {
       </ThemeProvider>
     </QueryClientProvider>
   );
+}
+
+/** Local configuration is decided before network gating on terminal apps only. */
+function TerminalConnectionSetup({ children }: { children: ReactNode }) {
+  const pathname = useLocation({ select: location => location.pathname });
+  const [profile, setProfile] = useState<ConfigReadiness | null>(null);
+  useEffect(() => {
+    if (!isTerminalApp()) return;
+    return subscribeConfigReady(setProfile);
+  }, []);
+  if (!isTerminalApp() || isRecoveryPath(pathname)) return children;
+  if (!profile) return <TillLoader message="Checking saved terminal settings…" />;
+  if (profile.state === "missing" || profile.state === "incomplete") {
+    return <ConnectDatabaseScreen cloudConfigured={profile.have.supabaseKey} onRetry={() => { void heartbeat(); }} />;
+  }
+  return children;
 }
 
 function AppUpdateNotices() {

@@ -44,10 +44,11 @@ describe("connectivity lifecycle ownership", () => {
     expect(store).toContain("APP_RESUME_EVENT");
   });
 
-  it("opens Android setup only after local settings are confirmed absent", () => {
-    expect(gate).toContain('isNative() && (profile?.state === "missing" || profile?.state === "incomplete")');
-    expect(gate.indexOf("return renderSetup(profile)")).toBeLessThan(gate.indexOf('const browserOffline'));
-    expect(gate).toContain('isNative() && profile === null');
+  it("opens terminal setup before network gating only after local settings are confirmed absent", () => {
+    expect(root).toContain('if (!isTerminalApp() || isRecoveryPath(pathname)) return children');
+    expect(root).toContain('profile.state === "missing" || profile.state === "incomplete"');
+    expect(root.indexOf("<TerminalConnectionSetup>")).toBeLessThan(root.indexOf("<OfflineGate>"));
+    expect(root).toContain('if (!profile) return <TillLoader');
     expect(root).toContain('cloudConfigured={profile.have.supabaseKey}');
   });
 
