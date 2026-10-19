@@ -233,6 +233,7 @@ describe("per-user notification state", () => {
     expect(bell).not.toContain('value="history"');
     const root = readFileSync("src/routes/__root.tsx", "utf8");
     expect(root).toContain('<Toaster position="top-right" closeButton={false} />');
+    expect(bell).toContain("<DialogContent showCloseButton={false}");
     expect(bell).toContain("closeButton: false");
     expect(bell).not.toContain('value="attention"');
     expect(bell).not.toContain('value="warning"');

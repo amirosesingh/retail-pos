@@ -295,7 +295,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
           )}
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-lg gap-0 overflow-hidden p-0 sm:p-0 [&>button]:size-6 [&>button>svg]:size-3">
+      <DialogContent showCloseButton={false} className="max-w-lg gap-0 overflow-hidden p-0 sm:p-0">
         <div className="border-b border-border/60 px-4 py-4 pr-12">
           <DialogTitle className="flex items-center gap-2 text-base"><Bell className="size-4 text-primary" /> Notifications</DialogTitle>
           <DialogDescription className="mt-1 text-xs">Recent activity and updates for your branch.</DialogDescription>
