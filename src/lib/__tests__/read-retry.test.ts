@@ -55,12 +55,13 @@ describe("read-only transient recovery", () => {
 
 describe("business read startup ordering", () => {
   it("waits for profile and cloud session readiness on Web and Android", () => {
-    expect(businessReadsReady(false, true, false, "staff")).toBe(false);
-    expect(businessReadsReady(true, true, false, null)).toBe(false);
-    expect(businessReadsReady(true, true, false, "staff")).toBe(true);
+    expect(businessReadsReady(false, true, false, "staff", true)).toBe(false);
+    expect(businessReadsReady(true, true, false, null, true)).toBe(false);
+    expect(businessReadsReady(true, true, false, "staff", false)).toBe(false);
+    expect(businessReadsReady(true, true, false, "staff", true)).toBe(true);
   });
   it("preserves signed-in Electron local reads without cloud authentication", () => {
-    expect(businessReadsReady(true, true, true, null)).toBe(true);
-    expect(businessReadsReady(true, false, true, null)).toBe(false);
+    expect(businessReadsReady(true, true, true, null, false)).toBe(true);
+    expect(businessReadsReady(true, false, true, null, false)).toBe(false);
   });
 });

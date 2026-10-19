@@ -168,13 +168,14 @@ export async function loadTransfers(): Promise<StoredTransfer[]> {
 }
 
 /** One note by id, for a deep link into a page the till has not cached. */
-export async function loadTransfer(id: string): Promise<StoredTransfer | null> {
+export async function loadTransfer(id: string, options: { throwOnError?: boolean } = {}): Promise<StoredTransfer | null> {
   try {
     const row = (await routedQuery("stock_transfers", { match: { id }, limit: 1 }) as Row[])[0] ?? null;
     if (!row) return null;
     const lines = await loadTransferLines([id]);
     return rowToTransfer(row, lines);
-  } catch {
+  } catch (error) {
+    if (options.throwOnError) throw error;
     if (import.meta.env.DEV) console.error("[transfers] detail load failed");
     return null;
   }

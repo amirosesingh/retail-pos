@@ -125,12 +125,12 @@ export async function runBranchCoverage(): Promise<BranchCoverage[]> {
       error: null,
     };
     try {
-      const total = await anyFrom(entry.table).select("*", { count: "exact", head: true });
+      const total = await anyFrom(entry.table).select(entry.column, { count: "exact", head: true });
       if (total.error) throw total.error;
       row.total = total.count ?? 0;
 
       const blank = await anyFrom(entry.table)
-        .select("*", { count: "exact", head: true })
+        .select(entry.column, { count: "exact", head: true })
         .or(`${entry.column}.is.null,${entry.column}.eq.`);
       if (blank.error) throw blank.error;
       row.missing = blank.count ?? 0;
@@ -236,7 +236,7 @@ async function probeTable(entry: {
   };
 
   try {
-    const { error, count } = await from(entry.table).select("*", { count: "exact", head: true });
+    const { error, count } = await from(entry.table).select(entry.table === "shifts" ? "id" : "*", { count: "exact", head: true });
     if (error) {
       probe.readDetail = explainError(error);
     } else {

@@ -182,6 +182,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261017083528_reconcile_business_analytics.sql",
       "supabase/migrations/20261017121938_private_approval_tokens.sql",
       "supabase/migrations/20261017132000_fix_relational_health_parent_schema.sql",
+      "supabase/migrations/20261019071157_secure_shift_refresh_by_ids.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

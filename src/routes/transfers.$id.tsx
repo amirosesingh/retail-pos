@@ -1,3 +1,4 @@
+import { TransferLoadError } from "@/platforms/web/components/pos/TransferWorkspace";
 import { sameBranchId } from "@/lib/branch-id";
 /**
  * One transfer note, in full: what was asked for, approved, packed and
@@ -64,7 +65,7 @@ function TransferDetail() {
   } = usePos();
   const { can } = useAuth();
   const navigate = useNavigate();
-  const { transfer, live, loading } = useTransferRecord(id);
+  const { transfer, live, loading, error: loadError, retry } = useTransferRecord(id);
   const [step, setStep] = useState<TransferStep | null>(null);
   const [rejecting, setRejecting] = useState(false);
 
@@ -74,6 +75,8 @@ function TransferDetail() {
         <p className="p-10 text-center text-sm text-muted-foreground">Loading transfer…</p>
       </AppShell>
     );
+
+  if (loadError) return <AppShell><TransferLoadError error={loadError} onRetry={retry} /></AppShell>;
 
   if (!transfer)
     return (
