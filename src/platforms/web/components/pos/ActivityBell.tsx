@@ -186,7 +186,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         show(eventText(row.title), {
           id: `activity-${row.id}`,
           description: row.message ? eventText(row.message) : undefined,
-          closeButton: true,
+          closeButton: false,
           onDismiss: () => {
             if (!mounted.current || generation !== refreshGeneration.current || clearedIds(meKey).includes(row.id)) return;
             void updatePreference(
@@ -197,7 +197,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
           },
           duration: 4_000,
           position: "top-right",
-          className: "activity-notification-toast !w-[min(20rem,calc(100vw-1rem))] !gap-2 !p-3",
+          className: "activity-notification-toast",
           classNames: {
             title: "text-xs font-medium",
             description: "line-clamp-2 text-[11px] leading-4",

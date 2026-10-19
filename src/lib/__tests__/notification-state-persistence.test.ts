@@ -219,7 +219,7 @@ describe("per-user notification state", () => {
     const styles = readFileSync("src/styles.css", "utf8");
     expect(bell).not.toContain("Full log");
     expect(bell).toContain("Clear all");
-    expect(bell).toContain("closeButton: true");
+    expect(bell).toContain("closeButton: false");
     expect(bell).toContain('position: "top-right"');
     expect(bell).toContain("newlyArrived.slice(0, 4).reverse()");
     expect(styles).not.toContain("--y: translateX(calc(100% + 1rem))");
@@ -232,7 +232,8 @@ describe("per-user notification state", () => {
     expect(bell).toContain("activity-notification-row");
     expect(bell).not.toContain('value="history"');
     const root = readFileSync("src/routes/__root.tsx", "utf8");
-    expect(root).toContain('<Toaster position="top-right" closeButton />');
+    expect(root).toContain('<Toaster position="top-right" closeButton={false} />');
+    expect(bell).toContain("closeButton: false");
     expect(bell).not.toContain('value="attention"');
     expect(bell).not.toContain('value="warning"');
     expect(bell).not.toContain('value="ready"');
@@ -254,3 +255,4 @@ describe("per-user notification state", () => {
     expect(bell).not.toContain("deleteActivityEvent");
   });
 });
+

@@ -357,7 +357,7 @@ function RootComponent() {
             </TerminalConnectionSetup>
           </ConnectionProfileBoot>
         </NativeBoot>
-        <Toaster position="top-right" closeButton />
+        <Toaster position="top-right" closeButton={false} />
         </>}
         </NativeWindowFrame>
       </ThemeProvider>

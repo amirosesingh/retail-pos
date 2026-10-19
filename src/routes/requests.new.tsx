@@ -50,7 +50,7 @@ function NewRequest() {
 
   return (
     <AppShell>
-      <div className="space-y-6 p-6">
+      <div className="min-w-0 space-y-4 p-3 sm:space-y-6 sm:p-6">
         <WorkspaceHeader
           back="/transfers"
           backLabel="Back to stock movements"

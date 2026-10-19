@@ -202,6 +202,8 @@ export function StockCountDialog({
   );
 
   const [code, setCode] = useState("");
+  const [lookupMode, setLookupMode] = useState<"code" | "name">("code");
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [counted, setCounted] = useState("");
   const [rows, setRows] = useState<CountRow[]>([]);
   const [reason, setReason] = useState<StockAdjustmentReason | "">("");
@@ -227,7 +229,15 @@ export function StockCountDialog({
   const postingAttemptRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const match = useMemo(() => resolveByBarcode(products, code), [products, code]);
+  const match = useMemo(() => lookupMode === "code"
+    ? resolveByBarcode(products, code)
+    : products.find(product => product.id === selectedProductId), [products, code, lookupMode, selectedProductId]);
+  const nameMatches = useMemo(() => {
+    const query = code.trim().toLocaleLowerCase();
+    return lookupMode === "name" && query
+      ? products.filter(product => product.name.toLocaleLowerCase().includes(query)).slice(0, 30)
+      : [];
+  }, [products, code, lookupMode]);
   const totalImpact = rows.reduce((s, r) => s + (r.counted - r.system) * r.cost, 0);
 
   /** Load the dialog for a fresh count, or for the draft being resumed. */
@@ -235,6 +245,7 @@ export function StockCountDialog({
     if (!open) return;
     sessionRef.current += 1;
     setCode("");
+    setSelectedProductId(null);
     setCounted("");
     setErrors([]);
     setTab("count");
@@ -418,7 +429,7 @@ export function StockCountDialog({
 
   const commitPunch = () => {
     if (!match) {
-      toast.warning("No product matches that code.");
+      toast.warning(lookupMode === "code" ? "No product matches that code." : "Choose a product from the search results.");
       codeRef.current?.select();
       return;
     }
@@ -430,6 +441,7 @@ export function StockCountDialog({
     }
     queue(match.id, qty);
     setCode("");
+    setSelectedProductId(null);
     setCounted("");
     codeRef.current?.focus();
   };
@@ -574,28 +586,50 @@ export function StockCountDialog({
 
           <TabsContent value="count" className="space-y-4">
             <div className="rounded-xl border border-border bg-card p-4">
+              <Tabs value={lookupMode} onValueChange={value => {
+                setLookupMode(value as "code" | "name");
+                setCode(""); setSelectedProductId(null); setCounted("");
+                codeRef.current?.focus();
+              }} className="mb-3">
+                <TabsList className="grid w-full grid-cols-2 sm:w-fit">
+                  <TabsTrigger value="code">Barcode / SKU</TabsTrigger>
+                  <TabsTrigger value="name">Product name</TabsTrigger>
+                </TabsList>
+              </Tabs>
               <div className="grid gap-3 sm:grid-cols-[2fr_1fr_auto]">
                 <div>
-                  <Label htmlFor="so-code">Scan or type a barcode / SKU</Label>
+                  <Label htmlFor="so-code">{lookupMode === "code" ? "Scan or type a barcode / SKU" : "Search by product name"}</Label>
                   <Input
                     id="so-code"
                     ref={codeRef}
                     autoFocus
                     value={code}
-                    onChange={(e) => setCode(e.target.value)}
+                    onChange={(e) => { setCode(e.target.value); setSelectedProductId(null); }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
                         if (match) countRef.current?.focus();
-                        else toast.warning("No product matches that code.");
+                        else toast.warning(lookupMode === "code" ? "No product matches that code." : "Choose a product from the search results.");
                       }
                     }}
-                    placeholder="Scanner input lands here"
+                    placeholder={lookupMode === "code" ? "Scanner input lands here" : "Type a product name"}
                   />
+                  {lookupMode === "name" && code.trim() && !selectedProductId && (
+                    <div aria-label="Matching products" className="mt-2 max-h-52 overflow-y-auto rounded-md border border-border">
+                      {nameMatches.map(product => <button key={product.id} type="button"
+                        className="block w-full border-b border-border p-2 text-left text-sm last:border-0 hover:bg-muted focus-visible:bg-muted"
+                        onClick={() => { setSelectedProductId(product.id); countRef.current?.focus(); }}>
+                        <span className="block font-medium">{product.name}</span>
+                        <span className="block text-xs text-muted-foreground">{product.sku || "No SKU"} · system stock {stockAt(product, targetStore.id)}</span>
+                      </button>)}
+                      {!nameMatches.length && <p className="p-2 text-xs text-muted-foreground">No products match this name.</p>}
+                      {nameMatches.length === 30 && <p className="p-2 text-xs text-muted-foreground">First 30 matches. Type more to narrow the search.</p>}
+                    </div>
+                  )}
                   <p className="mt-1 text-xs text-muted-foreground">
                     {match
                       ? `${match.name} · system stock ${stockAt(match, targetStore.id)}`
-                      : "Waiting for a scan…"}
+                      : lookupMode === "code" ? "Waiting for a scan…" : "Search and choose a product."}
                   </p>
                 </div>
                 <div>
