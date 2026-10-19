@@ -20,6 +20,7 @@ test('beta identities are separate and never rewrite backend configuration', () 
     prepareBeta(root, '1.4.75-beta.1');
     const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json')));
     assert.equal(pkg.build.appId, 'app.lovable.pos.beta');
+    assert.equal(pkg.name, 'retail-pos-beta');
     assert.equal(pkg.build.productName, 'Retail Beta');
     assert.equal(pkg.build.publish[0].url, `${BETA_BASE}/latest/`);
     assert.equal(pkg.build.extraMetadata.backend, 'unchanged');
