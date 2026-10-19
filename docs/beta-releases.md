@@ -37,6 +37,11 @@ Every fix/feature starts on a branch based on `beta`, with a `[BETA]` PR targeti
 by their destination; fork PRs require manual labels because their tokens are
 read-only. Both beta and production PRs appear in GitHub's same PR list. A merged
 beta PR moves to the Closed/Merged list; it does not become a production PR.
+Dependabot maintenance PRs are configured to target and label `beta`; their
+restricted tokens do not run the metadata writer. GitHub-generated security PRs
+that target the default branch still require beta testing and owner approval
+before production promotion. Default-branch configuration changes take effect
+when the owner approves their promotion to `main`.
 
 Promotion is manual: after beta testing, open a separate `[PRODUCTION]` PR from
 `beta` to `main`, labeled `production` and `awaiting-owner-approval`. Merge only

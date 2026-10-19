@@ -3,12 +3,14 @@ updates:
   # Security patches only — no routine version-bump noise.
   - package-ecosystem: npm
     directory: "/"
+    target-branch: beta
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    labels: ["security"]
+    labels: ["security", "beta"]
   - package-ecosystem: github-actions
     directory: "/"
+    target-branch: beta
     schedule:
       interval: monthly
-    labels: ["security"]
+    labels: ["security", "beta"]
