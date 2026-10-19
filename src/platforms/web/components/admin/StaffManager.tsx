@@ -1,10 +1,12 @@
+import { withReadDeadline } from "@/lib/read-retry";
+import { notifyError } from "@/lib/notify";
 import { NativeApprovalMethods } from "@/platform-config/approval-methods";
 import { nativeApprovalCredentials } from "@/platform-config/approval-token";
 import { approvalMethods } from "@/lib/approval-credentials";
 import { PERMISSION_EDITOR_IDS } from "@/lib/permission-editor";
 import { PermissionHierarchy } from "./PermissionHierarchy";
 import { StaffIdleTimeout } from "./StaffIdleTimeout";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Copy,
   Eye,
@@ -47,7 +49,6 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { ADMIN_OFFLINE_MESSAGE } from "@/lib/admin-session";
 import { isConnectionError } from "@/core/local-db/db-mode";
-import { notifyError } from "@/lib/notify";
 import {
   fromDbRole,
   normalizePermissions,
@@ -73,6 +74,7 @@ import {
 type Row = {
   auth_user_id: string | null;
   user_id: string;
+  login_username: string | null;
   full_name: string;
   role: StaffRole;
   role_slug: string;
@@ -91,6 +93,7 @@ type Row = {
 type Form = {
   displayName: string;
   username: string;
+  email: string;
   credential: string;
 
   roleSlug: string;
@@ -101,6 +104,7 @@ type Form = {
 const EMPTY: Form = {
   displayName: "",
   username: "",
+  email: "",
   credential: "",
 
   roleSlug: "cashier",
@@ -202,17 +206,22 @@ export function StaffManager() {
       setBusy("");
     }
   }
+  const loadPromise = useRef<Promise<void> | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [offline, setOffline] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(() => {
+    if (loadPromise.current) return loadPromise.current;
+    loadPromise.current = (async () => {
     setLoading(true);
     try {
-      const [staffResult, roleList] = await Promise.all([
+      const [staffResult, roleList] = await withReadDeadline(() => Promise.all([
         getPosCallerAuth().then((auth) => listManagedStaffAccounts({ data: auth })),
         getRolesWithPermissions(),
-      ]);
+      ]));
       if (!staffResult.ok) throw new Error(staffResult.error);
       setOffline(false);
+      setLoadError("");
       setRoles(roleList);
       setRows(
         staffResult.rows.map((r) => {
@@ -220,6 +229,7 @@ export function StaffManager() {
           return {
             auth_user_id: (r["auth_user_id"] as string | null) ?? null,
             user_id: String(r["user_id"] ?? ""),
+            login_username: r.login_username ?? null,
             full_name: String(r["full_name"] ?? ""),
             role,
             role_slug: String(r["role_slug"] ?? role),
@@ -244,33 +254,35 @@ export function StaffManager() {
       // than throwing a red failure at the administrator.
       if (isConnectionError(error)) {
         setOffline(true);
-        setRows([]);
+        setLoadError("Could not reach the staff service. Please retry.");
         return;
       }
-      notifyError(error, "Could not load staff accounts");
+      setLoadError(friendlyError(error));
     } finally {
       setLoading(false);
     }
+    })().finally(() => { loadPromise.current = null; });
+    return loadPromise.current;
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  useEffect(
-    () =>
-      subscribeDataChange((change) => {
-        if (["app_users", "cashiers", "staff_roles", "user_roles"].includes(change.table)) {
-          void load();
-        }
-      }),
-    [load],
-  );
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const off = subscribeDataChange((change) => {
+      if (!["app_users", "cashiers", "staff_roles", "user_roles"].includes(change.table)) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => { void load(); }, 300);
+    });
+    return () => { off(); clearTimeout(timer); };
+  }, [load]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return rows.filter((row) =>
-      `${row.full_name} ${row.user_id} ${row.email} ${row.role_slug}`
+      `${row.full_name} ${row.login_username ?? row.user_id} ${row.email} ${row.role_slug}`
         .toLowerCase()
         .includes(needle),
     );
@@ -286,7 +298,8 @@ export function StaffManager() {
     setEditing(row);
     setForm({
       displayName: row.full_name,
-      username: row.user_id,
+      username: row.login_username || row.user_id,
+      email: isExternalEmail(row.email) ? row.email : "",
       credential: "",
 
       roleSlug: row.role_slug,
@@ -297,13 +310,17 @@ export function StaffManager() {
   };
 
   const selectedRole = roles.find((role) => role.slug === form.roleSlug);
-  const emailMode = editing ? isExternalEmail(editing.email) : looksLikeEmail(form.username);
+  const emailMode = editing ? !!form.email.trim() : looksLikeEmail(form.username);
   const nameValid = form.displayName.trim().length > 0;
-  const identifierValid = emailMode
+  const identifierValid = editing
+    ? (form.username === (editing.login_username || editing.user_id) || /^[a-z0-9._-]{2,40}$/.test(form.username.trim().toLowerCase()))
+    : emailMode
     ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.username.trim())
     : /^[a-z0-9._-]{2,40}$/.test(form.username.trim().toLowerCase());
+  const emailValid = !editing || (!form.email.trim() ? !isExternalEmail(editing.email) : /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()));
+  const needsEmailPassword = !!editing && !isExternalEmail(editing.email) && emailMode;
   const credentialValid =
-    editing && !form.credential
+    editing && !form.credential && !needsEmailPassword
       ? true
       : emailMode
         ? form.credential.length >= 8
@@ -313,7 +330,7 @@ export function StaffManager() {
   const branchId = form.branchId === "all" ? null : form.branchId;
   const branchLabel = branchId ? branchDisplayName(stores, branchId) : "All branches";
 
-  const canSave = nameValid && identifierValid && credentialValid && branchValid && !!selectedRole;
+  const canSave = nameValid && identifierValid && emailValid && credentialValid && branchValid && !!selectedRole;
 
   const save = async () => {
     if (!canSave || !selectedRole) return;
@@ -322,6 +339,8 @@ export function StaffManager() {
       if (editing) {
         await updateStaffMember({
           username: editing.user_id,
+          loginUsername: form.username.trim().toLowerCase(),
+          email: form.email.trim().toLowerCase(),
           displayName: form.displayName.trim(),
           branchId,
           roleSlug: selectedRole.slug,
@@ -364,7 +383,7 @@ export function StaffManager() {
     } catch (error) {
       // Lead with the real reason; the generic wording hid every cause.
       toast.error(friendlyError(error), {
-        description: editing ? "The account was not updated." : "The account was not created.",
+        description: editing ? "Review the error before retrying the account change." : "The account was not created.",
       });
     } finally {
       setBusy("");
@@ -459,6 +478,7 @@ export function StaffManager() {
           changed once the line is back — nothing is queued for later.
         </p>
       )}
+      {loadError && !offline && <p role="alert" className="rounded-lg border border-destructive/30 px-3 py-2 text-xs text-destructive">{loadError}</p>}
       <Separator />
       <div className="relative max-w-sm">
         <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
@@ -486,7 +506,7 @@ export function StaffManager() {
                 <tr key={row.user_id} className="grid grid-cols-2 gap-2 rounded-lg border border-border/60 p-3 sm:table-row sm:rounded-none sm:border-x-0 sm:border-t-0 sm:p-0">
                   <td className="col-span-2 min-w-0 sm:table-cell sm:py-3 sm:pr-3">
                     <div className="flex flex-wrap items-center gap-1.5"><p className="break-words font-medium">{row.full_name}</p>{!row.is_active && <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4 text-muted-foreground">Disabled</Badge>}</div>
-                    <p className="text-xs text-muted-foreground">{row.user_id}</p>
+                    <p className="text-xs text-muted-foreground">{row.login_username || row.user_id}</p>
                     <div className="mt-1 flex flex-wrap gap-1">
                       <Badge variant="secondary" className="px-1.5 py-0 text-[10px] leading-4">{roles.find((role) => role.slug === row.role_slug)?.name ?? row.role_slug}</Badge>
                       <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4">{row.store_id ? stores.find((store) => store.id === row.store_id)?.name ?? "Assigned branch" : "All branches"}</Badge>
@@ -679,10 +699,9 @@ export function StaffManager() {
               {!nameValid && <p className="text-xs text-destructive">Display name is required.</p>}
             </div>
             <div className="space-y-1">
-              <Label className="text-xs" htmlFor="staff-identifier">Username or email *</Label>
+              <Label className="text-xs" htmlFor="staff-identifier">{editing ? "Username *" : "Username or email *"}</Label>
               <Input
                 id="staff-identifier"
-                disabled={!!editing}
                 value={form.username}
                 onChange={(e) => setForm({ ...form, username: e.target.value.replace(/\s+/g, "") })}
                 aria-invalid={!identifierValid}
@@ -691,6 +710,13 @@ export function StaffManager() {
                 <p className="text-xs text-destructive">Enter a valid username or email.</p>
               )}
             </div>
+            {editing && <div className="space-y-1">
+              <Label className="text-xs" htmlFor="staff-email">Email</Label>
+              <Input id="staff-email" type="email" maxLength={254} autoComplete="off"
+                value={form.email} aria-invalid={!emailValid}
+                onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              {!emailValid && <p className="text-xs text-destructive">Enter a valid email address.</p>}
+            </div>}
             <div className="space-y-1">
               <Label className="text-xs" htmlFor="staff-credential">
                 {emailMode ? "Password" : "PIN or passcode (4–32)"}

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { retryDataRead, isTransientReadError } from "../read-retry";
+import { retryDataRead, isTransientReadError, withReadDeadline } from "../read-retry";
 import { __resetSessionEpoch, bumpSessionEpoch } from "../session-epoch";
 import { businessReadsReady } from "../business-readiness";
 
@@ -34,6 +34,14 @@ describe("read-only transient recovery", () => {
     const read = vi.fn().mockRejectedValue(error);
     await expect(retryDataRead(read)).rejects.toBe(error);
     expect(read).toHaveBeenCalledOnce();
+  });
+  it("releases a stalled composite read and clears its deadline after success", async () => {
+    const result = withReadDeadline(() => new Promise(() => {}), 1000);
+    const checked = expect(result).rejects.toThrow("did not respond");
+    await vi.advanceTimersByTimeAsync(1000);
+    await checked;
+    expect(await withReadDeadline(async () => ["staff"], 1000)).toEqual(["staff"]);
+    expect(vi.getTimerCount()).toBe(0);
   });
   it.each([
     { status: 403, message: "permission denied" },

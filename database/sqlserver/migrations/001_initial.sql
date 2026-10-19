@@ -773,6 +773,7 @@ IF OBJECT_ID(N'dbo.app_users', N'U') IS NULL BEGIN CREATE TABLE dbo.[app_users] 
   [pin_updated_by] nvarchar(max) NULL,
   [auth_secret] nvarchar(max) NOT NULL CONSTRAINT [DF_app_users_auth_secret] DEFAULT (''),
   [idle_timeout_minutes] int NULL,
+  [login_username] nvarchar(max) NULL,
   CONSTRAINT [PK_app_users] PRIMARY KEY ([id])
 
 ); END;
@@ -916,6 +917,8 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.app_users')
 END;
 
 IF COL_LENGTH(N'dbo.app_users', N'idle_timeout_minutes') IS NULL ALTER TABLE dbo.[app_users] ADD [idle_timeout_minutes] int NULL;
+
+IF COL_LENGTH(N'dbo.app_users', N'login_username') IS NULL ALTER TABLE dbo.[app_users] ADD [login_username] nvarchar(max) NULL;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.app_users') AND name=N'UX_app_users_user_id') CREATE UNIQUE INDEX [UX_app_users_user_id] ON dbo.[app_users]([user_id]);
 

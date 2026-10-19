@@ -44,19 +44,38 @@ Android installs as `com.luckycharms.pos.beta` (Retail Beta). Windows uses
 have their own device configuration and registration. Configure their connection
 through Settings → Database & Cloud Connection, as with stable devices.
 
-Cloudflare's connected beta branch uses a Worker version preview, with a Beta
-badge and beta update feed. Production routes stay assigned to the production
-deployment. Preview URLs are enabled in `wrangler.jsonc`.
+Cloudflare's `retail-pos-beta-domains` Worker runs the complete beta web app,
+with its own deployments and persisted invocation logs. It is connected to the
+`beta` branch; `retail-pos` remains connected to `main`. Cloudflare calls the
+active deployment of each Worker "Production"; this does not make the beta
+Worker part of the production POS.
 
-The dedicated `retail-pos-beta-domains` routing Worker serves only
+The dedicated beta Worker serves only
 `beta-pos.luckycharmsdnbhd.com`, `beta-member.luckycharmsdnbhd.com`, and
-`beta-redeem.luckycharmsdnbhd.com`, forwarding to the fixed beta version alias.
-It has no database credentials. Beta public links use those domains without
-editing the production domains in shared settings. External request origins
-remain external so upstream CSRF checks still apply.
+`beta-redeem.luckycharmsdnbhd.com`. The earlier proxy under
+`workers/beta-web-domains` is a rollback reference, not the current application
+deployment. Do not redeploy that proxy over the application accidentally.
 
-Cloudflare's non-production Version command must use `wrangler versions upload`,
-never `wrangler deploy`. Production builds/deploys wait for the final
+Build beta with `POS_RELEASE_CHANNEL=beta npm run build`, then run
+`node scripts/prepare-cloudflare-beta.cjs` and deploy using
+`npx wrangler deploy --config dist/server/wrangler.beta.json --keep-vars`.
+The helper preserves Nitro's assets and module paths, selects only the beta
+domains, enables logs and leaves database configuration in Cloudflare.
+Until the helper is merged into beta, the beta Worker's saved deploy command
+performs the same configuration conversion inline. Never run the default
+production deploy command for a beta publication.
+
+The beta Worker has its own encrypted runtime secrets. Keep service credentials
+out of build variables, browser assets, Git and local plaintext files. Its
+settings encryption key must be compatible with the existing signed sessions,
+terminal accounts and encrypted records; it is distinct from a Supabase API
+key unless explicitly configured to the same value. Do not rotate production
+keys as part of separating the beta website.
+
+The main Worker's build and Version commands skip `beta`, avoiding duplicate
+beta uploads under its production history. Other feature branches can still
+create immutable PR version previews without changing the shared beta domains.
+Production builds/deploys wait for the final
 `chore: release vX.Y.Z [release]` commit. An earlier merge build is skipped;
 the final version commit builds and deploys once. The release workflow creates
 that marker even when versioned files were already prepared in the PR.

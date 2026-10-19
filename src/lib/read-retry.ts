@@ -29,3 +29,16 @@ export async function retryDataRead<T>(read: () => PromiseLike<T>, isCurrent: ()
     }
   }
 }
+
+/** Bound a composite read too, including credential/client restoration before HTTP starts. */
+export async function withReadDeadline<T>(read: () => PromiseLike<T>, milliseconds = 45_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(read),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new DOMException("The data service did not respond in time. Please retry.", "TimeoutError")), milliseconds);
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
+}

@@ -11,7 +11,7 @@ describe("terminal staff administration", () => {
     const route = source("src/routes/api/v1/pos/sync.ts");
 
     expect(client).toContain('posFetch("/api/v1/pos/sync?operation=staff_admin"');
-    expect(client).toContain("if (!isTerminalApp())");
+    expect(client).toContain('if (!isTerminalApp() && action !== "list")');
     for (const action of ['"save"', '"set_active"', '"migrate"', '"update"', '"delete"', '"list"', '"permissions"']) {
       expect(client).toContain(action);
     }
