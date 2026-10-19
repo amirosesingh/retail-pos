@@ -137,6 +137,11 @@ function load() {
   }
   // The manager owns the automatic download so all callers share one promise.
   autoUpdater.autoDownload = false;
+  // A beta install has its own identity and feed, and never changes stable's channel.
+  if (/^\d+\.\d+\.\d+-beta\.\d+$/.test(app.getVersion())) {
+    autoUpdater.allowPrerelease = true;
+    autoUpdater.channel = "latest";
+  }
   autoUpdater.logger = { info: (...args) => log("info", ...args), warn: (...args) => log("warn", ...args), error: (...args) => log("error", ...args), debug: (...args) => log("info", ...args) };
   autoUpdater.autoInstallOnAppQuit = false;
   // Reuse unchanged installer blocks; electron-updater falls back to the

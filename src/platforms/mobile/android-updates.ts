@@ -15,9 +15,10 @@ import {
   firstReachableUrl,
   httpGetJson,
 } from "@/platforms/mobile/native-http";
-import { compareVersions, fetchManifest, resolvePlatformTarget, withTimeout } from "@/lib/update-manifest";
+import { compareVersions, fetchManifest, resolvePlatformTarget, withTimeout, UPDATE_BASE } from "@/lib/update-manifest";
+import { acceptsReleaseVersion } from "@/lib/release-channel";
 
-const BASE = "https://updatecms.luckycharmsdnbhd.com/pos-app";
+const BASE = UPDATE_BASE;
 /** Current layout first, legacy path second, for phones on older releases. */
 const FEEDS = [`${BASE}/latest/android`, `${BASE}/android`];
 const SIX_HOURS = 6 * 60 * 60 * 1000;
@@ -94,7 +95,7 @@ export async function fetchLatest(): Promise<Latest> {
       const data = await withTimeout(
         httpGetJson<{ version?: string; file?: string }>(`${feed}/latest.json`),
       );
-      if (!data?.version) throw new Error("The update feed did not report a version.");
+      if (!data?.version || !acceptsReleaseVersion(data.version)) throw new Error("The update feed did not report a version for this release channel.");
       return {
         version: data.version,
         file: data.file || `Retail-${data.version}.apk`,

@@ -11,8 +11,8 @@ import type { CapacitorConfig } from "@capacitor/cli";
 const remote = process.env["POS_MOBILE_URL"];
 
 const config: CapacitorConfig = {
-  appId: "com.luckycharms.pos",
-  appName: "Retail",
+  appId: process.env.POS_RELEASE_CHANNEL === "beta" ? "com.luckycharms.pos.beta" : "com.luckycharms.pos",
+  appName: process.env.POS_RELEASE_CHANNEL === "beta" ? "Retail Beta" : "Retail",
   webDir: "capacitor-shell",
   ...(remote
     ? { server: { url: remote, cleartext: false, androidScheme: "https" } }

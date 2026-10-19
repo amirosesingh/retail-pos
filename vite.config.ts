@@ -78,12 +78,14 @@ const isMobile = Boolean(process.env["MOBILE_BUILD"]);
 export const WEB_ONLY_ENV_NAMES = webOnlyEnv.webOnly.filter((name) => name.startsWith("VITE_"));
 
 const isTerminalBuild = isMobile || isDesktop;
+const isBetaBuild = process.env.POS_RELEASE_CHANNEL === "beta" || process.env.WORKERS_CI_BRANCH === "beta";
 
 const blankWebEnv = Object.fromEntries(
   WEB_ONLY_ENV_NAMES.map((name) => [`import.meta.env.${name}`, "undefined"]),
 );
 
 export default defineConfig({
+  define: { "import.meta.env.VITE_POS_RELEASE_CHANNEL": JSON.stringify(isBetaBuild ? "beta" : "stable") },
   server: {
     fs: { allow: [searchForWorkspaceRoot(process.cwd()), runtimeDependencies] },
     host: "::",
@@ -159,7 +161,7 @@ export default defineConfig({
     ? {
         // No repository or CI web environment value is visible to a device build.
         envDir: "scripts/no-env",
-        define: blankWebEnv,
+        define: { ...blankWebEnv, "import.meta.env.VITE_POS_RELEASE_CHANNEL": JSON.stringify(isBetaBuild ? "beta" : "stable") },
       }
     : {}),
 });

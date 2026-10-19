@@ -19,7 +19,7 @@ const { withoutWebEnv } = require("./web-only-env.cjs");
 const root = path.resolve(__dirname, "..");
 
 const DEFAULT_URL = "https://updatecms.luckycharmsdnbhd.com/pos-app/latest/";
-const url = (process.env.POS_UPDATE_URL || "").trim() || DEFAULT_URL;
+const url = (process.env.POS_UPDATE_URL || "").trim() || (process.env.POS_RELEASE_CHANNEL === "beta" ? require("./prepare-beta.cjs").BETA_BASE + "/latest/" : DEFAULT_URL);
 if (!process.env.POS_UPDATE_URL) {
   console.log(`POS_UPDATE_URL is not set — baking in the default feed ${url}`);
 }
@@ -72,7 +72,7 @@ for (const dir of ["dist-desktop", "release"]) {
   fs.rmSync(path.join(root, dir), { recursive: true, force: true });
 }
 
-run(path.join(root, "scripts", "bump-version.cjs"), ["--write"]);
+if (process.env.POS_RELEASE_CHANNEL !== "beta") run(path.join(root, "scripts", "bump-version.cjs"), ["--write"]);
 // Settings downloads and automatic upgrades consume this exact bundled file.
 // Regenerate before packaging so a new application cannot ship stale SQL.
 for (const script of ["supabase-registry-report.cjs", "generate-sqlserver-schema.cjs", "verify-sqlserver-schema.cjs", "verify-sync-registry.cjs", "test-database-upgrade.cjs"])

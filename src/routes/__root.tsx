@@ -1,4 +1,5 @@
 import { ApprovalTokenAgent } from "@/platform-config/approval-token";
+import { RELEASE_CHANNEL } from "@/lib/release-channel";
 import { createRefreshQueue, subscribeBackgroundRefresh } from "@/lib/background-refresh";
 import { queryReadsChangedTables } from "@/lib/live-query-tables";
 import { notifyError } from "@/lib/notify";
@@ -240,6 +241,7 @@ function RootShell({ children }: { children: ReactNode }) {
       </head>
       <body>
         {children}
+        {RELEASE_CHANNEL === "beta" && <div className="pointer-events-none fixed bottom-0 left-0 z-[100] rounded-tr-lg bg-amber-500 px-3 py-1 text-xs font-semibold text-black" role="note">Beta</div>}
         <Scripts />
       </body>
     </html>

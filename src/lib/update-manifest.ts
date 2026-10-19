@@ -21,6 +21,7 @@
 import { httpGetJson } from "@/platforms/mobile/native-http";
 import { isAndroid } from "@/platform-config/platform";
 import { isWindowsShell, isMobileShell } from "@/platform-config/features";
+import { DEFAULT_UPDATE_BASE, acceptsReleaseVersion } from "./release-channel";
 
 const ENV_BASE =
   (typeof import.meta !== "undefined" &&
@@ -30,7 +31,7 @@ const ENV_BASE =
   "";
 
 /** Root of the self-hosted update directory (no trailing slash). */
-export const UPDATE_BASE = (ENV_BASE || "https://updatecms.luckycharmsdnbhd.com/pos-app").replace(
+export const UPDATE_BASE = (ENV_BASE || DEFAULT_UPDATE_BASE).replace(
   /\/+$/,
   "",
 );
@@ -75,11 +76,25 @@ export function withTimeout<T>(work: Promise<T>, ms = UPDATE_TIMEOUT_MS): Promis
 
 /** "1.2.10" > "1.2.9" — plain numeric compare, missing parts count as 0. */
 export function compareVersions(a: string, b: string): number {
-  const left = String(a).split(".").map((n) => Number.parseInt(n, 10) || 0);
-  const right = String(b).split(".").map((n) => Number.parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+  const parse = (value: string) => /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value);
+  const l = parse(String(a)), r = parse(String(b));
+  if (!l || !r) return 0;
+  const left = l.slice(1, 4).map(n => Number(n) || 0);
+  const right = r.slice(1, 4).map(n => Number(n) || 0);
+  for (let i = 0; i < 3; i += 1) {
     const d = (left[i] ?? 0) - (right[i] ?? 0);
     if (d !== 0) return d > 0 ? 1 : -1;
+  }
+  if (!l[4] || !r[4]) return l[4] ? -1 : r[4] ? 1 : 0;
+  const lp = l[4].split("."), rp = r[4].split(".");
+  for (let i = 0; i < Math.max(lp.length, rp.length); i++) {
+    const x = lp[i], y = rp[i];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    const xn = /^\d+$/.test(x), yn = /^\d+$/.test(y);
+    if (xn && yn) return Number(x) > Number(y) ? 1 : -1;
+    if (xn !== yn) return xn ? -1 : 1;
+    return x > y ? 1 : -1;
   }
   return 0;
 }
@@ -124,7 +139,7 @@ export function resolvePlatformTarget(
 export async function fetchManifest(url = MANIFEST_URL): Promise<UpdateManifest | null> {
   try {
     const data = await withTimeout(httpGetJson<UpdateManifest>(url));
-    if (!data || typeof data.version !== "string" || !data.version.trim()) return null;
+    if (!data || typeof data.version !== "string" || !acceptsReleaseVersion(data.version.trim())) return null;
     return data;
   } catch {
     return null;

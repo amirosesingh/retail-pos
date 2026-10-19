@@ -15,6 +15,8 @@
   // wiped values typed into the dashboard. `keep_vars` stops that: variables
   // and secrets set in the dashboard survive each deploy.
   "keep_vars": true,
+  // Branch beta is uploaded as a version preview, never deployed to main routes.
+  "preview_urls": true,
   // The POS and membership public URL/publishable-key pairs are set as plain
   // variables in the dashboard. They are deliberately NOT listed here: a value
   // written in this file would overwrite the dashboard one on every deploy.
