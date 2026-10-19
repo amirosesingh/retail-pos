@@ -58,6 +58,7 @@ test('beta publisher verifies both packages before publishing isolated pointers'
     const firstPointer = writes.findIndex(w => !w.immutable);
     assert.ok(firstPointer > writes.findIndex(w => w.key.endsWith('.apk')));
     assert.equal(JSON.parse(objects.get('pos-app/beta/manifest.json')).version, f.expected.version);
+    assert.ok(objects.has(`pos-app/beta/latest/android/Retail-${f.expected.version}.apk`));
     assert.throws(() => assertBetaKey('pos-app/latest/latest.yml'));
     assert.throws(() => assertBetaKey('pos-app/beta/../latest/latest.yml'));
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }

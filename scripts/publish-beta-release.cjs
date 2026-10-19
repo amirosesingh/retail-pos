@@ -61,6 +61,8 @@ async function publishBeta(windows, android, expected, store = originStore()) {
     await immutable(path.join(windows, file), `${PREFIX}latest/${file}`);
   }
   await immutable(path.join(android, pair.apk.file), `${PREFIX}releases/${pair.releaseId}/android/${pair.apk.file}`);
+  // Android's existing per-folder recovery feed must advertise a real file too.
+  await immutable(path.join(android, pair.apk.file), `${PREFIX}latest/android/${pair.apk.file}`);
   await immutable(path.join(windows, 'release.json'), `${PREFIX}releases/${pair.releaseId}/release.json`);
   await immutable(path.join(windows, 'latest.yml'), `${PREFIX}latest/${expected.version}.yml`);
   // Every advertised package has been read back and verified before pointer updates.
