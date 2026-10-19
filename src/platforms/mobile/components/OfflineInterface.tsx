@@ -47,7 +47,7 @@ export function NativeConnectionIndicator() {
   if (state === "online" && !recovered || state === "connecting" && !wasOffline.current) return null;
   const online = state === "online";
   const Icon = online ? Wifi : WifiOff;
-  return <div role="status" aria-live="polite" className={`pointer-events-none fixed bottom-[calc(env(safe-area-inset-bottom,0px)+2rem)] right-3 z-[60] flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs shadow-sm ${online ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
+  return <div role="status" aria-live="polite" className={`pointer-events-none fixed bottom-[calc(env(safe-area-inset-bottom,0px)+0.125rem)] right-3 z-[60] flex items-center gap-2 rounded-full border border-border bg-card px-2.5 py-1 text-xs shadow-sm ${online ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
     <span className="size-2 rounded-full bg-current" aria-hidden /><Icon className="size-3.5" aria-hidden />{online ? "Online" : "Offline"}
   </div>;
 }
