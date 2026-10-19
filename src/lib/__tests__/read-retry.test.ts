@@ -17,9 +17,23 @@ describe("read-only transient recovery", () => {
     const failure = new Error("Network error");
     const read = vi.fn().mockRejectedValue(failure);
     const checked = expect(retryDataRead(read)).rejects.toBe(failure);
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1500);
     await checked;
-    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+  it("allows a connection time to recover without retrying writes", async () => {
+    const read = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockRejectedValueOnce(new TypeError("Failed to fetch")).mockResolvedValueOnce(["complete"]);
+    const result = retryDataRead(read);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(await result).toEqual(["complete"]);
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+  it("does not retry deliberate cancellation", async () => {
+    const error = new DOMException("The operation was aborted", "AbortError");
+    const read = vi.fn().mockRejectedValue(error);
+    await expect(retryDataRead(read)).rejects.toBe(error);
+    expect(read).toHaveBeenCalledOnce();
   });
   it.each([
     { status: 403, message: "permission denied" },

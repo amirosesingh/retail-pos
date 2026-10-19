@@ -67,3 +67,8 @@ export function platformName(): "android" | "ios" | "electron" | "web" {
   if (isElectron()) return "electron";
   return "web";
 }
+
+/** Phone typography applies to packaged mobile shells as well as mobile browsers. */
+export function usesMobileTypography(): boolean {
+  return isNative();
+}
