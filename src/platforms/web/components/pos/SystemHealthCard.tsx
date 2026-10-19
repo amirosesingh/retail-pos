@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { HeartPulse, Loader2, RotateCcw, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +15,7 @@ import {
 import { useAppHealth } from "@/lib/app-health";
 
 const when = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString() : "—";
+  iso ? posDisplayDateTime(new Date(iso)) : "—";
 
 /** Desktop-only: start health, last known-good build, and manual roll back. */
 export function SystemHealthCard() {

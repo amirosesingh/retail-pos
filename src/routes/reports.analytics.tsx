@@ -15,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { AnalyticsCardRail } from "@/platforms/web/components/pos/AnalyticsCardRail";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -149,7 +150,7 @@ function AnalyticsBoard() {
       <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
         <ReportHeader
           title="Business Analytics"
-          subtitle="Top sellers, shop performance, trends, savings and profit."
+          subtitle="Top sellers, shop performance, trends, savings and profit for your accessible shops and selected dates."
           from={from}
           to={to}
           onFrom={setFrom}
@@ -161,7 +162,7 @@ function AnalyticsBoard() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        <div className="summary-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="summary-grid grid grid-cols-2 gap-3 lg:grid-cols-5">
           <StatCard
             tone="revenue"
             label="Revenue"
@@ -226,9 +227,9 @@ function AnalyticsBoard() {
           </p>
         )}
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <AnalyticsCardRail title="Business analytics graphs">
+          <section className="flex min-w-0 flex-col rounded-2xl border border-border bg-card p-4">
+            <div className="mb-3 flex min-h-20 flex-wrap content-start items-center justify-between gap-3">
               <h2 className="text-sm font-semibold">Top selling items</h2>
               <div className="flex gap-1">
                 <Button
@@ -247,6 +248,7 @@ function AnalyticsBoard() {
                 </Button>
               </div>
             </div>
+            <div className="no-scrollbar h-80 overflow-y-auto overscroll-contain" tabIndex={0} aria-label="Top selling items chart">
             <ResponsiveContainer
               width="100%"
               height={Math.max(240, topItems.length * 36)}
@@ -288,11 +290,12 @@ function AnalyticsBoard() {
                 />
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </section>
 
-          <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
-            <h2 className="mb-3 text-sm font-semibold">Revenue by shop</h2>
-            <ResponsiveContainer width="100%" height={260} minWidth={0}>
+          <section className="flex min-w-0 flex-col rounded-2xl border border-border bg-card p-4">
+            <h2 className="mb-3 min-h-20 text-sm font-semibold">Revenue by shop</h2>
+            <ResponsiveContainer width="100%" height={240} minWidth={0}>
               <PieChart>
                 <Pie
                   isAnimationActive={false}
@@ -317,7 +320,7 @@ function AnalyticsBoard() {
             <p className="mb-2 text-xs text-muted-foreground">
               Colors identify branches and stay the same when their ranking changes.
             </p>
-            <ul className="grid gap-2 text-sm sm:grid-cols-2">
+            <ul tabIndex={0} aria-label="Shop revenue shares" className="no-scrollbar max-h-24 overflow-y-auto space-y-2 text-xs">
               {byStore.map((shop) => (
                 <li key={shop.id} className="flex min-w-0 items-start gap-2">
                   <span
@@ -325,15 +328,14 @@ function AnalyticsBoard() {
                     style={{ background: branchChartColor(shop.id) }}
                   />
                   <span className="min-w-0 flex-1 break-words">{shop.name}</span>
-                  <span className="shrink-0 tabular-nums">{shop.sharePct.toFixed(1)}%</span>
+                  <span className="shrink-0 tabular-nums">{money(shop.revenue)} · {shop.sharePct.toFixed(1)}%</span>
                 </li>
               ))}
             </ul>
           </section>
-        </div>
 
-        <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <section className="flex min-w-0 flex-col rounded-2xl border border-border bg-card p-4">
+          <div className="mb-3 flex min-h-20 flex-wrap content-start items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">
               {trend === "daily" ? "Daily revenue" : "Monthly revenue"}
             </h2>
@@ -354,7 +356,7 @@ function AnalyticsBoard() {
               </Button>
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={280}>
+          <ResponsiveContainer width="100%" height={320}>
             {trend === "daily" ? (
               <BarChart data={series}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
@@ -420,6 +422,8 @@ function AnalyticsBoard() {
             )}
           </ResponsiveContainer>
         </section>
+
+        </AnalyticsCardRail>
 
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="min-w-0 rounded-2xl border border-border bg-card p-4">

@@ -64,6 +64,7 @@ export function StaffIdleTimeout({
             {error}
           </p>
         )}
+        <div className="flex flex-wrap items-center gap-2 [&>div]:min-w-0 [&>div]:flex-1">
         <PresetNumber
           label="Personal idle limit"
           value={minutes}
@@ -79,6 +80,7 @@ export function StaffIdleTimeout({
         <Button size="sm" variant="outline" disabled={!loaded || busy} onClick={() => void save()}>
           {busy ? "Saving…" : "Save idle limit"}
         </Button>
+        </div>
     </section>
   );
 }

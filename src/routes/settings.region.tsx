@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/select";
 import { usePos } from "@/lib/pos-store";
 import { TIME_ZONES, effectiveTimeZone, formatDateTime } from "@/lib/time-zone";
-import type { DateFormat, TimeFormat } from "@/core/types/pos-types";
+import type { TimeFormat } from "@/core/types/pos-types";
 
 /** Countries the shop is likely to trade in, with a sensible default zone. */
 const COUNTRIES: { code: string; name: string; zone: string }[] = [
@@ -111,19 +111,7 @@ function RegionPage() {
 
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Date format</Label>
-            <Select
-              value={it.dateFormat ?? "dmy"}
-              onValueChange={(v) => patch({ dateFormat: v as DateFormat })}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="dmy">Day / Month / Year — 31/12/2026</SelectItem>
-                <SelectItem value="mdy">Month / Day / Year — 12/31/2026</SelectItem>
-                <SelectItem value="ymd">Year / Month / Day — 2026-12-31</SelectItem>
-              </SelectContent>
-            </Select>
+            <p className="rounded-md border border-border px-3 py-2 text-sm">DD-MM-YYYY · 31-12-2026</p>
           </div>
 
           <div className="space-y-1">

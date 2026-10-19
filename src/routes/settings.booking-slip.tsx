@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import {
@@ -117,7 +118,7 @@ function BookingSlipForm() {
 Racket            Yonex Astrox 88D
 String            BG65 Ti
 Tension           24 / 26 lb
-Ready by          ${new Date().toLocaleDateString()}
+Ready by          ${posDisplayDate(new Date())}
 `}
           {cfg.showTerms && cfg.terms.trim() ? `\nTERMS & CONDITIONS\n${cfg.terms.trim()}\n` : ""}
           {cfg.showSignature

@@ -112,7 +112,7 @@ function ReceivingIndex() {
                   <TableCell>{storeName(t.fromStoreId)}</TableCell>
                   <TableCell className="numeric text-right">{t.items.length}</TableCell>
                   <TableCell>
-                    <Badge variant="outline">{TRANSFER_STATUS_LABELS[t.status]}</Badge>
+                    <Badge status={t.status} variant="outline">{TRANSFER_STATUS_LABELS[t.status]}</Badge>
                   </TableCell>
                   <TableCell>
                     <Button asChild size="sm" variant={tab === "todo" ? "default" : "ghost"}>

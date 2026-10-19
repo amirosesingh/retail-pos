@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useStockTableCosts } from "@/lib/use-stock-table-costs";
 import { transferTableTotals } from "@/lib/stock-table-totals";
 /**
@@ -48,7 +49,7 @@ export const fulfilmentLabel: Record<string, string> = {
   none: "nothing sent",
 };
 
-export const when = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "—");
+export const when = (iso?: string) => (iso ? posDisplayDateTime(new Date(iso)) : "—");
 
 /**
  * The note for this page: from till state when it is there — so actions and
@@ -133,7 +134,7 @@ export function WorkspaceHeader({
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="numeric text-2xl font-semibold">{title}</h1>
           {status && (
-            <Badge variant="outline" className={statusStyle[status]}>
+            <Badge status={status} variant="outline" className={statusStyle[status]}>
               {TRANSFER_STATUS_LABELS[status]}
             </Badge>
           )}

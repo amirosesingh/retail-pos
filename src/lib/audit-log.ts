@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { readBusinessValue, writeBusinessValue } from "./business-storage";
 import { useEffect, useSyncExternalStore } from "react";
 import { db } from "@/core/api/pos-db";
@@ -606,7 +607,7 @@ export const auditToCsv = (rows: AuditLog[]) => {
   const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const body = rows.map((r) =>
     [
-      new Date(r.at).toLocaleString(),
+      posDisplayDateTime(new Date(r.at)),
       r.staffName,
       r.staffId,
       r.role ?? "",

@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Day-end shift summary and where it is delivered.
  *
@@ -102,9 +103,9 @@ export function buildShiftSummary(
 
   const lines = [
     `Shift closed — ${storeName}`,
-    `Closed by ${shift.closedBy ?? shift.cashier} at ${new Date(
+    `Closed by ${shift.closedBy ?? shift.cashier} at ${posDisplayDateTime(new Date(
       shift.closedAt ?? new Date().toISOString(),
-    ).toLocaleString()}`,
+    ))}`,
     `Total sales: ${money(totalSales)} over ${live.length} bill(s)`,
     `Discounts: ${money(discounts)}   Refunds: ${money(refunds)}`,
     ...Object.entries(paymentBreakdown).map(([m, v]) => `  ${m}: ${money(v)}`),

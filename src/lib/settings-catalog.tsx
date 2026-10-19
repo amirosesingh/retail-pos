@@ -14,7 +14,6 @@ import {
   Building2,
   CalendarClock,
   Database,
-  EyeOff,
   Globe,
   Landmark,
   Layers,
@@ -601,16 +600,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     raw: true,
     keywords: "people employees users accounts roles permissions pin cashier supervisor warehouse",
   },
-  {
-    id: "access",
-    label: "Roles & access",
-    blurb: "One page: what each role may do, and what it can see.",
-    icon: EyeOff,
-    category: "people",
-    scope: "company",
-    to: "/settings/access",
-    panel: page(() => import("@/routes/settings.access")),
-  },
+
 ];
 
 

@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { PresetNumber } from "@/components/ui/preset-number";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
@@ -341,7 +342,7 @@ function RulesSettings() {
               <p className="mt-0.5 text-xs opacity-90">{statusView.detail}</p>
               <p className="mt-2 text-xs opacity-80">
                 {lastSyncedAt
-                  ? `Last verified ${new Date(lastSyncedAt).toLocaleString()}`
+                  ? `Last verified ${posDisplayDateTime(new Date(lastSyncedAt))}`
                   : "Not yet verified on this terminal"}
               </p>
             </div>

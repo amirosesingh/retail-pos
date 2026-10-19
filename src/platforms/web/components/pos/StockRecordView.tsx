@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Read-only view of one stock count record: who counted it, when, and every
  * line with its variance. Always available, whatever the record's status.
@@ -27,13 +28,13 @@ export function StockRecordView({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <span className="font-mono">{record?.reference || "No reference"}</span>
-            <Badge variant="outline" className="capitalize">
+            <Badge status={record?.status} variant="outline" className="capitalize">
               {record?.status ?? "—"}
             </Badge>
           </DialogTitle>
           <DialogDescription>
             {record?.store_code || record?.store_id || "—"} ·{" "}
-            {record?.created_at ? new Date(record.created_at).toLocaleString() : "—"} · counted by{" "}
+            {record?.created_at ? posDisplayDateTime(new Date(record.created_at)) : "—"} · counted by{" "}
             {record?.staff_name || "—"}
             {record?.posted_by ? ` · posted by ${record.posted_by}` : ""}
           </DialogDescription>

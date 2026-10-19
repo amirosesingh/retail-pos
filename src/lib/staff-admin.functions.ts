@@ -51,10 +51,16 @@ export const listManagedStaffAccounts = createServerFn({ method: "POST" })
       const { normalizeRule } = await import("./authorization");
       const { approvalPinEligible } = await import("./approval-pin-eligibility");
       const rules = ((await rulesResponse.json()) as Record<string, unknown>[]).map(normalizeRule);
+      const { staffLastSignIns } = await import("./staff-admin.server");
+      const lastSignIns = await staffLastSignIns(rows.flatMap(row => row.auth_user_id ? [row.auth_user_id] : []));
       return {
         ok: true as const,
         rows: rows.map((row) => ({
           ...row,
+          last_login_at: (() => {
+            const authLogin = lastSignIns.get(row.auth_user_id?.toLowerCase() ?? "");
+            return authLogin && (!row.last_login_at || Date.parse(authLogin) > Date.parse(row.last_login_at)) ? authLogin : row.last_login_at;
+          })(),
           approval_pin_eligible: approvalPinEligible(rules, {
             userId: row.user_id,
             role: row.role_slug || row.role,

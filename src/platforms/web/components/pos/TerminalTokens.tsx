@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Admin console: issue an activation code for a Windows till and disconnect a
  * machine again at any time.
@@ -80,7 +81,7 @@ const qrDataUrl = (value: string) => {
 };
 
 const formatDate = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—";
+  iso ? posDisplayDateTime(iso) : "—";
 
 const STATUS_CLASS: Record<TerminalLiveStatus, string> = {
   online: "border-success/40 bg-success/10 text-success",

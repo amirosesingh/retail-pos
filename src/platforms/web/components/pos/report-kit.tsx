@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { posDayKey, inPosDayRange } from "@/lib/time-zone";
 import { beginDataTask } from "@/lib/data-progress";
 import { notifyError } from "@/lib/notify";
@@ -129,14 +130,7 @@ export function defaultRange(days = 30) {
 export const inRange = inPosDayRange;
 
 export const stamp = (iso: string) =>
-  new Date(iso).toLocaleString([], {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  posDisplayDateTime(iso);
 
 /** Downloads a report as CSV so it can be opened in Excel. */
 export function downloadCsv(name: string, rows: (string | number)[][]) {

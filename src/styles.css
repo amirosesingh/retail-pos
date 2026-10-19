@@ -55,6 +55,31 @@
 }
 
 /* Keep dialog grids and dense tables inside the visible device viewport. */
+.pos-popup-surface {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--popover-foreground);
+}
+.pos-popup-surface .pos-popup-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.pos-popup-surface :is(.pos-text-field, .pos-select-field, [data-control-size]) {
+  min-height: 2.25rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+}
+.pos-popup-surface .pos-text-area { font-size: 0.875rem; border-radius: 0.5rem; }
+.pos-popup-surface [data-control-size="icon"] { min-width: 2.25rem; }
+.pos-popup-surface > * { min-width: 0; }
+@media (max-width: 639px) {
+  .pos-popup-surface .pos-popup-title { font-size: max(16px, 1rem); }
+  .pos-popup-surface :is(.pos-text-field, .pos-select-field, [data-control-size]) { min-height: 44px; }
+  .pos-popup-surface [data-control-size="icon"] { min-width: 44px; }
+  /* Native-size text avoids browser focus zoom; labels remain compact. */
+  .pos-popup-surface :is(.pos-text-field, .pos-text-area, .pos-select-field) { font-size: max(16px, 1rem); }
+}
 .pos-dialog-content {
   max-height: calc(100dvh - 1rem);
 }
@@ -260,10 +285,10 @@
 
 :root {
   --radius: 0.75rem;
-  --motion-fast: 120ms;
-  --motion-normal: 180ms;
+  --motion-fast: 240ms;
+  --motion-normal: 420ms;
   --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --motion-ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-emphasized: cubic-bezier(0.22, 0.61, 0.36, 1);
   --background: oklch(0.98 0.004 250);
   --foreground: oklch(0.22 0.014 265);
   --surface: oklch(1 0 0);
@@ -823,7 +848,7 @@
 }
 
 @utility ui-menu-motion {
-  animation-duration: var(--motion-fast);
+  animation-duration: var(--motion-normal);
   animation-timing-function: var(--motion-ease-standard);
   backface-visibility: hidden;
 }
@@ -856,6 +881,11 @@
 
 .ui-collapsible-content[data-state="closed"] {
   animation: collapsible-up var(--motion-fast) var(--motion-ease-standard);
+}
+
+/* Native touch/wheel scrolling stays browser-controlled; explicit scrolls ease in. */
+html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-auto {
+  scroll-behavior: smooth;
 }
 
 /* Motion never competes with scanning, checkout or background processing. */

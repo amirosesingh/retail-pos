@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Runtime view of the static logic scan.
  *
@@ -44,7 +45,7 @@ export function logicReport(): LogicReport {
 
 export function formatLogicReport(report: LogicReport): string {
   const lines = [
-    `Logic health — scanned ${report.filesScanned} files on ${new Date(report.generatedAt).toLocaleString()}`,
+    `Logic health — scanned ${report.filesScanned} files on ${posDisplayDateTime(new Date(report.generatedAt))}`,
     `Critical ${report.counts.critical} · Warning ${report.counts.warning} · Info ${report.counts.info}`,
     "",
   ];

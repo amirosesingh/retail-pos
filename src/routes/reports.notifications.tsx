@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import {
   ReportTable as Table,
   downloadReport,
@@ -53,7 +54,7 @@ const STATUS_OPTIONS = [
 
 const when = (iso: string) => {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? "—" : posDisplayDateTime(d);
 };
 
 function NotificationsReport() {

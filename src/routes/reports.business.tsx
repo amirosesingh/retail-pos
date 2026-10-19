@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { sameBranchId } from "@/lib/branch-id";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
@@ -323,7 +324,7 @@ function BusinessReport() {
                       <TableCell className="font-medium">{r.name}</TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                         {r.arrivalDate
-                          ? new Date(r.arrivalDate).toLocaleDateString()
+                          ? posDisplayDate(new Date(r.arrivalDate))
                           : "Not recorded"}
                       </TableCell>
                       <TableCell className="text-right">{r.qty}</TableCell>

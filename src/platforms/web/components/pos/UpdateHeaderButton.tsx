@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { UpdateConfirmation } from "./MinimalUpdatePanel";
-import { Link } from "@tanstack/react-router";
 import { Download, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,35 +16,12 @@ export function UpdateHeaderButton({ className }: { className?: string }) {
   const waiting = state.status !== "unavailable" && state.status !== "current" && (state.status === "ready" || !!state.available);
   const busy = state.status === "checking" || state.status === "downloading";
 
-  if (supported) {
-    if (!waiting) return null;
-    return <>
+  if (!supported || !waiting) return null;
+  return <>
       <Button variant="ghost" size="icon" className={cn("relative shrink-0", className)} aria-label="Software update available" title="Update Retail" onClick={() => setOpen(true)}>
         {busy ? <RefreshCw className="size-4 animate-spin" /> : <Download className="size-4" />}
         <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-primary" />
       </Button>
       <UpdateConfirmation updates={updates} open={open} onOpenChange={setOpen} />
-    </>;
-  }
-  return (
-    <Button
-      asChild
-      variant="ghost"
-      size="icon"
-      className={cn("relative shrink-0", className)}
-      aria-label={waiting ? "Software update available" : "Software updates"}
-      title={waiting ? "A new version is ready to install" : "Software updates"}
-    >
-      <Link to="/settings/updates">
-        {busy ? (
-          <RefreshCw className="size-4 animate-spin" />
-        ) : (
-          <Download className="size-4" />
-        )}
-        {waiting && (
-          <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-primary ring-2 ring-sidebar" />
-        )}
-      </Link>
-    </Button>
-  );
+  </>;
 }

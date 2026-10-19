@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { withReadDeadline } from "@/lib/read-retry";
 import { notifyError } from "@/lib/notify";
 import { NativeApprovalMethods } from "@/platform-config/approval-methods";
@@ -95,6 +96,7 @@ type Form = {
   username: string;
   email: string;
   credential: string;
+  confirmCredential: string;
 
   roleSlug: string;
   branchId: string;
@@ -106,6 +108,7 @@ const EMPTY: Form = {
   username: "",
   email: "",
   credential: "",
+      confirmCredential: "",
 
   roleSlug: "cashier",
   // Empty until the administrator makes an explicit branch choice.
@@ -178,11 +181,12 @@ export function StaffManager() {
   // gated action, so administrators and supervisors need one too.
   const [pinFor, setPinFor] = useState<Row | null>(null);
   const [pinValue, setPinValue] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
   const [showPinValue, setShowPinValue] = useState(false);
 
 
   async function saveAuthPin() {
-    if (!pinFor || !/^\d{4,6}$/.test(pinValue)) return;
+    if (!pinFor || !/^\d{4,6}$/.test(pinValue) || pinValue !== confirmPin) return;
     setBusy("auth-pin");
     try {
       const auth = await getPosCallerAuth();
@@ -197,7 +201,7 @@ export function StaffManager() {
         ]);
         toast.success(`Authorisation PIN set for ${pinFor.full_name}`);
         setPinFor(null);
-        setPinValue("");
+        setPinValue(""); setConfirmPin("");
         setShowPinValue(false);
       }
     } catch (e) {
@@ -301,6 +305,7 @@ export function StaffManager() {
       username: row.login_username || row.user_id,
       email: isExternalEmail(row.email) ? row.email : "",
       credential: "",
+      confirmCredential: "",
 
       roleSlug: row.role_slug,
       branchId: row.store_id ?? "all",
@@ -330,7 +335,8 @@ export function StaffManager() {
   const branchId = form.branchId === "all" ? null : form.branchId;
   const branchLabel = branchId ? branchDisplayName(stores, branchId) : "All branches";
 
-  const canSave = nameValid && identifierValid && emailValid && credentialValid && branchValid && !!selectedRole;
+  const credentialMatches = form.credential === form.confirmCredential;
+  const canSave = credentialMatches && nameValid && identifierValid && emailValid && credentialValid && branchValid && !!selectedRole;
 
   const save = async () => {
     if (!canSave || !selectedRole) return;
@@ -503,8 +509,8 @@ export function StaffManager() {
             {filtered.map((row) => {
               const terminal = isInternalAddress(row.email);
               return (
-                <tr key={row.user_id} className="grid grid-cols-2 gap-2 rounded-lg border border-border/60 p-3 sm:table-row sm:rounded-none sm:border-x-0 sm:border-t-0 sm:p-0">
-                  <td className="col-span-2 min-w-0 sm:table-cell sm:py-3 sm:pr-3">
+                <tr key={row.user_id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 rounded-lg border border-border/60 p-3 sm:table-row sm:rounded-none sm:border-x-0 sm:border-t-0 sm:p-0">
+                  <td className="col-start-1 min-w-0 sm:table-cell sm:py-3 sm:pr-3">
                     <div className="flex flex-wrap items-center gap-1.5"><p className="break-words font-medium">{row.full_name}</p>{!row.is_active && <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4 text-muted-foreground">Disabled</Badge>}</div>
                     <p className="text-xs text-muted-foreground">{row.login_username || row.user_id}</p>
                     <div className="mt-1 flex flex-wrap gap-1">
@@ -512,17 +518,17 @@ export function StaffManager() {
                       <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4">{row.store_id ? stores.find((store) => store.id === row.store_id)?.name ?? "Assigned branch" : "All branches"}</Badge>
                     </div>
                   </td>
-                  <td className="min-w-0 sm:table-cell sm:pr-3">
+                  <td className="col-start-1 min-w-0 sm:table-cell sm:pr-3">
                     <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4">
                       {terminal ? "Terminal PIN sign-in" : "Email & password"}
                     </Badge>
                   </td>
 
-                  <td className="min-w-0 text-[11px] text-muted-foreground sm:table-cell sm:pr-3"><span className="block text-[10px] sm:hidden">Last login</span>
-                    {row.last_login_at ? new Date(row.last_login_at).toLocaleString() : "Never"}
+                  <td className="col-start-1 min-w-0 text-[11px] text-muted-foreground sm:table-cell sm:pr-3"><span className="block text-[10px] sm:hidden">Last login</span>
+                    {row.last_login_at ? posDisplayDateTime(new Date(row.last_login_at)) : "Not recorded"}
                   </td>
-                  <td className="col-span-2 sm:table-cell">
-                    <div className="flex justify-end gap-1">
+                  <td className="col-start-2 row-start-1 row-end-4 self-start sm:table-cell">
+                    <div className="flex flex-col items-center gap-1 sm:flex-row sm:justify-end">
                       <Button
                         size="icon"
                         variant="ghost"
@@ -543,7 +549,7 @@ export function StaffManager() {
                           disabled={offline || !row.approval_pin_eligible}
                           onClick={() => {
                             setPinFor(row);
-                            setPinValue("");
+                            setPinValue(""); setConfirmPin("");
                             setShowPinValue(false);
                           }}
                         >
@@ -600,7 +606,7 @@ export function StaffManager() {
         onOpenChange={(open) => {
           if (!open) {
             setPinFor(null);
-            setPinValue("");
+            setPinValue(""); setConfirmPin("");
             setShowPinValue(false);
           }
         }}
@@ -644,19 +650,27 @@ export function StaffManager() {
               Generate
             </Button>
           </div>
+          <div className="space-y-1">
+            <Label htmlFor="confirm-approval-pin">Confirm authorisation PIN</Label>
+            <Input id="confirm-approval-pin" type="password" inputMode="numeric" maxLength={6}
+              autoComplete="new-password" value={confirmPin}
+              onChange={event => setConfirmPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
+              aria-invalid={!!confirmPin && pinValue !== confirmPin} />
+            {confirmPin && pinValue !== confirmPin && <p className="text-xs text-destructive">The PINs must match.</p>}
+          </div>
           <DialogFooter>
             <Button
               variant="outline"
               onClick={() => {
                 setPinFor(null);
-                setPinValue("");
+                setPinValue(""); setConfirmPin("");
                 setShowPinValue(false);
               }}
             >
               Cancel
             </Button>
             <Button
-              disabled={!/^\d{4,6}$/.test(pinValue) || busy === "auth-pin"}
+              disabled={!/^\d{4,6}$/.test(pinValue) || pinValue !== confirmPin || busy === "auth-pin"}
               onClick={() => void saveAuthPin()}
             >
               {busy === "auth-pin" && <Loader2 className="size-4 animate-spin" />}Save PIN
@@ -671,7 +685,7 @@ export function StaffManager() {
           if (!busy) setFormOpen(open);
         }}
       >
-        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editing ? "Edit account" : "Create account"}</DialogTitle>
             <DialogDescription>
@@ -686,8 +700,8 @@ export function StaffManager() {
               disabled={busy === "save" || (!!editing && editing.auth_user_id === authUserId)}
               onCheckedChange={(active) => setForm({ ...form, active })} />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1 sm:col-span-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1 col-span-2">
               <Label className="text-xs" htmlFor="staff-name">Display name *</Label>
               <Input
                 id="staff-name"
@@ -743,6 +757,14 @@ export function StaffManager() {
               )}
             </div>
             <div className="space-y-1">
+              <Label className="text-xs" htmlFor="staff-confirm-credential">Confirm {emailMode ? "password" : "PIN / passcode"}</Label>
+              <Input id="staff-confirm-credential" type="password" autoComplete="new-password"
+                maxLength={emailMode ? 200 : 32} value={form.confirmCredential}
+                aria-invalid={!!form.confirmCredential && !credentialMatches}
+                onChange={e => setForm({ ...form, confirmCredential: e.target.value })} />
+              {form.confirmCredential && !credentialMatches && <p className="text-xs text-destructive">The entries must match.</p>}
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs">Role *</Label>
               <Select
                 value={form.roleSlug}
@@ -759,7 +781,7 @@ export function StaffManager() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">{editing && editing.role_slug === form.roleSlug ? "Keeping this role preserves the person’s current permissions. Use Edit permissions to adjust them." : "This role’s saved default permissions will be assigned when you save. Branch assignment is managed separately."}</p>
+              <p className="text-xs text-muted-foreground">{editing && editing.role_slug === form.roleSlug ? "Current permissions are preserved." : "Uses this role’s saved permissions."}</p>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Branch *</Label>
@@ -781,8 +803,7 @@ export function StaffManager() {
               </Select>
               {branchValid ? (
                 <p className="text-xs text-muted-foreground">
-                  Pick “All branches” for staff who work at any till; every sale is still stamped
-                  with the terminal’s branch.
+                  All branches uses the terminal’s branch for each sale.
                 </p>
               ) : (
                 <p className="text-xs text-destructive">Choose a branch, or “All branches”.</p>

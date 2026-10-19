@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { relayTableShapes } from "@/core/api/health-relay";
 import { checkFunction } from "./health-function-metadata";
 /**
@@ -377,7 +378,7 @@ const prettyTable = (name: string) => name.replace(/_/g, " ").replace(/^./, (c) 
 
 /** Plain-text version of the report, for pasting into a support message. */
 export function formatReport(report: DbHealthReport): string {
-  const lines = [`Database health — ${new Date(report.at).toLocaleString()}`, ""];
+  const lines = [`Database health — ${posDisplayDateTime(new Date(report.at))}`, ""];
   for (const h of report.header) lines.push(`${h.ok ? "OK  " : "FAIL"} ${h.label}: ${h.detail}`);
   lines.push("", "Table                 Read                 Write");
   for (const t of report.tables) {

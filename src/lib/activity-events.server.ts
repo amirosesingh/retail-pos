@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Server side of the activity feed.
  *
@@ -135,7 +136,7 @@ async function alertText(row: EventRecord): Promise<string> {
     row.actor_name ? `By: ${row.actor_name}${row.actor_role ? ` (${row.actor_role})` : ""}` : "",
     row.terminal_name ? `Terminal: ${row.terminal_name}` : "",
     branch ? `Branch: ${branch}` : "",
-    `At: ${new Date(row.created_at).toLocaleString()}`,
+    `At: ${posDisplayDateTime(new Date(row.created_at))}`,
   ];
   return parts.filter(Boolean).join("\n");
 }

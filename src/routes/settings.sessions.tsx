@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -119,7 +120,7 @@ function ActiveSessions() {
                 row.branch_name || (row.branch_id ? "Unknown branch" : null),
                 row.terminal_name || (row.terminal_id ? "Unnamed terminal" : null),
                 `Idle limit ${row.idle_timeout_minutes} min`,
-                `Last seen ${new Date(row.last_activity_at).toLocaleString()}`,
+                `Last seen ${posDisplayDateTime(new Date(row.last_activity_at))}`,
               ]
                 .filter(Boolean)
                 .join(" · ")}

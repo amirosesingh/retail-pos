@@ -6,6 +6,7 @@ vi.mock("@tanstack/react-start", () => ({ createServerFn: () => ({
 }) }));
 vi.mock("../privileged-caller.server", () => ({ requireCallerScope: mocks.scope }));
 vi.mock("@/core/api/pos-relay.server", () => ({ serviceRest: mocks.rest }));
+vi.mock("../staff-admin.server", () => ({ staffLastSignIns: async () => new Map([["auth-admin", "2026-10-19T08:00:00Z"]]) }));
 import { listManagedStaffAccounts } from "../staff-admin.functions";
 const person = {
   id: "person", auth_user_id: null, user_id: "cashier", full_name: "Cashier", email: "cashier@example.test",
@@ -35,4 +36,10 @@ it("reports a failed central read rather than treating it as an empty staff list
   mocks.rest.mockResolvedValue(new Response("unavailable", { status: 503 }));
   const result = await listManagedStaffAccounts({ data: { sessionToken: "person" } });
   expect(result).toMatchObject({ ok: false, rows: [], error: "Staff accounts could not be loaded." });
+});
+
+it("uses the latest Auth sign-in for linked administrators", async () => {
+  mocks.rest.mockImplementation(async (path: string) => Response.json(path.startsWith("app_users?") ? [{ ...person, auth_user_id: "AUTH-ADMIN", last_login_at: "2026-10-18T08:00:00Z" }] : []));
+  const result = await listManagedStaffAccounts({ data: { accessToken: "staff-access" } });
+  expect(result.rows[0].last_login_at).toBe("2026-10-19T08:00:00Z");
 });

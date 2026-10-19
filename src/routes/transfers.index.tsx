@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { sameBranchId } from "@/lib/branch-id";
 import { useStockTableCosts } from "@/lib/use-stock-table-costs";
 import { transferTableTotals } from "@/lib/stock-table-totals";
@@ -72,7 +73,7 @@ function Transfers() {
   const productsById = useMemo(() => new Map(state.products.map(product => [product.id, product])), [state.products]);
 
   const storeOf = (id: string) => stores.find((s) => s.id === id);
-  const productOf = (id: string) => state.products.find((p) => p.id === id) ?? null;
+  const productOf = (id: string) => productsById.get(id) ?? null;
 
   const mine = useMemo(
     () =>
@@ -200,7 +201,7 @@ function Transfers() {
                     <TableCell className="numeric">
                       {t.ref}
                       <div className="text-[11px] text-muted-foreground">
-                        {new Date(t.createdAt).toLocaleString()}
+                        {posDisplayDateTime(new Date(t.createdAt))}
                       </div>
                       {sourceRequest ? (
                         <div className="text-[11px] text-primary">
@@ -246,7 +247,7 @@ function Transfers() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={statusStyle[t.status]}>
+                      <Badge status={t.status} variant="outline" className={statusStyle[t.status]}>
                         {TRANSFER_STATUS_LABELS[t.status]}
                       </Badge>
                       {t.fulfilment && t.fulfilment !== "full" && (

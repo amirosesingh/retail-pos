@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, Copy, Info, ShieldAlert, Layers, Loader2, RefreshCw } from "lucide-react";
@@ -106,7 +107,7 @@ export function LogicHealthPanel() {
           {step
             ? STEP_LABEL[step]
             : scan
-              ? `Live scan run ${new Date(scan.at).toLocaleString()} — database and code findings combined.`
+              ? `Live scan run ${posDisplayDateTime(new Date(scan.at))} — database and code findings combined.`
               : "Checks the live database now and combines it with the stored code findings."}
         </span>
       </div>
@@ -159,7 +160,7 @@ export function LogicHealthPanel() {
           <Copy className="size-3.5" /> Copy report
         </Button>
         <span className="text-xs text-muted-foreground">
-          {report.filesScanned} files scanned {new Date(report.generatedAt).toLocaleString()} ·{" "}
+          {report.filesScanned} files scanned {posDisplayDateTime(new Date(report.generatedAt))} ·{" "}
           {rows.length} shown
         </span>
       </div>

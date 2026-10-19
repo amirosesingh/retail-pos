@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { inventoryMetrics, isLowStock } from "@/lib/inventory-metrics";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -264,7 +265,7 @@ function AllShops() {
                   {billPager.pageItems.map((s) => (
                     <TableRow key={s.id}>
                       <TableCell className="numeric text-xs">
-                        {new Date(s.createdAt).toLocaleString()}
+                        {posDisplayDateTime(new Date(s.createdAt))}
                       </TableCell>
                       <TableCell className="text-xs">
                         {stores.find((x) => x.id === s.storeId)?.name ?? "—"}

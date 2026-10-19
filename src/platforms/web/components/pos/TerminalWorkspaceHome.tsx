@@ -1,3 +1,4 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { inventoryMetrics } from "@/lib/inventory-metrics";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -17,6 +18,7 @@ import {
   ArrowLeftRight,
   BarChart3,
   Boxes,
+  Info,
   ClipboardCheck,
   LayoutDashboard,
   PackageSearch,
@@ -351,12 +353,10 @@ export function TerminalWorkspaceHome() {
               <Metric
                 icon={Boxes}
                 tone="text-warning bg-warning/10"
-                label="Low stock"
+                label={<>Low stock <StockExplanation><span className="block">Positive stock at or below reorder level</span><span className="block">{stockMetrics.outOfStock} out of stock · {stockMetrics.negativeStock} negative stock</span></StockExplanation></>}
                 value={<AnimatedMetric value={lowStock} />}
                 hint={
                   <>
-                    <span className="block">Positive stock at or below reorder level</span>
-                    <span className="block">{stockMetrics.outOfStock} out of stock · {stockMetrics.negativeStock} negative stock</span>
                     <span className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-border/60 pt-2">
                       <span>
                         Active{" "}
@@ -429,7 +429,7 @@ function Metric({
   tone,
   payments,
 }: {
-  label: string;
+  label: ReactNode;
   value: ReactNode;
   hint: ReactNode;
   icon: typeof Store;
@@ -472,4 +472,11 @@ function Metric({
       </CardContent>
     </Card>
   );
+}
+
+function StockExplanation({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return <Tooltip open={open} onOpenChange={setOpen}><TooltipTrigger asChild>
+    <button type="button" aria-label="Explain low-stock figures" className="inline-flex size-7 items-center justify-center rounded-md align-middle text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setOpen(value => !value)}><Info className="size-3.5" aria-hidden /></button>
+  </TooltipTrigger><TooltipContent className="max-w-72 text-sm leading-relaxed">{children}</TooltipContent></Tooltip>;
 }

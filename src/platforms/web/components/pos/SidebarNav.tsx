@@ -111,7 +111,7 @@ function SidebarRow({ entry, collapsed, active, inbound, onNavigate }: SidebarRo
       aria-current={active ? "page" : undefined}
       className={cn(
         "flex touch-manipulation select-none items-center gap-2.5 rounded-xl text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-inset transition-[background-color,color] duration-[var(--motion-fast)] ease-[var(--motion-ease-standard)] motion-reduce:transition-none",
-        collapsed ? "justify-center py-2.5" : "px-3 py-2.5",
+        collapsed ? "justify-center gap-0 py-2.5" : "px-3 py-2.5",
         active
           ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
           : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
@@ -122,7 +122,7 @@ function SidebarRow({ entry, collapsed, active, inbound, onNavigate }: SidebarRo
         aria-hidden="true"
         className={cn(collapsed ? "size-5" : "size-4 shrink-0", active ? "text-primary" : iconTone)}
       />
-      {!collapsed && <span className="min-w-0 truncate">{entry.label}</span>}
+      <span aria-hidden={collapsed || undefined} className={cn("min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-[var(--motion-normal)] motion-reduce:transition-none", collapsed ? "max-w-0 opacity-0" : "max-w-44 opacity-100")}>{entry.label}</span>
       {entry.badge && inbound > 0 && !collapsed && (
         <Badge className="ml-auto h-5 min-w-5 shrink-0 justify-center px-1 text-[10px]">
           {inbound}
@@ -131,11 +131,10 @@ function SidebarRow({ entry, collapsed, active, inbound, onNavigate }: SidebarRo
     </Link>
   );
 
-  if (!collapsed) return link;
   return (
     <Tooltip>
       <TooltipTrigger asChild>{link}</TooltipTrigger>
-      <TooltipContent side="right">{entry.label}</TooltipContent>
+      {collapsed && <TooltipContent side="right">{entry.label}</TooltipContent>}
     </Tooltip>
   );
 }

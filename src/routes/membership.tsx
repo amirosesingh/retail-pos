@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { createFileRoute, Link, Navigate, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
@@ -556,18 +557,6 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 function formatDate(value: string) {
-  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
-  const date = new Date(dateOnly ? `${value}T00:00:00Z` : value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat(undefined, {
-        dateStyle: "medium",
-        ...(dateOnly ? { timeZone: "UTC" } : {}),
-      }).format(date);
+  return posDisplayDate(value, /^\d{4}-\d{2}-\d{2}$/.test(value) ? { timeZone: "UTC" } : {});
 }
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
-}
+function formatDateTime(value: string) { return posDisplayDateTime(value); }

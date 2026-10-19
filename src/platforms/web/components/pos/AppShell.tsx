@@ -384,16 +384,14 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   };
 
   const Brand = ({ mini }: { mini?: boolean }) => (
-    <div className={cn("flex items-center gap-2 px-3 py-4", mini && "justify-center px-0")}>
+    <div className={cn("flex items-center gap-2 px-3 py-4 transition-[gap,padding] duration-[var(--motion-normal)] motion-reduce:transition-none", mini && "gap-0 px-3.5")}>
       <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
         <ReceiptText className="size-5" />
       </div>
-      {!mini && (
-        <div className="min-w-0">
+      <div aria-hidden={mini || undefined} className={cn("min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:transition-none", mini ? "max-w-0 -translate-x-2 opacity-0" : "max-w-48 translate-x-0 opacity-100")}>
           <p className="truncate text-sm font-semibold leading-tight">{companyName}</p>
           <p className="text-[11px] text-muted-foreground">{branding.terminal}</p>
         </div>
-      )}
     </div>
   );
 
@@ -481,8 +479,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 inbound={inbound}
                 header={
                   <>
-                    <Brand mini={collapsed} />
-                    {!collapsed && <div className="px-3 pb-3">{<StorePicker />}</div>}
+                    {Brand({ mini: collapsed })}
+                    <div inert={collapsed || undefined} aria-hidden={collapsed || undefined} className={cn("overflow-hidden px-3 transition-[max-height,opacity,padding] duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:transition-none", collapsed ? "max-h-0 pb-0 opacity-0" : "max-h-16 pb-3 opacity-100")}><div className="w-54">{StorePicker()}</div></div>
                   </>
                 }
               />
@@ -537,7 +535,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 </span>
                 <MobileStatusSheet />
                 {isMobile && <ActivityBell />}
-                <UpdateHeaderButton className="hidden sm:inline-flex" />
+                {isMobile && <UpdateHeaderButton />}
                 <span className="hidden sm:inline-flex">
                   <ThemeToggle />
                 </span>
@@ -564,7 +562,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                     {terminal.config.locationName || currentStore.name}
                   </Badge>
                 )}
-                <UpdateHeaderButton className="hidden lg:inline-flex" />
+                {!isMobile && <UpdateHeaderButton />}
                 <ThemeToggle />
                 <ProfileMenu />
               </header>
