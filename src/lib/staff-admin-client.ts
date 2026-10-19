@@ -1,6 +1,7 @@
 /**
  * Staff mutations need Supabase Auth admin privileges. Web server functions
- * already run on the hosted backend; Electron and Android must explicitly
+ * mutations retain their existing server functions. Staff reads use bounded
+ * JSON requests on every platform; Electron and Android explicitly
  * send the same validated request there instead of invoking their local app
  * server, which deliberately carries no service-role key.
  */
@@ -19,7 +20,7 @@ import {
 type DirectCall = (input: never) => Promise<unknown>;
 
 async function callHosted<T>(action: string, data: unknown, direct: DirectCall): Promise<T> {
-  if (!isTerminalApp()) return direct({ data } as never) as Promise<T>;
+  if (!isTerminalApp() && action !== "list") return direct({ data } as never) as Promise<T>;
   const response = await posFetch("/api/v1/pos/sync?operation=staff_admin", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -29,6 +30,8 @@ async function callHosted<T>(action: string, data: unknown, direct: DirectCall):
   if (!response.ok && !(result && typeof result === "object" && "error" in result)) {
     throw new Error(`Staff service failed (${response.status})`);
   }
+  if (!result || typeof result !== "object" || !("ok" in result))
+    throw new Error("The staff service returned an invalid response. Please retry.");
   return result;
 }
 

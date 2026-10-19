@@ -81,6 +81,8 @@ export async function toggleStaffStatus(username: string, active: boolean): Prom
 
 export async function updateStaffMember(input: {
   username: string;
+  loginUsername?: string;
+  email?: string;
   displayName: string;
   branchId: string | null;
   roleSlug: string;

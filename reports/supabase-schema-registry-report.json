@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-16T08:10:40.433Z",
+  "generatedAt": "2026-10-19T11:05:58.766Z",
   "tableCount": 70,
-  "columnCount": 1185,
+  "columnCount": 1186,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -751,6 +751,12 @@
         {
           "name": "idle_timeout_minutes",
           "declaration": "integer",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "login_username",
+          "declaration": "text",
           "nullable": true,
           "hasDefault": false
         }

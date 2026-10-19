@@ -4,6 +4,11 @@ on:
     branches: [beta, main]
     paths:
       - 'native/android/**'
+      - 'src/**'
+      - 'scripts/**'
+      - 'package*.json'
+      - 'vite.config.*'
+      - 'capacitor.config.*'
       - 'scripts/android-update-setup.cjs'
       - '.github/workflows/android-native-check.yml'
       - '.github/workflows/android-apk.yml'
@@ -29,8 +34,7 @@ jobs:
       - run: npm ci
       - name: Generate native project without release signing or publishing
         run: |
-          mkdir -p capacitor-shell
-          printf '<!doctype html><title>Native compile check</title>' > capacitor-shell/index.html
+          npm run mobile:build
           npx cap add android
           npx cap sync android
           node scripts/android-permissions.cjs
@@ -38,3 +42,21 @@ jobs:
       - name: Compile native app and plugins
         working-directory: android
         run: bash gradlew :app:compileDebugJavaWithJavac --no-daemon
+
+  windows-renderer:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Build Windows renderer without publishing
+        run: npm run build
+        env:
+          DESKTOP_BUILD: '1'
+      - run: npm run test:database-upgrade
+      - run: npm run test:sync-pipeline
+      - run: npm run verify:sqlserver-schema

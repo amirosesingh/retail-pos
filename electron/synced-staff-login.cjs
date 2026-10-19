@@ -18,7 +18,7 @@ async function listSyncedStaff(pool, branchId) {
   const result = await pool.request()
     .input("branch", String(branchId))
     .query(`SELECT TOP (500)
-      CONVERT(nvarchar(128),id) id,user_id username,full_name,store_id,
+      CONVERT(nvarchar(128),id) id,COALESCE(NULLIF(login_username,''),user_id) username,full_name,store_id,
       role,role_slug,permissions,is_active
       FROM dbo.app_users
       WHERE is_active=1 AND (store_id IS NULL OR store_id=@branch)
@@ -60,7 +60,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
         WHERE LOWER(candidate.username)=LOWER(a.user_id) AND candidate.is_active=1
         ORDER BY candidate.updated_at DESC,candidate.id DESC
       ) c
-      WHERE (LOWER(a.user_id)=@username OR LOWER(CONVERT(nvarchar(128),a.id))=@username)
+      WHERE (LOWER(a.user_id)=@username OR LOWER(a.login_username)=@username OR LOWER(CONVERT(nvarchar(128),a.id))=@username)
         AND (a.store_id IS NULL OR a.store_id=@branch)
       ORDER BY CASE WHEN a.store_id=@branch THEN 0 ELSE 1 END,a.updated_at DESC,a.id DESC;`);
   const row = result.recordset?.[0];
