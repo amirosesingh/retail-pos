@@ -31,6 +31,16 @@ function originStore() {
   if (!process.env.R2_ENDPOINT || !process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) throw new Error('Beta R2 credentials are required.');
   const aws = args => execFileSync('aws', [...args, '--endpoint-url', process.env.R2_ENDPOINT], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   return {
+    list() {
+      const result = JSON.parse(aws(['s3api', 'list-objects-v2', '--bucket', 'updatelccms', '--prefix', PREFIX, '--output', 'json']));
+      const keys = (result.Contents || []).map(item => item.Key);
+      for (const key of keys) assertBetaKey(key);
+      return keys;
+    },
+    remove(key) {
+      assertBetaKey(key);
+      aws(['s3api', 'delete-object', '--bucket', 'updatelccms', '--key', key]);
+    },
     read(key, optional = false) {
       assertBetaKey(key);
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pos-beta-'));
@@ -78,5 +88,5 @@ async function publishBeta(windows, android, expected, store = originStore()) {
   }
   console.log(`Published isolated beta ${expected.version}`);
 }
-module.exports = { verifyBetaPair, assertBetaKey, publishBeta };
+module.exports = { verifyBetaPair, assertBetaKey, publishBeta, originStore };
 if (require.main === module) publishBeta('upload', 'release-assets', { version: process.env.BETA_VERSION, commit: process.env.GITHUB_SHA }).catch(error => { console.error(error.message); process.exitCode = 1; });
