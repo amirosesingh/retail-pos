@@ -91,16 +91,16 @@ function RoundingForm() {
       {rounding.enabled && (
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Rounding unit</Label>
-            <ThemedSelect
+            <Label htmlFor="rounding-unit" className="text-xs text-muted-foreground">Rounding unit</Label>
+            <ThemedSelect id="rounding-unit"
               value={String(rounding.unit)}
               onChange={(v) => patch({ unit: Number(v) })}
               options={ROUNDING_UNITS.map((u) => ({ value: String(u), label: u.toFixed(2) }))}
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Rounding direction</Label>
-            <ThemedSelect
+            <Label htmlFor="rounding-direction" className="text-xs text-muted-foreground">Rounding direction</Label>
+            <ThemedSelect id="rounding-direction"
               value={rounding.direction}
               onChange={(v) => patch({ direction: v as typeof rounding.direction })}
               options={[
@@ -111,8 +111,8 @@ function RoundingForm() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Applies to</Label>
-            <ThemedSelect
+            <Label htmlFor="rounding-applies-to" className="text-xs text-muted-foreground">Applies to</Label>
+            <ThemedSelect id="rounding-applies-to"
               value={rounding.appliesTo}
               onChange={(v) => patch({ appliesTo: v as typeof rounding.appliesTo })}
               options={[
@@ -122,8 +122,9 @@ function RoundingForm() {
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Receipt label</Label>
+            <Label htmlFor="rounding-receipt-label" className="text-xs text-muted-foreground">Receipt label</Label>
             <Input
+              id="rounding-receipt-label"
               value={rounding.receiptLabel}
               placeholder="Extra Discount"
               onChange={(e) => patch({ receiptLabel: e.target.value })}

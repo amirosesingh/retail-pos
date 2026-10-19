@@ -342,7 +342,7 @@ function Inventory() {
                 <Input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search products"
+                  placeholder="Search products" aria-label="Search products"
                   className="w-full pl-9 pr-11 sm:w-64"
                 />
                 <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2" aria-label="Advanced product filters" title="Advanced filters" onClick={() => setAdvanced(true)}><SlidersHorizontal className="size-4" /></Button>
