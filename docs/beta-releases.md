@@ -6,6 +6,13 @@ and publishes a GitHub prerelease and the isolated `/pos-app/beta/` update feed.
 Both builds must succeed before either update is advertised. Stable feeds and
 the stable GitHub release remain unchanged.
 
+After the installers and GitHub prerelease are published successfully, retention
+keeps the latest six published beta versions. Older beta GitHub prereleases,
+their beta tags, archived installers and versioned download aliases are removed.
+Cleanup checks that all beta update pointers agree and protects the current
+version. It only deletes recognized files under `pos-app/beta/`; stable releases,
+active update pointers and newer incomplete uploads are never removed.
+
 Android installs as `com.luckycharms.pos.beta` (Retail Beta). Windows uses
 `app.lovable.pos.beta` (Retail Beta). They can be installed alongside stable and
 have their own device configuration and registration. Configure their connection

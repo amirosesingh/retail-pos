@@ -85,3 +85,12 @@ jobs:
             upload/*.blockmap
             upload/latest.yml
             release-assets/*.apk
+      - name: Keep the latest six beta versions only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BETA_VERSION: ${{ needs.prepare.outputs.version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: node scripts/prune-beta-releases.cjs
