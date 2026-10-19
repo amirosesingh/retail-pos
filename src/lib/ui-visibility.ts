@@ -1,3 +1,4 @@
+import { UPDATE_SETTINGS_VISIBILITY } from "@/platform-config/update-settings";
 import { pageForRoute, pageEnabled } from "./permission-pages";
 /**
  * Admin-controlled screen visibility.
@@ -168,7 +169,7 @@ export const VISIBILITY_ELEMENTS: VisibilityElement[] = [
 export const SETTINGS_VISIBILITY_ELEMENTS: VisibilityElement[] = (
   [
     ["/settings/display", "Display & text size", "Interface scale, density and theme.", "none"],
-    ["/settings/updates", "Software updates", "App version and background updates.", "sensitive"],
+    ...UPDATE_SETTINGS_VISIBILITY,
     ["/settings/terminals", "Terminal activation", "Register tills and activation codes.", "none"],
     ["/settings/admin-terminals", "Admin terminal activation", "Cloud-only admin browser registrations.", "core"],
     [

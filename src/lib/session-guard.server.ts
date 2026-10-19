@@ -6,6 +6,7 @@
  * has been used within its idle limit. A stale or revoked row is marked
  * revoked and the caller is refused with 401.
  */
+import { sessionActivityExpiresAt } from "./session-activity";
 import { hashSessionToken, mintSessionToken } from "./session-token.server";
 import { serviceRest } from "@/core/api/pos-relay.server";
 
@@ -120,8 +121,8 @@ export async function startSession(input: {
   return { token, idleMinutes };
 }
 
-async function markRevoked(hash: string, reason: string): Promise<void> {
-  await serviceRest(`user_sessions?session_token_hash=eq.${encodeURIComponent(hash)}`, {
+async function markRevoked(hash: string, reason: string): Promise<boolean> {
+  const response = await serviceRest(`user_sessions?session_token_hash=eq.${encodeURIComponent(hash)}`, {
     method: "PATCH",
     prefer: "return=minimal",
     body: JSON.stringify({
@@ -129,7 +130,8 @@ async function markRevoked(hash: string, reason: string): Promise<void> {
       revoked_at: new Date().toISOString(),
       revoked_reason: reason,
     }),
-  }).catch(() => undefined);
+  }).catch(() => null);
+  return response?.ok === true;
 }
 
 /**
@@ -158,9 +160,7 @@ export async function touchSession(
   if (!row) return { ok: false, reason: "unknown" };
   if (row.is_revoked) return { ok: false, reason: "revoked" };
 
-  const limit = Math.max(1, Number(row.idle_timeout_minutes) || DEFAULT_IDLE_MINUTES);
-  const idleMs = Date.now() - new Date(row.last_activity_at).getTime();
-  if (Number.isFinite(idleMs) && idleMs > limit * 60_000) {
+  if (sessionActivityExpiresAt(row) <= Date.now()) {
     await markRevoked(hash, "idle timeout");
     return { ok: false, reason: "idle" };
   }
@@ -179,7 +179,8 @@ export async function touchSession(
 /** Sign-out: the row stops proving anything at once. */
 export async function revokeSession(raw: string): Promise<void> {
   if (!raw?.trim()) return;
-  await markRevoked(hashSessionToken(raw), "signed out");
+  if (!await markRevoked(hashSessionToken(raw), "signed out"))
+    throw new Error("Could not end the central session. Try again.");
 }
 
 /** Remote reset / branch removal. */

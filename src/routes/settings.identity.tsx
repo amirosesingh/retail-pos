@@ -1,3 +1,4 @@
+import { APP_VERSION } from "@/version";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   SettingsFrame,
@@ -80,6 +81,7 @@ function IdentityForm() {
 
   return (
     <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">Retail · v{APP_VERSION}</p>
       {!(typeof effective.companyName === "string" && effective.companyName.trim()) ? (
         <p role="alert" className="rounded-md border border-amber-500 p-3 text-sm">
           Company details have not loaded here yet. Check Database &amp; Cloud Connection and

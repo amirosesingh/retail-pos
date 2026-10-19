@@ -7,7 +7,7 @@
  * Android's installer. Nothing here runs on web or Electron.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { APP_VERSION } from "@/lib/app-updates";
+import { APP_VERSION } from "@/version";
 import { isNative, isAndroid } from "@/platform-config/platform";
 import {
   describeNetworkError,

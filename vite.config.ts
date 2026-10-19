@@ -110,7 +110,11 @@ export default defineConfig({
   css: { transformer: "lightningcss" },
   resolve: {
     // Native approval UI/Keystore enrollment never enter website client chunks.
-    alias: [...shellAliases(buildPlatform), ...(isMobile ? [
+    alias: [...shellAliases(buildPlatform), ...(!isTerminalBuild ? [
+      { find: /^\.\/routeTree\.gen(?:\.tsx?)?$/, replacement: resolve("src/routeTree.web.gen.ts") },
+    ] : [
+      { find: "@/platform-config/update-settings", replacement: resolve("src/platform-config/native-update-settings.tsx") },
+    ]), ...(isMobile ? [
       { find: "@/platform-config/offline-interface", replacement: resolve("src/platforms/mobile/components/OfflineInterface.tsx") },
       { find: "@/platform-config/viewport", replacement: resolve("src/platforms/mobile/viewport.ts") },
     ] : []), ...(isTerminalBuild ? [
@@ -130,7 +134,13 @@ export default defineConfig({
   plugins: [
     enforceShellBoundary(buildPlatform),
     stripThirdPartyRscMarkers(),
-    tanstackStart({ server: { entry: "server" } }),
+    tanstackStart({
+      server: { entry: "server" },
+      router: !isTerminalBuild ? {
+        generatedRouteTree: "./routeTree.web.gen.ts",
+        routeFileIgnorePattern: "settings\\.updates\\.tsx$",
+      } : {},
+    }),
     nitro(
       isDesktop
         ? {

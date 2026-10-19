@@ -3,7 +3,7 @@
  * the current software?" — so a counter never has to guess whether a strange
  * behaviour is old software or a failed check.
  */
-import { APP_VERSION } from "@/lib/app-updates";
+import { APP_VERSION } from "@/version";
 import { useRevocationCheck } from "@/lib/use-revocation-check";
 import { TileGroup, TileRow } from "@/platforms/web/components/pos/AppUpdateSettings";
 
