@@ -10,20 +10,32 @@ const androidOnly = [
   "platforms/mobile/android-updates",
 ];
 const windowsOnly = [
+  "components/shared/NativeWindowFrame",
   "platforms/windows/components/PrivilegeGate",
   "platforms/windows/components/DesktopUpdateBanner",
   "platforms/windows/components/LocalDatabaseWizard",
   "platforms/windows/components/LocalDatabaseOperations",
 ];
+const terminalOnly = [
+  "components/shared/EmergencyAccessLink",
+  "platforms/web/components/pos/RecoveryHub",
+  "platforms/web/components/pos/EmergencyPinGate",
+  "platforms/web/components/pos/TerminalActivation",
+  "platforms/web/components/pos/ConnectDatabaseScreen",
+];
 
 export function excludedShellModules(platform: BuildPlatform) {
-  return [...(platform === "android" ? [] : androidOnly), ...(platform === "windows" ? [] : windowsOnly)];
+  return [...(platform === "android" ? [] : androidOnly), ...(platform === "windows" ? [] : windowsOnly), ...(platform === "web" ? terminalOnly : [])];
 }
 
 export function shellAliases(platform: BuildPlatform) {
   return excludedShellModules(platform).map(path => ({
     find: new RegExp(`^.*(?:^|/)${path}(?:\\.tsx?)?$`),
-    replacement: resolve(path.endsWith("android-updates")
+    replacement: resolve(terminalOnly.includes(path)
+      ? "src/platform-config/unsupported-terminal-setup.tsx"
+      : path.endsWith("NativeWindowFrame") && platform === "android"
+      ? "src/platforms/mobile/components/NativeWindowFrame.tsx"
+      : path.endsWith("android-updates")
       ? "src/platform-config/unsupported-android-updates.ts"
       : path.endsWith("use-native-back")
       ? "src/platform-config/unsupported-native-back.ts"
