@@ -1,9 +1,18 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { artifactVersion, planRetention, pruneBeta } = require('./prune-beta-releases.cjs');
+const { artifactVersion, planRetention, pruneBeta, parseReleaseList } = require('./prune-beta-releases.cjs');
 const version = n => `1.4.75-beta.${n}`;
 const releases = Array.from({ length: 12 }, (_, i) => ({ tag_name: `beta-v${version(i + 1)}`, prerelease: true, draft: false }));
 const archive = n => `pos-app/beta/releases/beta-v${version(n)}-abcdef0/android/Retail-${version(n)}.apk`;
+
+test('reads compact paginated metadata without downloading historical asset descriptions', () => {
+  assert.deepEqual(parseReleaseList('beta-v1.4.75-beta.1\ttrue\tfalse\r\nbeta-v1.4.75-beta.2\ttrue\ttrue\n'), [
+    { tag_name: 'beta-v1.4.75-beta.1', prerelease: true, draft: false },
+    { tag_name: 'beta-v1.4.75-beta.2', prerelease: true, draft: true },
+  ]);
+  assert.deepEqual(parseReleaseList(''), []);
+  assert.throws(() => parseReleaseList('beta-v1.4.75-beta.1\ttrue'), /Invalid/);
+});
 
 test('keeps exactly six newest betas in numeric order and never targets stable or pointers', () => {
   const protectedKeys = ['pos-app/latest/Retail Setup 1.4.74.exe', 'pos-app/beta/manifest.json', 'pos-app/beta/latest/latest.yml', 'pos-app/beta/latest/android/latest.json', 'pos-app/beta/unrecognized-file'];

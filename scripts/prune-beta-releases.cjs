@@ -52,9 +52,12 @@ async function pruneBeta(store, github, expected) {
 
 function githubStore(repository) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository || '')) throw new Error('Invalid GitHub repository.');
-  const gh = args => execFileSync('gh', args, { encoding: 'utf8', windowsHide: true });
+  const gh = args => execFileSync('gh', args, { encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
   return {
-    list: () => JSON.parse(gh(['api', '--paginate', '--slurp', `repos/${repository}/releases?per_page=100`])).flat(),
+    // Filter each page inside gh: full historical release/asset JSON can exceed
+    // Node's default output buffer even when there are only a few beta releases.
+    list: () => parseReleaseList(gh(['api', '--paginate', `repos/${repository}/releases?per_page=100`, '--jq',
+      '.[] | select(.prerelease == true and (.tag_name | startswith("beta-v"))) | [.tag_name, .prerelease, .draft] | @tsv'])),
     remove(tag) {
       if (!tag.startsWith('beta-v') || !valid(tag.slice(6))) throw new Error('Refusing non-beta GitHub deletion.');
       gh(['release', 'delete', tag, '--repo', repository, '--cleanup-tag', '--yes']);
@@ -62,6 +65,14 @@ function githubStore(repository) {
   };
 }
 
-module.exports = { LIMIT, artifactVersion, planRetention, pruneBeta };
+function parseReleaseList(text) {
+  return text.trim().split(/\r?\n/).filter(Boolean).map(line => {
+    const fields = line.split('\t');
+    if (fields.length !== 3 || !['true', 'false'].includes(fields[1]) || !['true', 'false'].includes(fields[2])) throw new Error('Invalid GitHub beta release listing.');
+    return { tag_name: fields[0], prerelease: fields[1] === 'true', draft: fields[2] === 'true' };
+  });
+}
+
+module.exports = { LIMIT, artifactVersion, planRetention, pruneBeta, parseReleaseList };
 if (require.main === module) pruneBeta(originStore(), githubStore(process.env.GITHUB_REPOSITORY), process.env.BETA_VERSION)
   .catch(error => { console.error(error.message); process.exitCode = 1; });
