@@ -285,10 +285,10 @@
 
 :root {
   --radius: 0.75rem;
-  --motion-fast: 120ms;
-  --motion-normal: 180ms;
+  --motion-fast: 240ms;
+  --motion-normal: 420ms;
   --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --motion-ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-emphasized: cubic-bezier(0.22, 0.61, 0.36, 1);
   --background: oklch(0.98 0.004 250);
   --foreground: oklch(0.22 0.014 265);
   --surface: oklch(1 0 0);
@@ -848,7 +848,7 @@
 }
 
 @utility ui-menu-motion {
-  animation-duration: var(--motion-fast);
+  animation-duration: var(--motion-normal);
   animation-timing-function: var(--motion-ease-standard);
   backface-visibility: hidden;
 }
@@ -881,6 +881,11 @@
 
 .ui-collapsible-content[data-state="closed"] {
   animation: collapsible-up var(--motion-fast) var(--motion-ease-standard);
+}
+
+/* Native touch/wheel scrolling stays browser-controlled; explicit scrolls ease in. */
+html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-auto {
+  scroll-behavior: smooth;
 }
 
 /* Motion never competes with scanning, checkout or background processing. */
