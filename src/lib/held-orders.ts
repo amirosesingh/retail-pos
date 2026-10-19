@@ -11,7 +11,7 @@ import { subscribeDataChange } from "./sync-engine";
  * small platform store lets the receipts screen push a cancelled
  * bill straight back onto the register's hold list.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { lineDiscountTotal, r2, type CartLine, type Sale } from "@/core/types/pos-types";
 import { db } from "@/core/api/pos-db";
@@ -316,7 +316,8 @@ export function useHeldOrders(storeId?: string): HeldOrder[] {
       window.removeEventListener("storage", refresh);
     };
   }, [storeId]);
-  return orders.filter(order => !["completed", "cancelled"].includes(order.status ?? "held") && (!storeId || order.storeId === storeId));
+  // Consumers use this snapshot in effects; keep its identity until data or scope changes.
+  return useMemo(() => orders.filter(order => !["completed", "cancelled"].includes(order.status ?? "held") && (!storeId || order.storeId === storeId)), [orders, storeId]);
 }
 
 /**
