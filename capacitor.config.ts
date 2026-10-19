@@ -17,6 +17,9 @@ const config: CapacitorConfig = {
   ...(remote
     ? { server: { url: remote, cleartext: false, androidScheme: "https" } }
     : { server: { androidScheme: "https" } }),
+  plugins: {
+    SystemBars: { insetsHandling: "native", initialViewportFitValueHint: "contain" },
+  },
   android: {
     allowMixedContent: false,
     zoomEnabled: false,

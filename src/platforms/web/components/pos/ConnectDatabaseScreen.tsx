@@ -64,33 +64,33 @@ export function ConnectDatabaseScreen({
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4 text-foreground sm:p-6">
-      <div className="w-full max-w-lg space-y-4 rounded-2xl border border-border bg-card p-6">
+    <div className="flex min-h-screen items-start justify-center bg-background px-3 py-4 pb-28 text-foreground sm:items-center sm:p-6">
+      <div className="w-full max-w-lg space-y-3 rounded-2xl border border-border bg-card p-4 sm:space-y-4 sm:p-6">
         <div className="flex items-center gap-3">
-          <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/20">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/20">
             <CloudCog className="size-6" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold">Connect to the database</h1>
+            <h1 className="text-base font-semibold sm:text-lg">Connect to the database</h1>
             <p className="text-xs text-muted-foreground">Step 1 of 2 · then activate this terminal</p>
           </div>
         </div>
 
         <p className="text-sm text-muted-foreground">
           {cloudConfigured
-            ? "The saved database details are not answering right now. Check the address and key below, or try again once the network is back."
-            : "Enter the central database address and publishable key for your company. They are sealed in this device's secure store."}
+            ? "Connection saved. Check the details or retry."
+            : "Enter your company connection details below."}
         </p>
 
         {offline && <p role="status" className="rounded-lg border border-border bg-muted p-3 text-sm text-muted-foreground">
-          No internet connection. You can enter your connection details here. Connect to the internet to test, save and activate this terminal.
+          Offline. Enter details now; connect to the internet to save and activate.
         </p>}
 
-        <div className="rounded-xl border border-border bg-muted/40 p-4">
+        <div className="min-w-0">
           <CloudConnectionPanel onConnected={continueStartup} />
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        {hasSavedConfiguration && <div className="flex flex-wrap gap-2 [&>button]:min-h-10 [&>button]:flex-1">
           <Button
             className="bg-primary text-primary-foreground hover:bg-primary/90"
             disabled={checking}
@@ -103,7 +103,6 @@ export function ConnectDatabaseScreen({
             )}
             Test and continue
           </Button>
-          {hasSavedConfiguration && (
             <Button
               variant="outline"
               className="border-border bg-muted text-foreground hover:bg-accent"
@@ -112,8 +111,7 @@ export function ConnectDatabaseScreen({
               <LifeBuoy className="size-4" />
               Emergency access
             </Button>
-          )}
-        </div>
+        </div>}
       </div>
     </div>
   );

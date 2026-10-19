@@ -310,7 +310,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     });
     // Step 1 — no usable database connection: ask for the URL and key.
     if (decision === "offline-blocked") return <OfflineStatus force />;
-    if (decision === "connect-database" && startup.verdict === "rejected" && startup.cloudConfigured)
+    if (decision === "connect-database" && startup.cloudConfigured !== false)
       return <OfflineStatus force />;
     if (decision === "connect-database")
       return (

@@ -288,8 +288,23 @@ export async function saveCloudCredentials(
       const loaded = await androidStore();
       if (!loaded) return { ok: false, error: "Secure storage is unavailable on this device." };
       const store = loaded.value;
-      await store.set({ key: ANDROID_URL_KEY, value: cleanUrl });
-      await store.set({ key: ANDROID_KEY_KEY, value: cleanKey });
+      const previous = await androidRead();
+      try {
+        const savedUrl = await store.set({ key: ANDROID_URL_KEY, value: cleanUrl });
+        const savedKey = await store.set({ key: ANDROID_KEY_KEY, value: cleanKey });
+        const verified = await androidRead();
+        if (savedUrl.value === false || savedKey.value === false || verified?.url !== cleanUrl || verified.key !== cleanKey)
+          throw new Error("Could not verify the saved secure database connection.");
+      } catch (error) {
+        if (previous) {
+          await store.set({ key: ANDROID_URL_KEY, value: previous.url });
+          await store.set({ key: ANDROID_KEY_KEY, value: previous.key });
+        } else {
+          await store.remove({ key: ANDROID_URL_KEY });
+          await store.remove({ key: ANDROID_KEY_KEY });
+        }
+        throw error;
+      }
       if (setTerminalSupabaseOverride(cleanUrl, cleanKey)) resetExternalClient();
       notifyCloudKeysChanged();
       return { ok: true, encrypted: true };
