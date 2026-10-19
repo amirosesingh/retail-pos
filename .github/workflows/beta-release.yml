@@ -1,21 +1,38 @@
-name: Beta - Android and Windows
+name: Publish beta - Android and Windows
 on:
+  # A release tag is created only after the owner says "Publish beta now".
+  # This works before this workflow has been promoted to the default branch.
   push:
-    branches: [beta]
+    tags: ['beta-publish-*']
   workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Enter Publish beta now after the owner requests this release'
+        required: true
+        type: string
 concurrency:
   group: beta-release
   cancel-in-progress: false
 permissions:
   contents: write
+  checks: read
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/beta'
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/beta-publish-')) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/beta' && inputs.confirmation == 'Publish beta now')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.beta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require an explicit beta publication and passing checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BETA_CONFIRMATION: ${{ inputs.confirmation }}
+        run: node scripts/check-beta-publication.cjs
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
