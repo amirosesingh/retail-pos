@@ -9,6 +9,11 @@
   merge, or enable auto-merge into `main` without the owner's explicit approval
   for that specific promotion. Previous approvals and passing checks are not
   permission to promote new changes. Never assert approval on the owner's behalf.
+- Keep Cloudflare beta websites live on beta pushes and keep checks automatic.
+  Accumulate Android/Windows changes on beta; publish their paired beta installers
+  only after the owner explicitly says “Publish beta now”. Do not create a
+  `beta-publish-YYYYMMDD-HHMMSS` tag or dispatch the beta-release workflow without
+  that request. Implementing or merging a fix is not publication approval.
 - Preserve existing functionality, branch restrictions, permissions, and
   operator-managed database configuration. PR labels do not grant access or
   authorize production deployment.

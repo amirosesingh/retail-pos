@@ -1,10 +1,36 @@
 # Beta releases
 
-Push approved development changes to `beta`. The beta workflow builds Windows
-and Android in parallel, validates that both artifacts belong to the same commit,
-and publishes a GitHub prerelease and the isolated `/pos-app/beta/` update feed.
-Both builds must succeed before either update is advertised. Stable feeds and
-the stable GitHub release remain unchanged.
+Merge development changes into `beta` to accumulate fixes. Pushes continue to
+run regression checks and update the live Cloudflare beta websites. They do not
+build or publish Android/Windows beta installers.
+
+Only when the owner explicitly says **“Publish beta now”**, publish one combined
+Android/Windows beta from the selected, checked beta commit. The beta workflow
+builds both in parallel, validates that both belong to that same commit, and
+publishes a GitHub prerelease and the isolated `/pos-app/beta/` feed. Both builds
+must succeed before either update is advertised. Stable feeds and releases stay
+unchanged. Cloudflare remains live on beta pushes; it does not wait for installer
+publication.
+
+To request the installer release after owner authorization:
+
+1. Select the intended `beta` commit and wait for its regression checks to pass.
+2. Create and push a lightweight tag `beta-publish-YYYYMMDD-HHMMSS` (UTC timestamp)
+   pointing to that exact commit. Never create this tag without the owner's
+   publication request. Unlike a default-branch dispatch, this works while the
+   release workflow exists only on beta, without merging anything to main.
+3. The workflow verifies beta ancestry and successful regression checks on the
+   exact commit before building. An unconfirmed dispatch, ordinary beta push,
+   stable release tag or malformed publication tag cannot publish beta apps.
+
+Once GitHub exposes the workflow's manual Run button, dispatch it on `beta` with
+`confirmation` exactly `Publish beta now` as an alternative. This is the same
+owner-authorized release operation, not permission to publish automatically.
+The confirmation input and reserved tags are operator controls, not a substitute
+for GitHub repository access restrictions. Never dispatch both methods for one
+release. Do not move/reuse publication tags or retry an old release over a newer
+published beta. Leave corrections on beta until the owner requests the next
+installer release.
 
 After the installers and GitHub prerelease are published successfully, retention
 keeps the latest six published beta versions. Older beta GitHub prereleases,
