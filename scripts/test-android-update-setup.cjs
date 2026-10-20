@@ -16,9 +16,12 @@ for (const packageName of ['com.luckycharms.pos', 'com.luckycharms.pos.beta']) {
       configureUpdateDownload(root);
       configureUpdateDownload(root);
       const source = fs.readFileSync(activity, 'utf8');
-      assert.equal(source.match(/registerPlugin\(/g).length, 1);
+      assert.equal(source.match(/registerPlugin\(/g).length, 2);
+      assert.equal(source.match(/PosAppearancePlugin.class/g).length, 1);
+      assert.ok(source.indexOf('PosAppearancePlugin.class') < source.indexOf('super.onCreate('));
       assert.ok(source.indexOf('registerPlugin(') < source.indexOf('super.onCreate('));
       assert.ok(fs.readFileSync(path.join(root, 'android/app/src/main/java/com/luckycharms/pos/PosUpdateDownloadPlugin.java'), 'utf8').includes('DownloadManager'));
+      assert.ok(fs.existsSync(path.join(root, 'android/app/src/main/java/com/luckycharms/pos/PosAppearancePlugin.java')));
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 }

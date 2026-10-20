@@ -27,8 +27,15 @@ function configureUpdateDownload(root) {
     fs.writeFileSync(activity, source);
   }
   const folder = path.join(java, 'com/luckycharms/pos');
+  const appearanceRegistration = 'registerPlugin(com.luckycharms.pos.PosAppearancePlugin.class);';
+  if (!source.includes(appearanceRegistration)) {
+    if (!source.includes('super.onCreate(savedInstanceState);')) throw new Error('Unknown MainActivity; cannot register native appearance safely.');
+    source = source.replace('super.onCreate(savedInstanceState);', `${appearanceRegistration}\n        super.onCreate(savedInstanceState);`);
+    fs.writeFileSync(activity, source);
+  }
   fs.mkdirSync(folder, { recursive: true });
   fs.copyFileSync(path.join(__dirname, '../native/android/PosUpdateDownloadPlugin.java'), path.join(folder, 'PosUpdateDownloadPlugin.java'));
+  fs.copyFileSync(path.join(__dirname, '../native/android/PosAppearancePlugin.java'), path.join(folder, 'PosAppearancePlugin.java'));
 }
 module.exports = { configureUpdateDownload };
 if (require.main === module) configureUpdateDownload(path.resolve(__dirname, '..'));

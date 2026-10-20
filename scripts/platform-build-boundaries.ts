@@ -8,6 +8,7 @@ const androidOnly = [
   "platforms/mobile/components/AndroidUpdateBanner",
   "platforms/mobile/use-native-back",
   "platforms/mobile/android-updates",
+  "platforms/mobile/android-appearance",
 ];
 const windowsOnly = [
   "components/shared/NativeWindowFrame",
@@ -43,7 +44,9 @@ export function shellAliases(platform: BuildPlatform) {
       ? "src/platform-config/unsupported-update-header.tsx"
       : terminalOnly.includes(path)
       ? "src/platform-config/unsupported-terminal-setup.tsx"
-      : path.endsWith("NativeWindowFrame") && (platform === "android" || platform === "ios")
+      : path.endsWith("NativeWindowFrame") && platform === "ios"
+      ? "src/platforms/ios/NativeWindowFrame.tsx"
+      : path.endsWith("NativeWindowFrame") && platform === "android"
       ? "src/platforms/mobile/components/NativeWindowFrame.tsx"
       : path.endsWith("android-updates")
       ? "src/platform-config/unsupported-android-updates.ts"
