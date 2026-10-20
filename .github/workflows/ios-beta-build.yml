@@ -9,7 +9,7 @@ permissions:
   contents: read
 jobs:
   ios:
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +22,7 @@ jobs:
         run: |
           xcodebuild -version
           xcodebuild -showsdks
+          test "$(xcrun --sdk iphoneos --show-sdk-version | cut -d. -f1)" -ge 27
       - name: Verify iOS OTA service and server
         run: |
           npx vitest run src/platforms/ios/__tests__/ota.test.ts
