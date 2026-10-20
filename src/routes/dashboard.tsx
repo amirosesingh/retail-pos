@@ -1,4 +1,4 @@
-import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
+import { CashierBillList } from "@/platforms/web/components/pos/CashierBillList";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { productVisibleAt } from "@/lib/branch-policy";
 import { createFileRoute } from "@tanstack/react-router";
@@ -335,24 +335,12 @@ function Dashboard() {
               <article key={c.name} className="space-y-4 p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold">{c.name}</h3>
-                  {c.flags.length > 0 && <span className="text-xs text-destructive">{c.flags.join(" · ")}</span>}
+                  {c.flags.length > 0 && <span className="text-xs text-destructive">Cashier review flag: {c.flags.join(" · ")}</span>}
                 </div>
-                <div>
-                  <p className="mb-2 text-xs font-medium text-muted-foreground">Bill numbers · today</p>
-                  <ol className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                    {todaySales.filter(sale => (sale.cashier || "Unknown") === c.name).map((sale, index) => (
-                      <li key={sale.id} className="flex min-w-0 items-start gap-2 rounded-lg border border-border px-3 py-2 text-sm">
-                        <span className="shrink-0 text-muted-foreground">{index + 1}.</span>
-                        <div className="min-w-0"><ReportReceiptLink sale={sale} />
-                          {sale.refunded && <span className="ml-2 text-xs text-muted-foreground">Refunded</span>}
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
+                <CashierBillList sales={todaySales} cashier={c.name} />
                 <dl className="grid grid-cols-2 gap-3">
-                  <div><dt className="text-xs text-muted-foreground">Final bill total</dt><dd className="numeric text-base font-semibold">{money(c.revenue)}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Discount</dt><dd className="numeric text-base font-semibold">{money(c.discount)} <span className="text-xs font-normal">({c.discountPct.toFixed(1)}%)</span></dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Cashier total · completed bills</dt><dd className="numeric text-base font-semibold">{money(c.revenue)}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Cashier discount · completed bills</dt><dd className="numeric text-base font-semibold">{money(c.discount)} <span className="text-xs font-normal">({c.discountPct.toFixed(1)}%)</span></dd></div>
                 </dl>
                 <details className="rounded-lg border border-border p-3">
                   <summary className="cursor-pointer text-sm font-medium">More totals</summary>

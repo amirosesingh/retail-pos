@@ -1,3 +1,4 @@
+import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import {
@@ -293,17 +294,22 @@ function Locations() {
   return (
     <AppShell>
       <div className="space-y-5 p-6">
-        <header className="flex flex-wrap items-end justify-between gap-3">
-          <div>
+        <header className="min-w-0 space-y-3">
+          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
             <h1 className="text-2xl font-semibold">Manage locations</h1>
+            <HomeShortcuts />
+          </div>
+          <div>
             <p className="text-sm text-muted-foreground page-description">
               <span className="numeric">{roots.length}</span> stores and warehouses · every new
               location gets its own stock bucket on all {state.products.length} products.
             </p>
           </div>
+          <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
           <Button onClick={() => setDraft(blankDraft())}>
             <Plus className="size-4" /> New location
           </Button>
+          </div>
         </header>
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

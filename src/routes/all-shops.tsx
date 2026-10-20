@@ -1,3 +1,4 @@
+import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { inventoryMetrics, isLowStock } from "@/lib/inventory-metrics";
 import { createFileRoute } from "@tanstack/react-router";
@@ -161,14 +162,17 @@ function AllShops() {
     <AppShell>
       <div className="mx-auto w-full max-w-[1600px] space-y-5 p-4 sm:p-6">
         {history.error && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {history.error}</p>}
-        <header className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+        <header className="min-w-0 space-y-3">
+          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
             <h1 className="text-2xl font-semibold">All shops</h1>
+            <HomeShortcuts />
+          </div>
+          <div>
             <p className="text-sm text-muted-foreground page-description">
               Sales from {from} to {to}. Stock quantities and shift status show the current state.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
             <ReportFilters title="All Shops filters">
               {showMoney && (
                 <div className="flex flex-wrap gap-3">

@@ -1,3 +1,4 @@
+import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { effectiveTimeZone } from "@/lib/time-zone";
 import { branchChartColor, ANALYTICS_COLORS } from "@/lib/analytics-design";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -222,19 +223,22 @@ function LiveBoard() {
   return (
     <AppShell>
       <div className="min-w-0 space-y-5 p-3 sm:p-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+        <header className="min-w-0 space-y-3">
           <div>
             <Link to="/reports" className="text-xs text-muted-foreground hover:text-foreground">
               ← Reports &amp; Analytics
             </Link>
-            <h1 className="text-2xl font-semibold tracking-tight">Live Business Board</h1>
+            <div className="mt-2 flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+              <h1 className="text-2xl font-semibold tracking-tight">Live Business Board</h1>
+              <HomeShortcuts />
+            </div>
             <p className="text-sm text-muted-foreground page-description">
               {data?.localOnly
                 ? "This terminal’s branch — reports calculated from local SQL Server. Group-wide reports are available on the web."
                 : "Every shop combined — categories, item drilldown, revenue share and margin. Refreshes every minute."}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
 <ReportFilters title="Business Analytics filters"><div className="flex flex-wrap items-end gap-4">
           <div className="flex gap-1">
             {(["today", "7", "30"] as const).map((p) => (
@@ -309,7 +313,7 @@ function LiveBoard() {
               </Button>
             )}
           </div>
-        </div>
+        </header>
 
         {query.isError && (
           <AnalyticsErrorPanel error={query.error} onRetry={() => void query.refetch()} />
