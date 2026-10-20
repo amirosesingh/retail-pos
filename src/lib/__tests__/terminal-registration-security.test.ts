@@ -118,7 +118,7 @@ describe("terminal registration trust boundary", () => {
     );
     expect(schema).toContain("CONSTRAINT terminal_tokens_platform_check");
     expect(claim).toContain(") IS NOT TRUE THEN");
-    expect(claim).toContain("t.platform = 'mobile' AND p_platform = 'android'");
+    expect(claim).toContain("t.platform = 'mobile' AND p_platform IN ('android', 'ios')");
     expect(claim).toContain("t.platform = 'pc' AND p_platform = 'electron'");
     expect(claim).toContain("TERMINAL_PLATFORM_MISMATCH");
   });
