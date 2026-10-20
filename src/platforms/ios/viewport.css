@@ -2,14 +2,31 @@
 html[data-ios-edge] body {
   box-sizing: border-box;
   min-height: 100dvh;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: 0;
   background: var(--background);
 }
 
-/* Keep the register's scroll region and footer inside the usable height. */
+/* The app itself reaches the bottom edge. Do not reserve a permanent strip
+   outside the workspace; apply safe spacing to its controls/scroll content. */
 html[data-ios-edge] .pos-scaled.h-dvh {
-  height: calc(100dvh - env(safe-area-inset-bottom, 0px));
-  min-height: calc(100dvh - env(safe-area-inset-bottom, 0px));
+  height: 100dvh;
+  min-height: 100dvh;
+}
+
+/* Settings scroll underneath the home indicator, with enough trailing space
+   to bring the last card fully above it. This padding scrolls with the content. */
+html[data-ios-edge] .settings-workspace > .overflow-y-auto {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  scroll-padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Register pages can contain stationary payment controls inside main. */
+html[data-ios-edge] .pos-scaled main.overflow-y-auto {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html[data-ios-edge] .settings-workspace .sticky.bottom-0 {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
 }
 
 /* Portals bypass body padding. Their backgrounds can reach the bottom, while
