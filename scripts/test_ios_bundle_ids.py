@@ -37,6 +37,20 @@ class BundleIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate bundle identifier"):
             module.verify(self.app)
 
+    def test_stable_identity_is_distinct(self):
+        self.write(self.app, "com.luckycharms.pos")
+        self.write(self.app / "Frameworks/A.framework", "org.cocoapods.A")
+        self.assertEqual(len(module.verify(self.app, "stable")), 2)
+        with self.assertRaisesRegex(ValueError, "Expected app identity"):
+            module.verify(self.app, "beta")
+
+    def test_stable_rejects_duplicate_framework_ids(self):
+        self.write(self.app, "com.luckycharms.pos")
+        self.write(self.app / "Frameworks/A.framework", "org.cocoapods.A")
+        self.write(self.app / "Frameworks/B.framework", "org.cocoapods.A")
+        with self.assertRaisesRegex(ValueError, "Duplicate bundle identifier"):
+            module.verify(self.app, "stable")
+
 
 if __name__ == "__main__":
     unittest.main()
