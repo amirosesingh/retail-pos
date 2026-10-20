@@ -65,7 +65,7 @@ test("public flags recover after SQL readiness failure and share concurrent forc
 
 function terminalFixture(error=null, savedProject=config.url) {
   let logins=0,provisions=0;
-  const deps={window:{},supabaseConfig:()=>config,awaitProfileHydrated:async()=>{},supabaseExternal:{auth:{getSession:async()=>({data:{session:null}}),signInWithPassword:async()=>{logins++;await Promise.resolve();return {error};}}},getDeviceSecret:async()=>({email:"terminal",password:"test",projectUrl:savedProject}),setDeviceSecret:async()=>{},readTerminalConfig:()=>({tokenId:"paired-terminal"}),deviceProofHash:async()=>"proof",getTerminalAccount:async()=>{provisions++;return {ok:true,email:"terminal",password:"fresh"};},logger:{log(){}}};
+  const deps={window:{},supabaseConfig:()=>config,awaitProfileHydrated:async()=>{},supabaseExternal:{auth:{getSession:async()=>({data:{session:null}}),signInWithPassword:async()=>{logins++;await Promise.resolve();return {error};}}},getDeviceSecret:async()=>({email:"terminal",password:"test",projectUrl:savedProject}),setDeviceSecret:async()=>{},readTerminalConfig:()=>({tokenId:"paired-terminal",locationId:"test-branch"}),deviceProofHash:async()=>"proof",getTerminalAccount:async()=>{provisions++;return {ok:true,email:"terminal",password:"fresh"};},logger:{log(){}}};
   deps.externalClientSnapshot=()=>deps.supabaseExternal;
   deps.discardRejectedExternalAuthSession=async()=>{};
   deps.validateStoredAuthSession=async auth=>{const {data}=await auth.getSession();return {state:data.session?"verified":"signed-out",session:data.session};};
@@ -113,4 +113,12 @@ test("manual startup retry performs a new probe after the first launch check",as
   registration="not-registered";registrationListener();
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(slots[0],"not-registered");
+});
+
+test("branchless management registration never provisions a machine login",async()=>{
+  const f=terminalFixture();
+  f.deps.readTerminalConfig=()=>({tokenId:"management-terminal",deviceUse:"management",locationId:""});
+  const module=load("src/lib/terminal-session.ts",f.deps,["ensureTerminalSession"]);
+  assert.equal(await module.ensureTerminalSession(),false);
+  assert.deepEqual(f.counts(),{logins:0,provisions:0});
 });
