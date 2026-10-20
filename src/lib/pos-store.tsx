@@ -1491,14 +1491,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
         return;
       wake();
     });
-    const interval = window.setInterval(wake, 60_000);
-    window.addEventListener("focus", wake);
-    window.addEventListener("online", wake);
+    const visibleWake = () => {
+      if (document.visibilityState !== "hidden") wake();
+    };
+    const interval = window.setInterval(visibleWake, 60_000);
+    window.addEventListener("focus", visibleWake);
+    window.addEventListener("online", visibleWake);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
-      window.removeEventListener("focus", wake);
-      window.removeEventListener("online", wake);
+      window.removeEventListener("focus", visibleWake);
+      window.removeEventListener("online", visibleWake);
       unsubscribe();
     };
   }, [signedIn]);

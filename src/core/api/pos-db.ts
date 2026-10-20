@@ -1735,6 +1735,7 @@ export async function loadSalesPage(
   storeId: string,
   cursor: Cursor = null,
   limit = PAGE_SIZE,
+  range?: { from: string; to: string },
 ): Promise<Page<Sale>> {
   if (localDb()?.query) {
     const heads = (await routedQuery("sales", {
@@ -1768,6 +1769,7 @@ export async function loadSalesPage(
   const query = () => {
     let q = supabase.from("sales").select(saleColumns());
     if (storeId) q = q.eq("store_id", storeId) as typeof q;
+    if (range) q = q.gte("created_at", range.from).lte("created_at", range.to) as typeof q;
     return keyset(q as never, "created_at", cursor, limit);
   };
   let res = await query();

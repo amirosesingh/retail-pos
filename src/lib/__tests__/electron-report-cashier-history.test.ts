@@ -87,7 +87,8 @@ describe("legacy report data", () => {
       expect(read(component), report).toContain("useReportSales(");
     }
     const loader = read("src/lib/use-report-sales.ts");
-    expect(loader).toContain("loadSalesPage(storeId, cursor, 500)");
+    expect(loader).toContain("loadSalesPage(storeId, cursor, 500, {");
+    expect(loader).toContain("from: new Date(start).toISOString(), to: new Date(end).toISOString()");
     expect(loader).toContain("Date.parse(oldest.createdAt) < start");
   });
 

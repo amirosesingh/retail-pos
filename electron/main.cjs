@@ -77,6 +77,7 @@ const syncCoordinator = new SyncCoordinator({
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",state); },
 });
 const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange });
+const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
@@ -194,7 +195,7 @@ async function observedDatabaseOperation(category, stage, work) {
 }
 let localDataPreparePromise=null;
 function prepareLocalData({force=false}={}){
-  if(isManagementDevice())return Promise.resolve({ok:true,skipped:true});
+  if(isManagementDevice())return managementReplica.run();
   // Startup, the automatic ECHANGEGAP recovery path, and a manual database
   // action can request preparation together. Share one lifecycle run so a
   // periodic push cannot race the scoped checkpoint repairs.
@@ -220,11 +221,14 @@ function prepareLocalData({force=false}={}){
 }
 let localDatabaseRecoveryPromise=null;
 function recoverLocalDatabase({prepare=true}={}){
-  if(isManagementDevice())return Promise.resolve(databaseService.snapshot());
   if(localDatabaseRecoveryPromise)return localDatabaseRecoveryPromise;
   localDatabaseRecoveryPromise=(async()=>{
     const restored=await databaseService.restore({reuseValidation:!prepare});
     if(!restored.connected||!restored.tradingReady)return restored;
+    if(isManagementDevice()){
+      if(prepare){managementReplica.resetRetry();await managementReplica.run();}
+      return databaseService.snapshot();
+    }
     const branchId=localBranchId();
     if(!branchId)return databaseService.snapshot();
     if(prepare){
@@ -266,7 +270,12 @@ function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
   automaticSyncScheduler.schedule(delay);
 }
 async function runAutomaticSync() {
-  if(isManagementDevice())return;
+  if(isManagementDevice()){
+    try { await managementReplica.run(); }
+    catch(error) { diagnostics.logConnection("synchronization.management.failed", { category:"synchronization", message:String(error?.message??error) }); }
+    finally { if(terminalStore.read()?.tokenId && !terminalIdentityPausedSync) scheduleAutomaticSync(AUTO_SYNC_RETRY_MS); }
+    return;
+  }
   const databaseState=databaseService.snapshot();
   if(databaseState.enabled&&databaseState.configured&&!databaseManager.isConnected()){
     const recovered=await recoverLocalDatabase({prepare:false}).catch(error=>{
@@ -2246,7 +2255,7 @@ function registerIpc() {
       const backend=/^https:\/\/.+/i.test(savedBackend)?savedBackend:/^https:\/\/.+/i.test(activationBackend)?activationBackend:"";
       if(backend)configStore.set("backendUrl",backend);
       const saved=terminalStore.write(config?{...config,...(backend?{backendUrl:backend}:{})}:config);
-      if(saved?.ok&&isManagementDevice()){terminalIdentityPausedSync=true;stopAutomaticSync();syncCoordinator.pause();}
+      if(saved?.ok&&isManagementDevice()){managementReplica.resetRetry();terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       else if(saved?.ok&&config&&terminalIdentityPausedSync){terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       return saved;
     }

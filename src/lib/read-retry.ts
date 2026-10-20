@@ -25,7 +25,10 @@ export async function retryDataRead<T>(read: () => PromiseLike<T>, isCurrent: ()
     } catch (error) {
       if (attempt >= 2 || !valid() || !isTransientReadError(error) ||
           (typeof navigator !== "undefined" && navigator.onLine === false)) throw error;
-      await new Promise(resolve => setTimeout(resolve, attempt === 0 ? 300 : 1200));
+      // Equal jitter avoids every till retrying at the same instant after an
+      // outage. Keep the existing two-retry budget and maximum wait.
+      const cap = Math.min(1200, 300 * 4 ** attempt);
+      await new Promise(resolve => setTimeout(resolve, cap / 2 + Math.random() * cap / 2));
     }
   }
 }

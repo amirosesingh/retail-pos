@@ -58,12 +58,22 @@ describe("owned Postgres subscriptions", () => {
     const first = vi.fn(), second = vi.fn();
     const branchFilter = { ...filter, table: "authorization_requests", filter: "store_id=eq.branch-a" };
     const stop = subscribeOwnedPostgresChanges(client, "approvals", branchFilter, first);
-    subscribeOwnedPostgresChanges(client, "approvals", branchFilter, second);
+    const stopSecond = subscribeOwnedPostgresChanges(client, "approvals", branchFilter, second);
+    expect(client.channel).toHaveBeenCalledOnce();
     stop(); stop();
     for (const channel of channels.values()) { expect(channel.filter).toEqual(branchFilter); channel.emit(); }
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledOnce();
+    expect(client.removeChannel).not.toHaveBeenCalled();
+    stopSecond();
     expect(client.removeChannel).toHaveBeenCalledOnce();
+  });
+  it("never shares a channel between branch filters", () => {
+    const { client } = fixture();
+    const a = subscribeOwnedPostgresChanges(client, "approvals", filter, vi.fn());
+    const b = subscribeOwnedPostgresChanges(client, "approvals", { ...filter, filter: "scope_id=eq.person-b" }, vi.fn());
+    expect(client.channel).toHaveBeenCalledTimes(2);
+    a(); b();
   });
   it("does not crash a page if realtime setup fails and cleans partial setup", () => {
     const { client, channels } = fixture();

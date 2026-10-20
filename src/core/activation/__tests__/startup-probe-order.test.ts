@@ -118,6 +118,27 @@ describe("start-up connection check", () => {
     expect(health.cloudVerdict()).toBe("verified");
   });
 
+  it("pauses hidden health polling and checks again on foreground", async () => {
+    vi.useFakeTimers();
+    const browserWindow = new EventTarget();
+    const browserDocument = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    vi.stubGlobal("window", browserWindow);
+    vi.stubGlobal("document", browserDocument);
+    if (typeof CustomEvent === "undefined")
+      vi.stubGlobal("CustomEvent", class extends Event {});
+    const health = await import("@/core/activation/connection-health");
+    health.resetHealthCache(); health.resetConnectivity();
+    stopMonitor = health.startConnectivityMonitor();
+    await health.heartbeat();
+    const before = order.filter(value => value === "query").length;
+    browserDocument.visibilityState = "hidden";
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(order.filter(value => value === "query")).toHaveLength(before);
+    browserDocument.visibilityState = "visible";
+    browserDocument.dispatchEvent(new Event("visibilitychange"));
+    await health.heartbeat();
+    expect(order.filter(value => value === "query").length).toBeGreaterThan(before);
+  });
   it("does not grace a definitive credential rejection after being online", async () => {
     vi.useFakeTimers();
     const browserWindow = new EventTarget();

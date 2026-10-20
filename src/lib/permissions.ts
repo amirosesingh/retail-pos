@@ -115,6 +115,7 @@ export const PERMISSION_GROUPS = [
       "can_manage_staff",
       "can_manage_promotions",
       "can_manage_terminals",
+      "can_use_management_mobile",
       "can_manage_sync_backup",
     ],
   },
@@ -192,6 +193,7 @@ export type PermissionKey =
   | "can_manage_staff"
   | "can_manage_promotions"
   | "can_manage_terminals"
+  | "can_use_management_mobile"
   | "can_manage_sync_backup";
 
 export const PERMISSION_LABELS: Record<PermissionKey, string> = {
@@ -266,6 +268,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_manage_staff: "Manage staff & permissions",
   can_manage_promotions: "Edit promotions & coupon rules",
   can_manage_terminals: "Manage terminal activation tokens",
+  can_use_management_mobile: "Sign in on management phones and tablets",
   can_manage_sync_backup: "Manage database connection",
 };
 
@@ -639,7 +642,7 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
     },
     "supervisor-only": {
       roles: ["supervisor", "admin"],
-      keys: ["can_edit_member_points", "can_manage_promotions", "can_manage_terminals"],
+      keys: ["can_edit_member_points", "can_manage_promotions", "can_manage_terminals", "can_use_management_mobile"],
     },
     "admin-only": {
       roles: ["admin"],

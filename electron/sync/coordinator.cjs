@@ -78,7 +78,7 @@ class SyncCoordinator {
     try {
       this.status.phase="pushing"; this.publish(this.snapshot());
       let pushError = null; let pushed = {};
-      try { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString(); }
+      try { if (!options.pullOnly) { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString(); } }
       catch(error) { pushError=error; }
       if (pushError && (pushError.code === "ECHANGEGAP" || [401,403].includes(Number(pushError.status)))) throw pushError;
       let pulled = {};

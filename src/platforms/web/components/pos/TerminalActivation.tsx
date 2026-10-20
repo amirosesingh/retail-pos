@@ -165,6 +165,7 @@ export function TerminalActivation({
       onActivationStarted?.();
       try {
         const config = await activateWithTokenId(pairing);
+        if (!stopped) setError("");
         if (config && !stopped) {
           clearRevocation();
           await writeActivationRecord({ tokenId: config.tokenId }).catch(() => {});
@@ -175,7 +176,7 @@ export function TerminalActivation({
           setError(e.message);
           // Network failures recover automatically; token verdicts need a new
           // request and must not hammer the API every three seconds forever.
-          if (!/cannot reach|connection/i.test(e.message)) setPairingStopped(true);
+          if (!e.retryable && !/cannot reach|connection/i.test(e.message)) setPairingStopped(true);
         }
       } finally {
         pending = false;

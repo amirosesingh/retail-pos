@@ -370,10 +370,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         <TerminalLogin />
       </>
     );
-  if ((isDesktop() || isNative()) && isManagementDevice() && !isSupervisor)
+  if ((isDesktop() || isNative()) && isManagementDevice() && !(isNative() ? can("can_use_management_mobile") : isSupervisor))
     return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
       <h1 className="text-lg font-semibold">Management device</h1>
-      <p>Sign in with an administrator or supervisor account. This registration does not grant management permissions.</p>
+      <p>Sign in with an account permitted to use this management device. Your page and branch permissions still apply.</p>
       <Button onClick={() => void logout()}>Use another account</Button>
     </div>;
   if (!dataReady && !offlineBypass)

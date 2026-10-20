@@ -19,6 +19,8 @@ import { claimsFromPayload, normalisePermissions } from "@/core/api/relay-claims
 import type { CallerClaims } from "@/core/api/relay-claims.server";
 
 export type RelayScope = {
+  /** Device-bound, read-only replication; never used for business writes. */
+  managementReplica?: boolean;
   kind: "cashier" | "terminal" | "staff";
   label: string;
   storeId: string | null;
@@ -255,6 +257,7 @@ export async function resolveRelayScope(caller: {
   claims?: CallerClaims | null;
   terminalId?: string | null;
   managementDevice?: boolean;
+  managementMobileDevice?: boolean;
 }): Promise<RelayScope> {
   // Authenticated claims identify a token, not current account authority.
   // In particular, Supabase user_metadata is editable by the account holder.
@@ -266,8 +269,13 @@ export async function resolveRelayScope(caller: {
   }
   const role = row?.role ?? null;
   const roleSlug = row?.role_slug ?? null;
-  if (caller.managementDevice && (!row || !supervisorRole(role, roleSlug)))
-    throw new Error("This management device requires an administrator or supervisor account");
+  const permissions = row ? normalisePermissions(row.permissions) : {};
+  const mobileAllowed = role === "admin" || roleSlug === "admin" ||
+    (typeof permissions.can_use_management_mobile === "boolean" ? permissions.can_use_management_mobile : supervisorRole(role, roleSlug));
+  if (caller.managementDevice && (!row || !(caller.managementMobileDevice ? mobileAllowed : supervisorRole(role, roleSlug))))
+    throw new Error(caller.managementMobileDevice
+      ? "This account is not permitted to sign in on management phones or tablets"
+      : "This management device requires an administrator or supervisor account");
   const branchMismatch = !!(
     row?.store_id &&
     caller.storeId &&
@@ -281,7 +289,7 @@ export async function resolveRelayScope(caller: {
     storeId: row?.store_id ?? caller.storeId ?? null,
     role,
     roleSlug,
-    permissions: row ? normalisePermissions(row.permissions) : {},
+    permissions,
     isSupervisor: !!row && supervisorRole(role, roleSlug),
     staffUserId: row?.user_id ?? null,
     actorName: row?.full_name ?? caller.label ?? null,

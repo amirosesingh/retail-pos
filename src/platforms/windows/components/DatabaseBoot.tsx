@@ -5,6 +5,7 @@ import { TillLoader } from "@/components/shared/TillLoader";
 import { desktopStorageRoute } from "@/lib/desktop-storage-route";
 import { observeLocalStartup } from "@/lib/local-startup";
 import { ONLINE_STARTUP_OVERRIDE } from "@/core/local-db/db-mode";
+import { toast } from "sonner";
 
 /** Resolve storage before any page/provider starts querying the desktop bridge. */
 export function NativeBoot({ children }: { children: ReactNode }) {
@@ -17,6 +18,7 @@ export function NativeBoot({ children }: { children: ReactNode }) {
     if (!api) { setError("The desktop database bridge is unavailable. Restart the app."); return; }
     return observeLocalStartup(api, state => {
       const route = desktopStorageRoute(state);
+      if (route === "local" || route === "online") toast.dismiss("pos-local-database-disconnected");
       if (route === "online") window.sessionStorage.setItem(ONLINE_STARTUP_OVERRIDE, "1");
       if (route === "local") window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
       // A configured but disconnected database must not silently redirect writes.

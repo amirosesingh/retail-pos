@@ -5,6 +5,24 @@ import { createRefreshQueue, requestBackgroundRefresh, subscribeBackgroundRefres
 let signedIn = true;
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 describe("background refresh", () => {
+  it("coalesces a foreground event burst and cancels pending work on cleanup", () => {
+    vi.useFakeTimers(); signedIn = true;
+    const win = new EventTarget();
+    const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    vi.stubGlobal("window", Object.assign(win, { setInterval, clearInterval }));
+    vi.stubGlobal("document", doc); vi.stubGlobal("navigator", { onLine: true });
+    const refresh = vi.fn(); const off = subscribeBackgroundRefresh(refresh);
+    win.dispatchEvent(new Event("focus"));
+    win.dispatchEvent(new Event("app:resume"));
+    doc.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(150);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    requestBackgroundRefresh();
+    expect(refresh).toHaveBeenCalledTimes(2);
+    win.dispatchEvent(new Event("focus")); off();
+    vi.advanceTimersByTime(150);
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
   it("coalesces overlapping events, runs a trailing read and stops on unmount", async () => {
     let finish!: () => void;
     const read = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));

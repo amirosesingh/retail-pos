@@ -321,7 +321,7 @@ function RootComponent() {
           for (const table of query.meta.tables) if (typeof table === "string") tables.add(table);
       }
       if (tables.size) void refresh.refresh();
-    });
+    }, 300_000);
     const off = subscribeDataChange((change) => {
       tables.add(change.table);
       if (timer) return;

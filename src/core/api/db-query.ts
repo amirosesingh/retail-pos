@@ -104,7 +104,7 @@ async function runQuery(
       ...options,
       limit: Math.min(options.limit ?? 1000, 2000),
     });
-    if (!result.ok) throw new Error(result.error ?? "The local SQL Server read failed.");
+    if (!result.ok) throw Object.assign(new Error(result.error ?? "The local SQL Server read failed."), { code: (result as { code?: string }).code });
     const rows = normalizeUuidFields((result.rows ?? []) as Row[]);
     noteVersions(table, rows);
     return { rows, source: "local" };
