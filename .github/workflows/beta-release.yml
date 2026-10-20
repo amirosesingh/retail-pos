@@ -80,11 +80,11 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Retail-windows-publish
           path: upload
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Retail-android-publish
           path: release-assets
@@ -96,7 +96,7 @@ jobs:
           AWS_DEFAULT_REGION: auto
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: node scripts/publish-beta-release.cjs
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Retail-iOS-Beta-unsigned-${{ github.sha }}
           path: ios-release-assets

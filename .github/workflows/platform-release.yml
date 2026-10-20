@@ -60,11 +60,11 @@ jobs:
           short=$(echo "$GITHUB_SHA" | cut -c1-7)
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "release_id=v$v-$short" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Retail-windows-publish
           path: upload
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Retail-android-publish
           path: release-assets
@@ -108,7 +108,7 @@ jobs:
             aws s3 cp release-assets/latest.json "s3://updatelccms/pos-app/$prefix/latest.json" \
               --endpoint-url "$R2_ENDPOINT" --cache-control "no-cache"
           done
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Retail-iOS-unsigned-${{ github.sha }}
           path: ios-release-assets
