@@ -166,17 +166,19 @@ function Dashboard() {
   return (
     <AppShell>
       <div className="space-y-6 p-6">
-        <header>
-          <h1 className="text-2xl font-semibold">Live dashboard · {currentStore.name}</h1>
+        <header className="min-w-0 space-y-2">
+          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+            <h1 className="min-w-0 text-2xl font-semibold">Live dashboard · {currentStore.name}</h1>
+            <HomeShortcuts />
+          </div>
           <p className="text-sm text-muted-foreground page-description">
             Today&apos;s revenue, margin, peak trading hours and behaviour flags.
           </p>
         </header>
 
-        <HomeShortcuts />
 
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
-        <div className="summary-grid grid gap-4 md:grid-cols-4 xl:grid-cols-7">
+        <div role="region" aria-label="Revenue summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(10rem,72%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-7">
           <Kpi label="Revenue today" value={money(revenue)} highlight />
           <Kpi label="Gross revenue" value={money(profit.revenue)} />
           <Kpi label="Total COGS" value={money(profit.cogs)} />
@@ -196,7 +198,7 @@ function Dashboard() {
               Current active catalogue and on-hand value at this branch.
             </p>
           </div>
-          <div className="summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+          <div role="region" aria-label="Inventory summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(9rem,65%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-8">
             <Kpi label="Products" value={<AnimatedMetric value={stock.products} />} />
             <Kpi label="Categories" value={<AnimatedMetric value={stock.categories} />} />
             <Kpi label="On-hand units" value={<AnimatedMetric value={stock.units} />} />
@@ -226,7 +228,7 @@ function Dashboard() {
         >
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">Trading graphs</h2>
-            <div className="flex items-center gap-1">
+            <div className="hidden items-center gap-1 md:flex">
               <CarouselPrevious className="static translate-y-0" aria-label="Previous graph" />
               <CarouselNext className="static translate-y-0" aria-label="Next graph" />
             </div>
@@ -474,7 +476,7 @@ function Kpi({
   danger?: boolean;
 }) {
   return (
-    <div className="summary-card rounded-lg border border-border bg-card px-4 py-3">
+    <div className="summary-card min-w-0 snap-start rounded-lg border border-border bg-card px-4 py-3">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p
         className={`numeric text-xl font-semibold ${highlight ? "text-primary" : ""} ${danger ? "text-destructive" : ""}`}

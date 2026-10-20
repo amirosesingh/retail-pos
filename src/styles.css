@@ -1093,6 +1093,16 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
   }
 }
 
+/* Keep dashboard swipe rows clear of the global desktop scrollbar theme. */
+.dashboard-swipe-row {
+  scrollbar-width: none;
+}
+.dashboard-swipe-row::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* Compact activity cards enter and leave at the right edge without delaying work. */
 [data-sonner-toast].activity-notification-toast {
   transition:
