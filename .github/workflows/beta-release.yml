@@ -63,6 +63,8 @@ jobs:
   ios:
     needs: prepare
     uses: ./.github/workflows/ios-beta-build.yml
+    with:
+      beta_version: ${{ needs.prepare.outputs.version }}
   publish:
     needs: [prepare, windows, android, ios]
     runs-on: ubuntu-latest
