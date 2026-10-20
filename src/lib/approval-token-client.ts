@@ -108,6 +108,9 @@ export async function enrollOwnApprovalToken(userId: string) {
   const token = { ...result.credential, project: supabaseConfig().url, sessionBinding: binding };
   const saved = await (await store()).value.set({ key: KEY, value: JSON.stringify(token) });
   if (saved.value === false) throw new Error("Secure token storage could not be updated");
+  const verified = await (await store()).value.get({ key: KEY });
+  if (verified.value !== JSON.stringify(token))
+    throw new Error("Secure token storage could not be verified");
   if (version !== revision) return;
   window.dispatchEvent(new Event(TOKEN_CHANGED));
 }

@@ -1,3 +1,4 @@
+import { IosOtaSettings } from "@/platform-config/ios-ota";
 import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { MinimalUpdatePanel } from "./MinimalUpdatePanel";
 import {
@@ -16,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { APP_VERSION, useAppUpdates, updateBridge } from "@/lib/app-updates";
 import { useAndroidUpdates } from "@/platforms/mobile/android-updates";
-import { isAndroid, isNative } from "@/platform-config/platform";
+import { isAndroid, isIOS, isNative } from "@/platform-config/platform";
 import { MANIFEST_URL } from "@/lib/update-manifest";
 
 
@@ -83,12 +84,13 @@ const LABELS: Record<string, string> = {
  * self-hosted manifest; only the install action differs.
  */
 export function AppUpdateSettings() {
-  const [platform, setPlatform] = useState<"web" | "android" | "windows">("web");
+  const [platform, setPlatform] = useState<"web" | "android" | "ios" | "windows">("web");
 
   useEffect(() => {
-    setPlatform(isNative() && isAndroid() ? "android" : "web");
+    setPlatform(isIOS() ? "ios" : isNative() && isAndroid() ? "android" : "web");
   }, []);
 
+  if (platform === "ios") return <IosOtaSettings />;
   if (platform === "android") return <AndroidUpdateCard />;
   return <DesktopUpdateCard />;
 }

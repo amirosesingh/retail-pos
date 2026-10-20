@@ -38,7 +38,7 @@ describe("terminal activation platform contract", () => {
     ["pc", "web", false],
     ["mobile", "web", false],
     ["pc", "ios", false],
-    ["mobile", "ios", false],
+    ["mobile", "ios", true],
   ] as const)(
     "%s token on %s has claim result %s",
     (token, runtime, expected) => {

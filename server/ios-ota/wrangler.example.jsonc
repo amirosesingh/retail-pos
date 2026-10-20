@@ -1,0 +1,9 @@
+{
+  "name": "retail-ios-ota",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-20",
+  "workers_dev": false,
+  "routes": [{ "pattern": "updatecms.luckycharmsdnbhd.com/pos-app/ios-ota/*", "zone_name": "luckycharmsdnbhd.com" }],
+  "r2_buckets": [{ "binding": "OTA_BUCKET", "bucket_name": "updatelccms" }],
+  "vars": { "OTA_STOP": "true" }
+}

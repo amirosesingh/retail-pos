@@ -40,7 +40,9 @@ test("workflow keeps checks automatic but publishes paired beta apps only by req
   assert.ok(ci.on.push.branches.includes("beta"));
   assert.equal(workflow.jobs.android.needs, "prepare");
   assert.equal(workflow.jobs.windows.needs, "prepare");
-  assert.deepEqual(workflow.jobs.publish.needs, ["prepare", "windows", "android"]);
+  assert.equal(workflow.jobs.ios.needs, "prepare");
+  assert.equal(workflow.jobs.ios.with.beta_version, workflow.jobs.android.with.beta_version);
+  assert.deepEqual(workflow.jobs.publish.needs, ["prepare", "windows", "android", "ios"]);
   assert.equal(workflow.jobs.android.with.release_channel, "beta");
   assert.equal(workflow.jobs.windows.with.release_channel, "beta");
   assert.ok(workflow.jobs.prepare.steps.find(step => step.run === "node scripts/check-beta-publication.cjs"));

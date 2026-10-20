@@ -59,6 +59,7 @@ const isDesktop = Boolean(process.env["DESKTOP_BUILD"]);
  * a static client bundle with an SPA fallback rather than a running server.
  */
 const isMobile = Boolean(process.env["MOBILE_BUILD"]);
+const isIos = isMobile && process.env.POS_MOBILE_TARGET === "ios";
 /**
  * Cloudflare Workers build (GitHub Actions -> wrangler deploy). Pins the same
  * preset and output layout that wrangler.jsonc points at, so CI never falls
@@ -79,7 +80,7 @@ const isMobile = Boolean(process.env["MOBILE_BUILD"]);
 export const WEB_ONLY_ENV_NAMES = webOnlyEnv.webOnly.filter((name) => name.startsWith("VITE_"));
 
 if (isMobile && isDesktop) throw new Error("Choose one build target: Android or Windows.");
-const buildPlatform = isMobile ? "android" : isDesktop ? "windows" : "web";
+const buildPlatform = isIos ? "ios" : isMobile ? "android" : isDesktop ? "windows" : "web";
 const isTerminalBuild = isMobile || isDesktop;
 const isBetaBuild = process.env.POS_RELEASE_CHANNEL === "beta" || process.env.WORKERS_CI_BRANCH === "beta";
 
@@ -110,7 +111,7 @@ export default defineConfig({
   css: { transformer: "lightningcss" },
   resolve: {
     // Native approval UI/Keystore enrollment never enter website client chunks.
-    alias: [...shellAliases(buildPlatform), ...(!isTerminalBuild ? [
+    alias: [...(isIos ? [{ find: "@/platform-config/ios-ota", replacement: resolve("src/platforms/ios/ui.tsx") }] : []), ...shellAliases(buildPlatform), ...(!isTerminalBuild ? [
       { find: /^\.\/routeTree\.gen(?:\.tsx?)?$/, replacement: resolve("src/routeTree.web.gen.ts") },
     ] : [
       { find: "@/platform-config/update-settings", replacement: resolve("src/platform-config/native-update-settings.tsx") },

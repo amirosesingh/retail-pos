@@ -5,6 +5,9 @@ membership, receipts, cash drawers, reporting, Windows terminals, and Android.
 
 ## Development
 
+The sideloaded iPhone beta build and self-hosted OTA instructions are in
+[docs/ios-ota.md](docs/ios-ota.md). Building an IPA does not publish an update.
+
 Use Node.js 22 and npm 11.4.2.
 
 ```sh

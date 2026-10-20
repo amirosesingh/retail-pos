@@ -46,3 +46,7 @@ capacitor-shell/
 
 # Web route graph excludes native installer settings.
 /src/routeTree.web.gen.ts
+
+# OTA private signing material and generated artifacts
+.ota-private/
+ota-artifacts/

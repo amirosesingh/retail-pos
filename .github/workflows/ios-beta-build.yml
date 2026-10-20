@@ -1,0 +1,58 @@
+name: Build iPhone beta IPA (no publication)
+on:
+  workflow_call:
+    inputs:
+      beta_version:
+        required: false
+        type: string
+        default: ''
+  workflow_dispatch:
+  pull_request:
+    branches: [beta]
+    paths: ['ios/**', 'packages/ios-ota-trust/**', 'src/**', 'scripts/**', 'package*.json', 'capacitor.config.ts', 'vite.config.ts', 'ios-ota.public.json', '.github/workflows/ios-beta-build.yml']
+permissions:
+  contents: read
+jobs:
+  ios:
+    runs-on: xcode-27
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Match the paired beta release version
+        if: inputs.beta_version != ''
+        env:
+          BETA_VERSION: ${{ inputs.beta_version }}
+        run: node scripts/prepare-beta.cjs
+      - name: Record Xcode and available iOS SDKs
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+          test "$(xcrun --sdk iphoneos --show-sdk-version | cut -d. -f1)" -ge 27
+      - name: Verify iOS OTA service and server
+        run: |
+          npx vitest run src/platforms/ios/__tests__/ota.test.ts
+          node --test scripts/test-ios-ota-server.cjs scripts/test-ios-beta-publish.cjs
+          python3 scripts/test_ios_bundle_ids.py
+      - name: Build and sync native iOS beta
+        run: npm run ios:sync
+      - name: Compile unsigned device application for Sideloadly
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath ios/DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Check embedded bundle identities before packaging
+        run: python3 scripts/verify-ios-bundle-ids.py ios/DerivedData/Build/Products/Release-iphoneos/App.app
+      - name: Package unsigned IPA (Sideloadly supplies signing)
+        run: |
+          mkdir -p ios/App/output/Payload
+          cp -R ios/DerivedData/Build/Products/Release-iphoneos/App.app ios/App/output/Payload/
+          cd ios/App/output
+          ditto -c -k --sequesterRsrc --keepParent Payload Retail-iOS-Beta-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Retail-iOS-Beta-unsigned-${{ github.sha }}
+          path: ios/App/output/Retail-iOS-Beta-unsigned.ipa
+          retention-days: 14

@@ -1,0 +1,29 @@
+/* Included only in the iOS build. Use hardware insets, never phone dimensions. */
+html[data-ios-edge] body {
+  box-sizing: border-box;
+  min-height: 100dvh;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--background);
+}
+
+/* Keep the register's scroll region and footer inside the usable height. */
+html[data-ios-edge] .pos-scaled.h-dvh {
+  height: calc(100dvh - env(safe-area-inset-bottom, 0px));
+  min-height: calc(100dvh - env(safe-area-inset-bottom, 0px));
+}
+
+/* Portals bypass body padding. Their backgrounds can reach the bottom, while
+   their last controls retain a safe touch margin above the home indicator. */
+html[data-ios-edge] [role="dialog"].fixed.bottom-0,
+html[data-ios-edge] [role="dialog"].fixed.inset-y-0 {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+}
+
+html[data-ios-edge] .fixed.bottom-0:not([role="dialog"]) {
+  bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html[data-ios-edge] [role="dialog"].fixed[class~="top-1/2"] {
+  top: calc((100dvh - env(safe-area-inset-bottom, 0px)) / 2);
+  max-height: calc(100dvh - env(safe-area-inset-bottom, 0px) - 2rem);
+}

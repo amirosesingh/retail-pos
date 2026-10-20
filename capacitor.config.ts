@@ -1,3 +1,5 @@
+import otaTrust from "./ios-ota.public.json";
+import packageJson from "./package.json";
 import type { CapacitorConfig } from "@capacitor/cli";
 
 /**
@@ -9,6 +11,9 @@ import type { CapacitorConfig } from "@capacitor/cli";
  * thin shell that loads a hosted site instead.
  */
 const remote = process.env["POS_MOBILE_URL"];
+if (process.env.POS_MOBILE_TARGET === "ios" && remote) {
+  throw new Error("iOS OTA requires a bundled interface; remove POS_MOBILE_URL before building the IPA.");
+}
 
 const config: CapacitorConfig = {
   appId: process.env.POS_RELEASE_CHANNEL === "beta" ? "com.luckycharms.pos.beta" : "com.luckycharms.pos",
@@ -17,10 +22,14 @@ const config: CapacitorConfig = {
   ...(remote
     ? { server: { url: remote, cleartext: false, androidScheme: "https" } }
     : { server: { androidScheme: "https" } }),
+  ios: { scheme: "App", contentInset: "never" },
   plugins: {
+    CapacitorUpdater: { autoUpdate: false, appReadyTimeout: 15000, responseTimeout: 120, autoDeletePrevious: false, autoDeleteFailed: false, statsUrl: "", channelUrl: "", updateUrl: "" },
+    RetailOtaTrust: otaTrust,
     SystemBars: { insetsHandling: "native", initialViewportFitValueHint: "contain" },
   },
   android: {
+    includePlugins: Object.keys(packageJson.dependencies).filter(name => name !== "@capgo/capacitor-updater" && name !== "@retail/ios-ota-trust"),
     allowMixedContent: false,
     zoomEnabled: false,
   },

@@ -1,3 +1,4 @@
+import { IosOtaBoot } from "@/platform-config/ios-ota";
 import { ApprovalTokenAgent } from "@/platform-config/approval-token";
 import { VIEWPORT_FIT } from "@/platform-config/viewport";
 import { RELEASE_CHANNEL } from "@/lib/release-channel";
@@ -221,7 +222,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
   }),
   shellComponent: RootShell,
-  component: RootComponent,
+  component: () => <IosOtaBoot><RootComponent /></IosOtaBoot>,
   notFoundComponent: NotFoundComponent,
   errorComponent: ErrorComponent,
 });

@@ -1,4 +1,4 @@
-name: Publish beta - Android and Windows
+name: Publish beta - Android, Windows and iPhone
 on:
   # A release tag is created only after the owner says "Publish beta now".
   # This works before this workflow has been promoted to the default branch.
@@ -60,8 +60,13 @@ jobs:
       beta_version: ${{ needs.prepare.outputs.version }}
       beta_number: ${{ fromJSON(github.run_number) }}
     secrets: inherit
+  ios:
+    needs: prepare
+    uses: ./.github/workflows/ios-beta-build.yml
+    with:
+      beta_version: ${{ needs.prepare.outputs.version }}
   publish:
-    needs: [prepare, windows, android]
+    needs: [prepare, windows, android, ios]
     runs-on: ubuntu-latest
     concurrency:
       group: pos-beta-publish
@@ -89,6 +94,18 @@ jobs:
           AWS_DEFAULT_REGION: auto
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: node scripts/publish-beta-release.cjs
+      - uses: actions/download-artifact@v4
+        with:
+          name: Retail-iOS-Beta-unsigned-${{ github.sha }}
+          path: ios-release-assets
+      - name: Publish matching unsigned iPhone download
+        env:
+          BETA_VERSION: ${{ needs.prepare.outputs.version }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: node scripts/publish-ios-beta.cjs
       - name: Attach beta installers as a prerelease
         uses: softprops/action-gh-release@v2
         with:
@@ -102,6 +119,7 @@ jobs:
             upload/*.blockmap
             upload/latest.yml
             release-assets/*.apk
+            ios-release-assets/*.ipa
       - name: Keep the latest six beta versions only
         env:
           GH_TOKEN: ${{ github.token }}

@@ -68,8 +68,8 @@ beforeEach(() => {
   vi.stubGlobal("navigator", { onLine: true });
 });
 afterEach(() => vi.unstubAllGlobals());
-describe("Android approval enrollment", () => {
-  it("uses Keystore enrollment offline with the same registered user session", async () => {
+describe("native phone approval enrollment (Android Keystore / iOS Keychain)", () => {
+  it("uses secure enrollment offline with the same registered user session", async () => {
     await enrollOwnApprovalToken("manager");
     Object.assign(navigator, { onLine: false });
     expect((await loadApprovalToken())?.userId).toBe("manager");
@@ -97,5 +97,19 @@ describe("Android approval enrollment", () => {
     await enrollOwnApprovalToken("manager");
     expect(await loadApprovalToken()).toBe(null);
     expect(fixture.fetch).not.toHaveBeenCalled();
+  });
+  it("removes cached enrollment when the server disables this user's token permission", async () => {
+    await enrollOwnApprovalToken("manager");
+    fixture.fetch.mockResolvedValue({ ok: true, json: async () => ({ ok: true, credential: null }) });
+    await enrollOwnApprovalToken("manager");
+    expect(await loadApprovalToken()).toBeNull();
+    expect(fixture.values.size).toBe(0);
+  });
+  it("refuses an expired offline enrollment", async () => {
+    await enrollOwnApprovalToken("manager");
+    for (const [key, raw] of fixture.values) {
+      fixture.values.set(key, JSON.stringify({ ...JSON.parse(raw), validUntil: Date.now() - 1 }));
+    }
+    expect(await loadApprovalToken()).toBeNull();
   });
 });
