@@ -1,4 +1,5 @@
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 /**
  * Admin console: issue an activation code for a Windows till and disconnect a
  * machine again at any time.
@@ -195,10 +196,10 @@ export function TerminalTokens({
   // Keep online / offline honest without anyone pressing Refresh.
   useEffect(() => {
     const tick = window.setInterval(() => setNow(Date.now()), 30_000);
-    const reload = window.setInterval(() => void refresh(), 60_000);
+    const stopRefresh = subscribePageDataRefresh(refresh, ["terminal_tokens"], { intervalMs: 60_000 });
     return () => {
       window.clearInterval(tick);
-      window.clearInterval(reload);
+      stopRefresh();
     };
   }, [refresh]);
 

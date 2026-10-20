@@ -1,4 +1,5 @@
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, ShieldCheck } from "lucide-react";
@@ -80,11 +81,10 @@ function Verifications() {
 
   useEffect(() => {
     const sequence = sequenceRef;
-    void refresh();
-    const wake = () => { void refresh(); };
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") wake(); }, 30_000);
-    window.addEventListener("focus", wake);
-    return () => { ++sequence.current; window.clearInterval(timer); window.removeEventListener("focus", wake); };
+    // Keep the short fallback: membership is a separate backend and may not
+    // publish changes through the POS feed.
+    const stop = subscribePageDataRefresh(refresh, [], { intervalMs: 30_000, initial: true });
+    return () => { ++sequence.current; stop(); };
   }, [refresh]);
 
   const filtered = rows.filter((r) =>

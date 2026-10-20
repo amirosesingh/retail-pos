@@ -49,3 +49,44 @@ Repository searches of `src`, `scripts`, and `.github` found no scheduled Supaba
 6. Do not reset production statistics or claim percentage savings until comparable measurements exist.
 
 Reference: [Supabase egress measurement and optimization](https://supabase.com/docs/guides/platform/manage-your-usage/egress).
+
+## Follow-up audit and fixes
+
+Report caches for analytics, stock adjustments and receiving history now include the session generation, user, permission matrix, runtime database URL and database mode, in addition to their branch/date filters. Cached values are kept in memory for five minutes. An invalidated report refreshes on reopening; existing table-change invalidation remains. No persistent business cache was added to browsers or phones.
+
+Shift-session history, terminal lists and telemetry use the shared change feed with serialized, burst-batched refreshes and hidden-page suppression. Telemetry and terminal availability keep their one-minute fallback; verification logs retain their 30-second fallback because membership uses a separate backend. Initial loads and explicit actions still read immediately. Local clocks, pairing-claim polling, pending sales uploads and authorization/revocation checks are not treated as wasteful data refreshes.
+
+Fixed a reconciliation bug where an optional field removed from a new snapshot could remain in the old cached object. Unchanged rows/fields still retain references.
+
+### Measured usage baseline
+
+On 20 October 2026, the Studio Usage page filtered to `qhrufhtbeguxydenzfey` showed the billing period 30 September–31 October:
+
+| Metric | POS project total so far |
+|---|---:|
+| Egress | 8.337 GB |
+| Log ingestion | 2.556 GB |
+| Log query scanning | 458.072 GB |
+| Realtime messages | 26,966 |
+| Realtime peak connections | 7 |
+| Storage size / cached egress | 0 GB / 0 GB |
+
+The organization page showed 8.337 GB egress against 5 GB included. The page marks the log metrics as upcoming, with enforcement/billing changes after their grace period. Do not confuse a displayed log allowance with an already charged overage. Code changes do not reverse accumulated usage; review capacity separately if the existing allowance cannot support normal operation.
+
+Zero Supabase cached egress does not mean the app has no React memory cache. These are different measurements. Storage is not an evidenced major contributor here. The service-specific egress split and individual endpoint bytes remain unmeasured.
+
+A narrow, read-only statement-statistics aggregate identified settings-related statements as a contributor worth profiling: 67,685 cumulative calls, 2,991,426.50 ms total execution. Sync: 24,471 calls; terminal-related: 114,004; session-related: 106,055. These are heuristic query-text categories with an unknown reset period, not daily HTTP requests or bytes. They cannot prove which endpoint caused the measured egress.
+
+### Database recommendations, not applied changes
+
+The performance advisor returned:
+
+- Four foreign keys without covering indexes: three in the legacy `admin_portal` activation tables and `pos_private.approval_tokens.terminal_id`. Check query plans and actual join/delete workload before adding indexes. [Advisor guidance](https://supabase.com/docs/guides/database/database-linter?lint=0001_unindexed_foreign_keys).
+- Two multiple-permissive-policy warnings on `settings_scoped`, for INSERT and UPDATE. Personal settings and POS-field policies have separate purposes; any consolidation must preserve their OR semantics and authorization tests. This warning does not establish a data leak. [Advisor guidance](https://supabase.com/docs/guides/database/database-linter?lint=0006_multiple_permissive_policies).
+- 84 indexes unused in the current statistics. Keep them until representative workload and statistics reset dates are established; rare reports and foreign-key maintenance may need them. [Advisor guidance](https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index).
+
+Logging settings were rechecked read-only and are unchanged. No indexes, RLS policies, quotas, billing settings, audit records or live schema were modified during this follow-up. No automated Logs Query scanner was found in the inspected repository; Studio investigations and external integrations remain attribution candidates, not proven culprits.
+
+### Remaining acceptance limits
+
+Automated tests exercise query isolation, burst coalescing, hidden/resume behavior, row deletion and sync safeguards. They cannot establish physical QR scanning, real Windows SQL recovery or every native device's network behavior. No signed-in POS browser session was available during this follow-up. These device checks and before/after daily byte measurements remain deployment acceptance work, not claimed complete.

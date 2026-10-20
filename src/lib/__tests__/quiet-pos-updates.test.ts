@@ -9,6 +9,12 @@ vi.mock("@/platforms/web/components/pos/status/SystemStatus",()=>({CloudStateIco
 import { TillLoader } from "@/components/shared/TillLoader";
 import { retainUnchangedFields } from "../live-state";
 describe("quiet POS updates",()=>{
+  it("removes deleted snapshot fields while retaining unrelated references",()=>{
+    const previous: { products: { id: string }[]; removed?: string } = {products:[{id:"one"}],removed:"old"};
+    const next=retainUnchangedFields(previous,{products:[{id:"one"}]});
+    expect(next).not.toHaveProperty("removed");
+    expect(next.products).toBe(previous.products);
+  });
   it("keeps exactly one original progress indicator on the startup screen",()=>{
     const html=renderToStaticMarkup(h(TillLoader));
     expect(html.match(/role="progressbar"/g)).toHaveLength(1);
