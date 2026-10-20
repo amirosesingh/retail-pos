@@ -133,6 +133,11 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   } = useAuth();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // The drawer is portalled outside the hidden mobile header. Close it when
+  // desktop navigation takes over, and do not reopen it on the next resize.
+  useEffect(() => {
+    if (!isMobile) setDrawerOpen(false);
+  }, [isMobile]);
   // Set when the operator chooses to carry on from the terminal's own copy
   // after the first load could not reach the central database.
   const [offlineBypass, setOfflineBypass] = useState(false);
@@ -524,7 +529,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {/* Mobile top bar + slide-out drawer */}
               <header className="pt-safe sticky top-0 z-30 flex shrink-0 items-center gap-2 border-b border-border/70 bg-background px-3 pb-2 md:hidden">
-                <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+                <Sheet open={isMobile && drawerOpen} onOpenChange={setDrawerOpen}>
                   <SheetTrigger asChild>
                     <Button
                       variant="ghost"
