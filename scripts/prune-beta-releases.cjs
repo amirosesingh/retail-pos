@@ -12,14 +12,15 @@ function artifactVersion(key) {
   const archive = new RegExp(`^${PREFIX}releases/beta-v(${VERSION})-[a-f0-9]{7,40}/(.+)$`).exec(key);
   if (archive && valid(archive[1])) {
     const [ , version, file ] = archive;
-    if (['release.json', `Retail Setup ${version}.exe`, `Retail Setup ${version}.exe.blockmap`, `android/Retail-${version}.apk`].includes(file)) return version;
+    if (['release.json', `Retail Setup ${version}.exe`, `Retail Setup ${version}.exe.blockmap`, `android/Retail-${version}.apk`, `ios/Retail-${version}-unsigned.ipa`].includes(file)) return version;
   }
   const latest = new RegExp(`^${PREFIX}latest/(?:Retail Setup (${VERSION})\\.exe(?:\\.blockmap)?|(${VERSION})\\.yml|android/Retail-(${VERSION})\\.apk)$`).exec(key);
   const version = latest?.slice(1).find(Boolean);
   return valid(version) ? version : null;
 }
 
-function planRetention(releases, keys, active) {
+function planRetention(releases, keys, active, limit = LIMIT) {
+  if (![2, 6].includes(limit)) throw new Error('Invalid beta retention limit.');
   if (!valid(active)) throw new Error('Invalid active beta version.');
   const betas = releases.filter(r => r.prerelease === true && !r.draft &&
     typeof r.tag_name === 'string' && r.tag_name.startsWith('beta-v') && valid(r.tag_name.slice(6)))
@@ -27,7 +28,7 @@ function planRetention(releases, keys, active) {
   if (!betas.some(r => r.version === active)) throw new Error('Active beta has no published GitHub release; refusing cleanup.');
   if (betas.some(r => semver.gt(r.version, active))) throw new Error('A newer beta release exists; refusing stale cleanup.');
   const versions = [...new Set(betas.map(r => r.version))].sort(semver.rcompare);
-  const keep = new Set(versions.slice(0, LIMIT));
+  const keep = new Set(versions.slice(0, limit));
   if (!keep.has(active)) throw new Error('Active beta would be removed.');
   const removeKeys = [...new Set(keys)].filter(key => {
     const version = artifactVersion(key);
@@ -36,14 +37,14 @@ function planRetention(releases, keys, active) {
   return { keep: [...keep], removeKeys, removeReleases: betas.filter(r => !keep.has(r.version)) };
 }
 
-async function pruneBeta(store, github, expected) {
+async function pruneBeta(store, github, expected, limit = LIMIT) {
   const readVersion = async (key, parse = JSON.parse) => parse((await store.read(PREFIX + key)).toString()).version;
   const active = await readVersion('manifest.json');
   if (!valid(expected) || active !== expected) throw new Error('The advertised beta changed; refusing cleanup.');
   for (const [key, parse] of [['latest/manifest.json', JSON.parse], ['latest/android/latest.json', JSON.parse], ['latest/latest.yml', yaml.load]]) {
     if (await readVersion(key, parse) !== active) throw new Error('Beta update pointers disagree; refusing cleanup.');
   }
-  const plan = planRetention(await github.list(), await store.list(), active);
+  const plan = planRetention(await github.list(), await store.list(), active, limit);
   for (const key of plan.removeKeys) { assertBetaKey(key); await store.remove(key); }
   for (const release of plan.removeReleases) await github.remove(release.tag_name);
   console.log(`Beta retention: kept ${plan.keep.length} versions; removed ${plan.removeReleases.length} releases and ${plan.removeKeys.length} objects.`);
@@ -74,5 +75,6 @@ function parseReleaseList(text) {
 }
 
 module.exports = { LIMIT, artifactVersion, planRetention, pruneBeta, parseReleaseList };
-if (require.main === module) pruneBeta(originStore(), githubStore(process.env.GITHUB_REPOSITORY), process.env.BETA_VERSION)
+if (require.main === module) pruneBeta(originStore(), githubStore(process.env.GITHUB_REPOSITORY), process.env.BETA_VERSION,
+  process.env.BETA_RETENTION_LIMIT ? Number(process.env.BETA_RETENTION_LIMIT) : LIMIT)
   .catch(error => { console.error(error.message); process.exitCode = 1; });

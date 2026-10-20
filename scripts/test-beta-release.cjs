@@ -5,9 +5,14 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const yaml = require('js-yaml');
-const { betaVersion, prepareBeta, BETA_BASE } = require('./prepare-beta.cjs');
+const { betaVersion, nextBetaVersion, prepareBeta, BETA_BASE } = require('./prepare-beta.cjs');
 const { publishBeta, assertBetaKey } = require('./publish-beta-release.cjs');
 const { validateRelease } = require('./publish-windows-release.cjs');
+
+test('beta numbering restarts for a new stable baseline without reusing releases', () => {
+  assert.equal(nextBetaVersion('1.4.75', ['beta-v1.4.75-beta.17']), '1.4.76-beta.1');
+  assert.equal(nextBetaVersion('1.4.75', ['beta-v1.4.76-beta.1', 'beta-v1.4.76-beta.3', 'v1.4.75']), '1.4.76-beta.4');
+});
 
 test('beta identities are separate and never rewrite backend configuration', () => {
   assert.equal(betaVersion('1.4.74', 12), '1.4.75-beta.12');
