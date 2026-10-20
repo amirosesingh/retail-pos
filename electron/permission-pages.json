@@ -254,7 +254,7 @@
   },
   {
     "id": "dashboard",
-    "label": "Live dashboard",
+    "label": "Home / Live dashboard",
     "routes": [
       "/dashboard"
     ],

@@ -12,6 +12,7 @@ import { isElectron } from "@/platform-config/platform";
  */
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
+  House,
   PanelLeftClose,
   PanelLeftOpen,
   SlidersHorizontal as SettingsIcon,
@@ -202,6 +203,12 @@ export function SidebarNav({
     };
   }, [canSee]);
 
+  // Use the same dashboard permission/visibility decision as the existing menu.
+  const dashboardItem = navGroups.flatMap(group => group.items).find(item => item.to === "/dashboard");
+  const homeEntry: Entry | null = dashboardItem && canSee(dashboardItem)
+    ? { key: "home", label: "Home", icon: House, to: "/dashboard" }
+    : null;
+
   const isActive = (e: Entry) => {
     if (e.to === "/") return pathname === "/";
     if (!e.prefix) return pathname === e.to;
@@ -213,6 +220,10 @@ export function SidebarNav({
       {header}
 
       <nav className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2 pb-3">
+        {homeEntry && (
+          <SidebarRow entry={homeEntry} collapsed={collapsed} active={isActive(homeEntry)}
+            inbound={inbound} onNavigate={onNavigate} />
+        )}
         {registerEntry && (
           <SidebarRow
             entry={registerEntry}

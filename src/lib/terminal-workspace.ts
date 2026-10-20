@@ -61,3 +61,4 @@ export const workspaceMetricOrder: Record<TerminalPurpose, readonly WorkspaceMet
   inventory: ["stock", "shift", "bills", "revenue"],
   receiving: ["stock", "shift", "bills", "revenue"],
 };
+

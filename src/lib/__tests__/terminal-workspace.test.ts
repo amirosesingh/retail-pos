@@ -104,3 +104,4 @@ describe("workspace dashboard priority", () => {
       expect([...order].sort()).toEqual(["bills", "revenue", "shift", "stock"]);
   });
 });
+

@@ -1,3 +1,4 @@
+import { useViewedBranchShift } from "@/lib/use-viewed-branch-shift";
 import { usePersonalAppearance } from "@/lib/personal-appearance";
 import { isManagementDevice } from "@/lib/management-device";
 import { workspacePurpose, workspaceMetricOrder } from "@/lib/terminal-workspace";
@@ -245,13 +246,14 @@ const ACTIONS: Record<TerminalPurpose, WorkspaceAction[]> = {
   ],
 };
 
-export function TerminalWorkspaceHome() {
-  const { state, currentStore, activeShift } = usePos();
+export function TerminalWorkspaceHome({ purpose: requestedPurpose }: { purpose?: TerminalPurpose } = {}) {
+  const { state, currentStore } = usePos();
+  const { shift: viewedShift, checked: shiftChecked, error: shiftError } = useViewedBranchShift();
   const { profile } = usePersonalAppearance();
   const { isAdmin, isSupervisor, isWarehouse, can, user } = useAuth();
   const { visible, visibleRoute } = useVisibility();
   const configured = state.settings.integrations.terminalPurpose ?? "retail";
-  const purpose: TerminalPurpose = workspacePurpose(configured, isElectron(), { isAdmin, isSupervisor, isWarehouse }, isManagementDevice(), profile.workspace);
+  const purpose: TerminalPurpose = requestedPurpose ?? workspacePurpose(configured, isElectron(), { isAdmin, isSupervisor, isWarehouse }, isManagementDevice(), profile.workspace);
   const detail = PURPOSE_DETAILS[purpose];
   const visibleActions = ACTIONS[purpose].filter(
     (action) =>
@@ -291,9 +293,9 @@ export function TerminalWorkspaceHome() {
                 key="shift"
                 label="Shift"
                 icon={Activity}
-                tone={activeShift ? "text-success bg-success/10" : "text-muted-foreground bg-muted"}
-                value={activeShift ? "Open" : "Closed"}
-                hint={activeShift ? activeShift.cashier : "Open a shift before cash sales"}
+                tone={viewedShift ? "text-success bg-success/10" : "text-muted-foreground bg-muted"}
+                value={viewedShift ? (viewedShift.state && viewedShift.state !== "ACTIVE" ? "Closing" : "Open") : !shiftChecked ? "Checking…" : shiftError ? "Unavailable" : "Closed"}
+                hint={shiftError ? "Reconnecting — showing last known status" : viewedShift ? viewedShift.cashier : !shiftChecked ? "Checking selected branch" : "No open shift at this branch"}
               />
             ),
     bills: can("can_view_sales_reports") && visible("workspace.todayBills") && (

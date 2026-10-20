@@ -1,3 +1,5 @@
+import { isDesktop } from "@/lib/branding";
+import { isManagementDevice } from "@/lib/management-device";
 import { usePersonalAppearance } from "@/lib/personal-appearance";
 import { createFileRoute } from "@tanstack/react-router";
 import { Boxes, ClipboardCheck, LayoutDashboard, Store, Warehouse } from "lucide-react";
@@ -49,6 +51,7 @@ const PURPOSES: Array<{
 function WorkspaceSettings() {
   const { state, updateSettings } = usePos();
   const personal = usePersonalAppearance();
+  const usesTerminalPurpose = isDesktop() && !isManagementDevice();
   const integrations = state.settings.integrations;
   const purpose = integrations.terminalPurpose ?? "retail";
 
@@ -58,7 +61,7 @@ function WorkspaceSettings() {
   return (
     <SettingsFrame
       title="Terminal workspace"
-      description="Choose what this terminal opens first. User permissions still decide which actions are available."
+      description="User workspace and terminal purpose are independent. Permissions still decide which actions are available."
     >
       <div className="space-y-8">
         <section className="space-y-3">
@@ -67,14 +70,15 @@ function WorkspaceSettings() {
           <RadioGroup value={personal.profile.workspace ?? "automatic"} disabled={!personal.editable}
             onValueChange={(value) => personal.update({ workspace: value === "automatic" ? undefined : value as TerminalPurpose })}
             className="grid gap-3 sm:grid-cols-2">
-            <Label className="flex items-center gap-2 rounded-lg border p-3"><RadioGroupItem value="automatic" />User default: Retail; Warehouse for warehouse users; Management for administrators</Label>
-            {PURPOSES.map(option => <Label key={option.value} className="flex items-center gap-2 rounded-lg border p-3"><RadioGroupItem value={option.value} />{option.label}</Label>)}
+            <Label htmlFor="workspace-automatic" className="flex items-center gap-2 rounded-lg border p-3"><RadioGroupItem id="workspace-automatic" value="automatic" />User default: Retail; Warehouse for warehouse users; Management for administrators</Label>
+            {PURPOSES.map(option => <Label key={option.value} htmlFor={`workspace-${option.value}`} className="flex items-center gap-2 rounded-lg border p-3"><RadioGroupItem id={`workspace-${option.value}`} value={option.value} />{option.label}</Label>)}
           </RadioGroup>
           {personal.pending && <p className="text-xs text-muted-foreground">Saving your workspace preference…</p>}
         </section>
         <section className="space-y-3">
           <div>
             <h2 className="text-base font-semibold">Terminal purpose</h2>
+            <p className="text-sm text-muted-foreground">{usesTerminalPurpose ? "This Operations PC follows the terminal purpose below, not My workspace." : "This web or management session follows My workspace above. Terminal purpose below applies only to Operations PCs in the selected settings scope."}</p>
             <p className="text-sm text-muted-foreground">
               This changes navigation emphasis only; it never grants access.
             </p>

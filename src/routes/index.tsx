@@ -186,7 +186,7 @@ function RegisterEntry() {
   }) ? (
     <Register />
   ) : (
-    <TerminalWorkspaceHome />
+    <TerminalWorkspaceHome purpose="retail" />
   );
 }
 
