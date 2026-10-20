@@ -11,6 +11,9 @@ import type { CapacitorConfig } from "@capacitor/cli";
  * thin shell that loads a hosted site instead.
  */
 const remote = process.env["POS_MOBILE_URL"];
+if (process.env.POS_MOBILE_TARGET === "ios" && remote) {
+  throw new Error("iOS OTA requires a bundled interface; remove POS_MOBILE_URL before building the IPA.");
+}
 
 const config: CapacitorConfig = {
   appId: process.env.POS_RELEASE_CHANNEL === "beta" ? "com.luckycharms.pos.beta" : "com.luckycharms.pos",

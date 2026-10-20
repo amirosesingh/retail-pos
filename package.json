@@ -171,7 +171,10 @@
       "database/sqlserver/**",
       "dist-desktop/**",
       "package.json",
-      "node_modules/**"
+      "node_modules/**",
+      "!node_modules/@capacitor/ios/**",
+      "!node_modules/@capgo/capacitor-updater/**",
+      "!node_modules/@retail/ios-ota-trust/**"
     ],
     "asarUnpack": [
       "node_modules/msnodesqlv8/**"
