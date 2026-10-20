@@ -8,7 +8,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
-        window?.rootViewController = CAPBridgeViewController()
+        window?.rootViewController = RetailSafeAreaController()
         window?.makeKeyAndVisible()
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
@@ -21,4 +21,32 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
         SceneDelegateProxy.shared.scene(scene, continue: userActivity)
     }
+}
+
+/// Use UIKit's current safe area, not a model-specific notch height. Containing
+/// the WebView also protects fixed-position dialogs and portalled controls.
+final class RetailSafeAreaController: UIViewController {
+    private let content = CAPBridgeViewController()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        addChild(content)
+        view.addSubview(content.view)
+        content.view.translatesAutoresizingMaskIntoConstraints = false
+        let safe = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            content.view.topAnchor.constraint(equalTo: safe.topAnchor),
+            content.view.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
+            content.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
+            content.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor)
+        ])
+        content.didMove(toParent: self)
+    }
+
+    override var childForStatusBarStyle: UIViewController? { content }
+    override var childForStatusBarHidden: UIViewController? { content }
+    override var childForHomeIndicatorAutoHidden: UIViewController? { content }
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { content.supportedInterfaceOrientations }
+    override var shouldAutorotate: Bool { content.shouldAutorotate }
 }

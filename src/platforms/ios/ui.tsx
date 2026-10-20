@@ -5,6 +5,7 @@ import { CapacitorUpdater } from "@capgo/capacitor-updater";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { iosOta, startIosOta, allowManualInstall } from "./runtime";
+import { syncIosAppearance } from "./appearance";
 
 export function IosOtaBoot({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -17,6 +18,7 @@ export function IosOtaBoot({ children }: { children: ReactNode }) {
     void startIosOta()
       .then(() => setReady(true))
       .catch((e) => setError(String(e)));
+    return syncIosAppearance();
   }, []);
   if (error)
     return (

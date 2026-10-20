@@ -18,6 +18,10 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
+      - name: Record Xcode and available iOS SDKs
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
       - name: Verify iOS OTA service and server
         run: |
           npx vitest run src/platforms/ios/__tests__/ota.test.ts
