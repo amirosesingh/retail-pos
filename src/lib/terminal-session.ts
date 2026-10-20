@@ -104,8 +104,9 @@ async function establishTerminalSession(project: string): Promise<boolean> {
     if (checked.state === "rejected") await discardRejectedExternalAuthSession();
     if (supabaseConfig().url !== project) return false;
 
-    const tokenId = readTerminalConfig()?.tokenId;
-    if (!tokenId) return false;
+    const config = readTerminalConfig();
+    const tokenId = config?.tokenId;
+    if (!tokenId || !config?.locationId) return false;
 
     let account = await getDeviceSecret<Account>(SECRET);
     if (!usableAccount(account) || account.projectUrl !== project)

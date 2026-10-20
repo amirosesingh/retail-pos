@@ -1484,7 +1484,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // A registered till is pinned to its own branch for everyone, including
       // admins. Unbound browsers keep the old rule.
       canSwitchStores:
-        !terminalStoreId && !!user && !user.storeId && (user.role === "admin" || isWarehouse),
+        !terminalStoreId && !!user && !user.storeId && (user.role === "admin" || user.metaRole === "supervisor" || user.roles.includes("manager") || appUser?.role === "manager" || isWarehouse),
       isCashier:
         !isWarehouse &&
         !!user &&

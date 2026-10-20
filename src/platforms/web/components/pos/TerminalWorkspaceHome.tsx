@@ -1,3 +1,6 @@
+import { isManagementDevice } from "@/lib/management-device";
+import { workspacePurpose } from "@/lib/terminal-workspace";
+import { isElectron } from "@/platform-config/platform";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { inventoryMetrics } from "@/lib/inventory-metrics";
 import { Link } from "@tanstack/react-router";
@@ -236,10 +239,10 @@ const ACTIONS: Record<TerminalPurpose, WorkspaceAction[]> = {
 
 export function TerminalWorkspaceHome() {
   const { state, currentStore, activeShift } = usePos();
-  const { isAdmin, isSupervisor, can, user } = useAuth();
+  const { isAdmin, isSupervisor, isWarehouse, can, user } = useAuth();
   const { visible, visibleRoute } = useVisibility();
   const configured = state.settings.integrations.terminalPurpose ?? "retail";
-  const purpose: TerminalPurpose = isAdmin ? "management" : configured;
+  const purpose: TerminalPurpose = workspacePurpose(configured, isElectron(), { isAdmin, isSupervisor, isWarehouse }, isManagementDevice());
   const detail = PURPOSE_DETAILS[purpose];
   const visibleActions = ACTIONS[purpose].filter(
     (action) =>

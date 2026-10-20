@@ -1,3 +1,5 @@
+import { isManagementDevice } from "@/lib/management-device";
+import { isElectron } from "@/platform-config/platform";
 /**
  * Top-level navigation only.
  *
@@ -159,7 +161,7 @@ export function SidebarNav({
     const list = orderWorkspaceGroups(
       navGroups,
       state.settings.integrations.terminalPurpose,
-      isAdmin || isSupervisor,
+      (!isElectron() || isManagementDevice()) && (isAdmin || isSupervisor),
     )
       .map((g) => ({ ...g, items: g.items.filter(canSee) }))
       .filter((g) => g.id !== "register" && g.items.length > 0)

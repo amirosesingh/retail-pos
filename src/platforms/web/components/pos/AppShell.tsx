@@ -1,6 +1,6 @@
+import { isManagementDevice } from "@/lib/management-device";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ApprovalTokenButton } from "@/platform-config/approval-token";
-import { useAdminWebActivation } from "@/lib/use-admin-web-activation";
 import { isLocationSetupRoute } from "@/lib/app-shell-routes";
 import { usePersonalAppearance, usePersonalAppearanceSync } from "@/lib/personal-appearance";
 import { setPersonalLanguage } from "@/lib/time-zone";
@@ -110,7 +110,6 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function AppShellFrame({ children }: { children: ReactNode }) {
   const isMobile = useIsMobile();
-  useAdminWebActivation();
   useEffect(() => startSyncEngine(), []);
   useEffect(() => localDb()?.onBeforeClose?.(() => flushTicketDrafts().then(() => undefined)), []);
   const { stores, currentStore, setCurrentStore, state, ready: dataReady, retryLoad } = usePos();
@@ -268,10 +267,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
 
   // A registered till fixes the branch for everyone signed in on it; otherwise
   // an account with a single assigned branch is pinned to that one.
-  // The phone app is an admin tool: an admin on Android keeps the freedom to
-  // look at any branch, so the terminal pin does not apply to them there.
+  // Unbound management phones follow the signed-in account branch assignment.
   useEffect(() => {
-    if (isNative() && isAdmin) return;
     const pinned = terminalStoreId ?? (canSwitchStores ? null : (user?.storeId ?? soleBranchId()));
     if (user && pinned && currentStore.id !== pinned) setCurrentStore(pinned);
   }, [user, isAdmin, canSwitchStores, terminalStoreId, currentStore.id, setCurrentStore]);
@@ -331,7 +328,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       registration: startup.registration,
       verdict: startup.verdict,
       activated: Boolean(terminal.config),
-      offlineCapable: hasFeature("offlineFirst"),
+      offlineCapable: hasFeature("offlineFirst") && !isManagementDevice(),
     });
     // Step 1 — no usable database connection: ask for the URL and key.
     if (decision === "offline-blocked") return <OfflineStatus force />;
@@ -368,6 +365,12 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         <TerminalLogin />
       </>
     );
+  if ((isDesktop() || isNative()) && isManagementDevice() && !isSupervisor)
+    return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
+      <h1 className="text-lg font-semibold">Management device</h1>
+      <p>Sign in with an administrator or supervisor account. This registration does not grant management permissions.</p>
+      <Button onClick={() => void logout()}>Use another account</Button>
+    </div>;
   if (!dataReady && !offlineBypass)
     return <TillLoader onRetry={retryLoad} onContinueOffline={() => setOfflineBypass(true)} />;
   // Nothing can be sold, received or moved without somewhere to book it to.
@@ -423,7 +426,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
 
   // An admin on the phone browses every branch even though the device itself
   // is registered to one.
-  const mayPickStore = canSwitchStores || (isNative() && isAdmin);
+  const mayPickStore = canSwitchStores;
 
   const StorePicker = ({ compact = false }: { compact?: boolean } = {}) =>
     mayPickStore ? (

@@ -1,3 +1,4 @@
+import { isManagementDevice } from "@/lib/management-device";
 /**
  * Bridge to the Windows desktop shell's local Microsoft SQL Server database.
  *
@@ -856,7 +857,7 @@ export async function writeLocalSetting(key: string, value: string | null): Prom
 }
 
 export const localDb = (): PosBridge | null =>
-  typeof window === "undefined" ? null : desktopBridge("pos", window.pos ?? null);
+  typeof window === "undefined" || isManagementDevice() ? null : desktopBridge("pos", window.pos ?? null);
 
 /**
  * Proves the till's own pool can write: one transaction that inserts, reads

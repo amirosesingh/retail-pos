@@ -354,16 +354,6 @@
     ]
   },
   {
-    "id": "settings-admin-terminals",
-    "label": "Admin web activation",
-    "routes": [
-      "/settings/admin-terminals"
-    ],
-    "keys": [
-      "can_manage_terminals"
-    ]
-  },
-  {
     "id": "database",
     "label": "Database & synchronization",
     "routes": [

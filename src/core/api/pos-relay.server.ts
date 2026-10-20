@@ -1,3 +1,4 @@
+import { canCrossBranches } from "./relay-policy.server";
 /**
  * Server-side write relay for the POS database.
  *
@@ -413,7 +414,7 @@ export async function runRelayRpc(
     if (typeof storeId !== "string" || !storeId) {
       return { ok: false, code: "SCOPE_MISSING", error: "The sale branch is missing." };
     }
-    if (!scope.isSupervisor && storeId !== scope.storeId) {
+    if (!canCrossBranches(scope) && storeId !== scope.storeId) {
       return {
         ok: false,
         code: "STORE_FORBIDDEN",
@@ -450,7 +451,7 @@ export async function runRelayRpc(
     const owner = rows[0];
     if (!owner) return { ok: false, code: "SCOPE_MISSING", error: "That shift no longer exists." };
     const storeId = owner.store_id;
-    if (!scope.isSupervisor && storeId !== scope.storeId)
+    if (!canCrossBranches(scope) && storeId !== scope.storeId)
       return {
         ok: false,
         code: "STORE_FORBIDDEN",
@@ -488,7 +489,7 @@ export async function runRelayRpc(
   const owner = rows[0];
   if (!owner) return { ok: false, code: "SCOPE_MISSING", error: "That record no longer exists." };
   const storeId = owner[spec.storeColumn];
-  if (!scope.isSupervisor && storeId !== scope.storeId)
+  if (!canCrossBranches(scope) && storeId !== scope.storeId)
     return {
       ok: false,
       code: "STORE_FORBIDDEN",
@@ -635,6 +636,7 @@ export type RelayCaller = {
   claims?: import("@/core/api/relay-claims.server").CallerClaims | null;
   /** Verified physical terminal identity. Never accepted from a request body. */
   terminalId?: string | null;
+  managementDevice?: boolean;
 };
 
 /**
@@ -656,6 +658,7 @@ export async function verifyRelayCaller(input: {
   let identity: RelayCaller | null = null;
   let terminalStore: string | null = null;
   let terminalId: string | null = null;
+  let managementDevice = false;
   let endedSession = false;
 
   // A cryptographic session record is the strongest proof: it can be revoked
@@ -701,12 +704,13 @@ export async function verifyRelayCaller(input: {
 
   if (input.terminalToken) {
     const res = await serviceRest(
-      `terminal_tokens?id=eq.${encodeURIComponent(input.terminalToken)}&select=id,status,location_id,revoked_at`,
+      `terminal_tokens?id=eq.${encodeURIComponent(input.terminalToken)}&select=id,status,location_id,platform,revoked_at`,
     );
     if (res.ok) {
       const rows = (await res.json()) as {
         status?: string;
         location_id?: string | null;
+        platform?: string;
         revoked_at?: string | null;
       }[];
       const row = rows[0];
@@ -714,6 +718,7 @@ export async function verifyRelayCaller(input: {
       if (row && !row.revoked_at && (row.status === "active" || row.status === "used")) {
         terminalId = input.terminalToken;
         terminalStore = row.location_id ?? null;
+        managementDevice = (row.platform === "mobile" || row.platform === "pc") && !terminalStore;
         identity ??= {
           kind: "terminal",
           label: input.terminalToken,
@@ -770,5 +775,6 @@ export async function verifyRelayCaller(input: {
   // administrator signed into that device may change permissions, but cannot
   // make the till read or write another branch's operational data.
   if (terminalStore) identity = { ...identity, storeId: terminalStore, terminalId };
+  if (managementDevice) identity = { ...identity, terminalId, managementDevice: true };
   return identity;
 }

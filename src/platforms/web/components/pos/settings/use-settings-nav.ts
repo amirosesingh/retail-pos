@@ -7,7 +7,6 @@
 import { useMemo } from "react";
 import { useVisibility } from "@/lib/ui-visibility";
 import { useAuth } from "@/lib/pos-auth";
-import { isTerminalApp } from "@/platform-config/platform";
 import { routePermissionForPath } from "@/platforms/web/components/pos/nav-config";
 import {
   SETTINGS_CARDS,
@@ -41,7 +40,6 @@ export function useSettingsNav(): SettingsNav {
       SETTINGS_CARDS.filter(
         (c) =>
           visibleRoute(routeOf(c)) &&
-          (routeOf(c) !== "/settings/admin-terminals" || (isAdmin && !isTerminalApp())) &&
           (!["/settings/notifications", "/settings/shift-alerts"].includes(routeOf(c)) || isAdmin) &&
           (isAdmin ||
             ((routeOf(c) === "/settings/terminals" || routeOf(c) === "/settings/mobile-terminals")

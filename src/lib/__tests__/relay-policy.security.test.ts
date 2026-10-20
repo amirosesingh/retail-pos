@@ -3,7 +3,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const restMock = vi.fn();
 vi.mock("@/core/api/pos-relay.server", () => ({ serviceRest: (...a: unknown[]) => restMock(...a) }));
 
-import { safeAuthorizeRelayOp, batchInsertIds, type RelayScope } from "@/core/api/relay-policy.server";
+import { safeAuthorizeRelayOp, batchInsertIds, resolveRelayScope, type RelayScope } from "@/core/api/relay-policy.server";
 
 const cashier: RelayScope = {
   kind: "cashier",
@@ -429,4 +429,32 @@ describe("relay authorisation", () => {
     expect(out.ok).toBe(true);
     if (out.ok && out.op.kind === "insert") expect(out.op.rows[0]!["store_id"]).toBe("STORE-C");
   });
+});
+
+describe("management and branch-bound devices", () => {
+  it.each(["staff", "manager", "admin"])("resolves %s only from the current account", async role => {
+    restMock.mockResolvedValue(Response.json([{ user_id: "u", full_name: "User", role, role_slug: role === "manager" ? "supervisor" : role, store_id: "STORE-A", is_active: true, permissions: {} }]));
+    const resolving = resolveRelayScope({ kind: "staff", label: "User", authUserId: "auth-id", terminalId: "phone", managementDevice: true });
+    if (role === "staff") await expect(resolving).rejects.toThrow("administrator or supervisor");
+    else expect(await resolving).toMatchObject({ storeId: "STORE-A", branchRestricted: true, isSupervisor: true });
+  });
+  it("does not grant a machine identity management access", async () => {
+    await expect(resolveRelayScope({ kind: "terminal", label: "phone", managementDevice: true })).rejects.toThrow("administrator or supervisor");
+  });
+  it("keeps all-branch management users unbound", async () => {
+    restMock.mockResolvedValue(Response.json([{ user_id: "u", role: "manager", role_slug: "supervisor", store_id: null, is_active: true, permissions: {} }]));
+    expect(await resolveRelayScope({ kind: "staff", label: "User", authUserId: "id", terminalId: "phone", managementDevice: true })).toMatchObject({ storeId: null, branchRestricted: false });
+  });
+  it("blocks even an administrator from writing a different branch on a bound device", async () => {
+    const scope = { ...admin, terminalId: "pc", branchRestricted: true };
+    expect((await safeAuthorizeRelayOp({ kind: "insert", table: "sales", rows: [{ id: "s", store_id: "STORE-B" }] }, scope)).ok).toBe(false);
+    const own = await safeAuthorizeRelayOp({ kind: "update", table: "shifts", match: { id: "s" }, values: { note: "note" } }, scope);
+    expect(own.ok).toBe(true);
+    if (own.ok && own.op.kind === "update") expect(own.op.match.store_id).toBe("STORE-A");
+  });
+});
+
+it("refuses a disabled supervisor on a management phone", async () => {
+  restMock.mockResolvedValue(Response.json([{ user_id: "u", role: "manager", role_slug: "supervisor", is_active: false, store_id: null }]));
+  await expect(resolveRelayScope({ kind: "staff", label: "User", authUserId: "auth-id", managementDevice: true })).rejects.toThrow("administrator or supervisor");
 });

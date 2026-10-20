@@ -76,6 +76,8 @@ export async function ensureTerminalAccount(
     throw new Error("This activation belongs to another device");
   }
 
+  if (!token.location_id) throw new Error("Management devices require a staff sign-in, not a machine account.");
+
   const email = emailFor(tokenId);
   const password = passwordFor(tokenId);
 

@@ -41,3 +41,13 @@ export function orderWorkspaceGroups<T extends { id: string }>(
       (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
   );
 }
+
+/** User-led on browsers/phones, fixed to the configured purpose on Windows. */
+export function workspacePurpose(configured: TerminalPurpose | undefined, desktop: boolean,
+  user: { isAdmin: boolean; isSupervisor: boolean; isWarehouse?: boolean }, managementDevice = false): TerminalPurpose {
+  if (managementDevice) return "management";
+  if (desktop) return configured ?? "retail";
+  if (user.isAdmin || user.isSupervisor) return "management";
+  if (user.isWarehouse) return "warehouse";
+  return "retail";
+}

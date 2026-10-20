@@ -13,7 +13,7 @@ export const PERMISSION_SECTIONS = [
   { id: "bookings", label: "Booking & services", pageIds: ["bookings", "pos-general-booking", "pos-racket-service"] },
   { id: "marketing", label: "Marketing", pageIds: ["promotions", "coupons"] },
   { id: "reports", label: "Reports", pageIds: ["reports", "alerts"] },
-  { id: "settings", label: "Settings", pageIds: ["settings", "staff", "admin", "terminals", "settings-mobile-terminals", "settings-admin-terminals", "database"] },
+  { id: "settings", label: "Settings", pageIds: ["settings", "staff", "admin", "terminals", "settings-mobile-terminals", "database"] },
 ];
 export type PermissionSection = (typeof PERMISSION_SECTIONS)[number];
 const destinations = [

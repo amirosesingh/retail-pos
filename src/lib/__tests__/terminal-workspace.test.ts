@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderWorkspaceGroups, shouldOpenRegister } from "@/lib/terminal-workspace";
+import { orderWorkspaceGroups, shouldOpenRegister, workspacePurpose } from "@/lib/terminal-workspace";
 
 describe("terminal workspace landing", () => {
   it("opens retail cashiers in the workspace until Sell now is explicit", () => {
@@ -71,5 +71,16 @@ describe("terminal navigation priority", () => {
         .map((group) => group.id)
         .slice(0, 2),
     ).toEqual(["company", "inventory"]);
+  });
+});
+
+describe("platform workspace purpose", () => {
+  it("keeps the registered Windows purpose for administrators", () => {
+    expect(workspacePurpose("warehouse", true, { isAdmin: true, isSupervisor: true })).toBe("warehouse");
+  });
+  it("uses the signed-in manager rather than another user's saved workspace on phones and web", () => {
+    expect(workspacePurpose("retail", false, { isAdmin: false, isSupervisor: true })).toBe("management");
+    expect(workspacePurpose("management", false, { isAdmin: false, isSupervisor: false })).toBe("retail");
+    expect(workspacePurpose("management", false, { isAdmin: false, isSupervisor: false, isWarehouse: true })).toBe("warehouse");
   });
 });
