@@ -2,9 +2,12 @@ import { z } from "zod";
 import { DEFAULT_THEME_PALETTE, THEME_PALETTES } from "./theme-palettes";
 
 /** Personal preferences never accept business configuration or notification rules. */
-export const personalAppearanceSchema = z
-  .object({
-    workspace: z.enum(["retail", "warehouse", "inventory", "receiving", "management"]).optional(),
+export const personalAppearanceSchema = z.preprocess((input) => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const profile = { ...input } as Record<string, unknown>;
+  delete profile.workspace; // Retired preference: preserve old cached appearance values.
+  return profile;
+}, z.object({
     theme: z.enum(["system", "light", "dark"]),
     palette: z.enum(THEME_PALETTES.map((p) => p.id)),
     accent: z
@@ -22,7 +25,7 @@ export const personalAppearanceSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict());
 export type PersonalAppearance = z.infer<typeof personalAppearanceSchema>;
 export const DEFAULT_PERSONAL_APPEARANCE: PersonalAppearance = {
   theme: "system",

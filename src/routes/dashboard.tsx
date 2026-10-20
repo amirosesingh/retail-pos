@@ -1,3 +1,4 @@
+import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { productVisibleAt } from "@/lib/branch-policy";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -171,6 +172,8 @@ function Dashboard() {
             Today&apos;s revenue, margin, peak trading hours and behaviour flags.
           </p>
         </header>
+
+        <HomeShortcuts />
 
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
         <div className="summary-grid grid gap-4 md:grid-cols-4 xl:grid-cols-7">

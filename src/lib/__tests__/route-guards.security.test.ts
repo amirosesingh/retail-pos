@@ -136,8 +136,10 @@ describe("route guards", () => {
     // The denial screen (which names the missing permission) renders instead
     // of the page body.
     expect(APP_SHELL).toContain("<PermissionDenied");
-    // The old post-render redirect guard must not come back.
-    expect(APP_SHELL).not.toContain("useNavigate");
+    // Sign-in navigation is allowed, but must never replace the synchronous
+    // permission/visibility gate around protected children.
+    expect(APP_SHELL).toMatch(/if \(allowed && visibleRoute\(location.pathname\)\)\s*return <AppShellContext.Provider value>\{children\}<\/AppShellContext.Provider>;/);
+    expect(APP_SHELL).toContain('return <PermissionDenied flag={required === "unknown" ? null : required} />');
   });
 
   it("every report screen requires the sales-reports permission in the sidebar", () => {

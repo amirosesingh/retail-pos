@@ -1,8 +1,4 @@
 import { useViewedBranchShift } from "@/lib/use-viewed-branch-shift";
-import { usePersonalAppearance } from "@/lib/personal-appearance";
-import { isManagementDevice } from "@/lib/management-device";
-import { workspacePurpose, workspaceMetricOrder } from "@/lib/terminal-workspace";
-import { isElectron } from "@/platform-config/platform";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { inventoryMetrics } from "@/lib/inventory-metrics";
 import { Link } from "@tanstack/react-router";
@@ -20,22 +16,14 @@ const localDay = () => {
 import {
   Activity,
   ArrowUpRight,
-  ArrowLeftRight,
   BarChart3,
   Boxes,
   Info,
-  ClipboardCheck,
-  LayoutDashboard,
   PackageSearch,
-  ScanBarcode,
-  ShieldCheck,
   ShoppingCart,
   Store,
-  Truck,
-  Warehouse,
 } from "lucide-react";
 import type { PermissionFlag } from "@/lib/permissions";
-import type { TerminalPurpose } from "@/core/types/pos-types";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,39 +40,9 @@ type WorkspaceAction = {
   sell?: boolean;
 };
 
-const PURPOSE_DETAILS: Record<
-  TerminalPurpose,
-  { label: string; description: string; icon: typeof Store }
-> = {
-  retail: {
-    label: "Retail workspace",
-    description: "Sell, serve customers and manage the active shift.",
-    icon: Store,
-  },
-  warehouse: {
-    label: "Warehouse workspace",
-    description: "Move stock, fulfil requests and control dispatch.",
-    icon: Warehouse,
-  },
-  inventory: {
-    label: "Inventory workspace",
-    description: "Count, inspect and maintain branch stock.",
-    icon: Boxes,
-  },
-  receiving: {
-    label: "Receiving workspace",
-    description: "Receive deliveries and post verified quantities.",
-    icon: ClipboardCheck,
-  },
-  management: {
-    label: "Management workspace",
-    description: "Monitor performance, approvals and business operations.",
-    icon: LayoutDashboard,
-  },
-};
+const detail = { label: "Retail workspace", description: "Sell, serve customers and manage the active shift.", icon: Store };
 
-const ACTIONS: Record<TerminalPurpose, WorkspaceAction[]> = {
-  retail: [
+const ACTIONS: WorkspaceAction[] = [
     {
       label: "Open Register POS",
       description: "Start or continue selling.",
@@ -106,156 +64,14 @@ const ACTIONS: Record<TerminalPurpose, WorkspaceAction[]> = {
       icon: PackageSearch,
       permission: "can_view_sales_reports",
     },
-  ],
-  warehouse: [
-    {
-      label: "Stock transfers",
-      description: "Move and dispatch stock between locations.",
-      to: "/transfers",
-      icon: ArrowLeftRight,
-      permission: "can_create_transfer",
-    },
-    {
-      label: "Stock requests",
-      description: "Review and fulfil branch requests.",
-      to: "/requests",
-      icon: Truck,
-      permission: "can_create_transfer",
-    },
-    {
-      label: "Goods receiving",
-      description: "Count arriving deliveries and post them.",
-      to: "/receiving",
-      icon: ClipboardCheck,
-      permission: "can_receive_transfer",
-    },
-    {
-      label: "Inventory catalog",
-      description: "Search stock across the current branch.",
-      to: "/inventory",
-      icon: Boxes,
-      permission: "can_view_inventory",
-    },
-    {
-      label: "Open Register POS",
-      description: "Sell without changing terminal purpose.",
-      to: "/",
-      icon: ShoppingCart,
-      sell: true,
-      permission: "can_process_sale",
-    },
-  ],
-  inventory: [
-    {
-      label: "Inventory catalog",
-      description: "Review products, prices and availability.",
-      to: "/inventory",
-      icon: Boxes,
-      permission: "can_view_inventory",
-    },
-    {
-      label: "Stock operations",
-      description: "Count, adjust and reconcile stock.",
-      to: "/stock-operations",
-      icon: ScanBarcode,
-      permission: "can_adjust_stock",
-    },
-    {
-      label: "Stock transfers",
-      description: "Track stock moving between locations.",
-      to: "/transfers",
-      icon: ArrowLeftRight,
-      permission: "can_create_transfer",
-    },
-    {
-      label: "Open Register POS",
-      description: "Sell without changing terminal purpose.",
-      to: "/",
-      icon: ShoppingCart,
-      sell: true,
-      permission: "can_process_sale",
-    },
-  ],
-  receiving: [
-    {
-      label: "Goods receiving",
-      description: "Count arriving deliveries and post them.",
-      to: "/receiving",
-      icon: ClipboardCheck,
-      permission: "can_receive_transfer",
-    },
-    {
-      label: "Purchasing",
-      description: "Receive purchase orders and supplier invoices.",
-      to: "/purchasing",
-      icon: Truck,
-      permission: "can_receive_purchase_order",
-    },
-    {
-      label: "Stock transfers",
-      description: "Inspect incoming inter-branch stock.",
-      to: "/transfers",
-      icon: ArrowLeftRight,
-      permission: "can_receive_transfer",
-    },
-    {
-      label: "Open Register POS",
-      description: "Sell without changing terminal purpose.",
-      to: "/",
-      icon: ShoppingCart,
-      sell: true,
-      permission: "can_process_sale",
-    },
-  ],
-  management: [
-    {
-      label: "Live dashboard",
-      description: "Track branch revenue and activity.",
-      to: "/dashboard",
-      icon: Activity,
-      permission: "can_view_dashboard",
-    },
-    {
-      label: "Business board",
-      description: "Compare performance and product categories.",
-      to: "/analytics",
-      icon: BarChart3,
-      permission: "can_view_sales_reports",
-    },
-    {
-      label: "Pending approvals",
-      description: "Decide protected operations waiting for review.",
-      to: "/approvals",
-      icon: ShieldCheck,
-    },
-    {
-      label: "Reports centre",
-      description: "Review sales, stock and audit reports.",
-      to: "/reports",
-      icon: BarChart3,
-      permission: "can_view_sales_reports",
-    },
-    {
-      label: "Open Register POS",
-      description: "Enter the shared selling engine.",
-      to: "/",
-      icon: ShoppingCart,
-      sell: true,
-      permission: "can_process_sale",
-    },
-  ],
-};
+  ];
 
-export function TerminalWorkspaceHome({ purpose: requestedPurpose }: { purpose?: TerminalPurpose } = {}) {
+export function TerminalWorkspaceHome() {
   const { state, currentStore } = usePos();
   const { shift: viewedShift, checked: shiftChecked, error: shiftError } = useViewedBranchShift();
-  const { profile } = usePersonalAppearance();
-  const { isAdmin, isSupervisor, isWarehouse, can, user } = useAuth();
+  const { can, user } = useAuth();
   const { visible, visibleRoute } = useVisibility();
-  const configured = state.settings.integrations.terminalPurpose ?? "retail";
-  const purpose: TerminalPurpose = requestedPurpose ?? workspacePurpose(configured, isElectron(), { isAdmin, isSupervisor, isWarehouse }, isManagementDevice(), profile.workspace);
-  const detail = PURPOSE_DETAILS[purpose];
-  const visibleActions = ACTIONS[purpose].filter(
+  const visibleActions = ACTIONS.filter(
     (action) =>
       (!action.permission || can(action.permission)) &&
       (!action.sell || can("can_process_sale")) &&
@@ -364,7 +180,7 @@ export function TerminalWorkspaceHome({ purpose: requestedPurpose }: { purpose?:
           <section>
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold">{purpose === "management" ? "Management tools" : purpose === "retail" ? "Selling tools" : "Stock operations"}</h2>
+                <h2 className="text-lg font-semibold">Selling tools</h2>
                 <p className="text-sm text-muted-foreground">Your everyday tools, one step away.</p>
               </div>
             </div>
@@ -403,7 +219,7 @@ export function TerminalWorkspaceHome({ purpose: requestedPurpose }: { purpose?:
 
   return (
     <AppShell>
-      {purpose === "retail" && <SellingShortcuts />}
+      <SellingShortcuts />
       <div className="h-full overflow-y-auto bg-background p-4 sm:p-6 lg:p-8">
         <div className="mx-auto max-w-6xl space-y-8">
           <header className="rounded-2xl border border-border/70 bg-card p-5 sm:p-7">
@@ -437,15 +253,13 @@ export function TerminalWorkspaceHome({ purpose: requestedPurpose }: { purpose?:
             </div>
           </header>
 
-          {purpose !== "management" && actions}
+          {actions}
 
           <section className="summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Workspace overview">
-            {workspaceMetricOrder[purpose].map(key => metrics[key])}
+            {(["shift", "bills", "revenue", "stock"] as const).map(key => metrics[key])}
           </section>
 
 
-          {purpose === "management" && actions}
-          {purpose !== "retail" && <SellingShortcuts />}
         </div>
       </div>
     </AppShell>

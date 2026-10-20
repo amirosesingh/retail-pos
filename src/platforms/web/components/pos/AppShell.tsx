@@ -1,3 +1,4 @@
+import { signInDestination } from "@/lib/sign-in-destination";
 import { isManagementDevice } from "@/lib/management-device";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ApprovalTokenButton } from "@/platform-config/approval-token";
@@ -7,10 +8,10 @@ import { setPersonalLanguage } from "@/lib/time-zone";
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
 import { LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { usePos } from "@/lib/pos-store";
 import { useAuth, type PermissionFlag } from "@/lib/pos-auth";
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { TerminalLogin } from "@/platforms/web/components/pos/TerminalLogin";
 import {
   TerminalActivation,
@@ -38,7 +39,7 @@ import { ThemeToggle } from "@/platforms/web/components/pos/ThemeToggle";
 import { hydrateBillSequence } from "@/lib/bill-number";
 import { DbConnectionModal } from "@/platforms/windows/components/DbConnectionModal";
 import { UpdateHeaderButton } from "@/platforms/web/components/pos/UpdateHeaderButton";
-import { routePermissionForPath, type NavItem } from "@/platforms/web/components/pos/nav-config";
+import { canSeeNavigationItem, routePermissionForPath, type NavItem } from "@/platforms/web/components/pos/nav-config";
 import { setPrintStore, setPrintSettings, setServiceTerms } from "@/lib/pos-print";
 import { bookingRulesOf } from "@/core/types/pos-types";
 import {
@@ -156,32 +157,35 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   const location = useLocation();
   const { visibleRoute } = useVisibility();
 
-  // A route belongs to the person who opened it. The immediately returning
-  // operator may carry on, but a different sign-in starts at the workspace so
-  // an admin settings URL can never leak into a cashier session. Remembering
-  // only the most recent identity also means A -> B -> A starts A fresh.
+  const navigate = useNavigate();
+  const sawSignedOut = useRef(false);
+  const handledIdentity = useRef<string | null>(null);
+  // Apply the default once per sign-in, not on navigation or permission refresh.
+  // A restored session keeps its current page and any in-progress selling flow.
   useEffect(() => {
-    if (!user) return;
-    // Profile hydration may replace the provisional staffId after sign-in.
-    // The authentication account / terminal person key remains stable and
-    // must be used so an in-flight page is not mistaken for another user.
-    const identity = terminalUser?.userCode
-      ? `terminal:${terminalUser.userCode}`
-      : authUserId
-        ? `auth:${authUserId}`
-        : `user:${user.email || user.staffId || user.name}`;
-    const key = "pos.last-signed-in-identity";
-    let previous: string;
-    try {
-      previous = window.sessionStorage.getItem(key) ?? "";
-      window.sessionStorage.setItem(key, identity);
-    } catch {
+    if (!ready) return;
+    if (!user) {
+      sawSignedOut.current = true;
+      handledIdentity.current = null;
       return;
     }
-    if (previous && previous !== identity && location.pathname !== "/") {
-      window.location.replace("/");
+    const identity = terminalUser?.userCode
+      ? `terminal:${terminalUser.userCode}`
+      : authUserId ? `auth:${authUserId}` : `user:${user.email || user.staffId || user.name}`;
+    if (handledIdentity.current === identity) return;
+    handledIdentity.current = identity;
+    let previous = "";
+    try {
+      previous = window.sessionStorage.getItem("pos.last-signed-in-identity") ?? "";
+      window.sessionStorage.setItem("pos.last-signed-in-identity", identity);
+    } catch { /* In-memory tracking still prevents repeated redirects. */ }
+    const freshSignIn = sawSignedOut.current || (previous !== identity);
+    sawSignedOut.current = false;
+    if (freshSignIn) {
+      const to = signInDestination(isAdmin, can("can_view_dashboard"), visibleRoute("/dashboard"));
+      void navigate({ to, search: {}, replace: true });
     }
-  }, [user, authUserId, terminalUser?.userCode, location.pathname]);
+  }, [ready, user, authUserId, terminalUser?.userCode, isAdmin, can, visibleRoute, navigate]);
 
   const appearance = usePersonalAppearance();
   usePersonalAppearanceSync(appearance.key, appearance.owner);
@@ -395,11 +399,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // The sidebar and the route guard below run exactly the same test, so a link
   // that is shown always opens, and a link that is hidden cannot be reached by
   // typing its address either.
-  const canSee = (item: NavItem) => {
-    if (item.flag && !can(item.flag)) return false;
-    if (item.adminOnly && !isAdmin && !item.flag) return false;
-    return visibleRoute(item.to);
-  };
+  const canSee = (item: NavItem) => canSeeNavigationItem(item, can, isAdmin, visibleRoute);
 
   const Brand = ({ mini }: { mini?: boolean }) => (
     <div

@@ -1,3 +1,4 @@
+import { withoutWorkspacePurpose } from "@/lib/retired-workspace-settings";
 import { readCataloguePages } from "@/lib/catalogue-read";
 import { normalizeUuidFields } from "@/lib/uuid-fields";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
@@ -488,7 +489,7 @@ export const rowToSettings = (r: Row | null): AppSettings =>
         },
         integrations: {
           ...defaultSettings.integrations,
-          ...settingsObject(r.integration_settings),
+          ...withoutWorkspacePurpose(settingsObject(r.integration_settings)),
         },
       }
     : defaultSettings;
@@ -527,7 +528,7 @@ const buildSettingsRow = (s: AppSettings): Row => ({
   show_barcode: s.receipt.showBarcode,
   show_tax_details: s.receipt.showTax,
   ui_visibility: s.visibility ?? { hidden: {} },
-  integration_settings: s.integrations ?? {},
+  integration_settings: withoutWorkspacePurpose(s.integrations ?? {}),
   updated_at: new Date().toISOString(),
 });
 

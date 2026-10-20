@@ -4,7 +4,7 @@ Staff accounts with a real email request a signup confirmation after the profile
 
 In Terminal Activation for Windows, or Settings → Mobile terminals for Android/iOS, choose Operations or Management. Management registration is for Windows/Android/iOS administrators and supervisors, without a fixed branch. It uses the matching platform and a NULL location in the existing terminal table. Registration grants no role or permission. The current enabled staff account is checked by the hosted relay. An assigned account stays on its branch; an All branches manager can choose branches. No machine credentials are provisioned for a management device.
 
-Existing branch mobile registrations remain branch-bound. Operations Windows registrations still require a branch and use the configured terminal workspace. Management PCs use online business data; local SQL access and synchronization are blocked without erasing saved local database settings. Legacy incomplete activations are not silently reclassified as management. Web and mobile workspace choices follow the signed-in user; destination permissions continue to apply.
+Existing branch mobile registrations remain branch-bound. Operations Windows registrations still require a branch and retain their Retail selling workflow. Management PCs use online business data; local SQL access and synchronization are blocked without erasing saved local database settings. Legacy incomplete activations are not silently reclassified as management. All destinations continue to enforce the signed-in user permissions.
 
 Separate admin-browser activation is retired. Its old URL redirects to Mobile terminals. Historical database activation/audit records are retained; no database rows are deleted. Normal browser authentication and active-session enforcement remain in use.
 
@@ -15,14 +15,17 @@ All branches is a display label for NULL staff branch assignment, not a literal 
 - Create an enabled real-email test staff account, receive and confirm the email, then sign in. Disable the account and verify that email confirmation does not enable it.
 - Create an internal username/PIN account and verify that no email is required.
 - Register Android, iOS and Windows management devices. Verify admin/supervisor sign-in, cashier rejection, an assigned supervisor's branch restriction and All branches selection.
-- Register a normal mobile branch device and a Windows terminal. Verify their fixed branch, current purpose, existing billing and stock workflows, and rejection of a different branch write.
+- Register a normal mobile branch device and a Windows terminal. Verify their fixed branch, existing billing and stock workflows, and rejection of a different branch write.
 - Exercise repeated QR callbacks and Continue taps; retry after a network interruption.
 - Open the retired admin-browser URL and verify the redirect, then check browser sign-in and remote session reset.
 
 Automated tests and renderer builds do not replace these physical-device and email-provider checks. This change does not publish installers or promote to main.
 
-User workspace and terminal purpose are separate. My workspace uses the existing authenticated PRIVATE user preference record and defaults to Retail, Warehouse for warehouse users, and Management for administrators. A permitted personal override follows the user on web/mobile and Management PCs; it does not change an Operations PC purpose, permissions or branch assignments. Existing personal preference records remain valid without the optional workspace field.
 
-Navigation clarification and signed-in checks (20 October): Home opens the existing Live Dashboard and follows its existing permission/page-visibility checks, labeled Home / Live dashboard in the permission editor. Selling always opens the Retail workspace; Sell now opens the existing register and Back to workspace returns to Retail. This supersedes the proposed Management redirect on Selling. User and terminal settings remain independent.
+## Home and Selling navigation
 
-Verified in the signed-in local preview: Retail, Warehouse, Inventory and Receiving preference save/home rendering before the navigation clarification; final Home → Live Dashboard, Selling → Retail, Sell now → cart, and Back to workspace. Fixed a discovered shift-card mismatch by sharing the selected-branch status hook with the banner, without changing the trading shift. Added explicit personal-radio label associations and explained which setting applies to the current platform. A development hydration stall recovered through Retry; it is not claimed permanently fixed. No sales/stock transactions or permission changes were performed. Physical device and separate restricted-user acceptance remain pending.
+Terminal workspace settings and personal workspace selection are retired. Old settings links redirect to Settings. The data-only cleanup in `scripts/sql/retire-workspace-preferences.sql` removes only obsolete purpose/preference keys; selling layout, appearance, database configuration, branch restrictions and device registration are retained. Readers/writers strip the retired integration fields and personal appearance accepts old cached profiles without retaining the workspace preference.
+
+After a new sign-in, administrators open Home when dashboard access is allowed; every other user opens Selling. An already restored session keeps its page. Home is the existing Live Dashboard and remains hidden without dashboard permission/page visibility. Selling always opens the Retail workspace, and Sell now opens the cart. Home provides permission-filtered Business Analytics, All Shops and Locations & Warehouses links. Audit History is in Reports. Restricted users who lack Home but have business-page permissions keep access through Business Overview.
+
+Signed-in local preview checks cover Home, Reports and Settings, plus Selling/cart navigation. Automated restricted-user rendering tests cover Home visibility and selling/reporting permissions. Actual restricted-account sign-in and physical-device acceptance remain pending. No business transactions or permission changes are performed by these checks.

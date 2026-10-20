@@ -1,7 +1,3 @@
-import { usePersonalAppearance } from "@/lib/personal-appearance";
-import { workspacePurpose } from "@/lib/terminal-workspace";
-import { isManagementDevice } from "@/lib/management-device";
-import { isElectron } from "@/platform-config/platform";
 /**
  * Top-level navigation only.
  *
@@ -30,8 +26,6 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/lib/pos-auth";
 import { cn } from "@/lib/utils";
-import { usePos } from "@/lib/pos-store";
-import { orderWorkspaceGroups } from "@/lib/terminal-workspace";
 
 const COLLAPSE_KEY = "pos.nav.collapsed";
 
@@ -115,7 +109,7 @@ function SidebarRow({ entry, collapsed, active, inbound, onNavigate }: SidebarRo
       aria-label={entry.label}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex touch-manipulation select-none items-center gap-2.5 rounded-xl text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-inset transition-[background-color,color] duration-[var(--motion-fast)] ease-[var(--motion-ease-standard)] motion-reduce:transition-none",
+        "flex touch-manipulation select-none items-center gap-2.5 rounded-xl text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-inset transition-[background-color,color] duration-[var(--motion-normal)] ease-[var(--motion-ease-standard)] motion-reduce:transition-none",
         collapsed ? "justify-center gap-0 py-2.5" : "px-3 py-2.5",
         active
           ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
@@ -154,24 +148,20 @@ export function SidebarNav({
   footer,
 }: Props) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
-  const { isAdmin, isSupervisor, isWarehouse, can } = useAuth();
-  const { state } = usePos();
-  const { profile } = usePersonalAppearance();
+  const { isAdmin, isSupervisor, can } = useAuth();
 
   const settingsAllowed = isSupervisor || can("can_access_pos_settings");
 
   /** The seven top-level destinations. */
   const sections: Entry[] = useMemo(() => {
-    const list = orderWorkspaceGroups(
-      navGroups,
-      workspacePurpose(state.settings.integrations.terminalPurpose, isElectron(), { isAdmin, isSupervisor, isWarehouse }, isManagementDevice(), profile.workspace),
-      false,
-    )
+    const dashboard = navGroups.flatMap(group => group.items).find(item => item.to === "/dashboard");
+    const hasHome = Boolean(dashboard && canSee(dashboard));
+    const list = navGroups
       .map((g) => ({ ...g, items: g.items.filter(canSee) }))
-      .filter((g) => g.id !== "register" && g.items.length > 0)
+      .filter((g) => g.id !== "register" && !(g.id === "company" && hasHome) && g.items.length > 0)
       .map((g) => ({
         key: g.id,
-        label: g.label,
+        label: g.id === "company" ? "Business Overview" : g.label,
         icon: g.icon,
         to: g.hubTo,
         prefix: true,
@@ -188,7 +178,7 @@ export function SidebarNav({
       });
     }
     return list;
-  }, [canSee, isAdmin, isSupervisor, isWarehouse, settingsAllowed, state.settings.integrations.terminalPurpose, profile.workspace]);
+  }, [canSee, settingsAllowed]);
 
   /** The till itself always stays one click away, above everything else. */
   const registerEntry: Entry | null = useMemo(() => {

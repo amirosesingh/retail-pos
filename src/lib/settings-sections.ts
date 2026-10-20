@@ -49,9 +49,9 @@ export type SettingsSectionDef = {
 export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   {
     id: "workspace",
-    label: "Terminal workspace",
-    blurb: "Operational home and selling layout for this terminal.",
-    paths: ["integrations.terminalPurpose", "integrations.sellingLayout"],
+    label: "Selling layout",
+    blurb: "Register layout for this terminal.",
+    paths: ["integrations.sellingLayout"],
     lockedByDefault: false,
     scopeFamily: "terminal",
   },
