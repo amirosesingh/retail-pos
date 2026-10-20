@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderWorkspaceGroups, shouldOpenRegister, workspacePurpose } from "@/lib/terminal-workspace";
+import { orderWorkspaceGroups, shouldOpenRegister, workspacePurpose, workspaceMetricOrder } from "@/lib/terminal-workspace";
 
 describe("terminal workspace landing", () => {
   it("opens retail cashiers in the workspace until Sell now is explicit", () => {
@@ -92,4 +92,15 @@ it("keeps a personal workspace separate from an Operations PC purpose", () => {
   expect(workspacePurpose("warehouse", true, user, false, "retail")).toBe("warehouse");
   expect(workspacePurpose("warehouse", false, user, false, "retail")).toBe("retail");
   expect(workspacePurpose("warehouse", false, user)).toBe("management");
+});
+
+describe("workspace dashboard priority", () => {
+  it("prioritizes selling, oversight and stock without discarding metrics", () => {
+    expect(workspaceMetricOrder.retail[0]).toBe("shift");
+    expect(workspaceMetricOrder.management[0]).toBe("revenue");
+    for (const purpose of ["warehouse", "inventory", "receiving"] as const)
+      expect(workspaceMetricOrder[purpose][0]).toBe("stock");
+    for (const order of Object.values(workspaceMetricOrder))
+      expect([...order].sort()).toEqual(["bills", "revenue", "shift", "stock"]);
+  });
 });

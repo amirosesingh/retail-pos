@@ -51,3 +51,13 @@ export function workspacePurpose(configured: TerminalPurpose | undefined, deskto
   if (user.isWarehouse) return "warehouse";
   return "retail";
 }
+
+export type WorkspaceMetric = "shift" | "bills" | "revenue" | "stock";
+/** Presentation priority only; callers retain each metric's visibility checks. */
+export const workspaceMetricOrder: Record<TerminalPurpose, readonly WorkspaceMetric[]> = {
+  retail: ["shift", "bills", "revenue", "stock"],
+  management: ["revenue", "bills", "shift", "stock"],
+  warehouse: ["stock", "shift", "bills", "revenue"],
+  inventory: ["stock", "shift", "bills", "revenue"],
+  receiving: ["stock", "shift", "bills", "revenue"],
+};

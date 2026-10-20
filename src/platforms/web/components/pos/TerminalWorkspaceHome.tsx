@@ -1,6 +1,6 @@
 import { usePersonalAppearance } from "@/lib/personal-appearance";
 import { isManagementDevice } from "@/lib/management-device";
-import { workspacePurpose } from "@/lib/terminal-workspace";
+import { workspacePurpose, workspaceMetricOrder } from "@/lib/terminal-workspace";
 import { isElectron } from "@/platform-config/platform";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { inventoryMetrics } from "@/lib/inventory-metrics";
@@ -120,6 +120,13 @@ const ACTIONS: Record<TerminalPurpose, WorkspaceAction[]> = {
       to: "/requests",
       icon: Truck,
       permission: "can_create_transfer",
+    },
+    {
+      label: "Goods receiving",
+      description: "Count arriving deliveries and post them.",
+      to: "/receiving",
+      icon: ClipboardCheck,
+      permission: "can_receive_transfer",
     },
     {
       label: "Inventory catalog",
@@ -276,64 +283,32 @@ export function TerminalWorkspaceHome() {
   const archivedProducts = state.products.filter((product) => product.archived === true).length;
   const activeProducts = state.products.length - archivedProducts;
   const PurposeIcon = detail.icon;
+  const primaryAction = visibleActions[0];
 
-  return (
-    <AppShell>
-      <SellingShortcuts />
-      <div className="h-full overflow-y-auto bg-background p-4 sm:p-6 lg:p-8">
-        <div className="mx-auto max-w-6xl space-y-8">
-          <header className="rounded-2xl border border-border/70 bg-card p-5 sm:p-7">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex items-start gap-4">
-                <span className="rounded-2xl bg-primary/10 p-3 text-primary">
-                  <PurposeIcon className="size-6" />
-                </span>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-                      {isSupervisor && !isAdmin ? "Manager workspace" : detail.label}
-                    </h1>
-                    <Badge variant="outline">{currentStore.name}</Badge>
-                  </div>
-                  <p className="mt-1 text-sm text-muted-foreground">{detail.description}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Welcome back, {user?.name ?? "staff"}.
-                  </p>
-                </div>
-              </div>
-              {can("can_process_sale") && visibleRoute("/") && (
-                <Link
-                  to="/"
-                  search={{ sell: true }}
-                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                >
-                  <ShoppingCart className="size-4" /> Sell now
-                </Link>
-              )}
-            </div>
-          </header>
-
-          <section className="summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {visible("workspace.shiftStatus") && (
+  const metrics = {
+    shift: visible("workspace.shiftStatus") && (
               <Metric
+                key="shift"
                 label="Shift"
                 icon={Activity}
                 tone={activeShift ? "text-success bg-success/10" : "text-muted-foreground bg-muted"}
                 value={activeShift ? "Open" : "Closed"}
                 hint={activeShift ? activeShift.cashier : "Open a shift before cash sales"}
               />
-            )}
-            {can("can_view_sales_reports") && visible("workspace.todayBills") && (
+            ),
+    bills: can("can_view_sales_reports") && visible("workspace.todayBills") && (
               <Metric
+                key="bills"
                 label="Today's bills"
                 icon={PackageSearch}
                 tone="text-category-1 bg-category-1/10"
                 value={<AnimatedMetric value={todaySales.length} />}
                 hint={error ? "Could not refresh totals" : loading ? "Updating…" : "Current branch"}
               />
-            )}
-            {can("can_view_sales_reports") && visible("workspace.todayRevenue") && (
+            ),
+    revenue: can("can_view_sales_reports") && visible("workspace.todayRevenue") && (
               <Metric
+                key="revenue"
                 label="Today's revenue"
                 payments={paymentSummary}
                 icon={BarChart3}
@@ -353,9 +328,10 @@ export function TerminalWorkspaceHome() {
                   error ? "Could not refresh totals" : loading ? "Updating…" : "Completed sales"
                 }
               />
-            )}
-            {can("can_view_inventory") && visible("workspace.lowStock") && (
+            ),
+    stock: can("can_view_inventory") && visible("workspace.lowStock") && (
               <Metric
+                key="stock"
                 icon={Boxes}
                 tone="text-warning bg-warning/10"
                 label={<>Low stock <StockExplanation><span className="block">Positive stock at or below reorder level</span><span className="block">{stockMetrics.outOfStock} out of stock · {stockMetrics.negativeStock} negative stock</span></StockExplanation></>}
@@ -379,13 +355,14 @@ export function TerminalWorkspaceHome() {
                   </>
                 }
               />
-            )}
-          </section>
+            ),
+  };
 
+  const actions = (
           <section>
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold">Quick actions</h2>
+                <h2 className="text-lg font-semibold">{purpose === "management" ? "Management tools" : purpose === "retail" ? "Selling tools" : "Stock operations"}</h2>
                 <p className="text-sm text-muted-foreground">Your everyday tools, one step away.</p>
               </div>
             </div>
@@ -420,6 +397,53 @@ export function TerminalWorkspaceHome() {
               ))}
             </div>
           </section>
+  );
+
+  return (
+    <AppShell>
+      {purpose === "retail" && <SellingShortcuts />}
+      <div className="h-full overflow-y-auto bg-background p-4 sm:p-6 lg:p-8">
+        <div className="mx-auto max-w-6xl space-y-8">
+          <header className="rounded-2xl border border-border/70 bg-card p-5 sm:p-7">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <span className="rounded-2xl bg-primary/10 p-3 text-primary">
+                  <PurposeIcon className="size-6" />
+                </span>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+                      {detail.label}
+                    </h1>
+                    <Badge variant="outline">{currentStore.name}</Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">{detail.description}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Welcome back, {user?.name ?? "staff"}.
+                  </p>
+                </div>
+              </div>
+              {primaryAction && (
+                <Link
+                  to={primaryAction.to}
+                  search={primaryAction.sell ? { sell: true } : {}}
+                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <primaryAction.icon className="size-4" /> {primaryAction.sell ? "Sell now" : primaryAction.label}
+                </Link>
+              )}
+            </div>
+          </header>
+
+          {purpose !== "management" && actions}
+
+          <section className="summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Workspace overview">
+            {workspaceMetricOrder[purpose].map(key => metrics[key])}
+          </section>
+
+
+          {purpose === "management" && actions}
+          {purpose !== "retail" && <SellingShortcuts />}
         </div>
       </div>
     </AppShell>
