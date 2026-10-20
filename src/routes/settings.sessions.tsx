@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Clock3, Monitor, Smartphone, Store, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { adminAccessToken } from "@/lib/admin-session";
 import { listDeviceSessions, revokeDeviceSessions } from "@/lib/user-sessions-client";
 import { subscribeBackgroundRefresh, createRefreshQueue } from "@/lib/background-refresh";
@@ -29,6 +29,8 @@ type Row = {
 };
 
 function ActiveSessions() {
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const resetIds = useRef(new Set<string>());
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -87,6 +89,10 @@ function ActiveSessions() {
 
   const activeRows = rows.filter(row => isVisibleActiveSession(row, now));
 
+  const pageCount = Math.max(1, Math.ceil(activeRows.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const visibleRows = activeRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   if (loading) return <p className="text-sm text-muted-foreground">Loading sessions…</p>;
   if (offline)
     return (
@@ -105,62 +111,58 @@ function ActiveSessions() {
         <span>{activeRows.length} active {activeRows.length === 1 ? "session" : "sessions"}</span>
         <span>Updates automatically</span>
       </div>
-      <div className="grid gap-3 lg:grid-cols-2">
-        {activeRows.map((row) => {
-          const DeviceIcon = /android|ios/i.test(row.platform ?? "") ? Smartphone : Monitor;
-          return (
-            <article key={row.id} className="min-w-0 rounded-xl border border-border bg-card p-3 sm:p-4">
-              <div className="flex items-start gap-3">
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                  <DeviceIcon className="size-4" aria-hidden="true" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h2 className="break-words text-sm font-medium leading-5">
-                    {row.label || row.staff_user_id || "Unnamed device"}
-                  </h2>
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                    <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
-                      {row.kind === "terminal" ? "Terminal" : row.kind === "cashier" ? "Cashier" : "Staff"}
-                    </Badge>
-                    {row.platform && <span className="text-xs text-muted-foreground">{row.platform}</span>}
+      <div className="overflow-x-auto rounded-xl border border-border">
+        <table className="w-full text-left text-xs">
+          <caption className="sr-only">Active sessions, page {currentPage} of {pageCount}</caption>
+          <thead className="bg-muted/50 text-muted-foreground">
+            <tr>
+              <th scope="col" className="px-3 py-2 font-medium">User / device</th>
+              <th scope="col" className="px-3 py-2 font-medium">Activity</th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {visibleRows.map(row => (
+              <tr key={row.id} className="align-top">
+                <td className="px-3 py-3">
+                  <div className="break-words text-sm font-medium">{row.label || row.staff_user_id || "Unnamed device"}</div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {[row.kind === "terminal" ? "Terminal" : row.kind === "cashier" ? "Cashier" : "Staff",
+                      row.platform,
+                      row.branch_name || (row.branch_id ? "Unknown branch" : "No fixed branch"),
+                      row.terminal_name || (row.terminal_id ? "Unnamed terminal" : "Browser session")]
+                      .filter(Boolean).map((label, index) => (
+                        <Badge key={index} variant="secondary" className="max-w-full whitespace-normal break-words px-1.5 py-0 text-[10px] font-normal">{label}</Badge>
+                      ))}
                   </div>
-                </div>
-              </div>
-              <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 text-xs">
-                <div className="min-w-0">
-                  <dt className="flex items-center gap-1 text-muted-foreground"><Store className="size-3" aria-hidden="true" />Branch</dt>
-                  <dd className="mt-1 break-words">{row.branch_name || (row.branch_id ? "Unknown branch" : "No fixed branch")}</dd>
-                </div>
-                <div className="min-w-0">
-                  <dt className="text-muted-foreground">Device</dt>
-                  <dd className="mt-1 break-words">{row.terminal_name || (row.terminal_id ? "Unnamed terminal" : "Browser session")}</dd>
-                </div>
-                <div className="min-w-0">
-                  <dt className="flex items-center gap-1 text-muted-foreground"><Clock3 className="size-3" aria-hidden="true" />Last active</dt>
-                  <dd className="mt-1 break-words tabular-nums">{posDisplayDateTime(new Date(row.last_activity_at))}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Idle limit</dt>
-                  <dd className="mt-1">{row.idle_timeout_minutes} min</dd>
-                </div>
-              </dl>
-              <div className="mt-3 flex justify-end border-t border-border pt-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="gap-1.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  disabled={row.is_revoked || busy === row.id}
-                  onClick={() => void revoke(row.id)}
-                  aria-label={`Remote reset for ${row.label || row.terminal_name || "this session"}`}
-                >
-                  <LogOut className="size-3.5" aria-hidden="true" />
-                  {busy === row.id ? "Resetting…" : "Remote reset"}
-                </Button>
-              </div>
-            </article>
-          );
-        })}
+                </td>
+                <td className="px-3 py-3">
+                  <div className="text-muted-foreground">Last active</div>
+                  <div className="mt-1 tabular-nums">{posDisplayDateTime(new Date(row.last_activity_at))}</div>
+                  <Badge variant="outline" className="mt-1 whitespace-normal px-1.5 py-0 text-[10px] font-normal">Idle limit {row.idle_timeout_minutes} min</Badge>
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <Button variant="ghost" size="sm"
+                    className="gap-1 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    disabled={row.is_revoked || busy === row.id}
+                    onClick={() => void revoke(row.id)}
+                    aria-label={`Remote reset for ${row.label || row.terminal_name || "this session"}`}>
+                    <LogOut className="size-3.5" aria-hidden="true" />
+                    <span className="hidden sm:inline">{busy === row.id ? "Resetting…" : "Reset"}</span>
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
+      <nav aria-label="Session pages" className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">Page {currentPage} of {pageCount} · {activeRows.length} sessions</span>
+        <div className="flex gap-1">
+          <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Previous</Button>
+          <Button variant="outline" size="sm" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>Next</Button>
+        </div>
+      </nav>
     </div>
   );
 }
