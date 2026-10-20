@@ -38,7 +38,7 @@ export const Route = createFileRoute("/all-shops")({
       {
         name: "description",
         content:
-          "Live takings and shift status for every branch, plus one stock table showing each product's inventory across all shops.",
+          "Live takings and shift status for every branch, with group sales performance and stock export.",
       },
       { property: "og:title", content: "All Shops — Retail" },
       {
@@ -132,7 +132,6 @@ function AllShops() {
     if (lowOnly && (p.archived === true || !stockStores.some((s) => productVisibleAt(state.settings, p, s.id) && isLowStock(stockAt(p, s.id), p.reorderLevel)))) return false;
     return true;
   });
-  const pager = usePagination(rows, 25);
 
   function exportCsv() {
     downloadReport("all-shops-stock", [
@@ -236,6 +235,56 @@ function AllShops() {
           </div>
         </header>
 
+        {history.error && (
+          <p role="alert" className="rounded-xl border border-warning/30 bg-warning/5 p-3 text-sm">
+            Could not refresh trading data: {history.error}
+          </p>
+        )}
+        {showMoney && (history.loading || history.refreshing) && (
+          <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
+            {history.loading ? "Loading sales for the selected dates…" : "Updating sales…"}
+          </p>
+        )}
+        {!stores.length && (
+          <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+            No active branches are available to this account.
+          </p>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {perStore.map((s) => (
+            <div key={s.store.id} className="rounded-lg border border-border bg-card p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{s.store.name}</p>
+                  <p className="text-xs text-muted-foreground">{s.store.code}</p>
+                </div>
+                {showMoney && (
+                  <Badge variant={s.shift ? "secondary" : "destructive"}>
+                    {s.shift ? "Current shift open" : "Current shift closed"}
+                  </Badge>
+                )}
+              </div>
+              <p className="numeric mt-3 text-xl font-semibold">
+                {showMoney ? money(s.revenue) : "—"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {showMoney ? (
+                  <>
+                    {s.count} bill{s.count === 1 ? "" : "s"} in selected dates ·{" "}
+                    {s.stockVisible ? "current stock " + money(s.stockValue) : "Private stock"}
+                  </>
+                ) : (
+                  "Stock quantities only"
+                )}
+              </p>
+              {s.stockVisible && (
+                <p className="mt-1 text-xs text-warning">{s.low} below reorder level</p>
+              )}
+            </div>
+          ))}
+        </div>
+
         {isAdmin && (
           <section className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -300,118 +349,6 @@ function AllShops() {
             </div>
           </section>
         )}
-        {history.error && (
-          <p role="alert" className="rounded-xl border border-warning/30 bg-warning/5 p-3 text-sm">
-            Could not refresh trading data: {history.error}
-          </p>
-        )}
-        {showMoney && (history.loading || history.refreshing) && (
-          <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
-            {history.loading ? "Loading sales for the selected dates…" : "Updating sales…"}
-          </p>
-        )}
-        {!stores.length && (
-          <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-            No active branches are available to this account.
-          </p>
-        )}
-
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {perStore.map((s) => (
-            <div key={s.store.id} className="rounded-lg border border-border bg-card p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{s.store.name}</p>
-                  <p className="text-xs text-muted-foreground">{s.store.code}</p>
-                </div>
-                {showMoney && (
-                  <Badge variant={s.shift ? "secondary" : "destructive"}>
-                    {s.shift ? "Current shift open" : "Current shift closed"}
-                  </Badge>
-                )}
-              </div>
-              <p className="numeric mt-3 text-xl font-semibold">
-                {showMoney ? money(s.revenue) : "—"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {showMoney ? (
-                  <>
-                    {s.count} bill{s.count === 1 ? "" : "s"} in selected dates ·{" "}
-                    {s.stockVisible ? "current stock " + money(s.stockValue) : "Private stock"}
-                  </>
-                ) : (
-                  "Stock quantities only"
-                )}
-              </p>
-              {s.stockVisible && (
-                <p className="mt-1 text-xs text-warning">{s.low} below reorder level</p>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="overflow-auto rounded-lg border border-border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Product</TableHead>
-                <TableHead>SKU</TableHead>
-                {stockStores.map((s) => (
-                  <TableHead key={s.id} className="text-right">
-                    {s.code}
-                  </TableHead>
-                ))}
-                <TableHead className="text-right">Total</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pager.pageItems.map((p) => {
-                const per = stockStores.map((s) => ({ store: s, qty: stockAt(p, s.id) }));
-                return (
-                  <TableRow key={p.id}>
-                    <TableCell>
-                      <span className="block text-sm">{p.name}</span>
-                      <span className="block text-xs text-muted-foreground">{p.category}</span>
-                    </TableCell>
-                    <TableCell className="numeric text-xs text-muted-foreground">{p.sku}</TableCell>
-                    {per.map(({ store, qty }) => (
-                      <TableCell
-                        key={store.id}
-                        className={`numeric text-right ${qty <= 0 ? "text-destructive" : isLowStock(qty, p.reorderLevel) ? "text-warning" : ""}`}
-                      >
-                        {qty}
-                      </TableCell>
-                    ))}
-                    <TableCell className="numeric text-right font-medium">
-                      {per.reduce((a, b) => a + b.qty, 0)}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-              {rows.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={stockStores.length + 3}
-                    className="py-8 text-center text-sm text-muted-foreground"
-                  >
-                    No products match this filter.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-        <TablePagination
-          page={pager.page}
-          pageCount={pager.pageCount}
-          pageSize={pager.pageSize}
-          total={pager.total}
-          from={pager.from}
-          to={pager.to}
-          label="products"
-          onPage={pager.setPage}
-          onPageSize={pager.setPageSize}
-        />
       </div>
     </AppShell>
   );

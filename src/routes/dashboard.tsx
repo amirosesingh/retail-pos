@@ -1,3 +1,4 @@
+import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { productVisibleAt } from "@/lib/branch-policy";
 import { createFileRoute } from "@tanstack/react-router";
@@ -329,65 +330,43 @@ function Dashboard() {
             Final totals include applicable tax and rounding; refunded bills are shown separately.
           </p>
           <Separator />
-          <Table loading={reportLoading}>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Cashier</TableHead>
-                <TableHead className="text-right">Bills</TableHead>
-                <TableHead className="text-right">Original bill value</TableHead>
-                <TableHead className="text-right">Discount amount</TableHead>
-                <TableHead className="text-right">Final bill total</TableHead>
-                <TableHead className="text-right">Refunds</TableHead>
-                <TableHead className="text-right">Discount %</TableHead>
-                <TableHead className="text-right">No-sale</TableHead>
-                <TableHead>Flags</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {cashiers.map((c) => (
-                <TableRow key={c.name}>
-                  <TableCell>
-                    <span>{c.name}</span>
-                    <details className="mt-1 min-w-48 max-w-sm text-xs">
-                      <summary className="cursor-pointer text-muted-foreground">View bills</summary>
-                      <ul className="mt-2 space-y-2">
-                        {todaySales.filter(sale => (sale.cashier || "Unknown") === c.name).map(sale => (
-                          <li key={sale.id} className="rounded-md border p-2">
-                            <p className="font-medium">{sale.receiptNo}{sale.refunded ? " · Refunded" : ""}</p>
-                            <p>Original {money(sale.subtotal)} · Discount {money(sale.discount)} ({(sale.subtotal > 0 ? sale.discount / sale.subtotal * 100 : 0).toFixed(1)}%)</p>
-                            <p>After discount {money(sale.subtotal - sale.discount)} · Final {money(sale.total)}</p>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  </TableCell>
-                  <TableCell className="numeric text-right">{c.bills}</TableCell>
-                  <TableCell className="numeric text-right">{money(c.original)}</TableCell>
-                  <TableCell className="numeric text-right">{money(c.discount)}</TableCell>
-                  <TableCell className="numeric text-right">{money(c.revenue)}</TableCell>
-                  <TableCell className="numeric text-right">
-                    {c.refunds} · {money(c.refundValue)}
-                  </TableCell>
-                  <TableCell className="numeric text-right">{c.discountPct.toFixed(1)}%</TableCell>
-                  <TableCell className="numeric text-right">{c.noSale}</TableCell>
-                  <TableCell>
-                    {c.flags.length ? (
-                      <span className="text-xs text-destructive">{c.flags.join(" · ")}</span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">clear</span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {!cashiers.length && (
-                <TableRow>
-                  <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
-                    No trading recorded today.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+          <div className="divide-y divide-border" aria-busy={reportLoading}>
+            {cashiers.map((c) => (
+              <article key={c.name} className="space-y-4 p-4 sm:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold">{c.name}</h3>
+                  {c.flags.length > 0 && <span className="text-xs text-destructive">{c.flags.join(" · ")}</span>}
+                </div>
+                <div>
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">Bill numbers · today</p>
+                  <ol className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {todaySales.filter(sale => (sale.cashier || "Unknown") === c.name).map((sale, index) => (
+                      <li key={sale.id} className="flex min-w-0 items-start gap-2 rounded-lg border border-border px-3 py-2 text-sm">
+                        <span className="shrink-0 text-muted-foreground">{index + 1}.</span>
+                        <div className="min-w-0"><ReportReceiptLink sale={sale} />
+                          {sale.refunded && <span className="ml-2 text-xs text-muted-foreground">Refunded</span>}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+                <dl className="grid grid-cols-2 gap-3">
+                  <div><dt className="text-xs text-muted-foreground">Final bill total</dt><dd className="numeric text-base font-semibold">{money(c.revenue)}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Discount</dt><dd className="numeric text-base font-semibold">{money(c.discount)} <span className="text-xs font-normal">({c.discountPct.toFixed(1)}%)</span></dd></div>
+                </dl>
+                <details className="rounded-lg border border-border p-3">
+                  <summary className="cursor-pointer text-sm font-medium">More totals</summary>
+                  <dl className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    <div><dt className="text-xs text-muted-foreground">Completed bills</dt><dd className="numeric text-sm">{c.bills}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Original bill value</dt><dd className="numeric text-sm">{money(c.original)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Refunds</dt><dd className="numeric text-sm">{c.refunds} · {money(c.refundValue)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">No-sale drawer opens</dt><dd className="numeric text-sm">{c.noSale}</dd></div>
+                  </dl>
+                </details>
+              </article>
+            ))}
+            {!cashiers.length && <p className="p-6 text-center text-sm text-muted-foreground">{reportLoading ? "Loading cashier review…" : "No trading recorded today."}</p>}
+          </div>
         </section>
 
         <section className="rounded-lg border border-border bg-card">
