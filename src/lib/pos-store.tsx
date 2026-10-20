@@ -1,3 +1,4 @@
+import { subscribeSettingsRefresh } from "./settings-refresh";
 import { createRefreshQueue, requestBackgroundRefresh, subscribeBackgroundRefresh } from "./background-refresh";
 import { stockCountChanges } from "./stock-count-plan";
 import { retainUnchangedFields } from "./live-state";
@@ -926,18 +927,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
         running = false;
       }
     };
-    void refreshScope();
-    const interval = window.setInterval(() => void refreshScope(), 60_000);
-    const off = subscribeSettingsChange(() => void refreshScope());
-    const onFocus = () => void refreshScope();
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("online", onFocus);
+    const off = subscribeSettingsRefresh(refreshScope, undefined, { initial: true });
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
       off();
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("online", onFocus);
     };
   }, [readsReady, readIdentity, state.currentStoreId, scopeIds]);
 
@@ -1478,30 +1471,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         if (queued && !cancelled) { queued = false; void refresh(); }
       }
     };
-    const wake = () => {
-      void refresh();
-    };
-    const unsubscribe = subscribeSettingsChange((change) => {
-      if (
-        !["pos_settings","pos_store_settings","settings_scoped","settings_overrides","settings_locks"].includes(change.table) &&
-        change.reason !== "desktop:pull-complete" &&
-        change.reason !== "reconnect" &&
-        change.reason !== "realtime:subscribed"
-      )
-        return;
-      wake();
-    });
-    const visibleWake = () => {
-      if (document.visibilityState !== "hidden") wake();
-    };
-    const interval = window.setInterval(visibleWake, 60_000);
-    window.addEventListener("focus", visibleWake);
-    window.addEventListener("online", visibleWake);
+    const unsubscribe = subscribeSettingsRefresh(refresh, (change) =>
+      ["pos_settings","pos_store_settings","settings_scoped","settings_overrides","settings_locks"].includes(change.table) ||
+      ["desktop:pull-complete", "reconnect", "realtime:subscribed"].includes(change.reason),
+    );
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
-      window.removeEventListener("focus", visibleWake);
-      window.removeEventListener("online", visibleWake);
       unsubscribe();
     };
   }, [signedIn]);

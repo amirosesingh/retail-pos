@@ -87,6 +87,26 @@ The performance advisor returned:
 
 Logging settings were rechecked read-only and are unchanged. No indexes, RLS policies, quotas, billing settings, audit records or live schema were modified during this follow-up. No automated Logs Query scanner was found in the inspected repository; Studio investigations and external integrations remain attribution candidates, not proven culprits.
 
+### Settings and remaining timer audit
+
+Settings home renders navigation only. Payment methods, verification gateway, hardware and terminal panels mount through their own routes; System settings conditionally mounts only the selected system/logic/security/inheritance tab. These details are already demand-loaded, not fetched for every settings tile. Public flags reuse their existing shared in-flight request and cache. Current-terminal's 15-second timer reads local configuration/status only; dashboard/day, session-age and token countdown timers are not database downloads.
+
+The audit found an additional hidden-page reader in the global branch-settings provider. Both branch settings and shared operational settings now batch change bursts (100 ms), serialize reads, pause background polling and hints while hidden, and coalesce focus/visibility/native-resume catch-up. Their one-minute foreground fallback remains: tax, pricing and other operational settings must stay current even outside Settings. Initial scope confirmation remains immediate and preserves edits/revision guards; a change arriving during that read queues another pass. SQL-backed settings still refresh without internet.
+
+Coverage and intentional exceptions:
+
+| Area | Policy |
+|---|---|
+| Report query caches | Scoped memory cache, table invalidation, five-minute stale fallback; retain branch/date/user identity |
+| Page refresh subscriptions | Shared lifecycle, hidden suppression and serialized/batched changes |
+| Settings detail panels | Open-page/open-tab loads and explicit actions; no eager mounting of all panels |
+| Operational settings | Needed across the app; immediate initial scope, change hints, one-minute visible fallback |
+| Activity/security status | Hidden-page suppression retained; visible alert polling is intentional |
+| Session authority, approval expiry, terminal pairing | Security/interaction timers retained; never treat a cached role as current authorization |
+| Native pending uploads and checkpoint downloads | Existing durable sync protocol retained; independent of whether a page is visible |
+
+This is shared infrastructure coverage, not a claim that every legacy list is a per-column delta API. Scoped list refreshes remain where complete record-level invalidation is unavailable. Tests cover hidden settings, offline SQL, sign-out suppression, burst serialization, initial-read races and cleanup. No settings values, database routing, permissions or persistence formats changed in this final pass.
+
 ### Remaining acceptance limits
 
 Automated tests exercise query isolation, burst coalescing, hidden/resume behavior, row deletion and sync safeguards. They cannot establish physical QR scanning, real Windows SQL recovery or every native device's network behavior. No signed-in POS browser session was available during this follow-up. These device checks and before/after daily byte measurements remain deployment acceptance work, not claimed complete.
