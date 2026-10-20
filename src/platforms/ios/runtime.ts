@@ -3,6 +3,7 @@ import { CapacitorUpdater } from "@capgo/capacitor-updater";
 import { Preferences } from "@capacitor/preferences";
 import { App } from "@capacitor/app";
 import { flushTicketDrafts } from "@/lib/session-draft";
+import { flushNativeStorage } from "@/platforms/mobile/mobile-storage";
 import { IosOtaService } from "./service";
 import type { Trust } from "./manifest";
 const nativeTrust = registerPlugin<{ configuration(): Promise<Trust> }>("RetailOtaTrust");
@@ -27,6 +28,7 @@ export const iosOta = new IosOtaService({
   online: () => navigator.onLine,
   preserve: async () => {
     await flushTicketDrafts();
+    await flushNativeStorage();
     await Preferences.set({ key: "retail.ios.ota.lastRoute", value: location.pathname });
   },
 });

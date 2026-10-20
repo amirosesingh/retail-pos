@@ -121,11 +121,8 @@ async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
     diagnosis = { issue: "configuration" };
     return "unconfigured";
   }
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    if (signal?.aborted) return "unreachable";
-    diagnosis = { issue: "device-offline" };
-    return "unreachable";
-  }
+  // WebView network hints can be stale after foregrounding. Only the bounded
+  // request may decide whether the configured backend is reachable.
   try {
     const limited = supabaseExternal.from("public_flags").select("key").limit(1);
     const request =
@@ -246,8 +243,7 @@ export function checkHealth(force = false): Promise<HealthReport> {
     // A single slow answer must not be recorded as "cannot be reached": that
     // verdict sends a configured terminal back to the connection screen.
     let cloud = firstCloud;
-    if (!cloud && !local && verdict === "unreachable" &&
-        !(typeof navigator !== "undefined" && navigator.onLine === false))
+    if (!cloud && !local && verdict === "unreachable")
       cloud = await probeCloudWithin(budget);
     probedOnce = true;
     settleVerdict(cloud);

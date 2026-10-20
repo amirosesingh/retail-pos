@@ -82,3 +82,11 @@ UIKit constrains the complete Capacitor view to its current safe-area layout gui
 This is safe-area support around the Dynamic Island, not a Live Activity inside it. iPhone 14/15/16/17/18 models and iOS 27 require physical-device or simulator acceptance before claiming certification. The workflow records its actual Xcode/iOS SDK versions; a passing compile is not proof of testing every OS or model. Test landscape, the keyboard, modal close controls, the home indicator, theme changes and text scaling on each supported size. The native container requires reinstalling this build-3 IPA once; future compatible interface changes can use OTA.
 
 Native build 3 matches the native safe-area surround to the actual CSS palette (including OKLCH), and places both connection states at the top centre. The supported minimum is iOS 26. The owner-approved beta release workflow builds iOS alongside Android/Windows and attaches the unsigned IPA to the same prerelease and immutable Cloudflare beta release directory under ios/. PR builds only upload CI artifacts; they do not publish.
+
+## Connection status and retained setup
+
+A missing saved database profile is shown as “Connection setup required”, not as an internet outage. Backend reachability uses an actual timed request even if the WebView's online hint is stale. Authentication/configuration failures remain closed; this does not grant offline sign-in.
+
+The database URL/key and backend URL retain their existing native secure-store keys (iOS Keychain). Terminal identity and UI preferences retain their existing Capacitor Preferences keys. OTA activation waits for pending preference writes and verifies the current values before reloading; failure postpones activation. Startup cache cleanup does not delete the separate iOS OTA recovery metadata.
+
+For IPA updates, install in place using the same app bundle identifier and signing identity/access group. Deleting the app, resetting its storage or changing the signing identity may lose access to data and is not equivalent to an OTA update. Saved configuration does not bypass session expiry, revocation, branch permissions or login checks; no plaintext login passwords are added. Test an in-place Sideloadly update on the actual device before relying on retention.

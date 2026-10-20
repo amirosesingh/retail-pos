@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Lock, ReceiptText, Wifi, WifiOff } from "lucide-react";
+import { Lock, ReceiptText, Settings2, Wifi, WifiOff } from "lucide-react";
 import { useBranding } from "@/lib/branding";
-import { connectivity, subscribeConnectivity } from "@/core/activation/connection-health";
+import { cloudVerdict, cloudDiagnosis, connectivity, subscribeConnectivity } from "@/core/activation/connection-health";
+import { connectionLabel } from "../connection-label";
 import { ApprovalTokenButton } from "@/platform-config/approval-token";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,10 +31,11 @@ export function OfflineLoginInterface() {
 
 /** The shared heartbeat owns retries; this indicator only observes its verdict. */
 export function NativeConnectionIndicator() {
-  const [state, setState] = useState(connectivity);
+  const [snapshot, setSnapshot] = useState(() => ({ state: connectivity(), verdict: cloudVerdict(), issue: cloudDiagnosis().issue }));
+  const { state, verdict, issue } = snapshot;
   const wasOffline = useRef(false);
   const [recovered, setRecovered] = useState(false);
-  useEffect(() => subscribeConnectivity(setState), []);
+  useEffect(() => subscribeConnectivity(state => setSnapshot({ state, verdict: cloudVerdict(), issue: cloudDiagnosis().issue })), []);
   useEffect(() => {
     if (state === "online") {
       if (!wasOffline.current) return;
@@ -46,10 +48,11 @@ export function NativeConnectionIndicator() {
   }, [state]);
   if (state === "online" && !recovered || state === "connecting" && !wasOffline.current) return null;
   const online = state === "online";
-  const Icon = online ? Wifi : WifiOff;
+  const setup = verdict === "unconfigured" || issue === "configuration";
+  const Icon = online ? Wifi : setup ? Settings2 : WifiOff;
   return <div className={`pointer-events-none fixed z-[60] top-[calc(var(--safe-top,env(safe-area-inset-top,0px))+0.75rem)] inset-x-3 flex justify-center`}>
-    <div key={online ? "online" : "offline"} role="status" aria-live="polite" className={`flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs shadow-md animate-in fade-in slide-in-from-top-4 duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:animate-none ${online ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
-    <span className="size-2 rounded-full bg-current" aria-hidden /><Icon className="size-3.5" aria-hidden />{online ? "Online" : "Offline"}
+    <div key={online ? "online" : "offline"} role="status" aria-live="polite" className={`flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs shadow-md animate-in fade-in slide-in-from-top-4 duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:animate-none ${online ? "text-emerald-600 dark:text-emerald-400" : setup ? "text-amber-700 dark:text-amber-400" : "text-destructive"}`}>
+    <span className="size-2 rounded-full bg-current" aria-hidden /><Icon className="size-3.5" aria-hidden />{connectionLabel(state, verdict, issue)}
     </div>
   </div>;
 }
