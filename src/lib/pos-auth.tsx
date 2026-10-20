@@ -1,3 +1,5 @@
+import { localStartupAuthReady } from "./local-startup";
+import { useLocalStartupReady } from "./use-local-startup";
 import { createSessionTransition } from "./session-transition";
 import { terminalUserPermissions } from "./terminal-user-permissions";
 import { createPermissionRefresh } from "./permission-refresh";
@@ -270,6 +272,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [staff, setStaff] = useState<StaffMember[]>(SEED_STAFF);
   const [session, setSession] = useState<Session | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
+  const localStartupReady = useLocalStartupReady();
+  const [localPinReady, setLocalPinReady] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   // A cached cashier profile is not proof that its POS session survived idle expiry.
   const [personSessionReady, setPersonSessionReady] = useState(false);
@@ -326,6 +330,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAppUser(null);
         setAuthReady(false);
         setPersonSessionReady(false);
+        setLocalPinReady(false);
         setRolesReady(false);
         setProfileReady(false);
         setAuthClientGeneration((current) => current + 1);
@@ -969,6 +974,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         /* session storage unavailable */
       }
+      setLocalPinReady(signedInOffline);
       // Sign the till itself in to the central database (machine account), so
       // shifts, sessions and sales are accepted instead of being refused.
       try {
@@ -1027,6 +1033,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setRoles([]);
       setAppUser(null);
       setTerminalUser(null);
+      setLocalPinReady(false);
       try {
         window.sessionStorage.removeItem(TERMINAL_KEY);
       } catch {
@@ -1461,7 +1468,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.staffId]);
 
-  const ready = authReady && personSessionReady && (!!terminalUser || !userId || (rolesReady && profileReady));
+  // Local PIN sign-in and its SQL-backed authority do not depend on a cloud
+  // bearer. Never expose an unverified cloud user through this fast path.
+  // The existing cloud checks continue and still enforce definitive revocations.
+  const localSignInReady = localStartupAuthReady(localStartupReady, !!userId, !!terminalUser, localPinReady);
+  const ready = localSignInReady || (authReady && personSessionReady && (!!terminalUser || !userId || (rolesReady && profileReady)));
   useEffect(() => {
     setSessionStartupPending(!ready);
     return () => setSessionStartupPending(true);

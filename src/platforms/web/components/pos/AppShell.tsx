@@ -1,3 +1,4 @@
+import { useLocalStartupReady } from "@/lib/use-local-startup";
 import { signInDestination } from "@/lib/sign-in-destination";
 import { isManagementDevice } from "@/lib/management-device";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -154,6 +155,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // Registration and connectivity are read separately: a dead link must never
   // look like a failed activation.
   const startup = useStartupGate();
+  const localStartupReady = useLocalStartupReady() && startup.registration === "registered";
   const location = useLocation();
   const { visibleRoute } = useVisibility();
 
@@ -294,12 +296,11 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // The connection profile is part of that: showing setup while it is still
   // being read out of the vault is what used to send a working till back to
   // the connection screen after a restart.
-  // The first connection check of the launch is part of that same window: a
-  // decision taken before it has answered is a decision taken on a guess.
-  // A registered till also waits for the first answer about its own
-  // registration, so a deleted terminal never reaches the sales screen.
+  // Online-only devices wait for cloud checks. An activated Windows till with
+  // validated local SQL may start immediately while revocation checks continue.
+  // A confirmed revocation still blocks the terminal below.
   const awaitingVerdict =
-    (isDesktop() || isNative()) && Boolean(terminal.config) && !terminal.verified;
+    (isDesktop() || isNative()) && Boolean(terminal.config) && !terminal.verified && !localStartupReady;
   // Persist the activation summary until Continue. Saving the verified config
   // causes background startup checks, which previously unmounted it immediately.
   if ((isDesktop() || isNative()) && activationFlowOpen && !terminal.revoked)
@@ -319,7 +320,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     ((isDesktop() || isNative()) && startup.loading) ||
     !profileHydrated ||
     awaitingVerdict ||
-    ((isDesktop() || isNative()) && startup.probing)
+    ((isDesktop() || isNative()) && startup.probing && !localStartupReady)
   )
     return <TillLoader message="Checking terminal connection…" onRetry={startup.refresh} />;
 
