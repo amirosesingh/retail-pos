@@ -20,3 +20,5 @@ All branches is a display label for NULL staff branch assignment, not a literal 
 - Open the retired admin-browser URL and verify the redirect, then check browser sign-in and remote session reset.
 
 Automated tests and renderer builds do not replace these physical-device and email-provider checks. This change does not publish installers or promote to main.
+
+User workspace and terminal purpose are separate. My workspace uses the existing authenticated PRIVATE user preference record and defaults to Retail, Warehouse for warehouse users, and Management for administrators. A permitted personal override follows the user on web/mobile and Management PCs; it does not change an Operations PC purpose, permissions or branch assignments. Existing personal preference records remain valid without the optional workspace field.

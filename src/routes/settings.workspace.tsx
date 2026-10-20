@@ -1,3 +1,4 @@
+import { usePersonalAppearance } from "@/lib/personal-appearance";
 import { createFileRoute } from "@tanstack/react-router";
 import { Boxes, ClipboardCheck, LayoutDashboard, Store, Warehouse } from "lucide-react";
 import type { TerminalPurpose } from "@/core/types/pos-types";
@@ -47,6 +48,7 @@ const PURPOSES: Array<{
 
 function WorkspaceSettings() {
   const { state, updateSettings } = usePos();
+  const personal = usePersonalAppearance();
   const integrations = state.settings.integrations;
   const purpose = integrations.terminalPurpose ?? "retail";
 
@@ -59,6 +61,17 @@ function WorkspaceSettings() {
       description="Choose what this terminal opens first. User permissions still decide which actions are available."
     >
       <div className="space-y-8">
+        <section className="space-y-3">
+          <h2 className="text-base font-semibold">My workspace</h2>
+          <p className="text-sm text-muted-foreground">Applies to your account on web and mobile, and Management PCs. Operations PCs keep their terminal purpose. This never changes permissions or branch access.</p>
+          <RadioGroup value={personal.profile.workspace ?? "automatic"} disabled={!personal.editable}
+            onValueChange={(value) => personal.update({ workspace: value === "automatic" ? undefined : value as TerminalPurpose })}
+            className="grid gap-3 sm:grid-cols-2">
+            <Label className="flex items-center gap-2 rounded-lg border p-3"><RadioGroupItem value="automatic" />User default: Retail; Warehouse for warehouse users; Management for administrators</Label>
+            {PURPOSES.map(option => <Label key={option.value} className="flex items-center gap-2 rounded-lg border p-3"><RadioGroupItem value={option.value} />{option.label}</Label>)}
+          </RadioGroup>
+          {personal.pending && <p className="text-xs text-muted-foreground">Saving your workspace preference…</p>}
+        </section>
         <section className="space-y-3">
           <div>
             <h2 className="text-base font-semibold">Terminal purpose</h2>

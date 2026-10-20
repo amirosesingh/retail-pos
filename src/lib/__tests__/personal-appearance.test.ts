@@ -12,14 +12,15 @@ beforeEach(() => { mocks.scope.mockReset().mockResolvedValue(person); mocks.rest
 describe("personal appearance boundaries", () => {
   it("validates display sizes and rejects business/notification properties", () => {
     expect(personalAppearanceSchema.safeParse(DEFAULT_PERSONAL_APPEARANCE).success).toBe(true);
+    expect(personalAppearanceSchema.safeParse({ ...DEFAULT_PERSONAL_APPEARANCE, workspace: "invalid" }).success).toBe(false);
     expect(personalAppearanceSchema.safeParse({ ...DEFAULT_PERSONAL_APPEARANCE, notifications: {} }).success).toBe(false);
     expect(personalAppearanceSchema.safeParse({ ...DEFAULT_PERSONAL_APPEARANCE, tax: {} }).success).toBe(false);
     expect(personalAppearanceSchema.safeParse({ ...DEFAULT_PERSONAL_APPEARANCE, scale: { ...DEFAULT_PERSONAL_APPEARANCE.scale, scale: Infinity } }).success).toBe(false);
   });
   it("persists only the verified person's private scope", async () => {
-    await savePersonalAppearance({ data: { owner: "person-a", profile: DEFAULT_PERSONAL_APPEARANCE } });
+    await savePersonalAppearance({ data: { owner: "person-a", profile: { ...DEFAULT_PERSONAL_APPEARANCE, workspace: "warehouse" } } });
     const body = JSON.parse(mocks.rest.mock.calls[0][1].body);
-    expect(body).toMatchObject({ scope: "PRIVATE", scope_id: "person-a", key: "personal_appearance" });
+    expect(body).toMatchObject({ scope: "PRIVATE", scope_id: "person-a", key: "personal_appearance", value: { workspace: "warehouse" } });
   });
   it("refuses an old user's request after the terminal changes identity", async () => {
     await expect(savePersonalAppearance({ data: { owner: "person-b", profile: DEFAULT_PERSONAL_APPEARANCE } })).rejects.toThrow("Sign in");

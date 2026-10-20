@@ -44,10 +44,10 @@ export function orderWorkspaceGroups<T extends { id: string }>(
 
 /** User-led on browsers/phones, fixed to the configured purpose on Windows. */
 export function workspacePurpose(configured: TerminalPurpose | undefined, desktop: boolean,
-  user: { isAdmin: boolean; isSupervisor: boolean; isWarehouse?: boolean }, managementDevice = false): TerminalPurpose {
-  if (managementDevice) return "management";
-  if (desktop) return configured ?? "retail";
-  if (user.isAdmin || user.isSupervisor) return "management";
+  user: { isAdmin: boolean; isSupervisor: boolean; isWarehouse?: boolean }, managementDevice = false, personal?: TerminalPurpose): TerminalPurpose {
+  if (desktop && !managementDevice) return configured ?? "retail";
+  if (personal) return personal;
+  if (user.isAdmin) return "management";
   if (user.isWarehouse) return "warehouse";
   return "retail";
 }

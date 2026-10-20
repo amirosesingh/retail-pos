@@ -79,8 +79,17 @@ describe("platform workspace purpose", () => {
     expect(workspacePurpose("warehouse", true, { isAdmin: true, isSupervisor: true })).toBe("warehouse");
   });
   it("uses the signed-in manager rather than another user's saved workspace on phones and web", () => {
-    expect(workspacePurpose("retail", false, { isAdmin: false, isSupervisor: true })).toBe("management");
+    expect(workspacePurpose("retail", false, { isAdmin: true, isSupervisor: true })).toBe("management");
+    expect(workspacePurpose("management", false, { isAdmin: false, isSupervisor: true })).toBe("retail");
+    expect(workspacePurpose("receiving", false, { isAdmin: true, isSupervisor: true }, false, "receiving")).toBe("receiving");
     expect(workspacePurpose("management", false, { isAdmin: false, isSupervisor: false })).toBe("retail");
     expect(workspacePurpose("management", false, { isAdmin: false, isSupervisor: false, isWarehouse: true })).toBe("warehouse");
   });
+});
+
+it("keeps a personal workspace separate from an Operations PC purpose", () => {
+  const user = { isAdmin: true, isSupervisor: true };
+  expect(workspacePurpose("warehouse", true, user, false, "retail")).toBe("warehouse");
+  expect(workspacePurpose("warehouse", false, user, false, "retail")).toBe("retail");
+  expect(workspacePurpose("warehouse", false, user)).toBe("management");
 });

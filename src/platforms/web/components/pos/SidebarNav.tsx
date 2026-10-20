@@ -1,3 +1,5 @@
+import { usePersonalAppearance } from "@/lib/personal-appearance";
+import { workspacePurpose } from "@/lib/terminal-workspace";
 import { isManagementDevice } from "@/lib/management-device";
 import { isElectron } from "@/platform-config/platform";
 /**
@@ -151,8 +153,9 @@ export function SidebarNav({
   footer,
 }: Props) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
-  const { isAdmin, isSupervisor, can } = useAuth();
+  const { isAdmin, isSupervisor, isWarehouse, can } = useAuth();
   const { state } = usePos();
+  const { profile } = usePersonalAppearance();
 
   const settingsAllowed = isSupervisor || can("can_access_pos_settings");
 
@@ -160,8 +163,8 @@ export function SidebarNav({
   const sections: Entry[] = useMemo(() => {
     const list = orderWorkspaceGroups(
       navGroups,
-      state.settings.integrations.terminalPurpose,
-      (!isElectron() || isManagementDevice()) && (isAdmin || isSupervisor),
+      workspacePurpose(state.settings.integrations.terminalPurpose, isElectron(), { isAdmin, isSupervisor, isWarehouse }, isManagementDevice(), profile.workspace),
+      false,
     )
       .map((g) => ({ ...g, items: g.items.filter(canSee) }))
       .filter((g) => g.id !== "register" && g.items.length > 0)
@@ -184,7 +187,7 @@ export function SidebarNav({
       });
     }
     return list;
-  }, [canSee, isAdmin, isSupervisor, settingsAllowed, state.settings.integrations.terminalPurpose]);
+  }, [canSee, isAdmin, isSupervisor, isWarehouse, settingsAllowed, state.settings.integrations.terminalPurpose, profile.workspace]);
 
   /** The till itself always stays one click away, above everything else. */
   const registerEntry: Entry | null = useMemo(() => {

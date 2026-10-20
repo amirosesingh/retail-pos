@@ -4,6 +4,7 @@ import { DEFAULT_THEME_PALETTE, THEME_PALETTES } from "./theme-palettes";
 /** Personal preferences never accept business configuration or notification rules. */
 export const personalAppearanceSchema = z
   .object({
+    workspace: z.enum(["retail", "warehouse", "inventory", "receiving", "management"]).optional(),
     theme: z.enum(["system", "light", "dark"]),
     palette: z.enum(THEME_PALETTES.map((p) => p.id)),
     accent: z

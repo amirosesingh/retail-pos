@@ -1,3 +1,4 @@
+import { usePersonalAppearance } from "@/lib/personal-appearance";
 import { isManagementDevice } from "@/lib/management-device";
 import { workspacePurpose } from "@/lib/terminal-workspace";
 import { isElectron } from "@/platform-config/platform";
@@ -239,10 +240,11 @@ const ACTIONS: Record<TerminalPurpose, WorkspaceAction[]> = {
 
 export function TerminalWorkspaceHome() {
   const { state, currentStore, activeShift } = usePos();
+  const { profile } = usePersonalAppearance();
   const { isAdmin, isSupervisor, isWarehouse, can, user } = useAuth();
   const { visible, visibleRoute } = useVisibility();
   const configured = state.settings.integrations.terminalPurpose ?? "retail";
-  const purpose: TerminalPurpose = workspacePurpose(configured, isElectron(), { isAdmin, isSupervisor, isWarehouse }, isManagementDevice());
+  const purpose: TerminalPurpose = workspacePurpose(configured, isElectron(), { isAdmin, isSupervisor, isWarehouse }, isManagementDevice(), profile.workspace);
   const detail = PURPOSE_DETAILS[purpose];
   const visibleActions = ACTIONS[purpose].filter(
     (action) =>
