@@ -5,3 +5,5 @@ export function IosOtaBoot({ children }: { children: ReactNode }) {
 export function IosOtaSettings() {
   return null;
 }
+
+export function IosUpdateBanner() { return null; }

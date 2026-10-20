@@ -129,7 +129,7 @@ describe("logout scope", () => {
     expect(activation).toContain('.auth.signOut({ scope: "local" })');
     expect(auth).toContain('reason === "expired"');
     expect(auth).toContain("await discardRejectedExternalAuthSession()");
-    expect(auth).toContain('centralSessionVerifiedRef.current = checked.state === "verified"');
+    expect(auth).toContain('centralSessionVerifiedRef.current = Boolean(next && checked.state === "verified")');
     const client = readFileSync("src/integrations/supabase/external-client.ts", "utf8");
     expect(client).toContain('new URL(requestUrl).pathname.endsWith("/auth/v1/logout")');
     expect(client).toContain('await client.auth.signOut({ scope: "local" })');
@@ -140,7 +140,7 @@ describe("logout scope", () => {
     expect(auth).toContain('import("@/lib/session-verify-client")');
     expect(auth).toContain("data: { accessToken: current.access_token }");
     expect(auth).toContain("validateCentralAuthSession(");
-    expect(auth).toContain('if (authCheck.state === "verified")');
-    expect(auth).toContain('authCheck.state === "rejected" || !authCheck.session');
+    expect(auth).toContain('if (authCheck.state === "verified" && matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current))');
+    expect(auth).toContain('authCheck.state === "rejected" || !matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current)');
   });
 });

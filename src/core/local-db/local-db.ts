@@ -1,3 +1,4 @@
+import { effectiveDatabaseMode } from "./db-mode";
 import { isManagementDevice } from "@/lib/management-device";
 /**
  * Bridge to the Windows desktop shell's local Microsoft SQL Server database.
@@ -206,7 +207,7 @@ export function reconnectReason(status: {
  * take the settings screen down with them.
  */
 export async function readConnectionAudit(): Promise<LocalConnectionAudit | null> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   if (!bridge?.getConnectionAudit) return null;
   try {
     return await withIpcTimeout(
@@ -224,7 +225,7 @@ export async function readConnectionAudit(): Promise<LocalConnectionAudit | null
  * send evidence of a crash to support without hunting through a log folder.
  */
 export async function saveDiagnosticReport(): Promise<{ ok: boolean; file?: string }> {
-  const bridge = localDb() as
+  const bridge = localConfigurationBridge() as
     (PosBridge & { collectDiagnostics?: () => Promise<{ ok: boolean; file?: string }> }) | null;
   if (!bridge?.collectDiagnostics) return { ok: false };
   try {
@@ -253,7 +254,7 @@ export async function connectLocalDatabase(
   config: LocalDbConfig,
   cloud?: CloudBridgeConfig,
 ): Promise<LocalDbTestResult> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   if (!bridge) return { ok: false, error: "Only the Windows desktop app has a local database." };
   try {
     await writeLocalDbConfig(config);
@@ -835,7 +836,7 @@ export const hasLocalSqlEngine = (): boolean =>
 
 /** Read a device setting from the branch SQL database, if there is one. */
 export async function readLocalSetting(key: string): Promise<string | null> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   if (!bridge?.getSetting) return null;
   try {
     const res = await bridge.getSetting(key);
@@ -847,7 +848,7 @@ export async function readLocalSetting(key: string): Promise<string | null> {
 
 /** Store a device setting in the branch SQL database when one is present. */
 export async function writeLocalSetting(key: string, value: string | null): Promise<boolean> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   if (!bridge?.setSetting) return false;
   try {
     return (await bridge.setSetting(key, value)).ok;
@@ -856,15 +857,21 @@ export async function writeLocalSetting(key: string, value: string | null): Prom
   }
 }
 
-export const localDb = (): PosBridge | null =>
+export const localConfigurationBridge = (): PosBridge | null =>
   typeof window === "undefined" || isManagementDevice() ? null : desktopBridge("pos", window.pos ?? null);
+
+/** Business queries follow the selected route; recovery/configuration remains accessible. */
+export const localDb = (): PosBridge | null => {
+  const bridge = localConfigurationBridge();
+  return bridge && effectiveDatabaseMode() !== "online" ? bridge : null;
+};
 
 /**
  * Proves the till's own pool can write: one transaction that inserts, reads
  * back, then rolls back. Nothing customer-facing is touched.
  */
 export async function verifyLocalWrite(timeoutMs = 30_000): Promise<LocalWriteCheck> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   if (!bridge?.verifyWrite) {
     return { ok: false, error: "Only the Windows desktop app can write to a local database." };
   }
@@ -883,7 +890,7 @@ export async function verifyLocalWrite(timeoutMs = 30_000): Promise<LocalWriteCh
 export async function testDirectConnection(
   params: DirectConnectionParams,
 ): Promise<LocalDbTestResult> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   if (!bridge) {
     return { ok: false, error: "Only the Windows desktop app can reach a local SQL Server." };
   }
@@ -916,7 +923,7 @@ export function readLocalDbConfig(): LocalDbConfig {
  */
 export async function loadLocalDbConfig(): Promise<LocalDbConfig> {
   if (typeof window === "undefined") return defaultLocalDbConfig;
-  const sealed = await localDb()?.getDatabaseConfig?.();
+  const sealed = await localConfigurationBridge()?.getDatabaseConfig?.();
   if (sealed) {
     cachedConfig = { ...defaultLocalDbConfig, ...sealed };
     return cachedConfig;
@@ -931,7 +938,7 @@ export async function loadLocalDbConfigState(): Promise<{
   configured: boolean;
 }> {
   if (typeof window === "undefined") return { config: defaultLocalDbConfig, configured: false };
-  const sealed = await localDb()?.getDatabaseConfig?.();
+  const sealed = await localConfigurationBridge()?.getDatabaseConfig?.();
   if (!sealed) {
     cachedConfig = defaultLocalDbConfig;
     return { config: cachedConfig, configured: false };
@@ -974,7 +981,7 @@ export type LocalDbReconnectResult = {
 export async function reconnectLocalDatabase(
   override?: Partial<LocalDbConfig>,
 ): Promise<LocalDbReconnectResult> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   if (!bridge?.reconnect) {
     return { ok: false, error: "Only the Windows desktop app holds a local database connection." };
   }
@@ -991,7 +998,7 @@ export async function reconnectLocalDatabase(
 
 /** Nudge the background retry loop to attempt right now. */
 export async function retryLocalDatabaseNow(): Promise<{ ok: boolean }> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   if (!bridge?.retryConnection) return { ok: false };
   try {
     return await withIpcTimeout(bridge.retryConnection(), 10_000, "The retry request timed out.");
@@ -1001,7 +1008,7 @@ export async function retryLocalDatabaseNow(): Promise<{ ok: boolean }> {
 }
 
 export async function resetLocalDatabase(): Promise<{ ok: boolean; error?: string | null }> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   const forget = bridge?.forgetConnection ?? bridge?.resetConnection;
   if (!forget) {
     return { ok: false, error: "Only the Windows desktop app holds a local database connection." };
@@ -1029,7 +1036,7 @@ export async function removeStoredConnection(): Promise<{
   removed?: boolean;
   error?: string | null;
 }> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   const remove = bridge?.removeConnection ?? bridge?.forgetConnection ?? bridge?.resetConnection;
   if (!remove) {
     return { ok: false, error: "Only the Windows desktop app holds a local database connection." };

@@ -40,7 +40,9 @@ export function excludedShellModules(platform: BuildPlatform) {
 export function shellAliases(platform: BuildPlatform) {
   return excludedShellModules(platform).map(path => ({
     find: new RegExp(`^.*(?:^|/)${path}(?:\\.tsx?)?$`),
-    replacement: resolve(path.endsWith("UpdateHeaderButton")
+    replacement: resolve(path.endsWith("NativeBoot") && platform === "windows"
+      ? "src/platforms/windows/components/DatabaseBoot.tsx"
+      : path.endsWith("UpdateHeaderButton")
       ? "src/platform-config/unsupported-update-header.tsx"
       : terminalOnly.includes(path)
       ? "src/platform-config/unsupported-terminal-setup.tsx"

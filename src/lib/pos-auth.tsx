@@ -1,3 +1,4 @@
+import { clearOperatorIdentity, isOperatorIdentity, matchesOperatorIdentity, readOperatorIdentity, saveOperatorIdentity } from "./operator-auth-identity";
 import { localStartupAuthReady } from "./local-startup";
 import { useLocalStartupReady } from "./use-local-startup";
 import { createSessionTransition } from "./session-transition";
@@ -271,6 +272,7 @@ const norm = (v: string) => v.trim().toLowerCase();
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [resumeOperator] = useState(mayResumeOperatorSession);
+  const operatorAuthId = useRef(resumeOperator ? readOperatorIdentity() : null);
   const startupSignOut = useRef<Promise<void> | null>(null);
   const [staff, setStaff] = useState<StaffMember[]>(SEED_STAFF);
   const [session, setSession] = useState<Session | null>(null);
@@ -326,6 +328,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       subscribeExternalClientReset(() => {
+        operatorAuthId.current = null;
+        clearOperatorIdentity();
         setSessionStartupPending(true);
         setCentralSessionVerified(false);
         setSession(null);
@@ -389,6 +393,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!bootstrapped) {
         return;
       }
+      // Machine provisioning and focus/refresh events are not operator login.
+      // Keep the existing PIN identity separate from the terminal cloud account.
+      if (next && !matchesOperatorIdentity(next.user, operatorAuthId.current)) return;
+      if (!next) { operatorAuthId.current = null; clearOperatorIdentity(); }
       const nextIdentity = next?.user?.id ?? null;
       const continuingSession =
         !!nextIdentity &&
@@ -430,6 +438,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // and offline PIN verification data belong to the device and stay intact.
         startupSignOut.current ??= (async () => {
           const oldToken = await loadSessionToken().catch(() => null);
+          operatorAuthId.current = null;
+          clearOperatorIdentity();
           clearStoredCredentials();
           clearAutoLockActivity();
           window.sessionStorage.removeItem(TERMINAL_KEY);
@@ -448,9 +458,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (checked.state === "rejected") await discardRejectedExternalAuthSession();
       if (!active || !isCurrentEpoch(startedAt)) { bootstrapped = true; return; }
       bootstrapped = true;
-      const next = checked.session;
+      const next = matchesOperatorIdentity(checked.session?.user, operatorAuthId.current) ? checked.session : null;
       centralIdentityRef.current = next?.user?.id ?? null;
-      centralSessionVerifiedRef.current = checked.state === "verified";
+      centralSessionVerifiedRef.current = Boolean(next && checked.state === "verified");
       setCentralSessionVerified(centralSessionVerifiedRef.current, next?.access_token);
       setSession(next);
       if (!next) {
@@ -604,6 +614,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const address = toLoginAddress(email);
       // Make a same-account interactive sign-in distinguishable from a replayed
       // SIGNED_IN event for an unverified restored token.
+      operatorAuthId.current = null;
+      clearOperatorIdentity();
       centralIdentityRef.current = null;
       centralSessionVerifiedRef.current = false;
       setCentralSessionVerified(false);
@@ -654,6 +666,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           error: loginFailureMessage("permission-denied"),
         };
       }
+
+      if (!data.session || !isOperatorIdentity(data.session.user)) {
+        await supabase.auth.signOut({ scope: "local" });
+        return { ok: false, code: "permission-denied" as const, error: loginFailureMessage("permission-denied") };
+      }
+      bumpSessionEpoch();
+      saveOperatorIdentity(data.session.user);
+      operatorAuthId.current = data.session.user.id;
+      centralIdentityRef.current = data.session.user.id;
+      setCentralSessionVerified(true, data.session.access_token);
+      setRolesReady(false);
+      setProfileReady(false);
+      setSession(data.session);
 
       // Whoever signs in on this device trades in the terminal's branch.
       bindTerminalBranch();
@@ -942,7 +967,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // RLS identity without guessing an address, changing a user's ordinary
       // password, or invoking a server function against its local app origin.
       if (verified?.authTokenHash) {
-        const { error } = await supabase.auth.verifyOtp({
+        const { data: pinAuth, error } = await supabase.auth.verifyOtp({
           token_hash: verified.authTokenHash,
           // Supabase now treats the former signup and magic-link verification
           // types as deprecated aliases. Admin generate_link still mints the
@@ -951,6 +976,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // verified PIN fail here with "invalid verification type".
           type: "email",
         });
+        if (!error && pinAuth.session && isOperatorIdentity(pinAuth.session.user)) {
+          saveOperatorIdentity(pinAuth.session.user);
+          operatorAuthId.current = pinAuth.session.user.id;
+          centralIdentityRef.current = pinAuth.session.user.id;
+          setCentralSessionVerified(true, pinAuth.session.access_token);
+          setSession(pinAuth.session);
+        }
         if (error) {
           recordDiagnostic({
             kind: "soft_write_failed",
@@ -976,6 +1008,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // PIN proof owns the operator. Machine Auth events must never replace it.
       bumpSessionEpoch();
       setTerminalUser(normalizeUuidFields(next));
       // The branch is in place before the register mounts, so nothing renders
@@ -1003,7 +1036,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return { ok: true };
     },
-    [sessionTransition],
+    [sessionTransition, setCentralSessionVerified],
   );
 
   /**
@@ -1044,6 +1077,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const staffId = terminalUser?.userCode ?? appUser?.user_id;
       if (staffId) await endShiftSessions({staffId, awaitWrites: true, persist: reason !== "expired"});
       if (!isCurrentEpoch(startedAt)) return;
+      operatorAuthId.current = null;
+      clearOperatorIdentity();
       setSessionState(reason === "locked" ? "locked" : reason);
       centralSessionVerifiedRef.current = false;
       setCentralSessionVerified(false);
@@ -1397,9 +1432,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // or server failure leaves the user's work and session untouched.
         const authCheck = await validateCentralAuthSession(true);
         if (!alive || !isCurrentEpoch(startedAt)) return;
-        if (authCheck.state === "verified") {
+        if (authCheck.state === "verified" && matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current)) {
           centralSessionVerifiedRef.current = true;
-        } else if (authCheck.state === "rejected" || !authCheck.session) {
+        } else if (authCheck.state === "rejected" || !matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current)) {
           // A definite refusal (or an absent local session) invalidates the
           // previous proof. An unavailable server with the same stored
           // session does not: connectivity loss must not sign out a till.
