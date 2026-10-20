@@ -26,7 +26,7 @@ jobs:
       - name: Verify iOS OTA service and server
         run: |
           npx vitest run src/platforms/ios/__tests__/ota.test.ts
-          node --test scripts/test-ios-ota-server.cjs
+          node --test scripts/test-ios-ota-server.cjs scripts/test-ios-beta-publish.cjs
           python3 scripts/test_ios_bundle_ids.py
       - name: Build and sync native iOS beta
         run: npm run ios:sync

@@ -19,6 +19,7 @@ describe("iPhone native appearance", () => {
     native.theme.mockResolvedValue(undefined);
     native.bars.mockResolvedValue(undefined);
     vi.stubGlobal("document", {
+      createElement: () => ({ getContext: () => null }),
       documentElement: {
         classList: { contains: () => dark },
         style: {
@@ -56,6 +57,22 @@ describe("iPhone native appearance", () => {
     scheme = "dark";
     syncIosAppearance();
     expect(native.theme).toHaveBeenCalledWith({ dark: true });
+  });
+  it("updates native safe-area colour when a palette changes without changing light mode", () => {
+    let rgb = [245, 248, 255, 255];
+    vi.stubGlobal("getComputedStyle", () => ({ getPropertyValue: () => "#f5f8ff" }));
+    document.createElement = (() => ({
+      getContext: () => ({
+        fillRect() {},
+        getImageData: () => ({ data: rgb }),
+      }),
+    })) as unknown as typeof document.createElement;
+    const stop = syncIosAppearance();
+    expect(native.theme).toHaveBeenLastCalledWith({ dark: false, background: [245, 248, 255] });
+    rgb = [240, 250, 240, 255];
+    changed();
+    expect(native.theme).toHaveBeenLastCalledWith({ dark: false, background: [240, 250, 240] });
+    stop();
   });
   it("continues on an earlier IPA without the optional native theme method", async () => {
     native.theme.mockRejectedValue(new Error("not implemented"));

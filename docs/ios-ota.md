@@ -10,7 +10,7 @@ A Mac/Xcode and CocoaPods are required to compile. The existing ML Kit scanner l
 
 ## Build and test without publishing
 
-The minimum deployment target is iOS 15.5, required by the existing barcode scanner; see the [plugin's iOS requirements](https://capawesome.io/docs/sdks/capacitor/mlkit/barcode-scanning/). An iOS build rejects POS_MOBILE_URL so a remote website cannot replace the bundled, verified interface. Android configuration remains unchanged.
+The minimum deployment target is iOS 26, supporting the recent iOS 26 and 27 releases; see the [plugin's iOS requirements](https://capawesome.io/docs/sdks/capacitor/mlkit/barcode-scanning/). An iOS build rejects POS_MOBILE_URL so a remote website cannot replace the bundled, verified interface. Android configuration remains unchanged.
 
 Use the repository Node 22 and npm 11.4.2 toolchain, then `npm ci`.
 
@@ -18,7 +18,7 @@ Use the repository Node 22 and npm 11.4.2 toolchain, then `npm ci`.
 - `npm run ios:sync`: build plus official `cap sync ios`.
 - Push a beta PR: `.github/workflows/ios-beta-build.yml` builds the unsigned IPA on macOS in parallel with existing Android and Windows PR checks. Download the `Retail-iOS-Beta-unsigned-<commit>` Actions artifact.
 - A future explicitly authorized beta installer release also starts the iOS artifact build. Existing Android/Windows publication gates are preserved; the iOS artifact is not uploaded to their update feeds.
-- Native beta identity: com.luckycharms.pos.beta, native build 2, marketing version 1.4.74. Increment the native build when native APIs change and explicitly choose matching manifest minBuild/maxBuild. OTA versions are separate semantic versions.
+- Native beta identity: com.luckycharms.pos.beta, native build 3, marketing version 1.4.74. Increment the native build when native APIs change and explicitly choose matching manifest minBuild/maxBuild. OTA versions are separate semantic versions.
 
 Do not publish merely because a build passes. This task authorizes a PR and IPA build, not deployment or a release.
 
@@ -75,8 +75,10 @@ A successful CI build is not proof of on-device OTA or Apple distribution approv
 
 The full regression suite passed 2,213 tests before the final five additional OTA cases; the expanded OTA suite passes 33 cases. Four Cloudflare handler tests cover path isolation, caching, emergency stop and read-only access. TypeScript and ESLint passed. The official Capgo CLI generated a signed local ZIP with a matching SHA-256; nothing was uploaded. GitHub macOS successfully compiled and packaged an unsigned IPA; Android native compilation and the Windows renderer checks also passed. Consult PR #276 for the final commit's check results. Physical iPhone testing, Sideloadly installation, live server deployment and an end-to-end OTA activation are still required before release.
 
-## Adaptive iPhone display (native build 2)
+## Adaptive iPhone display (native build 3)
 
 UIKit constrains the complete Capacitor view to its current safe-area layout guide on all four sides. No device model, notch height, corner radius or island width is hard-coded. The OS recalculates these bounds for portrait, landscape and supported window-size changes; web dialogs and fixed controls use the same protected viewport. Keep viewport-fit=contain to avoid adding the hardware inset twice. The native background, status icons and keyboard appearance follow the app theme. Android, Windows and website layout are unchanged.
 
-This is safe-area support around the Dynamic Island, not a Live Activity inside it. iPhone 14/15/16/17/18 models and iOS 27 require physical-device or simulator acceptance before claiming certification. The workflow records its actual Xcode/iOS SDK versions; a passing compile is not proof of testing every OS or model. Test landscape, the keyboard, modal close controls, the home indicator, theme changes and text scaling on each supported size. The native container requires reinstalling this build-2 IPA once; future compatible interface changes can use OTA.
+This is safe-area support around the Dynamic Island, not a Live Activity inside it. iPhone 14/15/16/17/18 models and iOS 27 require physical-device or simulator acceptance before claiming certification. The workflow records its actual Xcode/iOS SDK versions; a passing compile is not proof of testing every OS or model. Test landscape, the keyboard, modal close controls, the home indicator, theme changes and text scaling on each supported size. The native container requires reinstalling this build-3 IPA once; future compatible interface changes can use OTA.
+
+Native build 3 matches the native safe-area surround to the actual CSS palette (including OKLCH), and places both connection states at the top centre. The supported minimum is iOS 26. The owner-approved beta release workflow builds iOS alongside Android/Windows and attaches the unsigned IPA to the same prerelease and immutable Cloudflare beta release directory under ios/. PR builds only upload CI artifacts; they do not publish.

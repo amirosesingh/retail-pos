@@ -1,5 +1,6 @@
 import Foundation
 import Capacitor
+import UIKit
 @objc(RetailOtaTrustPlugin)
 public class RetailOtaTrustPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "RetailOtaTrustPlugin"
@@ -10,8 +11,15 @@ public class RetailOtaTrustPlugin: CAPPlugin, CAPBridgedPlugin {
     ]
     @objc func setAppearance(_ call: CAPPluginCall) {
         let dark = call.getBool("dark") ?? false
+        let rgb = call.getArray("background", Double.self)
         DispatchQueue.main.async {
-            self.bridge?.viewController?.view.window?.overrideUserInterfaceStyle = dark ? .dark : .light
+            let window = self.bridge?.viewController?.view.window
+            window?.overrideUserInterfaceStyle = dark ? .dark : .light
+            if let rgb = rgb, rgb.count == 3, rgb.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 255 }) {
+                let color = UIColor(red: CGFloat(rgb[0] / 255), green: CGFloat(rgb[1] / 255), blue: CGFloat(rgb[2] / 255), alpha: 1)
+                window?.backgroundColor = color
+                window?.rootViewController?.view.backgroundColor = color
+            }
             call.resolve()
         }
     }

@@ -47,8 +47,8 @@ export function NativeConnectionIndicator() {
   if (state === "online" && !recovered || state === "connecting" && !wasOffline.current) return null;
   const online = state === "online";
   const Icon = online ? Wifi : WifiOff;
-  return <div className={`pointer-events-none fixed z-[60] ${online ? "top-[calc(var(--safe-top,env(safe-area-inset-top,0px))+0.75rem)] inset-x-3 flex justify-center" : "bottom-[calc(env(safe-area-inset-bottom,0px)+0.125rem)] right-3"}`}>
-    <div key={online ? "online" : "offline"} role="status" aria-live="polite" className={`flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs shadow-md ${online ? "animate-in fade-in slide-in-from-top-4 duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:animate-none text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
+  return <div className={`pointer-events-none fixed z-[60] top-[calc(var(--safe-top,env(safe-area-inset-top,0px))+0.75rem)] inset-x-3 flex justify-center`}>
+    <div key={online ? "online" : "offline"} role="status" aria-live="polite" className={`flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs shadow-md animate-in fade-in slide-in-from-top-4 duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:animate-none ${online ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
     <span className="size-2 rounded-full bg-current" aria-hidden /><Icon className="size-3.5" aria-hidden />{online ? "Online" : "Offline"}
     </div>
   </div>;
