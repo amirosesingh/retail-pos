@@ -30,7 +30,7 @@ async function adminFetch(path: string, init: RequestInit = {}) {
 }
 
 /** Called only after staff-management authorization; return timestamps, never Auth profiles. */
-export async function staffLastSignIns(ids: string[]): Promise<Map<string, string>> {
+export async function staffLastSignIns(ids: string[], confirmations = new Map<string, boolean>()): Promise<Map<string, string>> {
   const pending = new Set(ids.map(id => id.toLowerCase()));
   const result = new Map<string, string>();
   if (!pending.size) return result;
@@ -39,12 +39,13 @@ export async function staffLastSignIns(ids: string[]): Promise<Map<string, strin
     for (let page = 1; page <= 20 && pending.size; page++) {
       const response = await adminFetch(`admin/users?page=${page}&per_page=1000`, { signal });
       if (!response.ok) break;
-      const body = await response.json() as { users?: { id?: string; last_sign_in_at?: string }[] };
+      const body = await response.json() as { users?: { id?: string; last_sign_in_at?: string; email_confirmed_at?: string | null }[] };
       if (!Array.isArray(body.users)) break;
       for (const user of body.users) {
         const id = user.id?.toLowerCase();
         if (!id || !pending.has(id)) continue;
         pending.delete(id);
+        confirmations.set(id, Boolean(user.email_confirmed_at));
         if (user.last_sign_in_at && Number.isFinite(Date.parse(user.last_sign_in_at))) result.set(id, user.last_sign_in_at);
       }
       if (body.users.length < 1000) break;
@@ -107,10 +108,18 @@ export async function requireSupervisor(accessToken: string): Promise<void> {
 
 /** Find an existing auth account for this address. */
 async function findUserId(email: string): Promise<string | null> {
-  const res = await adminFetch(`admin/users?page=1&per_page=1&email=${encodeURIComponent(email)}`);
-  if (!res.ok) return null;
-  const body = (await res.json()) as { users?: { id: string; email?: string }[] };
-  return body.users?.find((u) => u.email?.toLowerCase() === email)?.id ?? null;
+  // Auth's list endpoint is paginated; an email query parameter does not make
+  // per_page=1 an exact lookup. Check every returned identity before reuse.
+  for (let page = 1; page <= 20; page++) {
+    const res = await adminFetch(`admin/users?page=${page}&per_page=1000`);
+    if (!res.ok) throw new Error("Existing login accounts could not be checked. Please retry.");
+    const body = (await res.json()) as { users?: { id: string; email?: string }[] };
+    if (!Array.isArray(body.users)) throw new Error("The login account lookup returned an invalid response.");
+    const found = body.users.find((u) => u.email?.toLowerCase() === email);
+    if (found) return found.id;
+    if (body.users.length < 1000) return null;
+  }
+  throw new Error("The existing login could not be located. Ask an administrator to review this account.");
 }
 
 export type StaffPayload = {
@@ -144,7 +153,7 @@ export const isRealEmail = (input: string) => {
  * A real email address is kept as typed, uses its own password, and is left
  * unconfirmed so the person receives the usual verification email.
  */
-export async function provisionStaffAccount(payload: StaffPayload): Promise<{ userId: string }> {
+export async function provisionStaffAccount(payload: StaffPayload): Promise<{ userId: string; emailWarning?: string }> {
   const typed = payload.username.trim().toLowerCase();
   if (!typed) throw new Error("Enter a username or an email address");
   if (!payload.roleSlug?.trim()) throw new Error("Choose a role for this person");
@@ -209,7 +218,7 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
     if (!userId) {
       throw new Error((await created.text()).slice(0, 200) || "Could not create this account");
     }
-    await adminFetch(`admin/users/${userId}`, {
+    const repaired = await adminFetch(`admin/users/${userId}`, {
       method: "PUT",
       body: JSON.stringify({
         password: secret,
@@ -217,6 +226,7 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
         user_metadata: metadata,
       }),
     });
+    if (!repaired.ok) throw new Error("The existing login account could not be updated. Please retry.");
   }
 
   if (!userId) throw new Error("The authentication account was not created");
@@ -241,12 +251,24 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
     });
   }
 
-  await serviceRest("user_roles?on_conflict=user_id,role", {
+  const rolesSaved = await serviceRest("user_roles?on_conflict=user_id,role", {
     method: "POST",
     prefer: "return=minimal,resolution=merge-duplicates",
     body: JSON.stringify([{ user_id: userId, role: payload.baseRole }]),
   });
 
+  if (!rolesSaved.ok) throw new Error("The login was created, but its role could not be saved. Please retry.");
+  await persistStaffActive(username, userId, payload.active);
+
+  if (emailMode) {
+    try {
+      await sendStaffConfirmation(username);
+    } catch {
+      // The account already exists. Do not encourage creating it again when
+      // only mail delivery failed; administrators can retry that separately.
+      return { userId, emailWarning: "Account saved, but the verification email could not be sent. Use Resend verification email to retry." };
+    }
+  }
   return { userId };
 }
 
@@ -261,19 +283,28 @@ export async function readStaffSnapshot(username: string): Promise<Record<string
   return rows[0] ?? null;
 }
 
-export async function setStaffActive(username: string, active: boolean): Promise<void> {
-  const profile = await staffProfile(username);
-  const userId = profile?.auth_user_id ?? null;
-  if (userId) {
-    await adminFetch(`admin/users/${userId}`, {
-      method: "PUT",
-      body: JSON.stringify({ user_metadata: { active } }),
-    });
-  }
+// Keep the legacy cashier status aligned without changing its PIN or permissions.
+// A void RPC response alone does not prove an UPDATE matched the intended profile.
+async function persistStaffActive(username: string, authUserId: string, active: boolean): Promise<void> {
   await serviceRpc("staff_account_set_active", {
     p_user_id: username.trim().toLowerCase(),
     p_active: active,
   });
+  const saved = await staffProfile(username);
+  if (!saved || saved.auth_user_id !== authUserId || saved.is_active !== active) {
+    throw new Error("The account status was not saved. Reload this account and retry.");
+  }
+}
+
+export async function setStaffActive(username: string, active: boolean): Promise<void> {
+  const profile = await staffProfile(username);
+  if (!profile?.auth_user_id) throw new Error("This staff account has no authentication identity");
+  await persistStaffActive(profile.user_id, profile.auth_user_id, active);
+  const response = await adminFetch(`admin/users/${profile.auth_user_id}`, {
+    method: "PUT",
+    body: JSON.stringify({ user_metadata: { active } }),
+  });
+  if (!response.ok) throw new Error("The profile status was saved, but its login status could not be updated. Please retry.");
 }
 
 type StaffProfileRow = {
@@ -366,6 +397,8 @@ export async function updateStaffProfile(input: {
     }
     throw error;
   }
+
+  await persistStaffActive(profile.user_id, profile.auth_user_id, input.active);
 
   const authUpdate = await adminFetch(`admin/users/${profile.auth_user_id}`, {
     method: "PUT",
@@ -562,4 +595,23 @@ export async function listTerminalStaff(storeId: string | null) {
     // guessing run. The keypad accepts up to its own maximum instead.
     pinLength: 0,
   }));
+}
+
+/** Manager-authorized only. Never changes account activation or credentials. */
+export async function sendStaffConfirmation(username: string): Promise<void> {
+  const profile = await staffProfile(username);
+  if (!profile?.auth_user_id || !isRealEmail(profile.email))
+    throw new Error("This account does not use email verification.");
+  const response = await adminFetch(`admin/users/${encodeURIComponent(profile.auth_user_id)}`);
+  if (!response.ok) throw new Error("Could not check email verification. Please retry.");
+  const identity = await response.json() as { id?: string; email?: string; email_confirmed_at?: string | null };
+  if (identity.id !== profile.auth_user_id || identity.email?.toLowerCase() !== profile.email.toLowerCase())
+    throw new Error("The account email needs administrator review.");
+  if (identity.email_confirmed_at) return;
+  const sent = await adminFetch("resend", {
+    method: "POST", body: JSON.stringify({ type: "signup", email: profile.email }),
+  });
+  if (!sent.ok) throw new Error(sent.status === 429
+    ? "Please wait before requesting another verification email."
+    : "The verification email could not be sent. Check the email delivery configuration and retry.");
 }

@@ -26,7 +26,7 @@ export const Route = createFileRoute("/settings/mobile-terminals")({
       showSaveBar={false}
       terminalManagement
       title="Mobile terminals"
-      description="Register Android phones and tablets used for sales or stock work. Give each device its own code and location. The staff member's sign-in determines what they can do. Windows counter PCs are managed under Terminal activation."
+      description="Register Android and iOS devices for branch operations or management. Management devices use the signed-in administrator or supervisor’s branch access; branch devices keep their assigned location. Windows PCs are managed under Terminal activation."
     >
       <div className="space-y-5">
         <CurrentTerminalPanel />

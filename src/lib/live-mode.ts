@@ -1,3 +1,4 @@
+import { isManagementDevice } from "./management-device";
 /**
  * Whether the shell uses a live cloud-backed application experience.
  *
@@ -15,7 +16,7 @@ export function isLiveOnly(): boolean {
  * writes through its local SQL Server bridge before background cloud sync.
  */
 export function isOnlineOnly(): boolean {
-  return !hasFeature("offlineFirst");
+  return isManagementDevice() || !hasFeature("offlineFirst");
 }
 
 /** Storage keys the phone is still allowed to keep (interface preferences). */

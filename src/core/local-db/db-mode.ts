@@ -112,7 +112,7 @@ export function noteConnectionRestored() {
 const online = () => !isBrowser() || window.navigator.onLine;
 
 export function effectiveDatabaseMode(): DatabaseMode {
-  const startupOnline = isBrowser() && window.sessionStorage.getItem(ONLINE_STARTUP_OVERRIDE) === "1";
+  const startupOnline = isBrowser() && window.sessionStorage?.getItem(ONLINE_STARTUP_OVERRIDE) === "1";
   return isOnlineOnly() || startupOnline ? "online" : "local";
 }
 

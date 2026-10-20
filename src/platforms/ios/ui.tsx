@@ -1,3 +1,4 @@
+import { Download, Loader2, X } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Capacitor } from "@capacitor/core";
@@ -187,6 +188,47 @@ export function IosOtaSettings() {
           saved database connection is retained.
         </p>
       </details>
+    </section>
+  );
+}
+
+/** Root-level notice: available before database setup or operator sign-in. */
+export function IosUpdateBanner() {
+  const state = useSyncExternalStore(iosOta.subscribe, iosOta.snapshot, iosOta.snapshot);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "ios" || !state.latest || state.phase === "idle" || dismissed === state.latest.version) return null;
+  const busy = ["checking", "downloading", "verifying", "installing"].includes(state.phase);
+  const run = (action: () => Promise<unknown>) => {
+    setError("");
+    void action().catch(e => setError(e instanceof Error ? e.message : String(e)));
+  };
+  return (
+    <section aria-label="iPhone update" role="status" aria-live="polite"
+      className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom,0px)+1.75rem)] z-50 mx-auto max-w-lg rounded-xl border border-border bg-card p-3 shadow-lg">
+      <div className="flex items-start gap-2">
+        <Download className="mt-1 size-4 shrink-0 text-primary" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">{RELEASE_CHANNEL === "beta" ? "Beta update" : "Update"} {state.latest.version}</p>
+          <p className="text-xs text-muted-foreground">{state.error || error || state.deferred || (state.phase === "ready" ? "Downloaded. Ready to restart." : state.phase === "downloading" ? `Downloading${state.progress === undefined ? "…" : ` ${state.progress}%`}` : state.phase === "installing" ? "Restarting…" : "A new app update is available.")}</p>
+        </div>
+        <Button variant="ghost" size="icon" className="size-7 shrink-0" aria-label="Dismiss update" disabled={busy} onClick={() => setDismissed(state.latest!.version)}><X className="size-3.5" /></Button>
+      </div>
+      {state.phase === "downloading" && state.progress !== undefined && <Progress className="mt-2 h-1" value={state.progress} />}
+      <div className="mt-2 flex justify-end">
+        <Button size="sm" disabled={busy} onClick={() => {
+          if (state.phase === "ready") {
+            if (window.confirm("Install this update and restart? Save and finish any forms or transactions first. Your database settings will be retained.")) {
+              allowManualInstall();
+              run(() => iosOta.install());
+            }
+          } else if (state.phase === "error") run(() => iosOta.check(true));
+          else run(() => iosOta.download());
+        }}>
+          {busy && <Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden="true" />}
+          {busy ? "Updating…" : state.phase === "ready" ? "Update and restart" : state.phase === "error" ? "Retry" : "Download update"}
+        </Button>
+      </div>
     </section>
   );
 }

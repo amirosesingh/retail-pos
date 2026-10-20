@@ -1,7 +1,4 @@
-import type { TerminalPurpose } from "@/core/types/pos-types";
-
 export type WorkspaceEntryInput = {
-  purpose?: TerminalPurpose;
   isAdmin: boolean;
   isSupervisor: boolean;
   isCashier: boolean;
@@ -17,27 +14,4 @@ export type WorkspaceEntryInput = {
 export function shouldOpenRegister(input: WorkspaceEntryInput): boolean {
   if (input.forcedSelling || input.resumeSale || input.bookingFlow) return true;
   return false;
-}
-
-const PURPOSE_NAV_ORDER: Record<TerminalPurpose | "management-user", string[]> = {
-  retail: ["register", "inventory", "people", "bookings", "approvals", "marketing", "reports", "company"],
-  warehouse: ["inventory", "company", "reports", "people", "register", "bookings"],
-  inventory: ["inventory", "reports", "company", "people", "register", "bookings"],
-  receiving: ["inventory", "company", "reports", "register", "people", "bookings"],
-  management: ["company", "reports", "people", "inventory", "register", "bookings"],
-  "management-user": ["company", "approvals", "inventory", "people", "bookings", "marketing", "reports", "register"],
-};
-
-/** Reorder the same permitted destinations without creating another sidebar. */
-export function orderWorkspaceGroups<T extends { id: string }>(
-  groups: T[],
-  purpose: TerminalPurpose | undefined,
-  managementUser: boolean,
-): T[] {
-  const order = PURPOSE_NAV_ORDER[managementUser ? "management-user" : (purpose ?? "retail")];
-  const rank = new Map(order.map((id, index) => [id, index]));
-  return [...groups].sort(
-    (a, b) =>
-      (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
-  );
 }

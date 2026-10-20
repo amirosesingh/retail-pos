@@ -32,6 +32,8 @@ export type RelayScope = {
   /** Human name written onto rows so attribution is server-truth. */
   actorName?: string | null;
   terminalId?: string | null;
+  /** A fixed terminal or assigned management account cannot cross its branch. */
+  branchRestricted?: boolean;
   /** Claims answered the question but no account row backed them up. */
   stale?: boolean;
 };
@@ -252,6 +254,7 @@ export async function resolveRelayScope(caller: {
   authUserId?: string | null;
   claims?: CallerClaims | null;
   terminalId?: string | null;
+  managementDevice?: boolean;
 }): Promise<RelayScope> {
   // Authenticated claims identify a token, not current account authority.
   // In particular, Supabase user_metadata is editable by the account holder.
@@ -263,6 +266,8 @@ export async function resolveRelayScope(caller: {
   }
   const role = row?.role ?? null;
   const roleSlug = row?.role_slug ?? null;
+  if (caller.managementDevice && (!row || !supervisorRole(role, roleSlug)))
+    throw new Error("This management device requires an administrator or supervisor account");
   const branchMismatch = !!(
     row?.store_id &&
     caller.storeId &&
@@ -281,6 +286,7 @@ export async function resolveRelayScope(caller: {
     staffUserId: row?.user_id ?? null,
     actorName: row?.full_name ?? caller.label ?? null,
     terminalId: caller.terminalId ?? null,
+    branchRestricted: Boolean(caller.terminalId && (row?.store_id || caller.storeId)),
     stale: branchMismatch || (!row && caller.kind !== "terminal"),
   };
 }
@@ -305,8 +311,10 @@ async function parentStore(child: string, id: unknown): Promise<string | null | 
   return value === null || value === undefined ? null : String(value);
 }
 
+export const canCrossBranches = (scope: RelayScope) => scope.isSupervisor && !scope.branchRestricted;
+
 const visibleStore = (scope: RelayScope, storeId: string | null | undefined) =>
-  scope.isSupervisor || (!!storeId && storeId === scope.storeId);
+  canCrossBranches(scope) || (!!storeId && storeId === scope.storeId);
 
 function canonicalJsonValue(value: unknown): unknown {
   if (typeof value === "string") {
@@ -742,7 +750,7 @@ function authorizeProductPriceOverride(
         "PERMISSION_DENIED",
         "Only a valid branch product-price override can be saved here.",
       );
-    if (!scope.isSupervisor && branchId !== scope.storeId)
+    if (!canCrossBranches(scope) && branchId !== scope.storeId)
       return deny("STORE_FORBIDDEN", "You cannot change another branch's prices.");
 
     const price = value as Record<string, unknown>;
@@ -808,7 +816,7 @@ function pinToStore(
     const rows = op.rows.map((row) => {
       const given = row[column];
       if (given !== undefined && given !== null && String(given) !== (scope.storeId ?? "")) {
-        if (!scope.isSupervisor) throw new StoreViolation();
+        if (!canCrossBranches(scope)) throw new StoreViolation();
         return row;
       }
       return { ...row, [column]: scope.storeId ?? given ?? null };
@@ -818,16 +826,16 @@ function pinToStore(
 
   const given = op.match[column];
   if (given !== undefined && given !== null && String(given) !== (scope.storeId ?? "")) {
-    if (!scope.isSupervisor)
+    if (!canCrossBranches(scope))
       return deny("STORE_FORBIDDEN", "You cannot change another branch's records.");
     return { ok: true, op };
   }
   // Supervisors keep cross-branch reach; everyone else is pinned.
-  const match = scope.isSupervisor ? op.match : { ...op.match, [column]: scope.storeId };
+  const match = canCrossBranches(scope) ? op.match : { ...op.match, [column]: scope.storeId };
   if (op.kind === "update") {
     const values = { ...op.values };
     if (
-      !scope.isSupervisor &&
+      !canCrossBranches(scope) &&
       values[column] !== undefined &&
       String(values[column]) !== scope.storeId
     )
@@ -868,7 +876,7 @@ function authorizeTransfer(
   op: RelayOp,
   scope: RelayScope,
 ): Promise<{ ok: true; op: RelayOp } | RelayDenial> | ({ ok: true; op: RelayOp } | RelayDenial) {
-  if (scope.isSupervisor) return { ok: true, op };
+  if (canCrossBranches(scope)) return { ok: true, op };
   const involved = (row: Record<string, unknown>) =>
     String(row["from_store_id"] ?? "") === scope.storeId ||
     String(row["to_store_id"] ?? "") === scope.storeId;
@@ -918,7 +926,7 @@ async function authorizeChild(
   scope: RelayScope,
   batchIds?: Map<string, Set<string>>,
 ): Promise<{ ok: true; op: RelayOp } | RelayDenial> {
-  if (scope.isSupervisor) return { ok: true, op };
+  if (canCrossBranches(scope)) return { ok: true, op };
   const parent = PARENT_OF[op.table]!;
   const ids: unknown[] =
     op.kind === "insert" || op.kind === "upsert"

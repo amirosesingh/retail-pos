@@ -111,13 +111,15 @@ const approvalTokenVerifier = createApprovalTokenVerifier({
   },
 });
 
+function isManagementDevice(){const t=terminalStore.read();return Boolean(t?.tokenId&&t.deviceUse==="management"&&!t.locationId&&!t.storeId&&!t.branchId);}
 function localBranchId(){
+  if(isManagementDevice())return null;
   const terminal=terminalStore.read()??{};
   return [terminal.locationId,terminal.storeId,terminal.branchId,adminSession.branchId()]
     .map(value=>recordId(String(value??"").trim())).find(Boolean)??null;
 }
 function rememberVerifiedBranch(branchId){
-  if(!branchId)return;
+  if(!branchId||isManagementDevice())return;
   const terminal=terminalStore.read();
   if(terminal?.tokenId&&!terminal.locationId&&!terminal.storeId&&!terminal.branchId){
     terminalStore.write({...terminal,branchId});
@@ -192,6 +194,7 @@ async function observedDatabaseOperation(category, stage, work) {
 }
 let localDataPreparePromise=null;
 function prepareLocalData({force=false}={}){
+  if(isManagementDevice())return Promise.resolve({ok:true,skipped:true});
   // Startup, the automatic ECHANGEGAP recovery path, and a manual database
   // action can request preparation together. Share one lifecycle run so a
   // periodic push cannot race the scoped checkpoint repairs.
@@ -217,6 +220,7 @@ function prepareLocalData({force=false}={}){
 }
 let localDatabaseRecoveryPromise=null;
 function recoverLocalDatabase({prepare=true}={}){
+  if(isManagementDevice())return Promise.resolve(databaseService.snapshot());
   if(localDatabaseRecoveryPromise)return localDatabaseRecoveryPromise;
   localDatabaseRecoveryPromise=(async()=>{
     const restored=await databaseService.restore({reuseValidation:!prepare});
@@ -262,6 +266,7 @@ function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
   automaticSyncScheduler.schedule(delay);
 }
 async function runAutomaticSync() {
+  if(isManagementDevice())return;
   const databaseState=databaseService.snapshot();
   if(databaseState.enabled&&databaseState.configured&&!databaseManager.isConnected()){
     const recovered=await recoverLocalDatabase({prepare:false}).catch(error=>{
@@ -567,7 +572,7 @@ function prepareApplicationClose(forUpdate = false) {
       if (forUpdate && closeWriteBarrier.active.size) throw new Error("Please finish the current transaction before updating.");
       await flushRendererBeforeClose(forUpdate);
       // Even an unregistered window must pass the renderer safety check.
-      if(!databaseService.snapshot().configured && !pendingShiftCloseSync.size)return {ok:true,skipped:true};
+      if(isManagementDevice() || (!databaseService.snapshot().configured && !pendingShiftCloseSync.size))return {ok:true,skipped:true};
       const drained=await settleWithin(() => closeWriteBarrier.sealAndDrain(), SHUTDOWN_SYNC_TIMEOUT_MS);
       if(!drained.ok)throw new Error("Local writes are still finishing. Keep the application open and retry closing.");
       const result=await flushSyncBeforeShutdown();
@@ -1556,6 +1561,7 @@ function registerIpc() {
   ipcPrivilege.install(ipcMain, {
     isFirstRun: () => !terminalStore.wasProvisioned(),
     writeBarrier: closeWriteBarrier,
+    isManagementDevice,
   });
   ipcMain.handle("admin:status", () => adminSession.status());
   ipcMain.handle("admin:lock", () => { sessionAdoptionRevision++; adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
@@ -2240,7 +2246,8 @@ function registerIpc() {
       const backend=/^https:\/\/.+/i.test(savedBackend)?savedBackend:/^https:\/\/.+/i.test(activationBackend)?activationBackend:"";
       if(backend)configStore.set("backendUrl",backend);
       const saved=terminalStore.write(config?{...config,...(backend?{backendUrl:backend}:{})}:config);
-      if(saved?.ok&&config&&terminalIdentityPausedSync){terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
+      if(saved?.ok&&isManagementDevice()){terminalIdentityPausedSync=true;stopAutomaticSync();syncCoordinator.pause();}
+      else if(saved?.ok&&config&&terminalIdentityPausedSync){terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       return saved;
     }
     catch (err) { return guard.refuse(err.message); }

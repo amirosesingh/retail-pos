@@ -1,4 +1,4 @@
-import { IosOtaBoot } from "@/platform-config/ios-ota";
+import { IosOtaBoot, IosUpdateBanner } from "@/platform-config/ios-ota";
 import { ApprovalTokenAgent } from "@/platform-config/approval-token";
 import { VIEWPORT_FIT } from "@/platform-config/viewport";
 import { RELEASE_CHANNEL } from "@/lib/release-channel";
@@ -383,7 +383,7 @@ function TerminalConnectionSetup({ children }: { children: ReactNode }) {
 }
 
 function AppUpdateNotices() {
-  return <><AndroidUpdateBanner /><DesktopUpdateBanner /></>;
+  return <><AndroidUpdateBanner /><DesktopUpdateBanner /><IosUpdateBanner /></>;
 }
 
 /** Till-only runtime. Never mount this on customer-facing URLs. */

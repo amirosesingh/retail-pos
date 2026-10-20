@@ -41,7 +41,7 @@ export const dbBaseRole = (role: StaffRole): "admin" | "manager" | "staff" =>
   role === "admin" ? "admin" : role === "supervisor" ? "manager" : "staff";
 
 /** Create a staff member, or update the one that already holds this username. */
-export async function createStaffMember(input: StaffAccountInput): Promise<void> {
+export async function createStaffMember(input: StaffAccountInput): Promise<{ emailWarning?: string }> {
   const identifier = input.username.trim().toLowerCase();
   const emailMode = looksLikeEmail(identifier);
   if (!input.roleSlug) throw new Error("Choose a role for this person");
@@ -69,6 +69,7 @@ export async function createStaffMember(input: StaffAccountInput): Promise<void>
     },
   });
   if (!res.ok) throw new Error(res.error);
+  return { emailWarning: res.emailWarning };
 }
 
 /** Turn an account on or off. A blocked person cannot sign in anywhere. */

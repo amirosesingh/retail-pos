@@ -155,14 +155,12 @@ describe("settings section ownership", () => {
     ["integrations.stockNumbering", "stockNumbering"],
     ["integrations.country", "region"],
     ["integrations.rounding", "rounding"],
-    ["integrations.terminalPurpose", "workspace"],
     ["integrations.sellingLayout", "workspace"],
   ])("routes %s to only the %s block", (path, section) => {
     expect(sectionOfPath(path)?.id).toBe(section);
   });
 
   it("keeps workspace choices in the terminal settings family", () => {
-    expect(sectionOfPath("integrations.terminalPurpose")?.scopeFamily).toBe("terminal");
     expect(sectionOfPath("integrations.sellingLayout")?.scopeFamily).toBe("terminal");
   });
 

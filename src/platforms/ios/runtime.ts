@@ -1,8 +1,10 @@
+import { iosInstallSafe } from "./install-safety";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { CapacitorUpdater } from "@capgo/capacitor-updater";
 import { Preferences } from "@capacitor/preferences";
 import { App } from "@capacitor/app";
 import { APP_VERSION } from "@/version";
+import { updateRestartSafe } from "@/lib/update-safety";
 import { flushTicketDrafts } from "@/lib/session-draft";
 import { flushNativeStorage } from "@/platforms/mobile/mobile-storage";
 import { IosOtaService } from "./service";
@@ -10,11 +12,15 @@ import type { Trust } from "./manifest";
 const nativeTrust = registerPlugin<{ configuration(): Promise<Trust> }>("RetailOtaTrust");
 const key = "retail.ios.ota.v1";
 let edited = false;
-const safe = () =>
-  location.pathname === "/settings/updates" &&
-  document.visibilityState === "visible" &&
-  !edited &&
-  !document.querySelector('[role="dialog"], [role="alertdialog"], [aria-busy="true"]');
+let manualInstallPath: string | null = null;
+const safe = () => iosInstallSafe({
+  pathname: location.pathname,
+  confirmedPath: manualInstallPath,
+  transactionSafe: updateRestartSafe(),
+  visible: document.visibilityState === "visible",
+  edited,
+  blocked: Boolean(document.querySelector('[role="dialog"], [role="alertdialog"], [aria-busy="true"]')),
+});
 export const iosOta = new IosOtaService({
   builtinVersion: APP_VERSION,
   updater: CapacitorUpdater,
@@ -66,6 +72,8 @@ export function startIosOta() {
   })());
 }
 export function allowManualInstall() {
-  // Explicit confirmation is only available on the read-only updater page.
-  if (location.pathname === "/settings/updates") edited = false;
+  // Call only after explicit confirmation. Navigation, new edits, active
+  // checkout operations and open dialogs still prevent the reload.
+  manualInstallPath = location.pathname;
+  edited = false;
 }

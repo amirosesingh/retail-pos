@@ -1,3 +1,4 @@
+import { canCrossBranches } from "@/core/api/relay-policy.server";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
 /**
  * Shared handler for the POS sync relay.
@@ -242,7 +243,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     // A till may only ask about its own branch.
     if (
       body.read.kind === "activeShift" &&
-      !scope.isSupervisor &&
+      !canCrossBranches(scope) &&
       body.read.storeId !== scope.storeId
     )
       return Response.json(

@@ -1,4 +1,5 @@
 name: Publish beta - Android, Windows and iPhone
+run-name: Publish beta ${{ inputs.version || github.ref_name }} - Android, Windows and iPhone
 on:
   # A release tag is created only after the owner says "Publish beta now".
   # This works before this workflow has been promoted to the default branch.
@@ -10,6 +11,14 @@ on:
         description: 'Enter Publish beta now after the owner requests this release'
         required: true
         type: string
+      version:
+        description: 'Next beta version shown in Actions (must match the automatically selected version)'
+        required: false
+        type: string
+      cleanup_previous_betas:
+        description: 'Keep this new beta and only the newest previous beta'
+        type: boolean
+        default: false
 concurrency:
   group: beta-release
   cancel-in-progress: false
@@ -40,9 +49,17 @@ jobs:
       - run: npm ci
       - id: beta
         env:
-          SEQUENCE: ${{ github.run_number }}
-        run: echo "version=$(node scripts/prepare-beta.cjs --next "$SEQUENCE")" >> "$GITHUB_OUTPUT"
+          REQUESTED_BETA_VERSION: ${{ inputs.version }}
+        run: |
+          version=$(node scripts/prepare-beta.cjs --next)
+          if [ -n "$REQUESTED_BETA_VERSION" ] && [ "$REQUESTED_BETA_VERSION" != "$version" ]; then
+            echo "Requested beta version does not match the next available version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "## Beta $version - Android, Windows and iPhone" >> "$GITHUB_STEP_SUMMARY"
   windows:
+    name: Windows ${{ needs.prepare.outputs.version }}
     needs: prepare
     uses: ./.github/workflows/desktop-release.yml
     with:
@@ -52,6 +69,7 @@ jobs:
       beta_number: ${{ fromJSON(github.run_number) }}
     secrets: inherit
   android:
+    name: Android ${{ needs.prepare.outputs.version }}
     needs: prepare
     uses: ./.github/workflows/android-apk.yml
     with:
@@ -61,11 +79,13 @@ jobs:
       beta_number: ${{ fromJSON(github.run_number) }}
     secrets: inherit
   ios:
+    name: iPhone ${{ needs.prepare.outputs.version }}
     needs: prepare
     uses: ./.github/workflows/ios-beta-build.yml
     with:
       beta_version: ${{ needs.prepare.outputs.version }}
   publish:
+    name: Publish ${{ needs.prepare.outputs.version }}
     needs: [prepare, windows, android, ios]
     runs-on: ubuntu-latest
     concurrency:
@@ -78,11 +98,11 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Retail-windows-publish
           path: upload
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Retail-android-publish
           path: release-assets
@@ -94,7 +114,7 @@ jobs:
           AWS_DEFAULT_REGION: auto
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: node scripts/publish-beta-release.cjs
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Retail-iOS-Beta-unsigned-${{ github.sha }}
           path: ios-release-assets
@@ -122,6 +142,7 @@ jobs:
             ios-release-assets/*.ipa
       - name: Keep the latest six beta versions only
         env:
+          BETA_RETENTION_LIMIT: ${{ inputs.cleanup_previous_betas && '2' || '6' }}
           GH_TOKEN: ${{ github.token }}
           BETA_VERSION: ${{ needs.prepare.outputs.version }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

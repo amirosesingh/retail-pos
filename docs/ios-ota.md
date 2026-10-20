@@ -121,3 +121,9 @@ immutable ZIP before its signed production manifest. Never point a beta-installe
 IPA at the production manifest: the native app identity and trust configuration
 are distinct. Moving from the beta app to the stable app requires installing the
 stable IPA once; subsequent compatible stable interface updates use OTA.
+
+## CLI security upgrade gate
+
+PR #283's 8.83.2 upgrade is withdrawn: GHSA-86w9-cpqp-85rv affects node-forge through 1.4.0, including code embedded in that CLI distribution. Retain the exact 7.87.0 pin until a replacement passes both the dependency audit and review of its bundled dependencies; an npm override alone is insufficient. Do not suppress the audit or replace cryptographic verification to permit the upgrade.
+
+Run `node --test scripts/test-ios-ota-packaging.cjs` when changing the CLI. CI exercises the real official ZIP command with the production arguments, independently verifies its SHA-256 result, and checks that missing index.html is rejected. This test uses temporary local files and needs no signing key, cloud credentials or publication.

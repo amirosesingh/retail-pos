@@ -254,7 +254,7 @@
   },
   {
     "id": "dashboard",
-    "label": "Live dashboard",
+    "label": "Home / Live dashboard",
     "routes": [
       "/dashboard"
     ],
@@ -348,16 +348,6 @@
     "label": "Mobile terminal activation",
     "routes": [
       "/settings/mobile-terminals"
-    ],
-    "keys": [
-      "can_manage_terminals"
-    ]
-  },
-  {
-    "id": "settings-admin-terminals",
-    "label": "Admin web activation",
-    "routes": [
-      "/settings/admin-terminals"
     ],
     "keys": [
       "can_manage_terminals"

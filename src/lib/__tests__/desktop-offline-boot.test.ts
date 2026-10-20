@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 const query = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/connection-profile", () => ({ awaitProfileHydrated: async () => {} }));
-vi.mock("@/core/local-db/local-db", () => ({ localDb: () => ({ database: { getState: async () => ({ connected: true }) } }) }));
+vi.mock("@/core/local-db/local-db", () => ({ localConfigurationBridge: () => ({ database: { getState: async () => ({ connected: true }) } }) }));
 vi.mock("@/platform-config/features", () => ({ isWindowsShell: () => true }));
 vi.mock("@/lib/external-supabase-config", () => ({ hasSupabaseConfig: () => true }));
 vi.mock("@/integrations/supabase/external-client", () => ({ supabaseExternal: { from: () => ({ select: () => ({ limit: query }) }) } }));

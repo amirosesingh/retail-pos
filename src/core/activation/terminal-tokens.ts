@@ -1,3 +1,4 @@
+import { setManagementDevice } from "@/lib/management-device";
 /**
  * Windows terminal activation tokens.
  *
@@ -126,6 +127,7 @@ const rpcOn = (client: unknown, fn: string, args: Record<string, unknown>) =>
  * packaged terminal needs no environment variables of its own.
  */
 function applyTenantOverride(config: TerminalConfig | null): void {
+  setManagementDevice(config);
   let changed = false;
   if (config?.supabaseUrl && config?.supabaseKey) {
     changed = setTerminalSupabaseOverride(config.supabaseUrl, config.supabaseKey) || changed;
@@ -285,7 +287,8 @@ export async function listTerminalTokens(): Promise<TerminalToken[]> {
 
 /** Create the token row and return the base64 activation code for the till. */
 export async function issueTerminalToken(input: {
-  location: TokenLocation;
+  location: TokenLocation | null;
+  management?: boolean;
   locationName: string;
   deviceName: string;
   /** Defaults to a desktop till. */
@@ -296,12 +299,14 @@ export async function issueTerminalToken(input: {
   claimProof?: string;
 }): Promise<{ token: TerminalToken; code: string }> {
   // Self-healing: guarantee the referenced location row exists.
-  await ensureLocations([input.location]);
+  if (!input.location && !input.management) throw new Error("Operations terminals require a branch.");
+  if (input.management && input.location) throw new Error("Management devices use the signed-in user’s branches.");
+  if (input.location) await ensureLocations([input.location]);
   const id = input.tokenId || crypto.randomUUID();
   const issuedAt = Date.now();
   const row = {
     id,
-    location_id: input.location.id,
+    location_id: input.location?.id ?? null,
     location_name: input.locationName,
     device_name: input.deviceName,
     platform: input.platform ?? "pc",
@@ -383,6 +388,7 @@ export async function reissueTerminalToken(
 
 export type TerminalConfig = {
   tokenId: string;
+  deviceUse?: "operations" | "management";
   /** human-readable name of this physical machine, shown everywhere */
   deviceName?: string;
   /** pc or mobile, as recorded when the code was issued */
@@ -903,7 +909,8 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     tokenId: payload.token_id,
     deviceName: payload.device_name?.trim() || remote.locationName || "",
     deviceType: tokenPlatformForRuntime(shell) ?? "pc",
-    locationId: payload.location_id || remote.locationId,
+    deviceUse: remote.locationId ? "operations" : "management",
+    locationId: remote.locationId,
     locationName: remote.locationName || payload.location_name,
     supabaseUrl: payload.supabase_url,
     supabaseKey: payload.supabase_key,
@@ -933,7 +940,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
   }
   // Give this till its own machine account so its writes are accepted by the
   // central database even when a cashier signs in with a PIN.
-  void import("@/lib/terminal-session").then((m) => m.provisionTerminalAccount(config.tokenId)).catch(() => null);
+  if (config.locationId) void import("@/lib/terminal-session").then((m) => m.provisionTerminalAccount(config.tokenId)).catch(() => null);
   return config;
 }
 
@@ -1044,6 +1051,7 @@ export function decodePairingRequest(value: string): PairingRequest | null {
  */
 type PairingApproval = {
   approved: boolean;
+  managementDevice?: boolean;
   status?: TokenStatus;
   locationId?: string;
   locationName?: string;
@@ -1079,7 +1087,7 @@ export async function activateWithTokenId(request: PairingRequest): Promise<Term
       "This terminal has been revoked by management.",
     );
   }
-  if (!approval.locationId || !approval.supabaseUrl || !approval.supabaseKey) {
+  if ((!approval.locationId && !approval.managementDevice) || !approval.supabaseUrl || !approval.supabaseKey) {
     throw new ActivationError(
       "The POS server returned an incomplete pairing approval. Ask an administrator to check the hosted database settings.",
     );
@@ -1113,7 +1121,8 @@ export async function activateWithTokenId(request: PairingRequest): Promise<Term
     tokenId: request.tokenId,
     deviceName: approval.deviceName || request.deviceName,
     deviceType: tokenPlatformForRuntime(shell) ?? "pc",
-    locationId: approval.locationId,
+    deviceUse: approval.managementDevice ? "management" : "operations",
+    locationId: approval.locationId || "",
     locationName: approval.locationName || "",
     supabaseUrl: approval.supabaseUrl,
     supabaseKey: approval.supabaseKey,
@@ -1131,13 +1140,14 @@ export async function activateWithTokenId(request: PairingRequest): Promise<Term
     }
   }
   writeTerminalConfig(config);
+  if (desktopBridge()) await mirrorTerminalConfigToDesktop();
   clearPairingRequest();
   await rpcOn(tenant, "terminal_token_heartbeat", {
     p_token_id: request.tokenId,
     p_activate: true,
     p_proof_hash: request.proofHash,
   });
-  void import("@/lib/terminal-session")
+  if (config.locationId) void import("@/lib/terminal-session")
     .then((m) => m.provisionTerminalAccount(request.tokenId))
     .catch(() => null);
   return config;

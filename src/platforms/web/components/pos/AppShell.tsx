@@ -1,16 +1,18 @@
+import { useLocalStartupReady } from "@/lib/use-local-startup";
+import { signInDestination } from "@/lib/sign-in-destination";
+import { isManagementDevice } from "@/lib/management-device";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ApprovalTokenButton } from "@/platform-config/approval-token";
-import { useAdminWebActivation } from "@/lib/use-admin-web-activation";
 import { isLocationSetupRoute } from "@/lib/app-shell-routes";
 import { usePersonalAppearance, usePersonalAppearanceSync } from "@/lib/personal-appearance";
 import { setPersonalLanguage } from "@/lib/time-zone";
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
 import { LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { usePos } from "@/lib/pos-store";
 import { useAuth, type PermissionFlag } from "@/lib/pos-auth";
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { TerminalLogin } from "@/platforms/web/components/pos/TerminalLogin";
 import {
   TerminalActivation,
@@ -38,7 +40,7 @@ import { ThemeToggle } from "@/platforms/web/components/pos/ThemeToggle";
 import { hydrateBillSequence } from "@/lib/bill-number";
 import { DbConnectionModal } from "@/platforms/windows/components/DbConnectionModal";
 import { UpdateHeaderButton } from "@/platforms/web/components/pos/UpdateHeaderButton";
-import { routePermissionForPath, type NavItem } from "@/platforms/web/components/pos/nav-config";
+import { canSeeNavigationItem, routePermissionForPath, type NavItem } from "@/platforms/web/components/pos/nav-config";
 import { setPrintStore, setPrintSettings, setServiceTerms } from "@/lib/pos-print";
 import { bookingRulesOf } from "@/core/types/pos-types";
 import {
@@ -110,7 +112,6 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function AppShellFrame({ children }: { children: ReactNode }) {
   const isMobile = useIsMobile();
-  useAdminWebActivation();
   useEffect(() => startSyncEngine(), []);
   useEffect(() => localDb()?.onBeforeClose?.(() => flushTicketDrafts().then(() => undefined)), []);
   const { stores, currentStore, setCurrentStore, state, ready: dataReady, retryLoad } = usePos();
@@ -154,35 +155,39 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // Registration and connectivity are read separately: a dead link must never
   // look like a failed activation.
   const startup = useStartupGate();
+  const localStartupReady = useLocalStartupReady() && startup.registration === "registered";
   const location = useLocation();
   const { visibleRoute } = useVisibility();
 
-  // A route belongs to the person who opened it. The immediately returning
-  // operator may carry on, but a different sign-in starts at the workspace so
-  // an admin settings URL can never leak into a cashier session. Remembering
-  // only the most recent identity also means A -> B -> A starts A fresh.
+  const navigate = useNavigate();
+  const sawSignedOut = useRef(false);
+  const handledIdentity = useRef<string | null>(null);
+  // Apply the default once per sign-in, not on navigation or permission refresh.
+  // A restored session keeps its current page and any in-progress selling flow.
   useEffect(() => {
-    if (!user) return;
-    // Profile hydration may replace the provisional staffId after sign-in.
-    // The authentication account / terminal person key remains stable and
-    // must be used so an in-flight page is not mistaken for another user.
-    const identity = terminalUser?.userCode
-      ? `terminal:${terminalUser.userCode}`
-      : authUserId
-        ? `auth:${authUserId}`
-        : `user:${user.email || user.staffId || user.name}`;
-    const key = "pos.last-signed-in-identity";
-    let previous: string;
-    try {
-      previous = window.sessionStorage.getItem(key) ?? "";
-      window.sessionStorage.setItem(key, identity);
-    } catch {
+    if (!ready) return;
+    if (!user) {
+      sawSignedOut.current = true;
+      handledIdentity.current = null;
       return;
     }
-    if (previous && previous !== identity && location.pathname !== "/") {
-      window.location.replace("/");
+    const identity = terminalUser?.userCode
+      ? `terminal:${terminalUser.userCode}`
+      : authUserId ? `auth:${authUserId}` : `user:${user.email || user.staffId || user.name}`;
+    if (handledIdentity.current === identity) return;
+    handledIdentity.current = identity;
+    let previous = "";
+    try {
+      previous = window.sessionStorage.getItem("pos.last-signed-in-identity") ?? "";
+      window.sessionStorage.setItem("pos.last-signed-in-identity", identity);
+    } catch { /* In-memory tracking still prevents repeated redirects. */ }
+    const freshSignIn = sawSignedOut.current || (previous !== identity);
+    sawSignedOut.current = false;
+    if (freshSignIn) {
+      const to = signInDestination(isAdmin, can("can_view_dashboard"), visibleRoute("/dashboard"));
+      void navigate({ to, search: {}, replace: true });
     }
-  }, [user, authUserId, terminalUser?.userCode, location.pathname]);
+  }, [ready, user, authUserId, terminalUser?.userCode, isAdmin, can, visibleRoute, navigate]);
 
   const appearance = usePersonalAppearance();
   usePersonalAppearanceSync(appearance.key, appearance.owner);
@@ -268,10 +273,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
 
   // A registered till fixes the branch for everyone signed in on it; otherwise
   // an account with a single assigned branch is pinned to that one.
-  // The phone app is an admin tool: an admin on Android keeps the freedom to
-  // look at any branch, so the terminal pin does not apply to them there.
+  // Unbound management phones follow the signed-in account branch assignment.
   useEffect(() => {
-    if (isNative() && isAdmin) return;
     const pinned = terminalStoreId ?? (canSwitchStores ? null : (user?.storeId ?? soleBranchId()));
     if (user && pinned && currentStore.id !== pinned) setCurrentStore(pinned);
   }, [user, isAdmin, canSwitchStores, terminalStoreId, currentStore.id, setCurrentStore]);
@@ -293,12 +296,11 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // The connection profile is part of that: showing setup while it is still
   // being read out of the vault is what used to send a working till back to
   // the connection screen after a restart.
-  // The first connection check of the launch is part of that same window: a
-  // decision taken before it has answered is a decision taken on a guess.
-  // A registered till also waits for the first answer about its own
-  // registration, so a deleted terminal never reaches the sales screen.
+  // Online-only devices wait for cloud checks. An activated Windows till with
+  // validated local SQL may start immediately while revocation checks continue.
+  // A confirmed revocation still blocks the terminal below.
   const awaitingVerdict =
-    (isDesktop() || isNative()) && Boolean(terminal.config) && !terminal.verified;
+    (isDesktop() || isNative()) && Boolean(terminal.config) && !terminal.verified && !localStartupReady;
   // Persist the activation summary until Continue. Saving the verified config
   // causes background startup checks, which previously unmounted it immediately.
   if ((isDesktop() || isNative()) && activationFlowOpen && !terminal.revoked)
@@ -318,7 +320,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     ((isDesktop() || isNative()) && startup.loading) ||
     !profileHydrated ||
     awaitingVerdict ||
-    ((isDesktop() || isNative()) && startup.probing)
+    ((isDesktop() || isNative()) && startup.probing && !localStartupReady)
   )
     return <TillLoader message="Checking terminal connection…" onRetry={startup.refresh} />;
 
@@ -331,7 +333,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       registration: startup.registration,
       verdict: startup.verdict,
       activated: Boolean(terminal.config),
-      offlineCapable: hasFeature("offlineFirst"),
+      offlineCapable: hasFeature("offlineFirst") && !isManagementDevice(),
     });
     // Step 1 — no usable database connection: ask for the URL and key.
     if (decision === "offline-blocked") return <OfflineStatus force />;
@@ -368,6 +370,12 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         <TerminalLogin />
       </>
     );
+  if ((isDesktop() || isNative()) && isManagementDevice() && !isSupervisor)
+    return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
+      <h1 className="text-lg font-semibold">Management device</h1>
+      <p>Sign in with an administrator or supervisor account. This registration does not grant management permissions.</p>
+      <Button onClick={() => void logout()}>Use another account</Button>
+    </div>;
   if (!dataReady && !offlineBypass)
     return <TillLoader onRetry={retryLoad} onContinueOffline={() => setOfflineBypass(true)} />;
   // Nothing can be sold, received or moved without somewhere to book it to.
@@ -392,11 +400,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // The sidebar and the route guard below run exactly the same test, so a link
   // that is shown always opens, and a link that is hidden cannot be reached by
   // typing its address either.
-  const canSee = (item: NavItem) => {
-    if (item.flag && !can(item.flag)) return false;
-    if (item.adminOnly && !isAdmin && !item.flag) return false;
-    return visibleRoute(item.to);
-  };
+  const canSee = (item: NavItem) => canSeeNavigationItem(item, can, isAdmin, visibleRoute);
 
   const Brand = ({ mini }: { mini?: boolean }) => (
     <div
@@ -423,7 +427,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
 
   // An admin on the phone browses every branch even though the device itself
   // is registered to one.
-  const mayPickStore = canSwitchStores || (isNative() && isAdmin);
+  const mayPickStore = canSwitchStores;
 
   const StorePicker = ({ compact = false }: { compact?: boolean } = {}) =>
     mayPickStore ? (

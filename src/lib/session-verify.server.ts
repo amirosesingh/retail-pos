@@ -35,6 +35,22 @@ type StaffTokenCheck =
   | { state: "verified"; storeId: string | null }
   | { state: "revoked" | "unavailable" };
 
+/** Account status must be checked before a saved person session is restored. */
+async function verifyAccountStatus(identity: { authUserId?: string | null; staffUserId?: string | null }): Promise<StaffTokenCheck> {
+  const filter = identity.authUserId
+    ? `auth_user_id=eq.${encodeURIComponent(identity.authUserId)}`
+    : identity.staffUserId ? `user_id=eq.${encodeURIComponent(identity.staffUserId)}` : null;
+  if (!filter) return { state: "unavailable" };
+  try {
+    const response = await serviceRest(`app_users?${filter}&select=is_active,store_id&limit=1`, { signal: AbortSignal.timeout(8_000) });
+    if (!response.ok) return { state: "unavailable" };
+    const [profile] = await response.json() as { is_active: boolean; store_id: string | null }[];
+    if (!profile) return { state: "unavailable" };
+    if (profile.is_active === false) return { state: "revoked" };
+    return profile.is_active === true ? { state: "verified", storeId: profile.store_id } : { state: "unavailable" };
+  } catch { return { state: "unavailable" }; }
+}
+
 /**
  * Validate a browser account on the server so an expected revoked-session
  * answer never appears as a failed `/auth/v1/user` resource in DevTools.
@@ -58,7 +74,8 @@ async function verifyStaffAccessToken(accessToken: string): Promise<StaffTokenCh
       ? { state: "unavailable" }
       : { state: "revoked" };
   }
-  return { state: "verified", storeId: null };
+  const user = await response.json() as { id?: string };
+  return verifyAccountStatus({ authUserId: user.id });
 }
 
 export async function verifySessionServer(input: VerifyInput): Promise<VerifyResult> {
@@ -105,6 +122,12 @@ export async function verifySessionServer(input: VerifyInput): Promise<VerifyRes
     caller = await verifyRelayCaller(input);
   } catch {
     return { ok: false, reason: "revoked" };
+  }
+
+  if (caller.kind !== "terminal") {
+    const account = await verifyAccountStatus(caller);
+    if (account.state !== "verified")
+      return { ok: false, reason: account.state === "revoked" ? "revoked" : "unavailable" };
   }
 
   const storeId = input.storeId?.trim() || caller.storeId || null;

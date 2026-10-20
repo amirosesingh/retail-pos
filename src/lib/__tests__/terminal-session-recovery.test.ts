@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   session: null as unknown,
+  branch: "branch-a",
   saved: null as unknown,
   getUser: vi.fn(),
   refresh: vi.fn(),
@@ -25,7 +26,7 @@ vi.mock("../device-secrets", () => ({
   setDeviceSecret: vi.fn(),
 }));
 vi.mock("@/core/activation/terminal-tokens", () => ({
-  readTerminalConfig: () => ({ tokenId: "terminal-id" }),
+  readTerminalConfig: () => ({ tokenId: "terminal-id", locationId: state.branch, deviceType: "mobile" }),
 }));
 vi.mock("@/core/activation/device-proof", () => ({ deviceProofHash: async () => "proof" }));
 vi.mock("../audit-log", () => ({ logger: { log: vi.fn() } }));
@@ -38,6 +39,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("window", {});
   state.session = null;
+  state.branch = "branch-a";
   state.saved = {
     email: "terminal@example",
     password: "secret",
@@ -97,4 +99,12 @@ it("never sends missing email/password from an invalid provisioning response", a
   const { ensureTerminalSession } = await import("../terminal-session");
   expect(await ensureTerminalSession()).toBe(false);
   expect(state.login).not.toHaveBeenCalled();
+});
+
+it("does not use saved machine credentials for a management phone", async () => {
+  state.branch = "";
+  const { ensureTerminalSession } = await import("../terminal-session");
+  expect(await ensureTerminalSession()).toBe(false);
+  expect(state.login).not.toHaveBeenCalled();
+  expect(state.provision).not.toHaveBeenCalled();
 });

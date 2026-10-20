@@ -36,7 +36,7 @@ jobs:
       - name: Updater lifecycle and release retention checks
         run: node --test scripts/test-updater.cjs scripts/test-windows-publish.cjs scripts/test-update-history.cjs scripts/test-shutdown-sync.cjs scripts/test-report-days.cjs scripts/test-beta-release.cjs scripts/test-beta-domains.cjs scripts/test-beta-retention.cjs scripts/test-beta-publication.cjs scripts/test-android-update-setup.cjs scripts/test-mobile-interface.cjs
       - name: iPhone stable and beta release boundaries
-        run: node --test scripts/test-ios-stable-release.cjs scripts/test-ios-beta-publish.cjs
+        run: node --test scripts/test-ios-stable-release.cjs scripts/test-ios-beta-publish.cjs scripts/test-ios-ota-packaging.cjs
       - name: Lint
         run: npm run lint
       - name: Typecheck & build

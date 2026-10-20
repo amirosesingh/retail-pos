@@ -71,6 +71,7 @@ async function handlePost(request: Request): Promise<Response> {
       approved: true,
       status: row.status,
       locationId: row.location_id,
+      managementDevice: row.location_id === null,
       locationName: row.location_name ?? "",
       deviceName: row.device_name ?? "",
       expiresAt: row.expires_at,

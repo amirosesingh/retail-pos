@@ -8,8 +8,8 @@
  * The local engine lives in the Windows desktop shell (native SQL Server
  * driver in the Electron main process); this module only asks the bridge.
  */
+import { localConfigurationBridge } from "@/core/local-db/local-db";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { localDb } from "@/core/local-db/local-db";
 import { hasSupabaseConfig } from "@/lib/external-supabase-config";
 import { awaitProfileHydrated } from "@/lib/connection-profile";
 import { clearConnectivityIssue } from "@/lib/session-expiry";
@@ -208,7 +208,7 @@ function settleVerdict(cloud: boolean) {
 }
 
 async function probeLocal(): Promise<boolean> {
-  const bridge = localDb();
+  const bridge = localConfigurationBridge();
   if (!bridge) return false;
   // Current Electron builds expose the startup-restored SQL Server state on
   // `database.getState`. Keep the old `status` fallback for installed shells

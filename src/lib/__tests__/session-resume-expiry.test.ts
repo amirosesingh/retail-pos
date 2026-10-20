@@ -4,11 +4,12 @@ import { readFileSync } from "node:fs";
 const mocks = vi.hoisted(() => ({
   sessionReason: "idle" as "idle" | "revoked" | "unavailable" | "ok",
   relay: vi.fn(),
+  rest: vi.fn(),
 }));
 
 vi.mock("@/core/api/pos-relay.server", () => ({
   hasServiceKey: () => true,
-  serviceRest: vi.fn(),
+  serviceRest: mocks.rest,
   verifyRelayCaller: mocks.relay,
 }));
 
@@ -33,6 +34,8 @@ describe("session verification after resume", () => {
   beforeEach(() => {
     mocks.sessionReason = "idle";
     mocks.relay.mockReset();
+    mocks.rest.mockReset();
+    mocks.rest.mockResolvedValue(new Response(JSON.stringify([{ is_active: true, store_id: null }])));
     mocks.relay.mockResolvedValue({ kind: "staff", label: "Sam", storeId: null });
   });
 
@@ -53,6 +56,36 @@ describe("session verification after resume", () => {
       verifySessionServer({ sessionToken: "person-session", accessToken: "auth-token" }),
     ).resolves.toEqual({ ok: false, reason: "unavailable" });
     expect(mocks.relay).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("checks current account status before restoring Auth (active=%s)", async (active) => {
+    const request = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ id: "auth-user" })));
+    mocks.rest.mockResolvedValueOnce(new Response(JSON.stringify([{ is_active: active, store_id: null }])));
+    try {
+      expect(await verifySessionServer({ accessToken: "valid-saved-token" })).toEqual(active
+        ? { ok: true, kind: "staff", storeId: null } : { ok: false, reason: "revoked" });
+      expect(mocks.rest).toHaveBeenCalledWith("app_users?auth_user_id=eq.auth-user&select=is_active,store_id&limit=1", expect.anything());
+    } finally { request.mockRestore(); }
+  });
+
+  it.each(["cashier", "staff"])("rejects disabled %s person sessions even with a valid registered terminal", async (kind) => {
+    mocks.sessionReason = "ok";
+    mocks.relay.mockResolvedValue({ kind, staffUserId: "sports-warehouse", storeId: null });
+    mocks.rest.mockResolvedValueOnce(new Response(JSON.stringify([{ is_active: false, store_id: null }])));
+    expect(await verifySessionServer({ sessionToken: "valid-session", terminalToken: "registered" })).toEqual({ ok: false, reason: "revoked" });
+  });
+
+  it("does not misclassify account database downtime as deactivation", async () => {
+    const request = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ id: "auth-user" })));
+    mocks.rest.mockRejectedValueOnce(new TypeError("offline"));
+    try { expect(await verifySessionServer({ accessToken: "valid-saved-token" })).toEqual({ ok: false, reason: "unavailable" }); }
+    finally { request.mockRestore(); }
+  });
+
+  it("keeps terminal-only registration separate from staff account status", async () => {
+    mocks.relay.mockResolvedValue({ kind: "terminal", storeId: null });
+    expect(await verifySessionServer({ terminalToken: "registered" })).toEqual({ ok: true, kind: "terminal", storeId: null });
+    expect(mocks.rest).not.toHaveBeenCalled();
   });
 
   it("maps a server-side GoTrue refusal to a clean revoked result", async () => {
@@ -96,7 +129,7 @@ describe("logout scope", () => {
     expect(activation).toContain('.auth.signOut({ scope: "local" })');
     expect(auth).toContain('reason === "expired"');
     expect(auth).toContain("await discardRejectedExternalAuthSession()");
-    expect(auth).toContain('centralSessionVerifiedRef.current = checked.state === "verified"');
+    expect(auth).toContain('centralSessionVerifiedRef.current = Boolean(next && checked.state === "verified")');
     const client = readFileSync("src/integrations/supabase/external-client.ts", "utf8");
     expect(client).toContain('new URL(requestUrl).pathname.endsWith("/auth/v1/logout")');
     expect(client).toContain('await client.auth.signOut({ scope: "local" })');
@@ -107,7 +140,7 @@ describe("logout scope", () => {
     expect(auth).toContain('import("@/lib/session-verify-client")');
     expect(auth).toContain("data: { accessToken: current.access_token }");
     expect(auth).toContain("validateCentralAuthSession(");
-    expect(auth).toContain('if (authCheck.state === "verified")');
-    expect(auth).toContain('authCheck.state === "rejected" || !authCheck.session');
+    expect(auth).toContain('if (authCheck.state === "verified" && matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current))');
+    expect(auth).toContain('authCheck.state === "rejected" || !matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current)');
   });
 });
