@@ -33,7 +33,7 @@ import { recordSignIn } from "@/lib/shift-attendance";
 import { endShiftSessions } from "@/lib/shift-sessions";
 import { notifySessionExpired, onSessionExpired } from "@/lib/session-expiry";
 import { validateStoredAuthSession } from "@/lib/auth-session-guard";
-import { setCentralAuthSessionPresent as publishCentralAuthSessionPresent } from "@/lib/session-presence";
+import { setCentralAuthSessionPresent as publishCentralAuthSessionPresent, setSessionStartupPending } from "@/lib/session-presence";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 import {
   clearAutoLockActivity,
@@ -271,6 +271,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [authReady, setAuthReady] = useState(false);
+  // A cached cashier profile is not proof that its POS session survived idle expiry.
+  const [personSessionReady, setPersonSessionReady] = useState(false);
   const [rolesReady, setRolesReady] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
   const [authEnabled, setAuthEnabled] = useState(() => !isTerminalApp());
@@ -317,11 +319,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       subscribeExternalClientReset(() => {
+        setSessionStartupPending(true);
         setCentralSessionVerified(false);
         setSession(null);
         setRoles([]);
         setAppUser(null);
         setAuthReady(false);
+        setPersonSessionReady(false);
         setRolesReady(false);
         setProfileReady(false);
         setAuthClientGeneration((current) => current + 1);
@@ -1231,7 +1235,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const centralUserId = session?.user?.id ?? null;
   const terminalUserCode = terminalUser?.userCode ?? null;
   useEffect(() => {
-    if (typeof window === "undefined" || (!terminalUserCode && (!centralUserId || !centralAuthVerified))) return;
+    if (!personSessionReady || typeof window === "undefined" || (!terminalUserCode && (!centralUserId || !centralAuthVerified))) return;
     const startedAt = sessionEpoch();
     const current = () => isCurrentEpoch(startedAt);
     let nativeProfile: string | null = null;
@@ -1301,7 +1305,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(APP_RESUME_EVENT, check);
       document.removeEventListener("visibilitychange", check);
     };
-  }, [terminalUserCode, centralUserId, centralAuthVerified]);
+  }, [terminalUserCode, centralUserId, centralAuthVerified, personSessionReady]);
   useEffect(() => {
     // A PIN/offline terminal user has no Supabase bearer. Its status is
     // enforced by the signed device session, not by an authenticated-only RPC.
@@ -1344,11 +1348,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // exists. Only a definite refusal signs anyone out — offline stays working.
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!authReady) return;
+    if (!authEnabled) {
+      setPersonSessionReady(true);
+      return;
+    }
     let alive = true;
     let checking = false;
     const check = async () => {
       if (document.visibilityState === "hidden") return;
-      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        setPersonSessionReady(true);
+        return;
+      }
       if (checking) return;
       checking = true;
       const startedAt = sessionEpoch();
@@ -1386,20 +1398,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // session. If that browser token expires, keep the proven POS session
         // and let the server validate its revocable device/cashier proof below.
         if (authCheck.state === "rejected" && !hasIndependentPosProof) {
-          notifySessionExpired(startedAt);
+          await endSession("expired", startedAt);
           return;
         }
-        if (!creds.cashierToken && !creds.terminalToken && !creds.accessToken) return;
+        if (!creds.sessionToken && !creds.cashierToken && !creds.terminalToken && !creds.accessToken) return;
         const { verifySession } = await import("@/lib/session-verify-client");
-        const res = await verifySession({ data: creds });
+        const res = await verifySession({ data: creds, signal: AbortSignal.timeout(8_000) });
         if (!alive || res.ok || !isCurrentEpoch(startedAt)) return;
         if (res.reason === "revoked" || res.reason === "branch_missing") {
-          notifySessionExpired(startedAt);
+          await endSession("expired", startedAt);
         }
       } catch {
         /* a failed check is a connectivity problem, never a sign-out */
       } finally {
         checking = false;
+        if (alive) setPersonSessionReady(true);
       }
     };
     void check();
@@ -1415,7 +1428,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("online", onVisible);
       window.removeEventListener(APP_RESUME_EVENT, onVisible);
     };
-  }, [user?.staffId, setCentralSessionVerified]);
+  }, [user?.staffId, authReady, authEnabled, endSession, setCentralSessionVerified]);
 
   const isWarehouse =
     user?.role !== "admin" &&
@@ -1448,7 +1461,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.staffId]);
 
-  const ready = authReady && (!!terminalUser || !userId || (rolesReady && profileReady));
+  const ready = authReady && personSessionReady && (!!terminalUser || !userId || (rolesReady && profileReady));
+  useEffect(() => {
+    setSessionStartupPending(!ready);
+    return () => setSessionStartupPending(true);
+  }, [ready]);
 
   const can = useCallback((flag: PermissionFlag) => hasPermission(user, flag), [user]);
 
