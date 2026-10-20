@@ -1,6 +1,7 @@
 import { Switch } from "@/components/ui/switch";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Capacitor } from "@capacitor/core";
+import { CapacitorUpdater } from "@capgo/capacitor-updater";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { iosOta, startIosOta, allowManualInstall } from "./runtime";
@@ -19,13 +20,28 @@ export function IosOtaBoot({ children }: { children: ReactNode }) {
   }, []);
   if (error)
     return (
-      <div className="p-5">
-        <p role="alert">Could not initialize iOS update recovery: {error}</p>
-        <p>
-          Close and reopen the app. The native startup watchdog can recover an unacknowledged
-          bundle.
-        </p>
-      </div>
+      <>
+        <div className="p-3 text-sm" role="alert">
+          <p>Automatic updates are unavailable: {error}</p>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Restore the interface included in the IPA? The app will reopen. Saved database settings are retained.",
+                )
+              ) {
+                void CapacitorUpdater.reset({ toLastSuccessful: false }).catch((e) =>
+                  setError(String(e)),
+                );
+              }
+            }}
+          >
+            Restore built-in interface
+          </Button>
+        </div>
+        {children}
+      </>
     );
   return ready ? (
     children

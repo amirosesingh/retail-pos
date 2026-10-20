@@ -22,6 +22,8 @@ if (action === 'keygen') {
   run(path.join(root, 'scripts/mobile-build.cjs'), [], nativeEnv);
   if (action === 'sync') run(path.join(root, 'node_modules/@capacitor/cli/bin/capacitor'), ['sync', 'ios'], nativeEnv);
 } else if (action === 'package') {
+  // Always create an iOS shell here: a preceding Android build uses the same output folder.
+  run(path.join(root, 'scripts/mobile-build.cjs'), [], nativeEnv);
   const trust = JSON.parse(fs.readFileSync(trustPath));
   const version = process.env.OTA_VERSION || `1.4.75-beta.${new Date().toISOString().replace(/[^0-9]/g, '')}`;
   if (!semver.valid(version)) throw new Error('OTA_VERSION must be a semantic version.');
