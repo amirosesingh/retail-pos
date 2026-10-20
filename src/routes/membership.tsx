@@ -151,7 +151,7 @@ function MembershipPage() {
             </div>
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">My membership</h1>
-              <p className="text-sm text-muted-foreground">Points, rewards and purchase history</p>
+              <p className="text-sm text-muted-foreground page-description">Points, rewards and purchase history</p>
             </div>
           </div>
           {session ? (

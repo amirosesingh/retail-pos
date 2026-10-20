@@ -129,7 +129,7 @@ function SettingsHome() {
               <h1 className="truncate text-xl font-semibold sm:text-2xl">
                 {category ? category.label : "Settings"}
               </h1>
-              <p className="text-sm leading-relaxed text-muted-foreground">
+              <p className="text-sm leading-relaxed text-muted-foreground page-description">
                 {category
                   ? category.blurb
                   : "Everything this till can be configured to do, grouped by area."}

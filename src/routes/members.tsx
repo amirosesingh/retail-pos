@@ -80,7 +80,7 @@ function Members() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Central membership</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               {state.members.length} members · {state.members.reduce((a, m) => a + m.points, 0)}{" "}
               points outstanding
             </p>

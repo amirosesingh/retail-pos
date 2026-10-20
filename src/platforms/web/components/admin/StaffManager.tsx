@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { withReadDeadline } from "@/lib/read-retry";
 import { notifyError } from "@/lib/notify";
@@ -491,6 +492,7 @@ export function StaffManager() {
         <Input
           className="pl-9"
           placeholder="Search name, username, email or role"
+          aria-label="Search staff accounts"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -765,12 +767,12 @@ export function StaffManager() {
               {form.confirmCredential && !credentialMatches && <p className="text-xs text-destructive">The entries must match.</p>}
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Role *</Label>
+              <div className="flex items-center gap-1"><Label htmlFor="staff-role" className="text-xs">Role *</Label><HelpTip label="About role permissions" text={editing && editing.role_slug === form.roleSlug ? "Current permissions are preserved." : "Uses this role’s saved permissions."} /></div>
               <Select
                 value={form.roleSlug}
                 onValueChange={(roleSlug) => setForm({ ...form, roleSlug })}
               >
-                <SelectTrigger>
+                <SelectTrigger id="staff-role">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -781,15 +783,14 @@ export function StaffManager() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">{editing && editing.role_slug === form.roleSlug ? "Current permissions are preserved." : "Uses this role’s saved permissions."}</p>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Branch *</Label>
+              <div className="flex items-center gap-1"><Label htmlFor="staff-branch" className="text-xs">Branch *</Label><HelpTip label="About branch assignment" text="All branches uses the terminal’s branch for each sale." /></div>
               <Select
                 value={form.branchId}
                 onValueChange={(branchId) => setForm({ ...form, branchId })}
               >
-                <SelectTrigger aria-invalid={!branchValid}>
+                <SelectTrigger id="staff-branch" aria-invalid={!branchValid}>
                   <SelectValue placeholder="Select a branch" />
                 </SelectTrigger>
                 <SelectContent>
@@ -801,13 +802,7 @@ export function StaffManager() {
                   ))}
                 </SelectContent>
               </Select>
-              {branchValid ? (
-                <p className="text-xs text-muted-foreground">
-                  All branches uses the terminal’s branch for each sale.
-                </p>
-              ) : (
-                <p className="text-xs text-destructive">Choose a branch, or “All branches”.</p>
-              )}
+              {!branchValid && <p className="text-xs text-destructive">Choose a branch, or “All branches”.</p>}
             </div>
           </div>
           {editing && <StaffIdleTimeout person={{key: editing.user_id, name: editing.full_name, kind: "account"}} />}

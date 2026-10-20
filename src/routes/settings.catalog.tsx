@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Pencil, Plus, Trash2 } from "lucide-react";
@@ -87,8 +88,10 @@ function ListEditor({
   return (
     <div className="space-y-3 rounded-lg border border-border p-4">
       <div>
-        <h3 className="font-medium">{title}</h3>
-        <p className="text-xs text-muted-foreground">{hint}</p>
+        <div className="flex items-center gap-1">
+          <h3 className="font-medium">{title}</h3>
+          <HelpTip text={hint} label={`About ${title}`} />
+        </div>
       </div>
       <div className="flex items-end gap-2">
         <div className="flex-1 space-y-1">
@@ -197,8 +200,7 @@ function CatalogMetaSettings() {
     saveConfiguredSettings,
     settingsScopeLoading,
   } = usePos();
-  const autoArchiveZeroStock =
-    configuredGlobalSettings.integrations.autoArchiveZeroStock !== false;
+  const autoArchiveZeroStock = configuredGlobalSettings.integrations.autoArchiveZeroStock !== false;
 
   const [unitCode, setUnitCode] = useState("");
   const [unitName, setUnitName] = useState("");
@@ -259,7 +261,7 @@ function CatalogMetaSettings() {
       <div className="mx-auto w-full max-w-7xl space-y-6 p-6">
         <header>
           <h1 className="text-2xl font-semibold tracking-tight">Categories & Units</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground page-description">
             Keep three simple lists — categories, groups and sub-categories — and pick from them
             when adding products. Switch an entry off to retire it without losing what old records
             say.
@@ -271,8 +273,8 @@ function CatalogMetaSettings() {
             <p className="font-medium">Automatically archive zero-stock products</p>
             <p className="text-xs text-muted-foreground">
               Enabled by default. Net company stock of zero or less automatically archives a
-              product; positive stock automatically makes it active again. Turn this off to
-              manage archive status manually.
+              product; positive stock automatically makes it active again. Turn this off to manage
+              archive status manually.
             </p>
           </div>
           <Switch

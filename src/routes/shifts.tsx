@@ -251,7 +251,7 @@ function Shifts() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Shifts · {currentStore.name}</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Current shift, drawer control and X / Z reports
             </p>
           </div>

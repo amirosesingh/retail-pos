@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 /**
  * Booking rules.
  *
@@ -59,8 +60,10 @@ function Row({
   return (
     <div className="flex items-center justify-between gap-4 rounded-md border border-border px-3 py-2">
       <div className="min-w-0">
-        <p className="text-sm">{label}</p>
-        <p className="text-xs text-muted-foreground">{hint}</p>
+        <div className="flex items-center gap-1">
+          <p className="text-sm">{label}</p>
+          <HelpTip text={hint} label={`About ${label}`} />
+        </div>
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -104,8 +107,10 @@ function MasterList({
   return (
     <div className="space-y-2 rounded-md border border-border p-3">
       <div>
-        <p className="text-sm">{label}</p>
-        <p className="text-xs text-muted-foreground">{hint}</p>
+        <div className="flex items-center gap-1">
+          <p className="text-sm">{label}</p>
+          <HelpTip text={hint} label={`About ${label}`} />
+        </div>
       </div>
       {items.map((value, i) => (
         <div key={i} className="flex gap-2">

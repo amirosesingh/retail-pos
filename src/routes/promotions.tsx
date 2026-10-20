@@ -103,7 +103,7 @@ function Promotions() {
       <AppShell>
         <div className="p-6">
           <h1 className="text-2xl font-semibold">Promotions & discounts</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
+          <p className="mt-2 text-sm text-muted-foreground page-description">
             You do not have permission to manage promotion rules. Active offers are applied automatically
             on your register.
           </p>
@@ -118,7 +118,7 @@ function Promotions() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Promotions & discounts</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               {rules.filter((p) => isLive(p)).length} live · {rules.length} rules configured
             </p>
           </div>

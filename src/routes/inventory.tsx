@@ -323,7 +323,7 @@ function Inventory() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Inventory · {currentStore.name}</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               <AnimatedMetric value={metrics.products} /> active products ·{" "}
               {showStockValue && (
                 <>
@@ -342,7 +342,7 @@ function Inventory() {
                 <Input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search products"
+                  placeholder="Search products" aria-label="Search products"
                   className="w-full pl-9 pr-11 sm:w-64"
                 />
                 <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2" aria-label="Advanced product filters" title="Advanced filters" onClick={() => setAdvanced(true)}><SlidersHorizontal className="size-4" /></Button>

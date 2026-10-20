@@ -441,7 +441,7 @@ function ReceiptVault() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Receipt history log</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Viewing data for {currentStore.name} only · signed in as {user?.name}
             </p>
           </div>

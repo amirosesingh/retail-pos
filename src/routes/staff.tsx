@@ -42,7 +42,7 @@ export function StaffPermissionsPanel() {
           <div className="max-w-sm rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-center">
             <ShieldAlert className="mx-auto size-6 text-destructive" />
             <h1 className="mt-2 font-semibold">Staff management access required</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-1 text-sm text-muted-foreground page-description">
               An administrator must grant this account the staff-management permission.
             </p>
           </div>
@@ -55,7 +55,7 @@ export function StaffPermissionsPanel() {
         <header>
           <Button variant="ghost" size="sm" asChild className="mb-2"><Link to="/settings" search={{ cat: "people" }}><ArrowLeft className="size-4" />Back to Settings</Link></Button>
           <h1 className="text-2xl font-semibold">Staff &amp; Permissions</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground page-description">
             Accounts, access status, roles and feature permissions in one place.
           </p>
         </header>
