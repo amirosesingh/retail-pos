@@ -23,8 +23,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 }
 
-/// Use UIKit's current safe area, not a model-specific notch height. Containing
-/// the WebView also protects fixed-position dialogs and portalled controls.
+/// Protect the island and landscape cutouts natively, but let the web background
+/// extend behind the home indicator. iOS-only CSS protects bottom controls.
 final class RetailSafeAreaController: UIViewController {
     private let content = CAPBridgeViewController()
 
@@ -37,7 +37,7 @@ final class RetailSafeAreaController: UIViewController {
         let safe = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
             content.view.topAnchor.constraint(equalTo: safe.topAnchor),
-            content.view.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
+            content.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             content.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
             content.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor)
         ])

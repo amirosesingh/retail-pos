@@ -22,7 +22,7 @@ const config: CapacitorConfig = {
   ...(remote
     ? { server: { url: remote, cleartext: false, androidScheme: "https" } }
     : { server: { androidScheme: "https" } }),
-  ios: { scheme: "App" },
+  ios: { scheme: "App", contentInset: "never" },
   plugins: {
     CapacitorUpdater: { autoUpdate: false, appReadyTimeout: 15000, responseTimeout: 120, autoDeletePrevious: false, autoDeleteFailed: false, statsUrl: "", channelUrl: "", updateUrl: "" },
     RetailOtaTrust: otaTrust,
