@@ -1,43 +1,12 @@
 import { formatDate as posDisplayDate } from "@/lib/time-zone";
-import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Loader2, Lock, WifiOff } from "lucide-react";
-import { loadActiveShift } from "@/core/api/pos-db";
-import { money, usePos } from "@/lib/pos-store";
-import { useAuth } from "@/lib/pos-auth";
-import { activeBranchId } from "@/lib/active-branch";
-import { sameBranchId } from "@/lib/branch-id";
-import { sessionEpoch } from "@/lib/session-epoch";
+import { money } from "@/lib/pos-store";
 import { shiftDuration } from "@/lib/shift-hours";
-import { subscribeDataChange } from "@/lib/sync-engine";
+import { useViewedBranchShift } from "@/lib/use-viewed-branch-shift";
 
 /** Read-only status for the selected view; never replaces the terminal's trading shift. */
 export function BranchShiftBanner() {
-  const { currentStore, activeShift, shiftChecked, shiftReadError } = usePos();
-  const { user } = useAuth();
-  const storeId = currentStore.id;
-  const viewingOtherBranch = !sameBranchId(storeId, activeBranchId(storeId));
-  const query = useQuery({
-    queryKey: ["viewed-branch-shift", sessionEpoch(), user?.staffId ?? user?.name, storeId],
-    queryFn: () => loadActiveShift(storeId),
-    enabled: !!storeId && !!user && viewingOtherBranch,
-    refetchInterval: 15_000,
-    refetchOnWindowFocus: true,
-    retry: 1,
-  });
-  const { refetch } = query;
-  useEffect(() => {
-    if (!viewingOtherBranch || !user) return;
-    return subscribeDataChange(change => {
-      if (change.table === "shifts" && (!change.storeId || sameBranchId(change.storeId, storeId)))
-        void refetch();
-    });
-  }, [viewingOtherBranch, storeId, user, refetch]);
-  const candidate = viewingOtherBranch ? query.data : activeShift;
-  const shift = candidate && sameBranchId(candidate.storeId, storeId) && !candidate.closedAt && candidate.status !== "CLOSED"
-    ? candidate : null;
-  const checked = viewingOtherBranch ? query.isSuccess || query.isError : shiftChecked;
-  const error = viewingOtherBranch ? query.isError : !!shiftReadError;
+  const { shift, checked, error, currentStore } = useViewedBranchShift();
   const label = currentStore.name || "selected branch";
   const opened = shift ? new Date(shift.openedAt) : null;
   return (

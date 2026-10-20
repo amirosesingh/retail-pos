@@ -26,7 +26,7 @@ export async function auditReadBranch(
     (!scope.isSupervisor && scope.permissions.can_view_audit_trail !== true && !moduleAllowed)
   )
     throw new Error("Audit-trail permission is required");
-  if (scope.role === "admin" || scope.roleSlug === "admin") return null;
+  if (!scope.branchRestricted && (scope.role === "admin" || scope.roleSlug === "admin")) return null;
   if (!scope.storeId) throw new Error("A branch scope is required");
   return scope.storeId;
 }

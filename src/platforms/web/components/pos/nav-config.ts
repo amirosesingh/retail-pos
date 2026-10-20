@@ -472,11 +472,11 @@ export const navGroups: NavGroup[] = [
     blurb: "Assigned decisions and your authorization requests.", items: items("inventory", ["/approvals"]) },
   { id: "marketing", label: "Marketing", icon: Percent, hubTo: "/marketing",
     blurb: "Promotions, coupons and loyalty rules.", items: items("register", ["/promotions", "/coupons"]) },
-  { ...group("company"), label: "Business Overview", blurb: "All shops, locations, dashboards and audit history.",
-    items: group("company").items.map(item => ({ ...item, label: item.to === "/all-shops" ? "All Shops" :
+  { ...group("company"), label: "Home", blurb: "Business analytics, all shops and locations.",
+    items: group("company").items.filter(item => item.to !== "/audit").map(item => ({ ...item, label: item.to === "/all-shops" ? "All Shops" :
       item.to === "/stores" ? "Locations & Warehouses" : item.to === "/dashboard" ? "Dashboard" :
-      item.to === "/analytics" ? "Business Analytics" : item.to === "/audit" ? "Audit History" : item.label })) },
-  { ...group("reports"), items: group("reports").items
+      item.to === "/analytics" ? "Live Business Board" : item.to === "/audit" ? "Audit History" : item.label })) },
+  { ...group("reports"), items: [...group("reports").items, ...items("company", ["/audit"]).map(item => ({ ...item, label: "Audit History" }))]
     .filter(item => !["/reports/items", "/reports/payments"].includes(item.to))
     .map(item => item.to === "/reports/sales" ? { ...item, label: "Sales Report", blurb: "Bills, item sales and cashier payments in one workspace." } : item) },
 ];
@@ -521,4 +521,12 @@ export function routePermissionForPath(pathname: string): PermissionFlag | null 
       .filter((path) => pathname === path || pathname.startsWith(`${path}/`))
       .sort((a, b) => b.length - a.length)[0] ?? "";
   return routes[key] ?? null;
+}
+
+/** Shared sidebar visibility predicate; permission and page visibility are both required. */
+export function canSeeNavigationItem(item: NavItem, can: (flag: PermissionFlag) => boolean,
+  isAdmin: boolean, visibleRoute: (path: string) => boolean): boolean {
+  if (item.flag && !can(item.flag)) return false;
+  if (item.adminOnly && !isAdmin && !item.flag) return false;
+  return visibleRoute(item.to);
 }

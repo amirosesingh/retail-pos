@@ -8,6 +8,7 @@
 import { isTerminalApp } from "@/platform-config/platform";
 import { posFetch } from "./server-origin";
 import {
+  resendStaffConfirmation as resendStaffConfirmationFn,
   listManagedStaffAccounts as listManagedStaffAccountsFn,
   setManagedStaffPermissions as setManagedStaffPermissionsFn,
   deleteStaffAccount as deleteStaffAccountFn,
@@ -83,3 +84,6 @@ export const listManagedStaffAccounts = (input: NonNullable<Parameters<typeof li
 
 export const setManagedStaffPermissions = (input: NonNullable<Parameters<typeof setManagedStaffPermissionsFn>[0]>) =>
   callHosted<Awaited<ReturnType<typeof setManagedStaffPermissionsFn>>>("permissions", input.data, setManagedStaffPermissionsFn as DirectCall);
+
+export const resendStaffConfirmation = (input: NonNullable<Parameters<typeof resendStaffConfirmationFn>[0]>) =>
+  callHosted<Awaited<ReturnType<typeof resendStaffConfirmationFn>>>("resend_confirmation", input.data, resendStaffConfirmationFn as DirectCall);

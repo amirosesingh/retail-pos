@@ -1,3 +1,4 @@
+import { resendStaffConfirmation } from "@/lib/staff-admin-client";
 import { HelpTip } from "@/components/ui/help-tip";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { withReadDeadline } from "@/lib/read-retry";
@@ -80,6 +81,7 @@ type Row = {
   full_name: string;
   role: StaffRole;
   role_slug: string;
+  email_confirmed?: boolean | null;
   email: string;
   store_id: string | null;
   is_active: boolean;
@@ -168,6 +170,8 @@ export function StaffManager() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
+  const [sendingConfirmation, setSendingConfirmation] = useState<string | null>(null);
+  const confirmationPending = useRef(false);
   const [form, setForm] = useState<Form>({ ...EMPTY });
   const [editing, setEditing] = useState<Row | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -242,6 +246,7 @@ export function StaffManager() {
             role,
             role_slug: String(r["role_slug"] ?? role),
             email: String(r["email"] ?? ""),
+            email_confirmed: typeof r["email_confirmed"] === "boolean" ? r["email_confirmed"] : null,
             store_id: (r["store_id"] as string | null) ?? null,
             is_active: r["is_active"] !== false,
             permissions: normalizePermissions(
@@ -371,7 +376,7 @@ export function StaffManager() {
         }
         toast.success(`${form.displayName.trim()} saved — ${branchLabel}`);
       } else {
-        await createStaffMember({
+        const result = await createStaffMember({
           displayName: form.displayName.trim(),
           username: form.username.trim().toLowerCase(),
           ...(emailMode ? { password: form.credential } : { pin: form.credential }),
@@ -383,6 +388,7 @@ export function StaffManager() {
           active: form.active,
         });
         toast.success(`${form.displayName.trim()} created — ${branchLabel}`);
+        if (result.emailWarning) toast.warning(result.emailWarning);
       }
       setFormOpen(false);
       setForm({ ...EMPTY });
@@ -527,6 +533,23 @@ export function StaffManager() {
                     <Badge variant="outline" className="px-1.5 py-0 text-[10px] leading-4">
                       {terminal ? "Terminal PIN sign-in" : "Email & password"}
                     </Badge>
+                    {!terminal && row.email_confirmed === false && (
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        Awaiting email verification
+                        <Button variant="link" size="sm" className="h-auto px-1 py-0 text-[11px]" disabled={offline || sendingConfirmation !== null}
+                          onClick={async () => {
+                            if (confirmationPending.current) return;
+                            confirmationPending.current = true;
+                            setSendingConfirmation(row.user_id);
+                            try {
+                              const result = await resendStaffConfirmation({ data: { ...(await getPosCallerAuth()), username: row.user_id } });
+                              if (!result.ok) throw new Error(result.error);
+                              toast.success("Verification email requested");
+                            } catch (error) { toast.error(friendlyError(error)); }
+                            finally { confirmationPending.current = false; setSendingConfirmation(null); }
+                          }}>Resend</Button>
+                      </div>
+                    )}
                   </td>
 
                   <td className="col-start-1 min-w-0 text-[11px] text-muted-foreground sm:table-cell sm:pr-3"><span className="block text-[10px] sm:hidden">Last login</span>
@@ -797,7 +820,7 @@ export function StaffManager() {
                   <SelectValue placeholder="Select a branch" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All branches — terminal decides</SelectItem>
+                  <SelectItem value="all">All branches</SelectItem>
                   {stores.map((store) => (
                     <SelectItem key={store.id} value={store.id}>
                       {store.code} · {store.name}
@@ -899,7 +922,7 @@ export function StaffManager() {
           )}
           {permissionsFor && <div className="flex flex-wrap items-center gap-3">
             <Badge variant="secondary">{permissionsFor.role_slug}</Badge>
-            <span className="text-sm text-muted-foreground">Branch: {permissionsFor.store_id ? branchDisplayName(stores, permissionsFor.store_id) : "No branch assigned"}</span>
+            <span className="text-sm text-muted-foreground">Branch: {permissionsFor.store_id ? branchDisplayName(stores, permissionsFor.store_id) : "All branches"}</span>
             <Input className="min-w-48 flex-1" aria-label="Search permissions" placeholder="Search pages or permissions…" value={permissionSearch} onChange={event => setPermissionSearch(event.target.value)} />
             <Button variant="outline" disabled={permissionsFor.role === "admin" || busy === "permissions"} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: { ...(roles.find(role => role.slug === permissionsFor.role_slug)?.permissions ?? rolePermissions(permissionsFor.role)) } })}>Reset to role defaults</Button>
           </div>}

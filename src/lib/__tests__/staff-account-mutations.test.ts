@@ -2,7 +2,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 const rest = vi.hoisted(() => vi.fn());
 vi.mock("@/core/api/pos-relay.server", () => ({ serviceRest: rest, serviceKey: () => "test-key" }));
 vi.mock("../external-supabase-config", () => ({ supabaseConfig: () => ({ url: "https://example.invalid" }) }));
-import { provisionStaffAccount, setStaffActive, updateStaffProfile } from "../staff-admin.server";
+import { provisionStaffAccount, setStaffActive, updateStaffProfile, sendStaffConfirmation } from "../staff-admin.server";
 let auth: ReturnType<typeof vi.fn>;
 let saved: { user_id: string; auth_user_id: string; is_active: boolean; email: string; pin_length: number };
 const create = { username: "cashier", displayName: "Cashier", roleSlug: "cashier", baseRole: "staff" as const, branchId: "branch-a", active: true, pin: "1234" };
@@ -70,3 +70,40 @@ it("does not report successful creation when the role write fails", async () => 
   await expect(provisionStaffAccount(create)).rejects.toThrow("role could not be saved");
 });
 
+
+it("sends verification after saving a real-email account without changing its disabled state", async () => {
+  saved.email = "cashier@example.test";
+  auth.mockImplementation(async (url: string) => Response.json(url.endsWith("admin/users/auth-id")
+    ? { id: "auth-id", email: saved.email, email_confirmed_at: null } : { id: "auth-id" }));
+  const result = await provisionStaffAccount({ ...create, username: saved.email, password: "long-password", active: false });
+  expect(result).toEqual({ userId: "auth-id" });
+  expect(saved.is_active).toBe(false);
+  expect(auth.mock.calls.find(([url]) => url.endsWith("/resend"))?.[1].body).toBe(JSON.stringify({ type: "signup", email: saved.email }));
+});
+it("reports mail failure separately after the staff account was saved", async () => {
+  saved.email = "cashier@example.test";
+  auth.mockImplementation(async (url: string) => url.endsWith("/resend")
+    ? new Response("limited", { status: 429 })
+    : Response.json({ id: "auth-id", email: saved.email, email_confirmed_at: null }));
+  const result = await provisionStaffAccount({ ...create, username: saved.email, password: "long-password" });
+  expect(result.emailWarning).toContain("Account saved");
+  expect(saved.is_active).toBe(true);
+});
+it("never sends confirmation for an internal PIN account", async () => {
+  await provisionStaffAccount(create);
+  expect(auth.mock.calls.some(([url]) => url.endsWith("/resend"))).toBe(false);
+});
+it("resending cannot enable a disabled user or change their password", async () => {
+  saved.email = "cashier@example.test";
+  auth.mockResolvedValue(Response.json({ id: "auth-id", email: saved.email, email_confirmed_at: null }));
+  await sendStaffConfirmation("cashier");
+  expect(saved.is_active).toBe(false);
+  expect(rest.mock.calls.every(([, init]) => !init?.method)).toBe(true);
+  expect(auth.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(0);
+});
+it("refuses email for a mismatched authentication identity", async () => {
+  saved.email = "cashier@example.test";
+  auth.mockResolvedValue(Response.json({ id: "other", email: saved.email }));
+  await expect(sendStaffConfirmation("cashier")).rejects.toThrow("administrator review");
+  expect(auth.mock.calls.some(([url]) => url.endsWith("/resend"))).toBe(false);
+});

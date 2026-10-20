@@ -588,11 +588,15 @@ function allowed(channel, args = []) {
  * Wraps `ipcMain.handle` so every channel — the ones registered today and any
  * added later — passes the gate before its body runs.
  */
-function install(ipcMain, { isFirstRun, writeBarrier } = {}) {
+function install(ipcMain, { isFirstRun, writeBarrier, isManagementDevice } = {}) {
   if (typeof isFirstRun === "function") firstRun = isFirstRun;
   const original = ipcMain.handle.bind(ipcMain);
   ipcMain.handle = (channel, listener) =>
     original(channel, (event, ...args) => {
+      // Management PCs use the hosted database. Do not let a stale local pool
+      // or cached branch credentials become an alternate business-data path.
+      if (isManagementDevice?.() && /^(?:business:|db:|local:|staff:|receipts:refund$|sync:(?:run-now|reconcile|resume)$|pos:(?:write|write-batch|query|snapshot|compare-summary|compare-rows)$)/.test(channel))
+        return { ok: false, code: "MANAGEMENT_ONLINE_ONLY", error: "Management devices use the online database and a staff sign-in." };
       if (!allowed(channel, args)) return refusal(levelFor(channel, args), channel, args);
       if (writeBarrier && require("./sync/write-barrier.cjs").BUSINESS_WRITE_CHANNELS.has(channel))
         return writeBarrier.run(() => listener(event, ...args));

@@ -2,7 +2,7 @@
  * Full-screen activation gate for the Windows till, plus the lock screen the
  * kill-switch drops in when management revokes the machine.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
   ChevronDown,
@@ -84,6 +84,10 @@ export function TerminalActivation({
   const mobile = isNative();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  // React state is not synchronous: camera callbacks can arrive twice before
+  // the disabled button renders. Keep one activation in flight per screen.
+  const activationPending = useRef(false);
+  const continued = useRef(false);
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(false);
   /** Set once this till is registered, so the operator can check the details. */
@@ -118,8 +122,10 @@ export function TerminalActivation({
 
   const submit = useCallback(
     async (value: string) => {
+      if (activationPending.current || done) return;
       const trimmed = value.trim();
       if (!trimmed) return setError("Paste or scan the activation code first.");
+      activationPending.current = true;
       onActivationStarted?.();
       setBusy(true);
       setError("");
@@ -133,10 +139,11 @@ export function TerminalActivation({
           e instanceof ActivationError ? e.message : "Activation failed. Try again in a moment.",
         );
       } finally {
+        activationPending.current = false;
         setBusy(false);
       }
     },
-    [onActivationStarted],
+    [onActivationStarted, done],
   );
 
   // While the operator waits, keep asking whether an administrator approved
@@ -149,7 +156,12 @@ export function TerminalActivation({
     let attempts = 0;
     const tick = async () => {
       if (pending) return;
+      if (activationPending.current) {
+        timer = window.setTimeout(() => void tick(), 3_000);
+        return;
+      }
       pending = true;
+      activationPending.current = true;
       onActivationStarted?.();
       try {
         const config = await activateWithTokenId(pairing);
@@ -167,6 +179,7 @@ export function TerminalActivation({
         }
       } finally {
         pending = false;
+        activationPending.current = false;
         attempts += 1;
         if (!stopped)
           timer = window.setTimeout(
@@ -202,7 +215,11 @@ export function TerminalActivation({
           <TerminalRegistrationDetails details={{ ...done, backendUrl: done.backendUrl || serverOrigin() }} />
         </div>
 
-        <Button className="mt-4 w-full" onClick={() => onActivated(done)}>
+        <Button className="mt-4 w-full" onClick={() => {
+          if (continued.current) return;
+          continued.current = true;
+          onActivated(done);
+        }}>
           Continue
         </Button>
       </Frame>

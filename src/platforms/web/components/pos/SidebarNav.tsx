@@ -8,6 +8,7 @@
  */
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
+  House,
   PanelLeftClose,
   PanelLeftOpen,
   SlidersHorizontal as SettingsIcon,
@@ -25,8 +26,6 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/lib/pos-auth";
 import { cn } from "@/lib/utils";
-import { usePos } from "@/lib/pos-store";
-import { orderWorkspaceGroups } from "@/lib/terminal-workspace";
 
 const COLLAPSE_KEY = "pos.nav.collapsed";
 
@@ -110,7 +109,7 @@ function SidebarRow({ entry, collapsed, active, inbound, onNavigate }: SidebarRo
       aria-label={entry.label}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex touch-manipulation select-none items-center gap-2.5 rounded-xl text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-inset transition-[background-color,color] duration-[var(--motion-fast)] ease-[var(--motion-ease-standard)] motion-reduce:transition-none",
+        "flex touch-manipulation select-none items-center gap-2.5 rounded-xl text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-inset transition-[background-color,color] duration-[var(--motion-normal)] ease-[var(--motion-ease-standard)] motion-reduce:transition-none",
         collapsed ? "justify-center gap-0 py-2.5" : "px-3 py-2.5",
         active
           ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
@@ -150,22 +149,19 @@ export function SidebarNav({
 }: Props) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const { isAdmin, isSupervisor, can } = useAuth();
-  const { state } = usePos();
 
   const settingsAllowed = isSupervisor || can("can_access_pos_settings");
 
   /** The seven top-level destinations. */
   const sections: Entry[] = useMemo(() => {
-    const list = orderWorkspaceGroups(
-      navGroups,
-      state.settings.integrations.terminalPurpose,
-      isAdmin || isSupervisor,
-    )
+    const dashboard = navGroups.flatMap(group => group.items).find(item => item.to === "/dashboard");
+    const hasHome = Boolean(dashboard && canSee(dashboard));
+    const list = navGroups
       .map((g) => ({ ...g, items: g.items.filter(canSee) }))
-      .filter((g) => g.id !== "register" && g.items.length > 0)
+      .filter((g) => g.id !== "register" && !(g.id === "company" && hasHome) && g.items.length > 0)
       .map((g) => ({
         key: g.id,
-        label: g.label,
+        label: g.id === "company" ? "Business Overview" : g.label,
         icon: g.icon,
         to: g.hubTo,
         prefix: true,
@@ -182,7 +178,7 @@ export function SidebarNav({
       });
     }
     return list;
-  }, [canSee, isAdmin, isSupervisor, settingsAllowed, state.settings.integrations.terminalPurpose]);
+  }, [canSee, settingsAllowed]);
 
   /** The till itself always stays one click away, above everything else. */
   const registerEntry: Entry | null = useMemo(() => {
@@ -197,6 +193,12 @@ export function SidebarNav({
     };
   }, [canSee]);
 
+  // Use the same dashboard permission/visibility decision as the existing menu.
+  const dashboardItem = navGroups.flatMap(group => group.items).find(item => item.to === "/dashboard");
+  const homeEntry: Entry | null = dashboardItem && canSee(dashboardItem)
+    ? { key: "home", label: "Home", icon: House, to: "/dashboard" }
+    : null;
+
   const isActive = (e: Entry) => {
     if (e.to === "/") return pathname === "/";
     if (!e.prefix) return pathname === e.to;
@@ -208,6 +210,10 @@ export function SidebarNav({
       {header}
 
       <nav className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2 pb-3">
+        {homeEntry && (
+          <SidebarRow entry={homeEntry} collapsed={collapsed} active={isActive(homeEntry)}
+            inbound={inbound} onNavigate={onNavigate} />
+        )}
         {registerEntry && (
           <SidebarRow
             entry={registerEntry}

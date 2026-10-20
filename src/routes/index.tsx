@@ -172,11 +172,9 @@ export const Route = createFileRoute("/")({
 });
 
 function RegisterEntry() {
-  const { state } = usePos();
   const { isAdmin, isSupervisor, isCashier } = useAuth();
   const search = Route.useSearch();
   return shouldOpenRegister({
-    purpose: state.settings.integrations.terminalPurpose,
     isAdmin,
     isSupervisor,
     isCashier,

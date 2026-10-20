@@ -76,6 +76,8 @@ export async function ensureTerminalAccount(
     throw new Error("This activation belongs to another device");
   }
 
+  if (!token.location_id) throw new Error("Management devices require a staff sign-in, not a machine account.");
+
   const email = emailFor(tokenId);
   const password = passwordFor(tokenId);
 
@@ -98,10 +100,15 @@ export async function ensureTerminalAccount(
     userId = ((await created.json()) as { id?: string }).id ?? null;
   } else {
     // Already exists: look it up and reset the password to the derived value.
-    const list = await adminFetch(`admin/users?page=1&per_page=1&email=${encodeURIComponent(email)}`);
-    if (list.ok) {
+    // Auth does not support an exact email filter on this list endpoint.
+    // Search actual page contents instead of assuming the first user matches.
+    for (let page = 1; page <= 20 && !userId; page++) {
+      const list = await adminFetch(`admin/users?page=${page}&per_page=1000`);
+      if (!list.ok) break;
       const body = (await list.json()) as { users?: { id: string; email?: string }[] };
-      userId = body.users?.find((u) => u.email?.toLowerCase() === email)?.id ?? null;
+      if (!Array.isArray(body.users)) break;
+      userId = body.users.find((u) => u.email?.toLowerCase() === email)?.id ?? null;
+      if (body.users.length < 1000) break;
     }
     if (!userId) throw new Error("Could not prepare this terminal's account");
     const repaired = await adminFetch(`admin/users/${userId}`, {
@@ -120,7 +127,19 @@ export async function ensureTerminalAccount(
     if (existing && (existing.auth_user_id !== userId || existing.role !== "staff" ||
         !sameBranchId(existing.store_id, token.location_id)))
       throw new Error("This terminal account profile needs administrator review");
-    if (existing?.is_active === false) throw new Error("This terminal account is inactive. Ask an administrator to review it.");
+    if (existing?.is_active === false) {
+      if (!created.ok) throw new Error("This terminal account is inactive. Ask an administrator to review it.");
+      // Auth's signup trigger starts every new profile disabled. Only this
+      // request's newly-created, proof-bound machine identity may be initialized.
+      // Existing disabled machine accounts must still require administrator review.
+      const activated = await serviceRest(
+        `app_users?auth_user_id=eq.${encodeURIComponent(userId)}&email=eq.${encodeURIComponent(email)}&role=eq.staff&is_active=eq.false&store_id=${token.location_id ? `eq.${encodeURIComponent(token.location_id)}` : "is.null"}`,
+        { method: "PATCH", prefer: "return=representation", body: JSON.stringify({ is_active: true }) },
+      );
+      const initialized: unknown = activated.ok ? await activated.json() : null;
+      if (!Array.isArray(initialized) || initialized.length !== 1 || initialized[0]?.is_active !== true)
+        throw new Error("Could not initialize this terminal account. Ask an administrator to review it.");
+    }
     // Existing profiles already carry the verified account/branch link. Do not
     // overwrite administrator changes or a legacy username merely to sign in.
     if (!existing) {

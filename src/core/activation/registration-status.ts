@@ -135,7 +135,12 @@ export function useStartupGate(): StartupGate {
     loading: registration === null,
     probing,
     offlineAvailable: registration === "registered" && !cloudConnected,
-    refresh: () => setTick((v) => v + 1),
+    refresh: () => {
+      // Block routing in the same render as Continue. Waiting for the effect
+      // leaves one frame using the previous (unregistered) verdict.
+      setProbing(true);
+      setTick((v) => v + 1);
+    },
   };
 }
 

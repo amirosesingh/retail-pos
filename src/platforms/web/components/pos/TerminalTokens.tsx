@@ -114,7 +114,10 @@ export function TerminalTokens({
   const [error, setError] = useState("");
   const [locationId, setLocationId] = useState("");
   const [deviceName, setDeviceName] = useState("");
+  const [management, setManagement] = useState(false);
+  const managementDevice = management;
   const [issuing, setIssuing] = useState(false);
+  const issuePending = useRef(false);
   const [code, setCode] = useState("");
   const [codeTokenId, setCodeTokenId] = useState("");
   const [codeIssuedAt, setCodeIssuedAt] = useState(0);
@@ -232,31 +235,34 @@ export function TerminalTokens({
   }, [stores, locationId]);
 
   const generate = async () => {
+    if (issuePending.current) return;
     if (pairTokenId && (pairChecking || pairExisting || pairLookupError))
       return toast.error("Review the scanned terminal registration before issuing a code.");
-    if (!locationId) return toast.error("Choose a location first");
+    if (!managementDevice && !locationId) return toast.error("Choose a location first");
     if (!deviceName.trim()) return toast.error("Enter a terminal / device name");
     const store = stores.find((x) => x.id === locationId);
-    if (!store) return toast.error("That location is no longer available");
+    if (!managementDevice && !store) return toast.error("That location is no longer available");
+    issuePending.current = true;
     setIssuing(true);
     try {
       const { code: issued, token } = await issueTerminalToken({
-        location: {
-          id: store.id,
-          code: store.code,
-          name: store.name,
-          address: store.address,
-          phone: store.phone,
+        management: managementDevice,
+        location: managementDevice ? null : {
+          id: store!.id,
+          code: store!.code,
+          name: store!.name,
+          address: store!.address,
+          phone: store!.phone,
         },
-        locationName,
+        locationName: managementDevice ? "Management — user branch access" : locationName,
         deviceName: deviceName.trim(),
         platform: only ?? "pc",
         ...(pairTokenId ? { tokenId: pairTokenId } : {}),
         ...(pairProofHash ? { claimProof: pairProofHash } : {}),
       });
       setCode(issued);
-      setIssuedDetails({ tokenId: token.id, deviceName: token.deviceName, locationId: store.id,
-        locationName, supabaseUrl: supabaseConfig().url,
+      setIssuedDetails({ tokenId: token.id, deviceName: token.deviceName, locationId: token.locationId ?? undefined,
+        locationName: token.locationName, supabaseUrl: supabaseConfig().url,
         backendUrl: serverOrigin() || (typeof window !== "undefined" ? window.location.origin : "") });
       setCodeTokenId(token.id);
       setCodeIssuedAt(Date.now());
@@ -277,6 +283,7 @@ export function TerminalTokens({
         description: describeError(e, "Terminal registration"),
       });
     } finally {
+      issuePending.current = false;
       setIssuing(false);
     }
   };
@@ -349,8 +356,15 @@ export function TerminalTokens({
           codes; each staff member signs in with their own account and permissions.
         </p>
 
+        {<div className="mt-4 space-y-1.5">
+          <Label>Device use</Label>
+          <ThemedSelect ariaLabel="Device use" value={management ? "management" : "branch"}
+            onChange={(value) => setManagement(value === "management")}
+            options={[{ value: "branch", label: "Branch operations" }, { value: "management", label: "Management — administrator or supervisor" }]} />
+          {management && <p className="text-xs text-muted-foreground">No fixed branch. The signed-in manager keeps their own permissions and assigned branches.</p>}
+        </div>}
         <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
-          <div className="space-y-1.5">
+          {!managementDevice && <div className="space-y-1.5">
             <Label className="text-[11px] text-muted-foreground">Location / warehouse</Label>
             <ThemedSelect
               ariaLabel="Location or warehouse"
@@ -359,7 +373,7 @@ export function TerminalTokens({
               placeholder="Choose a location"
               options={stores.map((s) => ({ value: s.id, label: `${s.name} — ${s.code}` }))}
             />
-          </div>
+          </div>}
           <div className="space-y-1.5">
             <Label htmlFor="device-name" className="text-[11px] text-muted-foreground">
               {only === "mobile" ? "Phone or tablet name" : "Windows PC name"}
@@ -374,7 +388,7 @@ export function TerminalTokens({
           </div>
           <Button
             className="h-9"
-            disabled={issuing || pairChecking || Boolean(pairExisting) || Boolean(pairLookupError) || !locationId || !deviceName.trim()}
+            disabled={issuing || pairChecking || Boolean(pairExisting) || Boolean(pairLookupError) || (!managementDevice && !locationId) || !deviceName.trim()}
             onClick={() => void generate()}
           >
             {issuing ? (
@@ -563,7 +577,7 @@ export function TerminalTokens({
               Cancel
             </Button>
             <Button
-              disabled={issuing || pairChecking || Boolean(pairExisting) || Boolean(pairLookupError) || !locationId || !deviceName.trim() || !pairProofHash}
+              disabled={issuing || pairChecking || Boolean(pairExisting) || Boolean(pairLookupError) || (!managementDevice && !locationId) || !deviceName.trim() || !pairProofHash}
               onClick={() => void generate()}
             >
               {issuing ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}

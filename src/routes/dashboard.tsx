@@ -1,3 +1,5 @@
+import { CashierBillList } from "@/platforms/web/components/pos/CashierBillList";
+import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { productVisibleAt } from "@/lib/branch-policy";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -165,15 +167,19 @@ function Dashboard() {
   return (
     <AppShell>
       <div className="space-y-6 p-6">
-        <header>
-          <h1 className="text-2xl font-semibold">Live dashboard · {currentStore.name}</h1>
+        <header className="min-w-0 space-y-2">
+          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+            <h1 className="min-w-0 text-2xl font-semibold">Live dashboard · {currentStore.name}</h1>
+            <HomeShortcuts />
+          </div>
           <p className="text-sm text-muted-foreground page-description">
             Today&apos;s revenue, margin, peak trading hours and behaviour flags.
           </p>
         </header>
 
+
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
-        <div className="summary-grid grid gap-4 md:grid-cols-4 xl:grid-cols-7">
+        <div role="region" aria-label="Revenue summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(10rem,72%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-7">
           <Kpi label="Revenue today" value={money(revenue)} highlight />
           <Kpi label="Gross revenue" value={money(profit.revenue)} />
           <Kpi label="Total COGS" value={money(profit.cogs)} />
@@ -193,7 +199,7 @@ function Dashboard() {
               Current active catalogue and on-hand value at this branch.
             </p>
           </div>
-          <div className="summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+          <div role="region" aria-label="Inventory summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(9rem,65%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-8">
             <Kpi label="Products" value={<AnimatedMetric value={stock.products} />} />
             <Kpi label="Categories" value={<AnimatedMetric value={stock.categories} />} />
             <Kpi label="On-hand units" value={<AnimatedMetric value={stock.units} />} />
@@ -223,7 +229,7 @@ function Dashboard() {
         >
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">Trading graphs</h2>
-            <div className="flex items-center gap-1">
+            <div className="hidden items-center gap-1 md:flex">
               <CarouselPrevious className="static translate-y-0" aria-label="Previous graph" />
               <CarouselNext className="static translate-y-0" aria-label="Next graph" />
             </div>
@@ -324,65 +330,31 @@ function Dashboard() {
             Final totals include applicable tax and rounding; refunded bills are shown separately.
           </p>
           <Separator />
-          <Table loading={reportLoading}>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Cashier</TableHead>
-                <TableHead className="text-right">Bills</TableHead>
-                <TableHead className="text-right">Original bill value</TableHead>
-                <TableHead className="text-right">Discount amount</TableHead>
-                <TableHead className="text-right">Final bill total</TableHead>
-                <TableHead className="text-right">Refunds</TableHead>
-                <TableHead className="text-right">Discount %</TableHead>
-                <TableHead className="text-right">No-sale</TableHead>
-                <TableHead>Flags</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {cashiers.map((c) => (
-                <TableRow key={c.name}>
-                  <TableCell>
-                    <span>{c.name}</span>
-                    <details className="mt-1 min-w-48 max-w-sm text-xs">
-                      <summary className="cursor-pointer text-muted-foreground">View bills</summary>
-                      <ul className="mt-2 space-y-2">
-                        {todaySales.filter(sale => (sale.cashier || "Unknown") === c.name).map(sale => (
-                          <li key={sale.id} className="rounded-md border p-2">
-                            <p className="font-medium">{sale.receiptNo}{sale.refunded ? " · Refunded" : ""}</p>
-                            <p>Original {money(sale.subtotal)} · Discount {money(sale.discount)} ({(sale.subtotal > 0 ? sale.discount / sale.subtotal * 100 : 0).toFixed(1)}%)</p>
-                            <p>After discount {money(sale.subtotal - sale.discount)} · Final {money(sale.total)}</p>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  </TableCell>
-                  <TableCell className="numeric text-right">{c.bills}</TableCell>
-                  <TableCell className="numeric text-right">{money(c.original)}</TableCell>
-                  <TableCell className="numeric text-right">{money(c.discount)}</TableCell>
-                  <TableCell className="numeric text-right">{money(c.revenue)}</TableCell>
-                  <TableCell className="numeric text-right">
-                    {c.refunds} · {money(c.refundValue)}
-                  </TableCell>
-                  <TableCell className="numeric text-right">{c.discountPct.toFixed(1)}%</TableCell>
-                  <TableCell className="numeric text-right">{c.noSale}</TableCell>
-                  <TableCell>
-                    {c.flags.length ? (
-                      <span className="text-xs text-destructive">{c.flags.join(" · ")}</span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">clear</span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {!cashiers.length && (
-                <TableRow>
-                  <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
-                    No trading recorded today.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+          <div className="divide-y divide-border" aria-busy={reportLoading}>
+            {cashiers.map((c) => (
+              <article key={c.name} className="space-y-4 p-4 sm:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold">{c.name}</h3>
+                  {c.flags.length > 0 && <span className="text-xs text-destructive">Cashier review flag: {c.flags.join(" · ")}</span>}
+                </div>
+                <CashierBillList sales={todaySales} cashier={c.name} />
+                <dl className="grid grid-cols-2 gap-3">
+                  <div><dt className="text-xs text-muted-foreground">Cashier total · completed bills</dt><dd className="numeric text-base font-semibold">{money(c.revenue)}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Cashier discount · completed bills</dt><dd className="numeric text-base font-semibold">{money(c.discount)} <span className="text-xs font-normal">({c.discountPct.toFixed(1)}%)</span></dd></div>
+                </dl>
+                <details className="rounded-lg border border-border p-3">
+                  <summary className="cursor-pointer text-sm font-medium">More totals</summary>
+                  <dl className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    <div><dt className="text-xs text-muted-foreground">Completed bills</dt><dd className="numeric text-sm">{c.bills}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Original bill value</dt><dd className="numeric text-sm">{money(c.original)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Refunds</dt><dd className="numeric text-sm">{c.refunds} · {money(c.refundValue)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">No-sale drawer opens</dt><dd className="numeric text-sm">{c.noSale}</dd></div>
+                  </dl>
+                </details>
+              </article>
+            ))}
+            {!cashiers.length && <p className="p-6 text-center text-sm text-muted-foreground">{reportLoading ? "Loading cashier review…" : "No trading recorded today."}</p>}
+          </div>
         </section>
 
         <section className="rounded-lg border border-border bg-card">
@@ -471,7 +443,7 @@ function Kpi({
   danger?: boolean;
 }) {
   return (
-    <div className="summary-card rounded-lg border border-border bg-card px-4 py-3">
+    <div className="summary-card min-w-0 snap-start rounded-lg border border-border bg-card px-4 py-3">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p
         className={`numeric text-xl font-semibold ${highlight ? "text-primary" : ""} ${danger ? "text-destructive" : ""}`}
