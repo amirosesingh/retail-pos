@@ -501,6 +501,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     setProfileReady(false);
+    const profileEpoch = sessionEpoch();
     void supabase.rpc("current_app_user" as never).then(
       ({ data, error }) => {
         if (cancelled) return;
@@ -511,6 +512,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         const row = (Array.isArray(data) ? data[0] : data) as unknown as AppUserProfile | undefined;
         setAppUser(normalizeUuidFields(row ?? null));
+        if (row?.is_active === false && isCurrentEpoch(profileEpoch)) notifySessionExpired(profileEpoch);
         setProfileReady(true);
         markStartupStage("profile");
       },
@@ -1095,6 +1097,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Resolved fresh from the staff list so a duty change applies immediately.
   const user = useMemo<PosUser | null>(() => {
+    if (!terminalUser && appUser?.is_active === false) return null;
     // A PIN login already carries its verified role and permissions in
     // terminalUser. If the optional Supabase bearer is absent or still being
     // checked, keep using that proven terminal identity instead of replacing
