@@ -10,6 +10,8 @@ A Mac/Xcode and CocoaPods are required to compile. The existing ML Kit scanner l
 
 ## Build and test without publishing
 
+The minimum deployment target is iOS 15.5, required by the existing barcode scanner; see the [plugin's iOS requirements](https://capawesome.io/docs/sdks/capacitor/mlkit/barcode-scanning/). An iOS build rejects POS_MOBILE_URL so a remote website cannot replace the bundled, verified interface. Android configuration remains unchanged.
+
 Use the repository Node 22 and npm 11.4.2 toolchain, then `npm ci`.
 
 - `npm run ios:build`: package the offline React interface in capacitor-shell using iOS-only adapters.
@@ -29,6 +31,8 @@ Do not publish merely because a build passes. This task authorizes a PR and IPA 
 Manifests are an envelope `{payload, signature}` where payload is base64 of exact UTF-8 JSON bytes and signature is base64 Ed25519 signature of those bytes. Strict schema validation happens after signature verification. The payload includes version, appId, platform, channel, exact immutable ZIP URL, SHA-256, byte size, notes, minBuild/maxBuild, issuance/expiry and rollout percent/salt/stopped. Maximum response size is enforced while streaming (32 KiB); expiry is enforced using device time. Incorrect device time can reject an update. Both fetch and URL validation fail closed; manifest redirects are forbidden. Serve immutable ZIP paths directly without redirects. The native downloader verifies SHA-256 and the app checks its returned checksum before activation.
 
 ## Prepare and publish
+
+The packaging command always rebuilds the iOS interface before zipping it. This prevents a previous Android build in the shared capacitor-shell folder from becoming an iOS OTA release.
 
 Copy `.env.ios-ota.example` to a private local environment file. These variables are for Node release scripts, not React. Set explicit native build limits, release notes and rollout. Default rollout is 0%, not everyone.
 
@@ -66,3 +70,7 @@ Readiness proves JS initialization only, not later sales/API correctness. Option
 8. Repeat on physical iOS 26 with gesture navigation, rotation, foreground/background and provisioning refresh. Record device, native build, old/new bundle and logs.
 
 A successful CI build is not proof of on-device OTA or Apple distribution approval. Physical iPhone activation/rollback and feature parity remain release gates. No claim of working OTA without reinstalling can be made until step 5 is observed on that device.
+
+## Verification performed
+
+The full regression suite passed 2,213 tests before the final five additional OTA cases; the expanded OTA suite passes 33 cases. Four Cloudflare handler tests cover path isolation, caching, emergency stop and read-only access. TypeScript and ESLint passed. The official Capgo CLI generated a signed local ZIP with a matching SHA-256; nothing was uploaded. GitHub macOS successfully compiled and packaged an unsigned IPA; Android native compilation and the Windows renderer checks also passed. Consult PR #276 for the final commit's check results. Physical iPhone testing, Sideloadly installation, live server deployment and an end-to-end OTA activation are still required before release.

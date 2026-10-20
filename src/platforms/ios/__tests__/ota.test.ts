@@ -207,4 +207,51 @@ describe("controlled updater", () => {
     await service.restore(true, true);
     expect(updater.reset).toHaveBeenCalledWith({ toLastSuccessful: false });
   });
+  it("never activates when saving an active draft fails", async () => {
+    await service.check(true);
+    await service.download();
+    vi.mocked(deps.preserve).mockRejectedValue(new Error("Draft save failed"));
+    await service.install();
+    expect(updater.set).not.toHaveBeenCalled();
+    expect(service.state.error).toMatch(/Draft save failed/);
+  });
+  it("rechecks the active screen after asynchronous preservation", async () => {
+    await service.check(true);
+    await service.download();
+    vi.mocked(deps.preserve).mockImplementation(async () => {
+      deps.safe = () => false;
+    });
+    await service.install();
+    expect(updater.set).not.toHaveBeenCalled();
+    expect(service.state.error).toMatch(/screen changed/);
+  });
+  it("debounces foreground checks while allowing explicit checks", async () => {
+    await service.check();
+    await service.check();
+    expect(deps.fetch).toHaveBeenCalledOnce();
+    await service.check(true);
+    expect(deps.fetch).toHaveBeenCalledTimes(2);
+  });
+  it("silent download still defers automatic activation during work", async () => {
+    await service.preferences(true, true);
+    deps.safe = () => false;
+    await service.check(true);
+    expect(updater.download).toHaveBeenCalledOnce();
+    expect(service.state.phase).toBe("ready");
+    expect(service.state.deferred).toBeTruthy();
+    expect(updater.set).not.toHaveBeenCalled();
+  });
+  it("detects rollback from persisted pending activation even without a native event", async () => {
+    vi.mocked(deps.load).mockResolvedValue({
+      highest: "1.4.74",
+      failed: [],
+      pending: make().version,
+      device: "test",
+      silentDownload: false,
+      autoInstall: false,
+    });
+    await service.check(true);
+    expect(service.state.error).toMatch(/previously failed/);
+    expect(updater.download).not.toHaveBeenCalled();
+  });
 });
