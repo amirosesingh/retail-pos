@@ -3,7 +3,7 @@ const rest = vi.hoisted(() => vi.fn());
 vi.mock("@/core/api/pos-relay.server", () => ({ serviceRest: rest, serviceKey: () => "test-key" }));
 vi.mock("../external-supabase-config", () => ({ supabaseConfig: () => ({ url: "https://example.invalid" }) }));
 import { updateStaffProfile } from "../staff-admin.server";
-const profile = { user_id: "cashier", login_username: null, auth_user_id: "stable-auth-id", email: "cashier@pos-internal.local", pin_length: 4 };
+const profile = { user_id: "cashier", login_username: null, auth_user_id: "stable-auth-id", email: "cashier@pos-internal.local", pin_length: 4, is_active: true };
 const input = { username: "cashier", loginUsername: "new-cashier", displayName: "Cashier", branchId: "branch-a", roleSlug: "cashier", baseRole: "staff" as const, active: true };
 let auth: ReturnType<typeof vi.fn>;
 beforeEach(() => {

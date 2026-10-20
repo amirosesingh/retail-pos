@@ -107,10 +107,18 @@ export async function requireSupervisor(accessToken: string): Promise<void> {
 
 /** Find an existing auth account for this address. */
 async function findUserId(email: string): Promise<string | null> {
-  const res = await adminFetch(`admin/users?page=1&per_page=1&email=${encodeURIComponent(email)}`);
-  if (!res.ok) return null;
-  const body = (await res.json()) as { users?: { id: string; email?: string }[] };
-  return body.users?.find((u) => u.email?.toLowerCase() === email)?.id ?? null;
+  // Auth's list endpoint is paginated; an email query parameter does not make
+  // per_page=1 an exact lookup. Check every returned identity before reuse.
+  for (let page = 1; page <= 20; page++) {
+    const res = await adminFetch(`admin/users?page=${page}&per_page=1000`);
+    if (!res.ok) throw new Error("Existing login accounts could not be checked. Please retry.");
+    const body = (await res.json()) as { users?: { id: string; email?: string }[] };
+    if (!Array.isArray(body.users)) throw new Error("The login account lookup returned an invalid response.");
+    const found = body.users.find((u) => u.email?.toLowerCase() === email);
+    if (found) return found.id;
+    if (body.users.length < 1000) return null;
+  }
+  throw new Error("The existing login could not be located. Ask an administrator to review this account.");
 }
 
 export type StaffPayload = {
@@ -209,7 +217,7 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
     if (!userId) {
       throw new Error((await created.text()).slice(0, 200) || "Could not create this account");
     }
-    await adminFetch(`admin/users/${userId}`, {
+    const repaired = await adminFetch(`admin/users/${userId}`, {
       method: "PUT",
       body: JSON.stringify({
         password: secret,
@@ -217,6 +225,7 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
         user_metadata: metadata,
       }),
     });
+    if (!repaired.ok) throw new Error("The existing login account could not be updated. Please retry.");
   }
 
   if (!userId) throw new Error("The authentication account was not created");
@@ -241,11 +250,14 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
     });
   }
 
-  await serviceRest("user_roles?on_conflict=user_id,role", {
+  const rolesSaved = await serviceRest("user_roles?on_conflict=user_id,role", {
     method: "POST",
     prefer: "return=minimal,resolution=merge-duplicates",
     body: JSON.stringify([{ user_id: userId, role: payload.baseRole }]),
   });
+
+  if (!rolesSaved.ok) throw new Error("The login was created, but its role could not be saved. Please retry.");
+  await persistStaffActive(username, userId, payload.active);
 
   return { userId };
 }
@@ -261,19 +273,28 @@ export async function readStaffSnapshot(username: string): Promise<Record<string
   return rows[0] ?? null;
 }
 
-export async function setStaffActive(username: string, active: boolean): Promise<void> {
-  const profile = await staffProfile(username);
-  const userId = profile?.auth_user_id ?? null;
-  if (userId) {
-    await adminFetch(`admin/users/${userId}`, {
-      method: "PUT",
-      body: JSON.stringify({ user_metadata: { active } }),
-    });
-  }
+// Keep the legacy cashier status aligned without changing its PIN or permissions.
+// A void RPC response alone does not prove an UPDATE matched the intended profile.
+async function persistStaffActive(username: string, authUserId: string, active: boolean): Promise<void> {
   await serviceRpc("staff_account_set_active", {
     p_user_id: username.trim().toLowerCase(),
     p_active: active,
   });
+  const saved = await staffProfile(username);
+  if (!saved || saved.auth_user_id !== authUserId || saved.is_active !== active) {
+    throw new Error("The account status was not saved. Reload this account and retry.");
+  }
+}
+
+export async function setStaffActive(username: string, active: boolean): Promise<void> {
+  const profile = await staffProfile(username);
+  if (!profile?.auth_user_id) throw new Error("This staff account has no authentication identity");
+  await persistStaffActive(profile.user_id, profile.auth_user_id, active);
+  const response = await adminFetch(`admin/users/${profile.auth_user_id}`, {
+    method: "PUT",
+    body: JSON.stringify({ user_metadata: { active } }),
+  });
+  if (!response.ok) throw new Error("The profile status was saved, but its login status could not be updated. Please retry.");
 }
 
 type StaffProfileRow = {
@@ -366,6 +387,8 @@ export async function updateStaffProfile(input: {
     }
     throw error;
   }
+
+  await persistStaffActive(profile.user_id, profile.auth_user_id, input.active);
 
   const authUpdate = await adminFetch(`admin/users/${profile.auth_user_id}`, {
     method: "PUT",

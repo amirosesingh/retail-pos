@@ -215,8 +215,11 @@ export function StaffManager() {
   const [loadError, setLoadError] = useState("");
   const [offline, setOffline] = useState(false);
 
-  const load = useCallback(() => {
-    if (loadPromise.current) return loadPromise.current;
+  const load = useCallback(function loadStaffAccounts(force = false): Promise<void> {
+    if (loadPromise.current) {
+      // A pre-save background read must not overwrite the newly saved status.
+      return force ? loadPromise.current.then(() => loadStaffAccounts(true)) : loadPromise.current;
+    }
     loadPromise.current = (async () => {
     setLoading(true);
     try {
@@ -384,7 +387,7 @@ export function StaffManager() {
       setFormOpen(false);
       setForm({ ...EMPTY });
       await Promise.all([
-        load(),
+        load(true),
         propagateStaffChange("staff account saved", ["app_users", "cashiers", "user_roles"]),
       ]);
     } catch (error) {
