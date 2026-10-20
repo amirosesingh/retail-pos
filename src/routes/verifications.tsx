@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, ShieldCheck } from "lucide-react";
@@ -100,7 +101,7 @@ function Verifications() {
             <h1 className="flex items-center gap-2 text-2xl font-semibold">
               <ShieldCheck className="size-5 text-primary" /> Member verification log
             </h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Every code sent and what happened to it. The codes themselves are never stored in a
               readable form, so only the outcome is shown here.
             </p>
@@ -136,18 +137,18 @@ function Verifications() {
             <tbody>
               {filtered.map((r) => (
                 <tr key={r.id} className="border-t border-border">
-                  <td className="numeric px-3 py-2">{new Date(r.created_at).toLocaleString()}</td>
+                  <td className="numeric px-3 py-2">{posDisplayDateTime(new Date(r.created_at))}</td>
                   <td className="px-3 py-2">{r.phone || r.email || "—"}</td>
                   <td className="px-3 py-2">{CHANNEL_LABEL[r.channel] ?? r.channel}</td>
                   <td className="px-3 py-2">
-                    <Badge variant="outline" className={statusTone(r.status)}>
+                    <Badge status={r.status} variant="outline" className={statusTone(r.status)}>
                       {r.status}
                     </Badge>
                   </td>
                   <td className="numeric px-3 py-2">{r.attempts}</td>
                   <td className="px-3 py-2">{r.sent_by ?? "—"}</td>
                   <td className="numeric px-3 py-2">
-                    {r.verified_at ? new Date(r.verified_at).toLocaleString() : "—"}
+                    {r.verified_at ? posDisplayDateTime(new Date(r.verified_at)) : "—"}
                   </td>
                 </tr>
               ))}

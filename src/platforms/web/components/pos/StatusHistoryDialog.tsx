@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * The story of one record.
  *
@@ -33,7 +34,7 @@ const pretty = (value: string | null) =>
 
 const when = (iso: string) => {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? iso : posDisplayDateTime(d);
 };
 
 /**

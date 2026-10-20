@@ -40,6 +40,7 @@ export const Route = createFileRoute("/settings/")({
     const raw = search as Record<string, unknown>;
     const legacy = typeof raw["card"] === "string" ? raw["card"] : raw["section"];
     if (typeof legacy !== "string" || !legacy) return;
+    if (legacy === "access") throw redirect({ to: "/staff", search: { tab: "access" }, replace: true });
     const card = settingsCard(legacy);
     if (!card) throw redirect({ to: "/settings", search: {} });
     throw redirect({
@@ -73,7 +74,7 @@ function Row({ c }: { c: SettingsCard }) {
     <div data-settings-category={c.category} className="flex items-center gap-1 rounded-lg border border-border bg-card pr-2 transition-colors hover:border-primary/60">
       <SettingsLink
         card={c}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="settings-menu-link flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <c.icon className="size-5 shrink-0 text-primary" />
         <span className="min-w-0 flex-1">
@@ -128,7 +129,7 @@ function SettingsHome() {
               <h1 className="truncate text-xl font-semibold sm:text-2xl">
                 {category ? category.label : "Settings"}
               </h1>
-              <p className="text-sm leading-relaxed text-muted-foreground">
+              <p className="text-sm leading-relaxed text-muted-foreground page-description">
                 {category
                   ? category.blurb
                   : "Everything this till can be configured to do, grouped by area."}
@@ -163,13 +164,13 @@ function SettingsHome() {
             Configuration is managed by an administrator.
           </p>
         ) : term ? (
-          <section className="space-y-2" aria-label="Search results">
+          <section className="settings-menu-grid grid grid-cols-2 gap-2 xl:block xl:space-y-2" aria-label="Search results">
             {results.length ? (
               results.map((c) => (
                 <SettingsLink
                   key={c.id}
                   card={c}
-                  className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:border-primary/60"
+                  className="settings-menu-link flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:border-primary/60"
                 >
                   <c.icon className="size-5 shrink-0 text-primary" />
                   <span className="min-w-0 flex-1">
@@ -188,7 +189,7 @@ function SettingsHome() {
             )}
           </section>
         ) : category ? (
-          <section className="grid gap-3 sm:grid-cols-2" aria-label={category.label}>
+          <section className="settings-menu-grid grid grid-cols-2 gap-2 sm:gap-3" aria-label={category.label}>
             {cards
               .filter((c) => c.category === category.id)
               .map((c) => (
@@ -197,14 +198,14 @@ function SettingsHome() {
           </section>
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="settings-menu-grid grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-3">
               {categories.map((g) => (
                 <button
                   key={g.id}
                   data-settings-category={g.id}
                   type="button"
                   onClick={() => void navigate({ search: { cat: g.id }, replace: false })}
-                  className="group flex w-full flex-col gap-4 rounded-2xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-sm"
+                  className="settings-menu-category group flex min-w-0 w-full flex-col gap-4 rounded-2xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-sm"
                 >
                   <span className="flex w-full items-start gap-3">
                     <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/20">

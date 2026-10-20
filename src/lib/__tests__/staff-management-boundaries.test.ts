@@ -4,6 +4,14 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("staff management boundaries", () => {
+  it("keeps approval credential actions discoverable without bypassing eligibility", () => {
+    const screen = read("src/platforms/web/components/admin/StaffManager.tsx");
+    expect(screen).toContain('nativeApprovalCredentials ? "Approval credentials" : "Approval PIN"');
+    expect(screen).toContain('disabled={offline || !row.approval_pin_eligible}');
+    expect(screen).toContain('Assign this user to an enabled PIN or PIN-or-request approval rule');
+    expect(screen).not.toContain('"No PIN-enabled approval rule"');
+    expect(screen).not.toMatch(/row\.approval_pin_eligible &&\s*\(\s*<Button/);
+  });
   it("uses the configured staff-management permission at the page and PIN mutation", () => {
     const route = read("src/routes/staff.tsx");
     const authorization = read("src/lib/authorization.functions.ts");
@@ -28,7 +36,7 @@ describe("staff management boundaries", () => {
     expect(engine).toContain("retryScheduled: boolean");
     expect(accounts).toContain('propagateStaffChange("staff approval PIN changed"');
     expect(accounts).toContain('propagateStaffChange("staff permissions changed"');
-    expect(accounts).toContain('propagateStaffChange("staff account status changed"');
+    expect(accounts).toContain('propagateStaffChange("staff account saved"');
     expect(roles).toContain('broadcastSettingsChange("staff_roles")');
     expect(accounts).toContain("subscribeDataChange");
     expect(roles).toContain("subscribeDataChange");
@@ -58,4 +66,15 @@ describe("staff management boundaries", () => {
     expect(endpoint).toContain("permissions: z.record(z.string(), z.boolean())");
     expect(server).toContain("p_permissions: payload.permissions ?? null");
   });
+});
+
+it("keeps compact account controls in the editor rather than extra table columns", () => {
+  const screen = read("src/platforms/web/components/admin/StaffManager.tsx");
+  expect(screen).not.toContain("<th>Status</th>");
+  expect(screen).not.toContain("setIdleFor");
+  expect(screen).toContain('aria-label={nativeApprovalCredentials ? "Approval credentials" : "Approval PIN"}');
+  expect(screen).toContain('id="staff-active"');
+  expect(screen).toContain('text-[10px] leading-4');
+  expect(screen).toContain("Disabled</Badge>");
+  expect(screen).not.toContain("min-w-[620px]");
 });

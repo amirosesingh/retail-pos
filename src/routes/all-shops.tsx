@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { inventoryMetrics, isLowStock } from "@/lib/inventory-metrics";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -164,7 +165,7 @@ function AllShops() {
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">All shops</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Sales from {from} to {to}. Stock quantities and shift status show the current state.
             </p>
           </div>
@@ -243,7 +244,7 @@ function AllShops() {
                 Visible to administrators only
               </span>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="summary-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <Kpi label="Revenue · selected dates" value={money(live.revenue)} />
               <Kpi label="Gross profit" value={money(live.profit)} />
               <Kpi label="Bills" value={String(live.bills)} />
@@ -264,7 +265,7 @@ function AllShops() {
                   {billPager.pageItems.map((s) => (
                     <TableRow key={s.id}>
                       <TableCell className="numeric text-xs">
-                        {new Date(s.createdAt).toLocaleString()}
+                        {posDisplayDateTime(new Date(s.createdAt))}
                       </TableCell>
                       <TableCell className="text-xs">
                         {stores.find((x) => x.id === s.storeId)?.name ?? "—"}
@@ -418,7 +419,7 @@ function AllShops() {
 
 function Kpi({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <div className="summary-card rounded-lg border border-border bg-card p-4">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="numeric mt-1 text-xl font-semibold">{value}</p>
     </div>

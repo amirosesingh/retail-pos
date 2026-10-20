@@ -1,3 +1,4 @@
+import { TransferLoadError } from "@/platforms/web/components/pos/TransferWorkspace";
 import { sameBranchId } from "@/lib/branch-id";
 /**
  * Receiving workspace — the physical count that puts stock on the shelf.
@@ -63,7 +64,7 @@ function ReceivingWorkspace() {
   const { state, stores, currentStore, receiveTransfer, verifyTransfer } = usePos();
   const { can } = useAuth();
   const navigate = useNavigate();
-  const { transfer, live, loading } = useTransferRecord(id);
+  const { transfer, live, loading, error: loadError, retry } = useTransferRecord(id);
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   const [scan, setScan] = useState("");
@@ -120,6 +121,8 @@ function ReceivingWorkspace() {
         <p className="p-10 text-center text-sm text-muted-foreground">Loading delivery…</p>
       </AppShell>
     );
+
+  if (loadError) return <AppShell><TransferLoadError error={loadError} onRetry={retry} /></AppShell>;
 
   if (!transfer)
     return (

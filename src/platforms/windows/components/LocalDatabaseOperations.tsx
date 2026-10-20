@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,7 +31,7 @@ type SyncApi = {
   subscribe(cb: (state: SyncState) => void): () => void;
 };
 const shell = () => window.pos as unknown as { database?: DatabaseApi; jobs?: JobsApi; sync?: SyncApi };
-const when = (value?: string | null) => value ? new Date(value).toLocaleString() : "Never";
+const when = (value?: string | null) => value ? posDisplayDateTime(new Date(value)) : "Never";
 const label = (value?: string) => (value ?? "idle").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const isDatabaseConnectivityFailure = (failure: FailureRow) => /(?:E?CONN(?:ECT|REFUSED|RESET)|ETIMEOUT|ESOCKET|ELOGIN|ENOTOPEN|network|failed to fetch|sql server|database (?:connection|offline|unreachable)|could not (?:connect|reach)|unable to (?:connect|reach))/i.test(
   `${failure.error_code ?? ""} ${failure.error_message ?? ""}`,

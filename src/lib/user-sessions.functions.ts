@@ -117,18 +117,13 @@ export const listDeviceSessions = createServerFn({ method: "POST" })
     } catch (e) {
       return { ok: false as const, error: (e as Error).message, sessions: [] as DeviceSession[] };
     }
-    const res = await serviceRest(
-      "user_sessions?select=id,kind,label,staff_user_id,branch_id,terminal_id,platform," +
-        "idle_timeout_minutes,last_activity_at,is_revoked,created_at" +
-        "&order=last_activity_at.desc&limit=200",
-    );
-    if (!res.ok)
-      return {
-        ok: false as const,
-        error: "Could not read sessions",
-        sessions: [] as DeviceSession[],
-      };
-    const sessions = (await res.json()) as DeviceSession[];
+    let sessions: DeviceSession[];
+    try {
+      const { readActiveSessions } = await import("./active-sessions.server");
+      sessions = await readActiveSessions();
+    } catch (error) {
+      return { ok: false as const, error: (error as Error).message, sessions: [] as DeviceSession[] };
+    }
     const [storesRes, terminalsRes] = await Promise.all([
       serviceRest("stores?select=id,name"),
       serviceRest("terminal_tokens?select=id,device_name"),
@@ -197,7 +192,8 @@ export const revokeDeviceSessions = createServerFn({ method: "POST" })
           }),
         },
       );
-      if (res.ok) revoked += ((await res.json()) as unknown[]).length;
+      if (!res.ok) return { ok: false as const, error: "Could not reset the session. Try again.", revoked: 0 };
+      revoked += ((await res.json()) as unknown[]).length;
     }
     if (data.terminalId || data.branchId) {
       revoked += await revokeSessionsFor(

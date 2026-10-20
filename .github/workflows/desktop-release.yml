@@ -3,6 +3,15 @@ name: Desktop release (Windows)
 on:
   workflow_call:
     inputs:
+      release_channel:
+        type: string
+        default: stable
+      beta_version:
+        type: string
+        default: ""
+      beta_number:
+        type: number
+        default: 0
       build_only:
         type: boolean
         default: true
@@ -17,8 +26,10 @@ permissions:
 
 jobs:
   build-windows:
-    if: "github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')"
+    if: "inputs.release_channel == 'beta' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')"
     runs-on: windows-latest
+    env:
+      POS_RELEASE_CHANNEL: ${{ inputs.release_channel || 'stable' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,11 +46,18 @@ jobs:
 
       - name: Resolve release identity
         id: meta
+        env:
+          RELEASE_CHANNEL: ${{ inputs.release_channel || 'stable' }}
+          BETA_VERSION: ${{ inputs.beta_version }}
         shell: bash
         run: |
           version=$(node -p "require('./package.json').version")
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then version="$BETA_VERSION"; fi
           short=$(echo "$GITHUB_SHA" | cut -c1-7)
-          if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then
+            node -e "if(!/^\d+\.\d+\.\d+-beta\.[1-9]\d*$/.test(process.env.BETA_VERSION||''))process.exit(1)"
+          fi
+          if [ "$RELEASE_CHANNEL" != "beta" ] && [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
             tag="${{ github.ref_name }}"
             if [ "$tag" != "v$version" ]; then
               echo "Tag $tag does not match package version v$version"; exit 1
@@ -47,9 +65,10 @@ jobs:
           else
             tag="v$version"
           fi
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then tag="beta-v$version"; fi
           {
             echo "version=$version"
-            echo "build_number=$(git rev-list --count HEAD)"
+            if [ "$RELEASE_CHANNEL" = "beta" ]; then echo "build_number=${{ inputs.beta_number }}"; else echo "build_number=$(git rev-list --count HEAD)"; fi
             echo "tag=$tag"
             echo "commit=$GITHUB_SHA"
             echo "release_id=$tag-$short"
@@ -74,9 +93,15 @@ jobs:
           npm test
           node --test scripts/test-update-install.cjs scripts/test-updater.cjs scripts/test-windows-publish.cjs scripts/test-update-history.cjs scripts/test-shutdown-sync.cjs
 
+      - name: Prepare beta package identity
+        if: inputs.release_channel == 'beta'
+        env:
+          BETA_VERSION: ${{ inputs.beta_version }}
+        run: node scripts/prepare-beta.cjs
+
       - name: Build Electron installer
         env:
-          POS_UPDATE_URL: ${{ vars.POS_UPDATE_URL }}
+          POS_UPDATE_URL: ${{ inputs.release_channel == 'beta' && 'https://updatecms.luckycharmsdnbhd.com/pos-app/beta/latest/' || vars.POS_UPDATE_URL }}
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           FORCE_CODE_SIGNING: ${{ secrets.WIN_CSC_LINK != '' }}
@@ -99,7 +124,7 @@ jobs:
       - name: Write release manifest
         shell: bash
         run: |
-          node -e "const fs=require('fs');fs.writeFileSync('release/release.json',JSON.stringify({version:'${{ steps.meta.outputs.version }}',tag:'${{ steps.meta.outputs.tag }}',commit:'${{ steps.meta.outputs.commit }}',released:new Date().toISOString(),path:'pos-app/releases/${{ steps.meta.outputs.release_id }}/'},null,2))"
+          node -e "const fs=require('fs');fs.writeFileSync('release/release.json',JSON.stringify({version:'${{ steps.meta.outputs.version }}',tag:'${{ steps.meta.outputs.tag }}',commit:'${{ steps.meta.outputs.commit }}',released:new Date().toISOString(),path:(process.env.POS_RELEASE_CHANNEL==='beta'?'pos-app/beta':'pos-app')+'/releases/${{ steps.meta.outputs.release_id }}/'},null,2))"
 
       - name: Stage and validate publishable files
         shell: bash
@@ -113,6 +138,7 @@ jobs:
           v="${{ steps.meta.outputs.version }}"
           expected="Retail Setup $v.exe"
           base="https://updatecms.luckycharmsdnbhd.com/pos-app"
+          if [ "$POS_RELEASE_CHANNEL" = "beta" ]; then base="$base/beta"; fi
           epoch=$(node -e "const m=/BUNDLE_EPOCH\s*=\s*(\d+)/.exec(require('fs').readFileSync('src/lib/bundle-epoch.ts','utf8'));if(!m){process.exit(1)}console.log(m[1])")
           if [ ! -f "upload/$expected" ]; then
             echo "Expected Windows installer is missing: upload/$expected"

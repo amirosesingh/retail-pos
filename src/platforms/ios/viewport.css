@@ -1,0 +1,46 @@
+/* Included only in the iOS build. Use hardware insets, never phone dimensions. */
+html[data-ios-edge] body {
+  box-sizing: border-box;
+  min-height: 100dvh;
+  padding-bottom: 0;
+  background: var(--background);
+}
+
+/* The app itself reaches the bottom edge. Do not reserve a permanent strip
+   outside the workspace; apply safe spacing to its controls/scroll content. */
+html[data-ios-edge] .pos-scaled.h-dvh {
+  height: 100dvh;
+  min-height: 100dvh;
+}
+
+/* Settings scroll underneath the home indicator, with enough trailing space
+   to bring the last card fully above it. This padding scrolls with the content. */
+html[data-ios-edge] .settings-workspace > .overflow-y-auto {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  scroll-padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Register pages can contain stationary payment controls inside main. */
+html[data-ios-edge] .pos-scaled main.overflow-y-auto {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html[data-ios-edge] .settings-workspace .sticky.bottom-0 {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+}
+
+/* Portals bypass body padding. Their backgrounds can reach the bottom, while
+   their last controls retain a safe touch margin above the home indicator. */
+html[data-ios-edge] [role="dialog"].fixed.bottom-0,
+html[data-ios-edge] [role="dialog"].fixed.inset-y-0 {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+}
+
+html[data-ios-edge] .fixed.bottom-0:not([role="dialog"]) {
+  bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html[data-ios-edge] [role="dialog"].fixed[class~="top-1/2"] {
+  top: calc((100dvh - env(safe-area-inset-bottom, 0px)) / 2);
+  max-height: calc(100dvh - env(safe-area-inset-bottom, 0px) - 2rem);
+}

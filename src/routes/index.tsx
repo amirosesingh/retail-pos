@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime, formatDate as posDisplayDate } from "@/lib/time-zone";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { draftTicketId } from "@/lib/session-draft";
 import { LegacyExchangeForm } from "@/platforms/web/components/pos/LegacyExchangeForm";
@@ -214,6 +215,7 @@ function Register() {
     upsertProduct,
     upsertMember,
   } = usePos();
+  const productsById = useMemo(() => new Map(state.products.map(product => [product.id, product])), [state.products]);
   useUiScale();
   const { user, can, isAdmin } = useAuth();
   const { requirePermission } = useUserPermissions();
@@ -930,11 +932,11 @@ function Register() {
     if (focId && !hasFoc) {
       const [, productId, qty] = focId.split(":");
       const rule = state.promotions.find((p) => p.id === focId.split(":")[0]);
-      const product = state.products.find((p) => p.id === productId);
+      const product = productsById.get(productId);
       if (rule && product) setLines((ls) => [...ls, focLine(rule, product, Number(qty))]);
     }
     if (!focId && hasFoc) setLines((ls) => ls.filter((l) => !l.foc));
-  }, [focId, hasFoc, state.promotions, state.products, setLines]);
+  }, [focId, hasFoc, state.promotions, productsById, setLines]);
   // Total rounding: display and tender validation use the same rounded figure
   // the checkout charges and stores.
   const rounding = applyRounding(totals.total, state.settings.integrations.rounding, roundingPaymentMethod(method, tenders));
@@ -1142,7 +1144,7 @@ function Register() {
     totals.tax,
     totals.total,
   ]);
-  const detail = state.products.find((p) => p.id === detailId) ?? null;
+  const detail = detailId === null ? null : productsById.get(detailId) ?? null;
 
   /** Adds the product matching a scanned/typed code to the ticket. */
   function scanCode(raw: string) {
@@ -1577,7 +1579,7 @@ function Register() {
     setIntakeCharges((rows) => [...rows.filter((r) => r.kind !== kind), next]);
 
   function pickRacketProduct(id: string) {
-    const p = state.products.find((x) => x.id === id);
+    const p = productsById.get(id);
     setRacketProductId(id);
     if (!p) return;
     setRacketCustomerOwned(false);
@@ -1598,7 +1600,7 @@ function Register() {
   }
 
   async function pickStringProduct(id: string) {
-    const p = state.products.find((x) => x.id === id);
+    const p = productsById.get(id);
     if (p) {
       /* Inventory guard — never string from a reel the branch does not hold. */
       const onHand = availableAt(p, currentStore.id, state.bookings);
@@ -1642,7 +1644,7 @@ function Register() {
   }
 
   function addAddOnProduct(id: string) {
-    const p = state.products.find((x) => x.id === id);
+    const p = productsById.get(id);
     if (!p) return;
     setIntakeCharges((rows) => [
       ...rows,
@@ -2159,7 +2161,7 @@ function Register() {
                         l.job?.stencil ? "stencil" : "",
                         l.job?.overgrip ? "overgrip" : "",
                         l.job?.promisedAt
-                          ? `ready ${new Date(l.job.promisedAt).toLocaleString()}`
+                          ? `ready ${posDisplayDateTime(new Date(l.job.promisedAt))}`
                           : "",
                       ]
                         .filter(Boolean)
@@ -2782,7 +2784,7 @@ function Register() {
                   toast.error("Link barcodes to products permission required");
                   return;
                 }
-                const product = state.products.find((p) => p.id === id);
+                const product = productsById.get(id);
                 if (!product) return;
                 await upsertProduct({
                   ...product,
@@ -3335,7 +3337,7 @@ function Register() {
           {billHit && (
             <div className="space-y-3">
               <p className="numeric text-xs text-muted-foreground">
-                {billHit.receiptNo} · {new Date(billHit.createdAt).toLocaleString()} ·{" "}
+                {billHit.receiptNo} · {posDisplayDateTime(new Date(billHit.createdAt))} ·{" "}
                 {money(billHit.total)} · {billHit.cashier}
                 {billHit.exchangedToReceiptNo
                   ? ` · already exchanged to ${billHit.exchangedToReceiptNo}`
@@ -4162,7 +4164,7 @@ function Register() {
                       <p className="text-[11px] text-muted-foreground">
                         {discountLabel(v.campaign)} · {scopeLabel(v.campaign)}
                         {v.voucher.expiresAt || v.campaign.expiresAt
-                          ? ` · until ${new Date(v.voucher.expiresAt ?? v.campaign.expiresAt!).toLocaleDateString()}`
+                          ? ` · until ${posDisplayDate(new Date(v.voucher.expiresAt ?? v.campaign.expiresAt!))}`
                           : ""}
                       </p>
                       {usable ? null : (

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { retryDataRead, isTransientReadError } from "../read-retry";
+import { retryDataRead, isTransientReadError, withReadDeadline } from "../read-retry";
 import { __resetSessionEpoch, bumpSessionEpoch } from "../session-epoch";
 import { businessReadsReady } from "../business-readiness";
 
@@ -17,9 +17,31 @@ describe("read-only transient recovery", () => {
     const failure = new Error("Network error");
     const read = vi.fn().mockRejectedValue(failure);
     const checked = expect(retryDataRead(read)).rejects.toBe(failure);
+    await vi.advanceTimersByTimeAsync(1500);
+    await checked;
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+  it("allows a connection time to recover without retrying writes", async () => {
+    const read = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockRejectedValueOnce(new TypeError("Failed to fetch")).mockResolvedValueOnce(["complete"]);
+    const result = retryDataRead(read);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(await result).toEqual(["complete"]);
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+  it("does not retry deliberate cancellation", async () => {
+    const error = new DOMException("The operation was aborted", "AbortError");
+    const read = vi.fn().mockRejectedValue(error);
+    await expect(retryDataRead(read)).rejects.toBe(error);
+    expect(read).toHaveBeenCalledOnce();
+  });
+  it("releases a stalled composite read and clears its deadline after success", async () => {
+    const result = withReadDeadline(() => new Promise(() => {}), 1000);
+    const checked = expect(result).rejects.toThrow("did not respond");
     await vi.advanceTimersByTimeAsync(1000);
     await checked;
-    expect(read).toHaveBeenCalledTimes(2);
+    expect(await withReadDeadline(async () => ["staff"], 1000)).toEqual(["staff"]);
+    expect(vi.getTimerCount()).toBe(0);
   });
   it.each([
     { status: 403, message: "permission denied" },
@@ -55,12 +77,13 @@ describe("read-only transient recovery", () => {
 
 describe("business read startup ordering", () => {
   it("waits for profile and cloud session readiness on Web and Android", () => {
-    expect(businessReadsReady(false, true, false, "staff")).toBe(false);
-    expect(businessReadsReady(true, true, false, null)).toBe(false);
-    expect(businessReadsReady(true, true, false, "staff")).toBe(true);
+    expect(businessReadsReady(false, true, false, "staff", true)).toBe(false);
+    expect(businessReadsReady(true, true, false, null, true)).toBe(false);
+    expect(businessReadsReady(true, true, false, "staff", false)).toBe(false);
+    expect(businessReadsReady(true, true, false, "staff", true)).toBe(true);
   });
   it("preserves signed-in Electron local reads without cloud authentication", () => {
-    expect(businessReadsReady(true, true, true, null)).toBe(true);
-    expect(businessReadsReady(true, false, true, null)).toBe(false);
+    expect(businessReadsReady(true, true, true, null, false)).toBe(true);
+    expect(businessReadsReady(true, false, true, null, false)).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Append-only trail of every coupon claim, manual issue, redemption and
  * blocked attempt, with the shop and cashier that caused it.
@@ -88,7 +89,7 @@ export function CouponAuditLog({
         "Note",
       ],
       ...rows.map((e) => [
-        new Date(e.createdAt).toLocaleString(),
+        posDisplayDateTime(new Date(e.createdAt)),
         label[e.type] ?? e.type,
         e.campaignName,
         e.token,
@@ -187,7 +188,7 @@ export function CouponAuditLog({
             {rows.slice(0, 500).map((e) => (
               <TableRow key={e.id}>
                 <TableCell className="whitespace-nowrap text-xs">
-                  {new Date(e.createdAt).toLocaleString()}
+                  {posDisplayDateTime(new Date(e.createdAt))}
                 </TableCell>
                 <TableCell>
                   <Badge variant={tone[e.type] ?? "secondary"}>{label[e.type] ?? e.type}</Badge>

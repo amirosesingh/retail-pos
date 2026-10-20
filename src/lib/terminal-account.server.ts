@@ -10,6 +10,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { runtimeEnvValue, supabaseConfig } from "./external-supabase-config";
 import { serviceRest, serviceKey } from "@/core/api/pos-relay.server";
+import { sameBranchId } from "./branch-id";
 
 export type TerminalAccount = { email: string; password: string };
 
@@ -111,22 +112,39 @@ export async function ensureTerminalAccount(
   }
 
   if (userId) {
-    const profile = await serviceRest("app_users?on_conflict=user_id", {
-      method: "POST",
-      prefer: "return=minimal,resolution=merge-duplicates",
-      body: JSON.stringify([
-        {
-          user_id: `terminal-${tokenId.slice(0, 8)}`,
-          full_name: `Terminal ${token.location_name ?? tokenId.slice(0, 8)}`,
-          email,
-          role: "staff",
-          store_id: token.location_id ?? null,
-          auth_user_id: userId,
-          is_active: true,
-        },
-      ]),
-    });
-    if (!profile.ok) throw new Error("Could not authorize this terminal account");
+    const existingResponse = await serviceRest(`app_users?email=eq.${encodeURIComponent(email)}&select=user_id,auth_user_id,role,is_active,store_id`);
+    if (!existingResponse.ok) throw new Error("Could not verify this terminal account profile");
+    const existing = ((await existingResponse.json()) as {
+      user_id: string; auth_user_id: string | null; role: string; is_active: boolean; store_id: string | null;
+    }[])[0];
+    if (existing && (existing.auth_user_id !== userId || existing.role !== "staff" ||
+        !sameBranchId(existing.store_id, token.location_id)))
+      throw new Error("This terminal account profile needs administrator review");
+    if (existing?.is_active === false) throw new Error("This terminal account is inactive. Ask an administrator to review it.");
+    // Existing profiles already carry the verified account/branch link. Do not
+    // overwrite administrator changes or a legacy username merely to sign in.
+    if (!existing) {
+      const profile = await serviceRest("app_users?on_conflict=email", {
+        method: "POST",
+        prefer: "return=representation,resolution=ignore-duplicates",
+        body: JSON.stringify([
+          {
+            user_id: `terminal-${tokenId}`,
+            full_name: `Terminal ${token.location_name ?? tokenId.slice(0, 8)}`,
+            email,
+            role: "staff",
+            store_id: token.location_id ?? null,
+            auth_user_id: userId,
+            is_active: true,
+          },
+        ]),
+      });
+      if (!profile.ok) throw new Error("Could not authorize this terminal account");
+      // An Auth signup trigger or another request may have won the same email.
+      // Never silently return credentials for an unverified competing profile.
+      const inserted = (await profile.json()) as unknown[];
+      if (!inserted.length) throw new Error("This terminal account profile changed. Retry the registration check.");
+    }
     const role = await serviceRest("user_roles?on_conflict=user_id,role", {
       method: "POST",
       prefer: "return=minimal,resolution=merge-duplicates",

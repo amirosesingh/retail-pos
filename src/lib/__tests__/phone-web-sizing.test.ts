@@ -10,6 +10,12 @@ describe("phone website sizing", () => {
       expect(computeUiTextSize(width, 1)).toBe(16);
     expect(computeUiTextSize(390, 1, true)).toBe(16);
   });
+  it("sizes Capacitor phones compactly while retaining desktop terminal sizing", () => {
+    expect(computeUiTextSize(390, 1, true, true)).toBe(14);
+    expect(computeUiTextSize(390, 1.5, true, true)).toBe(21);
+    expect(computeUiTextSize(800, 1, true, true)).toBe(16);
+    expect(computeUiTextSize(390, 1, true, false)).toBe(16);
+  });
   it("retains the saved text-size multiplier on every platform", () => {
     expect(computeUiTextSize(390, 1.5)).toBe(21);
     expect(computeUiTextSize(1440, 1.5)).toBe(24);

@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -169,7 +170,10 @@ export function SecureCredentials() {
       {error && <p className="text-xs text-destructive">{error}</p>}
       {FIELDS.map((f) => (
         <div key={f.key} className="space-y-1">
-          <Label className="text-xs text-muted-foreground">{f.label}</Label>
+          <div className="flex items-center gap-1">
+            <Label className="text-xs text-muted-foreground">{f.label}</Label>
+            <HelpTip text={f.hint} label={`About ${f.label}`} />
+          </div>
           <div className="flex gap-2">
             <Input
               type="password"
@@ -191,7 +195,6 @@ export function SecureCredentials() {
               </Button>
             )}
           </div>
-          <p className="text-[11px] text-muted-foreground">{f.hint}</p>
         </div>
       ))}
     </div>

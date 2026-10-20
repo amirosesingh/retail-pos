@@ -1,3 +1,5 @@
+import { reconcileLiveRows } from "@/lib/live-state";
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { notifyError } from "@/lib/notify";
 /**
  * Stock Operations — the only place stock quantities change by hand.
@@ -69,6 +71,7 @@ function StockOperationsPage() {
   const [records, setRecords] = useState<StockRecordRow[]>([]);
   const [loading, setLoading] = useState(false);
   const refreshSequence = useRef(0);
+  const loadedScope = useRef<string | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [branchFilter, setBranchFilter] = useState<string>("current");
@@ -90,13 +93,17 @@ function StockOperationsPage() {
 
   const refresh = useCallback(async () => {
     const sequence = ++refreshSequence.current;
-    setLoading(true);
+    const scope = `${branchFilter}:${currentStore.id}`;
+    const initial = loadedScope.current !== scope;
+    setLoading(initial);
+    if (initial) setRecords([]);
     try {
       const list = (await db.listStockCountRecords({
         storeId: branchFilter === ALL ? null : currentStore.id,
       })) as unknown as StockRecordRow[];
       if (sequence !== refreshSequence.current) return;
-      setRecords(list);
+      loadedScope.current = scope;
+      setRecords(previous => reconcileLiveRows(previous, list));
       setViewing(current => current ? list.find(row => row.id === current.id) ?? current : null);
       setReadError(null);
     } catch (error) {
@@ -225,139 +232,7 @@ function StockOperationsPage() {
     }
   };
 
-  return (
-    <AppShell>
-      <div className="mx-auto w-full max-w-6xl space-y-4 p-4">
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList>
-            <TabsTrigger value="records">
-              <ClipboardList className="mr-2 size-4" /> Stock count records
-              {openDrafts > 0 && (
-                <Badge variant="outline" className="ml-2 numeric">
-                  {openDrafts} draft
-                </Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="transfers">
-              <ArrowLeftRight className="mr-2 size-4" /> Transfers
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="records" className="space-y-4">
-            {readError && <p role="alert" className="text-sm text-destructive">Stock count records: {readError}</p>}
-            <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-border bg-card p-4">
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="w-44">
-                  <ThemedSelect
-                    value={statusFilter}
-                    onChange={setStatusFilter}
-                    options={[
-                      { value: ALL, label: "All statuses" },
-                      { value: "draft", label: "Draft" },
-                      { value: "posted", label: "Posted" },
-                      { value: "discarded", label: "Discarded" },
-                    ]}
-                    ariaLabel="Status filter"
-                  />
-                </div>
-                {multiBranch && (
-                  <div className="w-52">
-                    <ThemedSelect
-                      value={branchFilter}
-                      onChange={setBranchFilter}
-                      options={[
-                        { value: "current", label: `This branch · ${currentStore.name}` },
-                        { value: ALL, label: "All branches" },
-                      ]}
-                      ariaLabel="Branch filter"
-                    />
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-wrap items-end gap-2">
-                {mayPickCountStore ? (
-                  <div className="w-64">
-                    <p className="mb-1 text-[11px] font-medium text-muted-foreground">
-                      New count writes to
-                    </p>
-                    <ThemedSelect
-                      value={countStoreId}
-                      onChange={setCountStoreId}
-                      options={activeStores.map((store) => ({
-                        value: store.id,
-                        label: `${store.code || store.id} · ${store.name}`,
-                      }))}
-                      ariaLabel="Stock count destination branch"
-                    />
-                  </div>
-                ) : null}
-                <Button onClick={startNew}>
-                  <Plus className="mr-2 size-4" /> New count
-                </Button>
-              </div>
-            </div>
-
-            {loading ? (
-              <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                Loading records…
-              </p>
-            ) : visible.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                No stock count records yet. Start one with “New count”.
-              </p>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-border">
-                <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Reference</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Branch</TableHead>
-                      <TableHead className="text-right">Items</TableHead>
-                      <TableHead className="text-right">Impact</TableHead>
-                      <TableHead>Created by</TableHead>
-                      <TableHead>Posted by</TableHead>
-                      <TableHead />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visible.map((r) => (
-                      <TableRow key={r.id} summaryValues={{ Items: Number(r.line_count ?? 0), "Net impact": Number(r.total_impact ?? 0) }}>
-                        <TableCell className="font-mono">{r.reference || "—"}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={`capitalize ${
-                              r.status === "posted"
-                                ? "border-success/40 text-success"
-                                : r.status === "discarded"
-                                  ? "text-muted-foreground"
-                                  : "border-primary/40 text-primary"
-                            }`}
-                          >
-                            {r.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell
-                          title={
-                            r.posted_at
-                              ? `Posted ${new Date(r.posted_at).toLocaleString()}`
-                              : undefined
-                          }
-                        >
-                          {r.created_at ? new Date(r.created_at).toLocaleString() : "—"}
-                        </TableCell>
-                        <TableCell>{r.store_code || r.store_id || "—"}</TableCell>
-                        <TableCell className="numeric text-right">{r.line_count ?? 0}</TableCell>
-                        <TableCell className="numeric text-right">
-                          {money(Number(r.total_impact ?? 0))}
-                        </TableCell>
-                        <TableCell>{r.staff_name || "—"}</TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {r.posted_by || "—"}
-                        </TableCell>
-                        <TableCell className="space-x-2 whitespace-nowrap text-right">
+  const recordActions = (r: StockRecordRow) => <>
                           <Button size="sm" variant="ghost" onClick={() => setViewing(r)}>
                             View
                           </Button>
@@ -418,12 +293,175 @@ function StockOperationsPage() {
                               </Button>
                             )
                           ) : null}
+  </>;
+
+  return (
+    <AppShell>
+      <div className="mx-auto w-full max-w-6xl space-y-4 p-4">
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList className="h-auto max-w-full flex-wrap">
+            <TabsTrigger value="records">
+              <ClipboardList className="mr-2 size-4" /> Stock count records
+              {openDrafts > 0 && (
+                <Badge variant="outline" className="ml-2 numeric">
+                  {openDrafts} draft
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="transfers">
+              <ArrowLeftRight className="mr-2 size-4" /> Transfers
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="records" className="space-y-4">
+            {readError && <p role="alert" className="text-sm text-destructive">Stock count records: {readError}</p>}
+            <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-border bg-card p-3 sm:p-4">
+              <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-end sm:gap-3">
+                <div className="min-w-0 sm:w-44">
+                  <ThemedSelect
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    options={[
+                      { value: ALL, label: "All statuses" },
+                      { value: "draft", label: "Draft" },
+                      { value: "posted", label: "Posted" },
+                      { value: "discarded", label: "Discarded" },
+                    ]}
+                    ariaLabel="Status filter"
+                  />
+                </div>
+                {multiBranch && (
+                  <div className="min-w-0 sm:w-52">
+                    <ThemedSelect
+                      value={branchFilter}
+                      onChange={setBranchFilter}
+                      options={[
+                        { value: "current", label: `This branch · ${currentStore.name}` },
+                        { value: ALL, label: "All branches" },
+                      ]}
+                      ariaLabel="Branch filter"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="flex w-full min-w-0 items-end gap-2 sm:w-auto sm:flex-wrap">
+                {mayPickCountStore ? (
+                  <div className="min-w-0 flex-1 sm:w-64 sm:flex-none">
+                    <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+                      New count writes to
+                    </p>
+                    <ThemedSelect
+                      value={countStoreId}
+                      onChange={setCountStoreId}
+                      options={activeStores.map((store) => ({
+                        value: store.id,
+                        label: `${store.code || store.id} · ${store.name}`,
+                      }))}
+                      ariaLabel="Stock count destination branch"
+                    />
+                  </div>
+                ) : null}
+                <Button className="shrink-0" onClick={startNew}>
+                  <Plus className="mr-2 size-4" /> New count
+                </Button>
+              </div>
+            </div>
+
+            {loading ? (
+              <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                Loading records…
+              </p>
+            ) : visible.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                No stock count records yet. Start one with “New count”.
+              </p>
+            ) : (
+              <>
+              <div className="space-y-3 md:hidden">
+                {visible.map(r => <article key={r.id} className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="break-all font-mono text-sm font-medium">{r.reference || "—"}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{r.store_code || r.store_id || "—"}</p>
+                    </div>
+                    <Badge status={r.status} variant="outline" className="shrink-0 text-[10px] capitalize">{r.status}</Badge>
+                  </div>
+                  <div className="relative grid grid-cols-[1fr_1fr_6rem] items-start gap-2 text-xs">
+                    <div><dt className="text-muted-foreground">Items</dt><dd className="numeric font-medium">{r.line_count ?? 0}</dd></div>
+                    <div><dt className="text-muted-foreground">Impact</dt><dd className="numeric font-medium">{money(Number(r.total_impact ?? 0))}</dd></div>
+                  <details className="col-span-3 text-xs">
+                    <summary className="absolute right-0 top-0 cursor-pointer rounded py-2 text-right font-medium text-primary">More details</summary>
+                    <dl className="col-span-3 grid grid-cols-2 gap-3 py-2 [&_dd]:break-words [&_dt]:text-muted-foreground">
+                      <div><dt>Created</dt><dd>{r.created_at ? posDisplayDateTime(new Date(r.created_at)) : "—"}</dd></div>
+                      <div><dt>Created by</dt><dd>{r.staff_name || "—"}</dd></div>
+                      <div><dt>Posted</dt><dd>{r.posted_at ? posDisplayDateTime(new Date(r.posted_at)) : "—"}</dd></div>
+                      <div><dt>Posted by</dt><dd>{r.posted_by || "—"}</dd></div>
+                    </dl>
+                  </details>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2">{recordActions(r)}</div>
+                </article>)}
+              </div>
+              <div className="hidden overflow-x-auto rounded-xl border border-border md:block">
+                <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Reference</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Branch</TableHead>
+                      <TableHead className="text-right">Items</TableHead>
+                      <TableHead className="text-right">Impact</TableHead>
+                      <TableHead>Created by</TableHead>
+                      <TableHead>Posted by</TableHead>
+                      <TableHead />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {visible.map((r) => (
+                      <TableRow key={r.id} summaryValues={{ Items: Number(r.line_count ?? 0), "Net impact": Number(r.total_impact ?? 0) }}>
+                        <TableCell className="font-mono">{r.reference || "—"}</TableCell>
+                        <TableCell>
+                          <Badge status={r.status}
+                            variant="outline"
+                            className={`capitalize ${
+                              r.status === "posted"
+                                ? "border-success/40 text-success"
+                                : r.status === "discarded"
+                                  ? "text-muted-foreground"
+                                  : "border-primary/40 text-primary"
+                            }`}
+                          >
+                            {r.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell
+                          title={
+                            r.posted_at
+                              ? `Posted ${posDisplayDateTime(new Date(r.posted_at))}`
+                              : undefined
+                          }
+                        >
+                          {r.created_at ? posDisplayDateTime(new Date(r.created_at)) : "—"}
+                        </TableCell>
+                        <TableCell>{r.store_code || r.store_id || "—"}</TableCell>
+                        <TableCell className="numeric text-right">{r.line_count ?? 0}</TableCell>
+                        <TableCell className="numeric text-right">
+                          {money(Number(r.total_impact ?? 0))}
+                        </TableCell>
+                        <TableCell>{r.staff_name || "—"}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {r.posted_by || "—"}
+                        </TableCell>
+                        <TableCell className="space-x-2 whitespace-nowrap text-right">
+                          {recordActions(r)}
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </div>
+              </>
             )}
           </TabsContent>
 

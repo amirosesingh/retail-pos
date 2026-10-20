@@ -99,7 +99,7 @@ function ActivityReport() {
           </div>
         </ReportHeader>
 
-        <div className="grid gap-4 sm:grid-cols-4">
+        <div className="summary-grid grid gap-4 sm:grid-cols-4">
           <StatCard label="Events" value={String(rows.length)} />
           <StatCard label="Orders held" value={String(count(/hold/i))} />
           <StatCard label="Carts voided" value={String(count(/void/i))} />

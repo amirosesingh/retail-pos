@@ -139,12 +139,20 @@ export function platformConfigReadySync(): boolean {
 
 /** Re-run the check whenever the device's stored credentials change. */
 export function subscribeConfigReady(fn: (state: ConfigReadiness) => void): () => void {
-  const run = () => void hasRequiredPlatformConfig().then(fn).catch(() => {});
+  let generation = 0;
+  let active = true;
+  const run = () => {
+    const request = ++generation;
+    void hasRequiredPlatformConfig().then(state => {
+      if (active && request === generation) fn(state);
+    }).catch(() => {});
+  };
   run();
   const offKeys = subscribeCloudKeys(run);
   // The backend half arrives with the restore, not with a key change.
   const offHydrated = subscribeProfileHydrated(run);
   return () => {
+    active = false;
     offKeys();
     offHydrated();
   };

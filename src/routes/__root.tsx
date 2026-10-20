@@ -1,4 +1,7 @@
+import { IosOtaBoot } from "@/platform-config/ios-ota";
 import { ApprovalTokenAgent } from "@/platform-config/approval-token";
+import { VIEWPORT_FIT } from "@/platform-config/viewport";
+import { RELEASE_CHANNEL } from "@/lib/release-channel";
 import { createRefreshQueue, subscribeBackgroundRefresh } from "@/lib/background-refresh";
 import { queryReadsChangedTables } from "@/lib/live-query-tables";
 import { notifyError } from "@/lib/notify";
@@ -33,8 +36,9 @@ import { ConnectDatabaseScreen } from "@/platforms/web/components/pos/ConnectDat
 import { isTerminalApp } from "@/platform-config/platform";
 import { FirstRunSetup } from "@/platforms/web/components/pos/FirstRunSetup";
 import { LifeBuoy } from "lucide-react";
-import { RECOVERY_PATH } from "@/lib/recovery-route";
+import { RECOVERY_PATH, isRecoveryPath } from "@/lib/recovery-route";
 import { ThemeProvider, themeBootScript } from "../lib/theme";
+import { NativeConnectionIndicator } from "@/platform-config/offline-interface";
 import { publicConfigScript } from "../lib/public-config-script";
 import { NativeBoot } from "@/platforms/mobile/components/NativeBoot";
 import { NativeWindowFrame } from "@/components/shared/NativeWindowFrame";
@@ -44,6 +48,7 @@ import {
   APP_RESUME_EVENT,
   CONNECTIVITY_RESTORED_EVENT,
   connectivity,
+  heartbeat,
   startConnectivityMonitor,
 } from "@/core/activation/connection-health";
 import { subscribeSyncConfig, syncConfig } from "@/lib/sync-config";
@@ -53,7 +58,7 @@ import { PublicHostBoundary } from "@/platforms/web/components/pos/PublicHostBou
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { bypassPersistentAppShell, isCustomerPublicRoute } from "@/lib/app-shell-routes";
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
-import { hasRequiredPlatformConfig, type ConfigReadiness } from "@/lib/platform-config-ready";
+import { hasRequiredPlatformConfig, subscribeConfigReady, type ConfigReadiness } from "@/lib/platform-config-ready";
 import { hydrateConnectionProfile, isConnectionProfileHydrated } from "@/lib/connection-profile";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { staleAssetRecoveryScript } from "@/lib/stale-asset-recovery";
@@ -192,7 +197,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         name: "viewport",
         content:
-          "width=device-width, initial-scale=1.0, minimum-scale=0.5, maximum-scale=2.0, user-scalable=yes, viewport-fit=cover",
+          `width=device-width, initial-scale=1.0, minimum-scale=0.5, maximum-scale=2.0, user-scalable=yes, viewport-fit=${VIEWPORT_FIT}`,
       },
       { title: "Retail — Register, Shifts & Inventory" },
       {
@@ -217,7 +222,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
   }),
   shellComponent: RootShell,
-  component: RootComponent,
+  component: () => <IosOtaBoot><RootComponent /></IosOtaBoot>,
   notFoundComponent: NotFoundComponent,
   errorComponent: ErrorComponent,
 });
@@ -240,6 +245,7 @@ function RootShell({ children }: { children: ReactNode }) {
       </head>
       <body>
         {children}
+        {RELEASE_CHANNEL === "beta" && <div className="pointer-events-none fixed bottom-0 left-0 z-[100] rounded-tr-lg bg-amber-500 px-3 py-1 text-xs font-semibold text-black" role="note">Beta</div>}
         <Scripts />
       </body>
     </html>
@@ -251,11 +257,13 @@ function RootComponent() {
   const router = useRouter();
   const pathname = useLocation({ select: (location) => location.pathname });
   useNativeBackNavigation(router);
+  const customerDisplay = pathname === "/display";
 
   // One long-lived owner for connectivity on every platform. Platform-specific
   // configuration remains separate; this only owns the shared heartbeat
   // lifecycle so temporary screens can never stop it when they unmount.
   useEffect(() => {
+    if (customerDisplay) return;
     let appliedHeartbeat = syncConfig().heartbeatMs;
     let stop = startConnectivityMonitor(appliedHeartbeat);
     const offConfig = subscribeSyncConfig(() => {
@@ -269,12 +277,13 @@ function RootComponent() {
       offConfig();
       stop();
     };
-  }, []);
+  }, [customerDisplay]);
 
   // A confirmed reconnect or foreground resume wakes every data mechanism in
   // one place. The current URL stays intact while active queries and route
   // data refreshes quietly; queued mutations are allowed to continue automatically.
   useEffect(() => {
+    if (customerDisplay) return;
     let refreshing = false;
     const recover = () => {
       if (refreshing || connectivity() !== "online") return;
@@ -295,10 +304,11 @@ function RootComponent() {
       window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
       window.removeEventListener(APP_RESUME_EVENT, recover);
     };
-  }, [queryClient]);
+  }, [queryClient, customerDisplay]);
 
   // Coalesce a committed sync page into one active-query refresh.
   useEffect(() => {
+    if (customerDisplay) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tables = new Set<string>();
     const refresh = createRefreshQueue(async () => {
@@ -321,32 +331,59 @@ function RootComponent() {
       }, 100);
     });
     return () => { off(); offCatchup(); refresh.stop(); if (timer) clearTimeout(timer); };
-  }, [queryClient]);
+  }, [queryClient, customerDisplay]);
 
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <NativeWindowFrame>
+        {customerDisplay ? <Outlet /> : <>
+        <NativeConnectionIndicator />
+        {/* Beta testers can update before provisioning a terminal or signing in. */}
+        {RELEASE_CHANNEL === "beta" && <AppUpdateNotices />}
         <NativeBoot>
           <ConnectionProfileBoot>
+            <TerminalConnectionSetup>
             <OfflineGate>
               <PublicHostBoundary pathname={pathname}>
               {isCustomerPublicRoute(pathname) ? (
                 <>
                   <Outlet />
-                  <Toaster position="top-right" closeButton />
                 </>
               ) : (
                 <TillRuntime />
               )}
               </PublicHostBoundary>
             </OfflineGate>
+            </TerminalConnectionSetup>
           </ConnectionProfileBoot>
         </NativeBoot>
+        <Toaster position="top-right" closeButton={false} />
+        </>}
         </NativeWindowFrame>
       </ThemeProvider>
     </QueryClientProvider>
   );
+}
+
+/** Local configuration is decided before network gating on terminal apps only. */
+function TerminalConnectionSetup({ children }: { children: ReactNode }) {
+  const pathname = useLocation({ select: location => location.pathname });
+  const [profile, setProfile] = useState<ConfigReadiness | null>(null);
+  useEffect(() => {
+    if (!isTerminalApp()) return;
+    return subscribeConfigReady(setProfile);
+  }, []);
+  if (!isTerminalApp() || isRecoveryPath(pathname)) return children;
+  if (!profile) return <TillLoader message="Checking saved terminal settings…" />;
+  if (profile.state === "missing" || profile.state === "incomplete") {
+    return <ConnectDatabaseScreen cloudConfigured={profile.have.supabaseKey} onRetry={() => { void heartbeat(); }} />;
+  }
+  return children;
+}
+
+function AppUpdateNotices() {
+  return <><AndroidUpdateBanner /><DesktopUpdateBanner /></>;
 }
 
 /** Till-only runtime. Never mount this on customer-facing URLs. */
@@ -368,10 +405,8 @@ function TillRuntime() {
               </PrivilegeGate>
             </FirstRunSetup>
 
-            <AndroidUpdateBanner />
-            <DesktopUpdateBanner />
+            {RELEASE_CHANNEL !== "beta" && <AppUpdateNotices />}
             <DesktopCloseSyncStatus />
-            <Toaster position="top-right" closeButton />
             <ErrorNotifier />
           </RulesBridge>
         </PosProvider>

@@ -42,6 +42,7 @@ vi.mock("@/lib/external-supabase-config", () => ({
 vi.mock("@/lib/session-expiry", () => ({
   inspectResponse: vi.fn(),
   noteConnectivityIssue: vi.fn(),
+  clearConnectivityIssue: vi.fn(),
 }));
 
 vi.mock("@/integrations/supabase/auth-storage", () => ({ externalAuthStorage: {} }));
@@ -181,4 +182,21 @@ describe("external Supabase client ownership", () => {
       "Bearer user-session",
     );
   });
+  it("clears connectivity warnings after recovery and ignores deliberate cancellation", async () => {
+    const { externalClientSnapshot } = await import("@/integrations/supabase/external-client");
+    const { clearConnectivityIssue, noteConnectivityIssue } = await import("@/lib/session-expiry");
+    vi.mocked(clearConnectivityIssue).mockClear();
+    vi.mocked(noteConnectivityIssue).mockClear();
+    externalClientSnapshot();
+    const fetcher = harness.fetchers[0];
+    harness.transport.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await expect(fetcher("https://tenant-a.example.co/rest/v1/public_flags")).rejects.toThrow("Failed to fetch");
+    expect(noteConnectivityIssue).toHaveBeenCalledOnce();
+    await fetcher("https://tenant-a.example.co/rest/v1/public_flags");
+    expect(clearConnectivityIssue).toHaveBeenCalledOnce();
+    harness.transport.mockRejectedValueOnce(new DOMException("Cancelled", "AbortError"));
+    await expect(fetcher("https://tenant-a.example.co/rest/v1/public_flags")).rejects.toThrow("Cancelled");
+    expect(noteConnectivityIssue).toHaveBeenCalledOnce();
+  });
+
 });

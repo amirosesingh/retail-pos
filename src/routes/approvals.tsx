@@ -1,3 +1,5 @@
+import { reconcileLiveRows } from "@/lib/live-state";
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { approvalBranchLabel, approvalDisplayFields, approvalDecisionText } from "@/lib/approval-display";
 import { ApprovalDiscountReview } from "@/platforms/web/components/pos/ApprovalDiscountReview";
@@ -160,9 +162,11 @@ function ApprovalsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const loadSequence = useRef(0);
+  const loadedScope = useRef("");
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current;
-    setLoading(true);
+    const scope = JSON.stringify([storeId, allBranches, status, page, pageSize]);
+    setLoading(loadedScope.current !== scope);
     try {
       const auth = await getPosCallerAuth();
       const res = await listAuthorizationRequests({
@@ -176,7 +180,10 @@ function ApprovalsPage() {
       if (sequence !== loadSequence.current) return;
       setError(res.ok ? "" : (res.error ?? ""));
       // A refused reply may carry no list at all; never hand undefined on.
-      setRows(Array.isArray(res.requests) ? (res.requests as AuthorizationRequest[]) : []);
+      if (res.ok) {
+        loadedScope.current = scope;
+        setRows(previous => reconcileLiveRows(previous, Array.isArray(res.requests) ? res.requests as AuthorizationRequest[] : []));
+      } else setRows([]);
       const nextMe = res.ok ? (res.me ?? null) : null;
       setMe(nextMe);
       if (res.ok && res.pageInfo) { setHasMore(res.pageInfo.hasMore); setPage(res.pageInfo.page); }
@@ -192,7 +199,6 @@ function ApprovalsPage() {
       }
     } catch (e) {
       if (sequence !== loadSequence.current) return;
-      setRows([]);
       setError((e as Error).message);
     }
     if (sequence === loadSequence.current) setLoading(false);
@@ -305,7 +311,7 @@ function ApprovalsPage() {
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold">Approvals</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Review pending requests and completed decisions.
             </p>
           </div>
@@ -351,16 +357,20 @@ function ApprovalsPage() {
         ) : null}
 
         {!loading && !error && rows.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center gap-2 p-10 text-center">
-              <Clock3 className="size-6 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                {`No ${status === "all" ? "approval" : status} requests found in this branch scope.`}
+          <Card role="status" className="border-dashed bg-muted/10 shadow-none">
+            <CardContent className="flex flex-col items-center gap-2 px-4 py-8 text-center sm:py-10">
+              <span className="mb-1 grid size-10 place-items-center rounded-full bg-muted"><Clock3 className="size-5 text-muted-foreground" /></span>
+              <p className="text-sm font-medium">
+                {status === "pending" ? "No pending approval requests" : `No ${status === "all" ? "approval" : status} requests`}
+              </p>
+              <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+                {status === "pending" ? "New requests for this branch scope will appear here automatically." : "Try another status or branch scope to view other requests."}
               </p>
             </CardContent>
           </Card>
         ) : null}
 
+        <div role="region" aria-label="Approval requests" tabIndex={rows.length ? 0 : undefined} className="no-scrollbar max-h-[65dvh] space-y-3 overflow-y-auto overscroll-contain scroll-smooth motion-reduce:scroll-auto">
         {rows.map((row) => {
           const mine = !!me && row.requestedBy.toLowerCase() === me.id.toLowerCase();
           const payload = approvalDisplayFields(row.payload ?? {});
@@ -373,7 +383,7 @@ function ApprovalsPage() {
                 onOpenChange={(open) => setOpenRequestId(open ? row.id : null)}
               >
                 <Card>
-                  <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
+                  <CardHeader className="flex flex-col items-start justify-between gap-3 pb-2 sm:flex-row">
                     <div>
                       <CardTitle className="text-base">
                         {AUTH_ACTION_LABEL[row.actionKey] ?? row.actionKey}
@@ -391,7 +401,7 @@ function ApprovalsPage() {
                         aria-label={`Open ${row.status} approval details`}
                         onClick={() => setOpenRequestId(row.id)}
                       >
-                        <Badge className={STATUS_TONE[row.status] ?? ""} variant="secondary">
+                        <Badge status={row.status} className={STATUS_TONE[row.status] ?? ""} variant="secondary">
                           {row.status}
                         </Badge>
                       </button>
@@ -400,7 +410,7 @@ function ApprovalsPage() {
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardContent className="grid gap-2 pt-0 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                  <CardContent className="grid grid-cols-2 gap-3 pt-0 text-xs lg:grid-cols-4 [&>div]:min-w-0 [&_p]:break-words">
                     <div>
                       <p className="text-muted-foreground">Bill number</p>
                       <p className="font-semibold">{requestBillNumber(row)}</p>
@@ -438,7 +448,7 @@ function ApprovalsPage() {
                   <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain p-5 sm:p-6">
                     {decisionText && <section className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-4" aria-label="Approval decision">
                       <p className="break-words font-semibold [overflow-wrap:anywhere]">{decisionText}</p>
-                      {row.decidedAt && <p className="text-sm text-muted-foreground">{new Date(row.decidedAt).toLocaleString()}</p>}
+                      {row.decidedAt && <p className="text-sm text-muted-foreground">{posDisplayDateTime(new Date(row.decidedAt))}</p>}
                       {row.decisionNote && <p className="whitespace-pre-wrap break-words text-sm">{row.decisionNote}</p>}
                     </section>}
 
@@ -458,11 +468,11 @@ function ApprovalsPage() {
                       </div>
                       <div>
                         <dt className="text-muted-foreground">Created</dt>
-                        <dd>{new Date(row.createdAt).toLocaleString()}</dd>
+                        <dd>{posDisplayDateTime(new Date(row.createdAt))}</dd>
                       </div>
                       <div>
                         <dt className="text-muted-foreground">Expires</dt>
-                        <dd>{new Date(row.expiresAt).toLocaleString()}</dd>
+                        <dd>{posDisplayDateTime(new Date(row.expiresAt))}</dd>
                       </div>
                       <div>
                         <dt className="text-muted-foreground">Terminal</dt>
@@ -471,13 +481,13 @@ function ApprovalsPage() {
                       {row.decidedAt ? (
                         <div>
                           <dt className="text-muted-foreground">Decision time</dt>
-                          <dd>{new Date(row.decidedAt).toLocaleString()}</dd>
+                          <dd>{posDisplayDateTime(new Date(row.decidedAt))}</dd>
                         </div>
                       ) : null}
                       {row.consumedAt ? (
                         <div>
                           <dt className="text-muted-foreground">Grant used</dt>
-                          <dd>{new Date(row.consumedAt).toLocaleString()}</dd>
+                          <dd>{posDisplayDateTime(new Date(row.consumedAt))}</dd>
                         </div>
                       ) : null}
                     </dl>
@@ -711,6 +721,7 @@ function ApprovalsPage() {
             </div>
           );
         })}
+        </div>
 
         <div className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between" aria-label="Approval pagination">
           <div className="flex items-center gap-2">
@@ -870,7 +881,7 @@ function ApprovalRouteReview({ row }: { row: AuthorizationRequest }) {
   const escalation = route.escalationApprovers.map((person) => `${person.name} (${person.role})`);
   const escalatesAt =
     route.escalationAfterMinutes && route.escalationAfterMinutes > 0
-      ? new Date(Date.parse(row.createdAt) + route.escalationAfterMinutes * 60_000).toLocaleString()
+      ? posDisplayDateTime(new Date(Date.parse(row.createdAt) + route.escalationAfterMinutes * 60_000))
       : null;
   return (
     <dl className="grid gap-x-4 gap-y-2 rounded-md border border-border/60 p-3 text-xs sm:grid-cols-2">
@@ -931,7 +942,7 @@ function TicketReview({ row, stores }: { row: AuthorizationRequest; stores: read
           </div>
           <div>
             <dt className="text-muted-foreground">Captured</dt>
-            <dd>{new Date(t.capturedAt).toLocaleString()}</dd>
+            <dd>{posDisplayDateTime(new Date(t.capturedAt))}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Branch</dt>

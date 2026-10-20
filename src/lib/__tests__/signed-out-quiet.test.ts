@@ -12,7 +12,7 @@ vi.mock("@/lib/pos-credentials", () => ({
   cashierTokenSync: () => tokens.cashier,
 }));
 
-import { hasSignedInIdentity, __setAuthSessionForTests } from "../session-presence";
+import { hasSignedInIdentity, __setAuthSessionForTests, setSessionStartupPending } from "../session-presence";
 
 describe("hasSignedInIdentity", () => {
   beforeEach(() => {
@@ -39,6 +39,33 @@ describe("hasSignedInIdentity", () => {
 
   it("is true for a back-office account with a central session", () => {
     __setAuthSessionForTests(true);
+    expect(hasSignedInIdentity()).toBe(true);
+  });
+
+  it("keeps cached staff and cashier credentials quiet until startup is settled", () => {
+    tokens.session = "persisted-session";
+    tokens.cashier = "persisted-cashier";
+    __setAuthSessionForTests(true);
+    setSessionStartupPending(true);
+    expect(hasSignedInIdentity()).toBe(false);
+    setSessionStartupPending(false);
+    expect(hasSignedInIdentity()).toBe(true);
+  });
+
+  it("stays signed out when validation removes an expired token before releasing startup", () => {
+    tokens.session = "expired";
+    setSessionStartupPending(true);
+    expect(hasSignedInIdentity()).toBe(false);
+    tokens.session = null;
+    setSessionStartupPending(false);
+    expect(hasSignedInIdentity()).toBe(false);
+  });
+
+  it("preserves local credentials across an unavailable startup check", () => {
+    tokens.cashier = "offline-till";
+    setSessionStartupPending(true);
+    setSessionStartupPending(false);
+    expect(tokens.cashier).toBe("offline-till");
     expect(hasSignedInIdentity()).toBe(true);
   });
 

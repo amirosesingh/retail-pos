@@ -1,0 +1,7 @@
+{
+  "publicKey": "o2oApouxAQDwMcVnxPZLI4QIsa9loeJ57LG045XcxZA=",
+  "origin": "https://updatecms.luckycharmsdnbhd.com",
+  "endpoint": "https://updatecms.luckycharmsdnbhd.com/pos-app/ios-ota/staging/manifest.json",
+  "channel": "staging",
+  "appId": "com.luckycharms.pos.beta"
+}

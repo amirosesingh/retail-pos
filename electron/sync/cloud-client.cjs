@@ -8,7 +8,7 @@ const { toLocalValue } = require("./row-codec.cjs");
 // therefore remains untouched until its upload is accepted or rejected.
 const DEVICE_COLUMN_ALLOWLIST = {
   app_users: new Set([
-    "id", "user_id", "full_name", "store_id", "role", "role_slug", "permissions",
+    "id", "user_id", "login_username", "full_name", "store_id", "role", "role_slug", "permissions",
     "is_active", "pin_hash", "pin_length", "pin_set_at", "pin_updated_by", "row_version",
     "email", "created_at", "updated_at", "deleted_at",
   ]),

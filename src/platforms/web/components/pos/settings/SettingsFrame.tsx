@@ -354,7 +354,7 @@ export function SettingsFrame({
     const denied = (
       <div className={embedded ? "" : "p-6"}>
         <h1 className="text-2xl font-semibold">{title}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
+        <p className="mt-2 text-sm text-muted-foreground page-description">
           This configuration is managed by an administrator.
         </p>
       </div>
@@ -409,7 +409,7 @@ export function SettingsFrame({
               </Button>
               <div className="min-w-0 space-y-1">
                 <h1 className="text-2xl font-semibold">{title}</h1>
-                <p className="text-sm text-muted-foreground">{description}</p>
+                <p className="text-sm text-muted-foreground page-description">{description}</p>
               </div>
             </div>
           )}

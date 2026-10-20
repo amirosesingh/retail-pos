@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Read-only look at one receiving entry. Anyone who can open Purchasing may
  * read a record; changing a posted one is a separate, gated action.
@@ -47,7 +48,7 @@ export function ReceivingRecordView({
               <Meta label="Supplier invoice no." value={record.invoiceNo || "—"} />
               <Meta label="Supplier" value={record.supplier || "—"} />
               <Meta label="Invoice date" value={record.invoiceDate ?? "—"} />
-              <Meta label="Entered" value={new Date(record.entryDate).toLocaleString()} />
+              <Meta label="Entered" value={posDisplayDateTime(new Date(record.entryDate))} />
               <Meta label="Operator" value={record.operator || "—"} />
               <Meta label="Branch" value={record.storeCode ?? "—"} />
             </dl>

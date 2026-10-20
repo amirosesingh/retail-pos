@@ -203,7 +203,7 @@ function StockReport() {
           </p>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-4">
+        <div className="summary-grid grid gap-4 sm:grid-cols-4">
           <StatCard label="Adjustments" value={String(rows.length)} />
           <StatCard label="Units over" value={`+${over}`} />
           <StatCard label="Units short" value={String(short)} />

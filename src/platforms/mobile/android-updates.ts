@@ -7,7 +7,7 @@
  * Android's installer. Nothing here runs on web or Electron.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { APP_VERSION } from "@/lib/app-updates";
+import { APP_VERSION } from "@/version";
 import { isNative, isAndroid } from "@/platform-config/platform";
 import {
   describeNetworkError,
@@ -15,9 +15,11 @@ import {
   firstReachableUrl,
   httpGetJson,
 } from "@/platforms/mobile/native-http";
-import { compareVersions, fetchManifest, resolvePlatformTarget, withTimeout } from "@/lib/update-manifest";
+import { compareVersions, fetchManifest, resolvePlatformTarget, withTimeout, UPDATE_BASE } from "@/lib/update-manifest";
+import { acceptsReleaseVersion } from "@/lib/release-channel";
+import { downloadPercent, readUpdateDownload, waitForUpdateDownload } from "./update-download";
 
-const BASE = "https://updatecms.luckycharmsdnbhd.com/pos-app";
+const BASE = UPDATE_BASE;
 /** Current layout first, legacy path second, for phones on older releases. */
 const FEEDS = [`${BASE}/latest/android`, `${BASE}/android`];
 const SIX_HOURS = 6 * 60 * 60 * 1000;
@@ -94,7 +96,7 @@ export async function fetchLatest(): Promise<Latest> {
       const data = await withTimeout(
         httpGetJson<{ version?: string; file?: string }>(`${feed}/latest.json`),
       );
-      if (!data?.version) throw new Error("The update feed did not report a version.");
+      if (!data?.version || !acceptsReleaseVersion(data.version)) throw new Error("The update feed did not report a version for this release channel.");
       return {
         version: data.version,
         file: data.file || `Retail-${data.version}.apk`,
@@ -112,64 +114,16 @@ export async function fetchLatest(): Promise<Latest> {
 /**
  * Download the APK and open Android's package installer.
  *
- * The file goes into the app's *external* cache: the package installer is a
- * different app, so it cannot read anything in private internal storage. The
- * write is confirmed with a stat before the intent fires, so the installer
- * never opens on a half-written file. Returns the content URI so the caller
- * can offer a manual "Tap to install" if the intent was refused.
+ * Android DownloadManager owns the transfer and persists it across screen-off
+ * and process recreation. Its completed file is checked natively before the
+ * existing FileOpener installer flow runs.
  */
 export async function downloadAndInstall(
   url: string,
   file: string,
   onProgress: (pct: number) => void,
 ): Promise<{ uri: string; opened: boolean; error?: string }> {
-  const { Filesystem, Directory } = await import("@capacitor/filesystem");
-
-  // Stream to disk natively: transferring the entire APK as base64 through
-  // the webview duplicates it in memory and supplies no byte progress.
-  const directory = Directory.ExternalCache ?? Directory.Cache;
-  let expectedBytes = 0;
-  let receivedBytes = 0;
-  const listener = await Filesystem.addListener("progress", progress => {
-    if (progress.url !== url) return;
-    receivedBytes = progress.bytes;
-    expectedBytes = progress.contentLength;
-    if (expectedBytes > 0) onProgress(Math.min(99, Math.floor(receivedBytes / expectedBytes * 100)));
-  });
-  try {
-    onProgress(0);
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        await Filesystem.downloadFile({
-          url, path: file, directory, recursive: true, progress: true,
-          connectTimeout: 15000, readTimeout: 60000,
-          headers: { "Accept-Encoding": "identity" },
-        });
-        break;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String((error as { message?: unknown })?.message ?? error);
-        if (attempt >= 2 || !/software caused connection abort|connection (?:abort|reset)|socket|timed? ?out|network is unreachable|unable to resolve host/i.test(message)) throw error;
-        await Filesystem.deleteFile({ path: file, directory }).catch(() => {});
-        expectedBytes = 0;
-        receivedBytes = 0;
-        onProgress(0);
-        await new Promise(resolve => setTimeout(resolve, 750 * (attempt + 1)));
-      }
-    }
-    const stat = await Filesystem.stat({ path: file, directory });
-    if (!stat?.size || (expectedBytes > 0 && stat.size !== expectedBytes) ||
-      (receivedBytes > 0 && stat.size < receivedBytes)) {
-      throw new Error("The update file did not finish saving on this device. Retry the download.");
-    }
-  } catch (error) {
-    await Filesystem.deleteFile({ path: file, directory }).catch(() => {});
-    throw error;
-  } finally {
-    await listener.remove().catch(() => {});
-  }
-  onProgress(100);
-
-  const { uri } = await Filesystem.getUri({ path: file, directory });
+  const uri = await waitForUpdateDownload(url, file, onProgress);
   try {
     await openInstaller(uri);
     return { uri, opened: true };
@@ -195,9 +149,11 @@ export async function openInstaller(uri: string): Promise<void> {
 export function useAndroidUpdates() {
   const [state, setState] = useState<AndroidUpdateState>(INITIAL);
   const downloadInFlight = useRef(false);
+  const checkInFlight = useRef(false);
 
   const check = useCallback(async () => {
-    if (!isNative() || !isAndroid()) return;
+    if (!isNative() || !isAndroid() || checkInFlight.current || downloadInFlight.current) return;
+    checkInFlight.current = true;
     setState((s) => ({ ...s, checking: true, error: null }));
     try {
       const { version, file, feed, url, notes } = await fetchLatest();
@@ -217,6 +173,7 @@ export function useAndroidUpdates() {
         lastChecked: new Date(),
       }));
     } finally {
+      checkInFlight.current = false;
       // Whatever happened above, the card must never stay on "Checking…".
       setState((s) => ({ ...s, checking: false }));
     }
@@ -264,8 +221,41 @@ export function useAndroidUpdates() {
     setState((s) => ({ ...s, supported: true }));
     void check();
     const timer = setInterval(() => void check(), SIX_HOURS);
-    return () => clearInterval(timer);
+    const reconnect = () => { void check(); };
+    const foreground = () => { if (document.visibilityState === "visible") reconnect(); };
+    window.addEventListener("online", reconnect);
+    document.addEventListener("visibilitychange", foreground);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("online", reconnect);
+      document.removeEventListener("visibilitychange", foreground);
+    };
   }, [check]);
+
+  useEffect(() => {
+    if (!isNative() || !isAndroid()) return;
+    let active = true;
+    let reading = false;
+    const restore = async () => {
+      if (reading || downloadInFlight.current || document.visibilityState === "hidden") return;
+      reading = true;
+      try {
+        const download = await readUpdateDownload();
+        const version = /^Retail-(.+)\.apk$/.exec(download.file ?? "")?.[1];
+        if (!active || downloadInFlight.current || !version || !acceptsReleaseVersion(version) || !isNewer(version, APP_VERSION) || download.status === "idle") return;
+        setState(s => s.latest && isNewer(s.latest, version) ? s : ({ ...s, latest: version, file: download.file!, url: download.url ?? null,
+          downloading: download.status === "downloading" || download.status === "paused",
+          percent: downloadPercent(download), readyUri: download.status === "complete" ? download.uri ?? null : null,
+          error: download.status === "failed" ? download.error ?? "Update download failed. Tap Download to retry." : null }));
+      } catch { /* Keep normal feed checks available if the Android service is unavailable. */ }
+      finally { reading = false; }
+    };
+    void restore();
+    const timer = setInterval(() => void restore(), 2000);
+    const foreground = () => { void restore(); };
+    document.addEventListener("visibilitychange", foreground);
+    return () => { active = false; clearInterval(timer); document.removeEventListener("visibilitychange", foreground); };
+  }, []);
 
   /** Manual retry for the "Update downloaded — tap to install" prompt. */
   const installDownloaded = useCallback(async () => {

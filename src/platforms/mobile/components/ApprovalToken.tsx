@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 export const nativeApprovalCredentials = true;
 import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
@@ -109,7 +110,7 @@ export function ApprovalTokenButton() {
             limits still apply.
           </p>
           <p className="text-xs text-muted-foreground">
-            Offline enrollment valid until {new Date(token.validUntil).toLocaleString()}. Reconnect
+            Offline enrollment valid until {posDisplayDateTime(new Date(token.validUntil))}. Reconnect
             to renew.
           </p>
         </DialogContent>

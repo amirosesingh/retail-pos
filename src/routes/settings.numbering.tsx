@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -8,7 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { usePos } from "@/lib/pos-store";
-import { billPrefix, currentPlatform, terminalNumber, configuredTillNumber, saveTillNumber } from "@/lib/bill-number";
+import {
+  billPrefix,
+  currentPlatform,
+  terminalNumber,
+  configuredTillNumber,
+  saveTillNumber,
+} from "@/lib/bill-number";
 import { activeBranchId } from "@/lib/active-branch";
 
 export const Route = createFileRoute("/settings/numbering")({
@@ -36,7 +43,9 @@ function NumberingPage() {
   const { state, updateSettings } = usePos();
   const it = state.settings.integrations;
   const cfg = it.billNumbering ?? {};
-  const [till, setTill] = useState(() => configuredTillNumber() || cfg.terminalNo || terminalNumber());
+  const [till, setTill] = useState(
+    () => configuredTillNumber() || cfg.terminalNo || terminalNumber(),
+  );
   const [savingTill, setSavingTill] = useState(false);
   const branchId = activeBranchId();
   const store = state.stores.find((s) => s.id === branchId) ?? state.stores[0];
@@ -65,7 +74,8 @@ function NumberingPage() {
           <p className="text-xs text-muted-foreground">Next number on this till</p>
           <p className="font-mono text-lg font-semibold">{sample}</p>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Platform code {currentPlatform()} · till {configuredTillNumber() || cfg.terminalNo || terminalNumber()} · date in{" "}
+            Platform code {currentPlatform()} · till{" "}
+            {configuredTillNumber() || cfg.terminalNo || terminalNumber()} · date in{" "}
             {it.timeZone || "this device's time zone"}.
           </p>
         </div>
@@ -90,38 +100,52 @@ function NumberingPage() {
               pattern="[0-9]*"
               value={till}
               placeholder={terminalNumber()}
-              onChange={(e) =>
-                setTill(e.target.value.replace(/\D+/g, "").slice(0, 2))
-              }
+              onChange={(e) => setTill(e.target.value.replace(/\D+/g, "").slice(0, 2))}
             />
             <p className="text-[11px] text-muted-foreground">
-              {tillError || "Use a different number on each till, for example 01 and 02. Applies to new bills; existing receipts keep their numbers."}
+              {tillError ||
+                "Use a different number on each till, for example 01 and 02. Applies to new bills; existing receipts keep their numbers."}
             </p>
-            <Button disabled={savingTill || !!tillError} onClick={async () => {
-              setSavingTill(true);
-              try { await saveTillNumber(till); setTill(till.padStart(2, "0")); toast.success("Till number saved on this device"); }
-              catch (error) { toast.error(error instanceof Error ? error.message : "Could not save till number"); }
-              finally { setSavingTill(false); }
-            }}>{savingTill ? "Saving…" : "Save till number"}</Button>
+            <Button
+              disabled={savingTill || !!tillError}
+              onClick={async () => {
+                setSavingTill(true);
+                try {
+                  await saveTillNumber(till);
+                  setTill(till.padStart(2, "0"));
+                  toast.success("Till number saved on this device");
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error ? error.message : "Could not save till number",
+                  );
+                } finally {
+                  setSavingTill(false);
+                }
+              }}
+            >
+              {savingTill ? "Saving…" : "Save till number"}
+            </Button>
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Running number length</Label>
+            <div className="flex items-center gap-1">
+              <Label className="text-xs text-muted-foreground">Running number length</Label>
+              <HelpTip text={<>Between 3 and 6 digits.</>} />
+            </div>
             <Input
               inputMode="numeric"
               pattern="[0-9]*"
               value={String(pad)}
               onChange={(e) => patch({ padding: Number(e.target.value.replace(/\D+/g, "")) || 4 })}
             />
-            <p className="text-[11px] text-muted-foreground">Between 3 and 6 digits.</p>
           </div>
 
           <div className="flex items-center justify-between rounded-lg border border-border p-3">
             <div>
-              <p className="text-sm font-medium">Start again each day</p>
-              <p className="text-[11px] text-muted-foreground">
-                Off keeps one continuous run for this till.
-              </p>
+              <div className="flex items-center gap-1">
+                <p className="text-sm font-medium">Start again each day</p>
+                <HelpTip text={<>Off keeps one continuous run for this till.</>} />
+              </div>
             </div>
             <Switch
               checked={cfg.resetDaily !== false}

@@ -11,3 +11,13 @@ export function retainUnchangedFields<T extends object>(previous: T, incoming: T
   }
   return changed ? next : previous;
 }
+
+/** Keep unchanged row identities and DOM keys during background reconciliation. */
+export function reconcileLiveRows<T extends { id: string }>(previous: T[], incoming: T[]): T[] {
+  const byId = new Map(previous.map(row => [row.id, row]));
+  const next = incoming.map(row => {
+    const old = byId.get(row.id);
+    return old && JSON.stringify(old) === JSON.stringify(row) ? old : row;
+  });
+  return next.length === previous.length && next.every((row, index) => row === previous[index]) ? previous : next;
+}

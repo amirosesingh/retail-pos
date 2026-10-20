@@ -29,6 +29,30 @@ async function adminFetch(path: string, init: RequestInit = {}) {
   return fetch(`${supabaseConfig().url}/auth/v1/${path}`, { ...init, headers });
 }
 
+/** Called only after staff-management authorization; return timestamps, never Auth profiles. */
+export async function staffLastSignIns(ids: string[]): Promise<Map<string, string>> {
+  const pending = new Set(ids.map(id => id.toLowerCase()));
+  const result = new Map<string, string>();
+  if (!pending.size) return result;
+  const signal = AbortSignal.timeout(3000);
+  try {
+    for (let page = 1; page <= 20 && pending.size; page++) {
+      const response = await adminFetch(`admin/users?page=${page}&per_page=1000`, { signal });
+      if (!response.ok) break;
+      const body = await response.json() as { users?: { id?: string; last_sign_in_at?: string }[] };
+      if (!Array.isArray(body.users)) break;
+      for (const user of body.users) {
+        const id = user.id?.toLowerCase();
+        if (!id || !pending.has(id)) continue;
+        pending.delete(id);
+        if (user.last_sign_in_at && Number.isFinite(Date.parse(user.last_sign_in_at))) result.set(id, user.last_sign_in_at);
+      }
+      if (body.users.length < 1000) break;
+    }
+  } catch { /* Optional metadata must never prevent staff administration. */ }
+  return result;
+}
+
 /**
  * Create a one-use Auth proof after another server-side credential has already
  * been verified. This never sends email and, unlike changing the Auth
@@ -230,7 +254,7 @@ export async function provisionStaffAccount(payload: StaffPayload): Promise<{ us
 /** Snapshot of an account, kept so the edit history can show before/after. */
 export async function readStaffSnapshot(username: string): Promise<Record<string, unknown> | null> {
   const res = await serviceRest(
-    `app_users?user_id=eq.${encodeURIComponent(username.toLowerCase())}&select=user_id,full_name,email,role,role_slug,store_id,is_active&limit=1`,
+    `app_users?user_id=eq.${encodeURIComponent(username.toLowerCase())}&select=user_id,login_username,full_name,email,role,role_slug,store_id,is_active&limit=1`,
   );
   if (!res.ok) return null;
   const rows = (await res.json()) as Record<string, unknown>[];
@@ -254,6 +278,7 @@ export async function setStaffActive(username: string, active: boolean): Promise
 
 type StaffProfileRow = {
   user_id: string;
+  login_username: string | null;
   full_name: string;
   email: string;
   role: "admin" | "manager" | "staff";
@@ -266,7 +291,7 @@ type StaffProfileRow = {
 };
 
 async function staffProfile(username: string): Promise<StaffProfileRow | null> {
-  const query = `app_users?user_id=eq.${encodeURIComponent(username.trim().toLowerCase())}&select=user_id,full_name,email,role,role_slug,store_id,is_active,auth_user_id,permissions,pin_length&limit=1`;
+  const query = `app_users?user_id=eq.${encodeURIComponent(username.trim().toLowerCase())}&select=user_id,login_username,full_name,email,role,role_slug,store_id,is_active,auth_user_id,permissions,pin_length&limit=1`;
   const res = await serviceRest(query);
   if (!res.ok) throw new Error("The staff profile could not be loaded");
   const rows = (await res.json()) as StaffProfileRow[];
@@ -275,6 +300,8 @@ async function staffProfile(username: string): Promise<StaffProfileRow | null> {
 
 export async function updateStaffProfile(input: {
   username: string;
+  loginUsername?: string;
+  email?: string;
   displayName: string;
   branchId: string | null;
   roleSlug: string;
@@ -285,12 +312,59 @@ export async function updateStaffProfile(input: {
   const profile = await staffProfile(input.username);
   if (!profile?.auth_user_id) throw new Error("This staff account has no authentication identity");
   const terminalAccount = profile.email.endsWith(`@${INTERNAL_EMAIL_DOMAIN}`);
+  const loginUsername = (input.loginUsername ?? profile.login_username ?? profile.user_id).trim().toLowerCase();
+  if (loginUsername !== profile.user_id && !/^[a-z0-9._-]{2,40}$/.test(loginUsername))
+    throw new Error("A username must use 2 to 40 letters, numbers, dot, dash or underscore");
+  const requestedEmail = input.email?.trim().toLowerCase();
+  const email = requestedEmail === undefined || (terminalAccount && !requestedEmail) ? profile.email : requestedEmail;
+  if (!email || (!email.endsWith(`@${INTERNAL_EMAIL_DOMAIN}`) && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)))
+    throw new Error("Enter a valid email address");
+  if (email !== profile.email && email.endsWith(`@${INTERNAL_EMAIL_DOMAIN}`))
+    throw new Error("Enter your real email address");
+  const emailAccount = !email.endsWith(`@${INTERNAL_EMAIL_DOMAIN}`);
   const credential = input.credential ?? "";
+  if (terminalAccount && emailAccount && credential.length < 8)
+    throw new Error("Set a password of at least 8 characters when adding email sign-in");
   if (credential) {
-    if (terminalAccount && (credential.length < 4 || credential.length > 32))
+    if (!emailAccount && (credential.length < 4 || credential.length > 32))
       throw new Error("A till PIN or passcode must be 4 to 32 characters");
-    if (!terminalAccount && credential.length < 8)
+    if (emailAccount && credential.length < 8)
       throw new Error("A password must be at least 8 characters");
+  }
+
+  const available = await serviceRpc("staff_login_available", {
+    p_user_id: profile.user_id, p_login_username: loginUsername, p_email: email,
+  });
+  if (available !== true) throw new Error("That username or email is already in use");
+  const emailChanged = email !== profile.email;
+  if (emailChanged) {
+    const changed = await adminFetch(`admin/users/${profile.auth_user_id}`, {
+      method: "PUT", body: JSON.stringify({ email }),
+    });
+    if (!changed.ok) throw new Error("That email could not be assigned to this login account");
+  }
+  try {
+    await serviceRpc("staff_account_edit", {
+      p_user_id: profile.user_id,
+      p_login_username: loginUsername,
+      p_full_name: input.displayName.trim(),
+      p_email: email,
+      p_role: input.baseRole,
+      p_role_slug: input.roleSlug,
+      p_store_id: input.branchId,
+      p_is_active: input.active,
+      p_auth_user_id: profile.auth_user_id,
+      // Email passwords and terminal PINs remain independent credentials.
+      p_terminal_pin: !emailAccount && credential ? credential : null,
+    });
+  } catch (error) {
+    if (emailChanged) {
+      const restored = await adminFetch(`admin/users/${profile.auth_user_id}`, {
+        method: "PUT", body: JSON.stringify({ email: profile.email }),
+      });
+      if (!restored.ok) throw new Error("The profile was not saved and the login email could not be restored. Review this account before retrying.", { cause: error });
+    }
+    throw error;
   }
 
   const authUpdate = await adminFetch(`admin/users/${profile.auth_user_id}`, {
@@ -299,6 +373,7 @@ export async function updateStaffProfile(input: {
       ...(credential ? { password: credential } : {}),
       user_metadata: {
         username: profile.user_id,
+        login_username: loginUsername,
         full_name: input.displayName.trim(),
         role:
           input.baseRole === "admin"
@@ -314,37 +389,8 @@ export async function updateStaffProfile(input: {
   });
   if (!authUpdate.ok)
     throw new Error(
-      (await authUpdate.text()).slice(0, 240) || "The login account could not be updated",
+      "Profile saved, but the login credential could not be updated. Please retry the credential change.",
     );
-
-  await serviceRpc("staff_account_upsert", {
-    p_user_id: profile.user_id,
-    p_full_name: input.displayName.trim(),
-    p_email: profile.email,
-    p_role: input.baseRole,
-    p_role_slug: input.roleSlug,
-    p_store_id: input.branchId,
-    p_is_active: input.active,
-    p_pin: "",
-    p_pin_length: profile.pin_length,
-    p_auth_user_id: profile.auth_user_id,
-    p_permissions: null,
-  });
-  if (terminalAccount && credential) {
-    await serviceRpc("staff_account_set_terminal_pin", {
-      p_user_id: profile.user_id,
-      p_pin: credential,
-    });
-  }
-  await serviceRest("user_roles?user_id=eq." + encodeURIComponent(profile.auth_user_id), {
-    method: "DELETE",
-  });
-  const roleResult = await serviceRest("user_roles", {
-    method: "POST",
-    prefer: "return=minimal",
-    body: JSON.stringify([{ user_id: profile.auth_user_id, role: input.baseRole }]),
-  });
-  if (!roleResult.ok) throw new Error("The account role could not be updated");
 }
 
 async function callerId(accessToken: string): Promise<string> {

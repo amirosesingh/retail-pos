@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Loader2, TicketPercent, TriangleAlert } from "lucide-react";
@@ -125,7 +126,7 @@ function ClaimPage() {
               </p>
               {campaign.expiresAt ? (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Valid until {new Date(campaign.expiresAt).toLocaleDateString()}
+                  Valid until {posDisplayDate(new Date(campaign.expiresAt))}
                 </p>
               ) : null}
             </div>

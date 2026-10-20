@@ -26,10 +26,12 @@ beforeEach(() => {
   for (const dir of [windows, android]) json(dir, "manifest.json", manifest);
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
-it("requires two independent builds before the serialized publishing job", () => {
+it("requires all three independent stable builds before the serialized publishing job", () => {
   const workflow = yaml.load(readFileSync(".github/workflows/platform-release.yml", "utf8"));
   expect(workflow.jobs.windows.needs).toBeUndefined(); expect(workflow.jobs.android.needs).toBeUndefined();
-  expect(workflow.jobs.publish.needs).toEqual(["windows", "android"]);
+  expect(workflow.jobs.ios.needs).toBeUndefined();
+  expect(workflow.jobs.ios.with.release_channel).toBe("stable");
+  expect(workflow.jobs.publish.needs).toEqual(["windows", "android", "ios"]);
   expect(workflow.jobs.publish.if).toBeUndefined();
   expect(workflow.jobs.publish.concurrency.group).toBe("pos-release-publish");
   for (const platform of ["desktop-release", "android-apk"]) {

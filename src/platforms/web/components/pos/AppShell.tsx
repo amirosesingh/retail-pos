@@ -1,3 +1,4 @@
+import { useIsMobile } from "@/hooks/use-mobile";
 import { ApprovalTokenButton } from "@/platform-config/approval-token";
 import { useAdminWebActivation } from "@/lib/use-admin-web-activation";
 import { isLocationSetupRoute } from "@/lib/app-shell-routes";
@@ -6,7 +7,7 @@ import { setPersonalLanguage } from "@/lib/time-zone";
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
 import { LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { usePos } from "@/lib/pos-store";
 import { useAuth, type PermissionFlag } from "@/lib/pos-auth";
 import { Link, useLocation } from "@tanstack/react-router";
@@ -108,6 +109,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function AppShellFrame({ children }: { children: ReactNode }) {
+  const isMobile = useIsMobile();
   useAdminWebActivation();
   useEffect(() => startSyncEngine(), []);
   useEffect(() => localDb()?.onBeforeClose?.(() => flushTicketDrafts().then(() => undefined)), []);
@@ -131,9 +133,16 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   } = useAuth();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // The drawer is portalled outside the hidden mobile header. Close it when
+  // desktop navigation takes over, and do not reopen it on the next resize.
+  useEffect(() => {
+    if (!isMobile) setDrawerOpen(false);
+  }, [isMobile]);
   // Set when the operator chooses to carry on from the terminal's own copy
   // after the first load could not reach the central database.
   const [offlineBypass, setOfflineBypass] = useState(false);
+  const [activationFlowOpen, setActivationFlowOpen] = useState(false);
+  const beginActivationReview = useCallback(() => setActivationFlowOpen(true), []);
   // The saved connection profile is read out of platform storage, which takes
   // a moment. Until it is back, this device's configuration is unknown — not
   // absent — so no start-up decision may be taken on it.
@@ -181,7 +190,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.documentElement.lang = appearance.profile.language;
     setPersonalLanguage(appearance.profile.language);
-    return () => { setPersonalLanguage("en"); document.documentElement.lang = "en"; };
+    return () => {
+      setPersonalLanguage("en");
+      document.documentElement.lang = "en";
+    };
   }, [appearance.profile.language]);
   // Terminal-wide font / control scaling preference.
   useUiScale();
@@ -276,7 +288,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     };
   }, [profileHydrated]);
 
-  if (!ready) return <TillLoader message="Restoring your workspace…" />;
   // Every activated terminal, including a browser-based till, must finish
   // unsealing its tenant configuration before any data read or write starts.
   // The connection profile is part of that: showing setup while it is still
@@ -288,6 +299,20 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // registration, so a deleted terminal never reaches the sales screen.
   const awaitingVerdict =
     (isDesktop() || isNative()) && Boolean(terminal.config) && !terminal.verified;
+  // Persist the activation summary until Continue. Saving the verified config
+  // causes background startup checks, which previously unmounted it immediately.
+  if ((isDesktop() || isNative()) && activationFlowOpen && !terminal.revoked)
+    return (
+      <TerminalActivation
+        onActivationStarted={beginActivationReview}
+        onActivated={() => {
+          setActivationFlowOpen(false);
+          clearRevocation();
+          startup.refresh();
+        }}
+      />
+    );
+  if (!ready) return <TillLoader message="Restoring your workspace…" />;
   if (
     terminal.hydrating ||
     ((isDesktop() || isNative()) && startup.loading) ||
@@ -310,7 +335,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     });
     // Step 1 — no usable database connection: ask for the URL and key.
     if (decision === "offline-blocked") return <OfflineStatus force />;
-    if (decision === "connect-database" && startup.verdict === "rejected" && startup.cloudConfigured)
+    if (decision === "connect-database" && startup.cloudConfigured !== false)
       return <OfflineStatus force />;
     if (decision === "connect-database")
       return (
@@ -323,6 +348,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     if (decision === "activate")
       return (
         <TerminalActivation
+          onActivationStarted={beginActivationReview}
           onActivated={() => {
             clearRevocation();
             startup.refresh();
@@ -358,8 +384,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   ).length;
 
   // Receipt identity wins; the locally captured install name is the fallback.
-  const companyName = (typeof state.settings.receipt.companyName === "string"
-    ? state.settings.receipt.companyName.trim() : "") || branding.company;
+  const companyName =
+    (typeof state.settings.receipt.companyName === "string"
+      ? state.settings.receipt.companyName.trim()
+      : "") || branding.company;
 
   // The sidebar and the route guard below run exactly the same test, so a link
   // that is shown always opens, and a link that is hidden cannot be reached by
@@ -371,16 +399,25 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   };
 
   const Brand = ({ mini }: { mini?: boolean }) => (
-    <div className={cn("flex items-center gap-2 px-3 py-4", mini && "justify-center px-0")}>
+    <div
+      className={cn(
+        "flex items-center gap-2 px-3 py-4 transition-[gap,padding] duration-[var(--motion-normal)] motion-reduce:transition-none",
+        mini && "gap-0 px-3.5",
+      )}
+    >
       <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
         <ReceiptText className="size-5" />
       </div>
-      {!mini && (
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold leading-tight">{companyName}</p>
-          <p className="text-[11px] text-muted-foreground">{branding.terminal}</p>
-        </div>
-      )}
+      <div
+        aria-hidden={mini || undefined}
+        className={cn(
+          "min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:transition-none",
+          mini ? "max-w-0 -translate-x-2 opacity-0" : "max-w-48 translate-x-0 opacity-100",
+        )}
+      >
+        <p className="truncate text-sm font-semibold leading-tight">{companyName}</p>
+        <p className="text-[11px] text-muted-foreground">{branding.terminal}</p>
+      </div>
     </div>
   );
 
@@ -388,11 +425,16 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // is registered to one.
   const mayPickStore = canSwitchStores || (isNative() && isAdmin);
 
-  const StorePicker = () =>
+  const StorePicker = ({ compact = false }: { compact?: boolean } = {}) =>
     mayPickStore ? (
       <Select value={currentStore.id} onValueChange={setCurrentStore}>
-        <SelectTrigger className="h-9 w-full text-xs">
-          <Store className="size-3.5 text-muted-foreground" />
+        <SelectTrigger
+          aria-label="Select store"
+          className="h-9 w-full gap-2 text-xs [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>span]:text-left"
+          // Drawer sizing also applies on tablets and is not enlarged by popup/touch rules.
+          style={compact ? { height: 36, minHeight: 36, padding: "4px 10px", fontSize: 12, lineHeight: 1.25 } : undefined}
+        >
+          <Store className="size-3.5 shrink-0 text-muted-foreground" />
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -468,8 +510,17 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 inbound={inbound}
                 header={
                   <>
-                    <Brand mini={collapsed} />
-                    {!collapsed && <div className="px-3 pb-3">{<StorePicker />}</div>}
+                    {Brand({ mini: collapsed })}
+                    <div
+                      inert={collapsed || undefined}
+                      aria-hidden={collapsed || undefined}
+                      className={cn(
+                        "overflow-hidden px-3 transition-[max-height,opacity,padding] duration-[var(--motion-normal)] ease-[var(--motion-ease-emphasized)] motion-reduce:transition-none",
+                        collapsed ? "max-h-0 pb-0 opacity-0" : "max-h-16 pb-3 opacity-100",
+                      )}
+                    >
+                      <div className="w-54">{StorePicker()}</div>
+                    </div>
                   </>
                 }
               />
@@ -478,7 +529,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {/* Mobile top bar + slide-out drawer */}
               <header className="pt-safe sticky top-0 z-30 flex shrink-0 items-center gap-2 border-b border-border/70 bg-background px-3 pb-2 md:hidden">
-                <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+                <Sheet open={isMobile && drawerOpen} onOpenChange={setDrawerOpen}>
                   <SheetTrigger asChild>
                     <Button
                       variant="ghost"
@@ -502,7 +553,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                         <>
                           <Brand />
                           <div className="px-3 pb-3">
-                            <StorePicker />
+                            <StorePicker compact />
                           </div>
                         </>
                       }
@@ -523,9 +574,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   <LiveClock compact />
                 </span>
                 <MobileStatusSheet />
-                <span className="hidden sm:inline-flex">
-                  <UpdateHeaderButton />
-                </span>
+                {isMobile && <ActivityBell />}
+                {isMobile && <UpdateHeaderButton />}
                 <span className="hidden sm:inline-flex">
                   <ThemeToggle />
                 </span>
@@ -541,7 +591,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 <ConnectionStatusButton />
                 <SystemAlertsButton />
                 <ApprovalTokenButton />
-                <ActivityBell />
+                {!isMobile && <ActivityBell />}
 
                 {terminal.config && (
                   <Badge
@@ -552,9 +602,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                     {terminal.config.locationName || currentStore.name}
                   </Badge>
                 )}
-                <span className="hidden lg:inline-flex">
-                  <UpdateHeaderButton />
-                </span>
+                {!isMobile && <UpdateHeaderButton />}
                 <ThemeToggle />
                 <ProfileMenu />
               </header>
@@ -581,11 +629,11 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                       ? isSupervisor || can("can_access_pos_settings")
                       : reportsHome
                         ? can("can_view_sales_reports") || can("can_view_audit_trail")
-                      : required === null
-                        ? true
-                        : required === "unknown"
-                          ? isAdmin
-                          : can(required);
+                        : required === null
+                          ? true
+                          : required === "unknown"
+                            ? isAdmin
+                            : can(required);
                   if (allowed && visibleRoute(location.pathname))
                     return <AppShellContext.Provider value>{children}</AppShellContext.Provider>;
                   if (allowed) return <PermissionDenied title="Hidden for your role" flag={null} />;

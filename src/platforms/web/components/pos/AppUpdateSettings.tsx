@@ -1,3 +1,5 @@
+import { IosOtaSettings } from "@/platform-config/ios-ota";
+import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { MinimalUpdatePanel } from "./MinimalUpdatePanel";
 import {
   CheckCircle2,
@@ -15,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { APP_VERSION, useAppUpdates, updateBridge } from "@/lib/app-updates";
 import { useAndroidUpdates } from "@/platforms/mobile/android-updates";
-import { isAndroid, isNative } from "@/platform-config/platform";
+import { isAndroid, isIOS, isNative } from "@/platform-config/platform";
 import { MANIFEST_URL } from "@/lib/update-manifest";
 
 
@@ -82,12 +84,13 @@ const LABELS: Record<string, string> = {
  * self-hosted manifest; only the install action differs.
  */
 export function AppUpdateSettings() {
-  const [platform, setPlatform] = useState<"web" | "android" | "windows">("web");
+  const [platform, setPlatform] = useState<"web" | "android" | "ios" | "windows">("web");
 
   useEffect(() => {
-    setPlatform(isNative() && isAndroid() ? "android" : "web");
+    setPlatform(isIOS() ? "ios" : isNative() && isAndroid() ? "android" : "web");
   }, []);
 
+  if (platform === "ios") return <IosOtaSettings />;
   if (platform === "android") return <AndroidUpdateCard />;
   return <DesktopUpdateCard />;
 }
@@ -156,7 +159,7 @@ function DesktopUpdateCard() {
         {!history.ok && <TileRow label="History unavailable" hint={history.error} />}
         {history.ok && history.releases.length === 0 && <TileRow label="No retained releases listed yet" />}
         {history.releases.map(release => <TileRow key={release.version} label={`v${release.version}`}
-          hint={[release.released ? new Date(release.released).toLocaleDateString() : "", release.notes].filter(Boolean).join(" · ")}
+          hint={[release.released ? posDisplayDate(new Date(release.released)) : "", release.notes].filter(Boolean).join(" · ")}
           value={release.version === version ? "Installed" : "Retained"} />)}
       </TileGroup>}
       <TileGroup title="Version">
@@ -190,7 +193,7 @@ function DesktopUpdateCard() {
             )
           }
           label={status}
-          hint={lastChecked ? `Last checked ${lastChecked.toLocaleString()}` : "Not checked yet"}
+          hint={lastChecked ? `Last checked ${posDisplayDateTime(lastChecked)}` : "Not checked yet"}
           value={
             state.available && state.status !== "current" ? (
               <span className="numeric text-primary">→ v{state.available}</span>
@@ -375,7 +378,7 @@ function AndroidUpdateCard() {
           }
           label={status}
           hint={
-            state.lastChecked ? `Last checked ${state.lastChecked.toLocaleString()}` : "Not checked yet"
+            state.lastChecked ? `Last checked ${posDisplayDateTime(state.lastChecked)}` : "Not checked yet"
           }
           value={
             available && state.latest ? (

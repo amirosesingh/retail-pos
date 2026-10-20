@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/pos-auth";
@@ -45,9 +46,12 @@ function ShiftAlertsPage() {
   const [recent, setRecent] = useState<ShiftSummary[]>([]);
 
   useEffect(() => {
-    void readAlertSettings().then((saved) => {
-      setSettings(saved); setNumbers(saved.recipients.join(", "));
-    }).catch(() => toast.error("Global shift notification settings could not be loaded."));
+    void readAlertSettings()
+      .then((saved) => {
+        setSettings(saved);
+        setNumbers(saved.recipients.join(", "));
+      })
+      .catch(() => toast.error("Global shift notification settings could not be loaded."));
     void listShiftSummaries()
       .then(setRecent)
       .catch(() => setRecent([]));
@@ -59,16 +63,19 @@ function ShiftAlertsPage() {
     if (!isAdmin || saving) return;
     setSaving(true);
     try {
-    const recipients = numbers
-      .split(/[,\s]+/)
-      .map((n) => n.replace(/\D/g, ""))
-      .filter((n) => n.length >= 6);
-    const next = { ...settings, recipients };
-    await writeAlertSettings(next);
-    setSettings(next);
-    toast.success("Global shift alert settings saved");
-    } catch (error) { toast.error(error instanceof Error ? error.message : "Settings could not be saved."); }
-    finally { setSaving(false); }
+      const recipients = numbers
+        .split(/[,\s]+/)
+        .map((n) => n.replace(/\D/g, ""))
+        .filter((n) => n.length >= 6);
+      const next = { ...settings, recipients };
+      await writeAlertSettings(next);
+      setSettings(next);
+      toast.success("Global shift alert settings saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Settings could not be saved.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const Row = ({
@@ -86,14 +93,25 @@ function ShiftAlertsPage() {
   }) => (
     <div className="flex items-start justify-between gap-4 rounded-lg border border-border bg-surface-2 p-3">
       <div className="min-w-0">
-        <p className="text-sm font-medium">{title}</p>
-        <p className="text-xs text-muted-foreground">{hint}</p>
+        <div className="flex items-center gap-1">
+          <p className="text-sm font-medium">{title}</p>
+          <HelpTip text={hint} />
+        </div>
       </div>
       <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
     </div>
   );
 
-  if (!isAdmin) return <SettingsFrame title="Shift alerts" description="Global notification delivery is managed by administrators." showSaveBar={false}><p>Administrator access is required.</p></SettingsFrame>;
+  if (!isAdmin)
+    return (
+      <SettingsFrame
+        title="Shift alerts"
+        description="Global notification delivery is managed by administrators."
+        showSaveBar={false}
+      >
+        <p>Administrator access is required.</p>
+      </SettingsFrame>
+    );
   return (
     <SettingsFrame
       showSaveBar={false}

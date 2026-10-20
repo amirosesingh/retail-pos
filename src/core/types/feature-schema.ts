@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Live schema & feature health probe.
  *
@@ -741,7 +742,7 @@ export async function runFeatureSchemaAudit(): Promise<FeatureSchemaReport> {
 
 /** Plain text, for pasting into a support message. */
 export function formatFeatureSchemaReport(report: FeatureSchemaReport): string {
-  const lines = [`Feature & schema health — ${new Date(report.at).toLocaleString()}`, ""];
+  const lines = [`Feature & schema health — ${posDisplayDateTime(new Date(report.at))}`, ""];
   if (report.error) lines.push(`Not checked: ${report.error}`, "");
   for (const f of report.features) {
     lines.push(`${f.status === "healthy" ? "[HEALTHY]" : "[SCHEMA FIX REQUIRED]"} ${f.name}`);

@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Copy, Link2, Loader2, Plus, Send, TicketPercent, Trash2 } from "lucide-react";
@@ -223,7 +224,7 @@ function CouponsPage() {
       <AppShell>
         <div className="p-6">
           <h1 className="text-2xl font-semibold">Coupon campaigns</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
+          <p className="mt-2 text-sm text-muted-foreground page-description">
             You do not have permission to manage campaigns. Customer vouchers still scan and apply
             automatically at your register.
           </p>
@@ -238,7 +239,7 @@ function CouponsPage() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Coupon campaigns</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               {campaigns.filter((c) => campaignStatus(c) === "Live").length} live ·{" "}
               {vouchers.length} vouchers issued · {vouchers.filter((v) => v.status === "REDEEMED").length}{" "}
               redeemed
@@ -305,8 +306,8 @@ function CouponsPage() {
                         <div className="text-xs text-muted-foreground">{scopeLabel(c)}</div>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {c.startsAt ? new Date(c.startsAt).toLocaleDateString() : "Now"} →{" "}
-                        {c.expiresAt ? new Date(c.expiresAt).toLocaleDateString() : "No end"}
+                        {c.startsAt ? posDisplayDate(new Date(c.startsAt)) : "Now"} →{" "}
+                        {c.expiresAt ? posDisplayDate(new Date(c.expiresAt)) : "No end"}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {c.claimsCount}
@@ -314,7 +315,7 @@ function CouponsPage() {
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{tally.redeemed}</TableCell>
                       <TableCell>
-                        <Badge variant={statusTone[stat] ?? "secondary"}>{stat}</Badge>
+                        <Badge status={stat} variant={statusTone[stat] ?? "secondary"}>{stat}</Badge>
                         {c.isWelcome ? (
                           <Badge variant="outline" className="ml-1">
                             Welcome

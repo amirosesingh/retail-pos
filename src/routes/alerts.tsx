@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { ReportFilters } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -52,7 +53,7 @@ const ALERT_TYPES = EVENT_CATALOG.flatMap((group) =>
 
 const when = (value: string) => {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? "—" : posDisplayDateTime(date);
 };
 
 const dateBound = (value: string, end = false) =>
@@ -173,7 +174,7 @@ function AlertsHistory() {
           </span>
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Alert History</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Every system alert, with branch, item, quantity, delivery state and full details.
             </p>
           </div>

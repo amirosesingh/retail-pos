@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useState } from "react";
 import { Eye, Printer } from "lucide-react";
 import { lineDiscountTotal, paymentsLabel, methodLabel, type Sale } from "@/core/types/pos-types";
@@ -125,7 +126,7 @@ export function ReportReceiptLink({ sale, receiptNo }: { sale?: Sale; receiptNo?
               <dl className="grid grid-cols-2 gap-4 rounded-xl bg-primary/5 p-4 text-sm">
                 <BillField label="Receipt number" value={sale.receiptNo} />
                 <BillField label="Sold by" value={sale.cashier || "—"} />
-                <BillField label="Date & time" value={new Date(sale.createdAt).toLocaleString()} />
+                <BillField label="Date & time" value={posDisplayDateTime(new Date(sale.createdAt))} />
                 <BillField
                   label="Branch"
                   value={

@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { sameBranchId } from "@/lib/branch-id";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
@@ -280,7 +281,7 @@ function BusinessReport() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        <div className="grid gap-4 sm:grid-cols-4">
+        <div className="summary-grid grid gap-4 sm:grid-cols-4">
           <StatCard label="Revenue" value={money(totals.revenue)} />
           <StatCard label="Gross profit" value={money(totals.profit)} />
           <StatCard label="Margin" value={`${totals.margin.toFixed(1)}%`} />
@@ -323,7 +324,7 @@ function BusinessReport() {
                       <TableCell className="font-medium">{r.name}</TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                         {r.arrivalDate
-                          ? new Date(r.arrivalDate).toLocaleDateString()
+                          ? posDisplayDate(new Date(r.arrivalDate))
                           : "Not recorded"}
                       </TableCell>
                       <TableCell className="text-right">{r.qty}</TableCell>

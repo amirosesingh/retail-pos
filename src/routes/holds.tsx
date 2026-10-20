@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { notifyError } from "@/lib/notify";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 /**
@@ -54,7 +55,7 @@ export const Route = createFileRoute("/holds")({
   component: HoldTickets,
 });
 
-const when = (iso: string) => new Date(iso).toLocaleString();
+const when = (iso: string) => posDisplayDateTime(new Date(iso));
 
 function heldFor(iso: string) {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -155,7 +156,7 @@ function HoldTickets() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Hold tickets</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               {tickets.length} parked ticket{tickets.length === 1 ? "" : "s"} at {currentStore.name}{" "}
               · signed in as {user?.name}
             </p>
@@ -192,7 +193,7 @@ function HoldTickets() {
                         </span>
                       </button>
                       <div className="mt-1 flex flex-wrap gap-1">
-                        <Badge variant="outline">
+                        <Badge status={h.status} variant="outline">
                           {h.status === "draft" ? "Draft — unpaid" : "Held — unpaid"}
                         </Badge>
                         {h.cancelledFrom && (

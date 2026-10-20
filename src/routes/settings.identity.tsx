@@ -1,3 +1,5 @@
+import { HelpTip } from "@/components/ui/help-tip";
+import { APP_VERSION } from "@/version";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   SettingsFrame,
@@ -80,11 +82,12 @@ function IdentityForm() {
 
   return (
     <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">Retail · v{APP_VERSION}</p>
       {!(typeof effective.companyName === "string" && effective.companyName.trim()) ? (
         <p role="alert" className="rounded-md border border-amber-500 p-3 text-sm">
           Company details have not loaded here yet. Check Database &amp; Cloud Connection and
-          synchronization first. If the shared company name is still empty after synchronization,
-          an administrator can enter it here and save it for all branches.
+          synchronization first. If the shared company name is still empty after synchronization, an
+          administrator can enter it here and save it for all branches.
         </p>
       ) : null}
       <div className="space-y-1">
@@ -98,11 +101,17 @@ function IdentityForm() {
       </div>
       <section className="space-y-3 rounded-md border border-border p-4">
         <div>
-          <h2 className="text-sm font-semibold">Business logo</h2>
-          <p className="text-xs text-muted-foreground">
-            Upload the logo here once. Receipt designer controls its position and size; Receipt
-            elements controls whether it prints.
-          </p>
+          <div className="flex items-center gap-1">
+            <h2 className="text-sm font-semibold">Business logo</h2>
+            <HelpTip
+              text={
+                <>
+                  Upload the logo here once. Receipt designer controls its position and size;
+                  Receipt elements controls whether it prints.
+                </>
+              }
+            />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-4">
           <div className="grid h-20 w-36 place-items-center rounded-md border border-dashed border-border bg-muted/40 p-2">
@@ -146,8 +155,11 @@ function IdentityForm() {
             <Label className="text-xs text-muted-foreground">{f.label}</Label>
             <Input
               placeholder={f.placeholder}
-              value={typeof effective[f.key as keyof ReceiptSettings] === "string"
-                ? effective[f.key as keyof ReceiptSettings] as string : ""}
+              value={
+                typeof effective[f.key as keyof ReceiptSettings] === "string"
+                  ? (effective[f.key as keyof ReceiptSettings] as string)
+                  : ""
+              }
               onChange={(e) => setField(f.key, e.target.value as never)}
             />
           </div>

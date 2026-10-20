@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { uniqueSales, sameRecordId } from "@/lib/sale-identity";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -440,7 +441,7 @@ function ReceiptVault() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Receipt history log</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Viewing data for {currentStore.name} only · signed in as {user?.name}
             </p>
           </div>
@@ -553,7 +554,7 @@ function ReceiptVault() {
                       <div className="min-w-0 flex-1">
                         <p className="numeric text-sm font-semibold">{s.correctedAt && <span className="mr-2 text-category-2">Corrected</span>}{s.receiptNo}</p>
                         <p className="text-[11px] text-muted-foreground">
-                          {new Date(s.createdAt).toLocaleString()} · {s.cashier} · {s.lines.length}{" "}
+                          {posDisplayDateTime(new Date(s.createdAt))} · {s.cashier} · {s.lines.length}{" "}
                           item{s.lines.length > 1 ? "s" : ""}
                         </p>
                       </div>

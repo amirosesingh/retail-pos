@@ -33,8 +33,10 @@ function readFromStorage(url, { optional, range }) {
   }
 }
 function stable(version) { if (!semver.valid(version) || semver.prerelease(version)) throw new Error('A stable semantic version is required.'); return version; }
-function validateRelease(directory, version) {
-  stable(version);
+function validateRelease(directory, version, { beta = false } = {}) {
+  if (beta) {
+    if (!semver.valid(version) || !/^\d+\.\d+\.\d+-beta\.[1-9]\d*$/.test(version)) throw new Error('A beta prerelease version is required.');
+  } else stable(version);
   const metadata = yaml.load(fs.readFileSync(path.join(directory, 'latest.yml'), 'utf8'));
   const name = `Retail Setup ${version}.exe`;
   if (metadata.version !== version || metadata.path !== name || metadata.files?.length !== 1 || metadata.files[0].url !== name)

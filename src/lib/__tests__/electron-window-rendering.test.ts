@@ -19,13 +19,19 @@ describe("Windows till rendering", () => {
     expect(main.indexOf('require("./window-rendering.cjs").configureWindowRendering(app)'))
       .toBeLessThan(main.indexOf("app.whenReady()"));
     expect(main).toContain("transparent: false");
-    expect(main).toContain("frame: true");
+    expect(main).toContain('frame: process.platform !== "win32"');
     expect(main).toContain("Menu.setApplicationMenu(null)");
     expect(main).toContain('titleBarStyle: "hidden"');
-    expect(main).toContain('titleBarOverlay: { color: "#0b0b0c", symbolColor: "#ffffff", height: 32 }');
+    expect(main).toContain("titleBarOverlay: false");
     expect(main).toContain("setVisualZoomLevelLimits(1, 1)");
     const styles = readFileSync("src/styles.css", "utf8");
-    expect(styles).not.toContain("-webkit-app-region: drag;");
+    expect(styles).toMatch(/\.native-caption \{[^}]*-webkit-app-region: drag;/);
+    expect(styles).toContain(".native-caption-controls { display: flex; -webkit-app-region: no-drag;");
+    const caption = readFileSync("src/components/shared/NativeWindowFrame.tsx", "utf8");
+    expect(caption).toContain('aria-label="Close window"');
+    expect(caption).toContain('run(controls()?.closeWindow)');
+    expect(main).toContain('owner(e)?.close()');
+    expect(main).toContain('mainWindow.on("close", (event) =>');
     expect(styles).toContain("html, body {");
   });
 });

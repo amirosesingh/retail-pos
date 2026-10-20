@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { relayTableShapes } from "@/core/api/health-relay";
 import { checkFunction } from "./health-function-metadata";
 /**
@@ -125,12 +126,12 @@ export async function runBranchCoverage(): Promise<BranchCoverage[]> {
       error: null,
     };
     try {
-      const total = await anyFrom(entry.table).select("*", { count: "exact", head: true });
+      const total = await anyFrom(entry.table).select(entry.column, { count: "exact", head: true });
       if (total.error) throw total.error;
       row.total = total.count ?? 0;
 
       const blank = await anyFrom(entry.table)
-        .select("*", { count: "exact", head: true })
+        .select(entry.column, { count: "exact", head: true })
         .or(`${entry.column}.is.null,${entry.column}.eq.`);
       if (blank.error) throw blank.error;
       row.missing = blank.count ?? 0;
@@ -236,7 +237,7 @@ async function probeTable(entry: {
   };
 
   try {
-    const { error, count } = await from(entry.table).select("*", { count: "exact", head: true });
+    const { error, count } = await from(entry.table).select(entry.table === "shifts" ? "id" : "*", { count: "exact", head: true });
     if (error) {
       probe.readDetail = explainError(error);
     } else {
@@ -377,7 +378,7 @@ const prettyTable = (name: string) => name.replace(/_/g, " ").replace(/^./, (c) 
 
 /** Plain-text version of the report, for pasting into a support message. */
 export function formatReport(report: DbHealthReport): string {
-  const lines = [`Database health — ${new Date(report.at).toLocaleString()}`, ""];
+  const lines = [`Database health — ${posDisplayDateTime(new Date(report.at))}`, ""];
   for (const h of report.header) lines.push(`${h.ok ? "OK  " : "FAIL"} ${h.label}: ${h.detail}`);
   lines.push("", "Table                 Read                 Write");
   for (const t of report.tables) {

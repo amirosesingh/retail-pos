@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Live health of every till, plus the data-only remote requests an
  * administrator may send. Rendered both as its own page and inside the
@@ -43,7 +44,7 @@ import {
 } from "@/lib/terminal-commands";
 
 const when = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—";
+  iso ? posDisplayDateTime(iso) : "—";
 
 /** Colour follows the heartbeat, not the last status a till managed to write. */
 function statusTone(row: TelemetryRow) {
@@ -304,7 +305,7 @@ export function TelemetryPanel() {
                     <TableCell>{event.table_name}</TableCell>
                     <TableCell className="text-right">{event.records}</TableCell>
                     <TableCell>
-                      <Badge variant={event.status === "failed" ? "destructive" : "secondary"}>
+                      <Badge status={event.status} variant={event.status === "failed" ? "destructive" : "secondary"}>
                         {event.status}
                       </Badge>
                       {event.error_message ? (

@@ -1,9 +1,10 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * Plain answer to "is this machine still a registered till, and is it running
  * the current software?" — so a counter never has to guess whether a strange
  * behaviour is old software or a failed check.
  */
-import { APP_VERSION } from "@/lib/app-updates";
+import { APP_VERSION } from "@/version";
 import { useRevocationCheck } from "@/lib/use-revocation-check";
 import { TileGroup, TileRow } from "@/platforms/web/components/pos/AppUpdateSettings";
 
@@ -34,7 +35,7 @@ export function TerminalStatusCard() {
         label="Last checked"
         hint={
           lastCheckedAt
-            ? new Date(lastCheckedAt).toLocaleString()
+            ? posDisplayDateTime(new Date(lastCheckedAt))
             : "Not yet — it checks on start-up and every five minutes."
         }
       />

@@ -7,7 +7,7 @@
  * Remote web-code activation is therefore fail-closed. Android updates ship
  * through the signed APK channel, which Android verifies before installation.
  */
-import { APP_VERSION } from "@/lib/app-updates";
+import { APP_VERSION } from "@/version";
 import { isNewerVersion } from "@/lib/update-manifest";
 import { BUNDLE_EPOCH, isBundleEpochCompatible } from "@/lib/bundle-epoch";
 import { isNative } from "@/platform-config/platform";

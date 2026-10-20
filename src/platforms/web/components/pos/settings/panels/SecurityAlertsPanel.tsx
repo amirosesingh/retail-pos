@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -18,7 +19,7 @@ import {
 function when(value: string): string {
   if (!value) return "—";
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? "—" : posDisplayDateTime(d);
 }
 
 export function SecurityAlertsPanel() {

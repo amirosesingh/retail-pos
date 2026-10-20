@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/pos-auth";
@@ -30,7 +31,7 @@ function AdminWebActivationPanel({ userId }: { userId: string }) {
     catch (reason) { setError(reason instanceof Error ? reason.message : "Admin activation failed"); }
     finally { setBusy(false); }
   }
-  const date = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
+  const date = (value: string | null) => value ? posDisplayDateTime(new Date(value)) : "—";
   return <section className="space-y-4 rounded-xl border p-4">
     <div><h2 className="text-lg font-semibold">Admin Web Activation</h2><p className="text-sm text-muted-foreground">Register your admin browser using a one-time code. Records stay in the cloud and are not synchronized to Windows or mobile databases. Admin sign-in is still required.</p></div>
     <div className="flex flex-wrap gap-2"><Input aria-label="Admin browser name" placeholder="Device name, e.g. Office admin browser" maxLength={100} value={name} onChange={e => setName(e.target.value)} className="min-w-48 flex-1" /><Button disabled={busy || !name.trim()} onClick={() => void run(async () => { const result = await adminActivationRequest<{id:string;code:string}>("issue", {p_device_name:name}); setIssued(`AW1:${result.id}:${result.code}`); })}>Create my activation code</Button><Button variant="outline" disabled={busy} onClick={() => void refresh()}>Refresh</Button></div>

@@ -1,3 +1,4 @@
+import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { CUSTOMER_REFUNDS_ALLOWED } from "@/lib/returns-policy";
 import { sameBranchId } from "@/lib/branch-id";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
@@ -324,7 +325,7 @@ function BookingsPage() {
               <CalendarClock className="size-5 shrink-0 text-primary" />
               <span className="truncate">Bookings, jobs &amp; pay later</span>
             </h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Reserved goods and racket stringing jobs at {currentStore.name}. Stock stays held
               until collection or cancellation.
             </p>
@@ -444,7 +445,7 @@ function BookingsPage() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2 font-semibold">
                         {b.ref}
-                        <Badge variant="outline" className={statusTone[b.status]}>
+                        <Badge status={b.status} variant="outline" className={statusTone[b.status]}>
                           {b.status}
                         </Badge>
                         {overdue && (
@@ -461,7 +462,7 @@ function BookingsPage() {
                       <p className="text-sm text-muted-foreground">
                         {b.customerName}
                         {b.customerPhone ? ` · ${b.customerPhone}` : ""} · booked{" "}
-                        {new Date(b.createdAt).toLocaleDateString()} · collect by{" "}
+                        {posDisplayDate(new Date(b.createdAt))} · collect by{" "}
                         {new Date(b.dueDate).toDateString()}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
@@ -481,15 +482,15 @@ function BookingsPage() {
                             <span className="min-w-0 truncate">
                               {racketSummary(job) || "String job"}
                             </span>
-                            <Badge variant="outline" className={jobTone[jobStatus]}>
+                            <Badge status={jobStatus} variant="outline" className={jobTone[jobStatus]}>
                               {JOB_STATUS_LABELS[jobStatus]}
                             </Badge>
                           </p>
                           {job?.promisedAt && (
                             <p className="mt-1 text-muted-foreground">
-                              Ready by {new Date(job.promisedAt).toLocaleString()}
+                              Ready by {posDisplayDateTime(new Date(job.promisedAt))}
                               {job.droppedOffAt
-                                ? ` · dropped off ${new Date(job.droppedOffAt).toLocaleDateString()}`
+                                ? ` · dropped off ${posDisplayDate(new Date(job.droppedOffAt))}`
                                 : ""}
                             </p>
                           )}
@@ -501,7 +502,7 @@ function BookingsPage() {
                           {b.jobStatusBy && b.jobStatusAt && (
                             <p className="mt-1 text-[11px] text-muted-foreground">
                               {JOB_STATUS_LABELS[jobStatus]} by {b.jobStatusBy} ·{" "}
-                              {new Date(b.jobStatusAt).toLocaleString()}
+                              {posDisplayDateTime(new Date(b.jobStatusAt))}
                             </p>
                           )}
                           {b.incidentNote && (
@@ -514,7 +515,7 @@ function BookingsPage() {
                               Cancelled: {b.cancelReason}
                               {b.cancelledBy ? ` · ${b.cancelledBy}` : ""}
                               {b.cancelledAt
-                                ? ` · ${new Date(b.cancelledAt).toLocaleString()}`
+                                ? ` · ${posDisplayDateTime(new Date(b.cancelledAt))}`
                                 : ""}
                               {b.cancelMoneyAction === "refunded"
                                 ? " · money refunded"

@@ -7,7 +7,7 @@ const target = process.argv[2];
 const targetPath = target ? path.resolve(target) : null;
 const packagedExecutable = targetPath && fs.existsSync(targetPath)
   ? fs.statSync(targetPath).isDirectory()
-    ? path.join(targetPath, "Retail.exe")
+    ? path.join(targetPath, `${require("../package.json").build?.productName || "Retail"}.exe`)
     : targetPath
   : null;
 const isHttpUrl = (value) => {

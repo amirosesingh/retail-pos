@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -962,7 +963,7 @@ function Purchasing() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Receiving order &amp; stock entry</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Receiving into {currentStore.name} · operator {user?.name}
             </p>
           </div>
@@ -1243,7 +1244,7 @@ function Purchasing() {
                     </p>
                     <p className="text-[11px] text-muted-foreground">
                       {d.lines.length} items · {units(d)} units · {money(d.totalCost)} · saved{" "}
-                      {new Date(d.entryDate).toLocaleString()}
+                      {posDisplayDateTime(new Date(d.entryDate))}
                     </p>
                   </div>
                   <Button
@@ -1388,7 +1389,7 @@ function Purchasing() {
                 <TableRow key={h.id} summaryValues={{ Items: h.lines.length, Units: units(h), Amount: h.totalCost }}>
                   <TableCell className="numeric font-medium">{h.reference ?? "—"}</TableCell>
                   <TableCell>
-                    <Badge
+                    <Badge status={h.status}
                       variant={
                         h.status === "posted"
                           ? "secondary"
@@ -1410,7 +1411,7 @@ function Purchasing() {
                     {h.invoiceDate ?? "—"}
                   </TableCell>
                   <TableCell className="numeric text-muted-foreground">
-                    {new Date(h.entryDate).toLocaleString()}
+                    {posDisplayDateTime(new Date(h.entryDate))}
                   </TableCell>
                   <TableCell className="numeric text-right">{h.lines.length}</TableCell>
                   <TableCell className="numeric text-right">{units(h)}</TableCell>

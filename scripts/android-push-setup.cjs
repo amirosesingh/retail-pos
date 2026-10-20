@@ -26,12 +26,13 @@ if (!input && !source) {
 }
 const text = input ?? fs.readFileSync(source, "utf8");
 const configuration = JSON.parse(text);
+const expectedPackage = process.env.POS_RELEASE_CHANNEL === "beta" ? "com.luckycharms.pos.beta" : "com.luckycharms.pos";
 if (
   !configuration.client?.some(
-    (client) => client.client_info?.android_client_info?.package_name === "com.luckycharms.pos",
+    (client) => client.client_info?.android_client_info?.package_name === expectedPackage,
   )
 )
-  throw new Error("Firebase configuration must register com.luckycharms.pos.");
+  throw new Error(`Firebase configuration must register ${expectedPackage}.`);
 fs.writeFileSync(target, JSON.stringify(configuration, null, 2));
 console.log("Firebase Android configuration installed.");
 

@@ -28,6 +28,7 @@ export function ThemedSelect({
   className,
   placeholder,
   ariaLabel,
+  id,
   disabled,
 }: {
   value: string;
@@ -36,6 +37,7 @@ export function ThemedSelect({
   className?: string;
   placeholder?: string;
   ariaLabel?: string;
+  id?: string;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -57,6 +59,7 @@ export function ThemedSelect({
       >
         <PopoverTrigger asChild>
           <Button
+            id={id}
             variant="outline"
             role="combobox"
             aria-expanded={open}
@@ -104,7 +107,7 @@ export function ThemedSelect({
   }
   return (
     <Select value={value} onValueChange={onChange} disabled={disabled}>
-      <SelectTrigger aria-label={ariaLabel} className={cn("h-9 text-sm", className)}>
+      <SelectTrigger id={id} aria-label={ariaLabel} className={cn("h-9 text-sm", className)}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>

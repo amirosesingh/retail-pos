@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { tenderSales } from "@/lib/shift-close";
 import { sameRecordId } from "@/lib/sale-identity";
@@ -98,7 +99,7 @@ function Shifts() {
         entry.role,
         entry.terminalName,
         entry.signedInAt,
-        new Date(entry.signedInAt).toLocaleString(),
+        posDisplayDateTime(new Date(entry.signedInAt)),
       ],
       signSearch,
     ),
@@ -161,7 +162,7 @@ function Shifts() {
         shift.terminalName,
         shift.status,
         shift.openedAt,
-        new Date(shift.openedAt).toLocaleString(),
+        posDisplayDateTime(new Date(shift.openedAt)),
       ],
       historySearch,
     ),
@@ -250,7 +251,7 @@ function Shifts() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Shifts · {currentStore.name}</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Current shift, drawer control and X / Z reports
             </p>
           </div>
@@ -532,11 +533,11 @@ function Shifts() {
                         {s.terminalName ?? "—"}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {new Date(s.signedInAt).toLocaleString()}
+                        {posDisplayDateTime(new Date(s.signedInAt))}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {s.signedOutAt
-                          ? new Date(s.signedOutAt).toLocaleString()
+                          ? posDisplayDateTime(new Date(s.signedOutAt))
                           : "Still signed in"}
                       </TableCell>
                     </TableRow>
@@ -628,10 +629,10 @@ function Shifts() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {new Date(sh.openedAt).toLocaleString()}
+                      {posDisplayDateTime(new Date(sh.openedAt))}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {sh.closedAt ? new Date(sh.closedAt).toLocaleString() : "open"}
+                      {sh.closedAt ? posDisplayDateTime(new Date(sh.closedAt)) : "open"}
                       {sh.overdue && (
                         <span className="ml-2 rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] text-destructive">
                           OVERDUE

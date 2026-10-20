@@ -15,6 +15,7 @@ const managedStaffRow = z.object({
   id: z.string(),
   auth_user_id: z.string().nullable(),
   user_id: z.string(),
+  login_username: z.string().nullable().optional(),
   full_name: z.string(),
   email: z.string(),
   role: z.string(),
@@ -41,7 +42,7 @@ export const listManagedStaffAccounts = createServerFn({ method: "POST" })
       await requireStaffManager(data);
       const { serviceRest } = await import("@/core/api/pos-relay.server");
       const response = await serviceRest(
-        "app_users?select=id,auth_user_id,user_id,full_name,email,role,role_slug,store_id,is_active,permissions,pin_length,pin_set_at,last_login_at,created_at&order=full_name.asc",
+        "app_users?select=id,auth_user_id,user_id,login_username,full_name,email,role,role_slug,store_id,is_active,permissions,pin_length,pin_set_at,last_login_at,created_at&order=full_name.asc",
       );
       if (!response.ok) throw new Error("Staff accounts could not be loaded.");
       const rows = z.array(managedStaffRow).parse(await response.json());
@@ -50,10 +51,16 @@ export const listManagedStaffAccounts = createServerFn({ method: "POST" })
       const { normalizeRule } = await import("./authorization");
       const { approvalPinEligible } = await import("./approval-pin-eligibility");
       const rules = ((await rulesResponse.json()) as Record<string, unknown>[]).map(normalizeRule);
+      const { staffLastSignIns } = await import("./staff-admin.server");
+      const lastSignIns = await staffLastSignIns(rows.flatMap(row => row.auth_user_id ? [row.auth_user_id] : []));
       return {
         ok: true as const,
         rows: rows.map((row) => ({
           ...row,
+          last_login_at: (() => {
+            const authLogin = lastSignIns.get(row.auth_user_id?.toLowerCase() ?? "");
+            return authLogin && (!row.last_login_at || Date.parse(authLogin) > Date.parse(row.last_login_at)) ? authLogin : row.last_login_at;
+          })(),
           approval_pin_eligible: approvalPinEligible(rules, {
             userId: row.user_id,
             role: row.role_slug || row.role,
@@ -285,6 +292,8 @@ export const updateStaffAccount = createServerFn({ method: "POST" })
       .object({
         ...proofFields,
         username: z.string().min(2).max(160),
+        loginUsername: z.string().trim().min(2).max(160).optional(),
+        email: z.string().trim().max(254).optional(),
         displayName: z.string().trim().min(1).max(120),
         branchId: z.string().max(60).nullable(),
         roleSlug: z.string().min(2).max(60),
@@ -299,6 +308,8 @@ export const updateStaffAccount = createServerFn({ method: "POST" })
       const actor = await requireStaffManager(data);
       const mod = await import("./staff-admin.server");
       const before = await mod.readStaffSnapshot(data.username);
+      if (!data.active && actor.staffUserId?.toLowerCase() === data.username.trim().toLowerCase())
+        throw new Error("You cannot disable the account currently signed in.");
       await mod.updateStaffProfile(data);
       await audit({
         actor,
@@ -308,6 +319,8 @@ export const updateStaffAccount = createServerFn({ method: "POST" })
         oldValue: before,
         newValue: {
           displayName: data.displayName,
+          loginUsername: data.loginUsername,
+          email: data.email,
           roleSlug: data.roleSlug,
           baseRole: data.baseRole,
           branchId: data.branchId,

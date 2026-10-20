@@ -55,6 +55,37 @@
 }
 
 /* Keep dialog grids and dense tables inside the visible device viewport. */
+.page-description {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.pos-popup-surface {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--popover-foreground);
+}
+.pos-popup-surface .pos-popup-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.pos-popup-surface :is(.pos-text-field, .pos-select-field, [data-control-size]) {
+  min-height: 2.25rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+}
+.pos-popup-surface .pos-text-area { font-size: 0.875rem; border-radius: 0.5rem; }
+.pos-popup-surface [data-control-size="icon"] { min-width: 2.25rem; }
+.pos-popup-surface > * { min-width: 0; }
+@media (max-width: 639px) {
+  .pos-popup-surface .pos-popup-title { font-size: max(16px, 1rem); }
+  .pos-popup-surface :is(.pos-text-field, .pos-select-field, [data-control-size]) { min-height: 44px; }
+  .pos-popup-surface [data-control-size="icon"] { min-width: 44px; }
+  /* Native-size text avoids browser focus zoom; labels remain compact. */
+  .pos-popup-surface :is(.pos-text-field, .pos-text-area, .pos-select-field) { font-size: max(16px, 1rem); }
+}
 .pos-dialog-content {
   max-height: calc(100dvh - 1rem);
 }
@@ -260,10 +291,10 @@
 
 :root {
   --radius: 0.75rem;
-  --motion-fast: 120ms;
-  --motion-normal: 180ms;
+  --motion-fast: 240ms;
+  --motion-normal: 420ms;
   --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --motion-ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-emphasized: cubic-bezier(0.22, 0.61, 0.36, 1);
   --background: oklch(0.98 0.004 250);
   --foreground: oklch(0.22 0.014 265);
   --surface: oklch(1 0 0);
@@ -823,7 +854,7 @@
 }
 
 @utility ui-menu-motion {
-  animation-duration: var(--motion-fast);
+  animation-duration: var(--motion-normal);
   animation-timing-function: var(--motion-ease-standard);
   backface-visibility: hidden;
 }
@@ -856,6 +887,11 @@
 
 .ui-collapsible-content[data-state="closed"] {
   animation: collapsible-up var(--motion-fast) var(--motion-ease-standard);
+}
+
+/* Native touch/wheel scrolling stays browser-controlled; explicit scrolls ease in. */
+html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-auto {
+  scroll-behavior: smooth;
 }
 
 /* Motion never competes with scanning, checkout or background processing. */
@@ -1153,6 +1189,29 @@
     opacity var(--motion-fast) var(--motion-ease-standard);
 }
 
+/* Floating notification cards: layout only; Sonner retains swipe and stack ownership. */
+.toaster [data-sonner-toast][data-styled="true"] {
+  border-radius: 16px;
+  padding: 14px;
+  gap: 12px;
+  align-items: flex-start;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.12), 0 2px 6px rgb(0 0 0 / 0.05);
+}
+.toaster [data-sonner-toast] [data-content] { min-width: 0; }
+.toaster [data-sonner-toast] [data-title] {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.toaster [data-sonner-toast] [data-description] {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.toaster [data-sonner-toast] [data-icon] { margin-top: 2px; }
+
 /* Keep Sonner's own --y/transform positioning intact, including stacked notifications. */
 .toaster [data-sonner-toast][data-styled="true"]:has([data-close-button]) {
   padding-inline-end: 44px !important;
@@ -1278,16 +1337,26 @@
   color: var(--settings-accent);
 }
 .settings-workspace .animate-spin { animation-duration: 1s; }
-/* Native captions reserve their own space even on login and recovery screens.
+/* App caption controls reserve their own space even on login and recovery screens.
    Dragging is restricted to this strip, never tables, popups or form controls. */
 .native-caption {
   position: fixed;
   inset: 0 0 auto;
   height: 32px;
   z-index: 100;
-  background: #0b0b0c;
+  display: flex;
+  background: var(--background);
+  color: var(--foreground);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
   app-region: drag;
 }
+.native-caption-controls { display: flex; -webkit-app-region: no-drag; app-region: no-drag; }
+.native-caption-controls button { display: grid; place-items: center; width: 46px; height: 32px; background: transparent; border: 0; cursor: pointer; }
+.native-caption-controls button:hover { background: var(--muted); }
+.native-caption-controls button:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; }
+.native-caption-controls svg { width: 14px; height: 14px; }
+.native-caption-controls .native-caption-close:hover { background: var(--destructive); color: white; }
 html[data-native-caption] body { padding-top: 32px; }
 html[data-native-caption] .min-h-screen { min-height: calc(100dvh - 32px); }
 html[data-native-caption] .h-screen { height: calc(100dvh - 32px); }
@@ -1306,3 +1375,46 @@ html[data-native-caption] .pos-dialog-content {
   min-height: 44px;
 }
 .pos-phone-web button[type="submit"] { min-height: 44px; }
+
+/* Summary tiles only: leave desktop layouts, charts and data cards unchanged. */
+@media (max-width: 1279px) {
+  .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+  .summary-card { min-width: 0; min-height: 5rem; padding: 0.75rem; border-radius: var(--radius); overflow-wrap: anywhere; }
+  .summary-card > p:first-child { font-size: 0.7rem; line-height: 1.35; }
+  .summary-card > .numeric { font-size: 1.125rem; line-height: 1.35; margin-top: 0.25rem; }
+  .summary-card > p:last-child:not(.numeric) { line-height: 1.35; }
+}
+@media (min-width: 640px) and (max-width: 1279px) {
+  .summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.inventory-details-toggle { display: none; }
+@container (max-width: 900px) {
+  .responsive-table.inventory-products[data-mobile-cards="true"] tbody tr { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+  .responsive-table.inventory-products[data-mobile-cards="true"] tbody td { grid-column: 1 / -1; }
+  .responsive-table.inventory-products[data-mobile-cards="true"] tbody .inventory-selection { grid-column: 1; grid-row: 1; justify-content: flex-start; }
+  .responsive-table.inventory-products[data-mobile-cards="true"] tbody .inventory-actions { grid-column: 2; grid-row: 1; flex-wrap: wrap; gap: 0.25rem; border-bottom: 1px solid var(--border); }
+  .responsive-table.inventory-products[data-mobile-cards="true"] tr:not([data-expanded="true"]) .inventory-detail { display: none; }
+  .responsive-table.inventory-products[data-mobile-cards="true"] .inventory-details-toggle { display: inline-flex; }
+}
+
+@media (max-width: 1279px) {
+  .workspace-metric, .workspace-action-card { min-width: 0; border-radius: var(--radius); overflow-wrap: anywhere; }
+  .workspace-metric p:first-child { font-size: 0.75rem; }
+  .workspace-action-header { padding: 0.75rem 0.75rem 0.5rem; gap: 0.375rem; flex-wrap: wrap; }
+  .workspace-action-title { font-size: 0.8125rem; }
+  .workspace-action-content { padding: 0 0.75rem 0.75rem; font-size: 0.75rem; line-height: 1.4; }
+}
+
+@media (max-width: 1279px) {
+  .section-hub-card { padding: 0.5rem; border-radius: var(--radius); }
+  .section-hub-link, .settings-menu-link { flex-wrap: wrap; align-content: flex-start; gap: 0.5rem; padding: 0.5rem; }
+  .section-hub-link > span:nth-child(2), .settings-menu-link > span { flex-basis: 100%; order: 1; overflow-wrap: anywhere; }
+  .section-hub-link > svg, .settings-menu-link > svg:last-child { margin-left: auto; }
+  .section-hub-link > span:first-child { padding: 0.5rem; }
+  .section-hub-link .text-sm, .settings-menu-link .text-sm { font-size: 0.75rem; line-height: 1.4; }
+  .settings-menu-category { padding: 0.75rem; gap: 0.75rem; border-radius: var(--radius); }
+  .settings-menu-category > span:first-child { flex-wrap: wrap; gap: 0.5rem; }
+  .settings-menu-category > span:first-child > span:nth-child(2) { flex-basis: 100%; order: 1; }
+  .settings-menu-category > span:first-child > svg { margin-left: auto; }
+  .settings-menu-category .text-base { font-size: 0.875rem; }
+}

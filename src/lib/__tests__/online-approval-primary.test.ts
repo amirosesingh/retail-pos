@@ -69,7 +69,8 @@ describe("online approval primary database", () => {
     expect(route).toContain("subscribeApprovals(load)");
     expect(route).toContain("void syncNow(`approval-decision:");
     expect(engine).toMatch(/LIVE_TABLES[\s\S]*"authorization_requests"/);
-    expect(centre).toContain("++approvalChannelSequence");
+    expect(centre).toContain("subscribeOwnedPostgresChanges(");
+    expect(centre).toContain("filter: `store_id=eq.${branchId}`");
   });
 
   it("never lets an offline replay replace a cloud request or duplicate its audit row", () => {

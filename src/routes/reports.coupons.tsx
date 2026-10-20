@@ -299,7 +299,7 @@ function CouponReport() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="summary-grid grid gap-4 sm:grid-cols-3">
           <StatCard label="Coupon events" value={String(rows.length)} />
           <StatCard label="Coupons redeemed" value={String(redeemed.length)} />
           <StatCard
@@ -371,7 +371,7 @@ function CouponReport() {
                   <TableCell>{r.staff}</TableCell>
                   <TableCell className="numeric text-right">{money(r.value)}</TableCell>
                   <TableCell>
-                    <Badge variant={r.status === "Removed" ? "outline" : "secondary"}>
+                    <Badge status={r.status} variant={r.status === "Removed" ? "outline" : "secondary"}>
                       {r.status}
                     </Badge>
                   </TableCell>

@@ -106,6 +106,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("approval credential authorization", () => {
+  it.each(["ios", "mobile"])("accepts a registered %s receiver with the same permission and replay checks", async platform => {
+    f.platform = platform;
+    const enrolled = await enrollApprovalToken(proof);
+    const code = await approvalTotp(enrolled.credential!.secret);
+    expect((await verifyApprovalTotp("manager", code, "branch-a", terminal))?.userId).toBe("manager");
+    expect(await verifyApprovalTotp("manager", code, "branch-a", terminal)).toBeNull();
+  });
   it("only enrolls an enabled eligible signed-in person on the same registered branch", async () => {
     const enrolled = await enrollApprovalToken(proof);
     expect(enrolled.credential?.userId).toBe("manager");

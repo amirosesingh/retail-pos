@@ -16,6 +16,11 @@
 import { cashierTokenSync, sessionTokenSync } from "./pos-credentials";
 
 let authSession = false;
+let startupPending = true;
+/** Cached person tokens must not start background reads before boot validation. */
+export function setSessionStartupPending(value: boolean): void {
+  startupPending = value;
+}
 let verifiedAccessToken: string | undefined;
 const authListeners = new Set<() => void>();
 export function subscribeCentralAuthSession(listener: () => void): () => void {
@@ -58,11 +63,12 @@ export function centralAuthAccessToken(): string | undefined {
  * heartbeats) that must not await anything.
  */
 export function hasSignedInIdentity(): boolean {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined" || startupPending) return false;
   return authSession || Boolean(sessionTokenSync()) || Boolean(cashierTokenSync());
 }
 
 /** Test seam. */
 export function __setAuthSessionForTests(value: boolean, accessToken?: string) {
+  startupPending = false;
   setCentralAuthSessionPresent(value, accessToken);
 }

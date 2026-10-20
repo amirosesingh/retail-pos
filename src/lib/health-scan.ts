@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 /**
  * One button, one answer.
  *
@@ -219,7 +220,7 @@ export async function runIssueScan(onStep?: (step: ScanStep) => void): Promise<S
 /** Plain text, for pasting into a support message. */
 export function formatScanResult(result: ScanResult): string {
   const lines = [
-    `Issue scan — ${new Date(result.at).toLocaleString()}`,
+    `Issue scan — ${posDisplayDateTime(new Date(result.at))}`,
     `Critical ${result.counts.critical} · Warning ${result.counts.warning} · Info ${result.counts.info}`,
     "",
   ];

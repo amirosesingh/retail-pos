@@ -4,7 +4,7 @@ const { serviceRest } = vi.hoisted(() => ({ serviceRest: vi.fn() }));
 
 vi.mock("@/core/api/pos-relay.server", () => ({ serviceRest }));
 
-import { touchSession } from "@/lib/session-guard.server";
+import { touchSession, revokeSession } from "@/lib/session-guard.server";
 
 const liveRow = {
   id: "session-1",
@@ -38,4 +38,18 @@ describe("server session activity boundary", () => {
     expect(serviceRest).toHaveBeenCalledTimes(2);
     expect(serviceRest.mock.calls[1]?.[1]?.body).toContain("last_activity_at");
   });
+  it.each(["invalid", new Date(Date.now() - 16 * 60_000).toISOString()])("refuses an abandoned session: %s", async last_activity_at => {
+    serviceRest.mockResolvedValueOnce(new Response(JSON.stringify([{...liveRow, last_activity_at}])));
+    serviceRest.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    expect(await touchSession("token", {operatorActivity: true})).toEqual({ok: false, reason: "idle"});
+    const patch = JSON.parse(serviceRest.mock.calls[1][1].body);
+    expect(patch.is_revoked).toBe(true);
+    expect(patch).not.toHaveProperty("last_activity_at");
+  });
+
+  it("does not acknowledge a sign-out that the database failed to persist", async () => {
+    serviceRest.mockResolvedValueOnce(new Response(null, {status: 503}));
+    await expect(revokeSession("token")).rejects.toThrow("Could not end the central session");
+  });
+
 });

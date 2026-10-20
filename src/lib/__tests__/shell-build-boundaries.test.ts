@@ -1,0 +1,80 @@
+import { describe, expect, it, vi } from "vitest";
+import { excludedShellModules, shellAliases, enforceShellBoundary } from "../../../scripts/platform-build-boundaries";
+import { readFileSync } from "node:fs";
+
+for (const target of ["web", "android", "windows"] as const) {
+  describe(`${target} shell build`, () => {
+    it("excludes only unsupported implementations and preserves its own", () => {
+      const excluded = excludedShellModules(target);
+      expect(excluded.some(path => path.includes("mobile"))).toBe(target !== "android");
+      expect(excluded.some(path => path.includes("windows"))).toBe(target !== "windows");
+      for (const path of excluded) {
+        const alias = shellAliases(target).find(item => item.find.test(`@/${path}`))!;
+        expect(alias).toBeDefined();
+        for (const source of [`@/${path}`, `../${path}`, `/repo/src/${path}.tsx`])
+          expect(source.replace(alias.find, alias.replacement)).toBe(alias.replacement);
+      }
+    });
+    it("rejects alternate imports that bypass shell aliases", () => {
+      const path = excludedShellModules(target)[0]!;
+      const error = vi.fn();
+      const hook = enforceShellBoundary(target).generateBundle as (...args: unknown[]) => void;
+      hook.call({ getModuleIds: () => [`/repo/src/${path}.tsx`], error });
+      expect(error).toHaveBeenCalledOnce();
+      error.mockClear();
+      hook.call({ getModuleIds: () => ["/repo/src/lib/pos-store.tsx", "/repo/src/lib/external-supabase-config.ts"], error });
+      expect(error).not.toHaveBeenCalled();
+    });
+  });
+}
+
+it("keeps update notices outside connection and staff gates with one mount each", () => {
+  const root = readFileSync("src/routes/__root.tsx", "utf8");
+  for (const name of ["AndroidUpdateBanner", "DesktopUpdateBanner"]) {
+    expect(root.match(new RegExp(`<${name} />`, "g"))).toHaveLength(1);
+  }
+  expect(root).toContain('RELEASE_CHANNEL === "beta" && <AppUpdateNotices />');
+  expect(root).toContain('RELEASE_CHANNEL !== "beta" && <AppUpdateNotices />');
+  expect(root.indexOf('RELEASE_CHANNEL === "beta" && <AppUpdateNotices />')).toBeLessThan(root.indexOf("<NativeBoot>"));
+  expect(root.indexOf("<NativeBoot>")).toBeLessThan(root.indexOf("<OfflineGate"));
+});
+
+it("rejects native setup/recovery in web builds and Windows caption code in Android", () => {
+  for (const [platform, module] of [
+    ["web", "platforms/web/components/pos/TerminalActivation"],
+    ["web", "platforms/web/components/pos/RecoveryHub"],
+    ["web", "platforms/web/components/pos/EmergencyPinGate"],
+    ["web", "components/shared/EmergencyAccessLink"],
+    ["android", "components/shared/NativeWindowFrame"],
+  ] as const) {
+    const error = vi.fn();
+    const hook = enforceShellBoundary(platform).generateBundle as (...args: unknown[]) => void;
+    hook.call({ getModuleIds: () => [`/repo/src/${module}.tsx`], error });
+    expect(error).toHaveBeenCalledOnce();
+  }
+});
+
+for (const module of [
+  "routes/settings.updates", "platform-config/native-update-settings",
+  "platforms/web/components/pos/AppUpdateSettings", "platforms/web/components/pos/MinimalUpdatePanel", "lib/app-updates",
+]) {
+  it(`excludes ${module} from web bundles while retaining native support`, () => {
+    for (const platform of ["web", "android", "windows"] as const) {
+      const error = vi.fn();
+      const hook = enforceShellBoundary(platform).generateBundle as (...args: unknown[]) => void;
+      hook.call({getModuleIds: () => [`/repo/src/${module}.tsx`], error});
+      expect(error).toHaveBeenCalledTimes(platform === "web" ? 1 : 0);
+    }
+  });
+}
+it("removes the updater route and navigation in the web build rather than runtime hiding", async () => {
+  const { UPDATE_SETTINGS_CARDS, UPDATE_SETTINGS_VISIBILITY } = await import("@/platform-config/update-settings");
+  expect(UPDATE_SETTINGS_CARDS).toEqual([]);
+  expect(UPDATE_SETTINGS_VISIBILITY).toEqual([]);
+  const config = readFileSync("vite.config.ts", "utf8");
+  expect(config).toContain('generatedRouteTree: "./routeTree.web.gen.ts"');
+  expect(config).toContain('routeFileIgnorePattern: "settings\\\\.updates\\\\.tsx$"');
+  const alias = shellAliases("web").find(item => item.find.test("@/platforms/web/components/pos/UpdateHeaderButton"))!;
+  expect(alias.replacement.replaceAll("\\", "/")).toContain("unsupported-update-header.tsx");
+  expect(shellAliases("android").some(item => item.find.test("@/platforms/web/components/pos/UpdateHeaderButton"))).toBe(false);
+});

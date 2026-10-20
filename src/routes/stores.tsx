@@ -296,7 +296,7 @@ function Locations() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Manage locations</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               <span className="numeric">{roots.length}</span> stores and warehouses · every new
               location gets its own stock bucket on all {state.products.length} products.
             </p>

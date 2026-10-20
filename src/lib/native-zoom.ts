@@ -1,8 +1,8 @@
 /** Native shells use the saved Display settings, never browser gesture zoom. */
-export function installNativeZoomLock(target: Window, page: Document): () => void {
+export function installNativeZoomLock(target: Window, page: Document, viewportFit: "cover" | "contain" = "cover"): () => void {
   const viewport = page.querySelector('meta[name="viewport"]');
   const previous = viewport?.getAttribute("content");
-  viewport?.setAttribute("content", "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover");
+  viewport?.setAttribute("content", `width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=${viewportFit}`);
   const wheel = (event: WheelEvent) => { if (event.ctrlKey || event.metaKey) event.preventDefault(); };
   const touch = (event: TouchEvent) => { if (event.touches.length > 1) event.preventDefault(); };
   const key = (event: KeyboardEvent) => {

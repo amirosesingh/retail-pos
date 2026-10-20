@@ -150,7 +150,7 @@ export function CloudConnectionPanel({
               <DialogTitle>Database &amp; Cloud Connection</DialogTitle>
               <DialogDescription>
                 {terminal
-                  ? "Test and save the central database, publishable key, and company POS domain as one connection profile. Membership credentials remain on that server."
+                  ? "Enter the database details and POS website address. Test before saving."
                   : "Review the cloud connection supplied by this website’s hosting environment."}
               </DialogDescription>
             </DialogHeader>
@@ -325,8 +325,8 @@ export function CloudConnectionPanel({
     <section
       className={
         presentation === "dialog"
-          ? "space-y-4"
-          : "space-y-4 rounded-lg border border-border bg-card p-4"
+          ? "min-w-0 space-y-3"
+          : "min-w-0 space-y-3 rounded-lg border border-border bg-card p-3 sm:p-4"
       }
     >
       {presentation === "panel" ? (
@@ -336,33 +336,26 @@ export function CloudConnectionPanel({
         </header>
       ) : null}
 
-      <p className="text-xs text-muted-foreground">
-        Everything this device needs to reach your company is entered here, once. Changing it points
-        the terminal at a different company, so it is tested before it is saved and the three values
-        are always stored together.
-      </p>
-
       <p
         className={`flex items-center gap-2 text-sm ${
-          status?.configured ? "text-success" : "text-destructive"
+          status?.configured ? "text-success" : "text-muted-foreground"
         }`}
       >
         {status?.configured ? (
-          <ShieldCheck className="size-4" />
+          <ShieldCheck className="size-4 shrink-0" />
         ) : (
-          <ShieldAlert className="size-4" />
+          <ShieldAlert className="size-4 shrink-0" />
         )}
         {status?.configured
-          ? `Connected to ${status.url} (key ${status.keyHint})${status.encrypted ? " — sealed with this device's secure storage" : ""}`
-          : "Not configured — the device trades fully offline. Save the central database URL, API key and backend address to connect it."}
+          ? "Database configured"
+          : "Database not configured"}
       </p>
 
       {!editable && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          <Lock className="size-4" />
+          <Lock className="size-4 shrink-0" />
           <span>
-            This terminal is already connected. Database-management permission is required to change
-            where it reads and writes.
+            Database-management permission is required to edit this connection.
           </span>
           <Button
             size="sm"
@@ -407,13 +400,11 @@ export function CloudConnectionPanel({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Both values come from the central project&apos;s API settings. They are encrypted with this
-        device&apos;s hardware-backed storage and decrypted only in memory while sync runs. The key
-        is never displayed again after saving.
+        Use a publishable key, never a service key. Saved details stay secure on this device.
       </p>
 
       {cloudResult && (
-        <div className="space-y-0.5 text-xs">
+        <div className="space-y-0.5 break-words text-xs [overflow-wrap:anywhere]">
           <p className={cloudResult.reachable ? "text-success" : "text-destructive"}>
             {cloudResult.reachable ? "✓" : "✕"} Address reachable
           </p>
@@ -442,18 +433,11 @@ export function CloudConnectionPanel({
           onChange={(e) => setBackend(e.target.value)}
         />
         <p className="text-xs text-muted-foreground">
-          {savedBackend
-            ? `Sign-in and sync are sent to ${savedBackend}.`
-            : "Not configured — this device cannot reach the POS backend for sign-in or sync."}{" "}
-          Enter the company web address you open the POS on, for example{" "}
-          <code>https://pos.example.com</code>. This is <strong>not</strong> the database address:
-          the till performs a secure terminal handshake with your POS site. That server talks to
-          both database projects with credentials that never reach Electron. Do not enter the
-          membership project ID or service key on this PC.
+          {savedBackend ? "POS address configured." : "Use your company POS website address."}
         </p>
         {backendResult && (
           <p
-            className={`text-xs ${
+            className={`break-words text-xs [overflow-wrap:anywhere] ${
               backendResult.ok
                 ? "text-success"
                 : backendResult.warn
@@ -466,12 +450,12 @@ export function CloudConnectionPanel({
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 [&>button]:min-h-10 [&>button]:flex-1 sm:[&>button]:flex-none">
         <Button variant="outline" onClick={() => void testAll()} disabled={!canTest}>
           {busy === "test" ? (
             <Loader2 className="size-4 animate-spin" />
           ) : (
-            <PlugZap className="size-4" />
+            <PlugZap className="size-4 shrink-0" />
           )}
           Test connection
         </Button>
@@ -488,7 +472,7 @@ export function CloudConnectionPanel({
             {busy === "remove" ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
-              <Trash2 className="size-4" />
+              <Trash2 className="size-4 shrink-0" />
             )}
             Remove saved connection
           </Button>
@@ -501,9 +485,9 @@ export function CloudConnectionPanel({
     status?.configured ? "Central database configured" : "Central database not configured",
     Boolean(status?.configured),
     status?.configured
-      ? `${status.url}${savedBackend ? " • POS backend configured" : " • POS backend missing"}`
+      ? savedBackend ? "Database and POS address saved." : "POS address missing."
       : savedBackend
         ? "POS backend saved; central database details are still required."
-        : "This terminal continues in offline mode until a connection profile is saved.",
+        : "Enter the database details and POS website address.",
   );
 }

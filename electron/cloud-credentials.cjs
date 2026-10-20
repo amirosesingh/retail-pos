@@ -69,6 +69,8 @@ function write(value) {
       fs.rmSync(legacyPath(), { force: true });
       return { ok: true, encrypted: true };
     }
+    if (process.platform === "win32")
+      return { ok: false, error: "The Windows credential vault is not ready. Credentials were not changed." };
     fs.writeFileSync(legacyPath(), JSON.stringify(next), { mode: 0o600 });
     return { ok: true, encrypted: false };
   } catch (error) {

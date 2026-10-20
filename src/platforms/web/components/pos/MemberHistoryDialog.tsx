@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime, formatDate as posDisplayDate } from "@/lib/time-zone";
 import { useCallback, useMemo, useState } from "react";
 import { Printer, Search, X } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -146,7 +147,7 @@ export function MemberHistoryDialog({
                       <tr key={s.id}>
                         <td className="numeric px-3 py-2">{s.receiptNo}</td>
                         <td className="numeric px-3 py-2 text-xs text-muted-foreground">
-                          {new Date(s.createdAt).toLocaleString()}
+                          {posDisplayDateTime(new Date(s.createdAt))}
                         </td>
                         <td className="numeric px-3 py-2 text-right">{money(s.total)}</td>
                         <td className="numeric px-3 py-2 text-right">
@@ -193,7 +194,7 @@ export function MemberHistoryDialog({
                         <td className="px-3 py-2">{r.name}</td>
                         <td className="numeric px-3 py-2 text-right">{r.qty}</td>
                         <td className="numeric px-3 py-2 text-xs text-muted-foreground">
-                          {new Date(r.last).toLocaleDateString()}
+                          {posDisplayDate(new Date(r.last))}
                         </td>
                         <td className="numeric px-3 py-2 text-right">{money(r.spent)}</td>
                         <td className="numeric px-3 py-2 text-right">{r.points}</td>

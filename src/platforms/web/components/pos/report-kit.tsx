@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { posDayKey, inPosDayRange } from "@/lib/time-zone";
 import { beginDataTask } from "@/lib/data-progress";
 import { notifyError } from "@/lib/notify";
@@ -129,14 +130,7 @@ export function defaultRange(days = 30) {
 export const inRange = inPosDayRange;
 
 export const stamp = (iso: string) =>
-  new Date(iso).toLocaleString([], {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  posDisplayDateTime(iso);
 
 /** Downloads a report as CSV so it can be opened in Excel. */
 export function downloadCsv(name: string, rows: (string | number)[][]) {
@@ -256,7 +250,7 @@ export function ReportHeader({
               <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
             </>
           )}
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">{subtitle}</p>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground page-description">{subtitle}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {toolbar}
@@ -305,7 +299,7 @@ export function StatCard({
 }) {
   return (
     <div
-      className="report-stat min-w-0 rounded-2xl border border-border bg-card p-5"
+      className="summary-card report-stat min-w-0 rounded-2xl border border-border bg-card p-5"
       style={tone ? { borderTopColor: ANALYTICS_COLORS[tone] } : undefined}
     >
       <p className="text-sm font-medium text-muted-foreground">{label}</p>

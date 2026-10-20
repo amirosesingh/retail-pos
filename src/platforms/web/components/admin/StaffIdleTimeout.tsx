@@ -2,22 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { PresetNumber } from "@/components/ui/preset-number";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { posFetch } from "@/lib/server-origin";
 
 export function StaffIdleTimeout({
   person,
-  onClose,
 }: {
   person: { key: string; name: string; kind: "account" | "cashier" };
-  onClose: () => void;
 }) {
   const [minutes, setMinutes] = useState(0);
   const [loaded, setLoaded] = useState(false);
@@ -59,7 +50,6 @@ export function StaffIdleTimeout({
     try {
       await request(minutes);
       toast.success("Idle limit saved for this person's new sign-ins");
-      onClose();
     } catch (failure) {
       setError((failure as Error).message);
     } finally {
@@ -67,25 +57,14 @@ export function StaffIdleTimeout({
     }
   };
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open && !busy) onClose();
-      }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Idle limit — {person.name}</DialogTitle>
-          <DialogDescription>
-            Applies to new sessions on every platform. Zero uses the branch default. A personal
-            value may shorten that default but cannot extend it.
-          </DialogDescription>
-        </DialogHeader>
+    <section className="space-y-2 rounded-lg border border-border p-3" aria-label="Personal idle limit">
+      <p className="text-xs text-muted-foreground">Applies to new sign-ins. Your limit can shorten the branch default.</p>
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}
           </p>
         )}
+        <div className="flex flex-wrap items-center gap-2 [&>div]:min-w-0 [&>div]:flex-1">
         <PresetNumber
           label="Personal idle limit"
           value={minutes}
@@ -98,10 +77,10 @@ export function StaffIdleTimeout({
             label: value ? `${value} minutes` : "Use branch default",
           }))}
         />
-        <Button disabled={!loaded || busy} onClick={() => void save()}>
+        <Button size="sm" variant="outline" disabled={!loaded || busy} onClick={() => void save()}>
           {busy ? "Saving…" : "Save idle limit"}
         </Button>
-      </DialogContent>
-    </Dialog>
+        </div>
+    </section>
   );
 }

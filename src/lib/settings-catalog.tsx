@@ -1,3 +1,4 @@
+import { UPDATE_SETTINGS_CARDS } from "@/platform-config/update-settings";
 /**
  * One registry for every settings area.
  *
@@ -13,8 +14,6 @@ import {
   Building2,
   CalendarClock,
   Database,
-  DownloadCloud,
-  EyeOff,
   Globe,
   Landmark,
   Layers,
@@ -197,17 +196,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     keywords:
       "font scaling zoom theme dark light ocean emerald sunset violet candy midnight appearance",
   },
-  {
-    id: "updates",
-    label: "Software updates",
-    blurb: "App version, background updates and system health.",
-    icon: DownloadCloud,
-    category: "terminal",
-    scope: "terminal",
-    to: "/settings/updates",
-    panel: page(() => import("@/routes/settings.updates")),
-    keywords: "version upgrade rollback",
-  },
+  ...UPDATE_SETTINGS_CARDS,
   {
     id: "hardware",
     label: "Hardware & cash drawer",
@@ -611,16 +600,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     raw: true,
     keywords: "people employees users accounts roles permissions pin cashier supervisor warehouse",
   },
-  {
-    id: "access",
-    label: "Roles & access",
-    blurb: "One page: what each role may do, and what it can see.",
-    icon: EyeOff,
-    category: "people",
-    scope: "company",
-    to: "/settings/access",
-    panel: page(() => import("@/routes/settings.access")),
-  },
+
 ];
 
 

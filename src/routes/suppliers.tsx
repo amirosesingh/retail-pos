@@ -114,7 +114,7 @@ function Suppliers() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Suppliers</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               One central directory — purchasing and goods receiving pick from this list.
             </p>
           </div>

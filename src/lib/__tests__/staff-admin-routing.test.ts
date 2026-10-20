@@ -24,13 +24,13 @@ it("sends native staff reads and permission saves with the unchanged person proo
   expect(mocks.list).not.toHaveBeenCalled();
   expect(mocks.permissions).not.toHaveBeenCalled();
 });
-it("retains website server functions without sending a second hosted request", async () => {
+it("uses the same bounded JSON staff read on the website", async () => {
   mocks.native = false;
-  mocks.list.mockResolvedValue({ ok: true, rows: [] });
+  mocks.fetch.mockResolvedValue(Response.json({ok: true, rows: []}));
   const input = { data: { sessionToken: "person" } };
   await listManagedStaffAccounts(input);
-  expect(mocks.list).toHaveBeenCalledWith(input);
-  expect(mocks.fetch).not.toHaveBeenCalled();
+  expect(mocks.list).not.toHaveBeenCalled();
+  expect(JSON.parse(mocks.fetch.mock.calls[0][1].body)).toEqual({action: "list", data: input.data});
 });
 it("dispatches hosted list and permission actions to the existing guarded handlers", async () => {
   mocks.list.mockResolvedValue({ ok: false, rows: [], error: "Permission required" });

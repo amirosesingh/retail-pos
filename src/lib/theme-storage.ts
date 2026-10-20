@@ -1,6 +1,7 @@
 import { DEFAULT_THEME_PALETTE, isThemePalette, type ThemePalette } from "./theme-palettes";
 
 export const THEME_PALETTE_STORAGE_KEY = "pos.color-theme";
+export const INTERFACE_PREFERENCES_RESTORED = "pos:interface-preferences-restored";
 
 export function readStoredPalette(): ThemePalette {
   try {

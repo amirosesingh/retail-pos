@@ -43,7 +43,7 @@ describe("Supervisor/Admin online login configuration", () => {
       "const account = !terminalUser && centralAuthVerified && rolesReady && profileReady && accountId",
     );
     expect(auth).toContain(
-      "const ready = authReady && (!!terminalUser || !userId || (rolesReady && profileReady))",
+      "const ready = authReady && personSessionReady && (!!terminalUser || !userId || (rolesReady && profileReady))",
     );
     const credentials = read("src/lib/pos-credentials.ts");
     expect(credentials).toContain("centralAuthAccessToken()");

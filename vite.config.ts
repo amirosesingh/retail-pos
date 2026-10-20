@@ -6,6 +6,7 @@ import { defineConfig, searchForWorkspaceRoot } from "vite";
 import type { Plugin } from "vite";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { shellAliases, enforceShellBoundary } from "./scripts/platform-build-boundaries";
 import webOnlyEnv from "./scripts/web-only-env-names.json" with { type: "json" };
 
 // Managed checkouts can resolve dependencies from a parent node_modules.
@@ -58,6 +59,7 @@ const isDesktop = Boolean(process.env["DESKTOP_BUILD"]);
  * a static client bundle with an SPA fallback rather than a running server.
  */
 const isMobile = Boolean(process.env["MOBILE_BUILD"]);
+const isIos = isMobile && process.env.POS_MOBILE_TARGET === "ios";
 /**
  * Cloudflare Workers build (GitHub Actions -> wrangler deploy). Pins the same
  * preset and output layout that wrangler.jsonc points at, so CI never falls
@@ -77,13 +79,17 @@ const isMobile = Boolean(process.env["MOBILE_BUILD"]);
  */
 export const WEB_ONLY_ENV_NAMES = webOnlyEnv.webOnly.filter((name) => name.startsWith("VITE_"));
 
+if (isMobile && isDesktop) throw new Error("Choose one build target: Android or Windows.");
+const buildPlatform = isIos ? "ios" : isMobile ? "android" : isDesktop ? "windows" : "web";
 const isTerminalBuild = isMobile || isDesktop;
+const isBetaBuild = process.env.POS_RELEASE_CHANNEL === "beta" || process.env.WORKERS_CI_BRANCH === "beta";
 
 const blankWebEnv = Object.fromEntries(
   WEB_ONLY_ENV_NAMES.map((name) => [`import.meta.env.${name}`, "undefined"]),
 );
 
 export default defineConfig({
+  define: { "import.meta.env.VITE_POS_RELEASE_CHANNEL": JSON.stringify(isBetaBuild ? "beta" : "stable") },
   server: {
     fs: { allow: [searchForWorkspaceRoot(process.cwd()), runtimeDependencies] },
     host: "::",
@@ -105,11 +111,18 @@ export default defineConfig({
   css: { transformer: "lightningcss" },
   resolve: {
     // Native approval UI/Keystore enrollment never enter website client chunks.
-    alias: isTerminalBuild ? [
+    alias: [...(isIos ? [{ find: "@/platform-config/ios-ota", replacement: resolve("src/platforms/ios/ui.tsx") }] : []), ...shellAliases(buildPlatform), ...(!isTerminalBuild ? [
+      { find: /^\.\/routeTree\.gen(?:\.tsx?)?$/, replacement: resolve("src/routeTree.web.gen.ts") },
+    ] : [
+      { find: "@/platform-config/update-settings", replacement: resolve("src/platform-config/native-update-settings.tsx") },
+    ]), ...(isMobile ? [
+      { find: "@/platform-config/offline-interface", replacement: resolve("src/platforms/mobile/components/OfflineInterface.tsx") },
+      { find: "@/platform-config/viewport", replacement: resolve("src/platforms/mobile/viewport.ts") },
+    ] : []), ...(isTerminalBuild ? [
       { find: "@/platform-config/approval-token", replacement: resolve("src/platforms/mobile/components/ApprovalToken.tsx") },
       { find: "@/platform-config/approval-token-client", replacement: resolve("src/lib/approval-token-client.ts") },
       { find: "@/platform-config/approval-methods", replacement: resolve("src/platforms/mobile/components/NativeApprovalMethods.tsx") },
-    ] : [],
+    ] : [])],
     tsconfigPaths: true,
     dedupe: [
       "react",
@@ -120,8 +133,15 @@ export default defineConfig({
     ],
   },
   plugins: [
+    enforceShellBoundary(buildPlatform),
     stripThirdPartyRscMarkers(),
-    tanstackStart({ server: { entry: "server" } }),
+    tanstackStart({
+      server: { entry: "server" },
+      router: !isTerminalBuild ? {
+        generatedRouteTree: "./routeTree.web.gen.ts",
+        routeFileIgnorePattern: "settings\\.updates\\.tsx$",
+      } : {},
+    }),
     nitro(
       isDesktop
         ? {
@@ -159,7 +179,7 @@ export default defineConfig({
     ? {
         // No repository or CI web environment value is visible to a device build.
         envDir: "scripts/no-env",
-        define: blankWebEnv,
+        define: { ...blankWebEnv, "import.meta.env.VITE_POS_RELEASE_CHANNEL": JSON.stringify(isBetaBuild ? "beta" : "stable") },
       }
     : {}),
 });

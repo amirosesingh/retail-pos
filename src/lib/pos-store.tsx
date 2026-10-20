@@ -19,6 +19,7 @@ import {
   useMemo,
   useState,
   useRef,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { defaultSettings, defaultTradingHours, emptyState } from "./pos-seed";
@@ -148,6 +149,7 @@ import {
 } from "./settings-sections";
 import { localDb } from "@/core/local-db/local-db";
 import { businessReadsReady } from "./business-readiness";
+import { hasCentralAuthSession, subscribeCentralAuthSession } from "./session-presence";
 import { retryDataRead } from "./read-retry";
 import {
   batches,
@@ -598,7 +600,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Nothing is fetched from the cloud until a cashier or supervisor session
   // exists — visitors never receive catalogue, member or sales data.
   const signedIn = Boolean(authUserId || terminalUser);
-  const readsReady = businessReadsReady(authReady, signedIn, effectiveDatabaseMode() === "local", authUserId);
+  const cloudSessionReady = useSyncExternalStore(subscribeCentralAuthSession, hasCentralAuthSession, () => false);
+  const readsReady = businessReadsReady(authReady, signedIn, effectiveDatabaseMode() === "local", authUserId, cloudSessionReady);
   const readIdentity = terminalUser?.userCode ?? authUserId;
   useEffect(() => {
     const name = state.settings.receipt.companyName?.trim();

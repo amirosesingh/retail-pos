@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const cloud: { error: null | { message: string; status?: number; code?: string } } = { error: null };
 
@@ -32,6 +32,7 @@ import {
 import { connectivityWarningAllowed, isConnectivityMessage } from "@/lib/notification-guard";
 
 describe("connection health", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
     resetHealthCache();
     cloud.error = null;
@@ -43,6 +44,11 @@ describe("connection health", () => {
     const report = await checkHealth();
     expect(report.cloud).toBe(true);
     expect(report.anyOnline).toBe(true);
+  });
+  it("probes a reachable backend even when the WebView offline hint is stale", async () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    expect((await checkHealth(true)).cloud).toBe(true);
+    expect(cloudVerdict()).toBe("verified");
   });
 
   it("reports the local database as reachable when the cloud is down", async () => {

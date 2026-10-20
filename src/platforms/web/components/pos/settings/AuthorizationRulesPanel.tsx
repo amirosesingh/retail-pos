@@ -5,14 +5,7 @@
  * lives in one reusable dialog so every action follows the same workflow.
  */
 import { useEffect, useMemo, useState } from "react";
-import {
-  AlertTriangle,
-  CircleHelp,
-  Loader2,
-  Settings2,
-  ShieldCheck,
-  UserRoundPlus,
-} from "lucide-react";
+import { AlertTriangle, Loader2, Settings2, ShieldCheck, UserRoundPlus } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -29,7 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { HelpTip } from "@/components/ui/help-tip";
 import { cn } from "@/lib/utils";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { SettingsSections } from "@/platforms/web/components/pos/settings/SettingsSection";
@@ -160,12 +153,12 @@ function PeopleMultiSelect({
 
   return (
     <fieldset className="space-y-2" disabled={disabled}>
-      <div>
+      <div className="flex items-center gap-1">
         <Label htmlFor={`${id}-search`} className="text-sm">
           {label}{" "}
           <span className="font-normal text-muted-foreground">· {selected.length} selected</span>
         </Label>
-        <p className="text-xs text-muted-foreground">{help}</p>
+        <HelpTip text={help} />
       </div>
       <Input
         id={`${id}-search`}
@@ -217,25 +210,6 @@ function PeopleMultiSelect({
   );
 }
 
-function HelpTip({ text }: { text: string }) {
-  return (
-    <TooltipProvider delayDuration={150}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="inline-flex text-muted-foreground hover:text-foreground"
-            aria-label={text}
-          >
-            <CircleHelp className="size-3.5" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-64">{text}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
-
 function AudienceSelector({
   id,
   title,
@@ -277,7 +251,6 @@ function AudienceSelector({
           {title}
           <HelpTip text={help} />
         </h3>
-        <p className="text-xs text-muted-foreground">{help}</p>
       </div>
       <div className="space-y-2">
         <Label className="flex items-center gap-1.5 text-sm">
@@ -415,7 +388,6 @@ function AuthorityFields({
           {title}
           <HelpTip text={help} />
         </Label>
-        <p className="text-xs text-muted-foreground">{help}</p>
       </div>
       {subjects.length ? (
         <div className="grid gap-2 sm:grid-cols-2">
@@ -1095,9 +1067,7 @@ export function AuthorizationRulesPanel({
                           ariaLabel={`${action.label} authorization`}
                           className="h-9 w-full"
                           value={rule.mode}
-                          onChange={(value) =>
-                            openConfiguration(action, value as AuthMode)
-                          }
+                          onChange={(value) => openConfiguration(action, value as AuthMode)}
                           options={AUTH_MODES.map((mode) => ({
                             value: mode.value,
                             label: mode.label,

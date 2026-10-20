@@ -82,7 +82,7 @@ function RequestsIndex() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Stock requests</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Requests touching <span className="text-primary">{currentStore.name}</span>. A request
               moves no stock until the supplying branch approves and dispatches it.
             </p>
@@ -146,7 +146,7 @@ function RequestsIndex() {
                   <TableCell className="numeric text-right">{totals.Sent}</TableCell>
                   {showCosts && <TableCell className="numeric text-right">{totals["Unpriced lines"] ? "Cost unavailable" : money(totals["Requested estimate"])}</TableCell>}
                   <TableCell>
-                    <Badge variant="outline">{TRANSFER_STATUS_LABELS[t.status]}</Badge>
+                    <Badge status={t.status} variant="outline">{TRANSFER_STATUS_LABELS[t.status]}</Badge>
                   </TableCell>
                   <TableCell>
                     <Button asChild size="sm" variant="ghost">

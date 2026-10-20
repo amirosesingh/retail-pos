@@ -1,3 +1,4 @@
+import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { PresetNumber } from "@/components/ui/preset-number";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
@@ -315,7 +316,7 @@ function RulesSettings() {
             <h1 className="flex items-center gap-2 text-2xl font-semibold">
               <ShieldCheck className="size-5 shrink-0 text-primary" /> POS rules &amp; enforcement
             </h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Configure the branch policy enforced across every register at {currentStore.name}.
               Saved values stay in force while newer rules are checked quietly in the background.
             </p>
@@ -341,7 +342,7 @@ function RulesSettings() {
               <p className="mt-0.5 text-xs opacity-90">{statusView.detail}</p>
               <p className="mt-2 text-xs opacity-80">
                 {lastSyncedAt
-                  ? `Last verified ${new Date(lastSyncedAt).toLocaleString()}`
+                  ? `Last verified ${posDisplayDateTime(new Date(lastSyncedAt))}`
                   : "Not yet verified on this terminal"}
               </p>
             </div>

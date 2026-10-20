@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const { manifest, exists, json } = vi.hoisted(() => ({ manifest: vi.fn(), exists: vi.fn(), json: vi.fn() }));
-vi.mock("@/lib/app-updates", () => ({ APP_VERSION: "1.4.70" }));
+vi.mock("@/version", () => ({ APP_VERSION: "1.4.70" }));
 vi.mock("@/platforms/mobile/native-http", () => ({ describeNetworkError: String, firstReachableUrl: vi.fn(), httpGetBase64: vi.fn(), httpGetJson: json, httpExists: exists }));
 vi.mock("@/lib/update-manifest", async (original) => ({ ...await original<typeof import("../update-manifest")>(), fetchManifest: manifest }));
 import { fetchLatest } from "@/platforms/mobile/android-updates";

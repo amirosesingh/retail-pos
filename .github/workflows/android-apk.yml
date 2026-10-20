@@ -9,6 +9,15 @@ on:
         default: ""
   workflow_call:
     inputs:
+      release_channel:
+        type: string
+        default: stable
+      beta_version:
+        type: string
+        default: ""
+      beta_number:
+        type: number
+        default: 0
       build_only:
         type: boolean
         default: true
@@ -25,11 +34,12 @@ permissions:
 
 jobs:
   apk:
-    if: "github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')"
+    if: "inputs.release_channel == 'beta' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')"
     runs-on: ubuntu-latest
     env:
-      ANDROID_GOOGLE_SERVICES_JSON: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON }}
-      VITE_ANDROID_PUSH_ENABLED: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON != '' && 'true' || 'false' }}
+      POS_RELEASE_CHANNEL: ${{ inputs.release_channel || 'stable' }}
+      ANDROID_GOOGLE_SERVICES_JSON: ${{ inputs.release_channel == 'beta' && secrets.ANDROID_BETA_GOOGLE_SERVICES_JSON || inputs.release_channel != 'beta' && secrets.ANDROID_GOOGLE_SERVICES_JSON || '' }}
+      VITE_ANDROID_PUSH_ENABLED: ${{ (inputs.release_channel == 'beta' && secrets.ANDROID_BETA_GOOGLE_SERVICES_JSON != '' || inputs.release_channel != 'beta' && secrets.ANDROID_GOOGLE_SERVICES_JSON != '') && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,10 +67,17 @@ jobs:
 
       - name: Resolve release identity
         id: meta
+        env:
+          RELEASE_CHANNEL: ${{ inputs.release_channel || 'stable' }}
+          BETA_VERSION: ${{ inputs.beta_version }}
         run: |
           version=$(node -p "require('./package.json').version")
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then version="$BETA_VERSION"; fi
           short=$(echo "$GITHUB_SHA" | cut -c1-7)
-          if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then
+            node -e "if(!/^\d+\.\d+\.\d+-beta\.[1-9]\d*$/.test(process.env.BETA_VERSION||''))process.exit(1)"
+          fi
+          if [ "$RELEASE_CHANNEL" != "beta" ] && [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
             tag="${{ github.ref_name }}"
             if [ "$tag" != "v$version" ]; then
               echo "Tag $tag does not match package version v$version"; exit 1
@@ -68,9 +85,10 @@ jobs:
           else
             tag="v$version"
           fi
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then tag="beta-v$version"; fi
           {
             echo "version=$version"
-            echo "build_number=$(git rev-list --count HEAD)"
+            if [ "$RELEASE_CHANNEL" = "beta" ]; then echo "build_number=${{ inputs.beta_number }}"; else echo "build_number=$(git rev-list --count HEAD)"; fi
             echo "tag=$tag"
             echo "commit=$GITHUB_SHA"
             echo "release_id=$tag-$short"
@@ -80,6 +98,12 @@ jobs:
       # handed to other shops and must carry no project address, key or
       # backend URL. The phone is told where to connect during activation or
       # in Settings -> Database & Cloud Connection.
+      - name: Prepare beta package identity
+        if: inputs.release_channel == 'beta'
+        env:
+          BETA_VERSION: ${{ inputs.beta_version }}
+        run: node scripts/prepare-beta.cjs
+
       - name: Build the offline app bundle
         if: ${{ !inputs.app_url }}
         run: npm run mobile:build
@@ -92,6 +116,7 @@ jobs:
           npx cap sync android
           node scripts/android-permissions.cjs
           node scripts/android-push-setup.cjs
+          node scripts/android-update-setup.cjs
 
       - name: Validate Android signing secrets
         env:
@@ -164,6 +189,8 @@ jobs:
           set -euo pipefail
           v="${{ steps.meta.outputs.version }}"
           rid="${{ steps.meta.outputs.release_id }}"
+          prefix="pos-app"
+          if [ "$POS_RELEASE_CHANNEL" = "beta" ]; then prefix="$prefix/beta"; fi
           released=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           epoch=$(node -e "const m=/BUNDLE_EPOCH\s*=\s*(\d+)/.exec(require('fs').readFileSync('src/lib/bundle-epoch.ts','utf8'));if(!m){process.exit(1)}console.log(m[1])")
           mkdir -p versioned/android latest/android release-assets
@@ -178,13 +205,14 @@ jobs:
           cp "$src" "latest/android/Retail-$v.apk"
           cp "$src" "latest/android/Retail-latest.apk"
           cp "$src" "release-assets/Retail-$v.apk"
-          manifest=$(printf '{"version":"%s","file":"Retail-%s.apk","tag":"%s","commit":"%s","released":"%s","path":"pos-app/releases/%s/android/"}\n' \
-            "$v" "$v" "${{ steps.meta.outputs.tag }}" "${{ steps.meta.outputs.commit }}" "$released" "$rid")
+          manifest=$(printf '{"version":"%s","file":"Retail-%s.apk","tag":"%s","commit":"%s","released":"%s","path":"%s/releases/%s/android/"}\n' \
+            "$v" "$v" "${{ steps.meta.outputs.tag }}" "${{ steps.meta.outputs.commit }}" "$released" "$prefix" "$rid")
           echo "$manifest" > latest/android/latest.json
           echo "$manifest" > versioned/android/latest.json
           echo "$manifest" > release-assets/latest.json
           # Unified cross-platform manifest read by Android, Windows and web.
           base="https://updatecms.luckycharmsdnbhd.com/pos-app"
+          if [ "$POS_RELEASE_CHANNEL" = "beta" ]; then base="$base/beta"; fi
           build="${{ steps.meta.outputs.build_number }}"
           printf '{"version":"%s","buildNumber":%s,"releaseNotes":"%s","apkUrl":"%s/releases/%s/android/Retail-%s.apk","bundleEpoch":%s,"windowsUrl":"%s/latest/Retail%%20Setup%%20%s.exe"}\n' \
             "$v" "$build" "Release $v" "$base" "$rid" "$v" "$epoch" "$base" "$v" > release-assets/manifest.json

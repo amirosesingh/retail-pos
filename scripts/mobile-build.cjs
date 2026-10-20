@@ -7,7 +7,8 @@
  * shell to HTML, and writes that plus every client asset into
  * `capacitor-shell/`. The result runs entirely on the phone: Android serves
  * the folder locally and the router takes over from there, so the till boots
- * and sells with no internet at all.
+ * and renders its interface without internet. Android business data and
+ * database operations remain online-only; this creates no offline database.
  */
 const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -15,6 +16,7 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
 const { withoutWebEnv, scrubWebEnv } = require("./web-only-env.cjs");
+const { checkMobileInterface } = require("./check-mobile-interface.cjs");
 
 const root = path.resolve(__dirname, "..");
 const out = path.join(root, "capacitor-shell");
@@ -109,6 +111,7 @@ async function main() {
   // Android's local server falls back to index.html for unknown paths, but a
   // copy under 200.html keeps other hosts (and manual testing) happy too.
   fs.writeFileSync(path.join(out, "200.html"), html, "utf8");
+  checkMobileInterface(out, html);
 
 
 

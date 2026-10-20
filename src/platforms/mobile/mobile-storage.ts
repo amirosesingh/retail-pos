@@ -12,6 +12,7 @@
  */
 import { isNative } from "@/platform-config/platform";
 import { isPersistentKey } from "@/lib/live-mode";
+import { INTERFACE_PREFERENCES_RESTORED } from "@/lib/theme-storage";
 
 const PREFIX = "pos.";
 
@@ -26,6 +27,11 @@ let prefs: { value: Prefs } | null = null;
 let installed = false;
 let hydrated = false;
 let hydration: Promise<void> | null = null;
+const pendingWrites = new Set<Promise<void>>();
+function trackWrite(work: Promise<void>) {
+  const settled = work.catch(() => {}).finally(() => pendingWrites.delete(settled));
+  pendingWrites.add(settled);
+}
 
 /**
  * The plugin handle is kept inside a wrapper object: a Capacitor plugin Proxy
@@ -57,17 +63,33 @@ function install(store: Prefs) {
 
   ls.setItem = (key: string, value: string) => {
     setItem(key, value);
-    if (isPersistentKey(key)) void store.set({ key, value }).catch(() => {});
+    if (isPersistentKey(key)) trackWrite(store.set({ key, value }));
   };
   ls.removeItem = (key: string) => {
     removeItem(key);
-    if (isPersistentKey(key)) void store.remove({ key }).catch(() => {});
+    if (isPersistentKey(key)) trackWrite(store.remove({ key }));
   };
   ls.clear = () => {
     const keys = Object.keys(ls).filter((k) => k.startsWith(PREFIX));
     clear();
-    for (const key of keys) void store.remove({ key }).catch(() => {});
+    for (const key of keys) trackWrite(store.remove({ key }));
   };
+}
+
+/** An OTA reload must not race the asynchronous native identity/preferences writes. */
+export async function flushNativeStorage(): Promise<void> {
+  if (typeof window === "undefined" || !isNative()) return;
+  await hydrateNativeStorage();
+  await Promise.all([...pendingWrites]);
+  const loaded = await loadPrefs();
+  if (!loaded) throw new Error("Cannot preserve saved device settings. Retry the update.");
+  for (const key of Object.keys(window.localStorage).filter(isPersistentKey)) {
+    const value = window.localStorage.getItem(key);
+    if (value === null) continue;
+    await loaded.value.set({ key, value });
+    if ((await loaded.value.get({ key })).value !== value)
+      throw new Error("Could not verify saved device settings. Update postponed.");
+  }
 }
 
 /**
@@ -98,7 +120,7 @@ async function restoreNativeStorage(): Promise<void> {
     if (value !== null) window.localStorage.setItem(key, value);
   }
   for (const key of keys) {
-    if (!isPersistentKey(key)) {
+    if (key.startsWith(PREFIX) && !isPersistentKey(key)) {
       // Left over from the previous offline-first build.
       await store.remove({ key }).catch(() => {});
     }
@@ -109,6 +131,7 @@ async function restoreNativeStorage(): Promise<void> {
     if (value !== null) await store.set({ key, value });
   }
   install(store);
+  window.dispatchEvent(new Event(INTERFACE_PREFERENCES_RESTORED));
 }
 
 /** Remove every non-preference key the app may have cached on this device. */

@@ -70,7 +70,7 @@ function ReceivingIndex() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Goods receiving</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground page-description">
               Stock arriving at <span className="text-primary">{currentStore.name}</span>. Counts are
               blind: type what is physically in the box, not what the sender wrote.
             </p>
@@ -112,7 +112,7 @@ function ReceivingIndex() {
                   <TableCell>{storeName(t.fromStoreId)}</TableCell>
                   <TableCell className="numeric text-right">{t.items.length}</TableCell>
                   <TableCell>
-                    <Badge variant="outline">{TRANSFER_STATUS_LABELS[t.status]}</Badge>
+                    <Badge status={t.status} variant="outline">{TRANSFER_STATUS_LABELS[t.status]}</Badge>
                   </TableCell>
                   <TableCell>
                     <Button asChild size="sm" variant={tab === "todo" ? "default" : "ghost"}>
