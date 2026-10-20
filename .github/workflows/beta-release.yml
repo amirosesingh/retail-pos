@@ -10,6 +10,10 @@ on:
         description: 'Enter Publish beta now after the owner requests this release'
         required: true
         type: string
+      cleanup_previous_betas:
+        description: 'Keep this new beta and only the newest previous beta'
+        type: boolean
+        default: false
 concurrency:
   group: beta-release
   cancel-in-progress: false
@@ -39,9 +43,7 @@ jobs:
           cache: npm
       - run: npm ci
       - id: beta
-        env:
-          SEQUENCE: ${{ github.run_number }}
-        run: echo "version=$(node scripts/prepare-beta.cjs --next "$SEQUENCE")" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(node scripts/prepare-beta.cjs --next)" >> "$GITHUB_OUTPUT"
   windows:
     needs: prepare
     uses: ./.github/workflows/desktop-release.yml
@@ -122,6 +124,7 @@ jobs:
             ios-release-assets/*.ipa
       - name: Keep the latest six beta versions only
         env:
+          BETA_RETENTION_LIMIT: ${{ inputs.cleanup_previous_betas && '2' || '6' }}
           GH_TOKEN: ${{ github.token }}
           BETA_VERSION: ${{ needs.prepare.outputs.version }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

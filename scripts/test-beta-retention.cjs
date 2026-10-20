@@ -5,6 +5,18 @@ const version = n => `1.4.75-beta.${n}`;
 const releases = Array.from({ length: 12 }, (_, i) => ({ tag_name: `beta-v${version(i + 1)}`, prerelease: true, draft: false }));
 const archive = n => `pos-app/beta/releases/beta-v${version(n)}-abcdef0/android/Retail-${version(n)}.apk`;
 
+test('explicit cleanup keeps the new cycle and one previous beta including IPA retention', () => {
+  const next = '1.4.76-beta.1';
+  const ipa = `pos-app/beta/releases/beta-v${version(1)}-abcdef0/ios/Retail-${version(1)}-unsigned.ipa`;
+  const stable = 'pos-app/releases/v1.4.75-abcdef0/ios/Retail-1.4.75-unsigned.ipa';
+  const plan = planRetention([...releases, { tag_name: `beta-v${next}`, prerelease: true, draft: false }],
+    [ipa, stable, archive(12)], next, 2);
+  assert.deepEqual(plan.keep, [next, version(12)]);
+  assert.deepEqual(plan.removeKeys, [ipa]);
+  assert.equal(plan.removeReleases.length, 11);
+  assert.throws(() => planRetention(releases, [], version(12), 0), /Invalid beta retention/);
+});
+
 test('reads compact paginated metadata without downloading historical asset descriptions', () => {
   assert.deepEqual(parseReleaseList('beta-v1.4.75-beta.1\ttrue\tfalse\r\nbeta-v1.4.75-beta.2\ttrue\ttrue\n'), [
     { tag_name: 'beta-v1.4.75-beta.1', prerelease: true, draft: false },
