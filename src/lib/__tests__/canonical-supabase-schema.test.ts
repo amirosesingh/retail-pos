@@ -184,6 +184,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261017132000_fix_relational_health_parent_schema.sql",
       "supabase/migrations/20261019071157_secure_shift_refresh_by_ids.sql",
       "supabase/migrations/20261019102437_staff_login_alias_and_profile_edit.sql",
+      "supabase/migrations/20261020033000_allow_ios_mobile_terminal_claim.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

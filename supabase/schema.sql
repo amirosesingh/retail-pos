@@ -4583,7 +4583,7 @@ BEGIN
   END IF;
 
   IF (
-    (t.platform = 'mobile' AND p_platform = 'android')
+    (t.platform = 'mobile' AND p_platform IN ('android', 'ios'))
     OR (t.platform = 'pc' AND p_platform = 'electron')
   ) IS NOT TRUE THEN
     RAISE EXCEPTION 'TERMINAL_PLATFORM_MISMATCH';
