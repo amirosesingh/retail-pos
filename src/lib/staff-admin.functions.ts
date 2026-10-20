@@ -52,11 +52,13 @@ export const listManagedStaffAccounts = createServerFn({ method: "POST" })
       const { approvalPinEligible } = await import("./approval-pin-eligibility");
       const rules = ((await rulesResponse.json()) as Record<string, unknown>[]).map(normalizeRule);
       const { staffLastSignIns } = await import("./staff-admin.server");
-      const lastSignIns = await staffLastSignIns(rows.flatMap(row => row.auth_user_id ? [row.auth_user_id] : []));
+      const confirmations = new Map<string, boolean>();
+      const lastSignIns = await staffLastSignIns(rows.flatMap(row => row.auth_user_id ? [row.auth_user_id] : []), confirmations);
       return {
         ok: true as const,
         rows: rows.map((row) => ({
           ...row,
+          email_confirmed: confirmations.get(row.auth_user_id?.toLowerCase() ?? "") ?? null,
           last_login_at: (() => {
             const authLogin = lastSignIns.get(row.auth_user_id?.toLowerCase() ?? "");
             return authLogin && (!row.last_login_at || Date.parse(authLogin) > Date.parse(row.last_login_at)) ? authLogin : row.last_login_at;
@@ -154,11 +156,11 @@ export const saveStaffAccount = createServerFn({ method: "POST" })
       })
       .parse(data),
   )
-  .handler(async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
+  .handler(async ({ data }): Promise<{ ok: true; emailWarning?: string } | { ok: false; error: string }> => {
     try {
       const actor = await requireStaffManager(data);
       const mod = await import("./staff-admin.server");
-      await mod.provisionStaffAccount({
+      const result = await mod.provisionStaffAccount({
         displayName: data.displayName,
         username: data.username,
         pin: data.pin ?? "",
@@ -183,7 +185,7 @@ export const saveStaffAccount = createServerFn({ method: "POST" })
           active: data.active,
         },
       });
-      return { ok: true };
+      return { ok: true, emailWarning: result.emailWarning };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
@@ -364,4 +366,16 @@ export const deleteStaffAccount = createServerFn({ method: "POST" })
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
+  });
+
+export const resendStaffConfirmation = createServerFn({ method: "POST" })
+  .validator((data: unknown) => z.object({ ...proofFields, username: z.string().min(2).max(160) }).parse(data))
+  .handler(async ({ data }) => {
+    try {
+      const actor = await requireStaffManager(data);
+      const { sendStaffConfirmation } = await import("./staff-admin.server");
+      await sendStaffConfirmation(data.username);
+      await audit({ actor, actionType: "staff.verification_requested", entityAffected: "app_users", entityId: data.username });
+      return { ok: true as const };
+    } catch (error) { return { ok: false as const, error: (error as Error).message }; }
   });

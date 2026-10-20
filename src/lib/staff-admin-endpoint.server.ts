@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const bodySchema = z.object({
-  action: z.enum(["save", "set_active", "migrate", "update", "delete", "list", "permissions"]),
+  action: z.enum(["save", "set_active", "migrate", "update", "delete", "list", "permissions", "resend_confirmation"]),
   data: z.record(z.string(), z.unknown()),
 });
 
@@ -15,7 +15,9 @@ export async function handleStaffAdminRequest(request: Request): Promise<Respons
     const body = bodySchema.parse(JSON.parse(raw));
     const functions = await import("./staff-admin.functions");
     const result =
-      body.action === "list"
+      body.action === "resend_confirmation"
+        ? await functions.resendStaffConfirmation({ data: body.data as never })
+        : body.action === "list"
         ? await functions.listManagedStaffAccounts({ data: body.data as never })
         : body.action === "permissions"
           ? await functions.setManagedStaffPermissions({ data: body.data as never })
