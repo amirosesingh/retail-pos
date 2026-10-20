@@ -1,7 +1,7 @@
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { effectiveTimeZone } from "@/lib/time-zone";
 import { branchChartColor, ANALYTICS_COLORS } from "@/lib/analytics-design";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FolderOpen, Package, RefreshCw, X } from "lucide-react";
@@ -225,10 +225,7 @@ function LiveBoard() {
       <div className="min-w-0 space-y-5 p-3 sm:p-6">
         <header className="min-w-0 space-y-3">
           <div>
-            <Link to="/reports" className="text-xs text-muted-foreground hover:text-foreground">
-              ← Reports &amp; Analytics
-            </Link>
-            <div className="mt-2 flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+            <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
               <h1 className="text-2xl font-semibold tracking-tight">Live Business Board</h1>
               <HomeShortcuts />
             </div>
@@ -239,7 +236,7 @@ function LiveBoard() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
-<ReportFilters title="Business Analytics filters"><div className="flex flex-wrap items-end gap-4">
+<ReportFilters title="Live Business Board filters"><div className="flex flex-wrap items-end gap-4">
           <div className="flex gap-1">
             {(["today", "7", "30"] as const).map((p) => (
               <Button
@@ -354,162 +351,6 @@ function LiveBoard() {
 
         {!empty && !query.isLoading && (
           <>
-            <div className="min-w-0">
-              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold">Top categories — all shops combined</h2>
-                  <div className="flex gap-1">
-                    <Button
-                      size="sm"
-                      variant={topBy === "revenue" ? "default" : "outline"}
-                      onClick={() => setTopBy("revenue")}
-                    >
-                      Revenue
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={topBy === "units" ? "default" : "outline"}
-                      onClick={() => setTopBy("units")}
-                    >
-                      Units
-                    </Button>
-                  </div>
-                </div>
-                <AnalyticsCardRail title="Categories">
-                  {combinedCategories.map((category) => (
-                    <button
-                      key={category.name}
-                      type="button"
-                      onClick={() => setSelectedCategory(category.name)}
-                      className={`group flex min-h-24 w-full min-w-0 items-center gap-3 rounded-lg border p-3 text-left transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-primary/60 ${
-                        selectedCategory === category.name
-                          ? "border-primary bg-primary/10"
-                          : "border-border bg-card"
-                      }`}
-                    >
-                      <span
-                        className="grid size-9 shrink-0 place-items-center rounded-lg text-white"
-                        style={{ background: branchChartColor("category:" + category.name) }}
-                      >
-                        <FolderOpen className="size-4" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">{category.name}</span>
-                        <span className="block text-[11px] text-muted-foreground">
-                          {category.itemCount} item{category.itemCount === 1 ? "" : "s"} ·{" "}
-                          {topBy === "revenue"
-                            ? money(category.revenue)
-                            : `${category.units} units`}
-                        </span>
-                      </span>
-                    </button>
-                  ))}
-                  {!combinedCategories.length && (
-                    <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-                      No category sales in this range.
-                    </p>
-                  )}
-                </AnalyticsCardRail>
-              </section>
-
-
-            </div>
-
-            {selectedCategory && (
-              <section className="rounded-lg border border-primary/40 bg-primary/5 p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">
-                      Category opened
-                    </p>
-                    <h2 className="flex items-center gap-2 text-sm font-semibold">
-                      <Package className="size-4 text-primary" /> Items in {selectedCategory}
-                    </h2>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => setSelectedCategory(null)}>
-                    <X className="size-4" /> Close items
-                  </Button>
-                </div>
-                {categoryItems.length ? (
-                  <ResponsiveContainer
-                    width="100%"
-                    height={Math.min(360, Math.max(220, categoryItems.length * 30))}
-                  >
-                    <BarChart
-                      data={categoryItems}
-                      layout="vertical"
-                      margin={{ left: 12, right: 20 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" fontSize={11} />
-                      <YAxis type="category" dataKey="name" width={130} fontSize={11} />
-                      <Tooltip
-                        formatter={(value) =>
-                          topBy === "revenue"
-                            ? money(Number(value ?? 0))
-                            : `${Number(value ?? 0)} units`
-                        }
-                      />
-                      <Bar dataKey={topBy} fill="var(--pos-pay)" radius={[0, 5, 5, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <p className="py-8 text-center text-sm text-muted-foreground">
-                    No items were sold in this category for the selected range.
-                  </p>
-                )}
-              </section>
-            )}
-
-            <section className="rounded-lg border border-border p-4">
-              <AnalyticsCardRail title="Top categories per shop">
-                  {shops.map((shop) => {
-                    const rows = topCategories(
-                      itemRows.filter((r) => (r.store_id ?? "") === shop.storeId),
-                      topBy,
-                      5,
-                    );
-                    return (
-                      <div
-                        key={shop.storeId}
-                        className="min-h-72 rounded-md border border-border p-3"
-                      >
-                        <p className="truncate text-sm font-semibold" title={shop.name}>
-                          {shop.name}
-                        </p>
-                        <p className="mb-1 text-[11px] text-muted-foreground">
-                          {money(shop.revenue)} · {shop.sharePct.toFixed(1)}% of group
-                        </p>
-                        <div className="mt-3 space-y-1.5">
-                          {rows.map((category) => (
-                            <button
-                              key={category.name}
-                              type="button"
-                              onClick={() => setSelectedCategory(category.name)}
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
-                            >
-                              <span
-                                className="size-2.5 shrink-0 rounded-full"
-                                style={{ background: branchChartColor("category:" + category.name) }}
-                              />
-                              <span className="min-w-0 flex-1 truncate">{category.name}</span>
-                              <span className="numeric shrink-0 text-muted-foreground">
-                                {topBy === "revenue" ? money(category.revenue) : category.units}
-                              </span>
-                            </button>
-                          ))}
-                          {!rows.length && (
-                            <p className="py-5 text-center text-xs text-muted-foreground">
-                              No category sales
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-              </AnalyticsCardRail>
-            </section>
-
             <AnalyticsCardRail title="Business graphs">
               <section className="min-w-0 rounded-lg border border-border bg-card p-4">
                 <h2 className="mb-3 min-h-36 text-sm font-semibold">Revenue share by shop</h2>
@@ -738,6 +579,162 @@ function LiveBoard() {
               </ResponsiveContainer>
             </section>
             </AnalyticsCardRail>
+            <div className="min-w-0">
+              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold">Top categories — all shops combined</h2>
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant={topBy === "revenue" ? "default" : "outline"}
+                      onClick={() => setTopBy("revenue")}
+                    >
+                      Revenue
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={topBy === "units" ? "default" : "outline"}
+                      onClick={() => setTopBy("units")}
+                    >
+                      Units
+                    </Button>
+                  </div>
+                </div>
+                <AnalyticsCardRail title="Categories">
+                  {combinedCategories.map((category) => (
+                    <button
+                      key={category.name}
+                      type="button"
+                      onClick={() => setSelectedCategory(category.name)}
+                      className={`group flex min-h-24 w-full min-w-0 items-center gap-3 rounded-lg border p-3 text-left transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-primary/60 ${
+                        selectedCategory === category.name
+                          ? "border-primary bg-primary/10"
+                          : "border-border bg-card"
+                      }`}
+                    >
+                      <span
+                        className="grid size-9 shrink-0 place-items-center rounded-lg text-white"
+                        style={{ background: branchChartColor("category:" + category.name) }}
+                      >
+                        <FolderOpen className="size-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{category.name}</span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {category.itemCount} item{category.itemCount === 1 ? "" : "s"} ·{" "}
+                          {topBy === "revenue"
+                            ? money(category.revenue)
+                            : `${category.units} units`}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                  {!combinedCategories.length && (
+                    <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                      No category sales in this range.
+                    </p>
+                  )}
+                </AnalyticsCardRail>
+              </section>
+
+
+            </div>
+
+            {selectedCategory && (
+              <section className="rounded-lg border border-primary/40 bg-primary/5 p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">
+                      Category opened
+                    </p>
+                    <h2 className="flex items-center gap-2 text-sm font-semibold">
+                      <Package className="size-4 text-primary" /> Items in {selectedCategory}
+                    </h2>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => setSelectedCategory(null)}>
+                    <X className="size-4" /> Close items
+                  </Button>
+                </div>
+                {categoryItems.length ? (
+                  <ResponsiveContainer
+                    width="100%"
+                    height={Math.min(360, Math.max(220, categoryItems.length * 30))}
+                  >
+                    <BarChart
+                      data={categoryItems}
+                      layout="vertical"
+                      margin={{ left: 12, right: 20 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" fontSize={11} />
+                      <YAxis type="category" dataKey="name" width={130} fontSize={11} />
+                      <Tooltip
+                        formatter={(value) =>
+                          topBy === "revenue"
+                            ? money(Number(value ?? 0))
+                            : `${Number(value ?? 0)} units`
+                        }
+                      />
+                      <Bar dataKey={topBy} fill="var(--pos-pay)" radius={[0, 5, 5, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    No items were sold in this category for the selected range.
+                  </p>
+                )}
+              </section>
+            )}
+
+            <section className="rounded-lg border border-border p-4">
+              <AnalyticsCardRail title="Top categories per shop">
+                  {shops.map((shop) => {
+                    const rows = topCategories(
+                      itemRows.filter((r) => (r.store_id ?? "") === shop.storeId),
+                      topBy,
+                      5,
+                    );
+                    return (
+                      <div
+                        key={shop.storeId}
+                        className="min-h-72 rounded-md border border-border p-3"
+                      >
+                        <p className="truncate text-sm font-semibold" title={shop.name}>
+                          {shop.name}
+                        </p>
+                        <p className="mb-1 text-[11px] text-muted-foreground">
+                          {money(shop.revenue)} · {shop.sharePct.toFixed(1)}% of group
+                        </p>
+                        <div className="mt-3 space-y-1.5">
+                          {rows.map((category) => (
+                            <button
+                              key={category.name}
+                              type="button"
+                              onClick={() => setSelectedCategory(category.name)}
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
+                            >
+                              <span
+                                className="size-2.5 shrink-0 rounded-full"
+                                style={{ background: branchChartColor("category:" + category.name) }}
+                              />
+                              <span className="min-w-0 flex-1 truncate">{category.name}</span>
+                              <span className="numeric shrink-0 text-muted-foreground">
+                                {topBy === "revenue" ? money(category.revenue) : category.units}
+                              </span>
+                            </button>
+                          ))}
+                          {!rows.length && (
+                            <p className="py-5 text-center text-xs text-muted-foreground">
+                              No category sales
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </AnalyticsCardRail>
+            </section>
+
           </>
         )}
       </div>

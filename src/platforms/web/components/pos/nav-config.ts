@@ -475,7 +475,7 @@ export const navGroups: NavGroup[] = [
   { ...group("company"), label: "Home", blurb: "Business analytics, all shops and locations.",
     items: group("company").items.filter(item => item.to !== "/audit").map(item => ({ ...item, label: item.to === "/all-shops" ? "All Shops" :
       item.to === "/stores" ? "Locations & Warehouses" : item.to === "/dashboard" ? "Dashboard" :
-      item.to === "/analytics" ? "Business Analytics" : item.to === "/audit" ? "Audit History" : item.label })) },
+      item.to === "/analytics" ? "Live Business Board" : item.to === "/audit" ? "Audit History" : item.label })) },
   { ...group("reports"), items: [...group("reports").items, ...items("company", ["/audit"]).map(item => ({ ...item, label: "Audit History" }))]
     .filter(item => !["/reports/items", "/reports/payments"].includes(item.to))
     .map(item => item.to === "/reports/sales" ? { ...item, label: "Sales Report", blurb: "Bills, item sales and cashier payments in one workspace." } : item) },
