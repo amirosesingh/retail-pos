@@ -135,7 +135,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
-    "@capgo/cli": "7.87.0",
+    "@capgo/cli": "8.83.2",
     "@electric-sql/pglite": "0.5.10",
     "@electron/rebuild": "4.2.0",
     "@eslint/js": "^10.0.1",
