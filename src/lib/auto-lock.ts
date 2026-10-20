@@ -11,6 +11,7 @@ import { useEffect, useRef } from "react";
 
 const KEY = "pos.autoLock.seconds";
 const LAST_ACTIVITY_KEY = "pos.autoLock.lastActivityAt";
+const LOGIN_WINDOW_KEY = "pos.session.interactiveWindow";
 const SESSION_IDLE_MINUTES_KEY = "pos.session.idleMinutes";
 export const DEFAULT_AUTO_LOCK_SECONDS = 180;
 const ACTIVITY_WRITE_THROTTLE_MS = 1_000;
@@ -89,9 +90,20 @@ function storedActivityAt(): number {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+/** A reload may retain a login, but a new window or an expired idle clock may not. */
+export function mayResumeOperatorSession(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(LOGIN_WINDOW_KEY) === "1" &&
+      storedActivityAt() > 0 &&
+      remainingAutoLockMs(sessionIdleSeconds(), storedActivityAt()) > 0;
+  } catch { return false; }
+}
+
 /** A successful interactive sign-in starts a fresh idle window. */
 export function markAutoLockActivity(at = Date.now()): void {
   if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(LOGIN_WINDOW_KEY, "1");
   lastLocalActivityAt = Math.max(lastLocalActivityAt, at);
   window.localStorage.setItem(LAST_ACTIVITY_KEY, String(lastLocalActivityAt));
   window.dispatchEvent(new CustomEvent(ACTIVITY_EVENT, { detail: lastLocalActivityAt }));
@@ -141,6 +153,7 @@ export function clearAutoLockActivity(): void {
   lastLocalActivityAt = 0;
   lastServerActivityAt = 0;
   operationGraceUntil = 0;
+  window.sessionStorage.removeItem(LOGIN_WINDOW_KEY);
   window.localStorage.removeItem(LAST_ACTIVITY_KEY);
   window.localStorage.removeItem(SESSION_IDLE_MINUTES_KEY);
 }
@@ -209,6 +222,17 @@ export function useAutoLock(active: boolean, onLock: () => void, ruleSeconds?: n
 
     const activity = () => {
       const now = Date.now();
+      // A sleeping renderer may receive input before its overdue timeout.
+      // Never let that first interaction revive an already expired login.
+      if (stopped) return;
+      if (Date.now() >= operationGraceUntil && remainingAutoLockMs(
+        effectiveLockSeconds(ruleSeconds), Math.max(storedActivityAt(), lastLocalActivityAt), now,
+      ) === 0) {
+        stopped = true;
+        window.clearTimeout(timer);
+        lockRef.current();
+        return;
+      }
       // Mouse movement is noisy. Reset the live timer immediately but write
       // the durable marker at a bounded rate.
       if (now - lastWrittenAt >= ACTIVITY_WRITE_THROTTLE_MS) {

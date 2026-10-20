@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { LogOut } from "lucide-react";
 import { adminAccessToken } from "@/lib/admin-session";
 import { listDeviceSessions, revokeDeviceSessions } from "@/lib/user-sessions-client";
 import { subscribeBackgroundRefresh, createRefreshQueue } from "@/lib/background-refresh";
@@ -28,6 +29,8 @@ type Row = {
 };
 
 function ActiveSessions() {
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const resetIds = useRef(new Set<string>());
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,6 +89,10 @@ function ActiveSessions() {
 
   const activeRows = rows.filter(row => isVisibleActiveSession(row, now));
 
+  const pageCount = Math.max(1, Math.ceil(activeRows.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const visibleRows = activeRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   if (loading) return <p className="text-sm text-muted-foreground">Loading sessions…</p>;
   if (offline)
     return (
@@ -99,43 +106,63 @@ function ActiveSessions() {
     return <p className="text-sm text-muted-foreground">Nobody is signed in right now.</p>;
 
   return (
-    <div className="space-y-2">
-      {activeRows.map((row) => (
-        <div
-          key={row.id}
-          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3"
-        >
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="truncate font-medium">
-                {row.label || row.staff_user_id || "Unnamed device"}
-              </span>
-              <Badge variant={row.is_revoked ? "outline" : "secondary"}>
-                {row.is_revoked ? "Signed out" : row.kind}
-              </Badge>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {[
-                row.platform,
-                row.branch_name || (row.branch_id ? "Unknown branch" : null),
-                row.terminal_name || (row.terminal_id ? "Unnamed terminal" : null),
-                `Idle limit ${row.idle_timeout_minutes} min`,
-                `Last seen ${posDisplayDateTime(new Date(row.last_activity_at))}`,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          </div>
-          <Button
-            variant="destructive"
-            size="sm"
-            disabled={row.is_revoked || busy === row.id}
-            onClick={() => void revoke(row.id)}
-          >
-            {busy === row.id ? "Resetting…" : "Remote reset"}
-          </Button>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>{activeRows.length} active {activeRows.length === 1 ? "session" : "sessions"}</span>
+        <span>Updates automatically</span>
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-border">
+        <table className="w-full text-left text-xs">
+          <caption className="sr-only">Active sessions, page {currentPage} of {pageCount}</caption>
+          <thead className="bg-muted/50 text-muted-foreground">
+            <tr>
+              <th scope="col" className="px-3 py-2 font-medium">User / device</th>
+              <th scope="col" className="px-3 py-2 font-medium">Activity</th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {visibleRows.map(row => (
+              <tr key={row.id} className="align-top">
+                <td className="px-3 py-3">
+                  <div className="break-words text-sm font-medium">{row.label || row.staff_user_id || "Unnamed device"}</div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {[row.kind === "terminal" ? "Terminal" : row.kind === "cashier" ? "Cashier" : "Staff",
+                      row.platform,
+                      row.branch_name || (row.branch_id ? "Unknown branch" : "No fixed branch"),
+                      row.terminal_name || (row.terminal_id ? "Unnamed terminal" : "Browser session")]
+                      .filter(Boolean).map((label, index) => (
+                        <Badge key={index} variant="secondary" className="max-w-full whitespace-normal break-words px-1.5 py-0 text-[10px] font-normal">{label}</Badge>
+                      ))}
+                  </div>
+                </td>
+                <td className="px-3 py-3">
+                  <div className="text-muted-foreground">Last active</div>
+                  <div className="mt-1 tabular-nums">{posDisplayDateTime(new Date(row.last_activity_at))}</div>
+                  <Badge variant="outline" className="mt-1 whitespace-normal px-1.5 py-0 text-[10px] font-normal">Idle limit {row.idle_timeout_minutes} min</Badge>
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <Button variant="ghost" size="sm"
+                    className="gap-1 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    disabled={row.is_revoked || busy === row.id}
+                    onClick={() => void revoke(row.id)}
+                    aria-label={`Remote reset for ${row.label || row.terminal_name || "this session"}`}>
+                    <LogOut className="size-3.5" aria-hidden="true" />
+                    <span className="hidden sm:inline">{busy === row.id ? "Resetting…" : "Reset"}</span>
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <nav aria-label="Session pages" className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">Page {currentPage} of {pageCount} · {activeRows.length} sessions</span>
+        <div className="flex gap-1">
+          <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Previous</Button>
+          <Button variant="outline" size="sm" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>Next</Button>
         </div>
-      ))}
+      </nav>
     </div>
   );
 }
@@ -164,7 +191,7 @@ export const Route = createFileRoute("/settings/sessions")({
       permission="can_manage_terminals"
       wide
       title="Active sessions"
-      description="Current sessions with activity in the last 24 hours. Signed-out, reset and idle-expired sessions are excluded. A remote reset ends that session at once — the terminal returns to the sign-in screen on its next call."
+      description="Active in the last 24 hours. Remote reset signs the device out on its next request."
     >
       <ActiveSessions />
     </SettingsFrame>

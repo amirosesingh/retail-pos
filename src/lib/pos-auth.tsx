@@ -39,6 +39,7 @@ import { setCentralAuthSessionPresent as publishCentralAuthSessionPresent, setSe
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 import {
   clearAutoLockActivity,
+  mayResumeOperatorSession,
   markAutoLockActivity,
   setSessionIdleMinutes,
 } from "@/lib/auto-lock";
@@ -269,6 +270,8 @@ authGlobal[AUTH_CTX_KEY] = AuthContext;
 const norm = (v: string) => v.trim().toLowerCase();
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const [resumeOperator] = useState(mayResumeOperatorSession);
+  const startupSignOut = useRef<Promise<void> | null>(null);
   const [staff, setStaff] = useState<StaffMember[]>(SEED_STAFF);
   const [session, setSession] = useState<Session | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
@@ -310,11 +313,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       const rawTerminal = window.sessionStorage.getItem(TERMINAL_KEY);
-      if (rawTerminal) setTerminalUser(normalizeUuidFields(JSON.parse(rawTerminal) as TerminalUser));
+      if (rawTerminal && resumeOperator) setTerminalUser(normalizeUuidFields(JSON.parse(rawTerminal) as TerminalUser));
     } catch {
       /* ignore corrupt storage */
     }
-  }, []);
+  }, [resumeOperator]);
 
   // A device connection profile can replace the tenant client without
   // remounting this provider. Drop the old proof synchronously and re-run the
@@ -422,6 +425,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     void (async () => {
       const startedAt = sessionEpoch();
+      if (!resumeOperator) {
+        // Clear only person credentials. Machine registration, connection settings
+        // and offline PIN verification data belong to the device and stay intact.
+        startupSignOut.current ??= (async () => {
+          const oldToken = await loadSessionToken().catch(() => null);
+          clearStoredCredentials();
+          clearAutoLockActivity();
+          window.sessionStorage.removeItem(TERMINAL_KEY);
+          await discardRejectedExternalAuthSession();
+          if (oldToken) void endDeviceSession({ data: { sessionToken: oldToken } }).catch(() => undefined);
+        })();
+        await startupSignOut.current;
+      }
       const checked = await validateCentralAuthSession(
         typeof navigator === "undefined" || navigator.onLine !== false,
       );
@@ -453,7 +469,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false;
       sub.subscription.unsubscribe();
     };
-  }, [authEnabled, authClientGeneration, setCentralSessionVerified]);
+  }, [authEnabled, authClientGeneration, setCentralSessionVerified, resumeOperator]);
 
   // Backend roles for the signed-in account.
   const userId = session?.user?.id ?? null;
