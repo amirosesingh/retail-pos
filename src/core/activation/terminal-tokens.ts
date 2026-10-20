@@ -253,7 +253,7 @@ const rowToToken = (r: Record<string, any>): TerminalToken => ({
   locationId: r.location_id ?? null,
   locationName: r.location_name ?? "",
   deviceName: r.device_name ?? "",
-  platform: r.platform === "mobile" || r.platform === "android" ? "mobile" : "pc",
+  platform: r.platform === "mobile" || r.platform === "android" || r.platform === "ios" ? "mobile" : "pc",
   status: asStatus(r.status),
   createdAt: r.created_at,
   activatedAt: r.activated_at ?? null,

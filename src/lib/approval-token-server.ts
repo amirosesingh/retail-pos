@@ -176,7 +176,7 @@ export async function verifyApprovalTotp(
   const receiverRows = await rows<{ platform: string }>(
     `terminal_tokens?id=eq.${encodeURIComponent(receiverToken)}&select=platform`,
   );
-  if (!["windows", "android"].includes(receiverRows[0]?.platform)) return null;
+  if (!["windows", "android", "ios", "pc", "mobile"].includes(receiverRows[0]?.platform)) return null;
   const person = await approvalPerson(userId);
   if (!person || !approvalMethods(person.permissions).totp || !(await eligible(person, branch)))
     return null;

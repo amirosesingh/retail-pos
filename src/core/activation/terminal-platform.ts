@@ -26,7 +26,7 @@ export function tokenPlatformForRuntime(
   runtime: TerminalRuntimePlatform,
 ): TerminalPlatform | null {
   if (runtime === "electron") return "pc";
-  if (runtime === "android") return "mobile";
+  if (runtime === "android" || runtime === "ios") return "mobile";
   return null;
 }
 

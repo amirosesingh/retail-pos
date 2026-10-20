@@ -20,7 +20,8 @@ describe("Android local interface with online-only business access", () => {
     expect(gate).toContain('inert={!available}');
     expect(gate).toContain('verdict === "unreachable"');
     const indicator = readFileSync("src/platforms/mobile/components/OfflineInterface.tsx", "utf8");
-    expect(indicator).toContain("subscribeConnectivity(setState)");
+    expect(indicator).toContain("subscribeConnectivity(state => setSnapshot");
+    expect(indicator).toContain("connectionLabel(state, verdict, issue)");
     expect(indicator).not.toContain("setInterval");
     expect(indicator).not.toContain("local-db");
   });
