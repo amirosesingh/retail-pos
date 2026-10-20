@@ -25,7 +25,10 @@ const config: CapacitorConfig = {
   ios: { scheme: "App", contentInset: "never" },
   plugins: {
     CapacitorUpdater: { autoUpdate: false, appReadyTimeout: 15000, responseTimeout: 120, autoDeletePrevious: false, autoDeleteFailed: false, statsUrl: "", channelUrl: "", updateUrl: "" },
-    RetailOtaTrust: otaTrust,
+    RetailOtaTrust: process.env.POS_RELEASE_CHANNEL === "stable"
+      ? { ...otaTrust, appId: "com.luckycharms.pos", channel: "production",
+          endpoint: `${otaTrust.origin}/pos-app/ios-ota/production/manifest.json` }
+      : otaTrust,
     SystemBars: { insetsHandling: "native", initialViewportFitValueHint: "contain" },
   },
   android: {

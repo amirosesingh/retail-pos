@@ -1,10 +1,13 @@
 """Reject an IPA installation failure before packaging (works with binary plists)."""
 import plistlib
+import os
 import sys
 from pathlib import Path
 
 
-def verify(app):
+def verify(app, channel="beta"):
+    if channel not in ("beta", "stable"):
+        raise ValueError("Invalid release channel")
     app = Path(app)
     seen = {}
     for info in sorted(app.rglob("Info.plist")):
@@ -17,8 +20,9 @@ def verify(app):
         if identifier in seen:
             raise ValueError(f"Duplicate bundle identifier {identifier}: {seen[identifier]} and {info}")
         seen[identifier] = info
-    if seen.get("com.luckycharms.pos.beta") != app / "Info.plist":
-        raise ValueError("Expected beta app identity is missing or assigned to a framework")
+    expected = "com.luckycharms.pos.beta" if channel == "beta" else "com.luckycharms.pos"
+    if seen.get(expected) != app / "Info.plist":
+        raise ValueError("Expected app identity is missing or assigned to a framework")
     if not any(path.parent.suffix == ".framework" for path in seen.values()):
         raise ValueError("Expected embedded frameworks are missing")
     print(f"Verified {len(seen)} unique app/framework bundle identifiers")
@@ -26,4 +30,4 @@ def verify(app):
 
 
 if __name__ == "__main__":
-    verify(sys.argv[1])
+    verify(sys.argv[1], os.environ.get("POS_RELEASE_CHANNEL", "beta"))

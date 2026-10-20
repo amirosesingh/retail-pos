@@ -3,11 +3,13 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const semver = require('semver');
+const { iosReleaseConfig, prepareIosProject } = require('./ios-release-config.cjs');
 const root = path.resolve(__dirname, '..');
 const trustPath = path.join(root, 'ios-ota.public.json');
 const action = process.argv[2];
 const run = (file, args = [], env = {}) => execFileSync(process.execPath, [file, ...args], { cwd: root, env: { ...process.env, ...env }, stdio: 'inherit', windowsHide: true });
-const nativeEnv = { POS_RELEASE_CHANNEL: 'beta', POS_MOBILE_TARGET: 'ios' };
+const release = iosReleaseConfig(process.env.POS_RELEASE_CHANNEL || 'beta', JSON.parse(fs.readFileSync(trustPath)));
+const nativeEnv = { POS_RELEASE_CHANNEL: release.channel, POS_MOBILE_TARGET: 'ios' };
 if (action === 'keygen') {
   const dir = path.join(root, '.ota-private'); fs.mkdirSync(dir, { recursive: true });
   const filename = path.join(dir, 'manifest-ed25519.pem');
@@ -19,14 +21,16 @@ if (action === 'keygen') {
   fs.writeFileSync(trustPath, JSON.stringify(trust, null, 2) + '\n');
   console.log('Private key stored in ignored .ota-private/manifest-ed25519.pem. Back it up securely offline. Public key updated.');
 } else if (action === 'build' || action === 'sync') {
+  prepareIosProject(root, release);
   run(path.join(root, 'scripts/mobile-build.cjs'), [], nativeEnv);
   if (action === 'sync') run(path.join(root, 'node_modules/@capacitor/cli/bin/capacitor'), ['sync', 'ios'], nativeEnv);
 } else if (action === 'package') {
   // Always create an iOS shell here: a preceding Android build uses the same output folder.
   run(path.join(root, 'scripts/mobile-build.cjs'), [], nativeEnv);
-  const trust = JSON.parse(fs.readFileSync(trustPath));
+  const trust = release.trust;
   const version = process.env.OTA_VERSION || `1.4.75-beta.${new Date().toISOString().replace(/[^0-9]/g, '')}`;
   if (!semver.valid(version)) throw new Error('OTA_VERSION must be a semantic version.');
+  if (release.channel === 'stable' && semver.prerelease(version)) throw new Error('Stable OTA requires a stable version.');
   const dir = path.join(root, 'ota-artifacts', version);
   if (fs.existsSync(dir)) throw new Error('Version directory already exists; release versions are immutable.');
   fs.mkdirSync(dir, { recursive: true });

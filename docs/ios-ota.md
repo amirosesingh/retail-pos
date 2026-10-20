@@ -100,3 +100,24 @@ Enabled users may enroll their own soft token while signed in on a registered iP
 ## iPhone bottom edge (native build 4)
 
 The native WebView now extends to the bottom display edge, while UIKit still protects the top and landscape sides. iOS alone uses viewport-fit=cover and disables automatic scroll-view content insets. The iOS stylesheet keeps the register height and bottom portal controls clear of the home indicator while the background fills the bottom area. Android, Windows and web do not import this stylesheet. Install the build-4 IPA in place once: OTA cannot change native constraints. Verify portrait/landscape, keyboard opening/closing, the selling footer, bottom drawers, settings save bars and screen corners on the actual iPhone.
+# Stable release channel
+
+An owner-approved beta → main promotion uses the shared stable release workflow.
+Android, Windows and iPhone build from the same immutable `vX.Y.Z` tag. The stable
+IPA is attached to that GitHub release and stored beside its APK and EXE under
+`pos-app/releases/vX.Y.Z-<commit>/ios/`.
+
+`POS_RELEASE_CHANNEL=stable npm run ios:sync` prepares only the application's
+native identifier (`com.luckycharms.pos`) and display name (`Retail`). Embedded
+framework identifiers remain untouched. Stable builds omit the Beta ribbon and
+use the signed production manifest at
+`https://updatecms.luckycharmsdnbhd.com/pos-app/ios-ota/production/manifest.json`.
+The default iOS build channel remains beta; beta identities and feeds are unchanged.
+
+For production OTA packaging, set `POS_RELEASE_CHANNEL=stable`, a stable
+`OTA_VERSION`, the explicit compatible native build range, and the offline signing
+key path before running `node scripts/ios-ota.cjs package`. Publish the verified
+immutable ZIP before its signed production manifest. Never point a beta-installed
+IPA at the production manifest: the native app identity and trust configuration
+are distinct. Moving from the beta app to the stable app requires installing the
+stable IPA once; subsequent compatible stable interface updates use OTA.
