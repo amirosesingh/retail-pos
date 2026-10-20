@@ -2,6 +2,7 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 import { CapacitorUpdater } from "@capgo/capacitor-updater";
 import { Preferences } from "@capacitor/preferences";
 import { App } from "@capacitor/app";
+import { APP_VERSION } from "@/version";
 import { flushTicketDrafts } from "@/lib/session-draft";
 import { flushNativeStorage } from "@/platforms/mobile/mobile-storage";
 import { IosOtaService } from "./service";
@@ -15,6 +16,7 @@ const safe = () =>
   !edited &&
   !document.querySelector('[role="dialog"], [role="alertdialog"], [aria-busy="true"]');
 export const iosOta = new IosOtaService({
+  builtinVersion: APP_VERSION,
   updater: CapacitorUpdater,
   trust: () => nativeTrust.configuration(),
   load: async () => {

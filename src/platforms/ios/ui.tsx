@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { iosOta, startIosOta, allowManualInstall } from "./runtime";
 import { syncIosAppearance } from "./appearance";
+import { RELEASE_CHANNEL } from "@/lib/release-channel";
 
 export function IosOtaBoot({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -71,7 +72,9 @@ export function IosOtaSettings() {
       className="space-y-4 rounded-xl border bg-card p-4"
       aria-label="iPhone software updates"
     >
-      <h2 className="text-base font-semibold">iPhone software updates</h2>
+      <h2 className="text-base font-semibold">
+        iPhone software updates{RELEASE_CHANNEL === "beta" ? " · Beta" : ""}
+      </h2>
       <p className="text-xs text-muted-foreground">Installed: {state.installed}</p>
       {state.latest && (
         <>

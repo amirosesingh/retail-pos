@@ -36,6 +36,8 @@ type Saved = {
   healthMonitor?: boolean;
 };
 export type Dependencies = {
+  /** Version generated into the IPA's web bundle by the release pipeline. */
+  builtinVersion?: string;
   updater: Pick<
     CapacitorUpdaterPlugin,
     "notifyAppReady" | "current" | "getFailedUpdate" | "download" | "set" | "reset" | "addListener"
@@ -88,7 +90,9 @@ export class IosOtaService {
     this.trust = await this.d.trust();
     const current = await this.d.updater.current();
     const installed =
-      current.bundle.id === "builtin" ? this.trust.nativeVersion : current.bundle.version;
+      current.bundle.id === "builtin"
+        ? this.d.builtinVersion ?? this.trust.nativeVersion
+        : current.bundle.version;
     this.saved = (await this.d.load()) ?? {
       highest: installed,
       failed: [],
@@ -269,7 +273,7 @@ export class IosOtaService {
     try {
       await this.d.preserve();
       if (!this.d.safe()) throw new Error("Finish your work before restoring.");
-      if (this.state.installed !== this.trust.nativeVersion)
+      if (this.state.installed !== (this.d.builtinVersion ?? this.trust.nativeVersion))
         this.saved.failed.push(this.state.installed);
       await this.d.save(this.saved);
       this.patch({ phase: "installing" });

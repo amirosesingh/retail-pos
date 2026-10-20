@@ -125,6 +125,22 @@ describe("controlled updater", () => {
     expect(updater.notifyAppReady).toHaveBeenCalledOnce();
     expect(deps.fetch).not.toHaveBeenCalled();
   });
+  it("reports the paired beta bundle version instead of the native marketing version", async () => {
+    deps.builtinVersion = "1.4.75-beta.16";
+    await service.boot();
+    expect(service.state.installed).toBe("1.4.75-beta.16");
+    await service.restore(true, true);
+    expect(vi.mocked(deps.save).mock.lastCall?.[0].failed).not.toContain("1.4.75-beta.16");
+  });
+  it("reports the active OTA version after replacing the built-in interface", async () => {
+    deps.builtinVersion = "1.4.75-beta.16";
+    vi.mocked(updater.current).mockResolvedValue({
+      bundle: { id: "ota", version: "1.4.75-beta.17", checksum: "", status: "success", downloaded: "" },
+      native: "1.4.74",
+    });
+    await service.boot();
+    expect(service.state.installed).toBe("1.4.75-beta.17");
+  });
   it("checks, verifies and installs using set once", async () => {
     await service.check(true);
     await service.download();
