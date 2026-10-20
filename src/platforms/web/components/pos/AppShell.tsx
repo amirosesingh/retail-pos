@@ -424,10 +424,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     mayPickStore ? (
       <Select value={currentStore.id} onValueChange={setCurrentStore}>
         <SelectTrigger
-          className={cn(
-            "h-9 w-full gap-2 text-xs [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>span]:text-left",
-            compact && "sidebar-branch-picker",
-          )}
+          aria-label="Select store"
+          className="h-9 w-full gap-2 text-xs [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>span]:text-left"
+          // Drawer sizing also applies on tablets and is not enlarged by popup/touch rules.
+          style={compact ? { height: 36, minHeight: 36, padding: "4px 10px", fontSize: 12, lineHeight: 1.25 } : undefined}
         >
           <Store className="size-3.5 shrink-0 text-muted-foreground" />
           <SelectValue />
