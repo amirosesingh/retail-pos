@@ -60,6 +60,9 @@ jobs:
       beta_version: ${{ needs.prepare.outputs.version }}
       beta_number: ${{ fromJSON(github.run_number) }}
     secrets: inherit
+  ios:
+    needs: prepare
+    uses: ./.github/workflows/ios-beta-build.yml
   publish:
     needs: [prepare, windows, android]
     runs-on: ubuntu-latest

@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { Plugin } from "vite";
 
-export type BuildPlatform = "web" | "android" | "windows";
+export type BuildPlatform = "web" | "android" | "ios" | "windows";
 const androidOnly = [
   "platforms/mobile/components/NativeBoot",
   "platforms/mobile/components/AndroidPushAgent",
@@ -33,7 +33,7 @@ const terminalOnly = [
 ];
 
 export function excludedShellModules(platform: BuildPlatform) {
-  return [...(platform === "android" ? [] : androidOnly), ...(platform === "windows" ? [] : windowsOnly), ...(platform === "web" ? terminalOnly : [])];
+  return [...(platform === "android" ? [] : platform === "ios" ? androidOnly.filter(path => !path.endsWith("NativeBoot") && !path.endsWith("use-native-back")) : androidOnly), ...(platform === "windows" ? [] : windowsOnly), ...(platform === "web" ? terminalOnly : [])];
 }
 
 export function shellAliases(platform: BuildPlatform) {
@@ -43,7 +43,7 @@ export function shellAliases(platform: BuildPlatform) {
       ? "src/platform-config/unsupported-update-header.tsx"
       : terminalOnly.includes(path)
       ? "src/platform-config/unsupported-terminal-setup.tsx"
-      : path.endsWith("NativeWindowFrame") && platform === "android"
+      : path.endsWith("NativeWindowFrame") && (platform === "android" || platform === "ios")
       ? "src/platforms/mobile/components/NativeWindowFrame.tsx"
       : path.endsWith("android-updates")
       ? "src/platform-config/unsupported-android-updates.ts"
@@ -58,12 +58,13 @@ export function enforceShellBoundary(platform: BuildPlatform): Plugin {
   return {
     name: "enforce-shell-build-boundary",
     generateBundle() {
-      const excluded = [...excludedShellModules(platform), ...(platform === "web" ? updaterOnly : []), ...(platform === "android" ? [] : [
+      const excluded = [...excludedShellModules(platform), ...(platform === "web" ? updaterOnly : []), ...((platform === "android" || platform === "ios") ? [] : [
         "platforms/mobile/components/OfflineInterface",
         "platforms/mobile/update-download",
       ])];
       for (const id of this.getModuleIds()) {
         const normalized = id.replaceAll("\\", "/").split("?")[0];
+        if (platform !== "ios" && normalized.includes("/src/platforms/ios/")) this.error(`iOS OTA code leaked into ${platform}: ${id}`);
         if (excluded.some(path => normalized.endsWith(`/src/${path}.tsx`) || normalized.endsWith(`/src/${path}.ts`))) {
           this.error(`The ${platform} build included another platform's shell implementation: ${id}`);
         }

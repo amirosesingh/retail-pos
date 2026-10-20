@@ -1,3 +1,5 @@
+import otaTrust from "./ios-ota.public.json";
+import packageJson from "./package.json";
 import type { CapacitorConfig } from "@capacitor/cli";
 
 /**
@@ -17,10 +19,14 @@ const config: CapacitorConfig = {
   ...(remote
     ? { server: { url: remote, cleartext: false, androidScheme: "https" } }
     : { server: { androidScheme: "https" } }),
+  ios: { scheme: "App" },
   plugins: {
+    CapacitorUpdater: { autoUpdate: false, appReadyTimeout: 15000, responseTimeout: 120, autoDeletePrevious: false, autoDeleteFailed: false, statsUrl: "", channelUrl: "", updateUrl: "" },
+    RetailOtaTrust: otaTrust,
     SystemBars: { insetsHandling: "native", initialViewportFitValueHint: "contain" },
   },
   android: {
+    includePlugins: Object.keys(packageJson.dependencies).filter(name => name !== "@capgo/capacitor-updater" && name !== "@retail/ios-ota-trust"),
     allowMixedContent: false,
     zoomEnabled: false,
   },
