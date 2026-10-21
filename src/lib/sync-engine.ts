@@ -62,6 +62,7 @@ import { localDb, type LocalSyncStatus } from "@/core/local-db/local-db";
 import {
   checkHealth,
   subscribeConnectivity,
+  connectivity,
   type Connectivity,
 } from "@/core/activation/connection-health";
 import { subscribeSyncConfig, syncConfig } from "./sync-config";
@@ -972,9 +973,12 @@ export function startSyncEngine() {
   // One heartbeat for the whole app decides whether we are online — the
   // browser's own flag lies on captive networks. A confirmed reconnect forces
   // a catch-up pass at once instead of waiting for the next tick.
+  let previousConnectivity = connectivity();
   const offConnectivity = subscribeConnectivity((state: Connectivity) => {
+    const recovered = state === "online" && previousConnectivity !== "online";
+    previousConnectivity = state;
     if (state === "offline") sleep();
-    else if (state === "online") {
+    else if (recovered) {
       wake();
       // A terminal that was offline while an administrator changed a rule
       // must not wait for a live event it already missed: reconnecting
@@ -998,10 +1002,15 @@ export function startSyncEngine() {
   // Auth can become ready after this engine starts, so rebuild the channel at
   // that boundary instead of permanently choosing anonymous or staff mode.
   let liveHasStaffSession = hasStaffSession();
-  const syncWakeChannels = desktopBridge ? createSyncWakeChannels(supabaseExternal,
-    table => queueLiveChange({reason:`database-trigger:${table}`,table,storeId:activeBranchId()}),
-    wake,
-  ) : null;
+  const syncWakeChannels = createSyncWakeChannels(supabaseExternal,
+    table => {
+      // Online screens need database-originated settings hints too, including
+      // changes made outside this browser. Private channels carry table names only.
+      if (desktopBridge || (LIVE_SETTINGS_TABLES as readonly string[]).includes(table))
+        queueLiveChange({reason:`database-trigger:${table}`,table,storeId:activeBranchId()});
+    },
+    () => { if (desktopBridge) wake(); announceSettingsChange("realtime:subscribed"); },
+  );
   const installSyncWake = () => { void syncWakeChannels?.replace(activeBranchId(),readTerminalConfig()?.tokenId ?? null,liveHasStaffSession); };
   const offTerminalWake = subscribeTerminalConfig(installSyncWake);
   installSyncWake();

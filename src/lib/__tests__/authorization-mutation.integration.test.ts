@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { authorizationBinding } from "../authorization";
+import { AUTH_ACTIONS, authorizationBinding } from "../authorization";
 import { runAuthorizedMutation, signOverrideGrant } from "../pos-rules.server";
 
 describe("authorization grant at the business mutation boundary", () => {
@@ -23,6 +23,15 @@ describe("authorization grant at the business mutation boundary", () => {
     );
     return { value, writes };
   }
+
+  it.each(AUTH_ACTIONS)("keeps $key grants bound to their action, branch and record", async ({ key }) => {
+    const token = signOverrideGrant({ action: key, approvedBy: "token-approver", role: "manager", storeId: "branch-a", binding });
+    const write = vi.fn(() => "saved");
+    await expect(runAuthorizedMutation({ token, action: key, storeId: "branch-a", binding }, write)).resolves.toBe("saved");
+    await expect(runAuthorizedMutation({ token, action: key, storeId: "branch-b", binding }, write)).rejects.toThrow();
+    await expect(runAuthorizedMutation({ token, action: key, storeId: "branch-a", binding: authorizationBinding({ sale_id: "another" }) }, write)).rejects.toThrow();
+    expect(write).toHaveBeenCalledOnce();
+  });
 
   it.each(["manager", "approval"])("allows the actual mutation after a %s grant", async (role) => {
     const token = signOverrideGrant({

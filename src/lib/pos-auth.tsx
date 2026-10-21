@@ -825,7 +825,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           next = {
             userCode: local.staff.username,
             name: local.staff.full_name,
-            role: offlineAppRole(local.staff.roleSlug),
+            role: offlineAppRole(local.staff.role ?? local.staff.roleSlug),
             roleSlug: local.staff.roleSlug,
             storeId: activeBranchId(null) ?? (local.staff.store_id?.trim() || null),
             email: "",
@@ -834,6 +834,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           };
         } else if (local.reason === "inactive") {
           return { ok: false, error: "Account deactivated" };
+        } else if (window.pos) {
+          return { ok: false, error: local.reason === "locked" ? "Too many attempts. Please wait before trying again." : local.reason === "invalid" ? "Invalid username or PIN" : "Offline sign-in is unavailable. Connect and sync this account’s sign-in PIN to the local SQL database first." };
         } else {
           // Tier 2: the browser-storage verifier kept by earlier builds.
           const cached = await verifyCachedPin(code, pin);
@@ -925,7 +927,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         let cashierToken = verified?.cashierToken ?? "";
         const sessionToken = verified?.sessionToken ?? "";
-        if (!cashierToken) {
+        if (!cashierToken && !signedInOffline) {
           const issued = await issueCashierSession({ data: { username: next.userCode, pin } });
           if (issued.ok) cashierToken = issued.token;
         }

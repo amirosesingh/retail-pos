@@ -71,3 +71,27 @@ it("retains a settings change arriving during the initial scope read", async () 
   expect(read).toHaveBeenCalledTimes(2);
   stop(); finish(); await Promise.resolve();
 });
+
+it("event-only readers stay idle until a matching change and defer hidden-page reads", async () => {
+ const { doc, win } = setup();
+ const read = vi.fn(async () => {});
+ const stop = subscribeSettingsRefresh(read, change => change.table === "pos_store_settings", { eventOnly: true });
+ await vi.advanceTimersByTimeAsync(600_000);
+ win.dispatchEvent(new Event("focus"));
+ await vi.advanceTimersByTimeAsync(1000);
+ expect(read).not.toHaveBeenCalled();
+ state.change!({table:"products",reason:"edit"});
+ await vi.advanceTimersByTimeAsync(200);
+ expect(read).not.toHaveBeenCalled();
+ doc.visibilityState = "hidden";
+ state.change!({table:"pos_store_settings",reason:"edit"});
+ await vi.advanceTimersByTimeAsync(200);
+ expect(read).not.toHaveBeenCalled();
+ doc.visibilityState = "visible";
+ doc.dispatchEvent(new Event("visibilitychange"));
+ await vi.advanceTimersByTimeAsync(200);
+ expect(read).toHaveBeenCalledOnce();
+ await vi.advanceTimersByTimeAsync(600_000);
+ expect(read).toHaveBeenCalledOnce();
+ stop();
+});

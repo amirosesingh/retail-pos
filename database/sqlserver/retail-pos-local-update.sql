@@ -786,6 +786,7 @@ IF OBJECT_ID(N''dbo.app_users'', N''U'') IS NULL BEGIN CREATE TABLE dbo.[app_use
   [auth_secret] nvarchar(max) NOT NULL CONSTRAINT [DF_app_users_auth_secret] DEFAULT (''''),
   [idle_timeout_minutes] int NULL,
   [login_username] nvarchar(max) NULL,
+  [offline_login_pin_hash] nvarchar(max) NOT NULL CONSTRAINT [DF_app_users_offline_login_pin_hash] DEFAULT (''''),
   CONSTRAINT [PK_app_users] PRIMARY KEY ([id])
 
 ); END;
@@ -931,6 +932,19 @@ END;
 IF COL_LENGTH(N''dbo.app_users'', N''idle_timeout_minutes'') IS NULL ALTER TABLE dbo.[app_users] ADD [idle_timeout_minutes] int NULL;
 
 IF COL_LENGTH(N''dbo.app_users'', N''login_username'') IS NULL ALTER TABLE dbo.[app_users] ADD [login_username] nvarchar(max) NULL;
+
+IF COL_LENGTH(N''dbo.app_users'', N''offline_login_pin_hash'') IS NULL ALTER TABLE dbo.[app_users] ADD [offline_login_pin_hash] nvarchar(max) NULL;
+
+IF OBJECT_ID(N''dbo.app_users'', N''U'') IS NOT NULL AND COL_LENGTH(N''dbo.app_users'', N''offline_login_pin_hash'') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N''dbo.app_users'') AND c.name=N''offline_login_pin_hash''
+) ALTER TABLE dbo.[app_users] ADD CONSTRAINT [DF_app_users_offline_login_pin_hash] DEFAULT ('''') FOR [offline_login_pin_hash];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N''dbo.app_users'') AND name=N''offline_login_pin_hash'' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N''UPDATE dbo.[app_users] SET [offline_login_pin_hash]='''''''' WHERE [offline_login_pin_hash] IS NULL;'';
+  ALTER TABLE dbo.[app_users] ALTER COLUMN [offline_login_pin_hash] nvarchar(max) NOT NULL;
+END;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''dbo.app_users'') AND name=N''UX_app_users_user_id'') CREATE UNIQUE INDEX [UX_app_users_user_id] ON dbo.[app_users]([user_id]);
 
@@ -12105,6 +12119,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''app_users'', N''auth_secret''),
   (N''app_users'', N''idle_timeout_minutes''),
   (N''app_users'', N''login_username''),
+  (N''app_users'', N''offline_login_pin_hash''),
   (N''audit_logs'', N''id''),
   (N''audit_logs'', N''user_name''),
   (N''audit_logs'', N''action_category''),
@@ -12988,9 +13003,9 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''authorization_action_history'', N''scope_type''),
   (N''authorization_action_history'', N''scope_id''),
   (N''authorization_action_history'', N''row_version''),
-  (N''authorization_action_history'', N''changed_by''),
-  (N''authorization_action_history'', N''change_source'');
+  (N''authorization_action_history'', N''changed_by'');
 INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N''authorization_action_history'', N''change_source''),
   (N''authorization_action_history'', N''change_kind''),
   (N''authorization_action_history'', N''snapshot''),
   (N''authorization_action_history'', N''created_at''),

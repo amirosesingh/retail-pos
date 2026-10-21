@@ -5,6 +5,7 @@ const fixture = vi.hoisted(() => ({
   terminal: "11111111-1111-4111-8111-111111111111",
   project: "https://project.test",
   mobile: true,
+  windows: false,
   fetch: vi.fn(),
 }));
 vi.mock("capacitor-secure-storage-plugin", () => ({
@@ -33,20 +34,22 @@ vi.mock("../external-supabase-config", () => ({
 vi.mock("../pos-caller-auth", () => ({
   getPosCallerAuth: async () => ({ sessionToken: fixture.proof, terminalToken: fixture.terminal }),
 }));
-vi.mock("@/platform-config/features", () => ({ isMobileShell: () => fixture.mobile, isWindowsShell: () => false }));
+vi.mock("@/platform-config/features", () => ({ isMobileShell: () => fixture.mobile, isWindowsShell: () => fixture.windows }));
 vi.mock("../secure-cloud-config", () => ({
   isMissingSecureValue: (error: Error) => error.message === "not found",
 }));
+vi.mock("@/core/local-db/local-db", () => ({ localDb: () => null }));
 import {
   enrollOwnApprovalToken,
   loadApprovalToken,
-  clearApprovalToken,
+  clearApprovalToken, setupOfflineApprovalToken, unlockOfflineApprovalToken, offlineTokenOwner,
 } from "../approval-token-client";
 beforeEach(() => {
   fixture.values.clear();
   fixture.proof = "session-a";
   fixture.project = "https://project.test";
   fixture.mobile = true;
+  fixture.windows = false;
   fixture.terminal = "11111111-1111-4111-8111-111111111111";
   fixture.fetch.mockReset();
   fixture.fetch.mockResolvedValue({
@@ -112,4 +115,45 @@ describe("native phone approval enrollment (Android Keystore / iOS Keychain)", (
     }
     expect(await loadApprovalToken()).toBeNull();
   });
+});
+
+it("retains only a locked token on logout, unlocks offline without signing in, and clears on unpair", async () => {
+  await enrollOwnApprovalToken("manager");
+  await setupOfflineApprovalToken("874392");
+  const raw = fixture.values.get("pos.approval-token.locked.v1")!;
+  expect(raw).not.toContain(Buffer.from("12345678901234567890").toString("base64"));
+  await clearApprovalToken(); fixture.proof = "";
+  Object.assign(navigator, { onLine: false });
+  expect(await loadApprovalToken()).toBeNull();
+  expect((await offlineTokenOwner())?.userId).toBe("manager");
+  expect((await unlockOfflineApprovalToken("874392")).userId).toBe("manager");
+  expect(fixture.proof).toBe("");
+  await clearApprovalToken(true);
+  expect(await offlineTokenOwner()).toBeNull();
+});
+it("persists failed unlock attempts and checks the device, project, permission and lease", async () => {
+  await enrollOwnApprovalToken("manager"); await setupOfflineApprovalToken("874392");
+  await expect(unlockOfflineApprovalToken("111111")).rejects.toThrow("Incorrect");
+  await expect(unlockOfflineApprovalToken("874392")).rejects.toThrow("Too many");
+  fixture.project = "https://wrong.test";
+  expect(await offlineTokenOwner()).toBeNull();
+  fixture.project = "https://project.test";
+  fixture.fetch.mockResolvedValue({ ok: true, json: async () => ({ ok: true, credential: null }) });
+  await enrollOwnApprovalToken("manager");
+  expect(await offlineTokenOwner()).toBeNull();
+});
+it("deduplicates concurrent enrollment requests", async () => {
+  await Promise.all([enrollOwnApprovalToken("manager"), enrollOwnApprovalToken("manager")]);
+  expect(fixture.fetch).toHaveBeenCalledTimes(1);
+});
+
+it("management Windows can provision and unlock its own token without a local SQL bridge", async () => {
+ fixture.windows = true; fixture.mobile = false;
+ await enrollOwnApprovalToken("manager");
+ expect((await loadApprovalToken())?.userId).toBe("manager");
+ await setupOfflineApprovalToken("874392");
+ await clearApprovalToken(); fixture.proof = "";
+ expect((await unlockOfflineApprovalToken("874392")).userId).toBe("manager");
+ expect(await loadApprovalToken()).toBeNull();
+ await clearApprovalToken(true); expect(await offlineTokenOwner()).toBeNull();
 });

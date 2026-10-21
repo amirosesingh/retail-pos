@@ -159,6 +159,9 @@ export const saveStaffAccount = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<{ ok: true; emailWarning?: string } | { ok: false; error: string }> => {
     try {
       const actor = await requireStaffManager(data);
+      if (data.authorizationPin && ((actor.roleSlug !== "admin" && actor.role !== "admin") || !data.active)) {
+        throw new Error("Only administrators can set approval PINs for active accounts");
+      }
       const mod = await import("./staff-admin.server");
       const result = await mod.provisionStaffAccount({
         displayName: data.displayName,

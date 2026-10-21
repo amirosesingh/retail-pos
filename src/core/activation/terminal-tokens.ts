@@ -1,3 +1,4 @@
+import { APP_VERSION } from "@/version";
 import { setManagementDevice } from "@/lib/management-device";
 /**
  * Windows terminal activation tokens.
@@ -68,6 +69,7 @@ function claimOs(): string {
 export type { TerminalPlatform } from "@/core/activation/terminal-platform";
 
 export type TerminalToken = {
+  approvalTokenEnabled?: boolean;
   id: string;
   locationId: string | null;
   locationName: string;
@@ -244,7 +246,10 @@ async function insertTokenRow(row: Record<string, unknown>): Promise<void> {
     const { error } = await table().insert([attempt]);
     if (!error) return;
     const missing = optional.find((c) => c in attempt && isMissingColumn(error, c));
-    if (!missing) throw error;
+    if (!missing) {
+      if (isMissingColumn(error, "approval_token_enabled")) throw new Error("Apply the terminal approval-token migration before saving device token options.");
+      throw error;
+    }
     rememberUnsupported(missing);
     delete attempt[missing];
   }
@@ -252,6 +257,7 @@ async function insertTokenRow(row: Record<string, unknown>): Promise<void> {
 }
 
 const rowToToken = (r: Record<string, any>): TerminalToken => ({
+  approvalTokenEnabled: r.approval_token_enabled === true || (r.approval_token_enabled == null && ["mobile", "android", "ios"].includes(String(r.platform))),
   id: r.id,
   locationId: r.location_id ?? null,
   locationName: r.location_name ?? "",
@@ -274,22 +280,24 @@ const rowToToken = (r: Record<string, any>): TerminalToken => ({
 
 /* ----------------------------- admin surface ---------------------------- */
 
-export async function listTerminalTokens(): Promise<TerminalToken[]> {
-  const { data, error } = await table()
-    .select(
-      "id,location_id,location_name,device_name,platform,status,created_at,activated_at,revoked_at,last_seen_at,reissued_at,replaced_by,claimed_by_device,claimed_at,is_claimed,expires_at,app_version,last_sync_at",
-    )
-    .is("revoked_at", null)
-    .in("status", ["active", "used"])
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map(rowToToken);
+export async function listTerminalTokens(includeRevoked = false): Promise<TerminalToken[]> {
+  const columns = "id,location_id,location_name,device_name,platform,status,created_at,activated_at,revoked_at,last_seen_at,reissued_at,replaced_by,claimed_by_device,claimed_at,is_claimed,expires_at,app_version,last_sync_at";
+  const read = (withOptions: boolean) => {
+    let query = table().select(columns + (withOptions ? ",approval_token_enabled" : "")).is("replaced_by", null);
+    if (!includeRevoked) query = query.is("revoked_at", null);
+    return query.in("status", includeRevoked ? ["active", "used", "revoked"] : ["active", "used"]).order("created_at", { ascending: false });
+  };
+  let result = await read(true);
+  if (result.error && isMissingColumn(result.error, "approval_token_enabled")) result = await read(false);
+  if (result.error) throw result.error;
+  return (result.data ?? []).map(rowToToken);
 }
 
 /** Create the token row and return the base64 activation code for the till. */
 export async function issueTerminalToken(input: {
   location: TokenLocation | null;
   management?: boolean;
+  approvalTokenEnabled?: boolean;
   locationName: string;
   deviceName: string;
   /** Defaults to a desktop till. */
@@ -314,6 +322,7 @@ export async function issueTerminalToken(input: {
   const row = {
     id,
     location_id: input.location?.id ?? null,
+    approval_token_enabled: input.approvalTokenEnabled ?? Boolean(input.management),
     ...(replica ? { management_sync_enabled: true, management_sync_proof_hash: replicaHash } : {}),
     location_name: input.locationName,
     device_name: input.deviceName,
@@ -354,6 +363,16 @@ export async function revokeTerminalToken(id: string): Promise<void> {
   if (!data) throw new Error("That terminal registration no longer exists.");
 }
 
+/** Device capability is independent of staff permission. No user is granted approval rights here. */
+export async function setTerminalApprovalEnabled(id: string, enabled: boolean): Promise<void> {
+  const { data, error } = await table().update({ approval_token_enabled: enabled }).eq("id", id).select("id").maybeSingle();
+  if (error) {
+    if (isMissingColumn(error, "approval_token_enabled")) throw new Error("Apply the terminal approval-token migration before changing this option.");
+    throw error;
+  }
+  if (!data) throw new Error("Terminal was not found or you cannot change it.");
+}
+
 /**
  * Replace the code of an existing terminal without creating a second entry for
  * the same counter: the old row is retired and a new row inherits the device
@@ -361,25 +380,23 @@ export async function revokeTerminalToken(id: string): Promise<void> {
  */
 export async function reissueTerminalToken(
   token: TerminalToken,
+  scope: { locationId: string | null; locationName: string; approvalTokenEnabled: boolean } = { locationId: token.locationId, locationName: token.locationName, approvalTokenEnabled: token.approvalTokenEnabled !== false },
 ): Promise<{ token: TerminalToken; code: string }> {
   const id = crypto.randomUUID();
   const issuedAt = Date.now();
-  const now = new Date(issuedAt).toISOString();
-  const expiresAt = new Date(issuedAt + ACTIVATION_TTL_MS).toISOString();
-  const { data, error } = await rpc("terminal_token_reissue", {
-    p_old_id: token.id,
-    p_new_id: id,
-    p_created_at: now,
-    p_expires_at: expiresAt,
+  const replicaSecret = token.platform === "pc" && !scope.locationId ? newReplicaSecret() : undefined;
+  const { data, error } = await rpc("terminal_token_reissue_scoped", {
+    p_old_id: token.id, p_new_id: id,
+    p_location_id: scope.locationId, p_location_name: scope.locationName,
+    p_approval_token_enabled: scope.approvalTokenEnabled,
+    p_replica_hash: replicaSecret ? await replicaSecretHash(replicaSecret) : null,
   });
-  if (error) throw error;
+  if (error) {
+    if (/terminal_token_reissue_scoped/.test(error.message || "")) throw new Error("Apply the terminal reissue migration before changing a registration’s branch or device use.");
+    throw error;
+  }
   if (!data) throw new Error("The replacement terminal registration was not returned.");
   const replacement = rowToToken(data as Record<string, unknown>);
-  const replicaSecret = replacement.platform === "pc" && !replacement.locationId ? newReplicaSecret() : undefined;
-  if (replicaSecret) {
-    const updated = await table().update({ management_sync_enabled: true, management_sync_proof_hash: await replicaSecretHash(replicaSecret) }).eq("id", id);
-    if (updated.error) throw updated.error;
-  }
   const membership = publicSupabaseConfig("membership");
 
   return {
@@ -544,8 +561,10 @@ export function writeTerminalConfig(config: TerminalConfig) {
 }
 
 /** Called when a token is revoked — the till loses its credentials entirely. */
-export function clearTerminalConfig() {
+export async function clearTerminalConfig() {
   if (typeof window === "undefined") return;
+  // Finish an already-started restore before deleting its result.
+  if (hydration) await hydration.catch(() => undefined);
   cachedConfig = null;
   hydrated = true;
   applyTenantOverride(null);
@@ -555,8 +574,8 @@ export function clearTerminalConfig() {
   // administrator action, but erasing a dead one is housekeeping the machine
   // must be able to do with a cashier — or nobody — signed in.
   const bridge = desktopBridge();
-  if (bridge?.clearTerminalConfig) void bridge.clearTerminalConfig();
-  else void bridge?.writeTerminalConfig(null);
+  const cleared = bridge?.clearTerminalConfig ? await bridge.clearTerminalConfig() : await bridge?.writeTerminalConfig(null);
+  if (cleared && !cleared.ok) throw new Error("Could not clear the saved terminal registration.");
   window.dispatchEvent(new CustomEvent(EVENT));
 }
 
@@ -634,14 +653,22 @@ export const TERMINAL_CONFIG_EVENT = EVENT;
  * comes back on the activation screen.
  */
 export async function unpairTerminal(): Promise<void> {
-  clearTerminalConfig();
+  // End Auth while its client still has the configured URL. Clearing first
+  // used to throw during sign-out and strand the root in connection recovery.
+  try { await supabaseExternal.auth.signOut({ scope: "local" }); } catch { /* revoke already confirmed */ }
+  const { clearApprovalToken } = await import("@/platform-config/approval-token-client");
+  await clearApprovalToken(true);
+  const { removeCloudCredentials } = await import("@/lib/secure-cloud-config");
+  const removed = await removeCloudCredentials();
+  if (!removed.ok) throw new Error(removed.error || "Could not clear the saved connection.");
+  const backend = await saveBackendUrl("");
+  if (!backend.ok) throw new Error(backend.error || "Could not clear the backend address.");
+  await clearTerminalConfig();
   clearPairingRequest();
   clearDeviceSecret("terminal-account");
-  try {
-    await supabaseExternal.auth.signOut({ scope: "local" });
-  } catch {
-    /* nothing else to clean up */
-  }
+  resetHealthCache();
+  const { flushConnectionProfile } = await import("@/lib/connection-profile");
+  await flushConnectionProfile();
 }
 
 /** Look the token up by id. `null` means the network answered "no such token". */
@@ -669,7 +696,7 @@ export async function fetchTokenStatus(
 
 export async function stampHeartbeat(
   tokenId: string,
-  _opts: { version?: string; synced?: boolean } = {},
+  opts: { version?: string; synced?: boolean } = {},
 ): Promise<void> {
   // Current heartbeat functions accept UUIDs. Old desktop profiles can carry
   // an opaque pre-v1 token; sending it to PostgREST produces a noisy 400 on
@@ -682,6 +709,8 @@ export async function stampHeartbeat(
   const { error } = await rpc("terminal_token_heartbeat", {
     p_token_id: tokenId,
     p_activate: false,
+    p_version: opts.version || APP_VERSION,
+    p_synced: opts.synced === true,
     p_proof_hash: proofHash,
   });
   if (error) throw error;

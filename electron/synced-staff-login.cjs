@@ -19,20 +19,22 @@ async function listSyncedStaff(pool, branchId) {
     .input("branch", String(branchId))
     .query(`SELECT TOP (500)
       CONVERT(nvarchar(128),id) id,COALESCE(NULLIF(login_username,''),user_id) username,full_name,store_id,
-      role,role_slug,permissions,is_active
+      role,role_slug,permissions,is_active,email
       FROM dbo.app_users
       WHERE is_active=1 AND (store_id IS NULL OR store_id=@branch)
+        AND (LOWER(email) LIKE '%@pos-internal.local' OR LOWER(email) LIKE '%@pos.local' OR COALESCE(offline_login_pin_hash,'')<>'')
       ORDER BY full_name,user_id;`);
   return {
     ok: true,
     rows: (result.recordset ?? []).map((row) => ({
       id: String(row.id ?? row.username),
       username: String(row.username ?? ""),
-      full_name: String(row.full_name ?? row.username ?? ""),
-      store_id: row.store_id == null ? null : String(row.store_id),
-      role_slug: String(row.role_slug ?? row.role ?? "staff").toLowerCase(),
+      fullName: String(row.full_name ?? row.username ?? ""),
+      email: String(row.email ?? ""), pinLength: 0,
+      storeId: row.store_id == null ? null : String(row.store_id),
+      roleSlug: String(row.role_slug ?? row.role ?? "staff").toLowerCase(),
       permissions: permissions(row.permissions),
-      is_active: true,
+      isActive: true,
     })),
   };
 }
@@ -46,7 +48,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
   // app_users owns the manager-approval PIN; cashiers owns the independent
   // terminal sign-in PIN. Never swap these or one credential can authorize
   // the other operation again.
-  const hashColumn = purpose === "approval" ? "a.pin_hash" : "c.pin_hash";
+  const hashColumn = purpose === "approval" ? "a.pin_hash" : "CASE WHEN a.email LIKE '%@%' AND LOWER(a.email) NOT LIKE '%@pos-internal.local' AND LOWER(a.email) NOT LIKE '%@pos.local' THEN a.offline_login_pin_hash ELSE c.pin_hash END";
   const result = await pool.request()
     .input("username", name)
     .input("branch", String(branchId))
@@ -60,7 +62,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
         WHERE LOWER(candidate.username)=LOWER(a.user_id) AND candidate.is_active=1
         ORDER BY candidate.updated_at DESC,candidate.id DESC
       ) c
-      WHERE (LOWER(a.user_id)=@username OR LOWER(a.login_username)=@username OR LOWER(CONVERT(nvarchar(128),a.id))=@username)
+      WHERE (LOWER(a.user_id)=@username OR LOWER(a.login_username)=@username OR LOWER(a.email)=@username OR LOWER(CONVERT(nvarchar(128),a.id))=@username)
         AND (a.store_id IS NULL OR a.store_id=@branch)
       ORDER BY CASE WHEN a.store_id=@branch THEN 0 ELSE 1 END,a.updated_at DESC,a.id DESC;`);
   const row = result.recordset?.[0];
@@ -114,6 +116,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
       username: String(row.username),
       full_name: String(row.full_name ?? row.username),
       store_id: row.store_id ?? null,
+      role: String(row.role ?? row.role_slug ?? "staff").toLowerCase(),
       role_slug: String(row.role_slug ?? row.role ?? "staff").toLowerCase(),
       permissions: permissions(row.permissions),
       is_active: true,

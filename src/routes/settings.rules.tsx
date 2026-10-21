@@ -27,6 +27,7 @@ import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/pos-auth";
 import { usePos } from "@/lib/pos-store";
 import { usePosRules } from "@/lib/pos-rules.tsx";
+import { rulesEqual } from "@/lib/pos-rules-pending";
 import { RULE_GROUPS, type PosRules, type PosRuleKey } from "@/lib/pos-rules";
 import { savePosRules } from "@/lib/pos-rules-client";
 import { queueRulesSave } from "@/lib/pos-rules-offline";
@@ -133,12 +134,15 @@ function RulesSettings() {
   // refresh must never erase an unfinished administrator draft.
   useEffect(() => {
     const changedBranch = draftScope.current !== currentStore.id;
+    // React may run the updater after the refs below have advanced.
+    const previous = previouslyConfirmed.current;
+    const force = forceNextRules.current || changedBranch;
     setDraft((current) =>
       reconcileRulesDraft(
         current,
-        previouslyConfirmed.current,
+        previous,
         rules,
-        forceNextRules.current || changedBranch,
+        force,
       ),
     );
     previouslyConfirmed.current = rules;
@@ -146,7 +150,7 @@ function RulesSettings() {
     forceNextRules.current = false;
   }, [currentStore.id, rules]);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(rules);
+  const dirty = !rulesEqual(draft, rules);
   const idleDirty = idleLoaded && savedIdle !== null && idle !== savedIdle;
 
   const statusView =

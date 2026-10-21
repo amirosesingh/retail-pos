@@ -94,8 +94,8 @@ export function ManagerGateProvider({
   const query = useQuery({
     queryKey: ["authorization-rules", storeId ?? ""],
     meta: { tables: ["authorization_actions", "pos_store_settings"] },
-    staleTime: 30_000,
-    refetchOnWindowFocus: true,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       const caller = await getPosCallerAuth();
       const res = await getAuthorizationRules({ data: { ...caller, storeId: storeId ?? "" } });

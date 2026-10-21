@@ -12,7 +12,7 @@ const f = vi.hoisted(() => ({
     actorName: "Manager",
     stale: false,
   },
-  manager: true,
+  manager: true, deviceEnabled: true,
   active: true,
   totp: true,
   branch: "branch-a",
@@ -48,7 +48,7 @@ const terminal = "11111111-1111-4111-8111-111111111111";
 const proof = { sessionToken: "verified-user-session", terminalToken: terminal };
 beforeEach(() => {
   vi.stubEnv("SETTINGS_ENCRYPTION_KEY", "test-approval-encryption-key-only");
-  f.manager = true;
+  f.manager = true; f.deviceEnabled = true;
   f.active = true;
   f.totp = true;
   f.platform = "android";
@@ -75,7 +75,7 @@ beforeEach(() => {
           permissions: { approval_totp_enabled: f.totp },
         },
       ]);
-    if (url.startsWith("terminal_tokens?")) return Response.json([{ platform: f.platform }]);
+    if (url.startsWith("terminal_tokens?")) return Response.json([{ platform: f.platform, approval_token_enabled: f.deviceEnabled }]);
     const args = JSON.parse(options?.body || "{}");
     if (args.p_op === "enroll") {
       if (!f.devices.length)
@@ -106,7 +106,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("approval credential authorization", () => {
-  it.each(["ios", "mobile"])("accepts a registered %s receiver with the same permission and replay checks", async platform => {
+  it.each(["ios", "mobile", "pc", "windows"])("accepts a registered %s receiver with the same permission and replay checks", async platform => {
     f.platform = platform;
     const enrolled = await enrollApprovalToken(proof);
     const code = await approvalTotp(enrolled.credential!.secret);
@@ -144,9 +144,9 @@ describe("approval credential authorization", () => {
     f.totp = false;
     expect(await verifyApprovalTotp("manager", code, "branch-a", terminal)).toBe(null);
   });
-  it("encrypts verifier bundles to the staff-manager-pinned Windows public key", async () => {
+  it.each(["windows", "pc"])("encrypts verifier bundles to the staff-manager-pinned %s public key", async platform => {
     const enrolled = await enrollApprovalToken(proof);
-    f.platform = "windows";
+    f.platform = platform;
     await expect(approvalVerifierBundle(terminal)).rejects.toThrow("manager must sign in");
     const keys = generateKeyPairSync("rsa", {
       modulusLength: 2048,
@@ -171,4 +171,26 @@ describe("approval credential authorization", () => {
     expect(opened.branchId).toBe("branch-a");
     expect(opened.entries[0].secret).toBe(enrolled.credential!.secret);
   });
+});
+
+it("enrolls a permitted branch user on a management phone without widening that user's branch", async () => {
+  f.branch = "";
+  const result = await enrollApprovalToken(proof);
+  expect(result.credential?.branchId).toBe("branch-a");
+  f.deviceEnabled = false;
+  expect((await enrollApprovalToken(proof)).credential).toBeNull();
+  f.deviceEnabled = true; f.totp = false;
+  expect((await enrollApprovalToken(proof)).credential).toBeNull();
+});
+
+it.each(["pc", "windows", "mobile"])("management %s can issue and receive a token without widening user branch access", async platform => {
+ f.platform = platform; f.branch = "";
+ const result = await enrollApprovalToken(proof);
+ expect(result.credential?.branchId).toBe("branch-a");
+ const code = await approvalTotp(result.credential!.secret);
+ expect(await verifyApprovalTotp("manager", code, "branch-b", terminal)).toBeNull();
+ expect((await verifyApprovalTotp("manager", code, "branch-a", terminal))?.userId).toBe("manager");
+ expect(await verifyApprovalTotp("manager", code, "branch-a", terminal)).toBeNull();
+ f.deviceEnabled = false;
+ expect((await enrollApprovalToken(proof)).credential).toBeNull();
 });

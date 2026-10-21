@@ -12,7 +12,7 @@ import { Component, useEffect, useState, type ReactNode } from "react";
 import { Building2, ChevronDown, KeyRound, MonitorCog, Server, ShieldCheck } from "lucide-react";
 
 import { CloudConnectionPanel } from "@/platforms/web/components/pos/settings/panels/CloudConnectionPanel";
-import { ReceiptPrinterSettings } from "@/platforms/web/components/pos/ReceiptPrinterSettings";
+import { RecoveryPrinterSettings } from "@/platforms/web/components/pos/ReceiptPrinterSettings";
 import { TerminalActivation } from "@/platforms/web/components/pos/TerminalActivation";
 import { isTerminalApp } from "@/platform-config/platform";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
@@ -195,7 +195,7 @@ export function RecoveryHub() {
         health="info"
         status="This device only"
       >
-        <ReceiptPrinterSettings />
+        <RecoveryPrinterSettings />
       </Card>
     </div>
   );

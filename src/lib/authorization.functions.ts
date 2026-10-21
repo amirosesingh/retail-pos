@@ -152,6 +152,7 @@ const mutationInput = caller.extend({
 });
 
 type Caller = {
+  isAdmin: boolean;
   id: string;
   name: string;
   role: string;
@@ -177,6 +178,7 @@ async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
   const scope = await resolveRelayScope(verified);
   const role = scope.roleSlug || scope.role || "staff";
   return {
+    isAdmin: scope.role === "admin" || scope.roleSlug === "admin",
     id: scope.staffUserId || verified.authUserId || scope.label,
     name: scope.actorName || scope.label,
     role,
@@ -1245,18 +1247,21 @@ export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
 /** Staff managers set another person's authorisation PIN; it is never read back. */
 export const setStaffAuthorizationPin = createServerFn({ method: "POST" })
   .validator((data: unknown) =>
-    caller.extend({ userId: z.string().min(1), pin: z.string().regex(/^\d{4,6}$/) }).parse(data),
+    caller.extend({ userId: z.string().min(1), pin: z.string().regex(/^\d{4,6}$/), purpose: z.enum(["approval", "offline_login"]).default("approval") }).parse(data),
   )
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
-      if (!who.canManageStaff) {
-        return { ok: false as const, error: "Staff management permission is required" };
+      if (!who.isAdmin) {
+        return { ok: false as const, error: "Only administrators can set approval PINs" };
       }
       const { setUserAuthorizationPin, writeLog } = await import("./authorization.server");
-      await setUserAuthorizationPin(data.userId, data.pin, who.id);
+      if (data.purpose === "offline_login") {
+        const { setUserOfflineLoginPin } = await import("./authorization.server");
+        await setUserOfflineLoginPin(data.userId, data.pin);
+      } else await setUserAuthorizationPin(data.userId, data.pin, who.id);
       const logged = await writeLog({
-        actionKey: "staff.set_pin",
+        actionKey: data.purpose === "offline_login" ? "staff.set_offline_pin" : "staff.set_pin",
         modeUsed: "admin_auto",
         outcome: "approved",
         requestedBy: who.id,
@@ -1265,7 +1270,7 @@ export const setStaffAuthorizationPin = createServerFn({ method: "POST" })
         authorizedByName: who.name,
         authorizerRole: who.role,
         purpose: `Set authorisation PIN for ${data.userId}`,
-        detail: { target: data.userId },
+        detail: { target: data.userId, purpose: data.purpose },
       });
       if (!logged.ok) {
         return { ok: false as const, error: "PIN was changed, but its audit entry failed" };

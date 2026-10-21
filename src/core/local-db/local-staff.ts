@@ -16,6 +16,7 @@ export type LocalStaffLogin = {
   full_name: string;
   store_id: string | null;
   permissions: Record<string, boolean>;
+  role?: string;
   roleSlug: string;
 };
 
@@ -73,6 +74,7 @@ export async function verifyLocalPin(username: string, pin: string, signIn = fal
           full_name: res.staff.full_name,
           store_id: res.staff.store_id,
           permissions: res.staff.permissions ?? {},
+          role: res.staff.role,
           roleSlug: res.staff.role_slug ?? "staff",
         },
       };
