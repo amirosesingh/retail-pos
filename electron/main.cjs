@@ -1989,7 +1989,7 @@ function registerIpc() {
       const result = await verifySyncedStaffPin(databaseManager.pool, username, pin, localBranchId());
       if (result.ok && result.staff) {
         const staff = result.staff;
-        const role = staff.role_slug;
+        const role = staff.role || staff.role_slug;
         const level = role === "admin" ? "admin" : ["manager", "supervisor"].includes(role) ? "supervisor" : "staff";
         adminSession.grant(level, staff.username, staff.permissions ?? {}, "pos", staff.store_id ?? localBranchId());
       }

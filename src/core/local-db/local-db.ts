@@ -697,6 +697,7 @@ export type PosBridge = {
       full_name: string;
       store_id: string | null;
       permissions: Record<string, boolean>;
+      role?: string;
       role_slug?: string;
     };
   }>;

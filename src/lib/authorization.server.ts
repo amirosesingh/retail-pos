@@ -420,16 +420,18 @@ export async function setUserAuthorizationPin(
   const people = await readRows(`app_users?user_id=eq.${encodeURIComponent(targetUserId)}&select=user_id,role,role_slug,store_id,is_active&limit=1`);
   const person = people[0];
   if (!person) throw new Error("Staff account not found");
-  const { approvalPinEligible } = await import("./approval-pin-eligibility");
-  const rules = await loadRuleRows(String(person.store_id ?? ""));
-  if (!approvalPinEligible(rules, {
-    userId: String(person.user_id), role: String(person.role_slug || person.role),
-    storeId: String(person.store_id ?? ""), active: person.is_active === true,
-  })) throw new Error("Assign this person to a PIN approval rule before setting an authorization PIN");
+  if (person.is_active !== true) throw new Error("Activate this account before setting an approval PIN");
   const { rpc } = await import("./pos-rules.server");
   await rpc<unknown>("set_authorization_pin", {
     p_user_id: targetUserId,
     p_pin: pin,
-    p_set_by: setBy,
+    p_updated_by: setBy,
   });
+}
+
+/** Windows-only sign-in verifier; never changes Auth or approval credentials. */
+export async function setUserOfflineLoginPin(userId: string, pin: string): Promise<void> {
+  if (!/^\d{6}$/.test(pin)) throw new Error("Offline sign-in PIN must be 6 digits");
+  const { rpc } = await import("./pos-rules.server");
+  await rpc("set_offline_login_pin", { p_user_id: userId, p_pin: pin });
 }

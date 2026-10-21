@@ -164,7 +164,7 @@ async function propagateStaffChange(reason: string, tables: string[]) {
 
 export function StaffManager() {
   const { stores } = usePos();
-  const { authUserId } = useAuth();
+  const { authUserId, isAdmin } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
   const [roles, setRoles] = useState<RoleDef[]>([]);
   const [query, setQuery] = useState("");
@@ -185,18 +185,19 @@ export function StaffManager() {
   // The authorisation PIN is separate from signing in: it only approves a
   // gated action, so administrators and supervisors need one too.
   const [pinFor, setPinFor] = useState<Row | null>(null);
+  const [pinPurpose, setPinPurpose] = useState<"approval" | "offline_login">("approval");
   const [pinValue, setPinValue] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [showPinValue, setShowPinValue] = useState(false);
 
 
   async function saveAuthPin() {
-    if (!pinFor || !/^\d{4,6}$/.test(pinValue) || pinValue !== confirmPin) return;
+    if (!isAdmin || !pinFor?.is_active || !/^\d{4,6}$/.test(pinValue) || pinValue !== confirmPin) return;
     setBusy("auth-pin");
     try {
       const auth = await getPosCallerAuth();
       const res = await setStaffAuthorizationPin({
-        data: { ...auth, userId: pinFor.user_id, pin: pinValue },
+        data: { ...auth, userId: pinFor.user_id, pin: pinValue, purpose: pinPurpose },
       });
       if (!res.ok) toast.error(res.error ?? "Could not save the PIN");
       else {
@@ -204,7 +205,7 @@ export function StaffManager() {
           load(),
           propagateStaffChange("staff approval PIN changed", ["app_users"]),
         ]);
-        toast.success(`Authorisation PIN set for ${pinFor.full_name}`);
+        toast.success(`${pinPurpose === "offline_login" ? "Offline sign-in PIN" : "Authorisation PIN"} set for ${pinFor.full_name}`);
         setPinFor(null);
         setPinValue(""); setConfirmPin("");
         setShowPinValue(false);
@@ -571,11 +572,10 @@ export function StaffManager() {
                           size="icon"
                           variant="ghost"
                           aria-label={nativeApprovalCredentials ? "Approval credentials" : "Approval PIN"}
-                          title={!row.is_active ? "Activate this account first" : !row.approval_pin_eligible
-                            ? "Assign this user to an enabled PIN or PIN-or-request approval rule in POS Rules & Enforcement"
-                            : nativeApprovalCredentials ? "Configure approval credentials" : "Set authorisation PIN"}
-                          disabled={offline || !row.approval_pin_eligible}
+                          title={!isAdmin ? "Only administrators can set approval PINs" : !row.is_active ? "Activate this account first" : nativeApprovalCredentials ? "Configure approval credentials" : "Set authorisation PIN"}
+                          disabled={offline || !isAdmin || !row.is_active}
                           onClick={() => {
+                            setPinPurpose("approval");
                             setPinFor(row);
                             setPinValue(""); setConfirmPin("");
                             setShowPinValue(false);
@@ -641,13 +641,13 @@ export function StaffManager() {
       >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>{nativeApprovalCredentials ? "Approval credentials" : "Authorisation PIN"}</DialogTitle>
+            <DialogTitle>{pinPurpose === "offline_login" ? "Windows offline sign-in PIN" : "Approval PIN"}</DialogTitle>
             <DialogDescription>
-              A 4–6 digit PIN for {pinFor?.full_name}, used only to approve gated actions at a till.
-              It does not change how they sign in, and it is never shown again.
+              {pinPurpose === "offline_login" ? "A separate 6-digit Windows sign-in PIN. Connect and sync the PC before using it offline. Their email password and approval PIN stay unchanged." : "A separate 4–6 digit approval PIN. It does not change sign-in. Approval still requires the appropriate rule, permission and branch access."}
             </DialogDescription>
           </DialogHeader>
-          {nativeApprovalCredentials && <NativeApprovalMethods person={pinFor} disabled={offline} onUpdated={(userId, patch) => {
+          {pinFor && isExternalEmail(pinFor.email) && <label className="space-y-1 text-xs">PIN purpose<select className="h-9 w-full rounded-md border bg-background px-2" aria-label="PIN purpose" value={pinPurpose} onChange={event => { setPinPurpose(event.target.value as "approval" | "offline_login"); setPinValue(""); setConfirmPin(""); }}><option value="approval">Approval PIN</option><option value="offline_login">Windows offline sign-in PIN</option></select></label>}
+          {pinPurpose === "approval" && nativeApprovalCredentials && <NativeApprovalMethods person={pinFor} disabled={offline} onUpdated={(userId, patch) => {
             setPinFor(current => current?.user_id === userId ? { ...current, ...patch } : current);
             setRows(current => current.map(row => row.user_id === userId ? { ...row, ...patch } : row));
           }} />}
@@ -698,7 +698,7 @@ export function StaffManager() {
               Cancel
             </Button>
             <Button
-              disabled={!/^\d{4,6}$/.test(pinValue) || pinValue !== confirmPin || busy === "auth-pin"}
+              disabled={!isAdmin || !pinFor?.is_active || !(pinPurpose === "offline_login" ? /^\d{6}$/ : /^\d{4,6}$/).test(pinValue) || pinValue !== confirmPin || busy === "auth-pin"}
               onClick={() => void saveAuthPin()}
             >
               {busy === "auth-pin" && <Loader2 className="size-4 animate-spin" />}Save PIN

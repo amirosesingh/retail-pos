@@ -61,7 +61,7 @@ describe("offline terminal operations", () => {
     expect(preload).toContain('rememberStaffPin: (username, pin) => invoke("staff:enroll"');
     expect(main).toContain('/api/public/cashier-login');
     const auth = readFileSync("src/lib/pos-auth.tsx", "utf8");
-    expect(auth).toContain("role: offlineAppRole(local.staff.roleSlug)");
+    expect(auth).toContain("role: offlineAppRole(local.staff.role ?? local.staff.roleSlug)");
     expect(auth).toContain("roleSlug: local.staff.roleSlug");
     expect(dialog).toContain("await verifyLocalApprovalPin(expectedId, pin)");
     expect(dialog).toContain("self_authorization: !!prompt.selfAuthorizer");
@@ -83,7 +83,7 @@ describe("offline terminal operations", () => {
       ok: true,
       rows: [expect.objectContaining({
         username: "admin",
-        role_slug: "admin",
+        roleSlug: "admin",
         permissions: { can_manage_staff: true },
       })],
     });

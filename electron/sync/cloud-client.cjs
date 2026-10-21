@@ -9,7 +9,7 @@ const { toLocalValue } = require("./row-codec.cjs");
 const DEVICE_COLUMN_ALLOWLIST = {
   app_users: new Set([
     "id", "user_id", "login_username", "full_name", "store_id", "role", "role_slug", "permissions",
-    "is_active", "pin_hash", "pin_length", "pin_set_at", "pin_updated_by", "row_version",
+    "is_active", "pin_hash", "offline_login_pin_hash", "pin_length", "pin_set_at", "pin_updated_by", "row_version",
     "email", "created_at", "updated_at", "deleted_at",
   ]),
   members: new Set([
