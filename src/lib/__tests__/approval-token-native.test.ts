@@ -170,6 +170,7 @@ describe("native approval IPC boundary", () => {
     const privilege = require("../../../electron/ipc-privilege.cjs");
     session.clear();
     expect(privilege.allowed("staff:verify-approval-pin")).toBe(false);
+    expect(privilege.allowed("approval:own-token-vault")).toBe(true);
     session.grant("staff", "cashier", { can_process_sale: true }, "pos", "branch-a");
     expect(privilege.allowed("staff:verify-approval-pin")).toBe(true);
     expect(privilege.allowed("approval:enroll-verifier")).toBe(false);

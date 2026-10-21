@@ -110,6 +110,7 @@ const CHANNEL_LEVELS = {
   "staff:cache-roster": OPEN,
   "staff:verify-pin": OPEN,
   "staff:verify-approval-pin": OPEN, // signed-in operator may present an approver credential
+  "approval:own-token-vault": OPEN, // POS main-frame only; fixed encrypted token keys, PIN-locked envelope before sign-in
   "approval:enroll-verifier": OPEN, // permission checked in allowed() and again by the backend
   "staff:sign-in": OPEN,
   "staff:enroll": OPEN,

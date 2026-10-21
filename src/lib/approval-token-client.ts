@@ -42,7 +42,7 @@ async function removeVault() {
   catch (error) { if (!isMissingSecureValue(error)) throw error; }
 }
 export async function offlineTokenOwner() {
-  if (!isMobileShell()) return null;
+  if (!isMobileShell() && !isWindowsShell()) return null;
   const terminal = readTerminalConfig();
   if (!terminal?.tokenId) return null;
   const v = await withVault(readVault);
@@ -83,8 +83,8 @@ export async function unlockOfflineApprovalToken(pin: string) {
   });
 }
 async function store() {
-  const { SecureStoragePlugin } = await import("capacitor-secure-storage-plugin");
-  return { value: SecureStoragePlugin };
+  const { approvalTokenStore } = await import("@/platform-config/approval-token-store");
+  return { value: await approvalTokenStore() };
 }
 export async function approvalCredentialCall(
   action: "enroll" | "methods",
@@ -109,7 +109,7 @@ async function sessionBinding() {
 }
 export async function clearApprovalToken(removeOffline = false) {
   revision++;
-  if (!isMobileShell()) return;
+  if (!isMobileShell() && !isWindowsShell()) return;
   try {
     await (await store()).value.remove({ key: KEY });
   } catch (error) {
@@ -119,7 +119,7 @@ export async function clearApprovalToken(removeOffline = false) {
   window.dispatchEvent(new Event(TOKEN_CHANGED));
 }
 export async function loadApprovalToken(): Promise<ApprovalToken | null> {
-  if (!isMobileShell()) return null;
+  if (!isMobileShell() && !isWindowsShell()) return null;
   const terminal = readTerminalConfig();
   if (!terminal?.tokenId) return null;
   const binding = await sessionBinding();
@@ -158,10 +158,9 @@ async function enroll(userId: string) {
       sessionToken: proof.sessionToken,
       cashierToken: proof.cashierToken,
       accessToken: proof.accessToken,
-    });
-    return;
+    }).catch(() => undefined);
   }
-  if (!isMobileShell() || !navigator.onLine || !readTerminalConfig()?.tokenId) return;
+  if ((!isMobileShell() && !isWindowsShell()) || !navigator.onLine || !readTerminalConfig()?.tokenId) return;
   const version = ++revision;
   const binding = await sessionBinding();
   if (!binding) return;

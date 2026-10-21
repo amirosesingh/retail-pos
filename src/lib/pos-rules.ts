@@ -76,7 +76,7 @@ export const DEFAULT_POS_RULES: PosRules = {
   require_counted_cash_on_close: true,
   require_opening_float_count: true,
   enable_blind_cash_count: true,
-  max_drawer_cash_limit: 1000,
+  max_drawer_cash_limit: 0,
   require_reason_for_payout: true,
   allow_multiple_shifts_per_terminal: false,
   enable_cashier_x_report: false,
@@ -193,7 +193,7 @@ export const RULE_GROUPS: RuleGroup[] = [
         key: "max_drawer_cash_limit",
         kind: "number",
         label: "Max cash in drawer",
-        blurb: "Prompts for a safe drop above this amount.",
+        blurb: "Cash-drawer threshold. 0 means no configured limit.",
       },
       {
         key: "require_reason_for_payout",

@@ -24,8 +24,8 @@ export const AUTH_MODES: { value: AuthMode; label: string; blurb: string }[] = [
   },
   {
     value: "pin",
-    label: "PIN only",
-    blurb: "Someone with the right to authorise must type their PIN at the till.",
+    label: "PIN or soft token",
+    blurb: "An authorised user enters their approval PIN or a soft token on a registered native terminal.",
   },
   {
     value: "request",
@@ -34,8 +34,8 @@ export const AUTH_MODES: { value: AuthMode; label: string; blurb: string }[] = [
   },
   {
     value: "either",
-    label: "PIN or approval request",
-    blurb: "Choose an authorised PIN at the till or send an approval request. Offline PIN approval requires the branch offline rules to allow it.",
+    label: "PIN, soft token or approval request",
+    blurb: "Enter an authorised PIN or terminal soft token, or send an approval request. Offline PIN approval requires the branch offline rules to allow it.",
   },
 ];
 

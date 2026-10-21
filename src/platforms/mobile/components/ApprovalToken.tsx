@@ -12,14 +12,13 @@ import {
   type ApprovalToken,
 } from "@/lib/approval-token-client";
 import { approvalTotp } from "@/lib/approval-totp";
-import { isWindowsShell } from "@/platform-config/features";
 import { subscribeBackgroundRefresh } from "@/lib/background-refresh";
 
 export function ApprovalTokenAgent() {
   const { user } = useAuth();
   const id = user?.staffId;
   useEffect(() => {
-    if (!id || (isWindowsShell() && !user?.permissions.can_manage_staff)) return;
+    if (!id) return;
     const refresh = () => {
       void enrollOwnApprovalToken(id).catch(() => {
         /* Keep the last valid enrollment while reconnecting. */
@@ -30,7 +29,7 @@ export function ApprovalTokenAgent() {
   }, [id, user?.permissions.can_manage_staff]);
   return null;
 }
-/** Only a Keystore enrollment bound to the retained sign-in and registered device is shown. */
+/** Only an OS-vault enrollment bound to the retained sign-in and registered device is shown. */
 export function ApprovalTokenButton() {
   const [token, setToken] = useState<ApprovalToken | null>(null);
   const [open, setOpen] = useState(false);
@@ -146,7 +145,7 @@ export function ApprovalTokenButton() {
           </p>
           </>}
           {token && <div className="space-y-2 border-t pt-3">
-            <p className="text-xs text-muted-foreground">Set a separate 6–12 digit unlock PIN to use your token from the login screen offline. This replaces any other saved token owner on this phone.</p>
+            <p className="text-xs text-muted-foreground">Set a separate 6–12 digit unlock PIN to use your token from the login screen offline. This replaces any other saved token owner on this device.</p>
             <label className="text-sm" htmlFor="token-setup-pin">New token unlock PIN</label>
             <input id="token-setup-pin" className="h-10 w-full rounded-md border bg-background px-3" type="password" inputMode="numeric" autoComplete="new-password" maxLength={12} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ""))} />
             <label className="text-sm" htmlFor="token-confirm-pin">Confirm unlock PIN</label>

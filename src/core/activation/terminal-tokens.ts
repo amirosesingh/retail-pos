@@ -257,7 +257,7 @@ async function insertTokenRow(row: Record<string, unknown>): Promise<void> {
 }
 
 const rowToToken = (r: Record<string, any>): TerminalToken => ({
-  approvalTokenEnabled: r.approval_token_enabled !== false,
+  approvalTokenEnabled: r.approval_token_enabled === true || (r.approval_token_enabled == null && ["mobile", "android", "ios"].includes(String(r.platform))),
   id: r.id,
   locationId: r.location_id ?? null,
   locationName: r.location_name ?? "",
@@ -322,7 +322,7 @@ export async function issueTerminalToken(input: {
   const row = {
     id,
     location_id: input.location?.id ?? null,
-    ...(input.platform === "mobile" ? { approval_token_enabled: input.approvalTokenEnabled ?? Boolean(input.management) } : {}),
+    approval_token_enabled: input.approvalTokenEnabled ?? Boolean(input.management),
     ...(replica ? { management_sync_enabled: true, management_sync_proof_hash: replicaHash } : {}),
     location_name: input.locationName,
     device_name: input.deviceName,

@@ -4,7 +4,7 @@
  * The category list is deliberately an overview. Detailed rule configuration
  * lives in one reusable dialog so every action follows the same workflow.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Loader2, Settings2, ShieldCheck, UserRoundPlus } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -29,7 +29,7 @@ import { SettingsSections } from "@/platforms/web/components/pos/settings/Settin
 import { validateAuthorizationRuleConfiguration } from "@/platforms/web/components/pos/settings/authorization-rule-configuration";
 import { notifyError } from "@/lib/notify";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { subscribeSettingsChange } from "@/lib/sync-engine";
+import { subscribeSettingsRefresh } from "@/lib/settings-refresh";
 import {
   getAuthorizationRules,
   listAuthorizationPeople,
@@ -69,6 +69,9 @@ const WIRED_ACTIONS = new Set([
   "price_override",
   "shift_close",
   "stock_transfer",
+  "edit_posted_stock",
+  "edit_posted_purchase",
+  "terminal_unpair",
 ]);
 
 const AUTHORITY_UNIT: Partial<Record<string, string>> = {
@@ -858,21 +861,25 @@ export function AuthorizationRulesPanel({
   const [people, setPeople] = useState<AuthorizationPerson[]>([]);
   const [editing, setEditing] = useState<EditingRule | null>(null);
   const [reloadVersion, setReloadVersion] = useState(0);
+  const loadedScope = useRef<string | null>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => {
     let cancelled = false;
-    setEditing(null);
+    const scope = branchScope ? storeId : "";
+    if (loadedScope.current !== scope) { setEditing(null); setLoading(true); }
     void (async () => {
-      setLoading(true);
       try {
         const auth = await getPosCallerAuth();
-        const res = await getAuthorizationRules({
-          data: { ...auth, storeId: branchScope ? storeId : "" },
+        const res = await queryClient.fetchQuery({
+          queryKey: ["authorization-editor", scope],
+          staleTime: 0,
+          queryFn: () => getAuthorizationRules({ data: { ...auth, storeId: scope } }),
         });
         if (cancelled) return;
-        if (!res.ok) setError(res.error ?? "");
+        if (!res.ok) { setError(res.error ?? "Could not load rules"); setLoading(false); return; }
         else setError("");
+        loadedScope.current = scope;
         const rows = res.rules ?? [];
         setRules(
           resolveEditableRules(rows, branchScope ? "branch" : "global", branchScope ? storeId : ""),
@@ -885,24 +892,18 @@ export function AuthorizationRulesPanel({
     return () => {
       cancelled = true;
     };
-  }, [branchScope, reloadVersion, storeId]);
-
-  useEffect(
-    () =>
-      subscribeSettingsChange((change) => {
-        if (change.table !== "authorization_actions" || editing) return;
-        setReloadVersion((version) => version + 1);
-      }),
-    [editing],
-  );
+  }, [branchScope, reloadVersion, storeId, queryClient]);
 
   useEffect(() => {
-    const refreshVisibleRules = () => {
-      if (!editing) setReloadVersion((version) => version + 1);
-    };
-    window.addEventListener("focus", refreshVisibleRules);
-    return () => window.removeEventListener("focus", refreshVisibleRules);
-  }, [editing]);
+    if (editing) return;
+    // Catch changes deferred while the rule dialog was open.
+    if (loadedScope.current !== null) setReloadVersion(version => version + 1);
+    return subscribeSettingsRefresh(async () => {
+      setReloadVersion(version => version + 1);
+    }, change => change.reason === "reconnect" || change.reason === "realtime:subscribed" ||
+      (change.table === "authorization_actions" && (!change.storeId || change.storeId === (branchScope ? storeId : ""))),
+    { eventOnly: true });
+  }, [editing, branchScope, storeId]);
 
   useEffect(() => {
     if (!mayEdit) return;

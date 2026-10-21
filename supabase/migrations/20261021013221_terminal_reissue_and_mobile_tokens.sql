@@ -1,6 +1,12 @@
 -- Existing enrolled phones retain their device capability; user permissions
 -- and approval rules remain authoritative. New registrations choose explicitly.
-ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS approval_token_enabled boolean NOT NULL DEFAULT true;
+DO $capability$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='terminal_tokens' AND column_name='approval_token_enabled') THEN
+  ALTER TABLE public.terminal_tokens ADD COLUMN approval_token_enabled boolean NOT NULL DEFAULT false;
+  UPDATE public.terminal_tokens SET approval_token_enabled=true WHERE platform IN ('mobile','android','ios');
+ END IF;
+END $capability$;
 
 CREATE OR REPLACE FUNCTION public.terminal_token_reissue_scoped(
  p_old_id uuid, p_new_id uuid, p_location_id text, p_location_name text,
@@ -25,7 +31,7 @@ BEGIN
   p_new_id,p_location_id,CASE WHEN p_location_id IS NULL THEN 'All branches — management' ELSE p_location_name END,
   old_token.device_name,old_token.platform,'active',now_at,now_at,false,now_at + interval '15 minutes',
   replica,CASE WHEN replica THEN p_replica_hash ELSE NULL END,
-  old_token.platform IN ('mobile','android','ios') AND coalesce(p_approval_token_enabled,false)
+  coalesce(p_approval_token_enabled,false)
  ) RETURNING * INTO new_token;
  UPDATE public.terminal_tokens SET status='revoked',revoked_at=coalesce(revoked_at,now_at),replaced_by=p_new_id WHERE id=p_old_id;
  IF NOT FOUND THEN RAISE EXCEPTION 'TERMINAL_REPLACEMENT_FORBIDDEN'; END IF;
@@ -74,7 +80,7 @@ BEGIN
       WHERE a.is_active AND a.permissions->>'approval_totp_enabled'='true'
         AND (a.store_id IS NULL OR lower(a.store_id::text)=lower(p_user_id))
         AND k.revoked_at IS NULL AND k.status::text IN ('active','used')
-        AND k.approval_token_enabled AND k.platform IN ('mobile','android','ios')
+        AND k.approval_token_enabled AND k.platform IN ('mobile','android','ios','pc','windows')
         AND (a.store_id IS NULL OR k.location_id IS NULL OR lower(k.location_id::text)=lower(p_user_id));
   ELSIF p_op = 'read' THEN
     SELECT coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb) INTO answer FROM pos_private.approval_tokens t WHERE t.user_id=p_user_id;

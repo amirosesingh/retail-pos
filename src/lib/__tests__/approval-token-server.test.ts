@@ -106,7 +106,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("approval credential authorization", () => {
-  it.each(["ios", "mobile"])("accepts a registered %s receiver with the same permission and replay checks", async platform => {
+  it.each(["ios", "mobile", "pc", "windows"])("accepts a registered %s receiver with the same permission and replay checks", async platform => {
     f.platform = platform;
     const enrolled = await enrollApprovalToken(proof);
     const code = await approvalTotp(enrolled.credential!.secret);
@@ -181,4 +181,16 @@ it("enrolls a permitted branch user on a management phone without widening that 
   expect((await enrollApprovalToken(proof)).credential).toBeNull();
   f.deviceEnabled = true; f.totp = false;
   expect((await enrollApprovalToken(proof)).credential).toBeNull();
+});
+
+it.each(["pc", "windows", "mobile"])("management %s can issue and receive a token without widening user branch access", async platform => {
+ f.platform = platform; f.branch = "";
+ const result = await enrollApprovalToken(proof);
+ expect(result.credential?.branchId).toBe("branch-a");
+ const code = await approvalTotp(result.credential!.secret);
+ expect(await verifyApprovalTotp("manager", code, "branch-b", terminal)).toBeNull();
+ expect((await verifyApprovalTotp("manager", code, "branch-a", terminal))?.userId).toBe("manager");
+ expect(await verifyApprovalTotp("manager", code, "branch-a", terminal)).toBeNull();
+ f.deviceEnabled = false;
+ expect((await enrollApprovalToken(proof)).credential).toBeNull();
 });

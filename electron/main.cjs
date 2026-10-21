@@ -96,6 +96,10 @@ const approvalVerifierKey = require("./approval-token-key.cjs").createApprovalKe
   safeStorage, directory: () => app.getPath("userData"), terminal: () => terminalStore.read(),
   origin: () => `${authorizationServerUrl()}|${cloudCredentials.read()?.url ?? ""}`,
 });
+const ownApprovalTokenVault = require("./approval-token-vault.cjs").createApprovalTokenVault({
+  safeStorage, directory: () => app.getPath("userData"),
+  binding: () => { const token = terminalStore.read()?.tokenId; const project = cloudCredentials.read()?.url; return token && project ? `${token}|${project}` : null; },
+});
 const approvalTokenVerifier = createApprovalTokenVerifier({
   safeStorage, directory: () => app.getPath("userData"), terminal: () => terminalStore.read(),
   branch: () => localBranchId(), origin: () => `${authorizationServerUrl()}|${cloudCredentials.read()?.url ?? ""}`,
@@ -1994,6 +1998,10 @@ function registerIpc() {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
   });
+  ipcMain.handle("approval:own-token-vault", (event, operation, key, value) => guard.guarded(() => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error("Approval storage is limited to the POS window");
+    return { ok: true, ...ownApprovalTokenVault(operation, key, value) };
+  }));
   ipcMain.handle("approval:enroll-verifier", async (_e, proof) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_manage_staff"))
       return { ok: false, error: "Staff management permission is required" };

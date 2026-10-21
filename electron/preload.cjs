@@ -110,6 +110,7 @@ contextBridge.exposeInMainWorld("pos", {
   rememberStaffPin: (username, pin) => invoke("staff:enroll", username, pin),
   signInStaffPin: (username, pin) => invoke("staff:sign-in", username, pin),
   verifyStaffPin: (username, pin) => invoke("staff:verify-pin", username, pin),
+  approvalTokenVault: (operation, key, value) => invoke("approval:own-token-vault", operation, key, value),
   enrollApprovalVerifier: (proof) => invoke("approval:enroll-verifier", proof),
   verifyApprovalPin: (username, pin) => invoke("staff:verify-approval-pin", username, pin),
   cashierLogin: (username, pin) => invoke("auth:cashier-login", { username, pin }),

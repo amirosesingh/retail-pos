@@ -382,7 +382,7 @@ export function TerminalTokens({
             options={[{ value: "branch", label: "Branch operations" }, { value: "management", label: "Management — all branches" }]} />
           {management && <p className="text-xs text-muted-foreground">No fixed branch. The signed-in manager keeps their own permissions and assigned branches.</p>}
         </div>}
-        {only === "mobile" && <label className="mt-3 flex items-center gap-2 text-sm"><Switch aria-label="Enable approval tokens on this phone" checked={approvalEnabled} onCheckedChange={setApprovalEnabled} />Enable approval tokens on this phone</label>}
+        {<label className="mt-3 flex items-center gap-2 text-sm"><Switch aria-label="Enable approval tokens on this terminal" checked={approvalEnabled} onCheckedChange={setApprovalEnabled} />Enable approval tokens on this terminal</label>}
         <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
           {!managementDevice && <div className="space-y-1.5">
             <Label className="text-[11px] text-muted-foreground">Location / warehouse</Label>
@@ -727,7 +727,7 @@ export function TerminalTokens({
                       <div className="flex flex-col items-start gap-1">
                         <Badge variant="outline" className="text-[10px]">{t.locationId ? (t.locationName || t.locationId) : "All branches — management"}</Badge>
                         <Badge variant="secondary" className="text-[10px]">{t.platform === "mobile" ? "Phone / tablet" : "Windows till"}</Badge>
-                        {t.platform === "mobile" && <span className="text-[10px] text-muted-foreground">Soft token {t.approvalTokenEnabled === false ? "off" : "on"}</span>}
+                        {<span className="text-[10px] text-muted-foreground">Soft token {t.approvalTokenEnabled === false ? "off" : "on"}</span>}
                       </div>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground tabular-nums">
@@ -775,7 +775,7 @@ export function TerminalTokens({
                         >
                           <ShieldX className="size-3.5" />
                         </Button></TooltipTrigger><TooltipContent>Revoke registration</TooltipContent></Tooltip>
-                        {t.platform === "mobile" && t.status !== "revoked" && <Tooltip><TooltipTrigger asChild>
+                        {t.status !== "revoked" && <Tooltip><TooltipTrigger asChild>
                           <Button size="icon" variant="ghost" className="size-8" aria-label={t.approvalTokenEnabled === false ? "Enable soft token" : "Disable soft token"}
                             onClick={async () => { try { await setTerminalApprovalEnabled(t.id, t.approvalTokenEnabled === false); await refresh(); toast.success("Terminal soft-token option saved"); }
                               catch (e) { toast.error(describeError(e, "Updating terminal soft token")); } }}>
@@ -832,7 +832,7 @@ export function TerminalTokens({
               onChange={value => setReplacementBranch(value === "__management" ? "" : value)}
               options={[{ value: "__management", label: "Management — all branches" }, ...stores.map(store => ({ value: store.id, label: `${store.name} — ${store.code}` }))]} />
             <p className="text-xs text-muted-foreground">Keeps the original assignment unless you change it. Staff permissions still apply.</p>
-            {pendingReissue?.platform === "mobile" && <label className="flex items-center gap-2 text-sm"><Switch aria-label="Enable approval tokens" checked={replacementApproval} onCheckedChange={setReplacementApproval} />Enable approval tokens</label>}
+            {pendingReissue && <label className="flex items-center gap-2 text-sm"><Switch aria-label="Enable approval tokens" checked={replacementApproval} onCheckedChange={setReplacementApproval} />Enable approval tokens</label>}
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

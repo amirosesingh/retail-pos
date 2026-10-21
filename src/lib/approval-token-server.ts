@@ -138,7 +138,7 @@ async function issuerOptions(id: string) {
   const result = await response.json();
   if (response.ok) return result as { platform: string; approval_token_enabled?: boolean }[];
   if (["42703", "PGRST204"].includes(result?.code) && /approval_token_enabled/.test(result?.message || ""))
-    return rows<{ platform: string; approval_token_enabled?: boolean }>(path + "platform");
+    return (await rows<{ platform: string }>(path + "platform")).map(row => ({ ...row, approval_token_enabled: ["mobile", "android", "ios"].includes(row.platform) }));
   throw new Error("Approval credential records could not be read");
 }
 export async function enrollApprovalToken(proof: CallerProof) {
@@ -148,7 +148,7 @@ export async function enrollApprovalToken(proof: CallerProof) {
   const terminal = await verifyRelayCaller({ terminalToken: proof.terminalToken });
   if (!terminal.terminalId) throw new Error("Terminal registration is required");
   const deviceOptions = await issuerOptions(terminal.terminalId);
-  if (!["ios", "android", "mobile"].includes(deviceOptions[0]?.platform) || deviceOptions[0]?.approval_token_enabled === false)
+  if (!["ios", "android", "mobile", "pc", "windows"].includes(deviceOptions[0]?.platform) || deviceOptions[0]?.approval_token_enabled === false)
     return { ok: true as const, credential: null };
   if (actor.storeId && terminal.storeId && actor.storeId.toLowerCase() !== terminal.storeId.toLowerCase())
     throw new Error("Terminal branch does not match the user");
@@ -182,7 +182,7 @@ export async function verifyApprovalTotp(
 ) {
   if (!receiverToken) return null;
   const receiver = await verifyRelayCaller({ terminalToken: receiverToken }).catch(() => null);
-  if (!receiver?.terminalId || receiver.storeId?.toLowerCase() !== branch.toLowerCase())
+  if (!receiver?.terminalId || (receiver.storeId && receiver.storeId.toLowerCase() !== branch.toLowerCase()))
     return null;
   const receiverRows = await rows<{ platform: string }>(
     `terminal_tokens?id=eq.${encodeURIComponent(receiverToken)}&select=platform`,
@@ -201,7 +201,7 @@ export async function verifyApprovalTotp(
       )
         continue;
       const issuer = await issuerOptions(device.terminal_id);
-      if (!["ios", "android", "mobile"].includes(issuer[0]?.platform) || issuer[0]?.approval_token_enabled === false) continue;
+      if (!["ios", "android", "mobile", "pc", "windows"].includes(issuer[0]?.platform) || issuer[0]?.approval_token_enabled === false) continue;
       const step = await matchingTotpStep(unseal(device.secret_ciphertext), code);
       if (step === null || step <= Number(device.last_used_step)) continue;
       if (!(await state("consume", person.user_id, device.terminal_id, null, step))) continue;

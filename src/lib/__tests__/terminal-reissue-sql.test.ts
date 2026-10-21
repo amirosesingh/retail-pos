@@ -54,3 +54,21 @@ it("runs under caller RLS and does not grant authenticated clients access to app
     await expect(db.query(`SELECT approval_token_state('read','manager')`)).rejects.toThrow(/permission denied/);
   } finally { await db.exec('RESET ROLE'); }
 });
+
+it("includes enabled Windows management issuers without granting another branch", async () => {
+ const pc = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+ await db.query(`INSERT INTO terminal_tokens(id,device_name,platform,status,location_id,approval_token_enabled) VALUES($1,'Management PC','pc','used',NULL,true)`, [pc]);
+ await db.query(`SELECT approval_token_state('enroll','manager',$1,$2)`, [pc,'p'.repeat(60)]);
+ const read = async (branch:string) => (await db.query<{v:{terminal_id:string}[]}>(`SELECT approval_token_state('read_branch',$1) AS v`,[branch])).rows[0].v;
+ expect((await read('branch-a')).some(row => row.terminal_id === pc)).toBe(true);
+ expect((await read('branch-b')).some(row => row.terminal_id === pc)).toBe(false);
+ await db.query(`UPDATE terminal_tokens SET approval_token_enabled=false WHERE id=$1`, [pc]);
+ expect((await read('branch-a')).some(row => row.terminal_id === pc)).toBe(false);
+});
+
+it("defaults an unset cash-drawer limit to zero without changing another rule", async () => {
+ await db.exec(readFileSync("supabase/migrations/20261021020900_pos_rules_drawer_default.sql", "utf8"));
+ const row = (await db.query<{rules:{max_drawer_cash_limit:number;max_cashier_discount_percent:number}}>(`SELECT pos_rules_defaults() AS rules`)).rows[0];
+ expect(row.rules.max_drawer_cash_limit).toBe(0);
+ expect(row.rules.max_cashier_discount_percent).toBe(10);
+});

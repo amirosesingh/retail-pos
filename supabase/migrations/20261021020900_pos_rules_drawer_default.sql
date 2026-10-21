@@ -1,0 +1,60 @@
+-- Change only the fallback for unset rules; retain saved global and branch limits.
+CREATE OR REPLACE FUNCTION public.pos_rules_defaults()
+ RETURNS jsonb
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  SELECT '{
+    "block_shift_close_on_hold": true,
+    "require_daily_sales_for_shift_close": true,
+    "require_counted_cash_on_close": true,
+    "require_opening_float_count": true,
+    "enable_blind_cash_count": true,
+    "max_drawer_cash_limit": 0,
+    "require_reason_for_payout": true,
+    "allow_multiple_shifts_per_terminal": false,
+    "enable_cashier_x_report": false,
+    "show_opening_float_at_close": true,
+    "show_expected_totals_at_close": false,
+    "show_live_variance_at_close": false,
+    "show_itemized_tender_breakdown": true,
+    "require_manager_pin_on_variance": true,
+    "variance_pin_threshold": 10,
+    "max_cashier_discount_percent": 10,
+    "max_cart_discount_amount": 100,
+    "allow_discount_stacking": false,
+    "require_reason_for_price_override": true,
+    "prevent_below_cost_sale": true,
+    "allow_tax_exemption": false,
+    "prevent_negative_stock_sale": false,
+    "require_receipt_for_refund": true,
+    "require_manager_pin_for_refund": true,
+    "max_refund_days_limit": 30,
+    "track_item_voids": true,
+    "auto_lock_timeout_seconds": 90,
+    "require_manager_pin_for_cash_drawer_open": true,
+    "enable_manager_pin_audit_log": true,
+    "require_pin_void_cart": true,
+    "require_pin_void_line": false,
+    "require_pin_reduce_qty": false,
+    "require_pin_manual_discount": true,
+    "require_pin_price_override": true,
+    "require_pin_stock_adjustment": true,
+    "require_pin_shift_close": false,
+    "require_pin_edit_tenders": false,
+    "require_pin_terminal_reset": true,
+    "allow_offline_approvals": true,
+    "offline_approval_requires_pin": true,
+    "online_only_void_cart": false,
+    "online_only_void_line": false,
+    "online_only_reduce_qty": false,
+    "online_only_manual_discount": false,
+    "online_only_price_override": false,
+    "online_only_stock_adjustment": false,
+    "online_only_shift_close": false,
+    "online_only_edit_tenders": false,
+    "online_only_terminal_reset": false,
+    "online_only_refund": false
+  }'::jsonb;
+$function$;

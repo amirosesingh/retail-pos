@@ -701,6 +701,7 @@ export type PosBridge = {
     };
   }>;
   verifyApprovalPin?: PosBridge["verifyStaffPin"];
+  approvalTokenVault?: (operation: "get" | "set" | "remove", key: string, value?: string) => Promise<{ ok: boolean; value?: string | boolean; error?: string }>;
   enrollApprovalVerifier?: (proof: { sessionToken?: string; cashierToken?: string; accessToken?: string }) => Promise<{ ok: boolean; error?: string }>;
   rememberStaffPin?: (username: string, pin: string) => Promise<{ ok: boolean }>;
   forgetStaffPin?: (username: string) => Promise<{ ok: boolean }>;
