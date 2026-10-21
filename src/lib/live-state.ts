@@ -1,7 +1,7 @@
 /** Preserve stable field references when a background snapshot has no new values. */
 export function retainUnchangedFields<T extends object>(previous: T, incoming: T): T {
   const next = { ...incoming };
-  let changed = false;
+  let changed = Object.keys(previous).length !== Object.keys(incoming).length;
   for (const key of Object.keys(incoming) as (keyof T)[]) {
     const oldValue = previous[key];
     const newValue = incoming[key];

@@ -117,6 +117,7 @@ const rpc = (fn: string, args: Record<string, unknown>) =>
   );
 
 import { deviceProofHash } from "@/core/activation/device-proof";
+import { newReplicaSecret, pairingReplicaSecret, replicaSecretHash } from "@/core/activation/replica-proof";
 
 /** Same helper against a throwaway client for a tenant we are not paired to. */
 const rpcOn = (client: unknown, fn: string, args: Record<string, unknown>) =>
@@ -297,6 +298,7 @@ export async function issueTerminalToken(input: {
   tokenId?: string;
   /** sealed device proof captured from a phone-scanned pairing QR */
   claimProof?: string;
+  replicaProofHash?: string;
 }): Promise<{ token: TerminalToken; code: string }> {
   // Self-healing: guarantee the referenced location row exists.
   if (!input.location && !input.management) throw new Error("Operations terminals require a branch.");
@@ -304,9 +306,15 @@ export async function issueTerminalToken(input: {
   if (input.location) await ensureLocations([input.location]);
   const id = input.tokenId || crypto.randomUUID();
   const issuedAt = Date.now();
+  const replica = Boolean(input.management && (input.platform ?? "pc") === "pc");
+  if (replica && input.claimProof && !/^[a-f0-9]{64}$/.test(input.replicaProofHash ?? ""))
+    throw new Error("Update the PC app and scan its new pairing QR before approving management replication.");
+  const replicaSecret = replica && !input.claimProof ? newReplicaSecret() : undefined;
+  const replicaHash = replica ? input.claimProof ? input.replicaProofHash : await replicaSecretHash(replicaSecret!) : null;
   const row = {
     id,
     location_id: input.location?.id ?? null,
+    ...(replica ? { management_sync_enabled: true, management_sync_proof_hash: replicaHash } : {}),
     location_name: input.locationName,
     device_name: input.deviceName,
     platform: input.platform ?? "pc",
@@ -322,6 +330,7 @@ export async function issueTerminalToken(input: {
   return {
     token: rowToToken(row),
     code: await encryptActivationV1({
+      managementSyncSecret: replicaSecret,
       supabaseUrl: supabaseConfig().url,
       supabaseAnonKey: supabaseConfig().key,
       membershipSupabaseUrl: membership?.url,
@@ -366,11 +375,17 @@ export async function reissueTerminalToken(
   if (error) throw error;
   if (!data) throw new Error("The replacement terminal registration was not returned.");
   const replacement = rowToToken(data as Record<string, unknown>);
+  const replicaSecret = replacement.platform === "pc" && !replacement.locationId ? newReplicaSecret() : undefined;
+  if (replicaSecret) {
+    const updated = await table().update({ management_sync_enabled: true, management_sync_proof_hash: await replicaSecretHash(replicaSecret) }).eq("id", id);
+    if (updated.error) throw updated.error;
+  }
   const membership = publicSupabaseConfig("membership");
 
   return {
     token: replacement,
     code: await encryptActivationV1({
+      managementSyncSecret: replicaSecret,
       supabaseUrl: supabaseConfig().url,
       supabaseAnonKey: supabaseConfig().key,
       membershipSupabaseUrl: membership?.url,
@@ -387,6 +402,8 @@ export async function reissueTerminalToken(
 /* --------------------------- terminal surface --------------------------- */
 
 export type TerminalConfig = {
+  deviceClaimProof?: string | null;
+  deviceBindingProof?: string | null;
   tokenId: string;
   deviceUse?: "operations" | "management";
   /** human-readable name of this physical machine, shown everywhere */
@@ -571,7 +588,7 @@ export async function mirrorTerminalConfigToDesktop(): Promise<void> {
   if (!config?.tokenId) {
     throw new Error("The POS activation could not be read on this device. Sign out and reopen the POS before retrying.");
   }
-  const result = await bridge.writeTerminalConfig(config);
+  const result = await bridge.writeTerminalConfig({ ...config, deviceBindingProof: await deviceProofHash() });
   if (!result?.ok) {
     throw new Error(
       result?.error ??
@@ -670,7 +687,9 @@ export async function stampHeartbeat(
   if (error) throw error;
 }
 
-export class ActivationError extends Error {}
+export class ActivationError extends Error {
+  constructor(message: string, readonly retryable = false) { super(message); }
+}
 
 const retryDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -778,6 +797,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     backend_url?: string;
     device_name?: string;
     platform?: TerminalPlatform;
+    management_sync_secret?: string;
   };
   try {
     if (isEncryptedV1(code)) {
@@ -793,6 +813,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
         backend_url: v1.backendUrl,
         device_name: v1.deviceName,
         platform: v1.platform,
+        management_sync_secret: v1.managementSyncSecret,
       };
     } else {
       payload = await decryptActivation(code);
@@ -907,6 +928,8 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
 
   const config: TerminalConfig = {
     tokenId: payload.token_id,
+    deviceClaimProof: payload.management_sync_secret,
+    deviceBindingProof: proofHash,
     deviceName: payload.device_name?.trim() || remote.locationName || "",
     deviceType: tokenPlatformForRuntime(shell) ?? "pc",
     deviceUse: remote.locationId ? "operations" : "management",
@@ -948,6 +971,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
 /* ------------------------- phone-assisted pairing ------------------------ */
 
 export type PairingRequest = {
+  replicaProofHash?: string;
   /** the token id the terminal reserved for itself */
   tokenId: string;
   deviceName: string;
@@ -969,25 +993,26 @@ export async function getPairingRequest(): Promise<PairingRequest> {
       ? "Windows till"
       : "POS terminal";
   const proofHash = await deviceProofHash();
+  const replicaProofHash = await replicaSecretHash(await pairingReplicaSecret());
   if (!proofHash) {
     throw new ActivationError(
       "Secure device storage is unavailable. Enable local storage for this app, then try again.",
     );
   }
   if (typeof window === "undefined") {
-    return { tokenId: crypto.randomUUID(), deviceName: suggested, proofHash };
+    return { tokenId: crypto.randomUUID(), deviceName: suggested, proofHash, replicaProofHash };
   }
   try {
     const raw = window.localStorage.getItem(PAIR_KEY);
     const parsed = raw ? (JSON.parse(raw) as PairingRequest) : null;
     // Old builds could persist an opaque id which the UUID-only hosted
     // verifier must reject. Replace it with a fresh proof-bound request.
-    if (parsed?.tokenId && TERMINAL_UUID.test(parsed.tokenId) && parsed.proofHash === proofHash)
+    if (parsed?.tokenId && TERMINAL_UUID.test(parsed.tokenId) && parsed.proofHash === proofHash && parsed.replicaProofHash === replicaProofHash)
       return parsed;
   } catch {
     /* fall through and mint a new request */
   }
-  const request: PairingRequest = { tokenId: crypto.randomUUID(), deviceName: suggested, proofHash };
+  const request: PairingRequest = { tokenId: crypto.randomUUID(), deviceName: suggested, proofHash, replicaProofHash };
   try {
     window.localStorage.setItem(PAIR_KEY, JSON.stringify(request));
   } catch {
@@ -1017,6 +1042,7 @@ export function decodePairingRequest(value: string): PairingRequest | null {
             tokenId: parsed.tokenId,
             deviceName: parsed.deviceName ?? "",
             proofHash: parsed.proofHash.toLowerCase(),
+            ...(validProofHash(parsed.replicaProofHash) ? { replicaProofHash: parsed.replicaProofHash.toLowerCase() } : {}),
           }
         : null;
     } catch {
@@ -1072,14 +1098,14 @@ async function fetchPairingApproval(request: PairingRequest): Promise<PairingApp
     body: JSON.stringify({ tokenId: request.tokenId, proofHash: request.proofHash }),
   });
   const body = (await response.json().catch(() => ({}))) as PairingApproval & { error?: string };
-  if (!response.ok) throw new Error(body.error || `Pairing check failed (${response.status})`);
+  if (!response.ok) throw Object.assign(new Error(body.error || `Pairing check failed (${response.status})`), { status: response.status });
   return body;
 }
 
 export async function activateWithTokenId(request: PairingRequest): Promise<TerminalConfig | null> {
   const shell = terminalRuntimePlatform();
   const approval = await withActivationRetry(() => fetchPairingApproval(request)).catch((e: unknown) => {
-    throw new ActivationError(activationFailureMessage(e));
+    throw new ActivationError(activationFailureMessage(e), isRetryableActivationError(e));
   });
   if (!approval.approved) return null;
   if (approval.status === "revoked") {
@@ -1112,13 +1138,15 @@ export async function activateWithTokenId(request: PairingRequest): Promise<Term
     });
     claimed = result.data;
   } catch (error) {
-    throw new ActivationError(activationFailureMessage(error));
+    throw new ActivationError(activationFailureMessage(error), isRetryableActivationError(error));
   }
   if (claimed !== true) {
     throw new ActivationError("This pairing request was already used on another terminal.");
   }
   const config: TerminalConfig = {
     tokenId: request.tokenId,
+    deviceClaimProof: approval.managementDevice ? await pairingReplicaSecret() : undefined,
+    deviceBindingProof: request.proofHash,
     deviceName: approval.deviceName || request.deviceName,
     deviceType: tokenPlatformForRuntime(shell) ?? "pc",
     deviceUse: approval.managementDevice ? "management" : "operations",

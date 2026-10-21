@@ -350,7 +350,8 @@
       "/settings/mobile-terminals"
     ],
     "keys": [
-      "can_manage_terminals"
+      "can_manage_terminals",
+      "can_use_management_mobile"
     ]
   },
   {

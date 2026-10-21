@@ -1,4 +1,5 @@
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 /**
  * Live health of every till, plus the data-only remote requests an
  * administrator may send. Rendered both as its own page and inside the
@@ -114,9 +115,7 @@ export function TelemetryPanel() {
   };
 
   useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void load(), 60_000);
-    return () => window.clearInterval(timer);
+    return subscribePageDataRefresh(load, ["branch_telemetry", "terminal_tokens", "terminal_commands"], { intervalMs: 60_000, initial: true });
   }, [load]);
 
   const send = async (row: TelemetryRow, command: CommandName) => {

@@ -1,4 +1,6 @@
 import { formatDate as posDisplayDate } from "@/lib/time-zone";
+import { PAGE_DATA_CACHE, pageDataScope } from "@/lib/page-data-cache";
+import { useAuth } from "@/lib/pos-auth";
 import { sameBranchId } from "@/lib/branch-id";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
@@ -67,6 +69,7 @@ type CashierRow = {
 
 function BusinessReport() {
   const { state, stores } = usePos();
+  const { user } = useAuth();
   const init = defaultRange(30);
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
@@ -74,11 +77,11 @@ function BusinessReport() {
   const reportStoreIds = storeId === "all" ? stores.map((store) => store.id) : [storeId];
   const history = useReportSales(state.sales, reportStoreIds, from, to);
   const arrivals = useQuery({
-    queryKey: ["business-report-arrivals", storeId],
+    queryKey: ["business-report-arrivals", pageDataScope(user), storeId, reportStoreIds.slice().sort().join("|")],
     meta: { tables: ["purchase_orders", "purchase_order_items"] },
     queryFn: () =>
       loadCompleteReceivingHistory(storeId === "all" ? null : storeId, storeId === "all"),
-    staleTime: 60_000,
+    ...PAGE_DATA_CACHE,
   });
   const arrivedByProduct = useMemo(() => {
     const dates = new Map<string, string>();

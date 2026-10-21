@@ -30,6 +30,7 @@ export type ActivationPayload = {
  * learns which database to talk to and which one-time claim id to redeem.
  */
 export type ActivationPayloadV1 = {
+  managementSyncSecret?: string;
   supabaseUrl: string;
   supabaseAnonKey: string;
   /** Public connection pair for the isolated customer-auth project. */

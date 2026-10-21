@@ -12,6 +12,8 @@ export function pageForRoute(path: string) {
     .sort((a,b) => b.route.length - a.route.length)[0]?.page;
 }
 export function pageAllowsAction(matrix: Record<string, unknown>, key: string) {
+  // Device sign-in authority is independent of permission to open device settings.
+  if (key === "can_use_management_mobile") return true;
   const owners = PERMISSION_PAGES.filter(page => page.keys.includes(key as PermissionKey));
   return !owners.length || owners.some(page => pageEnabled(matrix, page.id));
 }

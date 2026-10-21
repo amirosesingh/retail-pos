@@ -1,4 +1,5 @@
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 /**
  * Admin console: issue an activation code for a Windows till and disconnect a
  * machine again at any time.
@@ -132,6 +133,7 @@ export function TerminalTokens({
   const [pairScan, setPairScan] = useState(false);
   const [pairTokenId, setPairTokenId] = useState("");
   const [pairProofHash, setPairProofHash] = useState("");
+  const [pairReplicaHash, setPairReplicaHash] = useState("");
   const [pairDialogOpen, setPairDialogOpen] = useState(false);
   const [issuedDetails, setIssuedDetails] = useState<RegistrationDetails | null>(null);
   const [pairChecking, setPairChecking] = useState(false);
@@ -149,6 +151,7 @@ export function TerminalTokens({
     setPairDialogOpen(false);
     setPairTokenId("");
     setPairProofHash("");
+    setPairReplicaHash("");
   };
 
   const refresh = useCallback(async () => {
@@ -193,10 +196,10 @@ export function TerminalTokens({
   // Keep online / offline honest without anyone pressing Refresh.
   useEffect(() => {
     const tick = window.setInterval(() => setNow(Date.now()), 30_000);
-    const reload = window.setInterval(() => void refresh(), 60_000);
+    const stopRefresh = subscribePageDataRefresh(refresh, ["terminal_tokens"], { intervalMs: 60_000 });
     return () => {
       window.clearInterval(tick);
-      window.clearInterval(reload);
+      stopRefresh();
     };
   }, [refresh]);
 
@@ -254,11 +257,12 @@ export function TerminalTokens({
           address: store!.address,
           phone: store!.phone,
         },
-        locationName: managementDevice ? "Management — user branch access" : locationName,
+        locationName: managementDevice ? "All branches — management" : locationName,
         deviceName: deviceName.trim(),
-        platform: only ?? "pc",
+        platform: pairTokenId ? "pc" : only ?? "pc",
         ...(pairTokenId ? { tokenId: pairTokenId } : {}),
         ...(pairProofHash ? { claimProof: pairProofHash } : {}),
+        ...(pairReplicaHash ? { replicaProofHash: pairReplicaHash } : {}),
       });
       setCode(issued);
       setIssuedDetails({ tokenId: token.id, deviceName: token.deviceName, locationId: token.locationId ?? undefined,
@@ -271,6 +275,7 @@ export function TerminalTokens({
       setDeviceName("");
       setPairTokenId("");
       setPairProofHash("");
+      setPairReplicaHash("");
       setPairDialogOpen(false);
       logger.log("settings_change", "Terminal token issued", "terminals", {
         location: locationName,
@@ -348,8 +353,8 @@ export function TerminalTokens({
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           {only === "mobile"
-            ? "Issue one code for each Android phone or tablet. Open the POS app on that device and scan or paste the code to assign it to this location."
-            : "Issue one code for each Windows counter PC. Open the POS app on that PC and scan or paste the code to assign it to this location."}
+            ? "Issue one code for each Android or iOS device. Choose branch operations or management, then scan or paste the code in the app."
+            : "Issue one code for each Windows PC. Choose branch operations or management, then scan or paste the code in the app."}
         </p>
         <p className="mt-2 text-xs text-muted-foreground">
           This registers the device, not a person. Staff with terminal-management permission issue
@@ -360,7 +365,7 @@ export function TerminalTokens({
           <Label>Device use</Label>
           <ThemedSelect ariaLabel="Device use" value={management ? "management" : "branch"}
             onChange={(value) => setManagement(value === "management")}
-            options={[{ value: "branch", label: "Branch operations" }, { value: "management", label: "Management — administrator or supervisor" }]} />
+            options={[{ value: "branch", label: "Branch operations" }, { value: "management", label: "Management — all branches" }]} />
           {management && <p className="text-xs text-muted-foreground">No fixed branch. The signed-in manager keeps their own permissions and assigned branches.</p>}
         </div>}
         <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
@@ -400,7 +405,7 @@ export function TerminalTokens({
           </Button>
         </div>
 
-        {only !== "mobile" && <div className="mt-4 rounded-lg border border-dashed border-border p-3">
+        <div className="mt-4 rounded-lg border border-dashed border-border p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="text-xs font-medium">Pair a PC by scanning its screen</p>
@@ -430,6 +435,7 @@ export function TerminalTokens({
                   }
                   setPairTokenId(request.tokenId);
                   setPairProofHash(request.proofHash);
+                  setPairReplicaHash(request.replicaProofHash ?? "");
                   setDeviceName(request.deviceName);
                   setPairScan(false);
                   setPairDialogOpen(true);
@@ -441,7 +447,10 @@ export function TerminalTokens({
                     const existing = await fetchTokenStatus(request.tokenId);
                     if (sequence !== pairLookupSequence.current) return;
                     setPairExisting(existing);
-                    if (existing) setLocationId(existing.locationId);
+                    if (existing) {
+                      setLocationId(existing.locationId);
+                      setManagement(!existing.locationId);
+                    }
                   } catch {
                     if (sequence === pairLookupSequence.current)
                       setPairLookupError("Could not verify this terminal. Check the connection and scan again.");
@@ -453,7 +462,7 @@ export function TerminalTokens({
               />
             </div>
           )}
-        </div>}
+        </div>
 
         {code && claimed && (
           <div className="mt-5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4">
@@ -532,15 +541,15 @@ export function TerminalTokens({
           <DialogHeader>
             <DialogTitle>Approve terminal pairing</DialogTitle>
             <DialogDescription>
-              Confirm the terminal name and the branch it belongs to. This approval is bound to
+              Confirm the terminal name and device use. Branch operations require a location; management has no fixed branch. This approval is bound to
               the device that displayed the scanned QR and cannot activate another device.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <p role="status" className="text-sm text-muted-foreground">{pairChecking ? "Checking terminal registration…" : pairLookupError || (pairExisting ?
               pairExisting.status === "revoked" ? "This registration was revoked. Use the registered-terminal controls to review it." :
-              pairExisting.isClaimed ? "This terminal is already registered to the branch below." : "This request is already approved. Waiting for the terminal to activate." :
-              "QR verified. Choose the branch, review the backend, then approve.")}</p>
+              pairExisting.isClaimed ? "This terminal is already registered with the assignment below." : "This request is already approved. Waiting for the terminal to activate." :
+              "QR verified. Choose device use, review the assignment and backend, then approve.")}</p>
             <div className="rounded-md border bg-muted/40 p-3 text-xs">
               <p className="font-medium">Scanned pairing request</p>
               <p className="mt-1 break-all font-mono text-muted-foreground">{pairTokenId}</p>
@@ -556,6 +565,13 @@ export function TerminalTokens({
               />
             </div>
             <div className="space-y-1.5">
+              <Label>Device use</Label>
+              <ThemedSelect ariaLabel="Pairing device use" value={management ? "management" : "branch"}
+                onChange={(value) => { if (!pairExisting && !pairChecking) setManagement(value === "management"); }}
+                options={[{ value: "branch", label: "Branch operations" }, { value: "management", label: "Management — all branches" }]} />
+              {management && <p className="text-xs text-muted-foreground">No fixed branch. Staff permissions still control which branches and functions are available.</p>}
+            </div>
+            {!managementDevice && <div className="space-y-1.5">
               <Label>Assigned branch</Label>
               <ThemedSelect
                 ariaLabel="Assigned branch"
@@ -567,9 +583,9 @@ export function TerminalTokens({
                   label: `${store.name} — ${store.code}`,
                 }))}
               />
-            </div>
+            </div>}
             <TerminalRegistrationDetails details={{ tokenId: pairTokenId, deviceName,
-              locationName: pairExisting?.locationName || locationName, supabaseUrl: supabaseConfig().url,
+              locationName: managementDevice ? "All branches — management" : (pairExisting?.locationName || locationName), supabaseUrl: supabaseConfig().url,
               backendUrl: serverOrigin() || (typeof window !== "undefined" ? window.location.origin : "") }} />
           </div>
           <DialogFooter>
@@ -693,7 +709,7 @@ export function TerminalTokens({
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{t.locationName || "—"}</TableCell>
+                    <TableCell className="text-muted-foreground">{t.locationId ? (t.locationName || t.locationId) : "All branches — management"}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {t.platform === "mobile" ? "Phone / tablet" : "Windows till"}
                     </TableCell>

@@ -50,7 +50,9 @@ export function useReportSales(
         refresh();
       }, 100);
     });
-    const offCatchup = subscribeBackgroundRefresh(refresh);
+    // Sales-change hints stay immediate; a full historical reconciliation is
+    // only a fallback for missed events, not a once-per-minute table download.
+    const offCatchup = subscribeBackgroundRefresh(refresh, 300_000);
     return () => {
       off();
       if (timer) clearTimeout(timer);
@@ -83,7 +85,9 @@ export function useReportSales(
           let cursor: { ts: string; id: string } | null = null;
           for (;;) {
             if (cancelled) return;
-            const page = await loadSalesPage(storeId, cursor, 500);
+            const page = await loadSalesPage(storeId, cursor, 500, {
+              from: new Date(start).toISOString(), to: new Date(end).toISOString(),
+            });
             if (cancelled) return;
             for (const sale of page.rows) {
               const at = Date.parse(sale.createdAt);

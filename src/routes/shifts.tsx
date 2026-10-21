@@ -1,8 +1,8 @@
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { tenderSales } from "@/lib/shift-close";
 import { sameRecordId } from "@/lib/sale-identity";
-import { subscribeDataChange } from "@/lib/sync-engine";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Pencil, Printer, Users, Vault } from "lucide-react";
@@ -141,15 +141,10 @@ function Shifts() {
         if (alive) setSessions(local);
       }
     };
-    void refresh();
-    const offData = subscribeDataChange((change) => {
-      if (change.table === "shift_sessions") void refresh();
-    });
-    const t = window.setInterval(() => void refresh(), 60_000);
+    const offData = subscribePageDataRefresh(refresh, ["shift_sessions"], { allowOffline: true, initial: true });
     return () => {
       alive = false;
       offData();
-      window.clearInterval(t);
     };
   }, [currentStore.id, activeShift?.id, mayViewSignIns, signHistoryOpen]);
 

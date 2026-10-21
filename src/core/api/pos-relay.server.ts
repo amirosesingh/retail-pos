@@ -637,6 +637,7 @@ export type RelayCaller = {
   /** Verified physical terminal identity. Never accepted from a request body. */
   terminalId?: string | null;
   managementDevice?: boolean;
+  managementMobileDevice?: boolean;
 };
 
 /**
@@ -659,6 +660,7 @@ export async function verifyRelayCaller(input: {
   let terminalStore: string | null = null;
   let terminalId: string | null = null;
   let managementDevice = false;
+  let managementMobileDevice = false;
   let endedSession = false;
 
   // A cryptographic session record is the strongest proof: it can be revoked
@@ -719,6 +721,7 @@ export async function verifyRelayCaller(input: {
         terminalId = input.terminalToken;
         terminalStore = row.location_id ?? null;
         managementDevice = (row.platform === "mobile" || row.platform === "pc") && !terminalStore;
+        managementMobileDevice = row.platform === "mobile" && !terminalStore;
         identity ??= {
           kind: "terminal",
           label: input.terminalToken,
@@ -775,6 +778,6 @@ export async function verifyRelayCaller(input: {
   // administrator signed into that device may change permissions, but cannot
   // make the till read or write another branch's operational data.
   if (terminalStore) identity = { ...identity, storeId: terminalStore, terminalId };
-  if (managementDevice) identity = { ...identity, terminalId, managementDevice: true };
+  if (managementDevice) identity = { ...identity, terminalId, managementDevice: true, managementMobileDevice };
   return identity;
 }

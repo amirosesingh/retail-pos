@@ -91,7 +91,7 @@ class PullWorker {
       await refresh("held_orders", row => ids.has(String(row.id)));
     }
   }
-  async run({ branchId, batchSize = 500, onProgress = () => {} }) {
+  async run({ branchId, batchSize = 500, skipMembership = false, onProgress = () => {} }) {
     if (!branchId) throw new Error("A branch is required for synchronization.");
     // A single legacy settings/audit row can approach 2 MiB. Keep downloads at
     // the database's byte-safe minimum even when a caller asks for a larger
@@ -145,6 +145,9 @@ class PullWorker {
       batch.rows.length = 0; batch.tombstones.length = 0;
       if (batch.count < page.limit) break;
     }
+    // Management replication is POS-only and has no signed-in membership authority.
+    if (skipMembership)
+      return { merged, conflicts: conflictCount, membershipMirrored, membershipDeferred, deferredHeldDeletion, deferredLocalChanges };
     let membershipCheckpoint = await this.checkpoints.get(branchId, "__membership_directory__", "pull");
     try {
       while (true) {

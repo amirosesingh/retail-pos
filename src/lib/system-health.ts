@@ -102,10 +102,13 @@ export async function checkDatabase(): Promise<ServiceCheck> {
 export function checkRealtime(timeoutMs = 6000): Promise<ServiceCheck> {
   return new Promise((resolve) => {
     const started = Date.now();
+    let finished = false;
     const finish = (state: ServiceState, detail: string) => {
+      if (finished) return;
+      finished = true;
       window.clearTimeout(timer);
       try {
-        void supabaseExternal.removeChannel(channel);
+        void supabaseExternal.removeChannel(channel).catch(() => undefined);
       } catch {
         /* already gone */
       }

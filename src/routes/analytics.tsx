@@ -1,4 +1,5 @@
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
+import { PAGE_DATA_CACHE, pageDataScope } from "@/lib/page-data-cache";
 import { effectiveTimeZone } from "@/lib/time-zone";
 import { branchChartColor, ANALYTICS_COLORS } from "@/lib/analytics-design";
 import { createFileRoute } from "@tanstack/react-router";
@@ -90,7 +91,7 @@ function LiveBoard() {
   };
 
   const query = useQuery({
-    queryKey: ["analytics-board", user?.staffId, currentStore.id, stores.map(store => store.id).sort().join("|"), effectiveTimeZone(), from, to],
+    queryKey: ["analytics-board", pageDataScope(user), currentStore.id, stores.map(store => store.id).sort().join("|"), effectiveTimeZone(), from, to],
     queryFn: () => fetchBoard(from, to),
     enabled: allowed,
     meta: {
@@ -103,7 +104,7 @@ function LiveBoard() {
         "stores",
       ],
     },
-    staleTime: 30_000,
+    ...PAGE_DATA_CACHE,
   });
 
   const filter = useMemo(
