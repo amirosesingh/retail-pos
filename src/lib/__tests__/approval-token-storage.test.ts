@@ -40,7 +40,7 @@ vi.mock("../secure-cloud-config", () => ({
 import {
   enrollOwnApprovalToken,
   loadApprovalToken,
-  clearApprovalToken,
+  clearApprovalToken, setupOfflineApprovalToken, unlockOfflineApprovalToken, offlineTokenOwner,
 } from "../approval-token-client";
 beforeEach(() => {
   fixture.values.clear();
@@ -112,4 +112,34 @@ describe("native phone approval enrollment (Android Keystore / iOS Keychain)", (
     }
     expect(await loadApprovalToken()).toBeNull();
   });
+});
+
+it("retains only a locked token on logout, unlocks offline without signing in, and clears on unpair", async () => {
+  await enrollOwnApprovalToken("manager");
+  await setupOfflineApprovalToken("874392");
+  const raw = fixture.values.get("pos.approval-token.locked.v1")!;
+  expect(raw).not.toContain(Buffer.from("12345678901234567890").toString("base64"));
+  await clearApprovalToken(); fixture.proof = "";
+  Object.assign(navigator, { onLine: false });
+  expect(await loadApprovalToken()).toBeNull();
+  expect((await offlineTokenOwner())?.userId).toBe("manager");
+  expect((await unlockOfflineApprovalToken("874392")).userId).toBe("manager");
+  expect(fixture.proof).toBe("");
+  await clearApprovalToken(true);
+  expect(await offlineTokenOwner()).toBeNull();
+});
+it("persists failed unlock attempts and checks the device, project, permission and lease", async () => {
+  await enrollOwnApprovalToken("manager"); await setupOfflineApprovalToken("874392");
+  await expect(unlockOfflineApprovalToken("111111")).rejects.toThrow("Incorrect");
+  await expect(unlockOfflineApprovalToken("874392")).rejects.toThrow("Too many");
+  fixture.project = "https://wrong.test";
+  expect(await offlineTokenOwner()).toBeNull();
+  fixture.project = "https://project.test";
+  fixture.fetch.mockResolvedValue({ ok: true, json: async () => ({ ok: true, credential: null }) });
+  await enrollOwnApprovalToken("manager");
+  expect(await offlineTokenOwner()).toBeNull();
+});
+it("deduplicates concurrent enrollment requests", async () => {
+  await Promise.all([enrollOwnApprovalToken("manager"), enrollOwnApprovalToken("manager")]);
+  expect(fixture.fetch).toHaveBeenCalledTimes(1);
 });

@@ -1,3 +1,4 @@
+import { syncState } from "@/lib/sync-status";
 /**
  * Online kill-switch.
  *
@@ -192,6 +193,8 @@ export function useRevocationCheck(): RevocationState {
     if (!config) return;
     let cancelled = false;
     let checking = false;
+    let reportedSync = syncState().lastSyncAt;
+    const watchingSince = Date.now();
 
     const check = async () => {
       if (checking) return;
@@ -206,15 +209,20 @@ export function useRevocationCheck(): RevocationState {
           // Persist the lock before clearing identity so the shell never falls
           // through to sign-in or activation during the state transition.
           setBlocked(true, verdict.outcome);
-          clearTerminalConfig();
+          await clearTerminalConfig();
           clearActivationRecord();
           return;
         }
         setBlocked(false);
-        void stampHeartbeat(config.tokenId);
+        const completedSync = syncState().lastSyncAt;
+        await stampHeartbeat(config.tokenId, { synced: Boolean(completedSync && Date.parse(completedSync) >= watchingSince && completedSync !== reportedSync) });
+        reportedSync = completedSync;
         void writeActivationRecord({ tokenId: config.tokenId, stamp: verdict.stamp ?? null }).catch(
           () => {},
         );
+      } catch {
+        // Network/heartbeat failures are retried on the next check. A confirmed
+        // revocation stays locked even if native credential cleanup fails.
       } finally {
         checking = false;
       }

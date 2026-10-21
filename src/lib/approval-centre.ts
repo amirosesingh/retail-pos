@@ -133,28 +133,34 @@ export async function claimMatchingApproval(input: {
  * Live delivery of decisions and new requests. Falls back silently when the
  * database has no realtime — the poll still reconciles.
  */
-export function subscribeApprovals(onChange: () => void | Promise<void>): () => void {
+export function subscribeApprovals(onChange: () => void | Promise<void>, { allBranches = false, branchId = activeBranchId() } = {}): () => void {
   const cleanups: Array<() => void> = [];
   let stopped = false;
+  let live = false;
+  let lastRead = Date.now();
+  const visible = () => document.visibilityState !== "hidden" && (Boolean(localDb()) || navigator.onLine);
   let running = false;
   let dirty = false;
   let scheduled: ReturnType<typeof setTimeout> | undefined;
   const refresh = async () => {
     scheduled = undefined;
-    if (stopped || running) return;
+    if (stopped || running || !visible()) return;
     running = true;
     dirty = false;
     try {
       await onChange();
+      lastRead = Date.now();
+    } catch {
+      // A failed background read must not become an unhandled rejection.
     } finally {
       running = false;
-      if (dirty && !stopped) scheduled = setTimeout(() => void refresh(), 100);
+      if (dirty && !stopped && visible()) scheduled = setTimeout(() => void refresh(), 100);
     }
   };
   const changed = () => {
     if (stopped) return;
     dirty = true;
-    if (!running && !scheduled) scheduled = setTimeout(() => void refresh(), 100);
+    if (visible() && !running && !scheduled) scheduled = setTimeout(() => void refresh(), 100);
   };
   cleanups.push(() => {
     stopped = true;
@@ -168,26 +174,32 @@ export function subscribeApprovals(onChange: () => void | Promise<void>): () => 
   // while visible so remote decisions still reach Holds without navigation.
   if (typeof window !== "undefined") {
     const timer = window.setInterval(() => {
-      if (document.visibilityState !== "hidden" && !running) changed();
+      if (visible() && !running && Date.now() - lastRead >= (live ? 300_000 : 5_000)) changed();
     }, 5_000);
     cleanups.push(() => window.clearInterval(timer));
     window.addEventListener("focus", changed);
     window.addEventListener("online", changed);
+    document.addEventListener("visibilitychange", changed);
     cleanups.push(() => {
       window.removeEventListener("focus", changed);
       window.removeEventListener("online", changed);
+      document.removeEventListener("visibilitychange", changed);
     });
   }
   // PIN-only terminals use the protected relay and the visible-page
   // reconciliation poll. Without a Supabase staff JWT, a filtered Postgres
   // subscription is rejected before RLS as an "invalid column" error.
   if (!hasStaffSession()) return () => cleanups.forEach((cleanup) => cleanup());
-  const branchId = activeBranchId();
-  if (branchId) cleanups.push(subscribeOwnedPostgresChanges(
+  if (branchId || allBranches) cleanups.push(subscribeOwnedPostgresChanges(
     supabaseExternal,
     "pos-approval-centre",
-    { event: "*", schema: "public", table: "authorization_requests", filter: `store_id=eq.${branchId}` },
+    { event: "*", schema: "public", table: "authorization_requests", ...(allBranches ? {} : { filter: `store_id=eq.${branchId}` }) },
     changed,
+    status => {
+      const connected = status === "SUBSCRIBED";
+      if (connected && !live) changed();
+      live = connected;
+    },
   ));
   return () => cleanups.forEach((cleanup) => cleanup());
 }

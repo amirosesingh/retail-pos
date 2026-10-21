@@ -18,7 +18,7 @@ import { isTerminalApp } from "@/platform-config/platform";
 import { hydrateBackendUrl } from "./backend-config";
 import { initCloudConfigFromShell } from "./secure-cloud-config";
 import { hydrateTerminalConfig } from "@/core/activation/terminal-tokens";
-import { hydrateNativeStorage } from "@/platforms/mobile/mobile-storage";
+import { hydrateNativeStorage, flushNativeStorage } from "@/platforms/mobile/mobile-storage";
 
 export type ProfileHydration = "idle" | "hydrating" | "hydrated";
 
@@ -106,4 +106,9 @@ export function subscribeProfileHydrated(cb: () => void): () => void {
 export function __resetProfileHydrationForTests(): void {
   state = "idle";
   inFlight = null;
+}
+
+/** Finish durable device-setting changes before an intentional restart. */
+export async function flushConnectionProfile(): Promise<void> {
+  await flushNativeStorage();
 }

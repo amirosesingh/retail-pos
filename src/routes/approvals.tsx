@@ -217,8 +217,8 @@ function ApprovalsPage() {
   // The queue is decided from another screen, so it refreshes on its own and
   // whenever this window is looked at again.
   useEffect(() => {
-    return subscribeApprovals(load);
-  }, [load]);
+    return subscribeApprovals(load, { allBranches, branchId: storeId });
+  }, [load, allBranches, storeId]);
 
   const decide = async (row: AuthorizationRequest, approve: boolean) => {
     setBusy(row.id);

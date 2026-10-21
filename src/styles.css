@@ -1144,7 +1144,6 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
   display: grid;
   grid-template-rows: 1fr;
   transform-origin: top center;
-  will-change: grid-template-rows, opacity, transform;
 }
 
 .ui-animated-list-item-inner {

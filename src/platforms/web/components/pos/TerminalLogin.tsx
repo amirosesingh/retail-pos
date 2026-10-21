@@ -1,3 +1,4 @@
+import { ApprovalTokenButton } from "@/platform-config/approval-token";
 import { useEffect, useState } from "react";
 import { Loader2, Lock, ReceiptText } from "lucide-react";
 import { useAuth } from "@/lib/pos-auth";
@@ -52,6 +53,7 @@ export function TerminalLogin() {
           <Lock className="ml-auto size-4 text-muted-foreground" />
         </div>
 
+        <ApprovalTokenButton />
         <Tabs
           value={tab}
           onValueChange={(v) => {

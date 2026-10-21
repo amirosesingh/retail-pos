@@ -132,20 +132,31 @@ export async function manageApprovalMethods(
   });
   return { ok: true as const };
 }
+async function issuerOptions(id: string) {
+  const path = `terminal_tokens?id=eq.${encodeURIComponent(id)}&select=`;
+  const response = await serviceRest(path + "platform,approval_token_enabled");
+  const result = await response.json();
+  if (response.ok) return result as { platform: string; approval_token_enabled?: boolean }[];
+  if (["42703", "PGRST204"].includes(result?.code) && /approval_token_enabled/.test(result?.message || ""))
+    return rows<{ platform: string; approval_token_enabled?: boolean }>(path + "platform");
+  throw new Error("Approval credential records could not be read");
+}
 export async function enrollApprovalToken(proof: CallerProof) {
   const actor = await requireCallerScope(proof);
   if (!actor.staffUserId || actor.stale || actor.kind === "terminal" || !proof.terminalToken)
     throw new Error("Sign in on a registered terminal first");
   const terminal = await verifyRelayCaller({ terminalToken: proof.terminalToken });
-  if (!terminal.terminalId || !terminal.storeId)
-    throw new Error("Terminal registration is required");
-  if (actor.storeId && actor.storeId.toLowerCase() !== terminal.storeId.toLowerCase())
+  if (!terminal.terminalId) throw new Error("Terminal registration is required");
+  const deviceOptions = await issuerOptions(terminal.terminalId);
+  if (!["ios", "android", "mobile"].includes(deviceOptions[0]?.platform) || deviceOptions[0]?.approval_token_enabled === false)
+    return { ok: true as const, credential: null };
+  if (actor.storeId && terminal.storeId && actor.storeId.toLowerCase() !== terminal.storeId.toLowerCase())
     throw new Error("Terminal branch does not match the user");
   const person = await approvalPerson(actor.staffUserId);
   if (
     !person ||
     !approvalMethods(person.permissions).totp ||
-    !(await eligible(person, terminal.storeId))
+    !(await eligible(person, terminal.storeId || person.store_id || actor.storeId || ""))
   )
     return { ok: true as const, credential: null };
   const proposed = seal(randomBytes(20).toString("base64"));
@@ -157,7 +168,7 @@ export async function enrollApprovalToken(proof: CallerProof) {
       userId: person.user_id,
       name: person.full_name,
       terminalId: terminal.terminalId,
-      branchId: terminal.storeId,
+      branchId: terminal.storeId || person.store_id || "",
       secret: unseal(device.secret_ciphertext),
       validUntil: Date.now() + APPROVAL_TOKEN_LEASE_MS,
     },
@@ -186,9 +197,11 @@ export async function verifyApprovalTotp(
       const terminal = await verifyRelayCaller({ terminalToken: device.terminal_id });
       if (
         !terminal.terminalId ||
-        (person.store_id && terminal.storeId?.toLowerCase() !== branch.toLowerCase())
+        (person.store_id && terminal.storeId && terminal.storeId.toLowerCase() !== branch.toLowerCase())
       )
         continue;
+      const issuer = await issuerOptions(device.terminal_id);
+      if (!["ios", "android", "mobile"].includes(issuer[0]?.platform) || issuer[0]?.approval_token_enabled === false) continue;
       const step = await matchingTotpStep(unseal(device.secret_ciphertext), code);
       if (step === null || step <= Number(device.last_used_step)) continue;
       if (!(await state("consume", person.user_id, device.terminal_id, null, step))) continue;
@@ -217,7 +230,7 @@ export async function registerApprovalVerifier(proof: CallerProof, publicKey: st
   const registration = await rows<{ platform: string }>(
     `terminal_tokens?id=eq.${encodeURIComponent(terminal.terminalId)}&select=platform`,
   );
-  if (registration[0]?.platform !== "windows")
+  if (!["windows", "pc"].includes(registration[0]?.platform))
     throw new Error("Windows terminal registration required");
   const parsed = createPublicKey(publicKey);
   if (
@@ -265,7 +278,7 @@ export async function approvalVerifierBundle(terminalToken: string) {
   const registration = await rows<{ platform: string }>(
     `terminal_tokens?id=eq.${encodeURIComponent(terminalToken)}&select=platform`,
   );
-  if (registration[0]?.platform !== "windows")
+  if (!["windows", "pc"].includes(registration[0]?.platform))
     throw new Error("Only Windows SQL tills may receive offline verifiers");
   const verifier = (await state("get_verifier", "", terminal.terminalId)) as {
     public_key?: string;

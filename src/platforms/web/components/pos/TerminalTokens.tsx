@@ -1,3 +1,6 @@
+import { Switch } from "@/components/ui/switch";
+import { setTerminalApprovalEnabled } from "@/core/activation/terminal-tokens";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 /**
@@ -13,7 +16,7 @@ import {
   Camera,
   MonitorSmartphone,
   RefreshCw,
-  ShieldX,
+  ShieldX, ShieldCheck,
 } from "lucide-react";
 import qrcode from "qrcode-generator";
 import { toast } from "sonner";
@@ -111,11 +114,16 @@ export function TerminalTokens({
   const { stores } = usePos();
   const [tokens, setTokens] = useState<TerminalToken[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const refreshPendingRef = useRef(false);
   const [error, setError] = useState("");
   const [locationId, setLocationId] = useState("");
   const [deviceName, setDeviceName] = useState("");
   const [management, setManagement] = useState(false);
+  const [approvalEnabled, setApprovalEnabled] = useState(false);
+  const [showRevoked, setShowRevoked] = useState(false);
+  const [replacementBranch, setReplacementBranch] = useState("");
+  const [replacementApproval, setReplacementApproval] = useState(false);
   const managementDevice = management;
   const [issuing, setIssuing] = useState(false);
   const issuePending = useRef(false);
@@ -159,7 +167,9 @@ export function TerminalTokens({
     refreshPendingRef.current = true;
     setLoading(true);
     try {
-      setTokens(await listTerminalTokens());
+      const next = await listTerminalTokens(showRevoked);
+      setTokens(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+      setLoaded(true);
       setError("");
     } catch (e) {
       setError(
@@ -170,7 +180,7 @@ export function TerminalTokens({
       refreshPendingRef.current = false;
       setLoading(false);
     }
-  }, []);
+  }, [showRevoked]);
 
   useEffect(() => {
     void refresh();
@@ -250,6 +260,7 @@ export function TerminalTokens({
     try {
       const { code: issued, token } = await issueTerminalToken({
         management: managementDevice,
+        approvalTokenEnabled: approvalEnabled,
         location: managementDevice ? null : {
           id: store!.id,
           code: store!.code,
@@ -318,7 +329,10 @@ export function TerminalTokens({
   const reissue = async (token: TerminalToken) => {
     setReissuing(token.id);
     try {
-      const result = await reissueTerminalToken(token);
+      const branch = stores.find(store => store.id === replacementBranch);
+      if (replacementBranch && !branch) throw new Error("Choose an available branch before reissuing.");
+      const result = await reissueTerminalToken(token, { locationId: replacementBranch || null,
+        locationName: branch ? `${branch.name} — ${branch.code}` : "All branches — management", approvalTokenEnabled: replacementApproval });
       setReissued(result);
       setReissueCopied(false);
       logger.log("settings_change", "Terminal token re-issued", "terminals", {
@@ -364,10 +378,11 @@ export function TerminalTokens({
         {<div className="mt-4 space-y-1.5">
           <Label>Device use</Label>
           <ThemedSelect ariaLabel="Device use" value={management ? "management" : "branch"}
-            onChange={(value) => setManagement(value === "management")}
+            onChange={(value) => { setManagement(value === "management"); setApprovalEnabled(value === "management"); }}
             options={[{ value: "branch", label: "Branch operations" }, { value: "management", label: "Management — all branches" }]} />
           {management && <p className="text-xs text-muted-foreground">No fixed branch. The signed-in manager keeps their own permissions and assigned branches.</p>}
         </div>}
+        {only === "mobile" && <label className="mt-3 flex items-center gap-2 text-sm"><Switch aria-label="Enable approval tokens on this phone" checked={approvalEnabled} onCheckedChange={setApprovalEnabled} />Enable approval tokens on this phone</label>}
         <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
           {!managementDevice && <div className="space-y-1.5">
             <Label className="text-[11px] text-muted-foreground">Location / warehouse</Label>
@@ -606,7 +621,8 @@ export function TerminalTokens({
       {/* ------------------------------- tokens -------------------------- */}
       <section className="rounded-xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
-          <h2 className="text-sm font-semibold">Registered terminals</h2>
+          <div className="space-y-1"><h2 className="text-sm font-semibold">Registered terminals</h2>
+          <label className="flex items-center gap-2 text-xs"><Switch aria-label="Include revoked registrations" checked={showRevoked} onCheckedChange={setShowRevoked} />Include revoked registrations</label></div>
           <Button
             variant="ghost"
             size="sm"
@@ -664,7 +680,7 @@ export function TerminalTokens({
           </div>
         )}
 
-        {loading ? (
+        {loading && !loaded ? (
           <div className="flex items-center gap-2 px-5 py-6 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> Loading terminals…
           </div>
@@ -680,8 +696,6 @@ export function TerminalTokens({
               <TableRow>
                 <TableHead>Device name</TableHead>
                 <TableHead>Location / warehouse</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Status</TableHead>
                 <TableHead>Version</TableHead>
                 <TableHead>Last seen</TableHead>
                 <TableHead>Last sync</TableHead>
@@ -696,7 +710,7 @@ export function TerminalTokens({
                 .map((t) => (
                   <TableRow key={t.id} className="hover:bg-muted/40">
                     <TableCell className="font-medium">
-                      {t.deviceName}
+                      <div className="flex flex-wrap items-center gap-2"><TerminalStatusBadge token={t} now={now} /><span>{t.deviceName}</span></div>
                       <span
                         title={t.id}
                         className="block font-mono text-[11px] font-normal text-muted-foreground"
@@ -709,15 +723,15 @@ export function TerminalTokens({
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{t.locationId ? (t.locationName || t.locationId) : "All branches — management"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {t.platform === "mobile" ? "Phone / tablet" : "Windows till"}
-                    </TableCell>
                     <TableCell>
-                      <TerminalStatusBadge token={t} now={now} />
+                      <div className="flex flex-col items-start gap-1">
+                        <Badge variant="outline" className="text-[10px]">{t.locationId ? (t.locationName || t.locationId) : "All branches — management"}</Badge>
+                        <Badge variant="secondary" className="text-[10px]">{t.platform === "mobile" ? "Phone / tablet" : "Windows till"}</Badge>
+                        {t.platform === "mobile" && <span className="text-[10px] text-muted-foreground">Soft token {t.approvalTokenEnabled === false ? "off" : "on"}</span>}
+                      </div>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground tabular-nums">
-                      {t.appVersion ?? "—"}
+                      {t.appVersion || "Not reported"}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {t.lastSeenAt ? (
@@ -730,35 +744,44 @@ export function TerminalTokens({
                       )}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {t.lastSyncAt ? sinceWords(t.lastSyncAt, now) : "Never"}
+                      {t.lastSyncAt ? <>{sinceWords(t.lastSyncAt, now)}<span className="block">{formatDate(t.lastSyncAt)}</span></> : "Not reported"}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {formatDate(t.activatedAt)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        <Button
+                        <Tooltip><TooltipTrigger asChild><Button
                           variant="outline"
-                          size="sm"
-                          className="h-8 text-xs"
+                          size="icon"
+                          className="size-8"
+                          aria-label="Reissue code"
                           disabled={reissuing === t.id || Boolean(t.replacedBy)}
-                          onClick={() => setPendingReissue(t)}
+                          onClick={() => { setPendingReissue(t); setReplacementBranch(t.locationId || ""); setReplacementApproval(t.approvalTokenEnabled !== false); }}
                         >
                           {reissuing === t.id ? (
                             <Loader2 className="size-3.5 animate-spin" />
                           ) : (
                             <RefreshCw className="size-3.5" />
                           )}
-                          Re-issue code
-                        </Button>
-                        <Button
+                        </Button></TooltipTrigger><TooltipContent>Reissue code</TooltipContent></Tooltip>
+                        <Tooltip><TooltipTrigger asChild><Button
                           variant="outline"
-                          size="sm"
-                          className="h-8 border-destructive/40 text-xs text-destructive hover:bg-destructive/10"
+                          size="icon"
+                          className="size-8 text-destructive"
+                          aria-label="Revoke registration"
+                          disabled={t.status === "revoked"}
                           onClick={() => setPendingRevoke(t)}
                         >
-                          <ShieldX className="size-3.5" /> Revoke authenticity
-                        </Button>
+                          <ShieldX className="size-3.5" />
+                        </Button></TooltipTrigger><TooltipContent>Revoke registration</TooltipContent></Tooltip>
+                        {t.platform === "mobile" && t.status !== "revoked" && <Tooltip><TooltipTrigger asChild>
+                          <Button size="icon" variant="ghost" className="size-8" aria-label={t.approvalTokenEnabled === false ? "Enable soft token" : "Disable soft token"}
+                            onClick={async () => { try { await setTerminalApprovalEnabled(t.id, t.approvalTokenEnabled === false); await refresh(); toast.success("Terminal soft-token option saved"); }
+                              catch (e) { toast.error(describeError(e, "Updating terminal soft token")); } }}>
+                            <ShieldCheck className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger><TooltipContent>{t.approvalTokenEnabled === false ? "Enable soft token" : "Disable soft token"}</TooltipContent></Tooltip>}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -803,9 +826,18 @@ export function TerminalTokens({
               must be activated again with the new one.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-3">
+            <Label>Replacement device use / branch</Label>
+            <ThemedSelect ariaLabel="Replacement device use or branch" value={replacementBranch || "__management"}
+              onChange={value => setReplacementBranch(value === "__management" ? "" : value)}
+              options={[{ value: "__management", label: "Management — all branches" }, ...stores.map(store => ({ value: store.id, label: `${store.name} — ${store.code}` }))]} />
+            <p className="text-xs text-muted-foreground">Keeps the original assignment unless you change it. Staff permissions still apply.</p>
+            {pendingReissue?.platform === "mobile" && <label className="flex items-center gap-2 text-sm"><Switch aria-label="Enable approval tokens" checked={replacementApproval} onCheckedChange={setReplacementApproval} />Enable approval tokens</label>}
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              disabled={Boolean(replacementBranch) && !stores.some(store => store.id === replacementBranch)}
               onClick={() => {
                 const token = pendingReissue;
                 setPendingReissue(null);

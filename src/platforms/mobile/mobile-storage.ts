@@ -28,6 +28,7 @@ let installed = false;
 let hydrated = false;
 let hydration: Promise<void> | null = null;
 const pendingWrites = new Set<Promise<void>>();
+const pendingRemovals = new Set<string>();
 function trackWrite(work: Promise<void>) {
   const settled = work.catch(() => {}).finally(() => pendingWrites.delete(settled));
   pendingWrites.add(settled);
@@ -63,16 +64,16 @@ function install(store: Prefs) {
 
   ls.setItem = (key: string, value: string) => {
     setItem(key, value);
-    if (isPersistentKey(key)) trackWrite(store.set({ key, value }));
+    if (isPersistentKey(key)) { pendingRemovals.delete(key); trackWrite(store.set({ key, value })); }
   };
   ls.removeItem = (key: string) => {
     removeItem(key);
-    if (isPersistentKey(key)) trackWrite(store.remove({ key }));
+    if (isPersistentKey(key)) { pendingRemovals.add(key); trackWrite(store.remove({ key })); }
   };
   ls.clear = () => {
     const keys = Object.keys(ls).filter((k) => k.startsWith(PREFIX));
     clear();
-    for (const key of keys) trackWrite(store.remove({ key }));
+    for (const key of keys) { pendingRemovals.add(key); trackWrite(store.remove({ key })); }
   };
 }
 
@@ -83,6 +84,15 @@ export async function flushNativeStorage(): Promise<void> {
   await Promise.all([...pendingWrites]);
   const loaded = await loadPrefs();
   if (!loaded) throw new Error("Cannot preserve saved device settings. Retry the update.");
+  // A reload after unpairing must not restore a deleted registration from
+  // Preferences if its asynchronous write-through removal failed.
+  for (const key of [...pendingRemovals]) {
+    if (window.localStorage.getItem(key) !== null) continue;
+    await loaded.value.remove({ key });
+    if ((await loaded.value.get({ key })).value !== null)
+      throw new Error("Could not remove saved device settings. Please retry.");
+    pendingRemovals.delete(key);
+  }
   for (const key of Object.keys(window.localStorage).filter(isPersistentKey)) {
     const value = window.localStorage.getItem(key);
     if (value === null) continue;

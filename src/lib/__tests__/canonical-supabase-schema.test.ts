@@ -187,6 +187,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261020033000_allow_ios_mobile_terminal_claim.sql",
       "supabase/migrations/20261020061456_fix_staff_identity_upsert_guard.sql",
       "supabase/migrations/20261020134403_management_terminal_read_replica.sql",
+      "supabase/migrations/20261021013221_terminal_reissue_and_mobile_tokens.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

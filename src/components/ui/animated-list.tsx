@@ -64,7 +64,7 @@ export function useAnimatedItems<T extends object>(items: T[], getKey: (item: T)
           .filter((row) => row.phase !== "exiting")
           .map((row) => (row.phase === "entering" ? { ...row, phase: "present" } : row)),
       );
-    }, 320);
+    }, 500);
     return () => window.clearTimeout(timer);
   }, [rendered]);
 
