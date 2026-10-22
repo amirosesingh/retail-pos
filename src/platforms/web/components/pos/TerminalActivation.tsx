@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   activateTerminal,
+  readTerminalConfig,
   ActivationError,
   activateWithTokenId,
   clearPairingRequest,
@@ -82,6 +83,7 @@ export function TerminalActivation({
   useEffect(() => subscribeConnectivity(() => setOnline(isCloudConnected())), []);
   const branding = useBranding();
   const mobile = isNative();
+  const [replacingRegistration] = useState(() => mobile && Boolean(readTerminalConfig()?.tokenId));
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   // React state is not synchronous: camera callbacks can arrive twice before
@@ -219,7 +221,8 @@ export function TerminalActivation({
         <Button className="mt-4 w-full" onClick={() => {
           if (continued.current) return;
           continued.current = true;
-          onActivated(done);
+          if (replacingRegistration) window.location.reload();
+          else onActivated(done);
         }}>
           Continue
         </Button>
@@ -243,10 +246,14 @@ export function TerminalActivation({
 
       <p className="mt-4 text-sm text-muted-foreground">
         Ask a supervisor or administrator for {mobile ? "a mobile terminal" : "a Windows till"} activation code
-        for this location. Scan the QR code or paste the text block below. This code registers the
+        for a branch or Management. Scan the QR code or paste the text block below. This code registers the
         device; each staff member signs in with their own account afterward.
       </p>
 
+      {replacingRegistration && <p className="mt-2 text-sm text-muted-foreground">
+        Scan or enter a new mobile token to change the registered branch or switch to Management.
+        A successful change requires staff to sign in again with their existing permissions.
+      </p>}
       <Tabs defaultValue="scan" className="mt-4">
         <TabsList className="grid w-full grid-cols-2 bg-muted">
           <TabsTrigger value="scan">

@@ -46,6 +46,13 @@ export function boundBranchName(): string | null {
   return readStored(BOUND_NAME_KEY);
 }
 
+/** Remove a previous hardware binding after an explicit mobile reassignment. */
+export function clearTerminalBranchBinding(): void {
+  writeStored(BOUND_ID_KEY, null);
+  writeStored(BOUND_NAME_KEY, null);
+  knownBranchIds = [];
+}
+
 /**
  * Pin this device to a branch. Called at start-up from the terminal's
  * activation claim and again on every sign-in, so whoever uses this till
@@ -53,6 +60,10 @@ export function boundBranchName(): string | null {
  */
 export function bindTerminalBranch(id?: string | null, name?: string | null): string | null {
   const config = readTerminalConfig();
+  if (config?.deviceUse === "management" && !clean(config.locationId)) {
+    clearTerminalBranchBinding();
+    return null;
+  }
   const nextId = clean(config?.locationId) ?? clean(id) ?? boundBranchId();
   const nextName = clean(config?.locationName) ?? clean(name) ?? boundBranchName();
   writeStored(BOUND_ID_KEY, nextId);
@@ -78,6 +89,8 @@ export function soleBranchId(): string | null {
 
 /** Branch id for this till, or null when nothing knows one yet. */
 export function activeBranchId(inView?: string | null): string | null {
+  const config = readTerminalConfig();
+  if (config?.deviceUse === "management" && !clean(config.locationId)) return clean(inView);
   return (
     clean(readTerminalConfig()?.locationId) ??
     boundBranchId() ??
@@ -89,6 +102,8 @@ export function activeBranchId(inView?: string | null): string | null {
 
 /** Human name for the branch, for messages and headers. */
 export function activeBranchName(inView?: string | null): string | null {
+  const config = readTerminalConfig();
+  if (config?.deviceUse === "management" && !clean(config.locationId)) return clean(inView);
   return (
     clean(readTerminalConfig()?.locationName) ??
     boundBranchName() ??

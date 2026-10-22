@@ -190,6 +190,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261021013221_terminal_reissue_and_mobile_tokens.sql",
       "supabase/migrations/20261021020900_pos_rules_drawer_default.sql",
       "supabase/migrations/20261021030000_windows_offline_login_pin.sql",
+      "supabase/migrations/20261022024932_management_registration_claim.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

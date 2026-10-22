@@ -23,7 +23,7 @@ import { clearDeviceSecret, getDeviceSecret, setDeviceSecret } from "@/lib/devic
 import { recordActivationAttempt } from "@/core/activation/terminal-activation-log";
 import { resetHealthCache } from "@/core/activation/connection-health";
 import { canRelay, relayOp } from "@/core/api/sync-relay";
-import { saveBackendUrl } from "@/lib/backend-config";
+import { backendUrl, saveBackendUrl } from "@/lib/backend-config";
 import { serverOrigin } from "@/lib/server-origin";
 import { posFetch } from "@/lib/server-origin";
 import {
@@ -971,8 +971,45 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     backendUrl: payload.backend_url,
     activatedAt: new Date().toISOString(),
   };
-  if (config.backendUrl) await saveBackendUrl(config.backendUrl);
-  writeTerminalConfig(config);
+  const mobile = shell === "android" || shell === "ios";
+  if (mobile) {
+    // The server claim has succeeded. Persist before dropping the old session;
+    // failed validation/claims above never disturb the existing registration.
+    const previous = readTerminalConfig();
+    const previousBackend = await backendUrl();
+    try {
+      await setDeviceSecret(SEALED_NAME, config);
+      if (config.backendUrl) {
+        const saved = await saveBackendUrl(config.backendUrl);
+        if (!saved.ok) throw new ActivationError(saved.error || "Could not save the backend address.");
+      }
+      const { resetMobileRegistrationIdentity } = await import("./mobile-registration-identity");
+      await resetMobileRegistrationIdentity(Boolean(previous?.supabaseUrl && previous.supabaseKey));
+      cachedConfig = config;
+      hydrated = true;
+      window.localStorage.removeItem(CONFIG_KEY);
+      applyTenantOverride(config);
+      const { flushConnectionProfile } = await import("@/lib/connection-profile");
+      await flushConnectionProfile();
+      window.dispatchEvent(new CustomEvent(EVENT));
+    } catch (error) {
+      cachedConfig = previous;
+      applyTenantOverride(previous);
+      if (previous) await setDeviceSecret(SEALED_NAME, previous);
+      else clearDeviceSecret(SEALED_NAME);
+      const restored = await saveBackendUrl(previousBackend);
+      if (!restored.ok) throw new ActivationError("Could not restore the saved backend address. Open connection settings before retrying.");
+      const { flushConnectionProfile } = await import("@/lib/connection-profile");
+      await flushConnectionProfile();
+      throw error;
+    }
+  } else {
+    if (config.backendUrl) {
+      const saved = await saveBackendUrl(config.backendUrl);
+      if (!saved.ok) throw new ActivationError(saved.error || "Could not save the backend address.");
+    }
+    writeTerminalConfig(config);
+  }
   // Electron synchronization reads the OS-vault mirror, not renderer storage.
   // Await the protected mirror before reporting activation success; otherwise
   // a quick reload or smoke-test shutdown can leave the UI activated while
