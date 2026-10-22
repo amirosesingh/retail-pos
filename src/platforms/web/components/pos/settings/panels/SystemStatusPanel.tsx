@@ -1,3 +1,4 @@
+import { copyText } from "@/platform-config/clipboard";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useEffect, useState } from "react";
 import { Activity, ClipboardCopy, Copy, Eraser, PlugZap, RefreshCw } from "lucide-react";
@@ -346,8 +347,8 @@ Switching one off keeps its unavailable page at the same address. The POS stays 
           <Button
             size="sm"
             onClick={() => {
-              void navigator.clipboard.writeText(dnsInstructions);
-              toast.success("Instructions copied");
+              void copyText(dnsInstructions).then(() => toast.success("Instructions copied"))
+                .catch(() => toast.error("Could not copy. Please try again."));
             }}
           >
             <Copy className="size-4" /> Copy to clipboard

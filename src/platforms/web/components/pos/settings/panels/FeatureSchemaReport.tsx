@@ -1,3 +1,4 @@
+import { copyText } from "@/platform-config/clipboard";
 /**
  * "Schema & Feature Health" — every POS feature checked against the live
  * database with the exact query shapes the screens use. Nothing is written.
@@ -39,7 +40,7 @@ export function FeatureSchemaReport() {
   const copy = async () => {
     if (!report) return;
     try {
-      await navigator.clipboard.writeText(formatFeatureSchemaReport(report));
+      await copyText(formatFeatureSchemaReport(report));
       toast.success("Report copied");
     } catch {
       toast.error("This device would not allow copying");

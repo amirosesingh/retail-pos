@@ -1,3 +1,5 @@
+import { toast } from "sonner";
+import { copyText } from "@/platform-config/clipboard";
 /**
  * Explains exactly which reporting table or view the database refused and
  * which SQL file re-creates it, so the fix is one copy-paste away.
@@ -28,10 +30,10 @@ function CopyButton({ value }: { value: string }) {
       variant="outline"
       className="h-7 shrink-0 px-2 text-[11px]"
       onClick={() => {
-        void navigator.clipboard?.writeText(value).then(() => {
+        void copyText(value).then(() => {
           setDone(true);
           window.setTimeout(() => setDone(false), 1500);
-        });
+        }).catch(() => toast.error("Could not copy. Please try again."));
       }}
     >
       {done ? <Check className="size-3" /> : <Copy className="size-3" />} {done ? "Copied" : "Copy path"}

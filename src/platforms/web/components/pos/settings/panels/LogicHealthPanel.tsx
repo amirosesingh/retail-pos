@@ -1,3 +1,4 @@
+import { copyText } from "@/platform-config/clipboard";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -68,7 +69,7 @@ export function LogicHealthPanel() {
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(
+      await copyText(
         scan ? formatScanResult(scan) : formatLogicReport(report),
       );
       toast.success("Report copied");

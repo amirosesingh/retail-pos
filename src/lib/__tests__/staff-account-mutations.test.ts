@@ -107,3 +107,15 @@ it("refuses email for a mismatched authentication identity", async () => {
   await expect(sendStaffConfirmation("cashier")).rejects.toThrow("administrator review");
   expect(auth.mock.calls.some(([url]) => url.endsWith("/resend"))).toBe(false);
 });
+
+it.each(['admin@example.com','cashier@pos-internal.local'])("disables %s without accepting or replacing credentials", async email => {
+ saved.email=email;
+ await setStaffActive('cashier',false);
+ expect(saved.is_active).toBe(false);
+ expect(rest.mock.calls.some(([path]) => path==='rpc/staff_account_edit' || path==='rpc/staff_account_upsert')).toBe(false);
+ for(const [,init] of auth.mock.calls) {
+  const payload=JSON.parse(init.body);
+  expect(payload).not.toHaveProperty('password');
+  expect(payload).not.toHaveProperty('pin');
+ }
+});

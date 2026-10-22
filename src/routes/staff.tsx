@@ -60,7 +60,7 @@ export function StaffPermissionsPanel() {
           </p>
         </header>
         <Tabs key={search.tab ?? "accounts"} defaultValue={search.tab ?? "accounts"}>
-          <TabsList className="max-w-full justify-start overflow-x-auto scrollbar-none">
+          <TabsList className="h-auto min-h-9 max-w-full justify-start overflow-x-auto overflow-y-hidden scrollbar-none">
             <TabsTrigger value="accounts"><Users className="mr-1.5 size-4" aria-hidden />Accounts</TabsTrigger>
             <TabsTrigger value="roles"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Roles &amp; permissions</TabsTrigger>
             {accessAllowed && <TabsTrigger value="access"><Eye className="mr-1.5 size-4" aria-hidden />Role &amp; access</TabsTrigger>}

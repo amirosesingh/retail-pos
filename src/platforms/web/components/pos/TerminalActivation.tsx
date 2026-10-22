@@ -1,3 +1,4 @@
+import { readText } from "@/platform-config/clipboard";
 /**
  * Full-screen activation gate for the Windows till, plus the lock screen the
  * kill-switch drops in when management revokes the machine.
@@ -311,7 +312,7 @@ export function TerminalActivation({
             className="w-full text-foreground"
             onClick={async () => {
               try {
-                const text = await navigator.clipboard.readText();
+                const text = await readText();
                 if (text.trim()) setCode(text.trim());
               } catch {
                 setError("Could not read the clipboard. Paste the token by hand.");

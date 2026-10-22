@@ -1,3 +1,4 @@
+import { copyText } from "@/platform-config/clipboard";
 import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -212,7 +213,7 @@ function CouponsPage() {
     // Clipboard access is refused outright in some browsers and kiosks, so the
     // link is shown instead of the copy silently doing nothing.
     try {
-      await navigator.clipboard.writeText(claimUrl(c.slug));
+      await copyText(claimUrl(c.slug));
       toast.success("Claim link copied");
     } catch {
       toast.error("Could not copy — copy it by hand", { description: claimUrl(c.slug) });

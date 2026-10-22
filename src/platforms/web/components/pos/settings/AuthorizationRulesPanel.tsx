@@ -477,13 +477,10 @@ function RuleConfigurationDialog({
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   <span className="inline-flex items-center gap-1.5">
                     Authorization method
-                    <HelpTip text="Choose whether this action needs no approval, a manager PIN at the till, a request that another person decides, or either method." />
+                    <HelpTip text={AUTH_MODES.find((mode) => mode.value === rule.mode)?.blurb || "Choose whether this action needs no approval, a manager PIN at the till, a request that another person decides, or either method."} />
                   </span>
                 </p>
                 <p className="mt-1 text-base font-semibold">{methodLabel(rule.mode)}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {AUTH_MODES.find((mode) => mode.value === rule.mode)?.blurb}
-                </p>
               </section>
 
               {approvalRequestBecomingInactive ? (
@@ -520,19 +517,36 @@ function RuleConfigurationDialog({
                     </div>
                   ) : null}
 
-                  <AudienceSelector
-                    id={`approve-${action.key}`}
-                    title="Who may authorize"
-                    help="Selected roles include their active staff automatically. Add individual people or exclude exceptions only when needed."
-                    roles={rule.allowedRoles}
-                    roleChoices={ROLE_CHOICES}
-                    encodedUsers={rule.allowedUserIds}
-                    people={people}
-                    disabled={!mayEdit}
-                    invalid={hasIssue("authorizers")}
-                    onRolesChange={(allowedRoles) => onChange({ allowedRoles })}
-                    onUsersChange={(allowedUserIds) => onChange({ allowedUserIds })}
-                  />
+                  <div className={cn("grid items-start gap-4", requestMode && "md:grid-cols-2")}>
+                    <AudienceSelector
+                      id={`approve-${action.key}`}
+                      title="Who may authorize"
+                      help="Selected roles include their active staff automatically. Add individual people or exclude exceptions only when needed."
+                      roles={rule.allowedRoles}
+                      roleChoices={ROLE_CHOICES}
+                      encodedUsers={rule.allowedUserIds}
+                      people={people}
+                      disabled={!mayEdit}
+                      invalid={hasIssue("authorizers")}
+                      onRolesChange={(allowedRoles) => onChange({ allowedRoles })}
+                      onUsersChange={(allowedUserIds) => onChange({ allowedUserIds })}
+                    />
+                    {requestMode && (
+                      <AudienceSelector
+                        id={`request-${action.key}`}
+                        title="Who may request approval"
+                        help="Selected roles may send requests. Additional people and role exceptions are optional. Requesting does not grant approval authority."
+                        roles={rule.requesterRoles}
+                        roleChoices={REQUESTER_ROLE_CHOICES}
+                        encodedUsers={rule.requesterUserIds}
+                        people={people}
+                        disabled={!mayEdit}
+                        invalid={hasIssue("requesters")}
+                        onRolesChange={(requesterRoles) => onChange({ requesterRoles })}
+                        onUsersChange={(requesterUserIds) => onChange({ requesterUserIds })}
+                      />
+                    )}
+                  </div>
 
                   {action.thresholdLabel || authorityUnit ? (
                     <section className="space-y-4 rounded-lg border p-4">
@@ -541,9 +555,6 @@ function RuleConfigurationDialog({
                           Approval authority / limit
                           <HelpTip text="Define the value that triggers approval and, where supported, the maximum each selected role or person may approve." />
                         </h3>
-                        <p className="text-xs text-muted-foreground">
-                          Only limits supported by this rule are shown.
-                        </p>
                       </div>
                       {action.thresholdLabel ? (
                         <label className="block max-w-sm space-y-1 text-sm">
@@ -592,19 +603,6 @@ function RuleConfigurationDialog({
 
                   {requestMode ? (
                     <section className="space-y-4">
-                      <AudienceSelector
-                        id={`request-${action.key}`}
-                        title="Who may request approval"
-                        help="Selected roles may send requests. Additional people and role exceptions are optional. Requesting does not grant approval authority."
-                        roles={rule.requesterRoles}
-                        roleChoices={REQUESTER_ROLE_CHOICES}
-                        encodedUsers={rule.requesterUserIds}
-                        people={people}
-                        disabled={!mayEdit}
-                        invalid={hasIssue("requesters")}
-                        onRolesChange={(requesterRoles) => onChange({ requesterRoles })}
-                        onUsersChange={(requesterUserIds) => onChange({ requesterUserIds })}
-                      />
                       <label className="block max-w-sm space-y-1 text-sm">
                         <span className="flex items-center gap-1.5">
                           Approval expires after
@@ -625,7 +623,7 @@ function RuleConfigurationDialog({
                               onChange({ approvalTimeoutMinutes: Number(event.target.value) })
                             }
                           />
-                          <span className="text-sm text-muted-foreground">minutes</span>
+                          <span className="shrink-0 whitespace-nowrap text-sm text-muted-foreground">minutes</span>
                         </div>
                       </label>
                     </section>
@@ -639,9 +637,6 @@ function RuleConfigurationDialog({
                             Escalation
                             <HelpTip text="After the delay, the same unanswered request becomes visible to the selected backup roles." />
                           </h3>
-                          <p className="text-xs text-muted-foreground">
-                            Send an unanswered request to backup roles after a delay.
-                          </p>
                         </div>
                         <div className="flex items-center gap-2">
                           <Label htmlFor={`escalation-${action.key}`} className="text-sm">
@@ -679,7 +674,7 @@ function RuleConfigurationDialog({
                                   onChange({ escalationAfterMinutes: Number(event.target.value) })
                                 }
                               />
-                              <span className="text-sm text-muted-foreground">minutes</span>
+                              <span className="shrink-0 whitespace-nowrap text-sm text-muted-foreground">minutes</span>
                             </div>
                           </label>
                           <div
@@ -744,9 +739,6 @@ function RuleConfigurationDialog({
                             Extra approval authority
                             <HelpTip text="Let an approver grant a controlled amount above the requester's own limit, optionally capped by a hard maximum." />
                           </h3>
-                          <p className="text-xs text-muted-foreground">
-                            Optionally add authority above the requester’s own limit.
-                          </p>
                         </div>
                         <Switch
                           aria-label="Extra approval authority"
@@ -802,9 +794,6 @@ function RuleConfigurationDialog({
                         Reason required
                         <HelpTip text="When enabled, the requester or authorizer must enter a reason that is stored in the approval audit history." />
                       </h3>
-                      <p className="text-xs text-muted-foreground">
-                        Require the workflow to record why this action is needed.
-                      </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <Label htmlFor={`reason-${action.key}`} className="text-sm">
@@ -1049,9 +1038,9 @@ export function AuthorizationRulesPanel({
                     key={action.key}
                     className="grid gap-3 border-t border-border/60 py-3 first:border-0 first:pt-0 lg:grid-cols-[minmax(0,1.5fr)_minmax(16rem,1fr)] lg:items-center lg:gap-4"
                   >
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex items-center gap-1">
                       <Label className="text-sm">{action.label}</Label>
-                      <p className="text-xs text-muted-foreground">{action.blurb}</p>
+                      <HelpTip text={action.blurb} label={`About ${action.label}`} />
                     </div>
 
                     <div className="flex items-center gap-2">

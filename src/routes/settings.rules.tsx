@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { PresetNumber } from "@/components/ui/preset-number";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -426,9 +427,9 @@ function RulesSettings() {
                       key={field.key}
                       className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-border/60 pt-3 first:border-0 first:pt-0"
                     >
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex items-center gap-1">
                         <Label className="text-sm">{field.label}</Label>
-                        <p className="text-xs text-muted-foreground">{field.blurb}</p>
+                        <HelpTip text={field.blurb} label={`About ${field.label}`} />
                       </div>
                       {field.kind === "switch" ? (
                         <Switch

@@ -12,13 +12,13 @@ export function HelpTip({ text, label = "More information" }: { text: ReactNode;
           <button
             type="button"
             aria-label={label}
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-full align-middle text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-full align-middle text-muted-foreground/70 hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={(event) => {
               event.stopPropagation();
               setOpen((value) => !value);
             }}
           >
-            <Info className="size-3.5" aria-hidden="true" />
+            <Info className="size-3" aria-hidden="true" />
           </button>
         </TooltipTrigger>
         <TooltipContent className="z-[100] max-w-[min(20rem,calc(100vw-2rem))] whitespace-normal break-words text-xs leading-relaxed">
