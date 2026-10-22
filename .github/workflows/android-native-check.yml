@@ -39,6 +39,8 @@ jobs:
           npx cap sync android
           node scripts/android-permissions.cjs
           node scripts/android-update-setup.cjs
+          grep -q 'com.google.mlkit.vision.DEPENDENCIES' android/app/src/main/AndroidManifest.xml
+          grep -q 'barcode_ui' android/app/src/main/AndroidManifest.xml
       - name: Compile native app and plugins
         working-directory: android
         run: bash gradlew :app:compileDebugJavaWithJavac --no-daemon

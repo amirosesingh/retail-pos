@@ -62,6 +62,15 @@ const before = xml;
 xml = setAttr(xml, "allowBackup", "false");
 xml = setAttr(xml, "fullBackupContent", "false");
 xml = setAttr(xml, "dataExtractionRules", "@xml/data_extraction_rules");
+// The ready-made ML Kit camera screen needs the Play Services barcode UI
+// module. Request it during APK setup instead of failing on the first scan.
+if (!xml.includes('com.google.mlkit.vision.DEPENDENCIES')) {
+  xml = xml.replace(
+    '</application>',
+    '    <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="barcode_ui" />\n</application>',
+  );
+  console.log('✓ requested the Google barcode scanner module');
+}
 if (xml !== before) console.log("✓ Auto Backup disabled — uninstall leaves nothing behind");
 
 fs.writeFileSync(manifest, xml, "utf8");
