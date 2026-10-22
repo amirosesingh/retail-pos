@@ -2,6 +2,7 @@ import { formatDateTime as posDisplayDateTime, formatDate as posDisplayDate } fr
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { draftTicketId } from "@/lib/session-draft";
 import { LegacyExchangeForm } from "@/platforms/web/components/pos/LegacyExchangeForm";
+import { isNativeApp, scanOnceNative } from "@/platforms/mobile/camera";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
@@ -36,6 +37,7 @@ import {
   Plus,
   Printer,
   Search,
+  ScanBarcode,
   Trash2,
   Gift,
   Vault,
@@ -3307,13 +3309,20 @@ function Register() {
               lookupBill();
             }}
           >
+            <div className="relative min-w-0 flex-1">
             <Input
               autoFocus
               value={billQuery}
               onChange={(e) => setBillQuery(e.target.value)}
               placeholder="Scan or type original bill number…"
-              className="numeric h-11"
+              className={`numeric h-11 ${isNativeApp() ? "pr-12" : ""}`}
             />
+            {isNativeApp() && (
+              <Button type="button" variant="ghost" size="icon" className="absolute inset-y-0 right-1 my-auto size-8" aria-label="Scan original bill barcode" title="Scan original bill barcode" onClick={() => { void scanOnceNative().then((value) => { if (value) setBillQuery(value); }).catch((error) => toast.error(error instanceof Error ? error.message : "The camera is not available.")); }}>
+                <ScanBarcode className="size-4" />
+              </Button>
+            )}
+            </div>
             <Button type="submit" className="h-11">
               <Search className="size-4" /> Find
             </Button>

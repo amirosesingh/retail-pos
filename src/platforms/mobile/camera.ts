@@ -77,6 +77,8 @@ export async function scanOnceNative(): Promise<string | null> {
   const permission = await ensureCameraPermission();
   if (!permission.ok) throw new Error(permission.reason ?? DENIED);
   const { BarcodeScanner } = await import("@capacitor-mlkit/barcode-scanning");
-  const { barcodes } = await BarcodeScanner.scan();
+  // No format filter: EAN/UPC, longer Code 128/39, Data Matrix and QR must
+  // all remain available to stock, selling, booking and activation flows.
+  const { barcodes } = await BarcodeScanner.scan({ autoZoom: true });
   return barcodes[0]?.rawValue?.trim() || null;
 }
