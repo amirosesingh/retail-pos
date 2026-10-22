@@ -253,13 +253,11 @@ export function TerminalWorkspaceHome() {
             </div>
           </header>
 
-          {actions}
-
-          <section className="summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Workspace overview">
-            {(["shift", "bills", "revenue", "stock"] as const).map(key => metrics[key])}
+          <section className="selling-overview no-scrollbar flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain sm:grid sm:grid-cols-2 lg:grid-cols-4" aria-label="Workspace overview" tabIndex={0}>
+            {(["shift", "bills", "revenue", "stock"] as const).map(key => <div key={key} className="w-[82%] shrink-0 snap-start sm:w-auto [&>*]:h-full">{metrics[key]}</div>)}
           </section>
 
-
+          {actions}
         </div>
       </div>
     </AppShell>

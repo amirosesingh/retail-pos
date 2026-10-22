@@ -1,5 +1,5 @@
 import { Children, type ReactNode } from "react";
-import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
+import { Carousel, CarouselContent, CarouselItem } from "@/components/ui/carousel";
 
 /** A bounded card strip shared by pointer, touch and keyboard users. */
 export function AnalyticsCardRail({ title, children }: { title: string; children: ReactNode }) {
@@ -7,10 +7,6 @@ export function AnalyticsCardRail({ title, children }: { title: string; children
     onKeyDownCapture={() => undefined} className="min-w-0">
     <div className="mb-3 flex items-center justify-between gap-3">
       <h2 className="text-sm font-semibold">{title}</h2>
-      <div className="flex shrink-0 gap-1">
-        <CarouselPrevious className="static translate-y-0" aria-label={`Previous ${title.toLowerCase()} card`} />
-        <CarouselNext className="static translate-y-0" aria-label={`Next ${title.toLowerCase()} card`} />
-      </div>
     </div>
     <CarouselContent className="touch-pan-y">
       {Children.toArray(children).map(child => <CarouselItem key={(child as { key?: string }).key}
