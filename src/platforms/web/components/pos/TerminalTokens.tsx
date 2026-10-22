@@ -82,7 +82,7 @@ const qrDataUrl = (value: string) => {
   const qr = qrcode(0, "M");
   qr.addData(value);
   qr.make();
-  return qr.createDataURL(5, 8);
+  return qr.createDataURL(5, 20);
 };
 
 const formatDate = (iso: string | null) =>
@@ -510,7 +510,7 @@ export function TerminalTokens({
             <img
               src={qr}
               alt="Activation code QR"
-              className={`mx-auto size-40 rounded-md bg-white p-2 ${expired ? "opacity-30" : ""}`}
+              className={`mx-auto aspect-square w-full max-w-80 bg-white [image-rendering:pixelated] ${expired ? "opacity-30" : ""}`}
             />
             <div className="min-w-0 space-y-2">
               {expired ? (
@@ -648,7 +648,7 @@ export function TerminalTokens({
             <img
               src={reissueQr}
               alt="Replacement activation code QR"
-              className="mx-auto size-40 rounded-md bg-white p-2"
+              className="mx-auto aspect-square w-full max-w-80 bg-white [image-rendering:pixelated]"
             />
             <div className="min-w-0 space-y-2">
               <p className="text-xs text-muted-foreground">

@@ -94,9 +94,9 @@ export function UnpairTerminalCard() {
         <h2 className="text-sm font-semibold">Unpair / reset terminal</h2>
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Removes this machine&apos;s saved activation, its connection details and its machine
+        Removes this machine&apos;s saved activation and its machine
         account from the secure vault. The till returns to the activation screen and needs a new
-        one-time code. Requires a manager PIN.
+        one-time code. Phones retain their database connection settings. Requires a manager PIN.
       </p>
       {config && (
         <p className="text-[11px] text-muted-foreground">

@@ -46,7 +46,7 @@ const qrDataUrl = (value: string) => {
   const qr = qrcode(0, "M");
   qr.addData(value);
   qr.make();
-  return qr.createDataURL(4, 8);
+  return qr.createDataURL(5, 20);
 };
 
 function Frame({ children, bare }: { children: React.ReactNode; bare?: boolean }) {
@@ -341,12 +341,12 @@ export function TerminalActivation({
               Scan this code from Settings → Terminal activation on the Android app and approve it.
               This till registers itself — nothing to type or copy.
             </p>
-            <div className="mt-3 flex items-center gap-3">
+            <div className="mt-3 flex flex-col items-center gap-3">
               {pairQr ? (
                 <img
                   src={pairQr}
                   alt="Pairing code for this terminal"
-                  className="size-32 rounded-lg bg-white p-1"
+                  className="aspect-square w-full max-w-80 bg-white [image-rendering:pixelated]"
                 />
               ) : (
                 <div className="grid size-32 place-items-center rounded-lg border border-border bg-card">
@@ -442,6 +442,7 @@ export function TerminalRevokedScreen({
   reason?: "revoked" | "missing";
 }) {
   const missing = reason === "missing";
+  if (isNative()) return <TerminalActivation onActivated={() => window.location.reload()} />;
   return (
     <Frame>
       <div className="text-center">
