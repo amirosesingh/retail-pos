@@ -6,6 +6,7 @@
  * the same shape so the scanner UIs can show one clear message when the user
  * says no, instead of failing silently.
  */
+import { Capacitor } from "@capacitor/core";
 export type CameraCheck = { ok: boolean; reason?: string };
 
 /**
@@ -76,7 +77,31 @@ export async function scanOnceNative(): Promise<string | null> {
   if (!isNativeApp()) return null;
   const permission = await ensureCameraPermission();
   if (!permission.ok) throw new Error(permission.reason ?? DENIED);
-  const { BarcodeScanner } = await import("@capacitor-mlkit/barcode-scanning");
+  const { BarcodeScanner, GoogleBarcodeScannerModuleInstallState } = await import("@capacitor-mlkit/barcode-scanning");
+  if (Capacitor.getPlatform() === "android" &&
+      !(await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable()).available) {
+    let complete!: () => void;
+    let fail!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => { complete = resolve; fail = reject; });
+    void ready.catch(() => {});
+    const listener = await BarcodeScanner.addListener("googleBarcodeScannerModuleInstallProgress", (event) => {
+      if (event.state === GoogleBarcodeScannerModuleInstallState.COMPLETED) complete();
+      if (event.state === GoogleBarcodeScannerModuleInstallState.FAILED ||
+          event.state === GoogleBarcodeScannerModuleInstallState.CANCELED)
+        fail(new Error("Camera scanner setup failed. Connect to the internet and try again."));
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await BarcodeScanner.installGoogleBarcodeScannerModule();
+      await Promise.race([
+        ready,
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Camera scanner is still setting up. Connect to the internet and try again shortly.")), 45_000); }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      await listener.remove();
+    }
+  }
   // No format filter: EAN/UPC, longer Code 128/39, Data Matrix and QR must
   // all remain available to stock, selling, booking and activation flows.
   const { barcodes } = await BarcodeScanner.scan({ autoZoom: true });
