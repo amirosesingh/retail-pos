@@ -578,6 +578,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   <LiveClock compact />
                 </span>
                 <MobileStatusSheet />
+                <ApprovalTokenButton compact />
                 {isMobile && <ActivityBell />}
                 {isMobile && <UpdateHeaderButton />}
                 <span className="hidden sm:inline-flex">
