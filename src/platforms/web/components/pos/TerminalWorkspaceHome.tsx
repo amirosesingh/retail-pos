@@ -220,8 +220,8 @@ export function TerminalWorkspaceHome() {
   return (
     <AppShell>
       <SellingShortcuts />
-      <div className="h-full overflow-y-auto bg-background p-4 sm:p-6 lg:p-8">
-        <div className="mx-auto max-w-6xl space-y-8">
+      <div className="pos-page-container h-full overflow-y-auto bg-background">
+        <div className="w-full min-w-0 space-y-5">
           <header className="rounded-2xl border border-border/70 bg-card p-5 sm:p-7">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-4">

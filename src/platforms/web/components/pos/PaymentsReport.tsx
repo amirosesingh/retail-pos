@@ -120,7 +120,7 @@ export function PaymentsReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Payments by Cashier"
           subtitle="Every payment transaction taken at the till, with the tender and card machine used."

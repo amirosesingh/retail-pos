@@ -105,7 +105,7 @@ function SettingsHome() {
 
   return (
     <SettingsShell home>
-      <div className="mx-auto w-full max-w-7xl space-y-5 p-4 sm:p-6">
+      <div className="pos-page-container">
         {/* Compact sticky header: title, description and search stay reachable. */}
         <header className="sticky top-0 z-20 -mx-4 space-y-2 border-b border-border bg-background/95 px-4 pb-3 pt-3 backdrop-blur sm:-mx-6 sm:px-6">
           <div className="flex items-center gap-2">

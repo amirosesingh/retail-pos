@@ -223,7 +223,7 @@ function LiveBoard() {
 
   return (
     <AppShell>
-      <div className="min-w-0 space-y-5 p-3 sm:p-6">
+      <div className="pos-page-container">
         <header className="min-w-0 space-y-3">
           <div>
             <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">

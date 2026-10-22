@@ -51,7 +51,7 @@ export function StaffPermissionsPanel() {
   }
 
   return (
-      <main className="space-y-5 p-4 sm:p-6">
+      <main className="pos-page-container">
         <header>
           <Button variant="ghost" size="sm" asChild className="mb-2"><Link to="/settings" search={{ cat: "people" }}><ArrowLeft className="size-4" />Back to Settings</Link></Button>
           <h1 className="text-2xl font-semibold">Staff &amp; Permissions</h1>

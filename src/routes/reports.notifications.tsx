@@ -146,7 +146,7 @@ function NotificationsReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         {missing && (
           <p className="rounded-md border border-border bg-surface-2 p-3 text-sm text-muted-foreground">
             The activity log needs a database update. Follow the existing-database upgrade

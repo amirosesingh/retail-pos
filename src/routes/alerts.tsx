@@ -167,7 +167,7 @@ function AlertsHistory() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-7xl space-y-5 p-4 sm:p-6">
+      <div className="pos-page-container">
         <header className="flex items-start gap-3">
           <span className="rounded-xl bg-primary/10 p-3 text-primary">
             <BellRing className="size-5" aria-hidden="true" />

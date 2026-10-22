@@ -241,7 +241,7 @@ function BusinessReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Retail performance"
           subtitle="Where the profit comes from, how fast stock moves, and how each cashier is trading."

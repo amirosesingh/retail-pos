@@ -258,7 +258,7 @@ function CatalogMetaSettings() {
 
   return (
     <SettingsShell>
-      <div className="mx-auto w-full max-w-7xl space-y-6 p-6">
+      <div className="pos-page-container">
         <header>
           <h1 className="text-2xl font-semibold tracking-tight">Categories & Units</h1>
           <p className="text-sm text-muted-foreground page-description">

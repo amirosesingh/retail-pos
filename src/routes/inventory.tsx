@@ -319,7 +319,7 @@ function Inventory() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-3 sm:p-4 lg:p-6">
+      <div className="pos-page-container">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Inventory · {currentStore.name}</h1>

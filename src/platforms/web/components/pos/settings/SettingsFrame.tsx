@@ -98,7 +98,6 @@ export function SettingsFrame({
   children,
   showPreview = false,
   requireCompanyName = false,
-  wide = false,
   terminalManagement = false,
   permission,
   showSaveBar = true,
@@ -386,7 +385,7 @@ export function SettingsFrame({
         className={
           embedded
             ? "w-full max-w-full space-y-4"
-            : `mx-auto w-full space-y-5 p-4 sm:p-6 ${wide ? "max-w-full" : "max-w-6xl"}`
+            : "pos-page-container"
         }
       >
         <header className="flex flex-wrap items-start justify-between gap-4">

@@ -166,7 +166,7 @@ function Dashboard() {
 
   return (
     <AppShell>
-      <div className="space-y-6 p-6">
+      <div className="pos-page-container">
         <header className="min-w-0 space-y-2">
           <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
             <h1 className="min-w-0 text-2xl font-semibold">Live dashboard · {currentStore.name}</h1>

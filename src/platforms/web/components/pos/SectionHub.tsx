@@ -26,7 +26,7 @@ export function SectionHub({ groupId }: { groupId: string }) {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-5xl space-y-7 p-4 sm:p-6 lg:p-8">
+      <div className="pos-page-container">
         <div className="flex items-center">
           <Link
             to="/"

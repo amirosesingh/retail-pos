@@ -1451,3 +1451,19 @@ html[data-native-caption] .pos-dialog-content {
   .settings-menu-category > span:first-child > svg { margin-left: auto; }
   .settings-menu-category .text-base { font-size: 0.875rem; }
 }
+
+/* One content boundary for operational pages and Settings. Individual tables
+   retain their own horizontal scrolling; dialogs and the selling cart are separate. */
+.pos-page-container {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  margin-inline: auto;
+  padding: 1rem;
+}
+.pos-page-container > * + * { margin-top: 1.25rem; }
+.pos-page-gutters { padding-inline: 1rem; }
+@media (min-width: 640px) {
+  .pos-page-container { padding: 1.5rem; }
+  .pos-page-gutters { padding-inline: 1.5rem; }
+}

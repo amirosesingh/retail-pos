@@ -95,7 +95,7 @@ function Verifications() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="pos-page-container">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="flex items-center gap-2 text-2xl font-semibold">

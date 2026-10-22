@@ -295,7 +295,7 @@ function RulesSettings() {
 
   return (
     <SettingsShell>
-      <div className="mx-auto w-full max-w-7xl space-y-5 p-6">
+      <div className="pos-page-container">
         <div className="sticky top-0 z-20 -mx-6 -mt-6 border-b border-border bg-background/95 px-4 py-2 backdrop-blur">
           <Button asChild variant="ghost" size="sm" className="h-8 text-xs">
             <Link to="/settings">

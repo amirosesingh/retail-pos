@@ -298,7 +298,7 @@ function StockOperationsPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-6xl space-y-4 p-4">
+      <div className="pos-page-container">
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="h-auto max-w-full flex-wrap">
             <TabsTrigger value="records">
