@@ -66,7 +66,7 @@ function Dashboard() {
   const { state, currentStore } = usePos();
   const { can } = useAuth();
   const { visible } = useVisibility();
-  const showStockValue = can("can_view_sales_reports") && visible("inventory.stockValue");
+  const showStockValue = can("can_view_cost_margin") && visible("inventory.stockValue");
   const drawer = useDrawerEvents();
   const thresholds = defaultReviewThresholds;
 

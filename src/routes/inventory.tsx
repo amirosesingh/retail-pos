@@ -137,8 +137,8 @@ function Inventory() {
   const { visible } = useVisibility();
   // Money columns need the reporting permission *and* the administrator's
   // "show cost & margin" switch for this role.
-  const showMoney = can("can_view_sales_reports") && visible("inventory.costColumns");
-  const showStockValue = can("can_view_sales_reports") && visible("inventory.stockValue");
+  const showMoney = can("can_view_cost_margin") && visible("inventory.costColumns");
+  const showStockValue = can("can_view_cost_margin") && visible("inventory.stockValue");
 
   const canCreate = can("can_add_new_product");
   const canEditDetails = can("can_edit_product_details");

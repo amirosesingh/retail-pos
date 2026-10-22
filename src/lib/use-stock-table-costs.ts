@@ -5,5 +5,5 @@ import { useVisibility } from "@/lib/ui-visibility";
 export function useStockTableCosts() {
   const { can } = useAuth();
   const { visible } = useVisibility();
-  return can("can_view_sales_reports") && visible("inventory.costColumns");
+  return can("can_view_cost_margin") && visible("inventory.costColumns");
 }

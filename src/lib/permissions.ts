@@ -67,6 +67,7 @@ export const PERMISSION_GROUPS = [
     label: "Inventory & Pricing",
     keys: [
       "can_view_inventory",
+      "can_view_cost_margin",
       "can_edit_product_price",
       "can_add_new_product",
       "can_edit_product_details",
@@ -163,6 +164,7 @@ export type PermissionKey =
   | "can_collect_booking"
   | "can_cancel_booking"
   | "can_view_inventory"
+  | "can_view_cost_margin"
   | "can_edit_product_price"
   | "can_add_new_product"
   | "can_edit_product_details"
@@ -238,6 +240,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_collect_booking: "Collect bookings & take part payments",
   can_cancel_booking: "Cancel or delete a booking / job",
   can_view_inventory: "View inventory",
+  can_view_cost_margin: "View purchase costs, stock value & profit margins",
   can_edit_product_price: "Edit product pricing",
   can_add_new_product: "Add new products",
   can_edit_product_details: "Edit product details",
@@ -387,6 +390,9 @@ export function normalizePermissions(
     const resolved = resolvePermission(key as PermissionFlag);
     if (resolved in base) base[resolved] = value === true;
   }
+  // Preserve old report-based visibility until this independent choice is saved.
+  if (!("can_view_cost_margin" in raw)) base.can_view_cost_margin = base.can_view_sales_reports &&
+    (!("page:reports" in raw) || raw["page:reports"] === true);
   if (!("can_customize_display" in raw)) base.can_customize_display = true;
   // Existing cashier matrices predate the split hold controls. Preserve their
   // current workflow once, while every subsequently saved matrix carries the
@@ -637,6 +643,7 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
       roles: ["supervisor", "admin"],
       keys: [
         "can_view_sales_reports",
+        "can_view_cost_margin",
         "can_view_dashboard",
         "can_view_audit_trail",
         "can_export_reports",

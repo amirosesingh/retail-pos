@@ -8,6 +8,24 @@ import { isVisibleFor, withVisibility } from "../ui-visibility";
 afterEach(() => cacheRoleDefinitions([]));
 
 describe("effective role and account permissions", () => {
+  it("lets an individual hide costs without disabling checkout or reports", () => {
+    const permissions = getEffectivePermissions("supervisor", { can_view_cost_margin: false });
+    expect(permissions.can_view_cost_margin).toBe(false);
+    expect(permissions.can_view_sales_reports).toBe(true);
+    expect(permissions.can_process_sale).toBe(true);
+  });
+  it("inherits the explicit cost setting from a custom role", () => {
+    cacheRoleDefinitions([{ slug: "sales-only", baseLevel: "supervisor", permissions: { ...rolePermissions("supervisor"), can_view_cost_margin: false } }]);
+    expect(getEffectivePermissions("sales-only", { can_give_discount: true }).can_view_cost_margin).toBe(false);
+    expect(getEffectivePermissions("sales-only", { can_view_cost_margin: true }).can_view_cost_margin).toBe(true);
+  });
+  it("preserves legacy financial access only until a cost choice is saved", () => {
+    expect(normalizePermissions({ can_view_sales_reports: true }).can_view_cost_margin).toBe(true);
+    expect(normalizePermissions({ can_view_sales_reports: true, can_view_cost_margin: false }).can_view_cost_margin).toBe(false);
+    expect(normalizePermissions({ can_view_sales_reports: false }).can_view_cost_margin).toBe(false);
+    expect(normalizePermissions({ can_view_sales_reports: true, "page:reports": false }).can_view_cost_margin).toBe(false);
+    expect(normalizePermissions({ can_view_sales_reports: true, "page:reports": "true" }).can_view_cost_margin).toBe(false);
+  });
   it("preserves a person's explicit page denial over an inherited action grant", () => {
     cacheRoleDefinitions([{ slug: "custom-stock", baseLevel: "warehouse", permissions: rolePermissions("warehouse") }]);
     const permissions = getEffectivePermissions("custom-stock", { "page:inventory": false });
