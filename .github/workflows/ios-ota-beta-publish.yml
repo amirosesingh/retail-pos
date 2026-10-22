@@ -1,0 +1,66 @@
+name: Publish signed iOS beta OTA
+run-name: Publish iOS OTA ${{ github.ref_name }}
+
+on:
+  # A tag is pushed only for an owner-approved beta release. This also works
+  # while the workflow exists on beta but has not been promoted to main.
+  push:
+    tags: ['ios-ota-publish-beta-*']
+
+concurrency:
+  group: ios-ota-beta-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify beta tag and release identity
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if [[ ! "$tag" =~ ^ios-ota-publish-beta-([0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*)$ ]]; then
+            echo 'Invalid iOS beta OTA publication tag' >&2
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          git fetch origin beta
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/beta
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Download pre-signed artifacts from the matching beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="ota-artifacts/$VERSION"
+          mkdir -p "$dir"
+          gh release download "beta-v$VERSION" --pattern 'ios-ota-bundle.zip' --pattern 'ios-ota-manifest.json' --dir "$dir"
+          mv "$dir/ios-ota-bundle.zip" "$dir/bundle.zip"
+          mv "$dir/ios-ota-manifest.json" "$dir/manifest.json"
+      - name: Verify and publish to the beta iOS feed
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          POS_RELEASE_CHANNEL: beta
+          OTA_PUBLISH_CONFIRM: Publish iOS OTA now
+          OTA_R2_BUCKET: updatelccms
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        shell: bash
+        run: node scripts/publish-ios-ota.cjs "$VERSION"
