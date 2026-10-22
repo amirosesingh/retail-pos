@@ -160,7 +160,7 @@ function AllShops() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-5 p-4 sm:p-6">
+      <div className="pos-page-container">
         {history.error && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {history.error}</p>}
         <header className="min-w-0 space-y-3">
           <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">

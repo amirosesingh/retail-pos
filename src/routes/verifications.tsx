@@ -2,7 +2,7 @@ import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -95,11 +95,11 @@ function Verifications() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="pos-page-container">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="flex items-center gap-2 text-2xl font-semibold">
-              <ShieldCheck className="size-5 text-primary" /> Member verification log
+              Member verification log
             </h1>
             <p className="text-sm text-muted-foreground page-description">
               Every code sent and what happened to it. The codes themselves are never stored in a

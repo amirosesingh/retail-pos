@@ -81,7 +81,7 @@ export function SalesReportWorkspace({ initialView = "bills" }: { initialView?: 
   return (
     <AppShell>
       <SalesReportContext.Provider value={{ ...filters, history, exportAction }}>
-        <div className="mx-auto w-full max-w-[1600px]">
+        <div className="pos-page-boundary">
           <div className="space-y-4 px-4 pt-4 sm:px-6 sm:pt-6">
             <ReportHeader
               workspaceHeader

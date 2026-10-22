@@ -293,7 +293,7 @@ function Locations() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="pos-page-container">
         <header className="min-w-0 space-y-3">
           <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
             <h1 className="text-2xl font-semibold">Manage locations</h1>

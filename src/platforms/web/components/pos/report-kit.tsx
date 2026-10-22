@@ -1,3 +1,4 @@
+import { ChevronLeft } from "lucide-react";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { posDayKey, inPosDayRange } from "@/lib/time-zone";
 import { beginDataTask } from "@/lib/data-progress";
@@ -228,29 +229,16 @@ export function ReportHeader({
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          {workspaceHeader ? (
-            <div className="flex items-center gap-2">
-              <Link
-                to="/reports"
-                aria-label="Back to reports"
-                className="rounded-lg px-2 py-1 text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                ←
-              </Link>
+          <div className="flex min-w-0 items-start gap-3">
+            <Link to="/reports" aria-label="Back to reports" title="Back to reports"
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <ChevronLeft className="size-4" aria-hidden="true" />
+            </Link>
+            <div className="min-w-0">
               <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+              <p className="mt-1 max-w-3xl text-sm text-muted-foreground page-description">{subtitle}</p>
             </div>
-          ) : (
-            <>
-              <Link
-                to="/reports"
-                className="mb-2 inline-flex rounded-md text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                ← Reports &amp; Analytics
-              </Link>
-              <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-            </>
-          )}
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground page-description">{subtitle}</p>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {toolbar}

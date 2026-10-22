@@ -18,7 +18,7 @@ import {
 import { AlertTriangle } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
-import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
+import { Carousel, CarouselContent, CarouselItem } from "@/components/ui/carousel";
 import { Separator } from "@/components/ui/separator";
 import {
   Table,
@@ -66,7 +66,7 @@ function Dashboard() {
   const { state, currentStore } = usePos();
   const { can } = useAuth();
   const { visible } = useVisibility();
-  const showStockValue = can("can_view_sales_reports") && visible("inventory.stockValue");
+  const showStockValue = can("can_view_cost_margin") && visible("inventory.stockValue");
   const drawer = useDrawerEvents();
   const thresholds = defaultReviewThresholds;
 
@@ -166,7 +166,7 @@ function Dashboard() {
 
   return (
     <AppShell>
-      <div className="space-y-6 p-6">
+      <div className="pos-page-container">
         <header className="min-w-0 space-y-2">
           <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
             <h1 className="min-w-0 text-2xl font-semibold">Live dashboard · {currentStore.name}</h1>
@@ -223,16 +223,12 @@ function Dashboard() {
           opts={{ align: "start", containScroll: "trimSnaps" }}
           aria-label="Live dashboard graphs"
           // Keep arrow keys inside charts available for Recharts data-point navigation.
-          // Previous/next buttons provide keyboard navigation between graph cards.
+          // Touch/pointer dragging moves between cards without navigation buttons.
           onKeyDownCapture={() => undefined}
           className="min-w-0"
         >
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">Trading graphs</h2>
-            <div className="hidden items-center gap-1 md:flex">
-              <CarouselPrevious className="static translate-y-0" aria-label="Previous graph" />
-              <CarouselNext className="static translate-y-0" aria-label="Next graph" />
-            </div>
           </div>
           <CarouselContent className="touch-pan-y">
           <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">

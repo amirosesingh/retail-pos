@@ -3,7 +3,7 @@
  * section can be opened as its own page instead of only expanding a list.
  */
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { navGroups, navItemKey, type NavItem } from "@/platforms/web/components/pos/nav-config";
 import { useAuth } from "@/lib/pos-auth";
@@ -26,21 +26,9 @@ export function SectionHub({ groupId }: { groupId: string }) {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-5xl space-y-7 p-4 sm:p-6 lg:p-8">
-        <div className="flex items-center">
-          <Link
-            to="/"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <ArrowLeft className="size-4" /> Back to register
-          </Link>
-        </div>
-
-        <header className="flex items-start gap-4 rounded-2xl border border-border/70 bg-card p-5 sm:p-6">
-          <span className="rounded-xl bg-primary/10 p-3 text-primary">
-            <group.icon aria-hidden="true" className="size-6" />
-          </span>
-          <div>
+      <div className="pos-page-container">
+        <header className="flex items-start gap-3">
+          <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight">{group.label}</h1>
             {group.blurb && <p className="text-sm text-muted-foreground page-description">{group.blurb}</p>}
           </div>

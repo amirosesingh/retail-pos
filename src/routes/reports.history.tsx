@@ -167,7 +167,7 @@ function EditHistoryReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Edit History"
           subtitle="Permanent history of recorded actions and unverified client reports. Entries cannot be changed or removed."

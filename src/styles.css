@@ -54,6 +54,30 @@
   .responsive-table.report-table[data-mobile-cards="true"] tbody td > * { justify-self: start; }
 }
 
+/* Shared POS hierarchy. Public membership/customer displays remain independent.
+   Rem units preserve the operator's configured text scale. */
+.pos-scaled main h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.025em;
+}
+.pos-scaled main h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.pos-scaled main h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+@media (max-width: 639px) {
+  .pos-scaled main h1 { font-size: 1.25rem; }
+  .pos-scaled main h2 { font-size: 1rem; }
+  .pos-scaled main h3 { font-size: 0.875rem; }
+}
+
 /* Keep dialog grids and dense tables inside the visible device viewport. */
 .page-description {
   font-size: 0.75rem;
@@ -932,7 +956,7 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
 .pos-scaled [role="button"],
 .pos-scaled input:not([type="checkbox"]):not([type="radio"]),
 .pos-scaled select {
-  min-height: calc(40px * var(--pos-scale));
+  min-height: calc(36px * var(--pos-scale));
 }
 
 .pos-scaled button.size-7,
@@ -960,7 +984,7 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
 /* Switch tracks keep their component dimensions, including compact mode.
    Pressed toggles follow the same minimum width as the surrounding buttons. */
 .pos-scaled button[data-slot="toggle"] {
-  min-height: calc(40px * var(--pos-scale));
+  min-height: calc(36px * var(--pos-scale));
   min-width: calc(40px * var(--pos-scale));
 }
 .pos-compact .pos-scaled button[data-slot="toggle"] {
@@ -1426,4 +1450,51 @@ html[data-native-caption] .pos-dialog-content {
   .settings-menu-category > span:first-child > span:nth-child(2) { flex-basis: 100%; order: 1; }
   .settings-menu-category > span:first-child > svg { margin-left: auto; }
   .settings-menu-category .text-base { font-size: 0.875rem; }
+}
+
+/* One centered content boundary for operational pages and Settings. Individual tables
+   retain their own horizontal scrolling; dialogs and the selling cart are separate. */
+.pos-page-boundary, .pos-page-container {
+  width: 100%;
+  min-width: 0;
+  max-width: 90rem;
+  margin-inline: auto;
+}
+.pos-page-container {
+  margin-inline: auto;
+  padding: 1rem;
+}
+.pos-page-container > * + * { margin-top: 1.25rem; }
+.pos-page-gutters { padding-inline: 1rem; }
+@media (min-width: 640px) {
+  .pos-page-container { padding: 1.5rem; }
+  .pos-page-gutters { padding-inline: 1.5rem; }
+}
+
+/* Page headings may wrap on phones without pushing their actions off-screen.
+   Keep this scoped to page headers, not receipt/customer-display layouts. */
+.pos-page-container > header { min-width: 0; }
+.pos-page-container > header > div { min-width: 0; }
+.pos-page-container > header h1 { overflow-wrap: anywhere; }
+.pos-page-container > header button,
+.pos-page-container > header a[aria-label^="Back"] { flex-shrink: 0; }
+
+/* Bell dialog: slide down from the safe top edge, independent of other dialogs. */
+.pos-dialog-content.notification-panel {
+  top: calc(var(--safe-top, env(safe-area-inset-top, 0px)) + 0.75rem);
+  max-height: calc(100dvh - var(--safe-top, env(safe-area-inset-top, 0px)) - 1.5rem);
+}
+html[data-native-caption] .pos-dialog-content.notification-panel { top: 44px; max-height: calc(100dvh - 56px); }
+.notification-panel[data-state="open"] { animation: notification-panel-down var(--motion-normal) var(--motion-ease-emphasized) both; }
+.notification-panel[data-state="closed"] { animation: notification-panel-up var(--motion-fast) var(--motion-ease-standard) both; }
+@keyframes notification-panel-down { from { opacity: 0; transform: translateY(-1.5rem); } to { opacity: 1; transform: translateY(0); } }
+@keyframes notification-panel-up { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-1rem); } }
+@media (prefers-reduced-motion: reduce) { .notification-panel[data-state] { animation: none; } }
+
+/* Translucent notification surface; blur the page, never the notification text. */
+.pos-dialog-content.notification-panel {
+  border-radius: 2rem;
+  background-color: color-mix(in srgb, var(--popover) 78%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }

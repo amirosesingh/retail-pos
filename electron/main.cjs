@@ -1882,7 +1882,7 @@ function registerIpc() {
   ipcMain.handle("business:snapshot", (_e, options) => guard.guarded(async () => {
     if(!databaseManager.isConnected())return{ok:false,code:"EDATABASE_NOT_READY",error:"SQL Server setup or connection is not complete yet."};
     const snapshot = await operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
-    return { ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) };
+    return require("./read-snapshot-policy.cjs").filterSnapshot({ ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) }, adminSession);
   }));
   ipcMain.handle("business:analytics", (_e, from, to, timeZone) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports"))

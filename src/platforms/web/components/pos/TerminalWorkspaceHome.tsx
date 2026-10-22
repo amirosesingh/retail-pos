@@ -220,8 +220,8 @@ export function TerminalWorkspaceHome() {
   return (
     <AppShell>
       <SellingShortcuts />
-      <div className="h-full overflow-y-auto bg-background p-4 sm:p-6 lg:p-8">
-        <div className="mx-auto max-w-6xl space-y-8">
+      <div className="pos-page-container no-scrollbar h-full overflow-y-auto bg-background">
+        <div className="w-full min-w-0 space-y-5">
           <header className="rounded-2xl border border-border/70 bg-card p-5 sm:p-7">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-4">
@@ -253,13 +253,11 @@ export function TerminalWorkspaceHome() {
             </div>
           </header>
 
-          {actions}
-
-          <section className="summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Workspace overview">
-            {(["shift", "bills", "revenue", "stock"] as const).map(key => metrics[key])}
+          <section className="selling-overview no-scrollbar flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain sm:grid sm:overflow-x-visible sm:grid-cols-2 lg:grid-cols-4" aria-label="Workspace overview" tabIndex={0}>
+            {(["shift", "bills", "revenue", "stock"] as const).map(key => <div key={key} className="min-w-0 w-[82%] shrink-0 snap-start sm:w-auto [&>*]:h-full">{metrics[key]}</div>)}
           </section>
 
-
+          {actions}
         </div>
       </div>
     </AppShell>

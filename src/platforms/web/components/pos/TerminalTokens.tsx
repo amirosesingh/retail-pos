@@ -1,3 +1,4 @@
+import { copyText } from "@/platform-config/clipboard";
 import { Switch } from "@/components/ui/switch";
 import { setTerminalApprovalEnabled } from "@/core/activation/terminal-tokens";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -305,7 +306,7 @@ export function TerminalTokens({
   };
 
   const copy = async () => {
-    await navigator.clipboard.writeText(code);
+    try { await copyText(code); } catch { toast.error("Could not copy the token. Please try again."); return; }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
   };
@@ -352,7 +353,7 @@ export function TerminalTokens({
 
   const copyReissued = async () => {
     if (!reissued) return;
-    await navigator.clipboard.writeText(reissued.code);
+    try { await copyText(reissued.code); } catch { toast.error("Could not copy the token. Please try again."); return; }
     setReissueCopied(true);
     window.setTimeout(() => setReissueCopied(false), 1500);
   };

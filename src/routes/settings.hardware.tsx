@@ -1,3 +1,5 @@
+import { useAuth } from "@/lib/pos-auth";
+import { BranchSettings } from "@/platforms/web/components/pos/BranchSettings";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { HardwarePanel } from "@/platforms/web/components/pos/settings/panels/HardwarePanel";
@@ -24,12 +26,14 @@ export const Route = createFileRoute("/settings/hardware")({
 });
 
 function HardwareSettings() {
+  const { isAdmin, can } = useAuth();
   return (
     <SettingsFrame
       title="Terminal hardware"
       description="Manage the synchronized printer and drawer profile selected in Settings inheritance."
     >
       <HardwarePanel />
+      {(isAdmin || can("can_manage_sync_backup")) && <BranchSettings />}
     </SettingsFrame>
   );
 }

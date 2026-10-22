@@ -162,8 +162,12 @@ describe("customer membership portal security", () => {
     const membership = read("src/routes/membership.tsx");
 
     expect(panel).toContain('publicSupabaseConfig("membership")');
-    expect(panel).toContain("MEMBERSHIP_SUPABASE_URL");
-    expect(panel).toContain("MEMBERSHIP_SUPABASE_PUBLISHABLE_KEY");
+    expect(panel).toContain("Membership database configured");
+    expect(panel).toContain("Central database configured");
+    expect(panel).not.toContain("${status.url}");
+    expect(panel).not.toContain("{membership?.url ??");
+    expect(panel).not.toContain("keyHint(membership.key)");
+    expect(panel).not.toContain("${status.keyHint}");
     expect(panel).not.toContain("MEMBERSHIP_SUPABASE_SERVICE_ROLE_KEY");
     expect(panel).toContain("encrypted hosting");
     expect(panel).not.toMatch(/setMembership|membershipServiceKey|membership-service-key/i);

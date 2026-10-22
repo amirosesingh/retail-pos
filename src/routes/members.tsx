@@ -76,7 +76,7 @@ function Members() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="pos-page-container">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Central membership</h1>

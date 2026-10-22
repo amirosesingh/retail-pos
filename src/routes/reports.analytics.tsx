@@ -147,7 +147,7 @@ function AnalyticsBoard() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Business Analytics"
           subtitle="Top sellers, shop performance, trends, savings and profit for your accessible shops and selected dates."

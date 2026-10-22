@@ -307,7 +307,7 @@ function ApprovalsPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-4xl space-y-4 p-4">
+      <div className="pos-page-container">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold">Approvals</h1>

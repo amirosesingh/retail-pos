@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { disconnectedRequestRecovery } from "./scripts/dev-request-abort";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
@@ -111,11 +113,12 @@ export default defineConfig({
   css: { transformer: "lightningcss" },
   resolve: {
     // Native approval UI/Keystore enrollment never enter website client chunks.
-    alias: [...(isDesktop ? [{ find: "@/platform-config/approval-token-store", replacement: resolve("src/platforms/windows/approval-token-store.ts") }] : []),...(isIos ? [{ find: "@/platform-config/ios-ota", replacement: resolve("src/platforms/ios/ui.tsx") }] : []), ...shellAliases(buildPlatform), ...(!isTerminalBuild ? [
+    alias: [{ find: /^zod$/, replacement: resolve("src/lib/csp-zod.ts") }, ...(isDesktop ? [{ find: "@/platform-config/approval-token-store", replacement: resolve("src/platforms/windows/approval-token-store.ts") }] : []),...(isIos ? [{ find: "@/platform-config/ios-ota", replacement: resolve("src/platforms/ios/ui.tsx") }] : []), ...shellAliases(buildPlatform), ...(!isTerminalBuild ? [
       { find: /^\.\/routeTree\.gen(?:\.tsx?)?$/, replacement: resolve("src/routeTree.web.gen.ts") },
     ] : [
       { find: "@/platform-config/update-settings", replacement: resolve("src/platform-config/native-update-settings.tsx") },
     ]), ...(isMobile ? [
+      { find: "@/platform-config/clipboard", replacement: resolve("src/platforms/mobile/clipboard.ts") },
       { find: "@/platform-config/offline-interface", replacement: resolve("src/platforms/mobile/components/OfflineInterface.tsx") },
       { find: "@/platform-config/viewport", replacement: resolve("src/platforms/mobile/viewport.ts") },
     ] : []), ...(isTerminalBuild ? [
@@ -133,6 +136,14 @@ export default defineConfig({
     ],
   },
   plugins: [
+    {
+      name: "refresh-bundled-logic-report",
+      apply: "build",
+      configResolved(config) {
+        // Scan the source used by this build, never ship a report from an older release.
+        execFileSync(process.execPath, [resolve(config.root, "scripts/logic-scan.cjs")], { cwd: config.root, stdio: "inherit" });
+      },
+    },
     enforceShellBoundary(buildPlatform),
     stripThirdPartyRscMarkers(),
     tanstackStart({
@@ -174,6 +185,7 @@ export default defineConfig({
     alignNitroRolldownOutput(),
     tailwindcss(),
     viteReact(),
+    disconnectedRequestRecovery(),
   ],
   ...(isTerminalBuild
     ? {

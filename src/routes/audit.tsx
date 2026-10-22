@@ -286,7 +286,7 @@ function AuditPage() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="pos-page-container">
         {historyError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Audit history incomplete: {historyError}</p>}
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>

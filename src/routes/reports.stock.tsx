@@ -92,7 +92,7 @@ function StockReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Stock Adjustments & Calibration"
           subtitle="Every correction to stock on hand, with the reason, the variance and the person responsible."

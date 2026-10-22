@@ -1,3 +1,4 @@
+import { copyText } from "@/platform-config/clipboard";
 import { resendStaffConfirmation } from "@/lib/staff-admin-client";
 import { HelpTip } from "@/components/ui/help-tip";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
@@ -72,6 +73,7 @@ import {
   looksLikeEmail,
   permanentlyDeleteStaffMember,
   updateStaffMember,
+  toggleStaffStatus,
 } from "@/lib/staff-admin";
 
 type Row = {
@@ -174,6 +176,7 @@ export function StaffManager() {
   const confirmationPending = useRef(false);
   const [form, setForm] = useState<Form>({ ...EMPTY });
   const [editing, setEditing] = useState<Row | null>(null);
+  const [changeCredential, setChangeCredential] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [permissionSearch, setPermissionSearch] = useState("");
   const [permissionsFor, setPermissionsFor] = useState<Row | null>(null);
@@ -245,7 +248,7 @@ export function StaffManager() {
             login_username: r.login_username ?? null,
             full_name: String(r["full_name"] ?? ""),
             role,
-            role_slug: String(r["role_slug"] ?? role),
+            role_slug: String(r["role_slug"] ?? "").trim() || role,
             email: String(r["email"] ?? ""),
             email_confirmed: typeof r["email_confirmed"] === "boolean" ? r["email_confirmed"] : null,
             store_id: (r["store_id"] as string | null) ?? null,
@@ -304,12 +307,14 @@ export function StaffManager() {
 
   const openCreate = () => {
     setEditing(null);
+    setChangeCredential(false);
     setForm({ ...EMPTY });
     setFormOpen(true);
   };
 
   const openEdit = (row: Row) => {
     setEditing(row);
+    setChangeCredential(false);
     setForm({
       displayName: row.full_name,
       username: row.login_username || row.user_id,
@@ -334,8 +339,9 @@ export function StaffManager() {
     : /^[a-z0-9._-]{2,40}$/.test(form.username.trim().toLowerCase());
   const emailValid = !editing || (!form.email.trim() ? !isExternalEmail(editing.email) : /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()));
   const needsEmailPassword = !!editing && !isExternalEmail(editing.email) && emailMode;
+  const credentialEnabled = !editing || changeCredential || needsEmailPassword;
   const credentialValid =
-    editing && !form.credential && !needsEmailPassword
+    !credentialEnabled
       ? true
       : emailMode
         ? form.credential.length >= 8
@@ -345,14 +351,21 @@ export function StaffManager() {
   const branchId = form.branchId === "all" ? null : form.branchId;
   const branchLabel = branchId ? branchDisplayName(stores, branchId) : "All branches";
 
-  const credentialMatches = form.credential === form.confirmCredential;
-  const canSave = credentialMatches && nameValid && identifierValid && emailValid && credentialValid && branchValid && !!selectedRole;
+  const credentialMatches = !credentialEnabled || form.credential === form.confirmCredential;
+  const statusOnly = Boolean(editing && form.active !== editing.is_active &&
+    form.displayName === editing.full_name && form.username === (editing.login_username || editing.user_id) &&
+    form.email === (isExternalEmail(editing.email) ? editing.email : "") &&
+    form.roleSlug === editing.role_slug && form.branchId === (editing.store_id ?? "all") && !credentialEnabled);
+  const canSave = statusOnly || credentialMatches && nameValid && identifierValid && emailValid && credentialValid && branchValid && !!selectedRole;
 
   const save = async () => {
-    if (!canSave || !selectedRole) return;
+    if (!canSave || (!selectedRole && !statusOnly)) return;
     setBusy("save");
     try {
-      if (editing) {
+      if (editing && statusOnly) {
+        await toggleStaffStatus(editing.user_id, form.active);
+        toast.success(`${form.displayName.trim()} ${form.active ? "enabled" : "disabled"}`);
+      } else if (editing && selectedRole) {
         await updateStaffMember({
           username: editing.user_id,
           loginUsername: form.username.trim().toLowerCase(),
@@ -362,7 +375,7 @@ export function StaffManager() {
           roleSlug: selectedRole.slug,
           baseRole: selectedRole.baseLevel,
           active: form.active,
-          ...(form.credential ? { credential: form.credential } : {}),
+          ...(credentialEnabled && form.credential ? { credential: form.credential } : {}),
         });
         if (editing.role_slug !== selectedRole.slug) {
           const permissions = selectedRole.permissions ?? rolePermissions(selectedRole.baseLevel);
@@ -376,7 +389,7 @@ export function StaffManager() {
           if (!permissionResult.ok) throw new Error(permissionResult.error);
         }
         toast.success(`${form.displayName.trim()} saved — ${branchLabel}`);
-      } else {
+      } else if (selectedRole) {
         const result = await createStaffMember({
           displayName: form.displayName.trim(),
           username: form.username.trim().toLowerCase(),
@@ -718,7 +731,7 @@ export function StaffManager() {
             <DialogTitle>{editing ? "Edit account" : "Create account"}</DialogTitle>
             <DialogDescription>
               {editing
-                ? "Update profile, access and credentials. Leave the credential blank to keep it unchanged."
+                ? "Update profile and access. The existing password or PIN stays unchanged unless you choose to replace it."
                 : "Use a username for terminal PIN sign-in or a real email for password sign-in."}
             </DialogDescription>
           </DialogHeader>
@@ -759,6 +772,14 @@ export function StaffManager() {
                 onChange={(e) => setForm({ ...form, email: e.target.value })} />
               {!emailValid && <p className="text-xs text-destructive">Enter a valid email address.</p>}
             </div>}
+            {editing && !needsEmailPassword && <div className="col-span-2 flex items-center justify-between gap-2 rounded-md border p-3">
+              <span className="text-xs text-muted-foreground">{changeCredential ? "Enter and confirm a new credential below." : "Existing sign-in credential unchanged."}</span>
+              <Button type="button" variant="outline" size="sm" onClick={() => {
+                setChangeCredential(!changeCredential);
+                setForm({ ...form, credential: "", confirmCredential: "" });
+              }}>{changeCredential ? "Cancel credential change" : emailMode ? "Change password" : "Change PIN / passcode"}</Button>
+            </div>}
+            {credentialEnabled && <>
             <div className="space-y-1">
               <Label className="text-xs" htmlFor="staff-credential">
                 {emailMode ? "Password" : "PIN or passcode (4–32)"}
@@ -792,6 +813,7 @@ export function StaffManager() {
                 onChange={e => setForm({ ...form, confirmCredential: e.target.value })} />
               {form.confirmCredential && !credentialMatches && <p className="text-xs text-destructive">The entries must match.</p>}
             </div>
+            </>}
             <div className="space-y-1">
               <div className="flex items-center gap-1"><Label htmlFor="staff-role" className="text-xs">Role *</Label><HelpTip label="About role permissions" text={editing && editing.role_slug === form.roleSlug ? "Current permissions are preserved." : "Uses this role’s saved permissions."} /></div>
               <Select
@@ -802,6 +824,7 @@ export function StaffManager() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  {editing && !selectedRole && <SelectItem value={form.roleSlug} disabled>{form.roleSlug || editing.role} (current)</SelectItem>}
                   {roles.map((role) => (
                     <SelectItem key={role.slug} value={role.slug}>
                       {role.name}
@@ -821,6 +844,7 @@ export function StaffManager() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All branches</SelectItem>
+                  {editing && !branchValid && <SelectItem value={form.branchId} disabled>{form.branchId} (current)</SelectItem>}
                   {stores.map((store) => (
                     <SelectItem key={store.id} value={store.id}>
                       {store.code} · {store.name}
@@ -962,9 +986,17 @@ export function StaffManager() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="delete-confirm">
-              Type <span className="font-mono font-semibold">{deleteFor?.user_id}</span> to confirm
-            </Label>
+            <Label htmlFor="delete-confirm">Type this account name to confirm</Label>
+            <div className="flex items-start gap-1">
+              <span className="min-w-0 select-text break-all font-mono text-sm font-semibold leading-7">{deleteFor?.user_id}</span>
+              <button type="button" aria-label="Copy confirmation name" title="Copy confirmation name"
+                className="inline-flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => {
+                  if (!deleteFor) return;
+                  void copyText(deleteFor.user_id).then(() => toast.success("Confirmation text copied"))
+                    .catch(() => toast.error("Could not copy. Select the account name and copy it manually."));
+                }}><Copy className="size-3" aria-hidden="true" /></button>
+            </div>
             <Input
               id="delete-confirm"
               value={confirmation}

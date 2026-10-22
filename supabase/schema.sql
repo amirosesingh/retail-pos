@@ -19913,6 +19913,90 @@ END $$;
 REVOKE ALL ON FUNCTION public.approval_token_state(text,text,uuid,text,bigint) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.approval_token_state(text,text,uuid,text,bigint) TO service_role;
 
+-- Record deliberate Management issuance; a deleted branch must never become Management.
+BEGIN;
+ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS management_registration boolean NOT NULL DEFAULT false;
+UPDATE public.terminal_tokens SET management_registration = true
+WHERE location_id IS NULL AND management_registration IS FALSE
+  AND ((platform = 'pc' AND management_sync_enabled IS TRUE)
+    OR (platform = 'mobile' AND location_name = 'All branches — management'
+      AND status = 'active' AND claimed_at IS NULL));
+
+-- Existing issuers and scoped reissue use this canonical Management label.
+-- INSERT-only: ON DELETE SET NULL on a branch cannot upgrade its token.
+CREATE OR REPLACE FUNCTION private.terminal_management_registration_on_insert()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $trigger$
+BEGIN
+  NEW.management_registration := coalesce(NEW.location_id IS NULL
+    AND ((NEW.platform = 'pc' AND NEW.management_sync_enabled IS TRUE)
+      OR (NEW.platform = 'mobile' AND NEW.location_name = 'All branches — management')), false);
+  RETURN NEW;
+END
+$trigger$;
+REVOKE ALL ON FUNCTION private.terminal_management_registration_on_insert() FROM PUBLIC;
+DROP TRIGGER IF EXISTS terminal_management_registration_insert ON public.terminal_tokens;
+CREATE TRIGGER terminal_management_registration_insert BEFORE INSERT ON public.terminal_tokens
+FOR EACH ROW EXECUTE FUNCTION private.terminal_management_registration_on_insert();
+
+CREATE OR REPLACE FUNCTION private.terminal_token_claim_impl(
+  p_token_id uuid,
+  p_device text DEFAULT NULL::text,
+  p_proof_hash text DEFAULT NULL::text,
+  p_platform text DEFAULT NULL::text,
+  p_os text DEFAULT NULL::text
+) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  t public.terminal_tokens%ROWTYPE;
+  claimed boolean;
+BEGIN
+  SELECT * INTO t FROM public.terminal_tokens WHERE id = p_token_id FOR UPDATE;
+  IF NOT FOUND THEN RETURN false; END IF;
+  IF t.status = 'revoked' OR t.revoked_at IS NOT NULL THEN RAISE EXCEPTION 'TERMINAL_TOKEN_REVOKED'; END IF;
+  IF pg_catalog.btrim(coalesce(t.location_id, '')) = '' AND t.management_registration IS NOT TRUE THEN RAISE EXCEPTION 'TERMINAL_BRANCH_REQUIRED'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.stores s WHERE s.id = t.location_id
+      AND (s.deleted_at IS NOT NULL OR s.archived_at IS NOT NULL OR s.is_active IS FALSE)
+  ) THEN RAISE EXCEPTION 'TERMINAL_BRANCH_INACTIVE'; END IF;
+  IF nullif(pg_catalog.btrim(coalesce(p_proof_hash, '')), '') IS NULL THEN
+    RAISE EXCEPTION 'TERMINAL_DEVICE_PROOF_REQUIRED';
+  END IF;
+  IF nullif(pg_catalog.btrim(coalesce(t.claim_proof, '')), '') IS NOT NULL
+     AND pg_catalog.lower(t.claim_proof) <> pg_catalog.lower(p_proof_hash) THEN
+    RAISE EXCEPTION 'TERMINAL_DEVICE_PROOF_MISMATCH';
+  END IF;
+  IF ((t.platform = 'mobile' AND p_platform IN ('android', 'ios')) OR (t.platform = 'pc' AND p_platform = 'electron')) IS NOT TRUE THEN
+    RAISE EXCEPTION 'TERMINAL_PLATFORM_MISMATCH';
+  END IF;
+  IF t.status <> 'active' OR t.claimed_at IS NOT NULL THEN
+    IF pg_catalog.lower(coalesce(t.claim_proof, t.claimed_proof_hash)) = pg_catalog.lower(p_proof_hash) THEN
+      UPDATE public.terminal_tokens SET last_seen_at = pg_catalog.now() WHERE id = p_token_id;
+      RETURN true;
+    END IF;
+    RETURN false;
+  END IF;
+  IF t.expires_at IS NOT NULL AND t.expires_at < pg_catalog.now() THEN RAISE EXCEPTION 'TERMINAL_TOKEN_EXPIRED'; END IF;
+  UPDATE public.terminal_tokens
+     SET status = 'used',
+         claimed_by_device = pg_catalog.left(coalesce(p_device, claimed_by_device), 120),
+         claim_proof = pg_catalog.lower(p_proof_hash),
+         claimed_proof_hash = pg_catalog.lower(p_proof_hash),
+         claimed_platform = coalesce(nullif(pg_catalog.btrim(coalesce(p_platform, '')), ''), claimed_platform),
+         claimed_os = coalesce(nullif(pg_catalog.btrim(coalesce(p_os, '')), ''), claimed_os),
+         is_claimed = true,
+         claimed_at = pg_catalog.now(),
+         activated_at = coalesce(activated_at, pg_catalog.now()),
+         last_seen_at = pg_catalog.now()
+   WHERE id = p_token_id AND status = 'active' AND claimed_at IS NULL
+   RETURNING true INTO claimed;
+  RETURN coalesce(claimed, false);
+END
+$function$;
+
+COMMIT;
+
 -- Final public-schema privilege hardening after release 1.4.38 routine definitions.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC,anon,authenticated;
 DO $release_hardening$
@@ -20002,3 +20086,168 @@ GROUP BY f.sale_day,f.sale_month,f.store_id,f.product_id,f.product_name,coalesce
 REVOKE ALL ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales FROM anon;
 GRANT SELECT ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales TO authenticated;
 GRANT ALL ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales TO service_role;
+
+-- Enforce saved action/page permissions for supervisors as well as other staff.
+-- Administrators retain recovery access; inactive accounts never gain access.
+CREATE OR REPLACE FUNCTION public.has_perm(_flag text) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+  WITH actor AS (
+    SELECT a.role, a.role_slug, coalesce(a.permissions, '{}'::jsonb) AS permissions
+    FROM public.app_users a
+    WHERE (SELECT auth.uid()) IS NOT NULL AND a.is_active
+      AND (a.auth_user_id = (SELECT auth.uid())
+        OR (a.auth_user_id IS NULL AND lower(a.email) = lower(coalesce((SELECT auth.jwt())->>'email', ''))))
+    ORDER BY (a.auth_user_id = (SELECT auth.uid())) DESC NULLS LAST
+    LIMIT 1
+  ), decision AS (
+    SELECT *, CASE
+      WHEN permissions ? _flag THEN permissions->_flag = 'true'::jsonb
+      WHEN _flag = 'can_view_cost_margin' THEN permissions->'can_view_sales_reports' = 'true'::jsonb
+        AND (NOT permissions ? 'page:reports' OR permissions->'page:reports' = 'true'::jsonb)
+      WHEN _flag = ANY (ARRAY['can_edit_product_details','can_link_product_barcode',
+        'can_archive_product','can_restore_product','can_publish_product'])
+        THEN permissions->'can_add_new_product' = 'true'::jsonb
+      ELSE false END AS granted
+    FROM actor
+  )
+  SELECT coalesce((SELECT
+    CASE WHEN role = 'admin' OR role_slug = 'admin' THEN true
+    ELSE coalesce(granted, false) AND (
+      _flag = 'can_use_management_mobile'
+      OR NOT ('{"can_process_sale":["register"],"can_give_discount":["register"],"can_void_item":["register"],"can_process_refund":["register"],"can_process_exchange":["register"],"can_send_whatsapp_bill":["register"],"can_delete_line":["register"],"can_reduce_qty":["register"],"can_discount_bill":["register"],"can_override_price":["register"],"can_void_cart":["register"],"can_no_sale_open":["register"],"can_edit_tenders":["register"],"can_apply_member_discount":["register"],"can_redeem_points":["register"],"can_hold_cart":["holds"],"can_view_held_orders":["holds"],"can_reopen_held_order":["holds"],"can_discard_held_order":["holds"],"can_open_drawer":["shifts"],"can_close_drawer":["shifts"],"can_view_drawer_balance":["shifts"],"can_open_shift":["shifts"],"can_close_shift":["shifts"],"can_bypass_shift_lock":["shifts"],"can_shift_cash_count":["shifts"],"can_shift_expected_cash_view":["shifts"],"can_shift_counted_cash_view":["shifts"],"can_shift_variance_view":["shifts"],"can_shift_financial_summary_view":["shifts"],"can_shift_payment_breakdown_view":["shifts"],"can_shift_closing_history_view":["shifts"],"can_shift_signin_history_view":["shifts"],"can_shift_report_reprint":["shifts"],"can_manage_other_shifts":["shifts"],"can_shift_variance_approve":["shifts"],"can_shift_cash_recount":["shifts"],"can_reprint_bill":["receipts"],"can_manage_bookings":["bookings","pos-general-booking","pos-racket-service"],"can_create_booking":["bookings","pos-general-booking","pos-racket-service"],"can_collect_booking":["bookings","pos-general-booking","pos-racket-service"],"can_cancel_booking":["bookings","pos-general-booking","pos-racket-service"],"can_view_inventory":["inventory"],"can_edit_product_price":["inventory"],"can_add_new_product":["inventory"],"can_edit_product_details":["inventory"],"can_link_product_barcode":["inventory"],"can_archive_product":["inventory"],"can_restore_product":["inventory"],"can_publish_product":["inventory"],"can_manage_categories":["inventory"],"can_bulk_edit_products":["inventory"],"can_merge_products":["inventory"],"can_view_cost_margin":["inventory","all-shops","dashboard","analytics","reports"],"can_adjust_stock":["stock"],"can_receive_purchase_order":["purchasing","receiving","suppliers"],"can_create_transfer":["requests","transfers","approvals","verifications"],"can_receive_transfer":["requests","transfers","approvals","verifications"],"can_approve_transfer":["requests","transfers","approvals","verifications"],"can_add_member":["members"],"can_edit_member_points":["members"],"can_view_member_history":["members"],"can_manage_locations":["locations","all-shops"],"can_view_dashboard":["dashboard","analytics"],"can_view_sales_reports":["reports"],"can_export_reports":["reports"],"can_view_audit_trail":["audit"],"can_manage_promotions":["promotions","coupons"],"can_manage_staff":["staff","admin"],"can_manage_terminals":["terminals","settings-mobile-terminals"],"can_use_management_mobile":["settings-mobile-terminals"],"can_manage_sync_backup":["database"],"can_access_pos_settings":["settings"],"can_customize_display":["settings"]}'::jsonb ? _flag)
+      OR EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text('{"can_process_sale":["register"],"can_give_discount":["register"],"can_void_item":["register"],"can_process_refund":["register"],"can_process_exchange":["register"],"can_send_whatsapp_bill":["register"],"can_delete_line":["register"],"can_reduce_qty":["register"],"can_discount_bill":["register"],"can_override_price":["register"],"can_void_cart":["register"],"can_no_sale_open":["register"],"can_edit_tenders":["register"],"can_apply_member_discount":["register"],"can_redeem_points":["register"],"can_hold_cart":["holds"],"can_view_held_orders":["holds"],"can_reopen_held_order":["holds"],"can_discard_held_order":["holds"],"can_open_drawer":["shifts"],"can_close_drawer":["shifts"],"can_view_drawer_balance":["shifts"],"can_open_shift":["shifts"],"can_close_shift":["shifts"],"can_bypass_shift_lock":["shifts"],"can_shift_cash_count":["shifts"],"can_shift_expected_cash_view":["shifts"],"can_shift_counted_cash_view":["shifts"],"can_shift_variance_view":["shifts"],"can_shift_financial_summary_view":["shifts"],"can_shift_payment_breakdown_view":["shifts"],"can_shift_closing_history_view":["shifts"],"can_shift_signin_history_view":["shifts"],"can_shift_report_reprint":["shifts"],"can_manage_other_shifts":["shifts"],"can_shift_variance_approve":["shifts"],"can_shift_cash_recount":["shifts"],"can_reprint_bill":["receipts"],"can_manage_bookings":["bookings","pos-general-booking","pos-racket-service"],"can_create_booking":["bookings","pos-general-booking","pos-racket-service"],"can_collect_booking":["bookings","pos-general-booking","pos-racket-service"],"can_cancel_booking":["bookings","pos-general-booking","pos-racket-service"],"can_view_inventory":["inventory"],"can_edit_product_price":["inventory"],"can_add_new_product":["inventory"],"can_edit_product_details":["inventory"],"can_link_product_barcode":["inventory"],"can_archive_product":["inventory"],"can_restore_product":["inventory"],"can_publish_product":["inventory"],"can_manage_categories":["inventory"],"can_bulk_edit_products":["inventory"],"can_merge_products":["inventory"],"can_view_cost_margin":["inventory","all-shops","dashboard","analytics","reports"],"can_adjust_stock":["stock"],"can_receive_purchase_order":["purchasing","receiving","suppliers"],"can_create_transfer":["requests","transfers","approvals","verifications"],"can_receive_transfer":["requests","transfers","approvals","verifications"],"can_approve_transfer":["requests","transfers","approvals","verifications"],"can_add_member":["members"],"can_edit_member_points":["members"],"can_view_member_history":["members"],"can_manage_locations":["locations","all-shops"],"can_view_dashboard":["dashboard","analytics"],"can_view_sales_reports":["reports"],"can_export_reports":["reports"],"can_view_audit_trail":["audit"],"can_manage_promotions":["promotions","coupons"],"can_manage_staff":["staff","admin"],"can_manage_terminals":["terminals","settings-mobile-terminals"],"can_use_management_mobile":["settings-mobile-terminals"],"can_manage_sync_backup":["database"],"can_access_pos_settings":["settings"],"can_customize_display":["settings"]}'::jsonb->_flag) AS owner(page)
+        WHERE permissions->('page:' || owner.page) IS DISTINCT FROM 'false'::jsonb
+      )
+    ) END FROM decision), false)
+$$;
+REVOKE ALL ON FUNCTION public.has_perm(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.has_perm(text) TO authenticated, service_role;
+NOTIFY pgrst, 'reload schema';
+
+-- Global denials are materialized into the existing replicated permission matrix.
+-- Requested per-user grants stay private so removing a denial restores prior intent.
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE TABLE IF NOT EXISTS private.global_permission_policy (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  denied text[] NOT NULL DEFAULT '{}'
+);
+INSERT INTO private.global_permission_policy(singleton) VALUES (true) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS private.requested_staff_permissions (
+  account_id uuid PRIMARY KEY REFERENCES public.app_users(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+  permissions jsonb NOT NULL
+);
+INSERT INTO private.requested_staff_permissions(account_id, permissions)
+SELECT id, coalesce(permissions, '{}'::jsonb) FROM public.app_users ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS private.global_permission_audit (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  actor uuid NOT NULL, denied text[] NOT NULL, changed_at timestamptz NOT NULL DEFAULT now()
+);
+REVOKE ALL ON private.global_permission_policy, private.requested_staff_permissions,
+  private.global_permission_audit FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION private.enforce_global_permission_denials() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE requested jsonb; entry record; blocked text;
+BEGIN
+  SELECT permissions INTO requested FROM private.requested_staff_permissions WHERE account_id = NEW.id;
+  IF requested IS NULL OR TG_OP = 'INSERT' THEN
+    requested := coalesce(NEW.permissions, '{}'::jsonb);
+  ELSE
+    -- A normal profile save must not replace a masked grant with a permanent denial.
+    FOR entry IN SELECT key, value FROM jsonb_each(coalesce(NEW.permissions, '{}'::jsonb)) LOOP
+      IF entry.value IS DISTINCT FROM OLD.permissions->entry.key THEN
+        requested := jsonb_set(requested, ARRAY[entry.key], entry.value, true);
+      END IF;
+    END LOOP;
+    FOR blocked IN SELECT jsonb_object_keys(coalesce(OLD.permissions, '{}'::jsonb)) LOOP
+      IF NOT coalesce(NEW.permissions, '{}'::jsonb) ? blocked THEN requested := requested - blocked; END IF;
+    END LOOP;
+  END IF;
+  INSERT INTO private.requested_staff_permissions(account_id, permissions) VALUES (NEW.id, requested)
+  ON CONFLICT(account_id) DO UPDATE SET permissions = EXCLUDED.permissions;
+  NEW.permissions := requested;
+  IF NEW.role <> 'admin' AND coalesce(NEW.role_slug, '') <> 'admin' THEN
+    FOR blocked IN SELECT unnest(denied) FROM private.global_permission_policy WHERE singleton LOOP
+      NEW.permissions := jsonb_set(NEW.permissions, ARRAY[blocked], 'false'::jsonb, true);
+    END LOOP;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION private.enforce_global_permission_denials() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS zz_global_permission_denials ON public.app_users;
+CREATE TRIGGER zz_global_permission_denials BEFORE INSERT OR UPDATE OF permissions, role, role_slug
+ON public.app_users FOR EACH ROW EXECUTE FUNCTION private.enforce_global_permission_denials();
+
+CREATE OR REPLACE FUNCTION public.global_permission_restrictions() RETURNS text[]
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.app_users WHERE auth_user_id = (SELECT auth.uid())
+    AND is_active AND (role = 'admin' OR role_slug = 'admin')) THEN
+    RAISE EXCEPTION 'Administrator access is required' USING ERRCODE = '42501';
+  END IF;
+  RETURN (SELECT denied FROM private.global_permission_policy WHERE singleton);
+END $$;
+CREATE OR REPLACE FUNCTION public.set_global_permission_restrictions(p_denied text[]) RETURNS text[]
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE normalized text[];
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.app_users WHERE auth_user_id = (SELECT auth.uid())
+    AND is_active AND (role = 'admin' OR role_slug = 'admin')) THEN
+    RAISE EXCEPTION 'Administrator access is required' USING ERRCODE = '42501';
+  END IF;
+  IF p_denied IS NULL OR cardinality(p_denied) > 500 OR EXISTS (
+    SELECT 1 FROM unnest(p_denied) k WHERE k IS NULL OR NOT ('["can_access_pos_settings","can_add_member","can_add_new_product","can_adjust_stock","can_apply_member_discount","can_approve_transfer","can_archive_product","can_bulk_edit_products","can_bypass_shift_lock","can_cancel_booking","can_close_drawer","can_close_shift","can_collect_booking","can_create_booking","can_create_transfer","can_customize_display","can_delete_line","can_discard_held_order","can_discount_bill","can_edit_member_points","can_edit_product_details","can_edit_product_price","can_edit_tenders","can_export_reports","can_give_discount","can_hold_cart","can_link_product_barcode","can_manage_bookings","can_manage_categories","can_manage_locations","can_manage_other_shifts","can_manage_promotions","can_manage_staff","can_manage_sync_backup","can_manage_terminals","can_merge_products","can_no_sale_open","can_open_drawer","can_open_shift","can_override_price","can_process_exchange","can_process_refund","can_process_sale","can_publish_product","can_receive_purchase_order","can_receive_transfer","can_redeem_points","can_reduce_qty","can_reopen_held_order","can_reprint_bill","can_restore_product","can_send_whatsapp_bill","can_shift_cash_count","can_shift_cash_recount","can_shift_closing_history_view","can_shift_counted_cash_view","can_shift_expected_cash_view","can_shift_financial_summary_view","can_shift_payment_breakdown_view","can_shift_report_reprint","can_shift_signin_history_view","can_shift_variance_approve","can_shift_variance_view","can_use_management_mobile","can_view_audit_trail","can_view_dashboard","can_view_drawer_balance","can_view_held_orders","can_view_inventory","can_view_cost_margin","can_view_member_history","can_view_sales_reports","can_void_cart","can_void_item","page:admin","page:alerts","page:all-shops","page:analytics","page:approvals","page:audit","page:bookings","page:coupons","page:dashboard","page:database","page:display","page:holds","page:inventory","page:locations","page:members","page:pos-general-booking","page:pos-racket-service","page:promotions","page:purchasing","page:receipts","page:receiving","page:register","page:reports","page:requests","page:settings","page:settings-mobile-terminals","page:shifts","page:staff","page:stock","page:suppliers","page:terminals","page:transfers","page:verifications"]'::jsonb ? k)
+  ) THEN RAISE EXCEPTION 'Invalid restriction keys' USING ERRCODE = '22023'; END IF;
+  SELECT coalesce(array_agg(DISTINCT k ORDER BY k), '{}') INTO normalized FROM unnest(p_denied) k;
+  -- Serialize policy changes with account edits before changing the effective matrices.
+  LOCK TABLE public.app_users IN SHARE ROW EXCLUSIVE MODE;
+  UPDATE private.global_permission_policy SET denied = normalized WHERE singleton;
+  UPDATE public.app_users a SET permissions = r.permissions, updated_at = now()
+    FROM private.requested_staff_permissions r WHERE r.account_id = a.id
+      AND a.role <> 'admin' AND coalesce(a.role_slug, '') <> 'admin';
+  INSERT INTO private.global_permission_audit(actor, denied) VALUES ((SELECT auth.uid()), normalized);
+  RETURN normalized;
+END $$;
+REVOKE ALL ON FUNCTION public.global_permission_restrictions(), public.set_global_permission_restrictions(text[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.global_permission_restrictions(), public.set_global_permission_restrictions(text[]) TO authenticated;
+NOTIFY pgrst, 'reload schema';
+
+-- Additional restrictive policies: existing branch/row policies still apply.
+DO $policy$
+DECLARE item record; predicate text;
+BEGIN
+  FOR item IN SELECT key, value FROM jsonb_each('{"products":["can_process_sale","can_view_inventory","can_add_new_product","can_edit_product_details","can_adjust_stock","can_receive_purchase_order","can_create_transfer","can_receive_transfer","can_approve_transfer","can_view_sales_reports","can_view_dashboard"],"product_barcodes":["can_process_sale","can_view_inventory","can_add_new_product","can_edit_product_details","can_adjust_stock","can_receive_purchase_order","can_create_transfer","can_receive_transfer","can_approve_transfer","can_view_sales_reports","can_view_dashboard"],"product_categories":["can_process_sale","can_view_inventory","can_add_new_product","can_edit_product_details","can_adjust_stock","can_receive_purchase_order","can_create_transfer","can_receive_transfer","can_approve_transfer","can_view_sales_reports","can_view_dashboard"],"uom_units":["can_process_sale","can_view_inventory","can_add_new_product","can_edit_product_details","can_adjust_stock","can_receive_purchase_order","can_create_transfer","can_receive_transfer","can_approve_transfer","can_view_sales_reports","can_view_dashboard"],"sales":["can_process_sale","can_view_sales_reports","can_view_dashboard","can_reprint_bill","can_process_refund","can_process_exchange"],"sale_items":["can_process_sale","can_view_sales_reports","can_view_dashboard","can_reprint_bill","can_process_refund","can_process_exchange"],"payment_transactions":["can_process_sale","can_view_sales_reports","can_view_dashboard","can_reprint_bill","can_process_refund","can_process_exchange"],"bookings":["can_manage_bookings","can_create_booking","can_collect_booking","can_cancel_booking"],"booking_payments":["can_manage_bookings","can_create_booking","can_collect_booking","can_cancel_booking"],"stock_transfers":["can_create_transfer","can_receive_transfer","can_approve_transfer"],"stock_transfer_items":["can_create_transfer","can_receive_transfer","can_approve_transfer"],"purchase_orders":["can_receive_purchase_order"],"purchase_order_items":["can_receive_purchase_order"],"receivings":["can_receive_purchase_order"],"receiving_items":["can_receive_purchase_order"],"suppliers":["can_receive_purchase_order"],"members":["can_process_sale","can_add_member","can_edit_member_points","can_view_member_history"],"stock_adjustments":["can_adjust_stock"],"stock_count_drafts":["can_adjust_stock"],"stock_movements":["can_adjust_stock","can_view_inventory","can_create_transfer","can_receive_transfer","can_approve_transfer"],"expenses":["can_view_sales_reports"],"audit_logs":["can_view_audit_trail"],"item_activity_logs":["can_view_audit_trail"],"held_orders":["can_hold_cart","can_view_held_orders","can_reopen_held_order"],"terminal_commands":["can_manage_terminals"]}'::jsonb) LOOP
+    IF to_regclass('public.' || item.key) IS NULL THEN CONTINUE; END IF;
+    SELECT string_agg(format('public.has_perm(%L)', flag), ' OR ') INTO predicate
+      FROM jsonb_array_elements_text(item.value) AS keys(flag);
+    EXECUTE format('DROP POLICY IF EXISTS staff_feature_read ON public.%I', item.key);
+    EXECUTE format('CREATE POLICY staff_feature_read ON public.%I AS RESTRICTIVE FOR SELECT TO authenticated USING (%s)', item.key, predicate);
+  END LOOP;
+END $policy$;
+NOTIFY pgrst, 'reload schema';
+
+-- PIN verifiers are only for trusted server/native verification, never renderer reads.
+DO $columns$
+DECLARE safe_columns text; secret record;
+BEGIN
+  REVOKE SELECT ON public.app_users FROM authenticated;
+  FOR secret IN SELECT attname FROM pg_attribute WHERE attrelid='public.app_users'::regclass
+    AND attnum > 0 AND NOT attisdropped AND attname IN ('pin_hash','offline_login_pin_hash') LOOP
+    EXECUTE format('REVOKE SELECT (%I) ON public.app_users FROM authenticated', secret.attname);
+  END LOOP;
+  SELECT string_agg(quote_ident(attname), ', ' ORDER BY attnum) INTO safe_columns
+    FROM pg_attribute WHERE attrelid='public.app_users'::regclass AND attnum > 0 AND NOT attisdropped
+      AND attname NOT IN ('pin_hash','offline_login_pin_hash');
+  EXECUTE format('GRANT SELECT (%s) ON public.app_users TO authenticated', safe_columns);
+END $columns$;
+
+-- Final public-schema privilege hardening after permission policy definitions.
+DO $permission_hardening$
+DECLARE routine record;
+BEGIN
+  FOR routine IN SELECT p.oid::regprocedure AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef
+  LOOP EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon',routine.signature); END LOOP;
+END $permission_hardening$;

@@ -1,3 +1,4 @@
+import { usePos } from "@/lib/pos-store";
 /**
  * Database connection — and nothing else.
  *
@@ -25,12 +26,14 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 export function DatabaseConnectionSettings() {
   const status = useSystemStatus();
+  const { currentStore } = usePos();
   const { isAdmin, can } = useAuth();
   const mayManageLocal = isAdmin || can("can_manage_sync_backup");
 
   return (
     <div className="w-full space-y-3">
-      <div className="grid gap-2 rounded-md border border-border px-3 py-2 text-sm sm:grid-cols-2">
+      <div className="grid gap-2 rounded-md border border-border px-3 py-2 text-sm sm:grid-cols-3">
+        <Stat label="Branch" value={currentStore.name} />
         <Stat
           label="Central database"
           value={status.connectivity === "online" ? "Reachable" : status.label}

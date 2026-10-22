@@ -137,8 +137,8 @@ function Inventory() {
   const { visible } = useVisibility();
   // Money columns need the reporting permission *and* the administrator's
   // "show cost & margin" switch for this role.
-  const showMoney = can("can_view_sales_reports") && visible("inventory.costColumns");
-  const showStockValue = can("can_view_sales_reports") && visible("inventory.stockValue");
+  const showMoney = can("can_view_cost_margin") && visible("inventory.costColumns");
+  const showStockValue = can("can_view_cost_margin") && visible("inventory.stockValue");
 
   const canCreate = can("can_add_new_product");
   const canEditDetails = can("can_edit_product_details");
@@ -319,7 +319,7 @@ function Inventory() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-3 sm:p-4 lg:p-6">
+      <div className="pos-page-container">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Inventory · {currentStore.name}</h1>

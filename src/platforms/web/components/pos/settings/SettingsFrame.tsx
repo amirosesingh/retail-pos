@@ -17,7 +17,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ArrowLeft, Eye, Loader2, RotateCcw, Save } from "lucide-react";
+import { ChevronLeft, Eye, Loader2, RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
 import { SaveIndicator } from "@/platforms/web/components/pos/settings/SaveIndicator";
@@ -98,7 +98,6 @@ export function SettingsFrame({
   children,
   showPreview = false,
   requireCompanyName = false,
-  wide = false,
   terminalManagement = false,
   permission,
   showSaveBar = true,
@@ -386,7 +385,7 @@ export function SettingsFrame({
         className={
           embedded
             ? "w-full max-w-full space-y-4"
-            : `mx-auto w-full space-y-5 p-4 sm:p-6 ${wide ? "max-w-full" : "max-w-6xl"}`
+            : "pos-page-container"
         }
       >
         <header className="flex flex-wrap items-start justify-between gap-4">
@@ -396,16 +395,16 @@ export function SettingsFrame({
             <div className="flex min-w-0 flex-1 basis-64 items-start gap-3">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="icon"
                 className="mt-0.5 shrink-0"
                 aria-label="Back to previous page"
                 onClick={() => {
                   if (window.history.length > 1) router.history.back();
-                  else void router.navigate({ to: "/" });
+                  else void router.navigate({ to: "/settings" });
                 }}
               >
-                <ArrowLeft className="size-4" />
+                <ChevronLeft className="size-4" />
               </Button>
               <div className="min-w-0 space-y-1">
                 <h1 className="text-2xl font-semibold">{title}</h1>
@@ -443,7 +442,7 @@ export function SettingsFrame({
 
         <fieldset
           disabled={settingsScopeLoading && !allowWhileScopeLoading}
-          className="settings-form w-full min-w-0 max-w-full space-y-5 rounded-2xl border border-border bg-card p-4 shadow-sm disabled:opacity-60 sm:p-6"
+          className="settings-form w-full min-w-0 max-w-full space-y-5 rounded-2xl border border-border bg-card p-4 shadow-sm disabled:opacity-60 sm:p-5"
         >
           {settingsScopeLoading && !allowWhileScopeLoading && (
             <p role="status" className="flex items-center gap-2 rounded-xl bg-primary/5 p-3 text-sm text-muted-foreground">

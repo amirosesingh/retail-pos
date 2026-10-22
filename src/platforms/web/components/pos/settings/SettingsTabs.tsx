@@ -41,9 +41,6 @@ export function SettingsTabs({
 
   return (
     <nav aria-label={`${category.label} sections`} className="w-full min-w-0 space-y-1.5">
-      <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-        {category.label}
-      </p>
       <div className="flex w-full max-w-full gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1">
         {tabs.map((tab) => {
           const tabSearch = searchOf(tab);

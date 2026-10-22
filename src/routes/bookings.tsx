@@ -5,7 +5,6 @@ import { TablePagination, usePagination } from "@/platforms/web/components/pos/T
 import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
-  CalendarClock,
   Printer,
   Search,
   Ban,
@@ -318,12 +317,11 @@ function BookingsPage() {
 
   return (
     <AppShell>
-      <div className="space-y-4 p-4">
+      <div className="pos-page-container">
         <header className="grid grid-cols-[minmax(0,1fr)] items-center gap-3 sm:flex sm:flex-wrap sm:justify-between">
           <div className="min-w-0">
-            <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight">
-              <CalendarClock className="size-5 shrink-0 text-primary" />
-              <span className="truncate">Bookings, jobs &amp; pay later</span>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Bookings, jobs &amp; pay later
             </h1>
             <p className="text-sm text-muted-foreground page-description">
               Reserved goods and racket stringing jobs at {currentStore.name}. Stock stays held

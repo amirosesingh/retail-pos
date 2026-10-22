@@ -538,6 +538,9 @@ function allowed(channel, args = []) {
   }
   if (channel === "business:query") {
     const table = String(args[0] ?? "");
+    const readPermissions = require("./read-permissions.json")[table];
+    if (readPermissions && (!adminSession.hasPosAuthority() ||
+        (!adminSession.hasLevel(ADMIN) && !readPermissions.some(flag => adminSession.hasPermission(flag))))) return false;
     if (table === "shift_reconciliations") return false;
     if (table === "shift_notifications") return adminSession.hasPosAuthority() && adminSession.identity()?.level === "admin";
     if (table === "shift_sessions" && adminSession.hasPosAuthority() && adminSession.identity()?.level === "admin") return true;

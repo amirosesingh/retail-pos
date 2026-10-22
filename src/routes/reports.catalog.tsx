@@ -65,7 +65,7 @@ function CatalogReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Catalog Change History"
           subtitle="Product creations, price changes and stock movements with who and when."

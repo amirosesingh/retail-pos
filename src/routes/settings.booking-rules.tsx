@@ -236,7 +236,7 @@ function BookingRulesForm() {
       <Section title="Scheduling" blurb="How the ready-by date and time are proposed and policed.">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Default turnaround (hours)</Label>
+            <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Default turnaround (hours)</Label><HelpTip label="About Default turnaround (hours)" text="Pre-fills the ready-by box. 0 leaves it blank." /></div>
             <Input
               className="numeric text-right"
               inputMode="numeric"
@@ -244,9 +244,6 @@ function BookingRulesForm() {
               onChange={(e) => patch({ defaultTurnaroundHours: num(e.target.value) })}
               placeholder="48"
             />
-            <p className="text-xs text-muted-foreground">
-              Pre-fills the ready-by box. 0 leaves it blank.
-            </p>
           </div>
         </div>
         <Row
@@ -270,9 +267,7 @@ function BookingRulesForm() {
           />
         </Row>
         <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">
-            Flag uncollected bookings after (days)
-          </Label>
+          <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Flag uncollected bookings after (days)</Label><HelpTip label="About Flag uncollected bookings after (days)" text="0 never flags a booking as abandoned." /></div>
           <Input
             className="numeric text-right"
             inputMode="numeric"
@@ -280,7 +275,6 @@ function BookingRulesForm() {
             onChange={(e) => patch({ staleAfterDays: num(e.target.value) })}
             placeholder="0"
           />
-          <p className="text-xs text-muted-foreground">0 never flags a booking as abandoned.</p>
         </div>
       </Section>
 
@@ -370,7 +364,7 @@ function BookingRulesForm() {
           onChange={(next) => setList("stringModels", next)}
         />
         <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Locked base labour fee</Label>
+          <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Locked base labour fee</Label><HelpTip label="About Locked base labour fee" text="Pre-filled and read-only on the intake screen. Cashiers must override it to change it." /></div>
           <Input
             className="numeric text-right"
             inputMode="decimal"
@@ -382,9 +376,6 @@ function BookingRulesForm() {
             }
             placeholder="0.00"
           />
-          <p className="text-xs text-muted-foreground">
-            Pre-filled and read-only on the intake screen. Cashiers must override it to change it.
-          </p>
         </div>
       </Section>
 
@@ -419,7 +410,7 @@ function BookingRulesForm() {
             </div>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Combo discount value</Label>
+            <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Combo discount value</Label><HelpTip label="About combo discount value" text="Applied to the labour line when a stock racket and a stock string are both on the job." /></div>
             <Input
               className="numeric text-right"
               inputMode="decimal"
@@ -428,9 +419,6 @@ function BookingRulesForm() {
               onChange={(e) => patch({ comboValue: num(e.target.value) })}
               placeholder="0"
             />
-            <p className="text-xs text-muted-foreground">
-              Applied to the labour line when a stock racket and a stock string are both on the job.
-            </p>
           </div>
         </div>
         <Row

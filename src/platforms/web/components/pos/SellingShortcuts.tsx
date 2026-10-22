@@ -1,7 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useAuth } from "@/lib/pos-auth";
 import { useVisibility } from "@/lib/ui-visibility";
-import { Carousel, CarouselContent, CarouselItem } from "@/components/ui/carousel";
 import { navGroups } from "./nav-config";
 
 export function SellingShortcuts() {
@@ -20,11 +19,8 @@ export function SellingShortcuts() {
       aria-label="Selling tools"
       className="min-w-0 shrink-0 border-b border-border bg-background px-3 py-2"
     >
-      <Carousel opts={{ align: "start", containScroll: "trimSnaps" }} className="flex min-w-0 items-center gap-1">
-        <div className="min-w-0 flex-1">
-        <CarouselContent className="ml-0 touch-pan-y">
+      <div className="flex min-w-0 flex-wrap items-center gap-1">
       {items.map((item) => (
-        <CarouselItem key={item.to} className="basis-auto pl-0">
         <Link
           key={item.to}
           to={item.to}
@@ -33,11 +29,8 @@ export function SellingShortcuts() {
           <item.icon className="size-4" aria-hidden="true" />
           {item.label}
         </Link>
-        </CarouselItem>
       ))}
-        </CarouselContent>
-        </div>
-      </Carousel>
+      </div>
     </nav>
   );
 }
