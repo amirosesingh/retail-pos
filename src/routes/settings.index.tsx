@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { SettingsLink, SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
@@ -108,22 +108,13 @@ function SettingsHome() {
       <div className="pos-page-container">
         {/* Compact sticky header: title, description and search stay reachable. */}
         <header className="sticky top-0 z-20 -mx-4 space-y-2 border-b border-border bg-background/95 px-4 pb-3 pt-3 backdrop-blur sm:-mx-6 sm:px-6">
-          <div className="flex items-center gap-2">
-            {activeCat ? (
-              <button
-                type="button"
+          <div className="flex items-start gap-3">
+            {activeCat && (
+              <button type="button" aria-label="Back to Settings" title="Back to Settings"
                 onClick={() => void navigate({ search: {}, replace: false })}
-                className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <ChevronLeft className="size-4" /> Settings
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-input bg-card text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <ChevronLeft className="size-4" aria-hidden="true" />
               </button>
-            ) : (
-              <Link
-                to="/"
-                className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <ChevronLeft className="size-4" /> Register
-              </Link>
             )}
             <div className="min-w-0">
               <h1 className="truncate text-xl font-semibold sm:text-2xl">

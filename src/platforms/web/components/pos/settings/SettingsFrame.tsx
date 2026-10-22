@@ -401,7 +401,7 @@ export function SettingsFrame({
                 aria-label="Back to previous page"
                 onClick={() => {
                   if (window.history.length > 1) router.history.back();
-                  else void router.navigate({ to: "/" });
+                  else void router.navigate({ to: "/settings" });
                 }}
               >
                 <ArrowLeft className="size-4" />

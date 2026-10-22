@@ -1,17 +1,16 @@
+import { SettingsBackLink } from "@/platforms/web/components/pos/settings/SettingsBackLink";
 import { HelpTip } from "@/components/ui/help-tip";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { PresetNumber } from "@/components/ui/preset-number";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft,
   CheckCircle2,
   CloudOff,
   Loader2,
   RefreshCw,
   Save,
-  ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -296,14 +295,6 @@ function RulesSettings() {
   return (
     <SettingsShell>
       <div className="pos-page-container">
-        <div className="sticky top-0 z-20 -mx-6 -mt-6 border-b border-border bg-background/95 px-4 py-2 backdrop-blur">
-          <Button asChild variant="ghost" size="sm" className="h-8 text-xs">
-            <Link to="/settings">
-              <ArrowLeft className="size-4" /> All settings
-            </Link>
-          </Button>
-        </div>
-
         <SettingsTabs current="/settings/rules" />
         {isAdmin && <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
           <div><h2 className="font-semibold">Allow another authorized user to close the shift</h2>
@@ -319,7 +310,7 @@ function RulesSettings() {
         <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
           <div className="min-w-0">
             <h1 className="flex items-center gap-2 text-2xl font-semibold">
-              <ShieldCheck className="size-5 shrink-0 text-primary" /> POS rules &amp; enforcement
+              <SettingsBackLink /> POS rules &amp; enforcement
             </h1>
             <p className="text-sm text-muted-foreground page-description">
               Configure the branch policy enforced across every register at {currentStore.name}.
