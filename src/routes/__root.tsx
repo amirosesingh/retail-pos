@@ -1,3 +1,4 @@
+import { claimRestoredConnectionRetry } from "@/lib/restored-connection-retry";
 import { IosOtaBoot, IosUpdateBanner } from "@/platform-config/ios-ota";
 import { ApprovalTokenAgent } from "@/platform-config/approval-token";
 import { VIEWPORT_FIT } from "@/platform-config/viewport";
@@ -16,7 +17,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportAppReady } from "@/lib/app-health";
@@ -99,6 +100,7 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
     reportAppReady();
   }, [normalizedError]);
 
+  const retryConnection = useCallback(() => { void router.invalidate(); reset(); }, [router, reset]);
   const notConfigured = normalizedError.name === "SupabaseConfigError";
 
   // Missing device configuration is step one of terminal setup, never a cue
@@ -106,10 +108,7 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
   // so the shared startup decision can proceed to activation or sign-in.
   if (notConfigured && isTerminalApp()) {
     return (
-      <ConnectionErrorRecovery onRetry={() => {
-        void router.invalidate();
-        reset();
-      }} />
+      <ConnectionErrorRecovery onRetry={retryConnection} />
     );
   }
 
@@ -424,10 +423,15 @@ function ConnectionErrorRecovery({ onRetry }: { onRetry: () => void }) {
     let current = true;
     setStatus(null);
     void hasRequiredPlatformConfig().then(result => {
-      if (current) setStatus(result);
+      if (!current) return;
+      if (claimRestoredConnectionRetry(result.ready)) {
+        onRetry();
+        return;
+      }
+      setStatus(result);
     });
     return () => { current = false; };
-  }, [attempt]);
+  }, [attempt, onRetry]);
   if (!status) return <TillLoader message="Restoring secure connection…" />;
   if (status.state === "missing" || status.state === "incomplete") {
     return <ConnectDatabaseScreen cloudConfigured={status.have.supabaseKey} onRetry={onRetry} />;
