@@ -50,7 +50,7 @@ function SystemSettingsPage() {
       <div className="w-full min-w-0 max-w-full">
         {tab === "system" && (
           <div className="space-y-4">
-            <CloudConnectionPanel />
+            <CloudConnectionPanel presentation="dialog" />
             <SystemStatusPanel />
           </div>
         )}
