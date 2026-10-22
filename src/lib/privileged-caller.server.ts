@@ -22,7 +22,9 @@ export async function requireCallerScope(
   const scope = await resolveRelayScope(caller);
   if (scope.stale) throw new Error("Your account details are stale — sign in again.");
   if (options.supervisor && !scope.isSupervisor) throw new Error("Supervisor access is required.");
-  if (options.permission && !scope.isSupervisor && scope.permissions[options.permission] !== true)
+  const owner = scope.role === "admin" || scope.roleSlug === "admin";
+  // A supervisor title is not permission to perform every sensitive action.
+  if (options.permission && !owner && scope.permissions[options.permission] !== true)
     throw new Error("You do not have permission to use this feature.");
   return scope;
 }
