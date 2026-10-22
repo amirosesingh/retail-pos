@@ -32,10 +32,7 @@ export function SectionHub({ groupId }: { groupId: string }) {
             className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ChevronLeft className="size-4" aria-hidden="true" />
           </Link>
-          <span className="rounded-xl bg-primary/10 p-3 text-primary">
-            <group.icon aria-hidden="true" className="size-6" />
-          </span>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight">{group.label}</h1>
             {group.blurb && <p className="text-sm text-muted-foreground page-description">{group.blurb}</p>}
           </div>

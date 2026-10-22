@@ -2,7 +2,7 @@ import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { ReportFilters } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BellRing, RefreshCw, Search } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -169,9 +169,6 @@ function AlertsHistory() {
     <AppShell>
       <div className="pos-page-container">
         <header className="flex items-start gap-3">
-          <span className="rounded-xl bg-primary/10 p-3 text-primary">
-            <BellRing className="size-5" aria-hidden="true" />
-          </span>
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Alert History</h1>
             <p className="text-sm text-muted-foreground page-description">
