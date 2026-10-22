@@ -91,7 +91,13 @@ export function TerminalLogin() {
               className="space-y-4"
               onSubmit={async (e) => {
                 e.preventDefault();
-                const typed = email.trim().toLowerCase();
+                // Password managers can fill DOM fields without firing React's
+                // change event. Read the submitted form so that autofill works
+                // on both native WebViews as well as in the browser.
+                const fields = new FormData(e.currentTarget);
+                const submittedIdentifier = String(fields.get("username") ?? email).trim();
+                const submittedPassword = String(fields.get("password") ?? password);
+                const typed = submittedIdentifier.toLowerCase();
                 // Internal accounts (bare usernames and our own hidden
                 // domains) never use a password — hand them to the keypad.
                 if (terminal && typed && !isExternalEmail(typed)) {
@@ -104,7 +110,7 @@ export function TerminalLogin() {
                 setBusy(true);
                 setError("");
                 setFailure(null);
-                const res = await login(email, password);
+                const res = await login(submittedIdentifier, submittedPassword);
                 if (!res.ok) {
                   setError(res.error ?? "Sign in could not be completed.");
                   setFailure((res as { code?: LoginFailure }).code ?? null);
@@ -117,8 +123,9 @@ export function TerminalLogin() {
                 <Label htmlFor="email">Email or username</Label>
                 <Input
                   id="email"
+                  name="username"
                   type="text"
-                  autoComplete="email"
+                  autoComplete="username"
                   placeholder="supervisor@store.com"
                   value={email}
                   onChange={(e) => {
@@ -131,6 +138,7 @@ export function TerminalLogin() {
                 <Label htmlFor="password">Password</Label>
                 <Input
                   id="password"
+                  name="password"
                   type="password"
                   autoComplete="current-password"
                   value={password}
