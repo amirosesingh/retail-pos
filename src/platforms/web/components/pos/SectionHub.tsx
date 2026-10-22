@@ -3,7 +3,7 @@
  * section can be opened as its own page instead of only expanding a list.
  */
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { navGroups, navItemKey, type NavItem } from "@/platforms/web/components/pos/nav-config";
 import { useAuth } from "@/lib/pos-auth";
@@ -28,10 +28,6 @@ export function SectionHub({ groupId }: { groupId: string }) {
     <AppShell>
       <div className="pos-page-container">
         <header className="flex items-start gap-3">
-          <Link to="/" aria-label="Back to register" title="Back to register"
-            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <ChevronLeft className="size-4" aria-hidden="true" />
-          </Link>
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight">{group.label}</h1>
             {group.blurb && <p className="text-sm text-muted-foreground page-description">{group.blurb}</p>}
