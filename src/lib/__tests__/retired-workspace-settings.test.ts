@@ -10,8 +10,9 @@ it("drops only retired preferences and leaves the original settings untouched", 
 
 it("moves links without changing their route permissions", () => {
   const home = navGroups.find(group => group.id === "company")!;
-  expect(home.items.map(item => item.to)).toEqual(expect.arrayContaining(["/dashboard", "/analytics", "/all-shops", "/stores"]));
+  expect(home.items.map(item => item.to)).toEqual(expect.arrayContaining(["/dashboard", "/analytics", "/all-shops"]));
   expect(home.items.some(item => item.to === "/audit")).toBe(false);
+  expect(home.items.some(item => item.to === "/stores")).toBe(false);
   expect(navGroups.find(group => group.id === "reports")!.items.some(item => item.to === "/audit")).toBe(true);
   expect(routePermissionForPath("/audit")).toBe("can_view_audit_trail");
   expect(routePermissionForPath("/dashboard")).toBe("can_view_dashboard");

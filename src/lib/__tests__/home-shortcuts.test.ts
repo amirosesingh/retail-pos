@@ -11,7 +11,8 @@ it.each(["/dashboard", "/stores", "/all-shops", "/analytics"])("omits current pa
   fixture.path = path;
   const html = renderToStaticMarkup(h(HomeShortcuts));
   expect(html).not.toContain(`href="${path}"`);
-  for (const sibling of ["/dashboard", "/stores", "/all-shops", "/analytics"].filter(item => item !== path)) expect(html).toContain(`href="${sibling}"`);
+  expect(html).not.toContain('href="/stores"');
+  for (const sibling of ["/dashboard", "/all-shops", "/analytics"].filter(item => item !== path)) expect(html).toContain(`href="${sibling}"`);
 });
 it("does not expose links without permission or through a visibility override", () => {
   fixture.allowed = false;
