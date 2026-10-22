@@ -2,7 +2,7 @@ import { useVisibility } from "@/lib/ui-visibility";
 import { Button } from "@/components/ui/button";
 import { RoleAccessPanel } from "@/platforms/web/components/admin/RoleAccessPanel";
 import { createFileRoute, useSearch, Link } from "@tanstack/react-router";
-import { ShieldAlert, Users, ShieldCheck, Eye, ArrowLeft } from "lucide-react";
+import { ShieldAlert, Users, ShieldCheck, Eye, ChevronLeft } from "lucide-react";
 
 import { RoleManager } from "@/platforms/web/components/admin/RoleManager";
 import { StaffManager } from "@/platforms/web/components/admin/StaffManager";
@@ -52,12 +52,14 @@ export function StaffPermissionsPanel() {
 
   return (
       <main className="pos-page-container">
-        <header>
-          <Button variant="ghost" size="sm" asChild className="mb-2"><Link to="/settings" search={{ cat: "people" }}><ArrowLeft className="size-4" />Back to Settings</Link></Button>
+        <header className="flex items-start gap-3">
+          <Button variant="outline" size="icon" asChild className="shrink-0" aria-label="Back to Settings" title="Back to Settings"><Link to="/settings" search={{ cat: "people" }}><ChevronLeft className="size-4" aria-hidden="true" /></Link></Button>
+          <div>
           <h1 className="text-2xl font-semibold">Staff &amp; Permissions</h1>
           <p className="text-sm text-muted-foreground page-description">
             Accounts, access status, roles and feature permissions in one place.
           </p>
+          </div>
         </header>
         <Tabs key={search.tab ?? "accounts"} defaultValue={search.tab ?? "accounts"}>
           <TabsList className="h-auto min-h-9 max-w-full justify-start overflow-x-auto overflow-y-hidden scrollbar-none">

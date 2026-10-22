@@ -17,7 +17,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ArrowLeft, Eye, Loader2, RotateCcw, Save } from "lucide-react";
+import { ChevronLeft, Eye, Loader2, RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
 import { SaveIndicator } from "@/platforms/web/components/pos/settings/SaveIndicator";
@@ -404,7 +404,7 @@ export function SettingsFrame({
                   else void router.navigate({ to: "/settings" });
                 }}
               >
-                <ArrowLeft className="size-4" />
+                <ChevronLeft className="size-4" />
               </Button>
               <div className="min-w-0 space-y-1">
                 <h1 className="text-2xl font-semibold">{title}</h1>

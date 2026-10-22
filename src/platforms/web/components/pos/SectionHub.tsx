@@ -3,7 +3,7 @@
  * section can be opened as its own page instead of only expanding a list.
  */
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, ArrowUpRight } from "lucide-react";
+import { ChevronLeft, ArrowUpRight } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { navGroups, navItemKey, type NavItem } from "@/platforms/web/components/pos/nav-config";
 import { useAuth } from "@/lib/pos-auth";
@@ -27,16 +27,11 @@ export function SectionHub({ groupId }: { groupId: string }) {
   return (
     <AppShell>
       <div className="pos-page-container">
-        <div className="flex items-center">
-          <Link
-            to="/"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <ArrowLeft className="size-4" /> Back to register
+        <header className="flex items-start gap-3">
+          <Link to="/" aria-label="Back to register" title="Back to register"
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <ChevronLeft className="size-4" aria-hidden="true" />
           </Link>
-        </div>
-
-        <header className="flex items-start gap-4 rounded-2xl border border-border/70 bg-card p-5 sm:p-6">
           <span className="rounded-xl bg-primary/10 p-3 text-primary">
             <group.icon aria-hidden="true" className="size-6" />
           </span>
