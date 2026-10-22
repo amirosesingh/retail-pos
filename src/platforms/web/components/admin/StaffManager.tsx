@@ -986,10 +986,9 @@ export function StaffManager() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <div className="flex items-center gap-1">
-              <Label htmlFor="delete-confirm" className="min-w-0 break-all">
-                Type <span className="select-text font-mono font-semibold">{deleteFor?.user_id}</span> to confirm
-              </Label>
+            <Label htmlFor="delete-confirm">Type this account name to confirm</Label>
+            <div className="flex items-start gap-1">
+              <span className="min-w-0 select-text break-all font-mono text-sm font-semibold leading-7">{deleteFor?.user_id}</span>
               <button type="button" aria-label="Copy confirmation name" title="Copy confirmation name"
                 className="inline-flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => {
