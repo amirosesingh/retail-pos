@@ -385,7 +385,7 @@ export function normalizePermissions(
   if (!raw) return rolePermissions(role);
   for (const [key, value] of Object.entries(raw)) {
     const resolved = resolvePermission(key as PermissionFlag);
-    if (resolved in base) base[resolved] = !!value;
+    if (resolved in base) base[resolved] = value === true;
   }
   if (!("can_customize_display" in raw)) base.can_customize_display = true;
   // Existing cashier matrices predate the split hold controls. Preserve their
@@ -479,6 +479,7 @@ type CachedRole = { slug: string; baseLevel: StaffRole; permissions: StaffPermis
 const roleCache = new Map<string, CachedRole>();
 
 export function cacheRoleDefinitions(roles: CachedRole[]) {
+  roleCache.clear();
   for (const r of roles) if (r.slug) roleCache.set(r.slug, r);
 }
 
@@ -508,7 +509,8 @@ export function getEffectivePermissions(
   const merged = { ...preset };
   for (const [key, value] of Object.entries(overrides)) {
     const resolved = resolvePermission(key as PermissionFlag);
-    if (resolved in merged) merged[resolved] = !!value;
+    if (resolved in merged || PERMISSION_PAGES.some(page => pageKey(page.id) === key))
+      merged[resolved] = value === true;
   }
   return merged;
 }

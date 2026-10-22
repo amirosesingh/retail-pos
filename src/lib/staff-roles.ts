@@ -6,6 +6,7 @@
  * permission checklist on a person's record can always be tuned afterwards,
  * and doing so marks that person as holding "Custom permissions".
  */
+import { PERMISSION_PAGES, pageEnabled } from "./permission-pages";
 import { routedQuery } from "@/core/api/db-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
@@ -111,7 +112,8 @@ export const roleSlug = (name: string): string =>
 
 /** True when the two permission sets differ on any single toggle. */
 export const permissionsDiffer = (a: StaffPermissions, b: StaffPermissions): boolean =>
-  PERMISSION_KEYS.some((k) => !!a[k] !== !!b[k]);
+  PERMISSION_KEYS.some((k) => a[k] !== b[k]) ||
+  PERMISSION_PAGES.some(page => pageEnabled(a, page.id) !== pageEnabled(b, page.id));
 
 /**
  * What to show next to a person's role: the role name, or "Custom

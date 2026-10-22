@@ -20086,3 +20086,41 @@ GROUP BY f.sale_day,f.sale_month,f.store_id,f.product_id,f.product_name,coalesce
 REVOKE ALL ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales FROM anon;
 GRANT SELECT ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales TO authenticated;
 GRANT ALL ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales TO service_role;
+
+-- Enforce saved action/page permissions for supervisors as well as other staff.
+-- Administrators retain recovery access; inactive accounts never gain access.
+CREATE OR REPLACE FUNCTION public.has_perm(_flag text) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+  WITH actor AS (
+    SELECT a.role, a.role_slug, coalesce(a.permissions, '{}'::jsonb) AS permissions
+    FROM public.app_users a
+    WHERE (SELECT auth.uid()) IS NOT NULL AND a.is_active
+      AND (a.auth_user_id = (SELECT auth.uid())
+        OR (a.auth_user_id IS NULL AND lower(a.email) = lower(coalesce((SELECT auth.jwt())->>'email', ''))))
+    ORDER BY (a.auth_user_id = (SELECT auth.uid())) DESC NULLS LAST
+    LIMIT 1
+  ), decision AS (
+    SELECT *, CASE
+      WHEN permissions ? _flag THEN permissions->_flag = 'true'::jsonb
+      WHEN _flag = ANY (ARRAY['can_edit_product_details','can_link_product_barcode',
+        'can_archive_product','can_restore_product','can_publish_product'])
+        THEN permissions->'can_add_new_product' = 'true'::jsonb
+      ELSE false END AS granted
+    FROM actor
+  )
+  SELECT coalesce((SELECT
+    CASE WHEN role = 'admin' OR role_slug = 'admin' THEN true
+    ELSE coalesce(granted, false) AND (
+      _flag = 'can_use_management_mobile'
+      OR NOT ('{"can_process_sale":["register"],"can_give_discount":["register"],"can_void_item":["register"],"can_process_refund":["register"],"can_process_exchange":["register"],"can_send_whatsapp_bill":["register"],"can_delete_line":["register"],"can_reduce_qty":["register"],"can_discount_bill":["register"],"can_override_price":["register"],"can_void_cart":["register"],"can_no_sale_open":["register"],"can_edit_tenders":["register"],"can_apply_member_discount":["register"],"can_redeem_points":["register"],"can_hold_cart":["holds"],"can_view_held_orders":["holds"],"can_reopen_held_order":["holds"],"can_discard_held_order":["holds"],"can_open_drawer":["shifts"],"can_close_drawer":["shifts"],"can_view_drawer_balance":["shifts"],"can_open_shift":["shifts"],"can_close_shift":["shifts"],"can_bypass_shift_lock":["shifts"],"can_shift_cash_count":["shifts"],"can_shift_expected_cash_view":["shifts"],"can_shift_counted_cash_view":["shifts"],"can_shift_variance_view":["shifts"],"can_shift_financial_summary_view":["shifts"],"can_shift_payment_breakdown_view":["shifts"],"can_shift_closing_history_view":["shifts"],"can_shift_signin_history_view":["shifts"],"can_shift_report_reprint":["shifts"],"can_manage_other_shifts":["shifts"],"can_shift_variance_approve":["shifts"],"can_shift_cash_recount":["shifts"],"can_reprint_bill":["receipts"],"can_manage_bookings":["bookings","pos-general-booking","pos-racket-service"],"can_create_booking":["bookings","pos-general-booking","pos-racket-service"],"can_collect_booking":["bookings","pos-general-booking","pos-racket-service"],"can_cancel_booking":["bookings","pos-general-booking","pos-racket-service"],"can_view_inventory":["inventory"],"can_edit_product_price":["inventory"],"can_add_new_product":["inventory"],"can_edit_product_details":["inventory"],"can_link_product_barcode":["inventory"],"can_archive_product":["inventory"],"can_restore_product":["inventory"],"can_publish_product":["inventory"],"can_manage_categories":["inventory"],"can_bulk_edit_products":["inventory"],"can_merge_products":["inventory"],"can_adjust_stock":["stock"],"can_receive_purchase_order":["purchasing","receiving","suppliers"],"can_create_transfer":["requests","transfers","approvals","verifications"],"can_receive_transfer":["requests","transfers","approvals","verifications"],"can_approve_transfer":["requests","transfers","approvals","verifications"],"can_add_member":["members"],"can_edit_member_points":["members"],"can_view_member_history":["members"],"can_manage_locations":["locations","all-shops"],"can_view_dashboard":["dashboard","analytics"],"can_view_sales_reports":["reports"],"can_export_reports":["reports"],"can_view_audit_trail":["audit"],"can_manage_promotions":["promotions","coupons"],"can_manage_staff":["staff","admin"],"can_manage_terminals":["terminals","settings-mobile-terminals"],"can_use_management_mobile":["settings-mobile-terminals"],"can_manage_sync_backup":["database"],"can_access_pos_settings":["settings"],"can_customize_display":["settings"]}'::jsonb ? _flag)
+      OR EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text('{"can_process_sale":["register"],"can_give_discount":["register"],"can_void_item":["register"],"can_process_refund":["register"],"can_process_exchange":["register"],"can_send_whatsapp_bill":["register"],"can_delete_line":["register"],"can_reduce_qty":["register"],"can_discount_bill":["register"],"can_override_price":["register"],"can_void_cart":["register"],"can_no_sale_open":["register"],"can_edit_tenders":["register"],"can_apply_member_discount":["register"],"can_redeem_points":["register"],"can_hold_cart":["holds"],"can_view_held_orders":["holds"],"can_reopen_held_order":["holds"],"can_discard_held_order":["holds"],"can_open_drawer":["shifts"],"can_close_drawer":["shifts"],"can_view_drawer_balance":["shifts"],"can_open_shift":["shifts"],"can_close_shift":["shifts"],"can_bypass_shift_lock":["shifts"],"can_shift_cash_count":["shifts"],"can_shift_expected_cash_view":["shifts"],"can_shift_counted_cash_view":["shifts"],"can_shift_variance_view":["shifts"],"can_shift_financial_summary_view":["shifts"],"can_shift_payment_breakdown_view":["shifts"],"can_shift_closing_history_view":["shifts"],"can_shift_signin_history_view":["shifts"],"can_shift_report_reprint":["shifts"],"can_manage_other_shifts":["shifts"],"can_shift_variance_approve":["shifts"],"can_shift_cash_recount":["shifts"],"can_reprint_bill":["receipts"],"can_manage_bookings":["bookings","pos-general-booking","pos-racket-service"],"can_create_booking":["bookings","pos-general-booking","pos-racket-service"],"can_collect_booking":["bookings","pos-general-booking","pos-racket-service"],"can_cancel_booking":["bookings","pos-general-booking","pos-racket-service"],"can_view_inventory":["inventory"],"can_edit_product_price":["inventory"],"can_add_new_product":["inventory"],"can_edit_product_details":["inventory"],"can_link_product_barcode":["inventory"],"can_archive_product":["inventory"],"can_restore_product":["inventory"],"can_publish_product":["inventory"],"can_manage_categories":["inventory"],"can_bulk_edit_products":["inventory"],"can_merge_products":["inventory"],"can_adjust_stock":["stock"],"can_receive_purchase_order":["purchasing","receiving","suppliers"],"can_create_transfer":["requests","transfers","approvals","verifications"],"can_receive_transfer":["requests","transfers","approvals","verifications"],"can_approve_transfer":["requests","transfers","approvals","verifications"],"can_add_member":["members"],"can_edit_member_points":["members"],"can_view_member_history":["members"],"can_manage_locations":["locations","all-shops"],"can_view_dashboard":["dashboard","analytics"],"can_view_sales_reports":["reports"],"can_export_reports":["reports"],"can_view_audit_trail":["audit"],"can_manage_promotions":["promotions","coupons"],"can_manage_staff":["staff","admin"],"can_manage_terminals":["terminals","settings-mobile-terminals"],"can_use_management_mobile":["settings-mobile-terminals"],"can_manage_sync_backup":["database"],"can_access_pos_settings":["settings"],"can_customize_display":["settings"]}'::jsonb->_flag) AS owner(page)
+        WHERE permissions->('page:' || owner.page) IS DISTINCT FROM 'false'::jsonb
+      )
+    ) END FROM decision), false)
+$$;
+REVOKE ALL ON FUNCTION public.has_perm(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.has_perm(text) TO authenticated, service_role;
+NOTIFY pgrst, 'reload schema';
