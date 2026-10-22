@@ -1478,3 +1478,15 @@ html[data-native-caption] .pos-dialog-content {
 .pos-page-container > header h1 { overflow-wrap: anywhere; }
 .pos-page-container > header button,
 .pos-page-container > header a[aria-label^="Back"] { flex-shrink: 0; }
+
+/* Bell dialog: slide down from the safe top edge, independent of other dialogs. */
+.pos-dialog-content.notification-panel {
+  top: calc(var(--safe-top, env(safe-area-inset-top, 0px)) + 0.75rem);
+  max-height: calc(100dvh - var(--safe-top, env(safe-area-inset-top, 0px)) - 1.5rem);
+}
+html[data-native-caption] .pos-dialog-content.notification-panel { top: 44px; max-height: calc(100dvh - 56px); }
+.notification-panel[data-state="open"] { animation: notification-panel-down var(--motion-normal) var(--motion-ease-emphasized) both; }
+.notification-panel[data-state="closed"] { animation: notification-panel-up var(--motion-fast) var(--motion-ease-standard) both; }
+@keyframes notification-panel-down { from { opacity: 0; transform: translateY(-1.5rem); } to { opacity: 1; transform: translateY(0); } }
+@keyframes notification-panel-up { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-1rem); } }
+@media (prefers-reduced-motion: reduce) { .notification-panel[data-state] { animation: none; } }
