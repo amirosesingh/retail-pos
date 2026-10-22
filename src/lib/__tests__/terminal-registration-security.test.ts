@@ -62,6 +62,11 @@ describe("terminal registration trust boundary", () => {
       proofHash: "a".repeat(64),
     };
     expect(decodePairingRequest(encodePairingRequest(request))).toEqual(request);
+    expect(encodePairingRequest(request).length).toBeLessThan(
+      `POSPAIR1:${btoa(JSON.stringify(request))}`.length,
+    );
+    expect(decodePairingRequest(`POSPAIR1:${btoa(JSON.stringify(request))}`)).toEqual(request);
+    expect(decodePairingRequest(`POSPAIR2:${JSON.stringify([request.tokenId, "short", "", request.deviceName])}`)).toBeNull();
     expect(decodePairingRequest(request.tokenId)).toBeNull();
     expect(
       decodePairingRequest(`POSPAIR1:${btoa(JSON.stringify({ ...request, proofHash: "short" }))}`),

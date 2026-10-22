@@ -1057,6 +1057,7 @@ export type PairingRequest = {
 
 const PAIR_KEY = "pos.terminal.pairing";
 const PAIR_PREFIX = "POSPAIR1:";
+const COMPACT_PAIR_PREFIX = "POSPAIR2:";
 const TERMINAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const validProofHash = (value: unknown): value is string =>
@@ -1104,7 +1105,14 @@ export function clearPairingRequest() {
 
 /** Text placed in the QR shown on the terminal for the phone to scan. */
 export function encodePairingRequest(request: PairingRequest): string {
-  return `${PAIR_PREFIX}${btoa(JSON.stringify(request))}`;
+  // Keep the proof, but omit JSON property names and base64 expansion so the
+  // on-screen QR has fewer modules and remains scannable by phone cameras.
+  return `${COMPACT_PAIR_PREFIX}${JSON.stringify([
+    request.tokenId,
+    request.proofHash,
+    request.replicaProofHash ?? "",
+    request.deviceName,
+  ])}`;
 }
 
 export function decodePairingRequest(value: string): PairingRequest | null {
@@ -1125,6 +1133,19 @@ export function decodePairingRequest(value: string): PairingRequest | null {
       return null;
     }
   };
+
+  if (trimmed.startsWith(COMPACT_PAIR_PREFIX)) {
+    try {
+      const parts = JSON.parse(trimmed.slice(COMPACT_PAIR_PREFIX.length));
+      if (!Array.isArray(parts) || parts.length !== 4) return null;
+      const [tokenId, proofHash, replicaProofHash, deviceName] = parts;
+      if (!TERMINAL_UUID.test(tokenId) || !validProofHash(proofHash) ||
+          (replicaProofHash && !validProofHash(replicaProofHash)) ||
+          typeof deviceName !== "string") return null;
+      return { tokenId, proofHash: proofHash.toLowerCase(), deviceName,
+        ...(replicaProofHash ? { replicaProofHash: replicaProofHash.toLowerCase() } : {}) };
+    } catch { return null; }
+  }
 
   // Preferred form: the prefixed base64 payload the till renders.
   if (trimmed.startsWith(PAIR_PREFIX)) {

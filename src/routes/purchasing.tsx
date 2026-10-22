@@ -73,6 +73,8 @@ import { ReceivingRecordView } from "@/platforms/web/components/pos/ReceivingRec
 import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
 import { subscribeDataChange } from "@/lib/sync-engine";
 import { IMPORT_HEADERS } from "@/lib/product-import";
+import { CameraScanner } from "@/platforms/web/components/pos/CameraScanner";
+import { isNativeApp } from "@/platforms/mobile/camera";
 
 /** Sentinel for "no value picked" — Radix selects cannot hold an empty value. */
 const PO_NONE = "__none";
@@ -155,6 +157,7 @@ function Purchasing() {
   const [invoiceDate, setInvoiceDate] = useState(today());
   const [entryDate, setEntryDate] = useState(() => localDateTime(new Date().toISOString()));
   const [scan, setScan] = useState("");
+  const [scanCameraOpen, setScanCameraOpen] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
   const [history, setHistory] = useState<ReceivingInvoice[]>([]);
   const [masterView, setMasterView] = useState(false);
@@ -554,8 +557,8 @@ function Purchasing() {
       ];
     });
 
-  function submitScan() {
-    const code = scan.trim();
+  function submitScan(scannedCode?: string) {
+    const code = (scannedCode ?? scan).trim();
     if (!code) return;
     const hit = findProduct(code);
     setScan("");
@@ -1057,18 +1060,31 @@ function Purchasing() {
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Scan or search barcode</Label>
                 <div className="flex gap-2">
+                  <div className="relative min-w-0 flex-1 max-w-md">
                   <Input
                     ref={scanRef}
                     value={scan}
                     onChange={(e) => setScan(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && submitScan()}
                     placeholder="Scan a barcode and press Enter"
-                    className="numeric h-11 max-w-md"
+                    className={`numeric h-11 ${isNativeApp() ? "pr-12" : ""}`}
                   />
-                  <Button className="h-11" onClick={submitScan}>
+                  {isNativeApp() && (
+                    <Button type="button" variant="ghost" size="icon" className="absolute inset-y-0 right-1 my-auto size-8" aria-label="Scan barcode with camera" title="Scan barcode with camera" onClick={() => setScanCameraOpen(true)}>
+                      <ScanBarcode className="size-4" />
+                    </Button>
+                  )}
+                  </div>
+                  <Button className="h-11" onClick={() => submitScan()}>
                     <ScanBarcode className="size-4" /> Add to invoice
                   </Button>
                 </div>
+                {scanCameraOpen && isNativeApp() && (
+                  <div className="space-y-2">
+                    <CameraScanner onScan={(code) => { setScanCameraOpen(false); submitScan(code); }} onClose={() => setScanCameraOpen(false)} />
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setScanCameraOpen(false)}>Cancel scan</Button>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-3">

@@ -41,6 +41,8 @@ import { db } from "@/core/api/pos-db";
 import { localTerminalId } from "@/lib/shift-hours";
 import { money, stockAt, usePos } from "@/lib/pos-store";
 import { resolveByBarcode } from "@/lib/product-lookup";
+import { CameraScanner } from "@/platforms/web/components/pos/CameraScanner";
+import { isNativeApp } from "@/platforms/mobile/camera";
 import { nextStockRef, saveStockDraftReference } from "@/lib/stock-ref";
 import { saveRecordEditHistory, type EditGrant } from "@/lib/record-edit-flow";
 import {
@@ -205,6 +207,8 @@ export function StockCountDialog({
   const [lookupMode, setLookupMode] = useState<"code" | "name">("code");
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [counted, setCounted] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [scanFeedback, setScanFeedback] = useState("");
   const [rows, setRows] = useState<CountRow[]>([]);
   const [reason, setReason] = useState<StockAdjustmentReason | "">("");
   const [note, setNote] = useState("");
@@ -446,6 +450,27 @@ export function StockCountDialog({
     codeRef.current?.focus();
   };
 
+  const acceptCameraScan = (rawCode: string) => {
+    setCameraOpen(false);
+    const scannedCode = rawCode.trim();
+    setLookupMode("code");
+    setCode(scannedCode);
+    setSelectedProductId(null);
+    const product = resolveByBarcode(products, scannedCode);
+    if (!product) {
+      setScanFeedback(`No catalogue item matches ${scannedCode}. Check the code or enter it manually.`);
+      return;
+    }
+    const existing = rows.find((row) => row.productId === product.id);
+    const nextCount = (existing?.counted ?? 0) + 1;
+    queue(product.id, nextCount);
+    setCode("");
+    setCounted("");
+    setScanFeedback(existing
+      ? `${product.name} was already scanned. Count increased to ${nextCount}.`
+      : `${product.name} added with a count of 1.`);
+  };
+
   const post = async () => {
     if (postingRef.current) return;
     if (!reason) {
@@ -599,6 +624,17 @@ export function StockCountDialog({
               <div className="grid gap-3 sm:grid-cols-[2fr_1fr_auto]">
                 <div>
                   <Label htmlFor="so-code">{lookupMode === "code" ? "Scan or type a barcode / SKU" : "Search by product name"}</Label>
+                  {cameraOpen && isNativeApp() && (
+                    <div className="mb-2 space-y-2">
+                      <CameraScanner onScan={acceptCameraScan} onClose={() => setCameraOpen(false)} />
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setCameraOpen(false)}>Cancel scan</Button>
+                    </div>
+                  )}
+                  {scanFeedback && <p role="status" className="mb-2 text-xs text-muted-foreground">{scanFeedback}</p>}
+                  {scanFeedback && isNativeApp() && (
+                    <Button type="button" variant="outline" size="sm" className="mb-2" onClick={() => { setScanFeedback(""); setCameraOpen(true); }}>Scan next item</Button>
+                  )}
+                  <div className="relative">
                   <Input
                     id="so-code"
                     ref={codeRef}
@@ -613,7 +649,14 @@ export function StockCountDialog({
                       }
                     }}
                     placeholder={lookupMode === "code" ? "Scanner input lands here" : "Type a product name"}
+                    className={isNativeApp() && lookupMode === "code" ? "pr-12" : undefined}
                   />
+                  {isNativeApp() && lookupMode === "code" && (
+                    <Button type="button" variant="ghost" size="icon" className="absolute inset-y-0 right-1 my-auto size-8" aria-label="Scan barcode with camera" title="Scan barcode with camera" onClick={() => { setScanFeedback(""); setCameraOpen(true); }}>
+                      <ScanBarcode className="size-4" />
+                    </Button>
+                  )}
+                  </div>
                   {lookupMode === "name" && code.trim() && !selectedProductId && (
                     <div aria-label="Matching products" className="mt-2 max-h-52 overflow-y-auto rounded-md border border-border">
                       {nameMatches.map(product => <button key={product.id} type="button"

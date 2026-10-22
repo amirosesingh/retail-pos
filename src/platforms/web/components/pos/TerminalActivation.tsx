@@ -46,7 +46,7 @@ const qrDataUrl = (value: string) => {
   const qr = qrcode(0, "M");
   qr.addData(value);
   qr.make();
-  return qr.createDataURL(5, 20);
+  return qr.createDataURL(8, 32);
 };
 
 function Frame({ children, bare }: { children: React.ReactNode; bare?: boolean }) {
@@ -346,7 +346,7 @@ export function TerminalActivation({
                 <img
                   src={pairQr}
                   alt="Pairing code for this terminal"
-                  className="aspect-square w-full max-w-80 bg-white [image-rendering:pixelated]"
+                  className="aspect-square w-full max-w-96 bg-white p-2 [image-rendering:pixelated]"
                 />
               ) : (
                 <div className="grid size-32 place-items-center rounded-lg border border-border bg-card">
