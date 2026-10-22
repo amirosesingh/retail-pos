@@ -1,3 +1,4 @@
+import { isMobileShell } from "@/platform-config/features";
 import { syncState } from "@/lib/sync-status";
 /**
  * Online kill-switch.
@@ -13,6 +14,7 @@ import { syncState } from "@/lib/sync-status";
 import { useEffect, useState } from "react";
 import {
   clearTerminalConfig,
+  unpairTerminal,
   fetchTokenStatus,
   hydrateTerminalConfig,
   isTerminalConfigHydrated,
@@ -209,7 +211,8 @@ export function useRevocationCheck(): RevocationState {
           // Persist the lock before clearing identity so the shell never falls
           // through to sign-in or activation during the state transition.
           setBlocked(true, verdict.outcome);
-          await clearTerminalConfig();
+          if (isMobileShell()) await unpairTerminal();
+          else await clearTerminalConfig();
           clearActivationRecord();
           return;
         }

@@ -567,7 +567,9 @@ export async function clearTerminalConfig() {
   if (hydration) await hydration.catch(() => undefined);
   cachedConfig = null;
   hydrated = true;
-  applyTenantOverride(null);
+  const mobile = ["android", "ios"].includes(terminalRuntimePlatform());
+  if (mobile) setManagementDevice(null);
+  else applyTenantOverride(null);
   clearDeviceSecret(SEALED_NAME);
   window.localStorage.removeItem(CONFIG_KEY);
   // Clearing goes through its own channel: saving an activation is an
@@ -658,13 +660,21 @@ export async function unpairTerminal(): Promise<void> {
   try { await supabaseExternal.auth.signOut({ scope: "local" }); } catch { /* revoke already confirmed */ }
   const { clearApprovalToken } = await import("@/platform-config/approval-token-client");
   await clearApprovalToken(true);
+  const mobile = ["android", "ios"].includes(terminalRuntimePlatform());
+  if (mobile) {
+    const { resetMobileRegistrationIdentity } = await import("./mobile-registration-identity");
+    await resetMobileRegistrationIdentity(false);
+  } else {
   const { removeCloudCredentials } = await import("@/lib/secure-cloud-config");
   const removed = await removeCloudCredentials();
   if (!removed.ok) throw new Error(removed.error || "Could not clear the saved connection.");
   const backend = await saveBackendUrl("");
   if (!backend.ok) throw new Error(backend.error || "Could not clear the backend address.");
+  }
   await clearTerminalConfig();
   clearPairingRequest();
+  const { clearActivationRecord } = await import("./activation-record");
+  clearActivationRecord();
   clearDeviceSecret("terminal-account");
   resetHealthCache();
   const { flushConnectionProfile } = await import("@/lib/connection-profile");

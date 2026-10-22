@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ calls: [] as string[], rpc: vi.fn(), clear: vi.fn(), remove: vi.fn(), flush: vi.fn() }));
+const f = vi.hoisted(() => ({ platform: "windows", reset: vi.fn(), calls: [] as string[], rpc: vi.fn(), clear: vi.fn(), remove: vi.fn(), flush: vi.fn() }));
 vi.mock("@/integrations/supabase/external-client", () => ({
   resetExternalClient: vi.fn(), createTenantClient: vi.fn(),
   supabaseExternal: { rpc: f.rpc, auth: { signOut: async () => { f.calls.push("signout"); } } },
@@ -19,9 +19,11 @@ vi.mock("@/lib/external-supabase-config", () => ({
   setTerminalSupabaseOverride: vi.fn(), setTerminalMembershipSupabaseOverride: vi.fn(),
   publicSupabaseConfig: vi.fn(), supabaseConfig: vi.fn(),
 }));
+vi.mock("@/core/activation/terminal-platform", () => ({ terminalRuntimePlatform: () => f.platform }));
+vi.mock("../mobile-registration-identity", () => ({ resetMobileRegistrationIdentity: f.reset }));
 import { unpairTerminal, stampHeartbeat } from "../terminal-tokens";
 beforeEach(() => {
-  f.calls.length = 0;
+  f.calls.length = 0; f.platform = "windows"; f.reset.mockReset().mockResolvedValue(undefined);
   f.rpc.mockReset().mockResolvedValue({ error: null });
   f.clear.mockReset().mockImplementation(async () => { f.calls.push("mirror"); return { ok: true }; });
   f.remove.mockReset().mockImplementation(async () => { f.calls.push("cloud"); return { ok: true }; });
@@ -53,4 +55,16 @@ it("sends the real version and distinguishes successful synchronization from pre
   expect(f.rpc).toHaveBeenLastCalledWith("terminal_token_heartbeat", expect.objectContaining({ p_token_id: id, p_version: "1.4.77-beta.2", p_synced: true, p_proof_hash: "proof-hash" }));
   await stampHeartbeat(id);
   expect(f.rpc).toHaveBeenLastCalledWith("terminal_token_heartbeat", expect.objectContaining({ p_synced: false, p_version: expect.any(String) }));
+});
+
+it.each(["android", "ios"])("retains the saved connection on %s but removes device and operator authorization", async platform => {
+  f.platform = platform;
+  await unpairTerminal();
+  expect(f.remove).not.toHaveBeenCalled();
+  expect(f.calls).not.toContain("backend");
+  expect(f.reset).toHaveBeenCalledWith(false);
+  expect(f.calls).toContain("activation.record.v1");
+  expect(f.calls).toContain("terminal.config");
+  expect(f.calls).toContain("terminal-account");
+  expect(f.calls.at(-1)).toBe("flush");
 });

@@ -442,6 +442,7 @@ export function TerminalRevokedScreen({
   reason?: "revoked" | "missing";
 }) {
   const missing = reason === "missing";
+  if (isNative()) return <TerminalActivation onActivated={() => window.location.reload()} />;
   return (
     <Frame>
       <div className="text-center">
