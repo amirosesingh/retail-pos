@@ -53,7 +53,7 @@ export function StaffPermissionsPanel() {
   return (
       <main className="pos-page-container">
         <header className="flex items-start gap-3">
-          <Button variant="outline" size="icon" asChild className="shrink-0" aria-label="Back to Settings" title="Back to Settings"><Link to="/settings" search={{ cat: "people" }}><ChevronLeft className="size-4" aria-hidden="true" /></Link></Button>
+          <Button variant="ghost" size="icon" asChild className="shrink-0" aria-label="Back to Settings" title="Back to Settings"><Link to="/settings" search={{ cat: "people" }}><ChevronLeft className="size-4" aria-hidden="true" /></Link></Button>
           <div>
           <h1 className="text-2xl font-semibold">Staff &amp; Permissions</h1>
           <p className="text-sm text-muted-foreground page-description">

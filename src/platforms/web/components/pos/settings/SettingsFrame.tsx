@@ -395,7 +395,7 @@ export function SettingsFrame({
             <div className="flex min-w-0 flex-1 basis-64 items-start gap-3">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="icon"
                 className="mt-0.5 shrink-0"
                 aria-label="Back to previous page"

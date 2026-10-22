@@ -29,7 +29,7 @@ export function SectionHub({ groupId }: { groupId: string }) {
       <div className="pos-page-container">
         <header className="flex items-start gap-3">
           <Link to="/" aria-label="Back to register" title="Back to register"
-            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ChevronLeft className="size-4" aria-hidden="true" />
           </Link>
           <div className="min-w-0">

@@ -112,7 +112,7 @@ function SettingsHome() {
             {activeCat && (
               <button type="button" aria-label="Back to Settings" title="Back to Settings"
                 onClick={() => void navigate({ search: {}, replace: false })}
-                className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-input bg-card text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <ChevronLeft className="size-4" aria-hidden="true" />
               </button>
             )}

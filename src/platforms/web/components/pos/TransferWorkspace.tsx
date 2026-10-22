@@ -127,7 +127,7 @@ export function WorkspaceHeader({
       <div className="space-y-1">
         <div className="flex flex-wrap items-center gap-3">
           <Link to={back as "/transfers"} aria-label={backLabel} title={backLabel}
-            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ChevronLeft className="size-4" aria-hidden="true" />
           </Link>
           <h1 className="numeric text-2xl font-semibold">{title}</h1>

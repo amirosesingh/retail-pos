@@ -154,7 +154,7 @@ function HoldTickets() {
     <AppShell>
       <div className="pos-page-container">
         <header className="flex items-start gap-3">
-          <Button variant="outline" size="icon" className="shrink-0" aria-label="Back to register" title="Back to register" onClick={() => void navigate({ to: "/" })}><ChevronLeft className="size-4" aria-hidden="true" /></Button>
+          <Button variant="ghost" size="icon" className="shrink-0" aria-label="Back to register" title="Back to register" onClick={() => void navigate({ to: "/" })}><ChevronLeft className="size-4" aria-hidden="true" /></Button>
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold">Hold tickets</h1>
             <p className="text-sm text-muted-foreground page-description">
