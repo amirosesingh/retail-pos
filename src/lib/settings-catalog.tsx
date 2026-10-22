@@ -75,18 +75,18 @@ export type SettingsCategory = {
 
 export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   {
-    id: "pos-rules",
-    label: "POS rules",
-    blurb: "Register policies, tax, bill and product numbering.",
-    group: "sales",
-    icon: ShieldCheck,
-  },
-  {
     id: "business",
     label: "Business & locations",
     blurb: "Who you are, where you trade and your regional preferences.",
     group: "business",
     icon: Building2,
+  },
+  {
+    id: "pos-rules",
+    label: "POS rules",
+    blurb: "Register policies, tax, bill and product numbering.",
+    group: "sales",
+    icon: ShieldCheck,
   },
   {
     id: "people",
@@ -300,6 +300,18 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     scope: "company",
     to: "/settings/qr",
     panel: page(() => import("@/routes/settings.qr")),
+  },
+
+  {
+    id: "locations",
+    label: "Locations & Warehouses",
+    blurb: "Manage storefronts, warehouses and branch details.",
+    icon: Building2,
+    category: "business",
+    scope: "company",
+    to: "/stores",
+    panel: page(() => import("@/routes/stores")),
+    keywords: "locations stores branches warehouses",
   },
 
   /* ---- Business, products --------------------------------------------- */

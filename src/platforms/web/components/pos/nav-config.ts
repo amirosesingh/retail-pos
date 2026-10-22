@@ -472,8 +472,8 @@ export const navGroups: NavGroup[] = [
     blurb: "Assigned decisions and your authorization requests.", items: items("inventory", ["/approvals"]) },
   { id: "marketing", label: "Marketing", icon: Percent, hubTo: "/marketing",
     blurb: "Promotions, coupons and loyalty rules.", items: items("register", ["/promotions", "/coupons"]) },
-  { ...group("company"), label: "Home", blurb: "Business analytics, all shops and locations.",
-    items: group("company").items.filter(item => item.to !== "/audit").map(item => ({ ...item, label: item.to === "/all-shops" ? "All Shops" :
+  { ...group("company"), label: "Home", blurb: "Business analytics and all shops.",
+    items: group("company").items.filter(item => !["/audit", "/stores"].includes(item.to)).map(item => ({ ...item, label: item.to === "/all-shops" ? "All Shops" :
       item.to === "/stores" ? "Locations & Warehouses" : item.to === "/dashboard" ? "Dashboard" :
       item.to === "/analytics" ? "Live Business Board" : item.to === "/audit" ? "Audit History" : item.label })) },
   { ...group("reports"), items: [...group("reports").items, ...items("company", ["/audit"]).map(item => ({ ...item, label: "Audit History" }))]
@@ -496,6 +496,7 @@ const ROUTE_PERMISSION_OVERRIDES: Record<string, PermissionFlag> = {
   "/reports/items": "can_view_sales_reports",
   "/reports/payments": "can_view_sales_reports",
   "/staff": "can_manage_staff",
+  "/stores": "can_manage_locations",
   "/settings/groups": "can_manage_locations",
   "/settings/terminals": "can_manage_terminals",
   "/settings/mobile-terminals": "can_manage_terminals",
