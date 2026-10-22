@@ -956,7 +956,7 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
 .pos-scaled [role="button"],
 .pos-scaled input:not([type="checkbox"]):not([type="radio"]),
 .pos-scaled select {
-  min-height: calc(40px * var(--pos-scale));
+  min-height: calc(36px * var(--pos-scale));
 }
 
 .pos-scaled button.size-7,
@@ -984,7 +984,7 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
 /* Switch tracks keep their component dimensions, including compact mode.
    Pressed toggles follow the same minimum width as the surrounding buttons. */
 .pos-scaled button[data-slot="toggle"] {
-  min-height: calc(40px * var(--pos-scale));
+  min-height: calc(36px * var(--pos-scale));
   min-width: calc(40px * var(--pos-scale));
 }
 .pos-compact .pos-scaled button[data-slot="toggle"] {
@@ -1452,12 +1452,15 @@ html[data-native-caption] .pos-dialog-content {
   .settings-menu-category .text-base { font-size: 0.875rem; }
 }
 
-/* One content boundary for operational pages and Settings. Individual tables
+/* One centered content boundary for operational pages and Settings. Individual tables
    retain their own horizontal scrolling; dialogs and the selling cart are separate. */
-.pos-page-container {
+.pos-page-boundary, .pos-page-container {
   width: 100%;
   min-width: 0;
-  max-width: none;
+  max-width: 90rem;
+  margin-inline: auto;
+}
+.pos-page-container {
   margin-inline: auto;
   padding: 1rem;
 }

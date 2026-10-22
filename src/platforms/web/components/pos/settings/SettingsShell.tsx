@@ -43,12 +43,12 @@ export function SettingsShell({ children, home = false }: { children: ReactNode;
     <div className="settings-workspace flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden bg-muted/20">
       <div
         className={
-          "z-20 shrink-0 border-b border-border bg-background/95 pos-page-gutters py-2 text-xs backdrop-blur " +
+          "z-20 shrink-0 border-b border-border bg-background/95 py-2 text-xs backdrop-blur " +
           (home ? "hidden" : "block")
         }
       >
         {!home && (
-          <div className="w-full min-w-0 space-y-2">
+          <div className="pos-page-boundary pos-page-gutters space-y-2">
             <div className="flex min-w-0 items-center gap-1.5">
               <Link
                 to="/settings"

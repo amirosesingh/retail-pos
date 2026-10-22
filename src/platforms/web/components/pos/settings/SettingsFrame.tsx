@@ -442,7 +442,7 @@ export function SettingsFrame({
 
         <fieldset
           disabled={settingsScopeLoading && !allowWhileScopeLoading}
-          className="settings-form w-full min-w-0 max-w-full space-y-5 rounded-2xl border border-border bg-card p-4 shadow-sm disabled:opacity-60 sm:p-6"
+          className="settings-form w-full min-w-0 max-w-full space-y-5 rounded-2xl border border-border bg-card p-4 shadow-sm disabled:opacity-60 sm:p-5"
         >
           {settingsScopeLoading && !allowWhileScopeLoading && (
             <p role="status" className="flex items-center gap-2 rounded-xl bg-primary/5 p-3 text-sm text-muted-foreground">
