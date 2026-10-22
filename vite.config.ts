@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { disconnectedRequestRecovery } from "./scripts/dev-request-abort";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
@@ -135,6 +136,14 @@ export default defineConfig({
     ],
   },
   plugins: [
+    {
+      name: "refresh-bundled-logic-report",
+      apply: "build",
+      configResolved(config) {
+        // Scan the source used by this build, never ship a report from an older release.
+        execFileSync(process.execPath, [resolve(config.root, "scripts/logic-scan.cjs")], { cwd: config.root, stdio: "inherit" });
+      },
+    },
     enforceShellBoundary(buildPlatform),
     stripThirdPartyRscMarkers(),
     tanstackStart({

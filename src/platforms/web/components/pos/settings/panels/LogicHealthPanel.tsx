@@ -1,6 +1,7 @@
+import { reconcileHealthScan } from "@/lib/reconcile-health-scan";
 import { copyText } from "@/platform-config/clipboard";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, Copy, Info, ShieldAlert, Layers, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ export function LogicHealthPanel() {
   const [query, setQuery] = useState("");
   const [only, setOnly] = useState<LogicSeverity | "all">("all");
   const [scan, setScan] = useState<ScanResult | null>(null);
+  const scanning = useRef(false);
   const [step, setStep] = useState<ScanStep | null>(null);
 
   const term = query.trim().toLowerCase();
@@ -79,16 +81,20 @@ export function LogicHealthPanel() {
   };
 
   const scanNow = async () => {
+    if (scanning.current) return;
+    scanning.current = true;
     setStep("readwrite");
     try {
       const result = await runIssueScan(setStep);
-      setScan(result);
-      toast.success(
+      setScan(previous => reconcileHealthScan(previous, result));
+      if (result.notes.length) toast.warning("Scan incomplete — review the unverified checks below.");
+      else toast.success(
         `Scan finished — ${result.counts.critical} critical, ${result.counts.warning} warning, ${result.counts.info} info`,
       );
     } catch (e) {
       toast.error((e as Error).message || "The scan could not finish.");
     } finally {
+      scanning.current = false;
       setStep(null);
     }
   };
@@ -108,8 +114,8 @@ export function LogicHealthPanel() {
           {step
             ? STEP_LABEL[step]
             : scan
-              ? `Live scan run ${posDisplayDateTime(new Date(scan.at))} — database and code findings combined.`
-              : "Checks the live database now and combines it with the stored code findings."}
+              ? `Live scan run ${posDisplayDateTime(new Date(scan.at))} — resolved findings removed after successful checks.`
+              : "Checks the database on demand. Successful checks replace previous findings; code findings come from this app build."}
         </span>
       </div>
 

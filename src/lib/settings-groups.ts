@@ -178,13 +178,16 @@ export function settingsDuplicates(): SettingsDuplicate[] {
  * Every `/settings/*` page that exists, discovered from the route files rather
  * than kept by hand.
  */
-const SETTINGS_ROUTE_FILES = Object.keys(import.meta.glob("/src/routes/settings.*.tsx"));
+const ROUTE_FILES = Object.keys(import.meta.glob("/src/routes/*.tsx"));
 
 /**
  * Pages that only forward somewhere else. They are old links kept alive, not
  * areas needing a card, so they are not expected to appear in the workspace.
  */
 const LEGACY_REDIRECTS = new Set([
+  "/settings/access",
+  "/settings/admin-terminals",
+  "/settings/workspace",
   "/settings/database-explorer",
   "/settings/data-sync",
   "/settings/diagnostics",
@@ -209,17 +212,20 @@ export type SettingsCoverage = {
  */
 export function settingsCoverage(): SettingsCoverage {
   const pages = new Set<string>();
-  for (const file of SETTINGS_ROUTE_FILES) {
+  for (const file of ROUTE_FILES.filter(file => file.includes("/settings."))) {
     const name = file.split("settings.")[1]?.replace(/\.tsx$/, "");
     if (!name || name === "index") continue;
     const route = `/settings/${name}`;
     if (LEGACY_REDIRECTS.has(route)) continue;
+    // The platform catalogue intentionally excludes installers from web builds.
+    if (route === "/settings/updates" && !SETTINGS_CARDS.some(card => card.to === route)) continue;
     pages.add(route);
   }
 
+  const allRoutes = new Set(ROUTE_FILES.map(file => "/" + file.split("/").pop()!.replace(/\.tsx$/, "").replace(/\.index$/, "").replaceAll(".", "/")));
   const carded = new Set(SETTINGS_CARDS.map((c) => c.to.split("?")[0] as string));
   return {
     uncovered: [...pages].filter((p) => !carded.has(p)).sort(),
-    dangling: [...carded].filter((p) => !pages.has(p)).sort(),
+    dangling: [...carded].filter((p) => !allRoutes.has(p)).sort(),
   };
 }

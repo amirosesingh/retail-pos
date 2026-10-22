@@ -1470,3 +1470,11 @@ html[data-native-caption] .pos-dialog-content {
   .pos-page-container { padding: 1.5rem; }
   .pos-page-gutters { padding-inline: 1.5rem; }
 }
+
+/* Page headings may wrap on phones without pushing their actions off-screen.
+   Keep this scoped to page headers, not receipt/customer-display layouts. */
+.pos-page-container > header { min-width: 0; }
+.pos-page-container > header > div { min-width: 0; }
+.pos-page-container > header h1 { overflow-wrap: anywhere; }
+.pos-page-container > header button,
+.pos-page-container > header a[aria-label^="Back"] { flex-shrink: 0; }

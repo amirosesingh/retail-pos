@@ -48,6 +48,23 @@ describe("settings categories", () => {
     }
   });
 
+  it("has no missing live pages or broken catalogue destinations", () => {
+    expect(settingsCoverage()).toEqual({ uncovered: [], dangling: [] });
+  });
+
+  it("places transaction policies together and keeps retired routes out of search", () => {
+    for (const id of ["rules", "tax", "numbering", "stock-numbering", "sku"]) {
+      expect(SETTINGS_CARDS.find(card => card.id === id)?.category).toBe("pos-rules");
+    }
+    expect(matchSettings(SETTINGS_CARDS, "access").some(card => card.to === "/staff")).toBe(true);
+    expect(SETTINGS_CARDS.some(card => card.to === "/settings/workspace")).toBe(false);
+  });
+
+  it("keeps security with health and delivery preferences separate", () => {
+    for (const id of ["logic-health", "security-alerts"]) expect(SETTINGS_CARDS.find(card => card.id === id)?.category).toBe("health");
+    for (const id of ["notifications", "shift-alerts"]) expect(SETTINGS_CARDS.find(card => card.id === id)?.category).toBe("notifications");
+  });
+
   it("does not report compatibility redirects as missing workspace pages", () => {
     const coverage = settingsCoverage();
     expect(coverage.uncovered).not.toContain("/settings/database-explorer");

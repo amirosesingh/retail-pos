@@ -1,3 +1,4 @@
+import { OperationalRulesPanel } from "@/platforms/web/components/pos/settings/panels/OperationalRulesPanel";
 import { SettingsBackLink } from "@/platforms/web/components/pos/settings/SettingsBackLink";
 import { HelpTip } from "@/components/ui/help-tip";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
@@ -296,6 +297,22 @@ function RulesSettings() {
     <SettingsShell>
       <div className="pos-page-container">
         <SettingsTabs current="/settings/rules" />
+        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <SettingsBackLink />
+            <div className="min-w-0">
+              <h1 className="text-2xl font-semibold">POS rules &amp; enforcement</h1>
+              <p className="text-sm text-muted-foreground page-description">
+                Configure the branch policy enforced across every register at {currentStore.name}.
+                Saved values stay in force while newer rules are checked quietly in the background.
+              </p>
+            </div>
+          </div>
+          {loading && (
+            <Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
+          )}
+        </header>
+
         {isAdmin && <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
           <div><h2 className="font-semibold">Allow another authorized user to close the shift</h2>
             <p className="text-sm text-muted-foreground">Company-wide. Any signed-in user with Close shift permission can close a shift in their branch, including one opened by someone else. Both identities are recorded.</p></div>
@@ -307,20 +324,7 @@ function RulesSettings() {
           }} />
         </div>}
 
-        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
-          <div className="min-w-0">
-            <h1 className="flex items-center gap-2 text-2xl font-semibold">
-              <SettingsBackLink /> POS rules &amp; enforcement
-            </h1>
-            <p className="text-sm text-muted-foreground page-description">
-              Configure the branch policy enforced across every register at {currentStore.name}.
-              Saved values stay in force while newer rules are checked quietly in the background.
-            </p>
-          </div>
-          {loading && (
-            <Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
-          )}
-        </header>
+        <OperationalRulesPanel canEdit={mayEdit} />
 
         {!mayEdit && (
           <p className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
