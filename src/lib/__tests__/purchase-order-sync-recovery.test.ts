@@ -16,6 +16,18 @@ vi.mock("@/core/api/relay-policy.server", () => ({
 }));
 
 describe("purchase order sync recovery", () => {
+  it("checks relay health after verifying identity without writing a dummy shift", async () => {
+    const relay = await import("@/core/api/pos-relay.server");
+    vi.mocked(relay.runRelayOp).mockClear();
+    vi.mocked(relay.runRelayRead).mockResolvedValueOnce({ ok: true });
+    const { handleSyncRequest } = await import("../sync-endpoint.server");
+    const response = await handleSyncRequest(new Request("https://pos.example.test/api/v1/pos/sync", {
+      method: "POST", body: JSON.stringify({ terminalToken: "T1", read: { kind: "health" } }),
+    }));
+    expect(response.status).toBe(200);
+    expect(relay.runRelayRead).toHaveBeenCalledWith({ kind: "health" });
+    expect(relay.runRelayOp).not.toHaveBeenCalled();
+  });
   it("accepts lowercase UUID branch requests against an uppercase verified legacy assignment", async () => {
     const policy = await import("@/core/api/relay-policy.server");
     const branch = "A1234567-1234-4234-8234-123456789ABC";

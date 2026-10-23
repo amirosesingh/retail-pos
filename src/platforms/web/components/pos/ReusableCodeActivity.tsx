@@ -1,3 +1,4 @@
+import { useAuth } from "@/lib/pos-auth";
 import { reusableCodeReportEntries, reusableCodeTotals } from "@/lib/reusable-code-report";
 import { ReusableCodeChangeLog } from "./ReusableCodeChangeLog";
 import { nextCursor, type Cursor } from "@/lib/keyset";
@@ -23,6 +24,13 @@ const PAGE_SIZE = 100;
 /** Uses the normal permission-scoped cloud/local read path, only while opened. */
 export function ReusableCodeActivity({ view }: { view: "issued" | "performance" | "audit" }) {
   const { state } = usePos();
+  const { can } = useAuth();
+  const canReadHistory = can("can_view_audit_trail");
+  const [deleted, setDeleted] = useState<Sale[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<Cursor>(null);
+  const [moreHistory, setMoreHistory] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyError, setHistoryError] = useState("");
   const codes = useMemo(
     () => state.promotions.filter((p) => p.type === "code"),
     [state.promotions],
@@ -74,6 +82,36 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
       live = false;
     };
   }, [read, view, revision]);
+  const readDeleted = useCallback((position: Cursor) => routedQuery("audit_logs", {
+    columns: "id,created_at,details",
+    match: { target_module: "promotions", action_name: "Promotion deleted" },
+    orderBy: { column: "created_at", ascending: false }, limit: PAGE_SIZE,
+    ...(position ? { cursor: { column: "created_at", value: position.ts, id: position.id } } : {}),
+  }), []);
+  useEffect(() => {
+    setDeleted([]); setHistoryCursor(null); setMoreHistory(false); setHistoryError("");
+    if (view === "issued" || !canReadHistory) return;
+    let live = true;
+    setHistoryBusy(true);
+    void readDeleted(null).then(rows => {
+      if (!live) return;
+      setDeleted(rows); setHistoryCursor(nextCursor(rows, "created_at", PAGE_SIZE));
+      setMoreHistory(rows.length === PAGE_SIZE);
+    }).catch(e => { if (live) setHistoryError(e instanceof Error ? e.message : "Could not load deleted-code history"); })
+      .finally(() => { if (live) setHistoryBusy(false); });
+    return () => { live = false; };
+  }, [view, canReadHistory, revision, readDeleted]);
+  async function olderHistory() {
+    if (historyBusy || !historyCursor) return;
+    setHistoryBusy(true);
+    try {
+      const rows = await readDeleted(historyCursor);
+      setDeleted(current => [...new Map([...current, ...rows].map(row => [String(row.id), row])).values()]);
+      setHistoryCursor(nextCursor(rows, "created_at", PAGE_SIZE)); setMoreHistory(rows.length === PAGE_SIZE);
+      setHistoryError("");
+    } catch (e) { setHistoryError(e instanceof Error ? e.message : "Could not load deleted-code history"); }
+    finally { setHistoryBusy(false); }
+  }
   async function older() {
     if (busy) return;
     setBusy(true);
@@ -91,7 +129,9 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
       setBusy(false);
     }
   }
-  const reportCodes = view === "issued" ? codes : reusableCodeReportEntries(codes, sales);
+  const reportCodes = view === "issued" ? codes : reusableCodeReportEntries(state.promotions, sales, canReadHistory ? deleted : []);
+  const codeIds = new Set(reportCodes.map(code => code.id));
+  const visibleSales = sales.filter(sale => codeIds.has(String(sale.coupon_promo_id)));
   return (
     <section className="space-y-3 py-3">
       <div className="flex items-center justify-between gap-2">
@@ -110,7 +150,7 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
       <p className="text-xs text-muted-foreground">
         {view === "issued"
           ? "These codes can be shared repeatedly; they are not single-use vouchers. Edit them in Reusable codes."
-          : `Showing ${sales.length} loaded sales, newest first. Load older sales to extend these results. Refunded bills are excluded from performance totals.`}
+          : `Showing ${visibleSales.length} matching sales in ${sales.length} loaded coupon sales, newest first. Load older sales to extend these results. Refunded bills are excluded from performance totals.`}
       </p>
       {error && (
         <p role="alert" className="text-sm text-destructive">
@@ -132,7 +172,7 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
         </TableHeader>
         <TableBody>
           {view === "audit"
-            ? sales.map((sale) => (
+            ? visibleSales.map((sale) => (
                 <TableRow key={String(sale.id)}>
                   <TableCell>{formatDateTime(new Date(String(sale.created_at)))}</TableCell>
                   <TableCell>
@@ -185,7 +225,7 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
                   </TableRow>
                 );
               })}
-          {(view === "audit" ? !sales.length : !reportCodes.length) && (
+          {(view === "audit" ? !visibleSales.length : !reportCodes.length) && (
             <TableRow>
               <TableCell colSpan={4} className="text-center text-muted-foreground">
                 {busy ? "Loading…" : "No reusable-code records to display."}
@@ -199,7 +239,10 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
           {busy ? "Loading…" : "Load older sales"}
         </Button>
       )}
-      {view === "audit" && <ReusableCodeChangeLog codeIds={codes.map((code) => code.id)} />}
+      {view !== "issued" && <p className="text-xs text-muted-foreground">Deleted reusable codes are included only when their campaign type is confirmed by accessible deletion history. Unidentified historical coupons are excluded.</p>}
+      {historyError && <p role="alert" className="text-sm text-destructive">{historyError}</p>}
+      {view !== "issued" && moreHistory && <Button size="sm" variant="outline" disabled={historyBusy} onClick={() => void olderHistory()}>Load older deleted-code history</Button>}
+      {view === "audit" && canReadHistory && <ReusableCodeChangeLog codeIds={codes.map((code) => code.id)} />}
     </section>
   );
 }

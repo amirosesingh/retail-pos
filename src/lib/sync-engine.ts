@@ -3,7 +3,7 @@ import { externalClientSnapshot, supabaseExternal } from "@/integrations/supabas
 import { logSync } from "./sync-log";
 import { hasRequiredPlatformConfig } from "./platform-config-ready";
 import { sessionEpoch, isCurrentEpoch } from "./session-epoch";
-import { hasSignedInIdentity, subscribeCentralAuthSession } from "./session-presence";
+import { hasSignedInIdentity, subscribeCentralAuthSession, centralAuthAccessToken } from "./session-presence";
 import { createSerialChannelReplacer } from "./realtime-channel-replacer";
 import { createSyncWakeChannels } from "./sync-wake-channels";
 import { readTerminalConfig, subscribeTerminalConfig } from "@/core/activation/terminal-tokens";
@@ -1010,6 +1010,12 @@ export function startSyncEngine() {
         queueLiveChange({reason:`database-trigger:${table}`,table,storeId:activeBranchId()});
     },
     () => { if (desktopBridge) wake(); announceSettingsChange("realtime:subscribed"); },
+    async () => {
+      const token = centralAuthAccessToken();
+      if (!token || !hasStaffSession()) return false;
+      await supabaseExternal.realtime.setAuth(token);
+      return token === centralAuthAccessToken() && hasStaffSession();
+    },
   );
   const installSyncWake = () => { void syncWakeChannels?.replace(activeBranchId(),readTerminalConfig()?.tokenId ?? null,liveHasStaffSession); };
   const offTerminalWake = subscribeTerminalConfig(installSyncWake);
@@ -1024,7 +1030,12 @@ export function startSyncEngine() {
     },
   });
   const installLiveChannel = (staffPresent: boolean) => {
-    void liveChannels.replace(() => {
+    void liveChannels.replace(async () => {
+      const token = staffPresent ? centralAuthAccessToken() : undefined;
+      if (token) await supabaseExternal.realtime.setAuth(token);
+      // The staff proof can change while Realtime accepts the JWT. Never join
+      // protected tables with a stale proof or the anonymous project key.
+      const canJoinTables = !!token && token === centralAuthAccessToken() && hasStaffSession();
       const next = supabaseExternal.channel("pos-live-settings");
       next.on("broadcast", { event: "settings_changed" }, (message) => {
         const table = String((message as { payload?: { table?: unknown } }).payload?.table ?? "");
@@ -1035,7 +1046,7 @@ export function startSyncEngine() {
       // Electron sessions intentionally have no cloud staff JWT, so they rely on
       // durable local SQL synchronization and polling instead of opening invalid
       // anon subscriptions. Authenticated web users retain scoped live wake-ups.
-      if (staffPresent && !desktopBridge) {
+      if (canJoinTables && !desktopBridge) {
         for (const table of ORGANIZATION_LIVE_TABLES) {
           next.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
             const changed = ((

@@ -36,6 +36,7 @@ export type RelayRpc = { kind: "rpc"; table: string; fn: string; args: Record<st
 
 /** Read requests the relay may answer for a proven till. */
 export type RelayRead =
+  | { kind: "health" }
   | { kind: "activeShift"; storeId: string }
   | { kind: "stores" }
   | { kind: "cloudSchema" }
@@ -169,6 +170,9 @@ export async function runRelayRead(read: RelayRead): Promise<{
   inventoryMode?: "deep" | "legacy";
   inventoryWarning?: string;
 }> {
+  // The endpoint has already verified the caller and resolved its branch.
+  // A health check must never attempt a write with a fabricated record ID.
+  if (read.kind === "health") return { ok: true };
   if (read.kind === "cloudSchema") {
     // The PostgREST root document lists every exposed table with its columns
     // (including type and nullability), which is exactly what the till needs
