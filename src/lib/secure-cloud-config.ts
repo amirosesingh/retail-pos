@@ -228,9 +228,18 @@ export async function probeCloudConnection(url: string, key: string): Promise<Cl
         stage: "rejected",
         detail: "The key was rejected by the server — check it and try again.",
       };
-    // Missing table or a row rule that hides everything: the connection itself
-    // is proven, the customer's POS schema simply is not provisioned yet.
-    if (/does not exist|relation|schema cache|permission denied/i.test(msg))
+    // Some projects deny anonymous SELECT on stores while allowing an
+    // authenticated staff member to read it. The denied query proves the
+    // table exists; do not report a missing database/schema at first run.
+    if (/permission denied/i.test(msg))
+      return {
+        reachable: true,
+        authenticated: true,
+        schemaReady: true,
+        stage: "ok",
+        detail: "Connected. Sign in to verify your access to POS tables.",
+      };
+    if (/does not exist|relation|schema cache/i.test(msg))
       return {
         reachable: true,
         authenticated: true,

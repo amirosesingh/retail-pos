@@ -259,13 +259,23 @@ export async function testBackendUrl(value: string): Promise<BackendTestResult> 
         "This is the POS backend, but it has no central database key. An administrator must set SUPABASE_URL, SUPABASE_ANON_KEY and the service key on the hosting environment.",
     };
 
-  if (!data.membershipService)
+  if (data.posUrl === false)
     return {
       ok: false,
       warn: true,
       url,
+      detail: "This is the POS backend, but its central database address is missing on the server.",
+    };
+
+  // Membership is a separate project and feature. Its missing server-only key
+  // must not make a working POS database appear disconnected.
+  if (!data.membershipService)
+    return {
+      ok: true,
+      warn: true,
+      url,
       detail:
-        "The POS backend handshake succeeded, but its membership gateway is not configured. Add the membership project variables only on the hosted backend; do not put them on this till.",
+        "POS database connected. Member lookup is unavailable until the membership gateway is configured on the server.",
     };
 
   return {
