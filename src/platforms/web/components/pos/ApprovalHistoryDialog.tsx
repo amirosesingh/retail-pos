@@ -52,7 +52,7 @@ export function ApprovalHistoryDialog({
     });
   }
   useEffect(() => {
-    generation.current++;
+    const current = ++generation.current;
     if (!open) return;
     let live = true;
     setBusy(true);
@@ -75,7 +75,7 @@ export function ApprovalHistoryDialog({
       });
     return () => {
       live = false;
-      generation.current++;
+      generation.current = current + 1;
     };
     // read is intentionally captured for this exact branch/open revision.
     // eslint-disable-next-line react-hooks/exhaustive-deps
