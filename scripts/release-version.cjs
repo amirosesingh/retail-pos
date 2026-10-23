@@ -1,5 +1,3 @@
-const semver = require('semver');
-
 // Only this explicit metadata namespace has revision ordering. Arbitrary build
 // metadata must not turn an otherwise equal release into an upgrade.
 function revision(version) {
@@ -10,7 +8,8 @@ function revision(version) {
   return value;
 }
 function compareRelease(a, b) {
-  const base = semver.compare(a, b);
+  // Version preparation runs before npm install; only publishers need SemVer.
+  const base = require('semver').compare(a, b);
   return base || Math.sign(revision(a) - revision(b));
 }
 function displayVersion(version) {
