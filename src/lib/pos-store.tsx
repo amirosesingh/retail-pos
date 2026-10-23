@@ -782,10 +782,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
             if (cancelled || !cloudBookings.length) return;
             setState((s: PosState) => {
               const seen = new Set(cloudBookings.map((b) => b.id));
-              return {
-                ...s,
-                bookings: [...cloudBookings, ...s.bookings.filter((b) => !seen.has(b.id))],
-              };
+              const bookings = [...cloudBookings, ...s.bookings.filter((b) => !seen.has(b.id))];
+              return hasSameValue(s.bookings, bookings) ? s : { ...s, bookings };
             });
           })
           .catch(() => {
@@ -833,6 +831,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     let running = false;
     let queued = false;
     let warned = false;
+    let eventTimer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
       if (running) {
         queued = true;
@@ -869,8 +868,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
         }
       }
     };
-    const wake = () => { void refresh(); };
-    wake();
+    const wake = () => {
+      // One transfer commonly commits its header and several lines together.
+      // Collapse those hints into one scoped read without delaying startup.
+      if (eventTimer) clearTimeout(eventTimer);
+      eventTimer = setTimeout(() => { eventTimer = undefined; void refresh(); }, 150);
+    };
+    void refresh();
     const offData = subscribeDataChange((change) => {
       if (change.table === "stock_transfers" || change.table === "stock_transfer_items") wake();
     });
@@ -880,9 +884,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const offLocal = localDb()?.onBusinessChanged?.((change) => {
       if (change.kind === "transfer") wake();
     });
-    const offCatchup = subscribeBackgroundRefresh(wake, 60_000, effectiveDatabaseMode() !== "online");
+    const local = effectiveDatabaseMode() !== "online";
+    const offCatchup = subscribeBackgroundRefresh(wake, local ? 60_000 : 300_000, local);
     return () => {
       cancelled = true;
+      if (eventTimer) clearTimeout(eventTimer);
       offCatchup();
       offData();
       offSettings();
@@ -1096,6 +1102,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     let loading = false;
     let resumeTimer: number | undefined;
+    let lastResumeStarted = 0;
     const resume = () => {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
       // Focus, visibility and the native app-state event often arrive together.
@@ -1103,7 +1110,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (resumeTimer) window.clearTimeout(resumeTimer);
       resumeTimer = window.setTimeout(() => {
         resumeTimer = undefined;
-        if (loading || cancelled) return;
+        // Focus, visibility and native resume can arrive in separate bursts.
+        // A recent or running snapshot already covers that foreground return.
+        if (loading || cancelled || Date.now() - lastResumeStarted < 5_000) return;
+        lastResumeStarted = Date.now();
         loading = true;
         void loadCloudState()
           .then((cloud) => {
@@ -1224,16 +1234,18 @@ export function PosProvider({ children }: { children: ReactNode }) {
           setState(current => {
             const byId = new Map(rows.map(row => [row.id,row]));
             const known = new Set(current.bookings.map(row=>row.id));
-            return {...current,bookings:[
+            const bookings = [
               ...current.bookings.filter(row => !changed.has(row.id) || byId.has(row.id)).map(row => byId.get(row.id) ?? row),
               ...rows.filter(row => !known.has(row.id)),
-            ]};
+            ];
+            return hasSameValue(current.bookings, bookings) ? current : { ...current, bookings };
           });
         }).catch(cause => { if (active) dbError("Refreshing bookings",cause); });
       },200);
     };
     const off = subscribeDataChange(changedBooking);
-    const offCatchup = subscribeBackgroundRefresh(() => changedBooking({ table: "bookings" }), 60_000, effectiveDatabaseMode() !== "online");
+    const local = effectiveDatabaseMode() !== "online";
+    const offCatchup = subscribeBackgroundRefresh(() => changedBooking({ table: "bookings" }), local ? 60_000 : 300_000, local);
     return () => { active = false; off(); offCatchup(); if (timer) clearTimeout(timer); };
   }, [readsReady, readIdentity, state.currentStoreId]);
 

@@ -381,12 +381,7 @@ function numericTableValue(value: string): number | null {
   return Number.isFinite(parsed) ? (negative ? -parsed : parsed) : null;
 }
 
-function compareTableText(left: string, right: string): number {
-  const leftNumber = numericTableValue(left);
-  const rightNumber = numericTableValue(right);
-  if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
-  return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
-}
+const tableTextCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 // eslint-disable-next-line react-refresh/only-export-components -- Pure transforms shared with table regression tests.
 export function sortTableBodies(node: React.ReactNode, sort: TableSortState): React.ReactNode {
@@ -397,24 +392,30 @@ export function sortTableBodies(node: React.ReactNode, sort: TableSortState): Re
       index,
       value: tableCellText(child, sort.column),
     }));
+    const sortableGroups = groups.map(group => ({
+      ...group,
+      missing: group.value === null || !group.value.trim() || group.value.trim() === "—",
+      numeric: group.value === null ? null : numericTableValue(group.value),
+    }));
     const sortable = groups.filter((group) => group.value !== null).length > 1;
     if (!sortable) return node;
     const direction = sort.direction === "asc" ? 1 : -1;
-    groups.sort((left, right) => {
+    sortableGroups.sort((left, right) => {
       if (left.value === null && right.value === null) return left.index - right.index;
       if (left.value === null) return 1;
       if (right.value === null) return -1;
-      const leftMissing = !left.value.trim() || left.value.trim() === "—";
-      const rightMissing = !right.value.trim() || right.value.trim() === "—";
-      if (leftMissing && rightMissing) return left.index - right.index;
-      if (leftMissing) return 1;
-      if (rightMissing) return -1;
-      return compareTableText(left.value, right.value) * direction || left.index - right.index;
+      if (left.missing && right.missing) return left.index - right.index;
+      if (left.missing) return 1;
+      if (right.missing) return -1;
+      const compared = left.numeric !== null && right.numeric !== null
+        ? left.numeric - right.numeric
+        : tableTextCollator.compare(left.value, right.value);
+      return compared * direction || left.index - right.index;
     });
     return React.cloneElement(
       node,
       undefined,
-      groups.map((group) => group.child),
+      sortableGroups.map((group) => group.child),
     );
   }
   return React.cloneElement(
@@ -428,13 +429,15 @@ export function sortTableBodies(node: React.ReactNode, sort: TableSortState): Re
 export function filterTableBodies(node: React.ReactNode, filters: TableFilters): React.ReactNode {
   if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
   if (isTableComponent(node, TableBody, "TableBody")) {
-    const active = Object.entries(filters).filter(([, value]) => value.trim());
+    const active = Object.entries(filters)
+      .map(([column, value]) => [Number(column), value.trim().toLocaleLowerCase()] as const)
+      .filter(([, value]) => value);
     if (!active.length) return node;
     const rows = React.Children.toArray(node.props.children).filter((child) =>
       active.every(([column, query]) => {
-        const value = tableCellText(child, Number(column));
+        const value = tableCellText(child, column);
         return (
-          value !== null && value.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+          value !== null && value.toLocaleLowerCase().includes(query)
         );
       }),
     );
@@ -688,10 +691,9 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
       setWidths({});
       resizeCleanupRef.current?.();
     }, [labelSignature]);
-    const labelled = React.Children.map(children, (child) => labelTableBodies(child, labels));
     const sorted = clientDataControls
-      ? React.Children.map(labelled, (child) => sortTableBodies(child, sort))
-      : labelled;
+      ? React.Children.map(children, (child) => sortTableBodies(child, sort))
+      : children;
     const content = clientDataControls
       ? React.Children.map(sorted, (child) => filterTableBodies(child, filters))
       : sorted;
@@ -699,9 +701,12 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
     const pagination = usePagination(managedRows);
     const totals = sumManagedRows(managedRows);
     const pagedContent = managed ? replaceManagedRows(content, pagination.pageItems) : content;
-    const hasRows = getManagedRows(content).length > 0;
+    const hasRows = !loading || (managed ? managedRows.length > 0 : getManagedRows(content).length > 0);
     const displayContent = loading && !hasRows ? loadingTableBodies(pagedContent, Math.max(1, labels.length)) : pagedContent;
-    const displayedContent = tableId || managed || columnControls ? hideTableColumns(displayContent, hiddenColumns) : displayContent;
+    // Sorting/filtering use cell values. Label only the visible page so large
+    // catalogues do not clone every row before the paginator discards them.
+    const labelledContent = React.Children.map(displayContent, (child) => labelTableBodies(child, labels));
+    const displayedContent = tableId || managed || columnControls ? hideTableColumns(labelledContent, hiddenColumns) : labelledContent;
     const controls = React.useMemo<TableControls>(
       () => ({
         clientDataControls,

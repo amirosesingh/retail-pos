@@ -108,14 +108,14 @@ function Dashboard() {
   const { sales, loading: reportLoading, error: reportError } = useReportSales(state.sales, storeIds,
     posDayKey(new Date(Date.parse(`${readFrom}T12:00:00`) - 86_400_000)),
     posDayKey(new Date(Date.parse(`${readTo}T12:00:00`) + 86_400_000)));
-  const todaySales = sales.filter((s) => posDayKey(s.createdAt) === today);
-  const live = todaySales.filter((s) => !s.refunded);
+  const todaySales = useMemo(() => sales.filter((s) => posDayKey(s.createdAt) === today), [sales, today]);
+  const live = useMemo(() => todaySales.filter((s) => !s.refunded), [todaySales]);
 
-  const revenue = live.reduce((a, s) => a + s.total, 0);
+  const revenue = useMemo(() => live.reduce((a, s) => a + s.total, 0), [live]);
   // One shared profit helper, so this never drifts from the business report.
   const profit = useMemo(() => profitOf(live, state.products), [live, state.products]);
   const margin = profit.marginPct;
-  const refunds = todaySales.filter((s) => s.refunded);
+  const refunds = useMemo(() => todaySales.filter((s) => s.refunded), [todaySales]);
   const stock = useMemo(
     () => inventoryMetrics(state.products.filter(product => productVisibleAt(state.settings, product, currentStore.id)), currentStore.id),
     [state.products, state.settings, currentStore.id],
@@ -167,10 +167,10 @@ function Dashboard() {
   }, [chartSales]);
   const peak = hourly.reduce((a, h) => (h.bills > a.bills ? h : a), hourly[0]!);
 
-  const todayDrawer = drawer.filter(
+  const todayDrawer = useMemo(() => drawer.filter(
     (d) => posDayKey(d.at) === today && sameBranchId(d.storeId, currentStore.id),
-  );
-  const splitSales = live.filter(sale => hasSplitPayments(sale.payments));
+  ), [drawer, today, currentStore.id]);
+  const splitSales = useMemo(() => live.filter(sale => hasSplitPayments(sale.payments)), [live]);
 
   /** Per-cashier behaviour with fixed thresholds plus relative outliers. */
   const cashiers = useMemo(() => {

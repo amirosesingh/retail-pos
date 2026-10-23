@@ -10,6 +10,8 @@ describe("operational table controls", () => {
   it("paginates supplied rows while totaling the entire matching list", () => {
     const html = renderToStaticMarkup(h(Table, {managed: true}, head, body));
     expect(html).toContain("Item-25"); expect(html).not.toContain("Item-26");
+    expect(html).toContain('data-label="Product"');
+    expect(html).toContain('data-label="Quantity"');
     expect(html).toContain("465"); expect(html).toContain("930");
     expect(html).toContain("Columns"); expect(html).toContain("Next page");
     expect(renderToStaticMarkup(h(Table, null, head, body))).toContain("Item-30");
