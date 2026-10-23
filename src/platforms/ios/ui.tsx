@@ -1,3 +1,4 @@
+import { displayReleaseVersion } from "@/lib/release-version";
 import { NativeUpdateOrb } from "@/components/ui/native-update-orb";
 import { Switch } from "@/components/ui/switch";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -77,10 +78,10 @@ export function IosOtaSettings() {
       <h2 className="text-base font-semibold">
         iPhone software updates{RELEASE_CHANNEL === "beta" ? " · Beta" : ""}
       </h2>
-      <p className="text-xs text-muted-foreground">Installed: {state.installed}</p>
+      <p className="text-xs text-muted-foreground">Installed: {displayReleaseVersion(state.installed)}</p>
       {state.latest && (
         <>
-          <p>Available: {state.latest.version}</p>
+          <p>Available: {displayReleaseVersion(state.latest.version)}</p>
           <p className="whitespace-pre-wrap text-sm">{state.latest.notes}</p>
         </>
       )}
@@ -206,7 +207,7 @@ export function IosUpdateBanner() {
   const detail = state.error || error || state.deferred || (state.phase === "ready" ? "Downloaded. Tap to install and reopen."
     : state.phase === "downloading" ? `Downloading${state.progress === undefined ? "…" : ` ${state.progress}%`}`
       : state.phase === "installing" ? "Saving and reopening…" : "Update available. Tap to download.");
-  return <NativeUpdateOrb label={`${RELEASE_CHANNEL === "beta" ? "Beta update" : "Update"} ${state.latest.version}`}
+  return <NativeUpdateOrb label={`${RELEASE_CHANNEL === "beta" ? "Beta update" : "Update"} ${displayReleaseVersion(state.latest.version)}`}
     detail={detail} progress={state.progress} busy={busy} error={state.phase === "error" || !!error}
     onClick={() => {
       if (state.phase === "ready") {

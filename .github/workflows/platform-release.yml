@@ -59,6 +59,8 @@ jobs:
           git merge-base --is-ancestor HEAD origin/main
           short=$(echo "$GITHUB_SHA" | cut -c1-7)
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          display=$(node -p "require('./scripts/release-version.cjs').displayVersion(require('./package.json').version)")
+          echo "display_version=$display" >> "$GITHUB_OUTPUT"
           echo "release_id=v$v-$short" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v8
         with:
@@ -125,6 +127,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          name: Retail ${{ steps.meta.outputs.display_version }}
           files: |
             upload/*.exe
             upload/*.blockmap

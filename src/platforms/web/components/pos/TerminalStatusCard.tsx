@@ -4,7 +4,7 @@ import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
  * the current software?" — so a counter never has to guess whether a strange
  * behaviour is old software or a failed check.
  */
-import { APP_VERSION } from "@/version";
+import { APP_DISPLAY_VERSION as APP_VERSION } from "@/version";
 import { useRevocationCheck } from "@/lib/use-revocation-check";
 import { TileGroup, TileRow } from "@/platforms/web/components/pos/AppUpdateSettings";
 

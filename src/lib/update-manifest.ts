@@ -1,3 +1,4 @@
+import { releaseRevision } from "./release-version";
 /**
  * Self-hosted HTTP update manifest — one source of truth for every platform.
  *
@@ -85,7 +86,7 @@ export function compareVersions(a: string, b: string): number {
     const d = (left[i] ?? 0) - (right[i] ?? 0);
     if (d !== 0) return d > 0 ? 1 : -1;
   }
-  if (!l[4] || !r[4]) return l[4] ? -1 : r[4] ? 1 : 0;
+  if (!l[4] || !r[4]) return l[4] ? -1 : r[4] ? 1 : Math.sign(releaseRevision(a) - releaseRevision(b));
   const lp = l[4].split("."), rp = r[4].split(".");
   for (let i = 0; i < Math.max(lp.length, rp.length); i++) {
     const x = lp[i], y = rp[i];

@@ -26,8 +26,7 @@ record synchronizes. The recipient needs connectivity to receive that event;
 this is an in-app notification, not a guaranteed background iOS push.
 
 The migration does not modify existing rows or table permissions. It is
-prepared for review, not applied automatically to the shared production/beta
-database. No local SQL Server column migration is needed for this change.
+applied to the shared production/beta database with the owner’s approval. No local SQL Server column migration is needed for this change.
 
 ## Device acceptance
 
