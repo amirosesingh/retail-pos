@@ -9,6 +9,20 @@ type FakeChannel = {
 };
 
 describe("Realtime channel replacement", () => {
+  it("removes a pending authenticated join if sign-out supersedes it", async () => {
+    let finish!: (channel: string) => void;
+    const remove = vi.fn(async () => undefined);
+    const changed = vi.fn();
+    const replacer = createSerialChannelReplacer<string>({ remove, onCurrentChange: changed });
+    const create = vi.fn(() => new Promise<string>(resolve => { finish = resolve; }));
+    const joining = replacer.replace(create);
+    await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
+    const stopping = replacer.stop();
+    finish("staff-channel");
+    await Promise.all([joining, stopping]);
+    expect(remove).toHaveBeenCalledWith("staff-channel");
+    expect(changed).not.toHaveBeenCalledWith("staff-channel");
+  });
   it("removes a subscribed topic before configuring its replacement", async () => {
     const channels: FakeChannel[] = [];
     const channel = (topic: string): FakeChannel => {

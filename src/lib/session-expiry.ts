@@ -51,13 +51,18 @@ export function isTokenRejection(status: number, body: string): boolean {
   return false;
 }
 
-let lastWarning = 0;
+let lastWarning = -Infinity;
+let connectivityRevision = 0;
+let toastModule: Promise<typeof import("sonner")> | undefined;
+const loadToast = () => (toastModule ??= import("sonner"));
 
 /** Remove the shared connectivity warning after a confirmed recovery. */
 export function clearConnectivityIssue(): void {
-  lastWarning = 0;
+  const revision = ++connectivityRevision;
   if (typeof window === "undefined") return;
-  void import("sonner").then(({ toast }) => toast.dismiss("pos-connectivity"));
+  void loadToast().then(({ toast }) => {
+    if (revision === connectivityRevision) toast.dismiss("pos-connectivity");
+  });
 }
 
 /** Temporary "we can't reach the server" note. Never signs anyone out. */
@@ -66,7 +71,9 @@ export function noteConnectivityIssue(detail?: string): void {
   const now = Date.now();
   if (now - lastWarning < 15000) return;
   lastWarning = now;
-  void import("sonner").then(({ toast }) => {
+  const revision = ++connectivityRevision;
+  void loadToast().then(({ toast }) => {
+    if (revision !== connectivityRevision) return;
     toast.warning("Connection trouble", {
       id: "pos-connectivity",
       description:
@@ -81,6 +88,7 @@ export function noteConnectivityIssue(detail?: string): void {
  */
 export async function inspectResponse(res: Response, hadBearer: boolean, startedAt = sessionEpoch()): Promise<void> {
   try {
+    if (!isCurrentEpoch(startedAt)) return;
     if (res.status >= 500) {
       noteConnectivityIssue(
         "The server is temporarily unavailable. The till will retry automatically.",

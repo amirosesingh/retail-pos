@@ -157,6 +157,7 @@ const bodySchema = z.object({
     .discriminatedUnion("kind", [
       z.object({ kind: z.literal("activeShift"), storeId: z.string().min(1).max(64) }),
       z.object({ kind: z.literal("stores") }),
+      z.object({ kind: z.literal("health") }),
     ])
     .optional(),
 });

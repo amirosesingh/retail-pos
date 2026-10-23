@@ -60,16 +60,18 @@ function supabaseFetchFor(SUPABASE_PUBLISHABLE_KEY: string, useDesktop = true): 
         typeof Request !== "undefined" && input instanceof Request
           ? await transport(new Request(input, { ...init, headers }))
           : await transport(input, { ...init, headers });
-      if (res.ok && isCurrentEpoch(startedAt)) clearConnectivityIssue();
+      if (useDesktop && res.ok && isCurrentEpoch(startedAt)) clearConnectivityIssue();
       // Secondary Auth failures must not revoke a separately verified PIN
       // session, nor may a late response revoke a newer sign-in/token.
       const currentBearer = centralAuthAccessToken();
       const currentRequest = hadBearer && !!currentBearer && headers.get("Authorization") === `Bearer ${currentBearer}`;
-      if (!cashierTokenSync() && !sessionTokenSync()) void inspectResponse(res.clone(), currentRequest, startedAt);
+      if (useDesktop && !cashierTokenSync() && !sessionTokenSync()) void inspectResponse(res.clone(), currentRequest, startedAt);
       return res;
     } catch (e) {
       // Network failure / timeout: warn, never sign out.
-      if (isCurrentEpoch(startedAt) && (e as { name?: string })?.name !== "AbortError") noteConnectivityIssue();
+      const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      if (useDesktop && isCurrentEpoch(startedAt) && !callerSignal?.aborted &&
+          (e as { name?: string })?.name !== "AbortError") noteConnectivityIssue();
       throw e;
     }
   };

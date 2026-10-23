@@ -209,14 +209,14 @@ export async function probeCloudConnection(url: string, key: string): Promise<Cl
 
   try {
     const client = createTenantClient(cleanUrl, cleanKey);
-    const { error } = await client.from("stores").select("id").limit(1);
+    const { error } = await client.from("public_flags").select("key").limit(1);
     if (!error)
       return {
         reachable: true,
         authenticated: true,
         schemaReady: true,
         stage: "ok",
-        detail: "Connected — the address, the key and the POS tables all check out.",
+        detail: "Connected — the address, key and POS connection check are valid. Sign in to access business data.",
       };
 
     const msg = error.message ?? "query failed";
@@ -228,7 +228,7 @@ export async function probeCloudConnection(url: string, key: string): Promise<Cl
         stage: "rejected",
         detail: "The key was rejected by the server — check it and try again.",
       };
-    // Some projects deny anonymous SELECT on stores while allowing an
+    // Some operator-managed projects deny anonymous SELECT while allowing an
     // authenticated staff member to read it. The denied query proves the
     // table exists; do not report a missing database/schema at first run.
     if (/permission denied/i.test(msg))

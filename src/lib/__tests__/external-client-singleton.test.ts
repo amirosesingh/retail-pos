@@ -182,6 +182,38 @@ describe("external Supabase client ownership", () => {
       "Bearer user-session",
     );
   });
+  it("does not let membership requests alter POS connectivity or session diagnostics", async () => {
+    const { memberPortalClientSnapshot } = await import("@/integrations/supabase/external-client");
+    const diagnostics = await import("@/lib/session-expiry");
+    vi.mocked(diagnostics.clearConnectivityIssue).mockClear();
+    vi.mocked(diagnostics.noteConnectivityIssue).mockClear();
+    vi.mocked(diagnostics.inspectResponse).mockClear();
+    memberPortalClientSnapshot();
+    const fetcher = harness.fetchers[0];
+    await fetcher("https://members-a.example.co/rest/v1/public_flags");
+    harness.transport.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await expect(fetcher("https://members-a.example.co/rest/v1/public_flags")).rejects.toThrow();
+    harness.transport.mockResolvedValueOnce(new Response("unavailable", { status: 503 }));
+    expect((await fetcher("https://members-a.example.co/rest/v1/public_flags")).status).toBe(503);
+    expect(diagnostics.clearConnectivityIssue).not.toHaveBeenCalled();
+    expect(diagnostics.noteConnectivityIssue).not.toHaveBeenCalled();
+    expect(diagnostics.inspectResponse).not.toHaveBeenCalled();
+  });
+  it("ignores caller timeouts but reports actual transport timeouts", async () => {
+    const { externalClientSnapshot } = await import("@/integrations/supabase/external-client");
+    const { noteConnectivityIssue } = await import("@/lib/session-expiry");
+    vi.mocked(noteConnectivityIssue).mockClear();
+    externalClientSnapshot();
+    const fetcher = harness.fetchers[0];
+    const controller = new AbortController();
+    controller.abort(new DOMException("Probe ended", "TimeoutError"));
+    harness.transport.mockRejectedValueOnce(controller.signal.reason);
+    await expect(fetcher("https://tenant-a.example.co/rest/v1/public_flags", { signal: controller.signal })).rejects.toThrow("Probe ended");
+    expect(noteConnectivityIssue).not.toHaveBeenCalled();
+    harness.transport.mockRejectedValueOnce(new DOMException("Server timed out", "TimeoutError"));
+    await expect(fetcher("https://tenant-a.example.co/rest/v1/public_flags")).rejects.toThrow("Server timed out");
+    expect(noteConnectivityIssue).toHaveBeenCalledOnce();
+  });
   it("clears connectivity warnings after recovery and ignores deliberate cancellation", async () => {
     const { externalClientSnapshot } = await import("@/integrations/supabase/external-client");
     const { clearConnectivityIssue, noteConnectivityIssue } = await import("@/lib/session-expiry");
