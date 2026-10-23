@@ -20,3 +20,8 @@ it("configures Zod before the root emits module scripts", () => {
   const root = readFileSync("src/routes/__root.tsx", "utf8");
   expect(root.indexOf("__html: zodCspBootScript")).toBeLessThan(root.indexOf("<HeadContent />"));
 });
+
+it("keeps the Electron renderer policy free of unsafe eval", () => {
+  const main = readFileSync("electron/main.cjs", "utf8");
+  expect(main).not.toContain("'unsafe-eval'");
+});
