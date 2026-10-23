@@ -77,3 +77,16 @@ it("counts reusable-code bills once and separates coupon savings from other disc
   const sale = { id: "s1", coupon_promo_id: "c", coupon_scope: "item", coupon_discount: 20, total_amount: 70, discount_amount: 30 };
   expect(reusableCodeTotals([sale, sale, { ...sale, id: "s2", is_refunded: true }, { ...sale, id: "s3", coupon_promo_id: "other" }], "c")).toEqual({ count: 1, revenue: 70, discount: 20 });
 });
+
+it("retains deleted campaign performance from saved sale snapshots", async () => {
+  const { reusableCodeReportEntries, reusableCodeTotals } = await import("../reusable-code-report");
+  const sales = [
+    { id: "s1", coupon_promo_id: "deleted", coupon_code: "PARTNER", coupon_scope: "item", coupon_discount: 20, total_amount: 80 },
+    { id: "s2", coupon_promo_id: "deleted", coupon_code: "PARTNER", is_refunded: true, coupon_discount: 10, total_amount: 40 },
+    { id: "voucher", coupon_promo_id: null, coupon_code: "VOUCHER" },
+  ];
+  const entries = reusableCodeReportEntries([], sales);
+  expect(entries).toHaveLength(1);
+  expect(entries[0]).toMatchObject({ id: "deleted", name: "PARTNER", active: false });
+  expect(reusableCodeTotals(sales, entries[0].id)).toEqual({ count: 1, discount: 20, revenue: 80 });
+});

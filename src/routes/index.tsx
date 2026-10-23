@@ -623,9 +623,22 @@ function Register() {
     getTotal: (paymentMethod) => applyRounding(totals.total, state.settings.integrations.rounding, paymentMethod).total,
   });
 
+  // Recheck wall-clock eligibility at checkout, including tickets held overnight.
+  // Never silently charge a different amount: update the cart and require review.
+  const validateCouponBeforeCommit = () => {
+    if (!coupon?.reusable) return true;
+    const fresh = projectReusableCoupon(rawCartLines, coupon, state.promotions, new Date(), currentStore.groupId);
+    if (fresh.coupon) return true;
+    setLines(fresh.lines);
+    setCoupon(null);
+    toast.error("This coupon is no longer available. Review the updated total before charging.");
+    return false;
+  };
+
   const charging = useRef(false);
   const openPayment = async (preset?: Parameters<typeof openTenderPayment>[0]) => {
     if (charging.current || !lines.length || tillLocked || !can("can_process_sale")) return;
+    if (!validateCouponBeforeCommit()) return;
     charging.current = true;
     try {
       let discounts: TicketDiscount[] = lines.flatMap((line,index) => {
@@ -656,6 +669,7 @@ function Register() {
         });
         if (grant === null) return;
       }
+      if (!validateCouponBeforeCommit()) return;
       openTenderPayment(preset);
     } catch (error) { notifyError(error,"Opening payment"); }
     finally { charging.current = false; }
@@ -1266,6 +1280,7 @@ function Register() {
               appliedApprovalRef.current.approvedByName ?? appliedApprovalRef.current.approvedBy,
           }
         : null,
+    validateCouponBeforeCommit,
     getLines: () => lines,
     getTotals: () => totals,
     getMember: () => member,

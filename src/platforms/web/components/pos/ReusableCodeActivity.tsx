@@ -1,4 +1,4 @@
-import { reusableCodeTotals } from "@/lib/reusable-code-report";
+import { reusableCodeReportEntries, reusableCodeTotals } from "@/lib/reusable-code-report";
 import { ReusableCodeChangeLog } from "./ReusableCodeChangeLog";
 import { nextCursor, type Cursor } from "@/lib/keyset";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -27,7 +27,6 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
     () => state.promotions.filter((p) => p.type === "code"),
     [state.promotions],
   );
-  const idsKey = JSON.stringify(codes.map((p) => p.id).sort());
   const [sales, setSales] = useState<Sale[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -36,13 +35,11 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
   const [revision, setRevision] = useState(0);
   const read = useCallback(
     async (position: Cursor) => {
-      const ids = JSON.parse(idsKey) as string[];
-      if (!ids.length) return [];
       // Bounded pages, never download the full transaction history on tab open.
       return routedQuery("sales", {
         columns:
           "id,bill_number,coupon_code,coupon_promo_id,coupon_scope,coupon_discount,total_amount,is_refunded,store_id,cashier_name,created_at",
-        in: { column: "coupon_promo_id", values: ids },
+        in: { column: "coupon_scope", values: ["bill", "item"] },
         orderBy: { column: "created_at", ascending: false },
         limit: PAGE_SIZE,
         ...(position
@@ -50,7 +47,7 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
           : {}),
       });
     },
-    [idsKey],
+    [],
   );
   useEffect(() => {
     if (view === "issued") return;
@@ -63,7 +60,7 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
     void read(null)
       .then((rows) => {
         if (!live) return;
-        setSales(rows);
+        setSales(rows.filter(row => row.coupon_promo_id));
         setCursor(nextCursor(rows, "created_at", PAGE_SIZE));
         setMore(rows.length === PAGE_SIZE);
       })
@@ -83,7 +80,7 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
     try {
       const rows = await read(cursor);
       setSales((current) => [
-        ...new Map([...current, ...rows].map((row) => [String(row.id), row])).values(),
+        ...new Map([...current, ...rows.filter(row => row.coupon_promo_id)].map((row) => [String(row.id), row])).values(),
       ]);
       setCursor(nextCursor(rows, "created_at", PAGE_SIZE));
       setMore(rows.length === PAGE_SIZE);
@@ -94,6 +91,7 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
       setBusy(false);
     }
   }
+  const reportCodes = view === "issued" ? codes : reusableCodeReportEntries(codes, sales);
   return (
     <section className="space-y-3 py-3">
       <div className="flex items-center justify-between gap-2">
@@ -156,11 +154,11 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
                   </TableCell>
                 </TableRow>
               ))
-            : codes.map((code) => {
+            : reportCodes.map((code) => {
                 const totals = reusableCodeTotals(sales, code.id);
                 return (
                   <TableRow key={code.id}>
-                    <TableCell className="font-mono">{code.name}</TableCell>
+                    <TableCell className="font-mono">{code.name}{!codes.some(current => current.id === code.id) && <Badge variant="outline" className="ml-2">Deleted campaign</Badge>}</TableCell>
                     {view === "issued" ? (
                       <>
                         <TableCell>
@@ -187,7 +185,7 @@ export function ReusableCodeActivity({ view }: { view: "issued" | "performance" 
                   </TableRow>
                 );
               })}
-          {(view === "audit" ? !sales.length : !codes.length) && (
+          {(view === "audit" ? !sales.length : !reportCodes.length) && (
             <TableRow>
               <TableCell colSpan={4} className="text-center text-muted-foreground">
                 {busy ? "Loading…" : "No reusable-code records to display."}

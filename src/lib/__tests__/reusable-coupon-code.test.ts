@@ -47,3 +47,12 @@ describe("reusable campaign codes", () => {
     expect(validateReusableCode(rule, [])).toBeNull();
   });
 });
+
+it("rechecks a held ticket after its campaign expires without a cart edit", () => {
+  const dated = { ...rule, endDate: "2026-10-23", codeScope: "item" as const };
+  const before = projectReusableCoupon([line], coupon, [dated], new Date("2026-10-23T12:00:00"));
+  expect(before.coupon?.discount).toBe(20);
+  const after = projectReusableCoupon(before.lines, before.coupon, [dated], new Date("2026-10-24T12:00:00"));
+  expect(after.coupon).toBeNull();
+  expect(after.lines[0].couponDiscount).toBeUndefined();
+});

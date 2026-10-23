@@ -59,6 +59,9 @@ export type CheckoutDeps = {
    */
   getAuthorization?: () => { requestId: string | null; approvedBy?: string | null } | null;
 
+  /** Recheck time-sensitive coupon eligibility immediately before saving. */
+  validateCouponBeforeCommit?: () => boolean;
+
   // Cart / ticket
   getLines: () => CartLine[];
   getTotals: () => ReturnType<typeof cartTotals>;
@@ -161,6 +164,7 @@ export function useCheckout(deps: CheckoutDeps) {
   }
 
   async function bookAndPayLater(timingOverride?: "now") {
+    if (deps.validateCouponBeforeCommit?.() === false) return;
     const activeShift = deps.getActiveShift();
     const currentStore = deps.getCurrentStore();
     const activeCashier = deps.getActiveCashier();
@@ -335,6 +339,7 @@ export function useCheckout(deps: CheckoutDeps) {
           : undefined,
       };
       const draftBillNo = await flushTicketDrafts();
+      if (deps.validateCouponBeforeCommit?.() === false) return;
       booking = await createBooking({ ...newBooking, draftBillNo: draftBillNo || deps.getBillNo() });
     } catch (e) {
       toast.error("Booking was not saved", {
@@ -398,6 +403,7 @@ export function useCheckout(deps: CheckoutDeps) {
   }
 
   async function completeSale() {
+    if (deps.validateCouponBeforeCommit?.() === false) return;
     if (inFlight.current) return;
     inFlight.current = true;
     try {
@@ -539,6 +545,7 @@ export function useCheckout(deps: CheckoutDeps) {
       setSaving(true);
       billNo = (await flushTicketDrafts()) || billNo;
       if (!attemptId.current) attemptId.current = crypto.randomUUID();
+      if (deps.validateCouponBeforeCommit?.() === false) return;
       sale = await recordSale(
         {
           storeId: currentStore.id,
