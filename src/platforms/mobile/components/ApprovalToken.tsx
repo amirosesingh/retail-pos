@@ -49,6 +49,7 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
   const [unlocked, setUnlocked] = useState<ApprovalToken | null>(null);
   const [pin, setPin] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  const [replacePin, setReplacePin] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const unlockGeneration = useRef(0);
@@ -60,7 +61,7 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
   const visibleOwner = owner && (!user || owner.userId.toLowerCase() === user.staffId.toLowerCase())
     ? owner : null;
   const renewalNeeded = Boolean(visibleOwner && visibleOwner.validUntil - Date.now() <= 7 * 24 * 60 * 60 * 1000);
-  const close = () => { unlockGeneration.current++; setOpen(false); setUnlocked(null); setPin(""); setConfirmation(""); setError(""); setCode(""); };
+  const close = () => { unlockGeneration.current++; setOpen(false); setUnlocked(null); setPin(""); setConfirmation(""); setReplacePin(false); setError(""); setCode(""); };
   useEffect(() => {
     const lock = () => { if (document.hidden) close(); };
     const reset = () => { unlockGeneration.current++; setUnlocked(null); setCode(""); };
@@ -194,7 +195,8 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
           </p>
           {renewalNeeded && <p className="text-xs text-amber-700 dark:text-amber-400">Connect to the internet to renew the approval token.</p>}
           </>}
-          {visibleToken && !visibleOwner && <div className="space-y-2 border-t pt-3">
+          {visibleToken && visibleOwner && !replacePin && <Button variant="outline" size="sm" onClick={() => { setPin(""); setConfirmation(""); setReplacePin(true); }}>Change token unlock PIN</Button>}
+          {visibleToken && (!visibleOwner || replacePin) && <div className="space-y-2 border-t pt-3">
             <p className="text-xs text-muted-foreground">Register this signed-in user’s token on this device with a separate 6–12 digit unlock PIN. You can then open it from the login screen without internet. This replaces any other saved token owner on this device.</p>
             <label className="text-sm" htmlFor="token-setup-pin">New token unlock PIN</label>
             <input id="token-setup-pin" className="h-10 w-full rounded-md border bg-background px-3" type="password" inputMode="numeric" autoComplete="new-password" maxLength={12} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ""))} />
@@ -203,7 +205,7 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
             <Button disabled={busy || pin.length < 6} onClick={async () => {
               if (pin !== confirmation) { setError("Unlock PINs must match."); return; }
               setBusy(true); setError("");
-              try { await setupOfflineApprovalToken(pin); setPin(""); setConfirmation(""); setError("Offline token access saved."); }
+              try { await setupOfflineApprovalToken(pin); setPin(""); setConfirmation(""); setReplacePin(false); setError("Offline token access saved."); }
               catch (e) { setError(e instanceof Error ? e.message : "Could not save token access"); }
               finally { setBusy(false); }
             }}>Register offline token</Button>
