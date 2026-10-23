@@ -161,7 +161,7 @@ function DesktopUpdateCard() {
       {supported && history && <TileGroup title="Retained Windows releases">
         {!history.ok && <TileRow label="History unavailable" hint={history.error} />}
         {history.ok && history.releases.length === 0 && <TileRow label="No retained releases listed yet" />}
-        {history.releases.map(release => <TileRow key={release.version} label={`v${release.version}`}
+        {history.releases.map(release => <TileRow key={release.version} label={`v${displayReleaseVersion(release.version)}`}
           hint={[release.released ? posDisplayDate(new Date(release.released)) : "", release.notes].filter(Boolean).join(" · ")}
           value={release.version === (state.version || APP_VERSION) ? "Installed" : "Retained"} />)}
       </TileGroup>}
