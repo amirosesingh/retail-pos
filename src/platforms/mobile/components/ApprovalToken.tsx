@@ -1,20 +1,20 @@
-import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 export const nativeApprovalCredentials = true;
 import { useEffect, useRef, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useAuth } from "@/lib/pos-auth";
+import { useAuth, useAuthOptional } from "@/lib/pos-auth";
 import {
   enrollOwnApprovalToken, offlineTokenOwner, setupOfflineApprovalToken, unlockOfflineApprovalToken,
-  loadApprovalToken,
-  TOKEN_CHANGED,
+  loadApprovalToken, revalidateOfflineApprovalToken,
+  TOKEN_CHANGED, TOKEN_RENEWED,
   type ApprovalToken,
 } from "@/lib/approval-token-client";
 import { approvalTotp } from "@/lib/approval-totp";
 import { subscribeBackgroundRefresh } from "@/lib/background-refresh";
 import { approvalMethods } from "@/lib/approval-credentials";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 
 export function ApprovalTokenAgent() {
   const { user, appUser } = useAuth();
@@ -28,18 +28,24 @@ export function ApprovalTokenAgent() {
       });
     };
     refresh();
-    return subscribeBackgroundRefresh(refresh, 60_000);
+    // Launch, foreground and reconnection revalidate immediately. A bounded
+    // interval catches revocation without polling the database every minute.
+    return subscribeBackgroundRefresh(refresh, 15 * 60_000);
   }, [id, methodEnabled]);
   return null;
 }
 /** Only an OS-vault enrollment bound to the retained sign-in and registered device is shown. */
 export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) {
-  const { user, appUser } = useAuth();
+  // The sign-in and offline recovery screens can render outside AuthProvider.
+  // A saved, device-bound token must remain unlockable there without signing in.
+  const auth = useAuthOptional();
+  const user = auth?.user ?? null;
+  const appUser = auth?.appUser ?? null;
   const maySetUp = Boolean(user && appUser && readTerminalConfig()?.tokenId &&
     approvalMethods(appUser.permissions as Record<string, unknown> | null).totp);
   const [token, setToken] = useState<ApprovalToken | null>(null);
   const [open, setOpen] = useState(false);
-  const [owner, setOwner] = useState<{ name: string; userId: string } | null>(null);
+  const [owner, setOwner] = useState<{ name: string; userId: string; validUntil: number; expired: boolean } | null>(null);
   const [unlocked, setUnlocked] = useState<ApprovalToken | null>(null);
   const [pin, setPin] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -53,6 +59,7 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
   // shown the previous operator's offline enrollment.
   const visibleOwner = owner && (!user || owner.userId.toLowerCase() === user.staffId.toLowerCase())
     ? owner : null;
+  const renewalNeeded = Boolean(visibleOwner && visibleOwner.validUntil - Date.now() <= 7 * 24 * 60 * 60 * 1000);
   const close = () => { unlockGeneration.current++; setOpen(false); setUnlocked(null); setPin(""); setConfirmation(""); setError(""); setCode(""); };
   useEffect(() => {
     const lock = () => { if (document.hidden) close(); };
@@ -80,10 +87,29 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
     refresh();
     const stopRefresh = subscribeBackgroundRefresh(refresh, 30_000);
     window.addEventListener(TOKEN_CHANGED, refresh);
+    window.addEventListener(TOKEN_RENEWED, refresh);
     return () => {
       stopped = true;
       stopRefresh();
       window.removeEventListener(TOKEN_CHANGED, refresh);
+      window.removeEventListener(TOKEN_RENEWED, refresh);
+    };
+  }, []);
+  useEffect(() => {
+    const check = () => {
+      if (document.hidden || !navigator.onLine) return;
+      void revalidateOfflineApprovalToken().catch(() => {
+        // Keep the last verified enrollment during transient network failures.
+      });
+    };
+    check();
+    const timer = window.setInterval(check, 15 * 60_000);
+    window.addEventListener("online", check);
+    window.addEventListener(APP_RESUME_EVENT, check);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("online", check);
+      window.removeEventListener(APP_RESUME_EVENT, check);
     };
   }, []);
   useEffect(() => {
@@ -140,7 +166,7 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
               finally { setBusy(false); }
             }}>Retry token registration</Button>
           </div>}
-          {!displayed && visibleOwner && <form className="space-y-3" onSubmit={async event => {
+          {!displayed && visibleOwner && !visibleOwner.expired && <form className="space-y-3" onSubmit={async event => {
             event.preventDefault(); if (busy) return; setBusy(true); setError("");
             try { const ticket = ++unlockGeneration.current; const value = await unlockOfflineApprovalToken(pin); if (!document.hidden && ticket === unlockGeneration.current) setUnlocked(value); setPin(""); }
             catch (e) { setError(e instanceof Error ? e.message : "Could not unlock token"); }
@@ -151,6 +177,7 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
             <Button disabled={busy || pin.length < 6} type="submit">Unlock token</Button>
             <p className="text-xs text-muted-foreground">Unlocks only this approval token. You remain signed out of the POS.</p>
           </form>}
+          {visibleOwner?.expired && <p className="text-xs text-amber-700 dark:text-amber-400">Connect to the internet to renew the approval token.</p>}
           {displayed && <>
           <p
             className="numeric text-center text-3xl font-semibold tracking-[0.2em]"
@@ -159,18 +186,15 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
             {code || "••••••••"}
           </p>
           <p className="text-center text-sm text-muted-foreground">
-            Changes in {seconds}s · Works without internet
+            Changes in {seconds}s · {visibleOwner ? "Works without internet" : "Save an unlock PIN for offline access"}
           </p>
           <p className="text-xs text-muted-foreground">
             Enter your staff ID and this code in the approval field. Your approval permissions and
             limits still apply.
           </p>
-          <p className="text-xs text-muted-foreground">
-            Offline enrollment valid until {posDisplayDateTime(new Date(displayed.validUntil))}. Reconnect
-            to renew.
-          </p>
+          {renewalNeeded && <p className="text-xs text-amber-700 dark:text-amber-400">Connect to the internet to renew the approval token.</p>}
           </>}
-          {visibleToken && <div className="space-y-2 border-t pt-3">
+          {visibleToken && !visibleOwner && <div className="space-y-2 border-t pt-3">
             <p className="text-xs text-muted-foreground">Register this signed-in user’s token on this device with a separate 6–12 digit unlock PIN. You can then open it from the login screen without internet. This replaces any other saved token owner on this device.</p>
             <label className="text-sm" htmlFor="token-setup-pin">New token unlock PIN</label>
             <input id="token-setup-pin" className="h-10 w-full rounded-md border bg-background px-3" type="password" inputMode="numeric" autoComplete="new-password" maxLength={12} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ""))} />

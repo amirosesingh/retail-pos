@@ -57,7 +57,7 @@ function fixture() {
     ok: true,
     terminalId: binding.tokenId,
     branchId: binding.branch,
-    validUntil: Date.now() + 86400000,
+    validUntil: Date.now() + 30 * 86400000,
     entries: [{ id: "device-a", userId: "manager", secret, lastUsedStep: -1 }],
   }));
   const options = {
@@ -100,9 +100,17 @@ describe("offline Windows token verifier", () => {
     f.binding.tokenId = "terminal-b";
     expect(await f.verifier.verify(f.pool, "manager", code, "branch-a")).toBe(false);
     f.binding.tokenId = "terminal-a";
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 86401000);
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31 * 86400000);
     expect(await f.verifier.verify(f.pool, "manager", code, "branch-a")).toBe(false);
     expect(f.query).not.toHaveBeenCalled();
+  });
+  it("accepts a registered issuer after 25 offline days on the paired Windows terminal", async () => {
+    const f = fixture();
+    const enrolledAt = Date.now();
+    await f.verifier.refresh();
+    vi.spyOn(Date, "now").mockReturnValue(enrolledAt + 25 * 86400000);
+    const code = tokenAt(f.secret, Math.floor(Date.now() / 30000));
+    expect(await f.verifier.verify(f.pool, "manager", code, "branch-a")).toBe(true);
   });
   it("does not fall back to unencrypted credential storage", async () => {
     const f = fixture();

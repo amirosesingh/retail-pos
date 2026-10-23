@@ -1,6 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHmac, timingSafeEqual } = require("node:crypto");
+// Keep in sync with OFFLINE_APPROVAL_TOKEN_LEASE_MS in approval-credentials.ts.
+const OFFLINE_APPROVAL_TOKEN_LEASE_MS = 30 * 24 * 60 * 60 * 1000;
 function tokenAt(secret, step) {
   const counter = Buffer.alloc(8);
   counter.writeBigUInt64BE(BigInt(step));
@@ -65,7 +67,7 @@ function createApprovalTokenVerifier({
         ...result,
         origin: project,
         refreshedAt: Date.now(),
-        validUntil: Math.min(Number(result.validUntil), Date.now() + 86400000),
+        validUntil: Math.min(Number(result.validUntil), Date.now() + OFFLINE_APPROVAL_TOKEN_LEASE_MS),
       };
       if (!Array.isArray(saved.entries) || !Number.isFinite(saved.validUntil)) return;
       const target = file();

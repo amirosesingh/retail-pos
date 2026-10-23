@@ -17,7 +17,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportAppReady } from "@/lib/app-health";
@@ -39,7 +39,7 @@ import { FirstRunSetup } from "@/platforms/web/components/pos/FirstRunSetup";
 import { LifeBuoy } from "lucide-react";
 import { RECOVERY_PATH, isRecoveryPath } from "@/lib/recovery-route";
 import { ThemeProvider, themeBootScript } from "../lib/theme";
-import { NativeConnectionIndicator } from "@/platform-config/offline-interface";
+import { NativeConnectionIndicator, OfflineLoginInterface, supportsOfflineLogin } from "@/platform-config/offline-interface";
 import { publicConfigScript } from "../lib/public-config-script";
 import { NativeBoot } from "@/platforms/mobile/components/NativeBoot";
 import { NativeWindowFrame } from "@/components/shared/NativeWindowFrame";
@@ -50,8 +50,10 @@ import {
   APP_RESUME_EVENT,
   CONNECTIVITY_RESTORED_EVENT,
   connectivity,
+  cloudVerdict,
   heartbeat,
   startConnectivityMonitor,
+  subscribeConnectivity,
 } from "@/core/activation/connection-health";
 import { subscribeSyncConfig, syncConfig } from "@/lib/sync-config";
 import { DesktopUpdateBanner, DesktopCloseSyncStatus } from "@/platforms/windows/components/DesktopUpdateBanner";
@@ -95,6 +97,26 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
   );
   if (import.meta.env.DEV) console.error(normalizedError);
   const router = useRouter();
+  const [connection, setConnection] = useState(connectivity);
+  const [networkOnline, setNetworkOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine !== false);
+  useEffect(() => subscribeConnectivity(setConnection), []);
+  useEffect(() => {
+    if (!supportsOfflineLogin) return;
+    void heartbeat();
+    const refresh = () => {
+      if (navigator.onLine === false) setNetworkOnline(false);
+      void heartbeat().finally(() => setNetworkOnline(navigator.onLine !== false));
+    };
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", refresh);
+    return () => { window.removeEventListener("online", refresh); window.removeEventListener("offline", refresh); };
+  }, []);
+  useEffect(() => {
+    if (!supportsOfflineLogin || (networkOnline && connection !== "offline")) return;
+    void heartbeat();
+    const timer = window.setInterval(() => { if (!document.hidden) void heartbeat(); }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [connection, networkOnline]);
   useEffect(() => {
     // Something on screen beats a blank window: the desktop shell must know the
     // build started, or its 60-second watchdog tears the till down.
@@ -103,6 +125,20 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
 
   const retryConnection = useCallback(() => { void router.invalidate(); reset(); }, [router, reset]);
   const notConfigured = normalizedError.name === "SupabaseConfigError";
+  const offlineRecovery = supportsOfflineLogin && !notConfigured &&
+    (!networkOnline || (connection === "offline" && cloudVerdict() === "unreachable"));
+  const wasOffline = useRef(false);
+  useEffect(() => {
+    if (offlineRecovery) wasOffline.current = true;
+    else if (wasOffline.current && connection === "online") {
+      wasOffline.current = false;
+      retryConnection();
+    }
+  }, [connection, offlineRecovery, retryConnection]);
+
+  // A native app retains its packaged sign-in UI when connectivity fails.
+  // Approval codes can be unlocked here without restoring an online session.
+  if (offlineRecovery) return <OfflineLoginInterface recovery />;
 
   // Missing device configuration is step one of terminal setup, never a cue
   // to attempt activation. Reset the boundary after a successful save/probe

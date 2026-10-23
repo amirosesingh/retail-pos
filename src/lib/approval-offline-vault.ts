@@ -1,4 +1,5 @@
 import type { ApprovalToken } from "./approval-token-client";
+import { OFFLINE_APPROVAL_TOKEN_LEASE_MS } from "./approval-credentials";
 // The encrypted envelope is itself kept in the native OS secure store.
 export type OfflineTokenVault = {
   id: string; userId: string; name: string; terminalId: string; project: string;
@@ -14,9 +15,13 @@ async function unlockKey(pin: string, salt: Uint8Array) {
 export async function tokenFingerprint(token: ApprovalToken) {
   return base64(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token.secret))));
 }
-export function validOfflineVault(v: OfflineTokenVault, terminal: string, project: string, now = Date.now()) {
+export function matchingOfflineVault(v: OfflineTokenVault, terminal: string, project: string, now = Date.now()) {
   return Boolean(v?.id && v.userId && v.ciphertext && v.terminalId?.toLowerCase() === terminal.toLowerCase() &&
-    v.project === project && Number.isFinite(v.validUntil) && v.validUntil > now && v.validUntil <= now + 86460000);
+    v.project === project && Number.isFinite(v.validUntil) &&
+    v.validUntil <= now + OFFLINE_APPROVAL_TOKEN_LEASE_MS + 60_000);
+}
+export function validOfflineVault(v: OfflineTokenVault, terminal: string, project: string, now = Date.now()) {
+  return matchingOfflineVault(v, terminal, project, now) && v.validUntil > now;
 }
 export async function sealOfflineToken(token: ApprovalToken, pin: string): Promise<OfflineTokenVault> {
   if (!/^\d{6,12}$/.test(pin)) throw new Error("Use a 6–12 digit token unlock PIN.");
@@ -24,7 +29,8 @@ export async function sealOfflineToken(token: ApprovalToken, pin: string): Promi
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await unlockKey(pin, salt), new TextEncoder().encode(JSON.stringify(token)));
   return { id: token.id, userId: token.userId, name: token.name, terminalId: token.terminalId, project: token.project,
-    validUntil: token.validUntil, salt: base64(salt), iv: base64(iv), ciphertext: base64(new Uint8Array(ciphertext)),
+    validUntil: Date.now() + OFFLINE_APPROVAL_TOKEN_LEASE_MS,
+    salt: base64(salt), iv: base64(iv), ciphertext: base64(new Uint8Array(ciphertext)),
     fingerprint: await tokenFingerprint(token), failures: 0, retryAfter: 0 };
 }
 export async function openOfflineToken(v: OfflineTokenVault, pin: string): Promise<ApprovalToken> {
