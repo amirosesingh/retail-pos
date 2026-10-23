@@ -30,3 +30,12 @@ test('external origins stay external and production domains cannot use the beta 
     return new Response(null, { status: 302, headers: { location: '/membership' } });
   }).then(r => assert.equal(r.headers.get('location'), 'https://beta-member.luckycharmsdnbhd.com/membership'));
 });
+
+test('beta password association is served only for a configured signing team', async () => {
+  const { routeBeta } = await modulePromise;
+  const url = 'https://beta-pos.luckycharmsdnbhd.com/.well-known/apple-app-site-association';
+  assert.equal((await routeBeta(new Request(url), () => { throw Error('Do not proxy association'); })).status, 404);
+  const response = await routeBeta(new Request(url), () => { throw Error('Do not proxy association'); }, { IOS_BETA_TEAM_ID: 'ABCDEFGHIJ' });
+  assert.equal(response.headers.get('content-type'), 'application/json');
+  assert.deepEqual(await response.json(), { webcredentials: { apps: ['ABCDEFGHIJ.com.luckycharms.pos.beta'] } });
+});

@@ -122,6 +122,7 @@ export default defineConfig({
     ] : [
       { find: "@/platform-config/update-settings", replacement: resolve("src/platform-config/native-update-settings.tsx") },
     ]), ...(isMobile ? [
+      { find: "@/platform-config/password-manager", replacement: resolve("src/platforms/mobile/password-manager.ts") },
       { find: "@/platform-config/clipboard", replacement: resolve("src/platforms/mobile/clipboard.ts") },
       { find: "@/platform-config/offline-interface", replacement: resolve("src/platforms/mobile/components/OfflineInterface.tsx") },
       { find: "@/platform-config/viewport", replacement: resolve("src/platforms/mobile/viewport.ts") },
