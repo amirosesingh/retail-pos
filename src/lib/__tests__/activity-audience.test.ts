@@ -10,6 +10,12 @@ const cashier = {
 };
 
 describe("targeted activity notifications", () => {
+  it("keeps in-app preferences independent of push audience checks", () => {
+    const row = { store_id: "branch-a", meta: { audience_user_ids: ["cashier-1"], in_app_disabled: true } };
+    expect(activityVisibleTo(row, cashier)).toBe(false);
+    expect(activityVisibleTo(row, cashier, "push")).toBe(true);
+    expect(activityVisibleTo(row, { ...cashier, userIds: ["someone-else"] }, "push")).toBe(false);
+  });
   it("shows an approval result only to its requester", () => {
     const row = {
       store_id: "branch-a",

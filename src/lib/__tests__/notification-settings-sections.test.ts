@@ -5,6 +5,14 @@ import {writeNotificationSection,DEFAULT_NOTIFICATION_SETTINGS} from "../activit
 import {defaultAndroidPushRules} from "../android-push-policy";
 beforeEach(() => vi.resetAllMocks());
 describe("independent notification delivery settings", () => {
+  it("saves in-app types without changing phone delivery or WhatsApp", async () => {
+    const current = {...DEFAULT_NOTIFICATION_SETTINGS, recipients:["60111111"], channels:{sale_complete:"whatsapp" as const}};
+    rest.mockResolvedValueOnce(Response.json([{notification_settings:current}])).mockResolvedValueOnce(Response.json([{}]));
+    const incoming = {...DEFAULT_NOTIFICATION_SETTINGS, inApp:{soft_token_approval:false}};
+    expect(await writeNotificationSection(incoming,"app")).toMatchObject({
+      recipients:["60111111"],channels:{sale_complete:"whatsapp"},inApp:{soft_token_approval:false},
+    });
+  });
   it("preserves a concurrent WhatsApp save while saving Android rules", async () => {
     const current = {...DEFAULT_NOTIFICATION_SETTINGS,recipients:["60111111"]};
     const newer = {...current,recipients:["60222222"],criticalOnly:true};

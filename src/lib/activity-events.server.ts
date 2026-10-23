@@ -19,6 +19,7 @@ export type NotificationSettings = {
   quietFrom: string;
   quietTo: string;
   channels: Record<string, NotificationChannel>;
+  inApp?: Record<string, boolean>;
   androidPush?: AndroidPushRules;
 };
 
@@ -158,7 +159,7 @@ export async function writeActivityEvent(
     (!cfg.criticalOnly || row.severity === "critical") &&
     (row.severity === "critical" || !inQuietHours(cfg));
 
-  const full: EventRecord = { ...row, whatsapp_status: status, whatsapp_error: null };
+  const full: EventRecord = { ...row, meta: { ...row.meta, in_app_disabled: cfg.inApp?.[row.event_type] === false }, whatsapp_status: status, whatsapp_error: null };
   if (wantsWhatsApp) {
     const failures: string[] = [];
     for (const to of cfg.recipients) {
@@ -195,7 +196,7 @@ export async function writeActivityEvent(
 }
 
 /** Compare-and-save prevents two delivery dialogs from overwriting each other. */
-export async function writeNotificationSection(incoming: NotificationSettings, section: "android" | "whatsapp"): Promise<NotificationSettings> {
+export async function writeNotificationSection(incoming: NotificationSettings, section: "android" | "whatsapp" | "app"): Promise<NotificationSettings> {
   const {mergeNotificationSection} = await import("./notification-settings-sections");
   for (let attempt = 0; attempt < 3; attempt++) {
     const response = await serviceRest("pos_settings?id=eq.1&select=notification_settings");
