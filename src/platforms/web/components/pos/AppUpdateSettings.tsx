@@ -199,7 +199,7 @@ function DesktopUpdateCard() {
           hint={lastChecked ? `Last checked ${posDisplayDateTime(lastChecked)}` : "Not checked yet"}
           value={
             state.available && state.status !== "current" ? (
-              <span className="numeric text-primary">→ v{state.available}</span>
+              <span className="numeric text-primary">→ v{displayReleaseVersion(state.available)}</span>
             ) : undefined
           }
         />
