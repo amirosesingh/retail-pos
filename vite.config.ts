@@ -91,6 +91,10 @@ const blankWebEnv = Object.fromEntries(
 );
 
 export default defineConfig({
+  // The browser and Electron previews can run beside each other. Separate
+  // dependency optimizer caches so a desktop reoptimization cannot invalidate
+  // modules already loaded by the browser preview (or vice versa).
+  cacheDir: resolve("node_modules", `.vite-${buildPlatform}`),
   define: { "import.meta.env.VITE_POS_RELEASE_CHANNEL": JSON.stringify(isBetaBuild ? "beta" : "stable") },
   server: {
     fs: { allow: [searchForWorkspaceRoot(process.cwd()), runtimeDependencies] },

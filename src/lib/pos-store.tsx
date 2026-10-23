@@ -149,7 +149,7 @@ import {
   type SettingsSectionId,
 } from "./settings-sections";
 import { localDb } from "@/core/local-db/local-db";
-import { businessReadsReady } from "./business-readiness";
+import { businessReadsReady, transferReadsReady } from "./business-readiness";
 import { hasCentralAuthSession, subscribeCentralAuthSession } from "./session-presence";
 import { retryDataRead } from "./read-retry";
 import {
@@ -584,6 +584,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   // Loading, ready, stalled or failed — never "the clock ran out, call it ready".
   const [loadPhase, setLoadPhase] = useState<LoadPhase>("loading");
+  const [snapshotIdentity, setSnapshotIdentity] = useState<string | null>(null);
   const [settingsSnapshotLoaded, setSettingsSnapshotLoaded] = useState(false);
   // Whether the location list has actually been answered for, so an empty list
   // can be told apart from a list that has not arrived yet.
@@ -675,6 +676,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // Anonymous visitors get nothing: no products, members or sales.
       if (!signedIn) {
         if (authReady && !cancelled) {
+          setSnapshotIdentity(null);
           setReady(true);
           setLoadPhase("ready");
         }
@@ -765,6 +767,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const cloud = directory?.ok ? { ...loaded, stores: directory.stores } : loaded;
         fullSnapshotApplied = true;
         setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
+        setSnapshotIdentity(readIdentity ?? null);
         setSettingsSnapshotLoaded(true);
         markStartupStage("remaining-data-ready");
         // The locations question now has a real answer, empty or not.
@@ -821,7 +824,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // their persisted headers and lines separately so a reload does not turn a
   // dispatched delivery into an empty receiving page or a read-only deep link.
   useEffect(() => {
-    if (!readsReady || !state.currentStoreId) return;
+    // A remembered branch can exist before the Electron SQL pool finishes
+    // connecting. Let the primary snapshot prove the selected backend is ready
+    // before this secondary read; otherwise startup shows a false transfer
+    // failure that disappears as soon as the connection completes.
+    if (!transferReadsReady(readsReady, loadPhase, readIdentity, snapshotIdentity, state.currentStoreId)) return;
     let cancelled = false;
     let running = false;
     let queued = false;
@@ -881,7 +888,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       offSettings();
       offLocal?.();
     };
-  }, [readsReady, readIdentity, state.currentStoreId]);
+  }, [readsReady, loadPhase, snapshotIdentity, readIdentity, state.currentStoreId]);
 
   useEffect(() => {
     if (!ready) return;

@@ -43,6 +43,7 @@ import { NativeConnectionIndicator } from "@/platform-config/offline-interface";
 import { publicConfigScript } from "../lib/public-config-script";
 import { NativeBoot } from "@/platforms/mobile/components/NativeBoot";
 import { NativeWindowFrame } from "@/components/shared/NativeWindowFrame";
+import { zodCspBootScript } from "@/lib/csp-zod-boot";
 import { AndroidPushAgent } from "@/platforms/mobile/components/AndroidPushAgent";
 import { OfflineGate } from "@/platforms/mobile/components/OfflineGate";
 import {
@@ -231,6 +232,10 @@ function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Zod's dependency chunk may initialize before the app's own Zod
+            wrapper. Set its supported interpreter flag before module/preload
+            scripts run, so strict CSP never sees its Function probe. */}
+        <script dangerouslySetInnerHTML={{ __html: zodCspBootScript }} />
         <script dangerouslySetInnerHTML={{ __html: staleAssetRecoveryScript }} />
         <HeadContent />
         {/* The server owns this payload. In browsers and device renderers the

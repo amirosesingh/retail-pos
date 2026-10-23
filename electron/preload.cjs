@@ -122,6 +122,7 @@ contextBridge.exposeInMainWorld("pos", {
   openDrawer: (value) => invoke("drawer:open", value),
   listPrinters: () => invoke("print:list"),
   appVersion: () => invoke("app:version"),
+  appName: () => invoke("app:name"),
   netGetJson: (url) => invoke("net:get-json", url),
   netHead: (url) => invoke("net:head", url),
   netGetBinary: (url) => invoke("net:get-binary", url),

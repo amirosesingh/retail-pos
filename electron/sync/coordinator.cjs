@@ -1,7 +1,7 @@
 const { AsyncLocalStorage } = require("node:async_hooks");
 const syncLease = new AsyncLocalStorage();
 class SyncCoordinator {
-  constructor({ pushWorker, pullWorker, publish = () => {} }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
+  constructor({ pushWorker, pullWorker, publish = () => {} }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
   snapshot() { return { ...this.status, running:this.running, paused:this.paused }; }
   async withExclusive(work) {
     if (syncLease.getStore() === this) return work();
@@ -72,6 +72,11 @@ class SyncCoordinator {
       this.status[field] += Number(progress.completed) || 0;
       this.status.currentTable = progress.table;
       this.status.lastProgressAt = new Date().toISOString();
+      // A bounded local activity view is enough to answer which tables moved
+      // without querying the cloud audit log on every status refresh.
+      const table=String(progress.table??"").trim();
+      if(table) this.status.recentTables.unshift({table,direction:progress.direction,rows:Number(progress.completed)||0,at:this.status.lastProgressAt});
+      this.status.recentTables.length=Math.min(this.status.recentTables.length,50);
       this.publish(this.snapshot());
     } };
     let result;

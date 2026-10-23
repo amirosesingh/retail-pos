@@ -133,6 +133,7 @@ const CHANNEL_LEVELS = {
   "cloud:bootstrap": OPEN,
   "server-keys:status": OPEN,
   "app:version": OPEN,
+  "app:name": OPEN,
   "app:ready": OPEN,
   "health:state": OPEN,
   "health:retry": OPEN,
