@@ -9,6 +9,10 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/pos-auth", () => ({
+  useAuthOptional: () => state.signedIn ? {
+    user: { staffId: "manager" },
+    appUser: { user_id: "manager", permissions: { approval_totp_enabled: state.totpEnabled } },
+  } : null,
   useAuth: () => ({
     user: state.signedIn ? { staffId: "manager" } : null,
     appUser: state.signedIn ? {

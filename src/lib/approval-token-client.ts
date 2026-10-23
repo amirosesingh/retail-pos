@@ -5,6 +5,7 @@ import { getPosCallerAuth } from "./pos-caller-auth";
 import { localDb } from "@/core/local-db/local-db";
 import { isWindowsShell, isMobileShell } from "@/platform-config/features";
 import { isMissingSecureValue } from "./secure-cloud-config";
+import { OFFLINE_APPROVAL_TOKEN_LEASE_MS } from "./approval-credentials";
 export type ApprovalToken = {
   id: string;
   userId: string;
@@ -18,9 +19,11 @@ export type ApprovalToken = {
 };
 const KEY = "pos.approval-token.active.v1";
 export const TOKEN_CHANGED = "pos:approval-token-changed";
+export const TOKEN_RENEWED = "pos:approval-token-renewed";
 let revision = 0;
 const OFFLINE_KEY = "pos.approval-token.locked.v1";
 let enrollment: Promise<void> | null = null;
+let statusCheck: Promise<void> | null = null;
 let vaultOperation: Promise<unknown> = Promise.resolve();
 function withVault<T>(work: () => Promise<T>): Promise<T> {
   const next = vaultOperation.then(work, work);
@@ -46,8 +49,9 @@ export async function offlineTokenOwner() {
   const terminal = readTerminalConfig();
   if (!terminal?.tokenId) return null;
   const v = await withVault(readVault);
-  const { validOfflineVault } = await import("./approval-offline-vault");
-  return v && validOfflineVault(v, terminal.tokenId, supabaseConfig().url) ? { name: v.name, userId: v.userId } : null;
+  const { matchingOfflineVault } = await import("./approval-offline-vault");
+  return v && matchingOfflineVault(v, terminal.tokenId, supabaseConfig().url)
+    ? { name: v.name, userId: v.userId, validUntil: v.validUntil, expired: v.validUntil <= Date.now() } : null;
 }
 export async function setupOfflineApprovalToken(pin: string) {
   const stamp = revision;
@@ -67,7 +71,7 @@ export async function unlockOfflineApprovalToken(pin: string) {
     const terminal = readTerminalConfig();
     const v = await readVault();
     const { validOfflineVault, openOfflineToken } = await import("./approval-offline-vault");
-    if (!terminal?.tokenId || !v || !validOfflineVault(v, terminal.tokenId, supabaseConfig().url)) throw new Error("Reconnect and sign in to renew your token.");
+    if (!terminal?.tokenId || !v || !validOfflineVault(v, terminal.tokenId, supabaseConfig().url)) throw new Error("Connect to the internet to renew the approval token.");
     if (v.retryAfter > Date.now()) throw new Error("Too many attempts. Wait before trying again.");
     // Persist the attempt before decrypting; closing the app cannot reset it.
     v.failures += 1;
@@ -87,9 +91,9 @@ async function store() {
   return { value: await approvalTokenStore() };
 }
 export async function approvalCredentialCall(
-  action: "enroll" | "methods",
+  action: "enroll" | "methods" | "status",
   data: Record<string, unknown>,
-): Promise<{ ok: boolean; error?: string; credential?: ApprovalToken | null }> {
+): Promise<{ ok: boolean; error?: string; credential?: ApprovalToken | null; active?: boolean }> {
   const response = await posFetch("/api/v1/pos/sync?operation=authorization", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -98,6 +102,36 @@ export async function approvalCredentialCall(
   const result = await response.json();
   if (!response.ok && !result.error) throw new Error("Approval credential service is unavailable");
   return result;
+}
+/** The terminal bearer proves device ownership; the server returns no token secret. */
+export function revalidateOfflineApprovalToken(): Promise<void> {
+  if (statusCheck) return statusCheck;
+  statusCheck = checkOfflineApprovalToken().finally(() => { statusCheck = null; });
+  return statusCheck;
+}
+async function checkOfflineApprovalToken() {
+  if ((!isMobileShell() && !isWindowsShell()) || !navigator.onLine) return;
+  const terminal = readTerminalConfig();
+  if (!terminal?.tokenId) return;
+  const saved = await withVault(readVault);
+  if (!saved || saved.terminalId.toLowerCase() !== terminal.tokenId.toLowerCase() ||
+      saved.project !== supabaseConfig().url) return;
+  const result = await approvalCredentialCall("status", {
+    terminalToken: terminal.tokenId, userId: saved.userId, credentialId: saved.id,
+  });
+  if (!result.ok || typeof result.active !== "boolean") throw new Error(result.error || "Token status unavailable");
+  await withVault(async () => {
+    const current = await readVault();
+    if (current?.id !== saved.id || current.fingerprint !== saved.fingerprint ||
+        readTerminalConfig()?.tokenId.toLowerCase() !== terminal.tokenId.toLowerCase()) return;
+    if (!result.active) {
+      await removeVault();
+      window.dispatchEvent(new Event(TOKEN_CHANGED));
+      return;
+    }
+    await saveVault({ ...current, validUntil: Date.now() + OFFLINE_APPROVAL_TOKEN_LEASE_MS });
+    window.dispatchEvent(new Event(TOKEN_RENEWED));
+  });
 }
 async function sessionBinding() {
   const proof = await getPosCallerAuth();
@@ -186,7 +220,8 @@ async function enroll(userId: string) {
     const v = await readVault();
     const { tokenFingerprint } = await import("./approval-offline-vault");
     if (v?.userId === token.userId && v.terminalId === token.terminalId && v.project === token.project) {
-      if (v.id === token.id && v.fingerprint === await tokenFingerprint(token)) await saveVault({ ...v, validUntil: token.validUntil, name: token.name });
+      if (v.id === token.id && v.fingerprint === await tokenFingerprint(token))
+        await saveVault({ ...v, validUntil: Date.now() + OFFLINE_APPROVAL_TOKEN_LEASE_MS, name: token.name });
       else await removeVault();
     }
   });

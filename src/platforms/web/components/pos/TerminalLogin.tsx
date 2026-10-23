@@ -150,7 +150,7 @@ export function TerminalLogin() {
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
-                  placeholder="Email or @username"
+                  placeholder="Email or username"
                   onChange={() => setError("")}
                 />
               </div>
@@ -189,7 +189,7 @@ export function TerminalLogin() {
               </Button>
               <p className="text-[11px] leading-relaxed text-muted-foreground">
                 {terminal
-                  ? "Password accounts use username, @username, or email; cashiers use the PIN tab."
+                  ? "Password accounts use their username or email; cashiers use the PIN tab."
                   : "Cashier PIN sign-in is only available on the desktop and mobile terminal apps."}
               </p>
             </form>

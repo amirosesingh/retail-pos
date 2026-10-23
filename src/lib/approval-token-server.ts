@@ -8,7 +8,7 @@ import {
 } from "node:crypto";
 import { serviceRest, verifyRelayCaller } from "@/core/api/pos-relay.server";
 import { requireCallerScope, type CallerProof } from "./privileged-caller.server";
-import { approvalMethods, APPROVAL_TOKEN_LEASE_MS } from "./approval-credentials";
+import { approvalMethods, APPROVAL_TOKEN_LEASE_MS, OFFLINE_APPROVAL_TOKEN_LEASE_MS } from "./approval-credentials";
 import { matchingTotpStep } from "./approval-totp";
 import type { AuthorizationRule } from "./authorization";
 import { approvalPinEligible } from "./approval-pin-eligibility";
@@ -216,6 +216,26 @@ export async function verifyApprovalTotp(
   }
   return null;
 }
+/** Revalidate one saved device enrollment without a staff login or exposing its secret. */
+export async function approvalTokenStatus(terminalToken: string, userId: string, credentialId: string) {
+  const terminal = await verifyRelayCaller({ terminalToken });
+  if (!terminal.terminalId || !credentialId) return { ok: true as const, active: false };
+  const issuer = await issuerOptions(terminal.terminalId);
+  if (!["ios", "android", "mobile", "pc", "windows"].includes(issuer[0]?.platform) ||
+      issuer[0]?.approval_token_enabled === false) return { ok: true as const, active: false };
+  const person = await approvalPerson(userId);
+  if (!person?.is_active || !approvalMethods(person.permissions).totp)
+    return { ok: true as const, active: false };
+  // An all-branch management device has no branch at sign-out. Its code is
+  // still checked against the selected branch's rules when it is used.
+  const branch = terminal.storeId || person.store_id;
+  if (branch && !(await eligible(person, branch))) return { ok: true as const, active: false };
+  const devices = await state("read", person.user_id) as Device[];
+  return {
+    ok: true as const,
+    active: devices.some(device => device.id === credentialId && device.terminal_id === terminal.terminalId),
+  };
+}
 export async function registerApprovalVerifier(proof: CallerProof, publicKey: string) {
   const actor = await requireCallerScope(proof, { permission: "can_manage_staff" });
   if (!actor.staffUserId || actor.kind === "terminal" || !proof.terminalToken)
@@ -270,7 +290,7 @@ function encryptVerifierBundle(publicKey: string, bundle: unknown) {
     tag: cipher.getAuthTag().toString("base64"),
   };
 }
-/** Main-process only: registered Windows tills receive branch-scoped, short-lived verifier bundles. */
+/** Main-process only: registered Windows tills receive branch-scoped verifier bundles. */
 export async function approvalVerifierBundle(terminalToken: string) {
   const terminal = await verifyRelayCaller({ terminalToken });
   if (terminal.kind !== "terminal" || !terminal.terminalId || !terminal.storeId)
@@ -302,7 +322,7 @@ export async function approvalVerifierBundle(terminalToken: string) {
     ok: true,
     terminalId: terminal.terminalId,
     branchId: terminal.storeId,
-    validUntil: Date.now() + APPROVAL_TOKEN_LEASE_MS,
+    validUntil: Date.now() + OFFLINE_APPROVAL_TOKEN_LEASE_MS,
     entries,
   });
 }
