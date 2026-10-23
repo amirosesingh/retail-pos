@@ -122,6 +122,7 @@ import { Route as ApiPublicSyncRouteImport } from './routes/api/public/sync'
 import { Route as ApiPublicSyncHealthRouteImport } from './routes/api/public/sync-health'
 import { Route as ApiPublicTerminalPairingRouteImport } from './routes/api/public/terminal-pairing'
 import { Route as ApiPublicTerminalStaffRouteImport } from './routes/api/public/terminal-staff'
+import { Route as ApiPublicUsernameLoginRouteImport } from './routes/api/public/username-login'
 import { Route as ApiPublicPosRulesSaveRouteImport } from './routes/api/public/pos-rules.save'
 import { Route as ApiV1PosActivityPreferencesRouteImport } from './routes/api/v1/pos/activity-preferences'
 import { Route as ApiV1PosAuthorizationRouteImport } from './routes/api/v1/pos/authorization'
@@ -698,6 +699,11 @@ const ApiPublicTerminalStaffRoute = ApiPublicTerminalStaffRouteImport.update({
   path: '/api/public/terminal-staff',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicUsernameLoginRoute = ApiPublicUsernameLoginRouteImport.update({
+  id: '/api/public/username-login',
+  path: '/api/public/username-login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicPosRulesSaveRoute = ApiPublicPosRulesSaveRouteImport.update({
   id: '/save',
   path: '/save',
@@ -849,6 +855,7 @@ export interface FileRoutesByFullPath {
   '/api/public/sync-health': typeof ApiPublicSyncHealthRoute
   '/api/public/terminal-pairing': typeof ApiPublicTerminalPairingRoute
   '/api/public/terminal-staff': typeof ApiPublicTerminalStaffRoute
+  '/api/public/username-login': typeof ApiPublicUsernameLoginRoute
   '/api/public/pos-rules/save': typeof ApiPublicPosRulesSaveRoute
   '/api/v1/pos/activity-preferences': typeof ApiV1PosActivityPreferencesRoute
   '/api/v1/pos/authorization': typeof ApiV1PosAuthorizationRoute
@@ -971,6 +978,7 @@ export interface FileRoutesByTo {
   '/api/public/sync-health': typeof ApiPublicSyncHealthRoute
   '/api/public/terminal-pairing': typeof ApiPublicTerminalPairingRoute
   '/api/public/terminal-staff': typeof ApiPublicTerminalStaffRoute
+  '/api/public/username-login': typeof ApiPublicUsernameLoginRoute
   '/api/public/pos-rules/save': typeof ApiPublicPosRulesSaveRoute
   '/api/v1/pos/activity-preferences': typeof ApiV1PosActivityPreferencesRoute
   '/api/v1/pos/authorization': typeof ApiV1PosAuthorizationRoute
@@ -1094,6 +1102,7 @@ export interface FileRoutesById {
   '/api/public/sync-health': typeof ApiPublicSyncHealthRoute
   '/api/public/terminal-pairing': typeof ApiPublicTerminalPairingRoute
   '/api/public/terminal-staff': typeof ApiPublicTerminalStaffRoute
+  '/api/public/username-login': typeof ApiPublicUsernameLoginRoute
   '/api/public/pos-rules/save': typeof ApiPublicPosRulesSaveRoute
   '/api/v1/pos/activity-preferences': typeof ApiV1PosActivityPreferencesRoute
   '/api/v1/pos/authorization': typeof ApiV1PosAuthorizationRoute
@@ -1218,6 +1227,7 @@ export interface FileRouteTypes {
     | '/api/public/sync-health'
     | '/api/public/terminal-pairing'
     | '/api/public/terminal-staff'
+    | '/api/public/username-login'
     | '/api/public/pos-rules/save'
     | '/api/v1/pos/activity-preferences'
     | '/api/v1/pos/authorization'
@@ -1340,6 +1350,7 @@ export interface FileRouteTypes {
     | '/api/public/sync-health'
     | '/api/public/terminal-pairing'
     | '/api/public/terminal-staff'
+    | '/api/public/username-login'
     | '/api/public/pos-rules/save'
     | '/api/v1/pos/activity-preferences'
     | '/api/v1/pos/authorization'
@@ -1462,6 +1473,7 @@ export interface FileRouteTypes {
     | '/api/public/sync-health'
     | '/api/public/terminal-pairing'
     | '/api/public/terminal-staff'
+    | '/api/public/username-login'
     | '/api/public/pos-rules/save'
     | '/api/v1/pos/activity-preferences'
     | '/api/v1/pos/authorization'
@@ -1585,6 +1597,7 @@ export interface RootRouteChildren {
   ApiPublicSyncHealthRoute: typeof ApiPublicSyncHealthRoute
   ApiPublicTerminalPairingRoute: typeof ApiPublicTerminalPairingRoute
   ApiPublicTerminalStaffRoute: typeof ApiPublicTerminalStaffRoute
+  ApiPublicUsernameLoginRoute: typeof ApiPublicUsernameLoginRoute
   ApiV1PosActivityPreferencesRoute: typeof ApiV1PosActivityPreferencesRoute
   ApiV1PosAuthorizationRoute: typeof ApiV1PosAuthorizationRoute
   ApiV1PosIpcAdoptRoute: typeof ApiV1PosIpcAdoptRoute
@@ -2386,6 +2399,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicTerminalStaffRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/username-login': {
+      id: '/api/public/username-login'
+      path: '/api/public/username-login'
+      fullPath: '/api/public/username-login'
+      preLoaderRoute: typeof ApiPublicUsernameLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/pos-rules/save': {
       id: '/api/public/pos-rules/save'
       path: '/save'
@@ -2563,6 +2583,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicSyncHealthRoute: ApiPublicSyncHealthRoute,
   ApiPublicTerminalPairingRoute: ApiPublicTerminalPairingRoute,
   ApiPublicTerminalStaffRoute: ApiPublicTerminalStaffRoute,
+  ApiPublicUsernameLoginRoute: ApiPublicUsernameLoginRoute,
   ApiV1PosActivityPreferencesRoute: ApiV1PosActivityPreferencesRoute,
   ApiV1PosAuthorizationRoute: ApiV1PosAuthorizationRoute,
   ApiV1PosIpcAdoptRoute: ApiV1PosIpcAdoptRoute,

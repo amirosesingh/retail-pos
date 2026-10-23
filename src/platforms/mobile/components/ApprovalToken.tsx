@@ -30,7 +30,7 @@ export function ApprovalTokenAgent() {
   return null;
 }
 /** Only an OS-vault enrollment bound to the retained sign-in and registered device is shown. */
-export function ApprovalTokenButton() {
+export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) {
   const [token, setToken] = useState<ApprovalToken | null>(null);
   const [open, setOpen] = useState(false);
   const [owner, setOwner] = useState<{ name: string; userId: string } | null>(null);
@@ -105,8 +105,8 @@ export function ApprovalTokenButton() {
   if (!token && !owner && !unlocked) return null;
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <ShieldCheck className="size-4" /> Approval token
+      <Button variant="outline" size={compact ? "icon" : "sm"} aria-label="Approval token" onClick={() => setOpen(true)}>
+        <ShieldCheck className="size-4" /> {!compact && (token && !owner ? "Register offline token" : "Approval token")}
       </Button>
       <Dialog open={open} onOpenChange={value => { if (value) setOpen(true); else close(); }}>
         <DialogContent className="sm:max-w-sm">
@@ -145,7 +145,7 @@ export function ApprovalTokenButton() {
           </p>
           </>}
           {token && <div className="space-y-2 border-t pt-3">
-            <p className="text-xs text-muted-foreground">Set a separate 6–12 digit unlock PIN to use your token from the login screen offline. This replaces any other saved token owner on this device.</p>
+            <p className="text-xs text-muted-foreground">Register this signed-in user’s token on this device with a separate 6–12 digit unlock PIN. You can then open it from the login screen without internet. This replaces any other saved token owner on this device.</p>
             <label className="text-sm" htmlFor="token-setup-pin">New token unlock PIN</label>
             <input id="token-setup-pin" className="h-10 w-full rounded-md border bg-background px-3" type="password" inputMode="numeric" autoComplete="new-password" maxLength={12} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ""))} />
             <label className="text-sm" htmlFor="token-confirm-pin">Confirm unlock PIN</label>
@@ -156,7 +156,7 @@ export function ApprovalTokenButton() {
               try { await setupOfflineApprovalToken(pin); setPin(""); setConfirmation(""); setError("Offline token access saved."); }
               catch (e) { setError(e instanceof Error ? e.message : "Could not save token access"); }
               finally { setBusy(false); }
-            }}>Save offline access</Button>
+            }}>Register offline token</Button>
           </div>}
           {error && <p role="status" className="text-sm">{error}</p>}
         </DialogContent>

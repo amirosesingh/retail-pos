@@ -30,9 +30,8 @@ import { clearStoredCredentials, readCredentials, saveCashierToken } from "@/lib
 import { issueCashierSession } from "@/lib/pos-session.functions";
 import { startDeviceSession, endDeviceSession } from "@/lib/user-sessions-client";
 import { loadSessionToken, saveSessionToken } from "@/lib/pos-credentials";
-import { toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
+import { isBareUsername, toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
 import { passwordUsername } from "@/lib/password-username";
-import { supabaseConfig } from "@/lib/external-supabase-config";
 import { activeBranchId, activeBranchName, bindTerminalBranch } from "@/lib/active-branch";
 import { verifyCachedPin } from "@/lib/offline-credentials";
 import { recordSignIn } from "@/lib/shift-attendance";
@@ -611,10 +610,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Check the account after authentication. A pre-login app_users read
       // sends an old bearer token (or no user token) to a protected table and
       // produces a noisy 401 before the password is even submitted.
-      // One handler for both worlds: a plain username belongs to a terminal
-      // account and is mapped onto its hidden internal address; anything with
-      // an "@" is used exactly as typed.
-      const address = toLoginAddress(email);
+      // Supabase Auth accepts email/password, not a staff login alias. Resolve
+      // bare usernames on the hosted server, where the private staff email is
+      // never sent to an unauthenticated client. Full email login stays direct.
       // Make a same-account interactive sign-in distinguishable from a replayed
       // SIGNED_IN event for an unverified restored token.
       operatorAuthId.current = null;
@@ -622,26 +620,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       centralIdentityRef.current = null;
       centralSessionVerifiedRef.current = false;
       setCentralSessionVerified(false);
-      let data;
-      let error;
+      let authResult: Awaited<ReturnType<typeof supabase.auth.setSession>>;
       try {
         const alias = passwordUsername(email);
-        if (alias) {
-          const { signInWithPasswordUsername } = await import("@/lib/password-username-client");
-          const result = await signInWithPasswordUsername({ data: {
-            username: alias, password, projectUrl: supabaseConfig().url,
-          } });
-          if (!result.ok) return { ok: false, code: result.code, error: loginFailureMessage(result.code) };
-          ({ data, error } = await supabase.auth.setSession({
-            access_token: result.accessToken, refresh_token: result.refreshToken,
-          }));
+        if (alias || isBareUsername(email)) {
+          const { posFetch } = await import("@/lib/server-origin");
+          const response = await posFetch("/api/public/username-login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: alias ?? email.trim(), password }),
+          });
+          if (!response.ok) {
+            const code = response.status === 401 ? "invalid-credentials" as const : "cloud-unreachable" as const;
+            return { ok: false, code, error: response.status === 429 ? "Too many attempts. Try again later." : loginFailureMessage(code) };
+          }
+          const verified = await response.json() as {
+            ok?: boolean; accessToken?: string; refreshToken?: string; projectUrl?: string;
+          };
+          const { supabaseConfig } = await import("@/lib/external-supabase-config");
+          if (!verified.ok || !verified.accessToken || !verified.refreshToken ||
+              verified.projectUrl?.replace(/\/+$/, "") !== supabaseConfig().url.replace(/\/+$/, "")) {
+            return { ok: false, code: "configuration-invalid" as const, error: loginFailureMessage("configuration-invalid") };
+          }
+          authResult = await supabase.auth.setSession({
+            access_token: verified.accessToken,
+            refresh_token: verified.refreshToken,
+          });
         } else {
-          ({ data, error } = await supabase.auth.signInWithPassword({ email: address, password }));
+          authResult = await supabase.auth.signInWithPassword({
+            email: toLoginAddress(email),
+            password,
+          });
         }
       } catch (failure) {
         const code = failureFromAuthError(failure as Error);
         return { ok: false, code, error: loginFailureMessage(code) };
       }
+      const { data, error } = authResult;
       if (error) {
         const code = failureFromAuthError(error);
         return { ok: false, code, error: loginFailureMessage(code) };

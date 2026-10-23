@@ -377,6 +377,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
       await import("./authorization");
     const { throttleStatus, throttleFail, throttleReset, minutesLeft } =
       await import("./pin-throttle.server");
+    const { beginPinRequest, finishPinRequest } = await import("./pin-request-throttle.server");
     const auditContext = Object.fromEntries(
       Object.entries(data.auditContext).filter(
         ([key]) => !["reason", "requested_amount", "self_authorization"].includes(key),
@@ -387,6 +388,10 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
       who = await assertCaller(data);
     } catch (e) {
       return { ok: false as const, error: (e as Error).message };
+    }
+    const sourceAttempt = await beginPinRequest();
+    if (sourceAttempt.locked) {
+      return { ok: false as const, error: "Too many wrong PINs. Try again later." };
     }
 
     // Guessing is stopped on the server, keyed on the authoriser, so trying
@@ -451,6 +456,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     const person = pinPerson ?? tokenPerson;
     const credentialMethod = tokenPerson ? "totp" : "pin";
     if (!person) {
+      await finishPinRequest(sourceAttempt.key, false);
       const after = await throttleFail(key);
       await writeLog({
         actionKey: data.actionKey,

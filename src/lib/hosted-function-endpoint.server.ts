@@ -2,7 +2,6 @@ import { z } from "zod";
 
 // Explicit operations only: no caller-controlled module imports or arbitrary RPCs.
 const handlers: Record<string, (data: unknown) => Promise<unknown>> = Object.freeze({
-  "password-username.signInWithPasswordUsername": async (data) => (await import("./password-username.functions")).signInWithPasswordUsername({ data: data as never }),
   "activity-events.pushActivityEvent": async (data) => (await import("./activity-events.functions")).pushActivityEvent({ data: data as never }),
   "activity-events.loadNotificationSettings": async (data) => (await import("./activity-events.functions")).loadNotificationSettings({ data: data as never }),
   "activity-events.saveNotificationSettings": async (data) => (await import("./activity-events.functions")).saveNotificationSettings({ data: data as never }),

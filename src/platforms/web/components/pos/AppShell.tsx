@@ -576,6 +576,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   <LiveClock compact />
                 </span>
                 <MobileStatusSheet />
+                <ApprovalTokenButton compact />
                 {isMobile && <ActivityBell />}
                 <span className="hidden sm:inline-flex">
                   <ThemeToggle />
@@ -610,6 +611,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               <main
                 className={cn(
                   "min-h-0 min-w-0 flex-1",
+                  ["/inventory", "/analytics"].includes(location.pathname) && "no-scrollbar",
                   location.pathname.startsWith("/settings") ? "overflow-hidden" : "overflow-y-auto",
                 )}
               >

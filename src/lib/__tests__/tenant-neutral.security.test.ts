@@ -34,7 +34,10 @@ describe("public credential surfaces are throttled", () => {
     expect(route).toContain("pin-throttle.server");
     expect(route).toContain("throttleFail");
     expect(route).toContain("throttleReset");
-    expect(route).toContain("cashier-ip:");
+    const login = read("src", "lib", "cashier-login.server.ts");
+    const sourceThrottle = read("src", "lib", "pin-request-throttle.server.ts");
+    expect(login).toContain("beginPinRequest");
+    expect(sourceThrottle).toContain("cashier-ip:");
     expect(route).toContain("429");
   });
 
