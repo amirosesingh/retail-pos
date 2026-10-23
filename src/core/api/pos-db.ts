@@ -422,7 +422,7 @@ const promotionToRow = (p: Promotion): Row => ({
   discount_percent: p.valueType === "percent" ? (p.value ?? 0) : 0,
   discount_amount: p.valueType === "amount" ? (p.value ?? 0) : 0,
   tier_rates: p.tierRates ?? null,
-  partner: p.partner?.trim() ? p.partner.trim() : null,
+  partner: p.partner?.trim() || "",
   ...(p.type === "code" ? { code_scope: p.codeScope ?? "bill", code_cluster_id: p.codeClusterId || null } : {}),
 });
 
