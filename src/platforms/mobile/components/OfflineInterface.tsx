@@ -7,6 +7,7 @@ import { ApprovalTokenButton } from "@/platform-config/approval-token";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { RECOVERY_PATH } from "@/lib/recovery-route";
 
 export const supportsOfflineLogin = true;
 /** Local interface only. No auth provider, cached staff list or business database. */
@@ -30,6 +31,7 @@ export function OfflineLoginInterface({ recovery = false }: { recovery?: boolean
         <Button className="w-full" disabled>Sign in</Button>
         <p className="text-xs text-muted-foreground">Sign-in will be available when the connection returns.</p>
         <ApprovalTokenButton />
+        {recovery && <Button variant="outline" className="w-full" onClick={() => window.location.assign(RECOVERY_PATH)}>Emergency access</Button>}
       </div>
     </section>
   </div>;
