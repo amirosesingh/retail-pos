@@ -45,4 +45,20 @@ describe("public username login", () => {
     expect((await handleUsernameLogin(request())).status).toBe(503);
     expect(mocks.fail).not.toHaveBeenCalled();
   });
+
+  it("rejects an oversized unauthenticated body before login work", async () => {
+    const oversized = request("manager", "x".repeat(10_000));
+    expect((await handleUsernameLogin(oversized)).status).toBe(401);
+    expect(mocks.status).not.toHaveBeenCalled();
+    expect(mocks.login).not.toHaveBeenCalled();
+  });
+
+  it("does not use caller-supplied X-Forwarded-For for the rate-limit key", async () => {
+    mocks.login.mockResolvedValue({ ok: false, code: "invalid_credentials" });
+    const spoofed = request();
+    spoofed.headers.set("x-forwarded-for", "1.2.3.4");
+    await handleUsernameLogin(spoofed);
+    expect(mocks.status).toHaveBeenCalledWith("staff-password-ip:unknown");
+    expect(mocks.status).not.toHaveBeenCalledWith("staff-password-ip:1.2.3.4");
+  });
 });

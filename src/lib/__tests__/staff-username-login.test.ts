@@ -59,6 +59,13 @@ describe("staff username/password login", () => {
     expect(mocks.signIn).not.toHaveBeenCalled();
   });
 
+  it("rejects database-filter syntax before sending a query", async () => {
+    expect(await staffUsernameLogin("alice),is_active.eq.true", "password")).toEqual({
+      ok: false, code: "invalid_credentials",
+    });
+    expect(mocks.rest).not.toHaveBeenCalled();
+  });
+
   it("preserves existing internal-username staff login", async () => {
     mocks.rest.mockResolvedValue(Response.json([{ ...account, email: "alice@pos-internal.local" }]));
     expect((await staffUsernameLogin("alice", "password")).ok).toBe(true);
