@@ -4437,6 +4437,9 @@ IF OBJECT_ID(N'dbo.promotions', N'U') IS NULL BEGIN CREATE TABLE dbo.[promotions
   [foc_product_id] uniqueidentifier NULL,
   [points_per_dollar] decimal(38,12) NOT NULL CONSTRAINT [DF_promotions_points_per_dollar] DEFAULT (1),
   [tier_rates] nvarchar(max) NULL,
+  [partner] nvarchar(max) NULL,
+  [code_scope] nvarchar(max) NULL,
+  [code_cluster_id] nvarchar(max) NULL,
   [is_active] bit NOT NULL CONSTRAINT [DF_promotions_is_active] DEFAULT (1),
   [start_date] date NULL,
   [end_date] date NULL,
@@ -4526,6 +4529,12 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.promotions'
 END;
 
 IF COL_LENGTH(N'dbo.promotions', N'tier_rates') IS NULL ALTER TABLE dbo.[promotions] ADD [tier_rates] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.promotions', N'partner') IS NULL ALTER TABLE dbo.[promotions] ADD [partner] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.promotions', N'code_scope') IS NULL ALTER TABLE dbo.[promotions] ADD [code_scope] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.promotions', N'code_cluster_id') IS NULL ALTER TABLE dbo.[promotions] ADD [code_cluster_id] nvarchar(max) NULL;
 
 IF COL_LENGTH(N'dbo.promotions', N'is_active') IS NULL ALTER TABLE dbo.[promotions] ADD [is_active] bit NULL;
 

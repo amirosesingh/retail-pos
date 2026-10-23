@@ -4449,6 +4449,9 @@ IF OBJECT_ID(N''dbo.promotions'', N''U'') IS NULL BEGIN CREATE TABLE dbo.[promot
   [foc_product_id] uniqueidentifier NULL,
   [points_per_dollar] decimal(38,12) NOT NULL CONSTRAINT [DF_promotions_points_per_dollar] DEFAULT (1),
   [tier_rates] nvarchar(max) NULL,
+  [partner] nvarchar(max) NULL,
+  [code_scope] nvarchar(max) NULL,
+  [code_cluster_id] nvarchar(max) NULL,
   [is_active] bit NOT NULL CONSTRAINT [DF_promotions_is_active] DEFAULT (1),
   [start_date] date NULL,
   [end_date] date NULL,
@@ -4538,6 +4541,12 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N''dbo.promotions
 END;
 
 IF COL_LENGTH(N''dbo.promotions'', N''tier_rates'') IS NULL ALTER TABLE dbo.[promotions] ADD [tier_rates] nvarchar(max) NULL;
+
+IF COL_LENGTH(N''dbo.promotions'', N''partner'') IS NULL ALTER TABLE dbo.[promotions] ADD [partner] nvarchar(max) NULL;
+
+IF COL_LENGTH(N''dbo.promotions'', N''code_scope'') IS NULL ALTER TABLE dbo.[promotions] ADD [code_scope] nvarchar(max) NULL;
+
+IF COL_LENGTH(N''dbo.promotions'', N''code_cluster_id'') IS NULL ALTER TABLE dbo.[promotions] ADD [code_cluster_id] nvarchar(max) NULL;
 
 IF COL_LENGTH(N''dbo.promotions'', N''is_active'') IS NULL ALTER TABLE dbo.[promotions] ADD [is_active] bit NULL;
 
@@ -12518,6 +12527,9 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''promotions'', N''foc_product_id''),
   (N''promotions'', N''points_per_dollar''),
   (N''promotions'', N''tier_rates''),
+  (N''promotions'', N''partner''),
+  (N''promotions'', N''code_scope''),
+  (N''promotions'', N''code_cluster_id''),
   (N''promotions'', N''is_active''),
   (N''promotions'', N''start_date''),
   (N''promotions'', N''end_date''),
@@ -13000,11 +13012,11 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''authorization_action_history'', N''id''),
   (N''authorization_action_history'', N''action_id''),
   (N''authorization_action_history'', N''action_key''),
-  (N''authorization_action_history'', N''scope_type''),
+  (N''authorization_action_history'', N''scope_type'');
+INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''authorization_action_history'', N''scope_id''),
   (N''authorization_action_history'', N''row_version''),
-  (N''authorization_action_history'', N''changed_by'');
-INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N''authorization_action_history'', N''changed_by''),
   (N''authorization_action_history'', N''change_source''),
   (N''authorization_action_history'', N''change_kind''),
   (N''authorization_action_history'', N''snapshot''),

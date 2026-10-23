@@ -2,7 +2,7 @@
   "source": "supabase/schema.sql",
   "generatedAt": "2026-10-19T11:05:58.766Z",
   "tableCount": 70,
-  "columnCount": 1187,
+  "columnCount": 1190,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -3493,6 +3493,24 @@
         {
           "name": "tier_rates",
           "declaration": "jsonb",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "partner",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "code_scope",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "code_cluster_id",
+          "declaration": "text",
           "nullable": true,
           "hasDefault": false
         },

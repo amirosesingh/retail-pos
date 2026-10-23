@@ -7137,6 +7137,45 @@
           "uniqueGroup": null
         },
         {
+          "cloudColumn": "partner",
+          "sqlServerColumn": "partner",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "code_scope",
+          "sqlServerColumn": "code_scope",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "code_cluster_id",
+          "sqlServerColumn": "code_cluster_id",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
           "cloudColumn": "is_active",
           "sqlServerColumn": "is_active",
           "cloudType": "boolean",

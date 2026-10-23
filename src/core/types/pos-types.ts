@@ -839,7 +839,7 @@ export type WhatsAppSettings = {
   signoff: string;
 };
 
-export type PromoType = "points" | "foc" | "birthday" | "threshold" | "tier";
+export type PromoType = "points" | "foc" | "birthday" | "threshold" | "tier" | "code";
 
 export type MemberTier = Member["tier"];
 
@@ -1247,6 +1247,9 @@ export type Promotion = {
   id: string;
   name: string;
   type: PromoType;
+  /** Saved scope for a reusable campaign code; old codes default to the bill. */
+  codeScope?: "bill" | "item";
+  codeClusterId?: string | null;
   active: boolean;
   /** collaborator / partner the coupon codes of this rule belong to */
   partner?: string;

@@ -1,3 +1,4 @@
+import { ApprovalHistoryDialog } from "@/platforms/web/components/pos/ApprovalHistoryDialog";
 import { Table } from "@/components/ui/table";
 import { reconcileLiveRows } from "@/lib/live-state";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
@@ -144,6 +145,7 @@ function ApprovalsPage() {
   const storeId = pos?.currentStore?.id ?? "";
   const [rows, setRows] = useState<AuthorizationRequest[]>([]);
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [allBranches, setAllBranches] = useState(false);
   const scopeDefaultedFor = useRef<string | null>(null);
   const [status, setStatus] = useState<AuthorizationRequest["status"] | "all">("pending");
@@ -308,6 +310,7 @@ function ApprovalsPage() {
 
   return (
     <AppShell>
+      <ApprovalHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} storeId={storeId} stores={pos?.state.stores ?? []} allBranches={allBranches && me?.role === "admin"} />
       <div className="pos-page-container">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -316,7 +319,8 @@ function ApprovalsPage() {
               Review pending requests and completed decisions.
             </p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>Approval history</Button>
             <div className="flex items-center gap-2">
               <Switch
                 id="all-branches"

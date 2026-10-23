@@ -161,6 +161,27 @@ describe("approval credential switches", () => {
     expect(result.credentialMethod).toBe("totp");
     expect(verifyTotp).toHaveBeenCalledOnce();
   });
+  it("resolves an ID-less token, preserves account switches, and never treats it as a PIN", async () => {
+    const verifyTotp = vi.fn(async () => true);
+    const identifyTotp = vi.fn(async () => "manager");
+    const result = await verifySyncedApprovalPin(pool({ approval_pin_enabled: true, approval_totp_enabled: true }), "", "12345678", "branch-a", { identifyTotp, verifyTotp });
+    expect(result.ok).toBe(true);
+    expect(result.staff.username).toBe("manager");
+    expect(result.credentialMethod).toBe("totp");
+    expect(identifyTotp).toHaveBeenCalledOnce();
+    expect(verifyTotp).toHaveBeenCalledOnce();
+    verifyTotp.mockClear();
+    expect((await verifySyncedApprovalPin(pool({ approval_totp_enabled: false }), "", "12345678", "branch-a", { identifyTotp, verifyTotp })).ok).toBe(false);
+    expect(verifyTotp).not.toHaveBeenCalled();
+    expect((await verifySyncedStaffPin(pool({ approval_totp_enabled: true }), "", "12345678", "branch-a")).ok).toBe(false);
+  });
+  it("checks the durable lookup budget before searching any identities", async () => {
+    const identifyTotp = vi.fn();
+    const request = { input: () => request, query: async () => ({ recordset: [] }) };
+    const result = await verifySyncedApprovalPin({ request: () => request }, "", "12345678", "branch-a", { identifyTotp });
+    expect(result.reason).toBe("locked");
+    expect(identifyTotp).not.toHaveBeenCalled();
+  });
   it("rejects disabled approval credentials without changing terminal sign-in", async () => {
     const verifyTotp = vi.fn(async () => true);
     const p = pool({ approval_pin_enabled: false, approval_totp_enabled: false });
@@ -186,4 +207,17 @@ describe("native approval IPC boundary", () => {
     expect(privilege.allowed("approval:enroll-verifier")).toBe(true);
     session.clear();
   });
+});
+
+it("finds the offline code owner without consuming and rejects ambiguous devices", async () => {
+  const f = fixture();
+  await f.verifier.refresh();
+  const code = tokenAt(f.secret, Math.floor(Date.now() / 30000));
+  expect(f.verifier.identify(code, "branch-a")).toBe("manager");
+  expect(f.verifier.identify(code, "branch-b")).toBeNull();
+  expect(f.query).not.toHaveBeenCalled();
+  const original = await f.options.fetchBundle();
+  f.options.fetchBundle.mockResolvedValue({ ...original, entries: [...original.entries, { ...original.entries[0], id: "second", userId: "other" }] });
+  await f.verifier.refresh(true);
+  expect(f.verifier.identify(code, "branch-a")).toBeNull();
 });

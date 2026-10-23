@@ -2034,7 +2034,7 @@ function registerIpc() {
   ipcMain.handle("staff:verify-approval-pin", async (_e, username, pin) => {
     try {
       if (!adminSession.hasPosAuthority()) return { ok: false, reason: "unavailable", error: "Sign in before authorizing an action" };
-      return await verifySyncedApprovalPin(databaseManager.pool, username, pin, localBranchId(), { verifyTotp: approvalTokenVerifier.verify });
+      return await verifySyncedApprovalPin(databaseManager.pool, username, pin, localBranchId(), { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify });
     } catch (error) {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }

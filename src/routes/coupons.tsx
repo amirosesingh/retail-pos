@@ -2,7 +2,7 @@ import { copyText } from "@/platform-config/clipboard";
 import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Copy, Link2, Loader2, Plus, Send, TicketPercent, Trash2 } from "lucide-react";
+import { Copy, Loader2, Pencil, Plus, Send, TicketPercent, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -30,11 +30,15 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CouponAuditLog } from "@/platforms/web/components/pos/CouponAuditLog";
 import { CampaignVouchers } from "@/platforms/web/components/pos/CampaignVouchers";
+import { ReusableCampaignCodes } from "@/platforms/web/components/pos/ReusableCampaignCodes";
+import { ReusableCodeActivity } from "@/platforms/web/components/pos/ReusableCodeActivity";
 import { CouponAnalytics } from "@/platforms/web/components/pos/CouponAnalytics";
 import { IssueVoucherDialog } from "@/platforms/web/components/pos/IssueVoucherDialog";
 import { useAuth } from "@/lib/pos-auth";
 import { usePos } from "@/lib/pos-store";
 import { claimUrl } from "@/lib/coupon-hosts";
+import { fromCouponLocalInput, toCouponLocalInput } from "@/lib/coupon-date-input";
+import { validateCouponCampaign } from "@/lib/coupon-campaign-validation";
 import {
   blankCampaign,
   campaignStatus,
@@ -81,11 +85,6 @@ const statusTone: Record<string, "default" | "secondary" | "destructive" | "outl
   "Fully claimed": "secondary",
 };
 
-/** ISO timestamp <-> value for a datetime-local input. */
-const toLocalInput = (iso?: string | null) =>
-  iso ? new Date(iso).toISOString().slice(0, 16) : "";
-const fromLocalInput = (v: string) => (v ? new Date(v).toISOString() : null);
-
 /**
  * A blank or half-typed limit ("", "-", "1e") must never reach the draft as
  * NaN: blank means unlimited, anything unreadable keeps the field empty.
@@ -101,6 +100,8 @@ const toCountOrNull = (v: string): number | null => {
 function CouponsPage() {
   const { can, user } = useAuth();
   const { state } = usePos();
+  const mayManage = can("can_manage_promotions");
+  const [tab, setTab] = useState("campaigns");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [events, setEvents] = useState<CouponEvent[]>([]);
@@ -119,7 +120,7 @@ function CouponsPage() {
       const [cs, vs, es] = await Promise.all([
         loadCampaigns(),
         loadVouchers(),
-        loadCouponEvents().catch(() => ({ rows: [] as CouponEvent[], cursor: null, hasMore: false })),
+        loadCouponEvents(),
       ]);
       setCampaigns(cs);
       setVouchers(vs);
@@ -139,8 +140,8 @@ function CouponsPage() {
   }, []);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (mayManage) void refresh();
+  }, [refresh, mayManage]);
 
   /** Pull the next page of the event trail without re-reading the ones on screen. */
   const loadMoreEvents = useCallback(async () => {
@@ -151,6 +152,8 @@ function CouponsPage() {
       setEvents((prev) => [...prev, ...page.rows]);
       setEventCursor(page.cursor);
       setMoreEvents(page.hasMore);
+    } catch (error) {
+      notifyError(error, "Loading older coupon events");
     } finally {
       setLoadingMore(false);
     }
@@ -175,8 +178,8 @@ function CouponsPage() {
   async function save() {
     if (!draft) return;
     const slug = slugify(draft.slug || draft.name);
-    if (!draft.name.trim()) return toast.error("Give the campaign a name");
-    if (!slug) return toast.error("Give the campaign a link slug");
+    const validationError = validateCouponCampaign({ ...draft, slug });
+    if (validationError) return toast.error(validationError);
     setSaving(true);
     try {
       const res = await saveCampaign({ ...draft, slug });
@@ -246,9 +249,9 @@ function CouponsPage() {
               redeemed
             </p>
           </div>
-          <Button onClick={() => setDraft(blankCampaign())}>
+          {tab === "campaigns" && <Button onClick={() => setDraft(blankCampaign())}>
             <Plus className="mr-2 h-4 w-4" /> New campaign
-          </Button>
+          </Button>}
         </header>
 
         {error ? (
@@ -257,14 +260,16 @@ function CouponsPage() {
           </p>
         ) : null}
 
-        <Tabs defaultValue="campaigns">
+        <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
-            <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
-            <TabsTrigger value="vouchers">Vouchers</TabsTrigger>
+            <TabsTrigger value="campaigns">Voucher campaigns</TabsTrigger>
+            <TabsTrigger value="reusable">Reusable codes</TabsTrigger>
+            <TabsTrigger value="vouchers">Issued vouchers & codes</TabsTrigger>
             <TabsTrigger value="performance">Performance</TabsTrigger>
             <TabsTrigger value="audit">Audit log</TabsTrigger>
           </TabsList>
 
+          <p className="mt-3 text-xs text-muted-foreground">{tab === "reusable" ? "Share a reusable code for store sales, without enrollment." : tab === "vouchers" ? "Issued campaign vouchers and reusable codes. Reusable codes do not require individual issuance." : tab === "performance" ? "Voucher performance and reusable-code sales." : tab === "audit" ? "Voucher events and reusable-code sales history." : "Create voucher campaigns, then issue individual vouchers or share the claim link. Automatic discounts and points rules are managed in Promotions & discounts."}</p>
           <TabsContent value="campaigns" className="mt-4">
         <div className="rounded-xl border border-border bg-card">
           {loading ? (
@@ -345,9 +350,10 @@ function CouponsPage() {
                             size="icon"
                             variant="ghost"
                             title="Edit campaign"
+                            aria-label={`Edit ${c.name}`}
                             onClick={() => setDraft(c)}
                           >
-                            <Link2 className="h-4 w-4" />
+                            <Pencil className="h-4 w-4" />
                           </Button>
                           <Button
                             size="icon"
@@ -368,11 +374,17 @@ function CouponsPage() {
         </div>
           </TabsContent>
 
+          <TabsContent value="reusable" className="mt-4">
+            <ReusableCampaignCodes />
+          </TabsContent>
+
           <TabsContent value="performance" className="mt-4">
             <CouponAnalytics />
+            <ReusableCodeActivity view="performance" />
           </TabsContent>
 
           <TabsContent value="vouchers" className="mt-4">
+            <ReusableCodeActivity view="issued" />
             <CampaignVouchers
               campaigns={campaigns}
               vouchers={vouchers}
@@ -385,6 +397,7 @@ function CouponsPage() {
           </TabsContent>
 
           <TabsContent value="audit" className="mt-4">
+            <ReusableCodeActivity view="audit" />
             <CouponAuditLog
               events={events}
               campaigns={campaigns}
@@ -520,9 +533,9 @@ function CouponsPage() {
                   <Input
                     id="c-start"
                     type="datetime-local"
-                    value={toLocalInput(draft.startsAt)}
+                    value={toCouponLocalInput(draft.startsAt)}
                     onChange={(e) =>
-                      setDraft({ ...draft, startsAt: fromLocalInput(e.target.value) })
+                      setDraft({ ...draft, startsAt: fromCouponLocalInput(e.target.value) })
                     }
                   />
                 </div>
@@ -531,9 +544,9 @@ function CouponsPage() {
                   <Input
                     id="c-end"
                     type="datetime-local"
-                    value={toLocalInput(draft.expiresAt)}
+                    value={toCouponLocalInput(draft.expiresAt)}
                     onChange={(e) =>
-                      setDraft({ ...draft, expiresAt: fromLocalInput(e.target.value) })
+                      setDraft({ ...draft, expiresAt: fromCouponLocalInput(e.target.value) })
                     }
                   />
                 </div>
@@ -593,7 +606,8 @@ function CouponsPage() {
                 <div>
                   <p className="text-sm font-medium">Welcome coupon</p>
                   <p className="text-xs text-muted-foreground">
-                    Issued automatically to everyone who registers on the member signup page.
+                    Marks this campaign for welcome vouchers. Until signup issuance is enabled,
+                    issue vouchers from the campaign actions.
                   </p>
                 </div>
                 <Switch

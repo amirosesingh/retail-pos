@@ -29,6 +29,8 @@ export type CartCoupon = {
   promoId: string;
   scope: "bill" | "item";
   discount: number;
+  /** Recalculate this campaign against the current cart, including quantity edits. */
+  reusable?: boolean;
   productId?: string;
   productName?: string;
   appliedAt: string;

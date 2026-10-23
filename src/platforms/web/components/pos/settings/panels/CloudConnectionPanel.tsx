@@ -421,14 +421,14 @@ export function CloudConnectionPanel({
         {backendResult && (
           <p
             className={`break-words text-xs [overflow-wrap:anywhere] ${
-              backendResult.ok
-                ? "text-success"
-                : backendResult.warn
-                  ? "text-amber-600"
+              backendResult.warn
+                ? "text-amber-600"
+                : backendResult.ok
+                  ? "text-success"
                   : "text-destructive"
             }`}
           >
-            {backendResult.ok ? "✓" : backendResult.warn ? "!" : "✕"} {backendResult.detail}
+            {backendResult.warn ? "!" : backendResult.ok ? "✓" : "✕"} {backendResult.detail}
           </p>
         )}
       </div>

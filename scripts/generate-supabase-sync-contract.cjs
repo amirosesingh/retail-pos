@@ -66,6 +66,8 @@ function directBranchPredicate(table, alias, parameter = "p_branch_id", terminal
 }
 
 function branchPredicate(table, alias = "x", seen = new Set()) {
+  if (table.cloudTable === "promotions")
+    return `(${alias}.foc_product_id IS NULL OR EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=${alias}."foc_product_id"::text AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id)))`;
   const direct = directBranchPredicate(table, alias);
   if (direct) return direct;
   if (seen.has(table.cloudTable)) return "false";
@@ -143,6 +145,8 @@ function dateColumn(table) {
 }
 
 function feedBranches(table) {
+  if (table.cloudTable === "promotions")
+    return "SELECT 'global'::text branch_id,NULL::text terminal_id WHERE COALESCE(NEW.foc_product_id,OLD.foc_product_id) IS NULL UNION ALL SELECT COALESCE(NULLIF(p.owner_store_id::text,''),'global'),NULL::text FROM public.products p WHERE p.id=COALESCE(NEW.foc_product_id,OLD.foc_product_id)";
   if (ORGANIZATION_WIDE.has(table.cloudTable))
     return "SELECT 'global'::text branch_id,NULL::text terminal_id";
   const names = columnNames(table);

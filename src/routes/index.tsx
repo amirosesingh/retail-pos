@@ -1,3 +1,4 @@
+import { projectReusableCoupon } from "@/lib/reusable-coupon-code";
 import { formatDateTime as posDisplayDateTime, formatDate as posDisplayDate } from "@/lib/time-zone";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { draftTicketId } from "@/lib/session-draft";
@@ -497,7 +498,7 @@ function Register() {
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
   /** The open ticket: lines, discount, member, coupon and bill number. */
   const {
-    lines,
+    lines: rawCartLines,
     setLines,
     cartDiscount,
     setCartDiscount,
@@ -509,7 +510,7 @@ function Register() {
     setMemberId,
     billNo,
     setBillNo,
-    coupon,
+    coupon: rawCartCoupon,
     setCoupon,
     addLine,
     setQty,
@@ -543,6 +544,10 @@ function Register() {
     // The register settings decide whether an out-of-stock item can be sold.
     preventNegativeStock: rules.prevent_negative_stock_sale,
   });
+  const { lines, coupon } = useMemo(
+    () => projectReusableCoupon(rawCartLines, rawCartCoupon, state.promotions, new Date(), currentStore.groupId),
+    [rawCartLines, rawCartCoupon, state.promotions, currentStore.groupId],
+  );
   revokeApprovalDiscountRef.current = (approval) => {
     // Functional updates cannot overwrite a cart mutation that landed after
     // the invalidation callback was created.
@@ -618,10 +623,22 @@ function Register() {
     getTotal: (paymentMethod) => applyRounding(totals.total, state.settings.integrations.rounding, paymentMethod).total,
   });
 
-  const [discountReviewRequested, setDiscountReviewRequested] = useState(false);
+  // Recheck wall-clock eligibility at checkout, including tickets held overnight.
+  // Never silently charge a different amount: update the cart and require review.
+  const validateCouponBeforeCommit = () => {
+    if (!coupon?.reusable) return true;
+    const fresh = projectReusableCoupon(rawCartLines, coupon, state.promotions, new Date(), currentStore.groupId);
+    if (fresh.coupon) return true;
+    setLines(fresh.lines);
+    setCoupon(null);
+    toast.error("This coupon is no longer available. Review the updated total before charging.");
+    return false;
+  };
+
   const charging = useRef(false);
-  const openPayment = async (preset?: Parameters<typeof openTenderPayment>[0], reviewOnly = false) => {
+  const openPayment = async (preset?: Parameters<typeof openTenderPayment>[0]) => {
     if (charging.current || !lines.length || tillLocked || !can("can_process_sale")) return;
+    if (!validateCouponBeforeCommit()) return;
     charging.current = true;
     try {
       let discounts: TicketDiscount[] = lines.flatMap((line,index) => {
@@ -652,18 +669,11 @@ function Register() {
         });
         if (grant === null) return;
       }
-      if (!reviewOnly) openTenderPayment(preset);
+      if (!validateCouponBeforeCommit()) return;
+      openTenderPayment(preset);
     } catch (error) { notifyError(error,"Opening payment"); }
     finally { charging.current = false; }
   };
-
-  const reviewDiscountsRef = useRef(openPayment);
-  reviewDiscountsRef.current = openPayment;
-  useEffect(() => {
-    if (!discountReviewRequested) return;
-    setDiscountReviewRequested(false);
-    void reviewDiscountsRef.current(undefined, true);
-  }, [discountReviewRequested]);
 
   const [waNumber, setWaNumber] = useState("");
   const [waSending, setWaSending] = useState(false);
@@ -964,6 +974,8 @@ function Register() {
     voucherPreview,
     removeCoupon,
   } = usePromotions({
+    clusterId: currentStore.groupId,
+    setLines,
     products: state.products,
     promotions: state.promotions,
     members: state.members,
@@ -974,7 +986,6 @@ function Register() {
     setCoupon,
     memberId,
     setMemberId,
-    patchLine,
     unlockDiscounts,
   });
 
@@ -1240,6 +1251,8 @@ function Register() {
     lines: lines.map((l) => toDisplayLine(l, r2((l.price - lineUnitDiscount(l)) * l.qty))),
     subtotal: totals.subtotal,
     discount: totals.discount,
+    couponCode: coupon?.code,
+    couponDiscount: Math.min(totals.discount, coupon?.discount ?? 0),
     tax: totals.tax,
     taxRate: taxSettings.rate,
     taxEnabled: taxSettings.enabled,
@@ -1267,6 +1280,7 @@ function Register() {
               appliedApprovalRef.current.approvedByName ?? appliedApprovalRef.current.approvedBy,
           }
         : null,
+    validateCouponBeforeCommit,
     getLines: () => lines,
     getTotals: () => totals,
     getMember: () => member,
@@ -1376,6 +1390,7 @@ function Register() {
     rl: roundingOf(state.settings.integrations.rounding).receiptLabel,
     rs: showsRoundingLine(rounding.adjustment, state.settings.integrations.rounding),
     d: totals.discount,
+    coupon: coupon ? [coupon.code, coupon.discount] : null,
     x: totals.tax,
     xr: taxSettings.rate,
     xe: taxSettings.enabled,
@@ -2882,7 +2897,9 @@ function Register() {
               onChange={(e) => setCouponCode(e.target.value)}
               placeholder="e.g. WEEKEND10"
             />
-            <Label>Apply to</Label>
+            {state.promotions.some((rule) => rule.type === "code" && rule.name.toUpperCase() === couponCode.trim().toUpperCase()) ? (
+              <p className="text-sm text-muted-foreground">The campaign’s saved bill/item scope and store coverage apply automatically.</p>
+            ) : <><Label>Apply to</Label>
             <div className="flex gap-2">
               <Button
                 size="sm"
@@ -2926,6 +2943,7 @@ function Register() {
                   ))}
               </div>
             )}
+            </>}
             <p className="text-[11px] text-muted-foreground">
               Codes match an active promotion by name. Every application, its scope and the item it
               touched are written to the audit trail with a timestamp.
@@ -4357,14 +4375,13 @@ function Register() {
               );
               return;
             }
-            // Review the resulting ticket after React has applied the discount.
+            // Keep discounts editable; Charge reviews the complete ticket once.
             if (target === "bill") {
               setCartDiscount(v);
               setCartDiscountType(t);
             } else if (typeof target === "number") {
               patchLine(target, { discount: v, discountType: t });
             }
-            setDiscountReviewRequested(true);
           })();
         }}
       />

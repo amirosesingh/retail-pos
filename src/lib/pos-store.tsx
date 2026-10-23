@@ -3361,12 +3361,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   const upsertPromotion = useCallback(async (promotion: Promotion): Promise<CommitTarget> => {
     const previous = stateRef.current.promotions.find((p) => p.id === promotion.id);
+    const target = await db.commitPromotion(promotion);
     logger.log("promotion", previous ? "Promotion updated" : "Promotion created", "promotions", {
       promotionId: promotion.id,
+      promotionType: promotion.type,
       name: promotion.name,
       active: promotion.active,
     });
-    const target = await db.commitPromotion(promotion);
     setState((s) => ({
       ...s,
       promotions: s.promotions.some((p) => p.id === promotion.id)
@@ -3378,11 +3379,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   const removePromotion = useCallback(async (id: string) => {
     const promotion = stateRef.current.promotions.find((p) => p.id === id);
+    await db.deletePromotion(id);
     logger.log("promotion", "Promotion deleted", "promotions", {
       promotionId: id,
+      promotionType: promotion?.type ?? null,
       name: promotion?.name ?? null,
     });
-    await db.deletePromotion(id);
     setState((s) => ({ ...s, promotions: s.promotions.filter((p) => p.id !== id) }));
   }, []);
 

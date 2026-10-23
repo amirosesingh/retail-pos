@@ -1,7 +1,7 @@
 import { Table } from "@/components/ui/table";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { Crown, Gift, Percent, Plus, Sparkles, Trash2, Trophy } from "lucide-react";
+import { Crown, Gift, Pencil, Percent, Plus, Sparkles, Trash2, Trophy } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
@@ -48,6 +48,7 @@ const typeLabel: Record<PromoType, string> = {
   birthday: "Birthday discount",
   threshold: "Threshold discount",
   tier: "Membership tier discount",
+  code: "Reusable campaign code",
 };
 
 const typeIcon: Record<PromoType, typeof Percent> = {
@@ -56,6 +57,7 @@ const typeIcon: Record<PromoType, typeof Percent> = {
   birthday: Sparkles,
   threshold: Percent,
   tier: Crown,
+  code: Percent,
 };
 
 const TIERS: MemberTier[] = ["Bronze", "Silver", "Gold"];
@@ -78,7 +80,8 @@ function Promotions() {
   const { can } = useAuth();
   const [draft, setDraft] = useState<Promotion | null>(null);
 
-  const rules = state.promotions;
+  // Reusable codes are managed in Coupon Campaigns, not duplicated here.
+  const rules = state.promotions.filter((p) => p.type !== "code");
 
   function summary(p: Promotion) {
     switch (p.type) {
@@ -96,6 +99,8 @@ function Promotions() {
         }`;
       case "tier":
         return TIERS.map((t) => `${t}: ${p.tierRates?.[t] ?? 0}%`).join(" · ");
+      case "code":
+        return `${p.value ?? 0}${p.valueType === "percent" ? "%" : " fixed"} off with code`;
     }
   }
 
@@ -188,8 +193,19 @@ function Promotions() {
                     </td>
                     <td className="px-3 py-2 text-right">
                       <Button
-                        size="sm"
+                        size="icon"
                         variant="ghost"
+                        aria-label={`Edit ${p.name || "promotion"}`}
+                        title="Edit promotion"
+                        onClick={() => setDraft(p)}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Delete ${p.name || "promotion"}`}
+                        title="Delete promotion"
                         onClick={async () => {
                           try {
                             await removePromotion(p.id);
@@ -238,7 +254,7 @@ function Promotions() {
                   ariaLabel="Promo type"
                   value={draft.type}
                   onChange={(v) => setDraft({ ...draft, type: v as PromoType })}
-                  options={(Object.keys(typeLabel) as PromoType[]).map((t) => ({
+                  options={(Object.keys(typeLabel) as PromoType[]).filter((t) => t !== "code").map((t) => ({
                     value: t,
                     label: typeLabel[t],
                   }))}
