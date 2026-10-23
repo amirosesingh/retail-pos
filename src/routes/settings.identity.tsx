@@ -1,5 +1,5 @@
 import { HelpTip } from "@/components/ui/help-tip";
-import { APP_VERSION } from "@/version";
+import { APP_DISPLAY_VERSION as APP_VERSION } from "@/version";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   SettingsFrame,

@@ -31,7 +31,7 @@ const versionCode = Number.parseInt(process.env.ANDROID_VERSION_CODE, 10);
 if (!Number.isSafeInteger(versionCode) || versionCode < 1) {
   fail("ANDROID_VERSION_CODE must be a positive integer.");
 }
-const versionName = process.env.ANDROID_VERSION_NAME;
+const versionName = require("./release-version.cjs").displayVersion(process.env.ANDROID_VERSION_NAME || "");
 
 /**
  * Find a `name { ... }` block whose opening brace lives at depth `depth`

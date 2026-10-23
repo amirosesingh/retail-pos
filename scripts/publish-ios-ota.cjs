@@ -4,6 +4,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const semver = require('semver');
+const { compareRelease } = require('./release-version.cjs');
 const { iosReleaseConfig } = require('./ios-release-config.cjs');
 const release = iosReleaseConfig(process.env.POS_RELEASE_CHANNEL || 'beta', require('../ios-ota.public.json'));
 const trust = release.trust;
@@ -28,7 +29,7 @@ try {
   const old = JSON.parse(fs.readFileSync(oldFile));
   const oldPayload = Buffer.from(old.payload, 'base64');
   if (!crypto.verify(null, oldPayload, publicKey, Buffer.from(old.signature, 'base64'))) throw new Error('Existing manifest signature is invalid. Investigate before publishing.');
-  if (!semver.gt(version, JSON.parse(oldPayload).version)) throw new Error('Refusing to publish a previous or reused release version.');
+  if (compareRelease(version, JSON.parse(oldPayload).version) <= 0) throw new Error('Refusing to publish a previous or reused release version.');
 } catch (e) { if (!/404|Not Found|NoSuchKey/.test(String(e.stderr || ''))) throw e; }
 finally { if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile); }
 const zipKey = `pos-app/ios-ota/releases/${version}/bundle.zip`;

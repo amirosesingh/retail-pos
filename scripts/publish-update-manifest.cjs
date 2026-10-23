@@ -1,6 +1,7 @@
 /** Promote shared metadata only when both release downloads exist. */
 const fs = require('node:fs');
 const semver = require('semver');
+const { compareRelease } = require('./release-version.cjs');
 const BASE = 'https://updatecms.luckycharmsdnbhd.com/pos-app/';
 
 async function promoteSharedManifest(file, { remote, upload, log = console.log }) {
@@ -18,7 +19,7 @@ async function promoteSharedManifest(file, { remote, upload, log = console.log }
   }
   // Either platform can finish last. Never regress a newer complete release.
   const existing = await remote(`${BASE}manifest.json`, { optional: true });
-  if (existing && semver.gt(JSON.parse(existing.toString()).version, version)) {
+  if (existing && compareRelease(JSON.parse(existing.toString()).version, version) > 0) {
     log(`Keeping the newer published shared release instead of ${version}.`);
     return false;
   }

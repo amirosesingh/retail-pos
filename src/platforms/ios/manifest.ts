@@ -1,5 +1,7 @@
 import { verifyAsync } from "@noble/ed25519";
 import { compare, valid } from "semver";
+import { releaseRevision } from "@/lib/release-version";
+const compareRelease = (a: string, b: string) => compare(a, b) || Math.sign(releaseRevision(a) - releaseRevision(b));
 import { z } from "zod";
 
 export const MAX_MANIFEST_BYTES = 32_768;
@@ -41,7 +43,7 @@ export type Trust = {
   nativeVersion: string;
 };
 export function newer(version: string, current: string) {
-  return Boolean(valid(version) && valid(current) && compare(version, current) > 0);
+  return Boolean(valid(version) && valid(current) && compareRelease(version, current) > 0);
 }
 export function httpsUrl(value: string, origin: string) {
   const u = new URL(value);
@@ -99,8 +101,8 @@ export async function validateManifest(
   if (
     !valid(current) ||
     !valid(highest) ||
-    compare(m.version, current) < 0 ||
-    compare(m.version, highest) < 0
+    compareRelease(m.version, current) < 0 ||
+    compareRelease(m.version, highest) < 0
   )
     throw new Error("Downgrade rejected. Use the explicit recovery action instead.");
   return m;

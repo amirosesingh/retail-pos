@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { MonitorSmartphone } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { APP_VERSION } from "@/version";
+import { APP_DISPLAY_VERSION as APP_VERSION } from "@/version";
 import { isDesktop } from "@/lib/branding";
 import { isNative } from "@/platform-config/platform";
 import { readTerminalConfig, subscribeTerminalConfig } from "@/core/activation/terminal-tokens";

@@ -1,3 +1,4 @@
+import { displayReleaseVersion } from "@/lib/release-version";
 import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,7 +37,7 @@ export function MinimalUpdatePanel({ updates }: { updates: Updates }) {
   const busy = installing || manifestChecking || state.status === "checking";
   return <section className="space-y-4 rounded-2xl border bg-card p-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><p className="font-medium">{available ? state.available ? `Version ${state.available} is available` : "Update ready to install" : "Software updates"}</p><p className="text-sm text-muted-foreground">Installed v{state.version || APP_VERSION}</p></div>
+      <div><p className="font-medium">{available ? state.available ? `Version ${state.available} is available` : "Update ready to install" : "Software updates"}</p><p className="text-sm text-muted-foreground">Installed v{displayReleaseVersion(state.version || APP_VERSION)}</p></div>
       {supported && available ? <Button disabled={installing} onClick={() => setOpen(true)}>Update and restart</Button> : <Button variant="outline" disabled={busy} onClick={() => void check().catch(() => undefined)}>{busy ? "Checking…" : "Check for updates"}</Button>}
     </div>
     {state.status === "downloading" && <div className="space-y-2" role="status"><p className="text-sm text-muted-foreground">Downloading · {state.percent}%</p><Progress value={state.percent} aria-label="Update download progress" /></div>}

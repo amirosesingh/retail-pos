@@ -34,7 +34,7 @@ function prepareBeta(root, version) {
   lock.version = version;
   if (lock.packages?.['']) Object.assign(lock.packages[''], { name: pkg.name, version });
   fs.writeFileSync(lockFile, JSON.stringify(lock, null, 2) + '\n');
-  fs.writeFileSync(path.join(root, 'src/version.ts'), `// Generated for a beta artifact; never commit this build output.\nexport const APP_VERSION = "${version}";\n`);
+  fs.writeFileSync(path.join(root, 'src/version.ts'), `// Generated for a beta artifact; never commit this build output.\nexport const APP_VERSION = "${version}";\nexport const APP_DISPLAY_VERSION = "${version}";\n`);
 }
 module.exports = { betaVersion, nextBetaVersion, prepareBeta, BETA_BASE };
 if (require.main === module) {

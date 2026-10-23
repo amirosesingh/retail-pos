@@ -1,3 +1,4 @@
+import { displayReleaseVersion } from "@/lib/release-version";
 import { toast } from "sonner";
 import { copyText } from "@/platform-config/clipboard";
 import { IosOtaSettings } from "@/platform-config/ios-ota";
@@ -138,7 +139,7 @@ function DesktopUpdateCard() {
     return () => { active = false; };
   }, [supported]);
 
-  const version = state.version || APP_VERSION;
+  const version = displayReleaseVersion(state.version || APP_VERSION);
   const busy = installing || manifestChecking || state.status === "checking" || state.status === "downloading";
 
   const status = manifestChecking
@@ -162,7 +163,7 @@ function DesktopUpdateCard() {
         {history.ok && history.releases.length === 0 && <TileRow label="No retained releases listed yet" />}
         {history.releases.map(release => <TileRow key={release.version} label={`v${release.version}`}
           hint={[release.released ? posDisplayDate(new Date(release.released)) : "", release.notes].filter(Boolean).join(" · ")}
-          value={release.version === version ? "Installed" : "Retained"} />)}
+          value={release.version === (state.version || APP_VERSION) ? "Installed" : "Retained"} />)}
       </TileGroup>}
       <TileGroup title="Version">
         <TileRow
