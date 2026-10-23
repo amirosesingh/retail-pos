@@ -43,6 +43,7 @@ import {
   enrollOwnApprovalToken,
   loadApprovalToken,
   clearApprovalToken, setupOfflineApprovalToken, unlockOfflineApprovalToken, offlineTokenOwner,
+  revalidateOfflineApprovalToken,
 } from "../approval-token-client";
 beforeEach(() => {
   fixture.values.clear();
@@ -70,7 +71,7 @@ beforeEach(() => {
   vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("navigator", { onLine: true });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe("native phone approval enrollment (Android Keystore / iOS Keychain)", () => {
   it("uses secure enrollment offline with the same registered user session", async () => {
     await enrollOwnApprovalToken("manager");
@@ -131,7 +132,45 @@ it("retains only a locked token on logout, unlocks offline without signing in, a
   await clearApprovalToken(true);
   expect(await offlineTokenOwner()).toBeNull();
 });
-it("persists failed unlock attempts and checks the device, project, permission and lease", async () => {
+it("keeps a device-bound token offline for 30 days and then requires online renewal", async () => {
+  const enrolledAt = Date.now();
+  await enrollOwnApprovalToken("manager"); await setupOfflineApprovalToken("874392");
+  await clearApprovalToken(); fixture.proof = "";
+  Object.assign(navigator, { onLine: false });
+  vi.spyOn(Date, "now").mockReturnValue(enrolledAt + 25 * 86400000);
+  expect((await offlineTokenOwner())?.userId).toBe("manager");
+  expect((await unlockOfflineApprovalToken("874392")).userId).toBe("manager");
+  vi.spyOn(Date, "now").mockReturnValue(enrolledAt + 31 * 86400000);
+  expect(await offlineTokenOwner()).toMatchObject({ userId: "manager", expired: true });
+  await expect(unlockOfflineApprovalToken("874392")).rejects.toThrow("Connect to the internet to renew the approval token");
+});
+it("renews the saved device token after a successful online permission check", async () => {
+  const enrolledAt = Date.now();
+  await enrollOwnApprovalToken("manager"); await setupOfflineApprovalToken("874392");
+  vi.spyOn(Date, "now").mockReturnValue(enrolledAt + 25 * 86400000);
+  fixture.fetch.mockResolvedValue({ ok: true, json: async () => ({ ok: true, active: true }) });
+  await revalidateOfflineApprovalToken();
+  expect((await offlineTokenOwner())?.validUntil).toBeGreaterThan(enrolledAt + 30 * 86400000);
+  await clearApprovalToken(); fixture.proof = "";
+  Object.assign(navigator, { onLine: false });
+  vi.spyOn(Date, "now").mockReturnValue(enrolledAt + 31 * 86400000);
+  expect((await offlineTokenOwner())?.userId).toBe("manager");
+});
+it("removes an offline token when its device enrollment is revoked online", async () => {
+  await enrollOwnApprovalToken("manager"); await setupOfflineApprovalToken("874392");
+  await clearApprovalToken(); fixture.proof = "";
+  fixture.fetch.mockResolvedValue({ ok: true, json: async () => ({ ok: true, active: false }) });
+  await revalidateOfflineApprovalToken();
+  expect(await offlineTokenOwner()).toBeNull();
+});
+it("does not renew or delete a saved token when the status service is unreachable", async () => {
+  await enrollOwnApprovalToken("manager"); await setupOfflineApprovalToken("874392");
+  const lease = (await offlineTokenOwner())!.validUntil;
+  fixture.fetch.mockRejectedValue(new Error("network unavailable"));
+  await expect(revalidateOfflineApprovalToken()).rejects.toThrow("network unavailable");
+  expect((await offlineTokenOwner())?.validUntil).toBe(lease);
+});
+it("persists failed unlock attempts and checks the device, project and permission", async () => {
   await enrollOwnApprovalToken("manager"); await setupOfflineApprovalToken("874392");
   await expect(unlockOfflineApprovalToken("111111")).rejects.toThrow("Incorrect");
   await expect(unlockOfflineApprovalToken("874392")).rejects.toThrow("Too many");

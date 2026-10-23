@@ -16,6 +16,7 @@ const f = vi.hoisted(() => ({
   active: true,
   totp: true,
   branch: "branch-a",
+  personBranch: "branch-a" as string | null,
   platform: "android",
   service: vi.fn(),
   rules: vi.fn(),
@@ -42,6 +43,7 @@ import {
   verifyApprovalTotp,
   registerApprovalVerifier,
   approvalVerifierBundle,
+  approvalTokenStatus,
 } from "../approval-token-server";
 import { approvalTotp } from "../approval-totp";
 const terminal = "11111111-1111-4111-8111-111111111111";
@@ -53,6 +55,7 @@ beforeEach(() => {
   f.totp = true;
   f.platform = "android";
   f.branch = "branch-a";
+  f.personBranch = "branch-a";
   f.verifier = "";
   f.devices = [];
   f.scope.kind = "staff";
@@ -70,7 +73,7 @@ beforeEach(() => {
           full_name: "Manager",
           role: "manager",
           role_slug: "manager",
-          store_id: "branch-a",
+          store_id: f.personBranch,
           is_active: f.active,
           permissions: { approval_totp_enabled: f.totp },
         },
@@ -143,6 +146,22 @@ describe("approval credential authorization", () => {
     expect(await verifyApprovalTotp("manager", code, "branch-a", terminal)).toBe(null);
     f.totp = false;
     expect(await verifyApprovalTotp("manager", code, "branch-a", terminal)).toBe(null);
+  });
+  it("revalidates only this registered device enrollment without returning its secret", async () => {
+    const enrolled = await enrollApprovalToken(proof);
+    expect(await approvalTokenStatus(terminal, "manager", enrolled.credential!.id)).toEqual({ ok: true, active: true });
+    expect((await approvalTokenStatus(terminal, "manager", "another-device")).active).toBe(false);
+    f.deviceEnabled = false;
+    expect((await approvalTokenStatus(terminal, "manager", enrolled.credential!.id)).active).toBe(false);
+    f.deviceEnabled = true; f.active = false;
+    expect((await approvalTokenStatus(terminal, "manager", enrolled.credential!.id)).active).toBe(false);
+  });
+  it("keeps an all-branch management token valid while signed out", async () => {
+    f.branch = "";
+    f.personBranch = null;
+    const enrolled = await enrollApprovalToken(proof);
+    f.rules.mockRejectedValue(new Error("No branch selected while signed out"));
+    expect(await approvalTokenStatus(terminal, "manager", enrolled.credential!.id)).toEqual({ ok: true, active: true });
   });
   it.each(["windows", "pc"])("encrypts verifier bundles to the staff-manager-pinned %s public key", async platform => {
     const enrolled = await enrollApprovalToken(proof);

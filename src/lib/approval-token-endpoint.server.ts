@@ -4,9 +4,10 @@ import {
   manageApprovalMethods,
   approvalVerifierBundle,
   registerApprovalVerifier,
+  approvalTokenStatus,
 } from "./approval-token-server";
 const schema = z.object({
-  action: z.enum(["enroll", "methods", "bundle", "register_verifier"]),
+  action: z.enum(["enroll", "methods", "bundle", "register_verifier", "status"]),
   data: z.object({
     sessionToken: z.string().max(400).optional(),
     cashierToken: z.string().max(2000).optional(),
@@ -14,6 +15,7 @@ const schema = z.object({
     terminalToken: z.string().uuid().optional(),
     publicKey: z.string().min(300).max(6000).optional(),
     userId: z.string().min(1).max(160).optional(),
+    credentialId: z.string().uuid().optional(),
     pinEnabled: z.boolean().optional(),
     totpEnabled: z.boolean().optional(),
   }),
@@ -26,6 +28,8 @@ export async function handleApprovalCredentials(request: Request) {
     const result =
       action === "enroll"
         ? await enrollApprovalToken(data)
+        : action === "status"
+          ? await approvalTokenStatus(z.string().uuid().parse(data.terminalToken), z.string().parse(data.userId), z.string().uuid().parse(data.credentialId))
         : action === "register_verifier"
           ? await registerApprovalVerifier(data, z.string().parse(data.publicKey))
           : action === "bundle"
