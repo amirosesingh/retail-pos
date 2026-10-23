@@ -85,8 +85,21 @@ it("retains deleted campaign performance from saved sale snapshots", async () =>
     { id: "s2", coupon_promo_id: "deleted", coupon_code: "PARTNER", is_refunded: true, coupon_discount: 10, total_amount: 40 },
     { id: "voucher", coupon_promo_id: null, coupon_code: "VOUCHER" },
   ];
-  const entries = reusableCodeReportEntries([], sales);
+  const entries = reusableCodeReportEntries([], sales, [{ details: { promotionId: "deleted", promotionType: "code" } }]);
   expect(entries).toHaveLength(1);
   expect(entries[0]).toMatchObject({ id: "deleted", name: "PARTNER", active: false });
   expect(reusableCodeTotals(sales, entries[0].id)).toEqual({ count: 1, discount: 20, revenue: 80 });
+});
+
+it("does not mislabel ordinary vouchers or legacy coupons as deleted reusable codes", async () => {
+  const { reusableCodeReportEntries } = await import("../reusable-code-report");
+  const rows = [
+    { coupon_promo_id: "voucher", coupon_code: "VOUCHER", coupon_scope: "bill" },
+    { coupon_promo_id: "legacy", coupon_code: "LEGACY", coupon_scope: "item" },
+    { coupon_promo_id: "unknown", coupon_code: "UNKNOWN", coupon_scope: "bill" },
+  ];
+  expect(reusableCodeReportEntries([], rows)).toEqual([]);
+  expect(reusableCodeReportEntries([], rows, [{ details: { promotionId: "legacy", promotionType: "threshold" } }])).toEqual([]);
+  expect(reusableCodeReportEntries([{ id: "legacy", name: "LEGACY", type: "threshold", active: true }], rows,
+    [{ details: { promotionId: "legacy", promotionType: "code" } }])).toEqual([]);
 });
