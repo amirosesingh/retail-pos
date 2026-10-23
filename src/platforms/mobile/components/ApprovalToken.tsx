@@ -190,7 +190,7 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
             Changes in {seconds}s · {visibleOwner ? "Works without internet" : "Save an unlock PIN for offline access"}
           </p>
           <p className="text-xs text-muted-foreground">
-            Enter your staff ID and this code in the approval field. Your approval permissions and
+            Choose Soft token and enter this code in the approval field. Your account is identified automatically; your approval permissions and
             limits still apply.
           </p>
           {renewalNeeded && <p className="text-xs text-amber-700 dark:text-amber-400">Connect to the internet to renew the approval token.</p>}
