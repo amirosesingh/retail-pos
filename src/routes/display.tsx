@@ -204,8 +204,9 @@ function CustomerDisplay() {
 
         <aside className="flex flex-col gap-4 lg:col-start-2">
           <div className="rounded-xl border border-border p-5">
-            <Row label="Subtotal" value={money(snap?.subtotal ?? 0)} />
-            <Row label="Discount" value={`-${money(snap?.discount ?? 0)}`} />
+            <Row label="Original total" value={money(snap?.subtotal ?? 0)} />
+            {snap.couponCode && (snap.couponDiscount ?? 0) > 0 && <Row label={`Coupon · ${snap.couponCode}`} value={`-${money(snap.couponDiscount ?? 0)}`} />}
+            <Row label={snap.couponCode ? "Other discounts" : "Discount"} value={`-${money(Math.max(0, (snap.discount ?? 0) - (snap.couponDiscount ?? 0)))}`} />
             {snap.showRounding && (snap.roundingAdjustment ?? 0) < 0 && (
               <Row label={snap.roundingLabel || "Extra Discount"} value={money(snap.roundingAdjustment!)} />
             )}

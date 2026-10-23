@@ -105,6 +105,17 @@ class AggregateRepository {
       // Close-start takes the same shift row lock. Once counting begins no
       // sale can race the database totals used for reconciliation.
       for (const sale of operations.filter((op) => op.table === "sales" && ["insert", "upsert"].includes(op.kind)).flatMap((op) => op.rows ?? [])) {
+        if (sale.coupon_promo_id) {
+          const campaign = await new sql.Request(transaction)
+            .input("promotion", String(sale.coupon_promo_id)).input("store", String(sale.store_id ?? aggregate.branchId))
+            .query("SELECT p.title,p.is_active,p.deleted_at,p.code_scope,p.code_cluster_id,s.group_id FROM dbo.promotions p LEFT JOIN dbo.stores s ON s.id=@store WHERE p.id=TRY_CONVERT(uniqueidentifier,@promotion) AND p.promo_type='code';");
+          const code = campaign.recordset?.[0];
+          if (code && (!code.is_active || code.deleted_at ||
+            String(code.title).trim().toUpperCase() !== String(sale.coupon_code ?? "").trim().toUpperCase() ||
+            (code.code_scope || "bill") !== sale.coupon_scope ||
+            (code.code_cluster_id && code.code_cluster_id !== code.group_id)))
+            throw Object.assign(new Error("The reusable code is no longer valid for this store. Refresh the code before completing the sale."), { code: "ECOUPON_SCOPE" });
+        }
         if (!sale.shift_id) continue;
         const shift = await new sql.Request(transaction).input("shift", String(sale.shift_id)).input("branch", aggregate.branchId)
           .query("SELECT state,status,closed_at FROM dbo.shifts WITH (UPDLOCK,HOLDLOCK) WHERE id=TRY_CONVERT(uniqueidentifier,@shift) AND store_id=@branch;");

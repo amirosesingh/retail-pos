@@ -30,6 +30,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CouponAuditLog } from "@/platforms/web/components/pos/CouponAuditLog";
 import { CampaignVouchers } from "@/platforms/web/components/pos/CampaignVouchers";
+import { ReusableCampaignCodes } from "@/platforms/web/components/pos/ReusableCampaignCodes";
 import { CouponAnalytics } from "@/platforms/web/components/pos/CouponAnalytics";
 import { IssueVoucherDialog } from "@/platforms/web/components/pos/IssueVoucherDialog";
 import { useAuth } from "@/lib/pos-auth";
@@ -98,6 +99,7 @@ const toCountOrNull = (v: string): number | null => {
 function CouponsPage() {
   const { can, user } = useAuth();
   const { state } = usePos();
+  const [tab, setTab] = useState("campaigns");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [events, setEvents] = useState<CouponEvent[]>([]);
@@ -243,9 +245,9 @@ function CouponsPage() {
               redeemed
             </p>
           </div>
-          <Button onClick={() => setDraft(blankCampaign())}>
+          {tab === "campaigns" && <Button onClick={() => setDraft(blankCampaign())}>
             <Plus className="mr-2 h-4 w-4" /> New campaign
-          </Button>
+          </Button>}
         </header>
 
         {error ? (
@@ -254,14 +256,16 @@ function CouponsPage() {
           </p>
         ) : null}
 
-        <Tabs defaultValue="campaigns">
+        <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
-            <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
-            <TabsTrigger value="vouchers">Vouchers</TabsTrigger>
-            <TabsTrigger value="performance">Performance</TabsTrigger>
+            <TabsTrigger value="campaigns">Voucher campaigns</TabsTrigger>
+            <TabsTrigger value="reusable">Reusable codes</TabsTrigger>
+            <TabsTrigger value="vouchers">Issued vouchers</TabsTrigger>
+            <TabsTrigger value="performance">Voucher performance</TabsTrigger>
             <TabsTrigger value="audit">Audit log</TabsTrigger>
           </TabsList>
 
+          <p className="mt-3 text-xs text-muted-foreground">{tab === "reusable" ? "Share a reusable code for store sales, without enrollment." : tab === "vouchers" ? "Individual vouchers issued from campaigns. Use a campaign’s Issue action to create one." : tab === "performance" ? "Issuance and redemption results for voucher campaigns." : tab === "audit" ? "Voucher campaign activity and redemption history." : "Create voucher campaigns, then issue individual vouchers or share the claim link. Automatic discounts and points rules are managed in Promotions & discounts."}</p>
           <TabsContent value="campaigns" className="mt-4">
         <div className="rounded-xl border border-border bg-card">
           {loading ? (
@@ -364,6 +368,10 @@ function CouponsPage() {
             </Table>
           )}
         </div>
+          </TabsContent>
+
+          <TabsContent value="reusable" className="mt-4">
+            <ReusableCampaignCodes />
           </TabsContent>
 
           <TabsContent value="performance" className="mt-4">

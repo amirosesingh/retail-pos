@@ -356,6 +356,8 @@ const rowToPromotion = (r: Row): Promotion => normalizeUuidFields({
   id: r.id,
   name: r.title,
   type: r.promo_type as PromoType,
+  codeScope: r.code_scope === "item" ? "item" : "bill",
+  codeClusterId: r.code_cluster_id || null,
   active: !!r.is_active,
   startDate: r.start_date ?? undefined,
   endDate: r.end_date ?? undefined,
@@ -421,6 +423,7 @@ const promotionToRow = (p: Promotion): Row => ({
   discount_amount: p.valueType === "amount" ? (p.value ?? 0) : 0,
   tier_rates: p.tierRates ?? null,
   partner: p.partner?.trim() ? p.partner.trim() : null,
+  ...(p.type === "code" ? { code_scope: p.codeScope ?? "bill", code_cluster_id: p.codeClusterId || null } : {}),
 });
 
 /** Older SQL copies may expose a JSON-encoded scalar rather than text. */

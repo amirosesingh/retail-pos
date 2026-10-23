@@ -546,7 +546,7 @@ export const FEATURES: FeatureDef[] = [
         source: "src/lib/pos-promotions.ts",
         columns: [
           "id", "title", "promo_type", "min_spend", "discount_percent", "discount_amount",
-          "foc_product_id", "points_per_dollar", "tier_rates", "is_active", "start_date", "end_date",
+          "foc_product_id", "points_per_dollar", "tier_rates", "partner", "code_scope", "code_cluster_id", "is_active", "start_date", "end_date",
         ],
       },
       {

@@ -1,3 +1,4 @@
+import { projectReusableCoupon } from "@/lib/reusable-coupon-code";
 import { formatDateTime as posDisplayDateTime, formatDate as posDisplayDate } from "@/lib/time-zone";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { draftTicketId } from "@/lib/session-draft";
@@ -497,7 +498,7 @@ function Register() {
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
   /** The open ticket: lines, discount, member, coupon and bill number. */
   const {
-    lines,
+    lines: rawCartLines,
     setLines,
     cartDiscount,
     setCartDiscount,
@@ -509,7 +510,7 @@ function Register() {
     setMemberId,
     billNo,
     setBillNo,
-    coupon,
+    coupon: rawCartCoupon,
     setCoupon,
     addLine,
     setQty,
@@ -543,6 +544,10 @@ function Register() {
     // The register settings decide whether an out-of-stock item can be sold.
     preventNegativeStock: rules.prevent_negative_stock_sale,
   });
+  const { lines, coupon } = useMemo(
+    () => projectReusableCoupon(rawCartLines, rawCartCoupon, state.promotions, new Date(), currentStore.groupId),
+    [rawCartLines, rawCartCoupon, state.promotions, currentStore.groupId],
+  );
   revokeApprovalDiscountRef.current = (approval) => {
     // Functional updates cannot overwrite a cart mutation that landed after
     // the invalidation callback was created.
@@ -964,6 +969,8 @@ function Register() {
     voucherPreview,
     removeCoupon,
   } = usePromotions({
+    clusterId: currentStore.groupId,
+    setLines,
     products: state.products,
     promotions: state.promotions,
     members: state.members,
@@ -974,7 +981,6 @@ function Register() {
     setCoupon,
     memberId,
     setMemberId,
-    patchLine,
     unlockDiscounts,
   });
 
@@ -1240,6 +1246,8 @@ function Register() {
     lines: lines.map((l) => toDisplayLine(l, r2((l.price - lineUnitDiscount(l)) * l.qty))),
     subtotal: totals.subtotal,
     discount: totals.discount,
+    couponCode: coupon?.code,
+    couponDiscount: Math.min(totals.discount, coupon?.discount ?? 0),
     tax: totals.tax,
     taxRate: taxSettings.rate,
     taxEnabled: taxSettings.enabled,
@@ -1376,6 +1384,7 @@ function Register() {
     rl: roundingOf(state.settings.integrations.rounding).receiptLabel,
     rs: showsRoundingLine(rounding.adjustment, state.settings.integrations.rounding),
     d: totals.discount,
+    coupon: coupon ? [coupon.code, coupon.discount] : null,
     x: totals.tax,
     xr: taxSettings.rate,
     xe: taxSettings.enabled,
@@ -2882,7 +2891,9 @@ function Register() {
               onChange={(e) => setCouponCode(e.target.value)}
               placeholder="e.g. WEEKEND10"
             />
-            <Label>Apply to</Label>
+            {state.promotions.some((rule) => rule.type === "code" && rule.name.toUpperCase() === couponCode.trim().toUpperCase()) ? (
+              <p className="text-sm text-muted-foreground">The campaign’s saved bill/item scope and store coverage apply automatically.</p>
+            ) : <><Label>Apply to</Label>
             <div className="flex gap-2">
               <Button
                 size="sm"
@@ -2926,6 +2937,7 @@ function Register() {
                   ))}
               </div>
             )}
+            </>}
             <p className="text-[11px] text-muted-foreground">
               Codes match an active promotion by name. Every application, its scope and the item it
               touched are written to the audit trail with a timestamp.

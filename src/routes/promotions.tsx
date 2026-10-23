@@ -48,6 +48,7 @@ const typeLabel: Record<PromoType, string> = {
   birthday: "Birthday discount",
   threshold: "Threshold discount",
   tier: "Membership tier discount",
+  code: "Reusable campaign code",
 };
 
 const typeIcon: Record<PromoType, typeof Percent> = {
@@ -56,6 +57,7 @@ const typeIcon: Record<PromoType, typeof Percent> = {
   birthday: Sparkles,
   threshold: Percent,
   tier: Crown,
+  code: Percent,
 };
 
 const TIERS: MemberTier[] = ["Bronze", "Silver", "Gold"];
@@ -78,7 +80,8 @@ function Promotions() {
   const { can } = useAuth();
   const [draft, setDraft] = useState<Promotion | null>(null);
 
-  const rules = state.promotions;
+  // Reusable codes are managed in Coupon Campaigns, not duplicated here.
+  const rules = state.promotions.filter((p) => p.type !== "code");
 
   function summary(p: Promotion) {
     switch (p.type) {
@@ -96,6 +99,8 @@ function Promotions() {
         }`;
       case "tier":
         return TIERS.map((t) => `${t}: ${p.tierRates?.[t] ?? 0}%`).join(" · ");
+      case "code":
+        return `${p.value ?? 0}${p.valueType === "percent" ? "%" : " fixed"} off with code`;
     }
   }
 
@@ -249,7 +254,7 @@ function Promotions() {
                   ariaLabel="Promo type"
                   value={draft.type}
                   onChange={(v) => setDraft({ ...draft, type: v as PromoType })}
-                  options={(Object.keys(typeLabel) as PromoType[]).map((t) => ({
+                  options={(Object.keys(typeLabel) as PromoType[]).filter((t) => t !== "code").map((t) => ({
                     value: t,
                     label: typeLabel[t],
                   }))}

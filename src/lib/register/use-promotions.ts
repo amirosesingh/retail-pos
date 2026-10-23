@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { logger } from "@/lib/audit-log";
-import { r2 } from "@/core/types/pos-types";
+import { lineDiscountTotal, r2 } from "@/core/types/pos-types";
 import {
   campaignStatus,
   isVoucherExpired,
@@ -20,6 +20,7 @@ import {
 } from "@/lib/coupons";
 import type { Campaign, VoucherView } from "@/lib/coupons";
 import { isLive } from "@/lib/pos-promotions";
+import { clearCouponLines, findReusableCode, projectReusableCoupon, reusableCodeAllowsCluster } from "@/lib/reusable-coupon-code";
 import type { CartCoupon } from "@/lib/register/use-cart";
 import type { CartLine, Product, Promotion } from "@/core/types/pos-types";
 
@@ -29,6 +30,8 @@ type PromotionsDeps = {
   promotions: Promotion[];
   members: { id: string }[];
   storeId: string;
+  clusterId?: string;
+  setLines: (lines: CartLine[]) => void;
   /** The open ticket. */
   lines: CartLine[];
   /** Bill subtotal after line discounts — the base a bill coupon works off. */
@@ -37,7 +40,6 @@ type PromotionsDeps = {
   setCoupon: (c: CartCoupon | null) => void;
   memberId: string | null;
   setMemberId: (id: string | null) => void;
-  patchLine: (index: number, patch: Partial<CartLine>) => void;
   /** Manager gate for staff without the discount permission. */
   unlockDiscounts: () => Promise<boolean>;
 };
@@ -48,13 +50,14 @@ export function usePromotions(deps: PromotionsDeps) {
     promotions,
     members,
     storeId,
+    clusterId,
+    setLines,
     lines,
     promoBase,
     coupon,
     setCoupon,
     memberId,
     setMemberId,
-    patchLine,
     unlockDiscounts,
   } = deps;
 
@@ -86,30 +89,62 @@ export function usePromotions(deps: PromotionsDeps) {
   async function applyCoupon() {
     const code = couponCode.trim();
     if (!code) return;
-    const rule = promotions.find(
+    const rule = findReusableCode(promotions, code) ?? promotions.find(
       (p) => isLive(p) && p.name.toLowerCase() === code.toLowerCase() && p.value,
     );
     if (!rule) {
       toast.error(`No active promotion matches “${code}”`);
       return;
     }
+    if (!lines.length || promoBase <= 0) {
+      toast.error("Add items to the bill before applying a code");
+      return;
+    }
+    if (rule.type === "code") {
+      if (!reusableCodeAllowsCluster(rule, clusterId)) {
+        toast.error("This code is not valid for this store's cluster");
+        return;
+      }
+      if (!(await unlockDiscounts())) return;
+      const clean = clearCouponLines(lines);
+      const projected = projectReusableCoupon(clean, {
+        code: rule.name, promoId: rule.id, scope: rule.codeScope ?? "bill",
+        discount: 0, appliedAt: new Date().toISOString(), reusable: true,
+      }, promotions, new Date(), clusterId);
+      if (!projected.coupon || projected.coupon.discount <= 0) {
+        toast.error("Nothing on this bill qualifies for that code");
+        return;
+      }
+      setLines(clean);
+      setCoupon(projected.coupon);
+      setVoucherToken(null);
+      logger.log("promotion", "Reusable campaign code applied", "register", {
+        coupon: rule.name, promotionId: rule.id, scope: projected.coupon.scope,
+        clusterId: rule.codeClusterId ?? null, storeId, discountValue: projected.coupon.discount,
+      });
+      setCouponCode("");
+      setCouponOpen(false);
+      toast.success(`Coupon ${rule.name} applied`);
+      return;
+    }
+    const scope = couponScope;
     const targetIndex = lines.findIndex((l) => l.productId === couponLine);
-    if (couponScope === "item" && targetIndex < 0) {
+    if (scope === "item" && targetIndex < 0) {
       toast.error("Pick the item the coupon applies to");
       return;
     }
     if (!(await unlockDiscounts())) return;
+    const clean = clearCouponLines(lines);
+    const cleanBase = r2(clean.reduce((sum, line) => sum + line.price * line.qty - lineDiscountTotal(line), 0));
+    setVoucherToken(null);
     const at = new Date().toISOString();
-    if (couponScope === "item") {
+    if (scope === "item") {
       const line = lines[targetIndex]!;
       const unit = rule.valueType === "percent" ? r2((line.price * (rule.value ?? 0)) / 100) : r2(rule.value ?? 0);
       const value = Math.min(r2(line.price * line.qty), r2(unit * line.qty));
       // The coupon lives in its own field so a cashier discount on the same
       // line adds to it instead of replacing it.
-      patchLine(targetIndex, {
-        couponCode: rule.name,
-        couponDiscount: value,
-      });
+      setLines(clean.map((line, index) => index === targetIndex ? { ...line, couponCode: rule.name, couponDiscount: value } : line));
       setCoupon({
         code: rule.name,
         promoId: rule.id,
@@ -135,11 +170,12 @@ export function usePromotions(deps: PromotionsDeps) {
       // A bill coupon is its own figure — it never occupies the cashier's
       // bill-discount entry, so the two add up instead of replacing each other.
       const value = Math.min(
-        promoBase,
+        cleanBase,
         rule.valueType === "percent"
-          ? r2((promoBase * (rule.value ?? 0)) / 100)
+          ? r2((cleanBase * (rule.value ?? 0)) / 100)
           : r2(rule.value ?? 0),
       );
+      setLines(clean);
       setCoupon({
         code: rule.name,
         promoId: rule.id,
@@ -150,6 +186,8 @@ export function usePromotions(deps: PromotionsDeps) {
       logger.log("promotion", "Coupon applied to the bill", "register", {
         coupon: rule.name,
         promotionId: rule.id,
+        campaignType: rule.type,
+        collaborator: rule.partner ?? null,
         scope: "bill",
         discountValue: value,
         billBase: promoBase,
@@ -206,6 +244,7 @@ export function usePromotions(deps: PromotionsDeps) {
         setMemberId(view.voucher.memberId);
       }
 
+      const clean = clearCouponLines(lines);
       const at = new Date().toISOString();
       if (campaign.scope === "PRODUCT") {
         const index = lines.findIndex((l) => l.productId === campaign.scopeValue);
@@ -215,10 +254,7 @@ export function usePromotions(deps: PromotionsDeps) {
         }
         const line = lines[index]!;
         const value = voucherValue(campaign, r2(line.price * line.qty));
-        patchLine(index, {
-          couponCode: token,
-          couponDiscount: value,
-        });
+        setLines(clean.map((line, i) => i === index ? { ...line, couponCode: token, couponDiscount: value } : line));
         setCoupon({
           code: token,
           promoId: campaign.id,
@@ -238,12 +274,13 @@ export function usePromotions(deps: PromotionsDeps) {
                   .filter((l) => products.find((p) => p.id === l.productId)?.category === campaign.scopeValue)
                   .reduce((a, l) => a + l.price * l.qty, 0),
               )
-            : promoBase;
+            : r2(clean.reduce((sum, line) => sum + line.price * line.qty - lineDiscountTotal(line), 0));
         if (base <= 0) {
           toast.error("Nothing on this bill qualifies for that voucher");
           return;
         }
         const value = voucherValue(campaign, base);
+        setLines(clean);
         setCoupon({
           code: token,
           promoId: campaign.id,
@@ -297,11 +334,7 @@ export function usePromotions(deps: PromotionsDeps) {
   /** Take the coupon off the ticket and record who removed it. */
   function removeCoupon() {
     if (!coupon) return;
-    if (coupon.scope === "item") {
-      const i = lines.findIndex((l) => l.couponCode === coupon.code);
-      // Only the coupon goes; the cashier's own discount on that line stays.
-      if (i >= 0) patchLine(i, { couponCode: undefined, couponDiscount: undefined });
-    }
+    setLines(clearCouponLines(lines, coupon.code));
     logger.log("promotion", "Coupon removed", "register", {
       coupon: coupon.code,
       promotionId: coupon.promoId,

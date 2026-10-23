@@ -120,7 +120,7 @@ export function useStoreGroups(): StoreGroup[] {
   useEffect(() => {
     const listener = () => setValue(readStoreGroups());
     listeners.add(listener);
-    void loadStoreGroups().then(listener);
+    void loadStoreGroups().then(listener).catch(() => { /* Keep the cached picker while offline. */ });
     return () => {
       listeners.delete(listener);
     };

@@ -28,6 +28,8 @@ export type DisplaySnapshot = {
   lines: DisplayLine[];
   subtotal: number;
   discount: number;
+  couponCode?: string;
+  couponDiscount?: number;
   tax: number;
   /** Effective global percentage used on this ticket. */
   taxRate?: number;
