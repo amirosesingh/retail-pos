@@ -18,7 +18,7 @@ import { handleCashierLogin } from "@/routes/api/public/cashier-login";
 const request = (username = "staff1") =>
   new Request("https://pos.test/api/public/cashier-login", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
     body: JSON.stringify({ username, pin: "1234" }),
   });
 
