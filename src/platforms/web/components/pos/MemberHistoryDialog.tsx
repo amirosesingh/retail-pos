@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { formatDateTime as posDisplayDateTime, formatDate as posDisplayDate } from "@/lib/time-zone";
 import { useCallback, useMemo, useState } from "react";
 import { Printer, Search, X } from "lucide-react";
@@ -131,7 +132,7 @@ export function MemberHistoryDialog({
 
             <TabsContent value="bills">
               <ScrollArea className="h-[46vh] rounded-md border border-border">
-                <table className="w-full text-sm">
+                <Table tableId="platforms/web/components/pos/MemberHistoryDialog.native#1" clientDataControls={false} className="w-full text-sm">
                   <thead className="sticky top-0 bg-surface-2 text-[11px] uppercase text-muted-foreground">
                     <tr>
                       <th className="px-3 py-2 text-left">Bill no</th>
@@ -169,7 +170,7 @@ export function MemberHistoryDialog({
                       </tr>
                     )}
                   </tbody>
-                </table>
+                </Table>
               </ScrollArea>
               <p className="mt-2 text-xs text-muted-foreground">
                 {bills.length} bills · {money(totalSpent)} lifetime in range
@@ -178,7 +179,7 @@ export function MemberHistoryDialog({
 
             <TabsContent value="items">
               <ScrollArea className="h-[46vh] rounded-md border border-border">
-                <table className="w-full text-sm">
+                <Table tableId="platforms/web/components/pos/MemberHistoryDialog.native#2" clientDataControls={false} className="w-full text-sm">
                   <thead className="sticky top-0 bg-surface-2 text-[11px] uppercase text-muted-foreground">
                     <tr>
                       <th className="px-3 py-2 text-left">Product</th>
@@ -208,7 +209,7 @@ export function MemberHistoryDialog({
                       </tr>
                     )}
                   </tbody>
-                </table>
+                </Table>
               </ScrollArea>
             </TabsContent>
           </Tabs>

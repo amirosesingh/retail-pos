@@ -39,7 +39,6 @@ import { LiveClock } from "@/platforms/web/components/pos/LiveClock";
 import { ThemeToggle } from "@/platforms/web/components/pos/ThemeToggle";
 import { hydrateBillSequence } from "@/lib/bill-number";
 import { DbConnectionModal } from "@/platforms/windows/components/DbConnectionModal";
-import { UpdateHeaderButton } from "@/platforms/web/components/pos/UpdateHeaderButton";
 import { canSeeNavigationItem, routePermissionForPath, type NavItem } from "@/platforms/web/components/pos/nav-config";
 import { setPrintStore, setPrintSettings, setServiceTerms } from "@/lib/pos-print";
 import { bookingRulesOf } from "@/core/types/pos-types";
@@ -578,7 +577,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 </span>
                 <MobileStatusSheet />
                 {isMobile && <ActivityBell />}
-                {isMobile && <UpdateHeaderButton />}
                 <span className="hidden sm:inline-flex">
                   <ThemeToggle />
                 </span>
@@ -605,7 +603,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                     {terminal.config.locationName || currentStore.name}
                   </Badge>
                 )}
-                {!isMobile && <UpdateHeaderButton />}
                 <ThemeToggle />
                 <ProfileMenu />
               </header>

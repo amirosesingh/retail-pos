@@ -405,7 +405,7 @@ function Dashboard() {
         <section className="rounded-lg border border-border bg-card">
           <h2 className="px-5 py-3 text-sm font-semibold">Cash drawer opens without a sale</h2>
           <Separator />
-          <Table loading={reportLoading}>
+          <Table tableId="routes/dashboard#1" loading={reportLoading}>
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
@@ -443,7 +443,7 @@ function Dashboard() {
           <h2 className="px-5 pt-3 text-sm font-semibold">Split payments today</h2>
           <p className="px-5 pb-3 pt-1 text-xs text-muted-foreground">Bills paid in two or more parts, such as cash and card.</p>
           <Separator />
-          <Table loading={reportLoading}>
+          <Table tableId="routes/dashboard#2" loading={reportLoading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Receipt</TableHead>

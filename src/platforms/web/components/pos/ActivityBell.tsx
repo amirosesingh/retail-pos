@@ -26,8 +26,10 @@ import {
 } from "@/lib/activity-events";
 import { usePosOptional } from "@/lib/pos-store";
 import { humanizeText } from "@/lib/human-readable";
+import { hasStaffSession } from "@/core/api/sync-relay";
 
-const POLL_MS = 15_000;
+const PIN_POLL_MS = 15_000;
+const AUTHENTICATED_POLL_MS = 60_000;
 const activityKey = (row: ActivityEvent) => row.id;
 /** Notifications expire from the live delivery feed after one week. The
  * underlying immutable activity/audit event remains available in Reports. */
@@ -243,7 +245,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         return;
       }
       tick();
-    }, POLL_MS);
+    }, hasStaffSession() ? AUTHENTICATED_POLL_MS : PIN_POLL_MS);
     document.addEventListener("visibilitychange", tick);
     window.addEventListener("pos:activity-cleared-changed", onCleared);
     window.addEventListener("storage", onCleared);

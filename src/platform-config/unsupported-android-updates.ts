@@ -8,5 +8,5 @@ export function useAndroidUpdates(): ReturnType<typeof import("@/platforms/mobil
     url: null, notes: null, checking: false, downloading: false, percent: 0,
     error: null, lastChecked: null, readyUri: null,
   };
-  return { state, available: false, check: async () => {}, install: async () => {}, installDownloaded: async () => {} };
+  return { state, available: false, check: async () => {}, download: async () => null, install: async () => {}, installDownloaded: async () => {} };
 }

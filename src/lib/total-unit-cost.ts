@@ -1,4 +1,4 @@
-/** Planning estimate only. Never used by stock valuation, checkout or profit. */
+/** Configured unit cost for catalog margin; stock valuation and recorded sales keep their own cost snapshots. */
 export type UnitCostRule = { percent: number; amount: number };
 export type TotalUnitCostSettings = {
   defaultRule: UnitCostRule;

@@ -28,8 +28,9 @@ describe("minimal inventory and native update controls", () => {
     expect(renderToStaticMarkup(h(UpdateHeaderButton))).toBe("");
     mocks.updates.supported = true;
     const shell = readFileSync("src/platforms/web/components/pos/AppShell.tsx", "utf8");
-    expect(shell).toContain("{isMobile && <UpdateHeaderButton />}");
-    expect(shell).toContain("{!isMobile && <UpdateHeaderButton />}");
+    expect(shell).not.toContain("<UpdateHeaderButton />");
+    const root = readFileSync("src/routes/__root.tsx", "utf8");
+    expect(root).toContain("<DesktopUpdateBanner />");
   });
   it("keeps one primary update action and puts notes behind disclosure", () => {
     const html = renderToStaticMarkup(h(MinimalUpdatePanel, { updates: mocks.updates as never }));

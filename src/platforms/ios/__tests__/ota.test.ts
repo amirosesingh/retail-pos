@@ -110,7 +110,10 @@ describe("controlled updater", () => {
     deps = {
       updater,
       trust: vi.fn().mockResolvedValue(trust),
-      load: vi.fn().mockResolvedValue(null),
+      load: vi.fn().mockResolvedValue({
+        highest: "1.4.74", failed: [], device: "test", silentDownload: false,
+        autoInstall: false, downloadPreferenceSet: true,
+      }),
       save: vi.fn().mockResolvedValue(undefined),
       safe: () => true,
       preserve: vi.fn().mockResolvedValue(undefined),
@@ -256,6 +259,24 @@ describe("controlled updater", () => {
     expect(service.state.phase).toBe("ready");
     expect(service.state.deferred).toBeTruthy();
     expect(updater.set).not.toHaveBeenCalled();
+  });
+  it("downloads automatically on a fresh installation but waits for the install tap", async () => {
+    vi.mocked(deps.load).mockResolvedValue(null);
+    await service.check(true);
+    expect(updater.download).toHaveBeenCalledOnce();
+    expect(service.state.phase).toBe("ready");
+    expect(updater.set).not.toHaveBeenCalled();
+    expect(service.settings().silentDownload).toBe(true);
+  });
+  it("moves the legacy download default once without overriding a later opt-out", async () => {
+    vi.mocked(deps.load).mockResolvedValue({
+      highest: "1.4.74", failed: [], device: "test", silentDownload: false, autoInstall: false,
+    });
+    await service.check(true);
+    expect(updater.download).toHaveBeenCalledOnce();
+    await service.preferences(false, false);
+    expect(service.settings().silentDownload).toBe(false);
+    expect(deps.save).toHaveBeenCalledWith(expect.objectContaining({ downloadPreferenceSet: true }));
   });
   it("detects rollback from persisted pending activation even without a native event", async () => {
     vi.mocked(deps.load).mockResolvedValue({

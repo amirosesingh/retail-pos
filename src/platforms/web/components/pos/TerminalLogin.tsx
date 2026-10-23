@@ -11,6 +11,7 @@ import { isLocalWebCashierTest, isNative, isTerminalApp } from "@/platform-confi
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { CashierPinLogin } from "@/platforms/web/components/auth/CashierPinLogin";
 import { isExternalEmail, usernameFromAddress } from "@/lib/internal-domains";
+import { passwordUsername } from "@/lib/password-username";
 import { isConfigurationFailure, type LoginFailure } from "@/lib/login-failure";
 
 export function TerminalLogin() {
@@ -94,7 +95,7 @@ export function TerminalLogin() {
                 const typed = email.trim().toLowerCase();
                 // Internal accounts (bare usernames and our own hidden
                 // domains) never use a password — hand them to the keypad.
-                if (terminal && typed && !isExternalEmail(typed)) {
+                if (terminal && typed && !isExternalEmail(typed) && !passwordUsername(typed)) {
                   setPinIdentifier(usernameFromAddress(typed));
                   setRouted(true);
                   setError("");
@@ -119,7 +120,7 @@ export function TerminalLogin() {
                   id="email"
                   type="text"
                   autoComplete="email"
-                  placeholder="supervisor@store.com"
+                  placeholder="Email or @username"
                   value={email}
                   onChange={(e) => {
                     setEmail(e.target.value);
@@ -164,7 +165,7 @@ export function TerminalLogin() {
               </Button>
               <p className="text-[11px] leading-relaxed text-muted-foreground">
                 {terminal
-                  ? "Supervisor and admin accounts sign in with email and password; cashiers use the PIN tab."
+                  ? "Password accounts use email or @username; cashiers use the PIN tab."
                   : "Cashier PIN sign-in is only available on the desktop and mobile terminal apps."}
               </p>
             </form>

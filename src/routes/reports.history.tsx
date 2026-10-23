@@ -201,7 +201,7 @@ function EditHistoryReport() {
         ) : (
           <>
             <div className="overflow-x-auto rounded-2xl border border-border bg-card">
-              <Table>
+              <Table tableId="routes/reports.history#1">
                 <TableHeader>
                   <TableRow>
                     <TableHead>When</TableHead>

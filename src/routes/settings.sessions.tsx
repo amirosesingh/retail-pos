@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -112,7 +113,7 @@ function ActiveSessions() {
         <span>Updates automatically</span>
       </div>
       <div className="overflow-x-auto rounded-xl border border-border">
-        <table className="w-full text-left text-xs">
+        <Table tableId="routes/settings.sessions.native#1" clientDataControls={false} className="w-full text-left text-xs">
           <caption className="sr-only">Active sessions, page {currentPage} of {pageCount}</caption>
           <thead className="bg-muted/50 text-muted-foreground">
             <tr>
@@ -154,7 +155,7 @@ function ActiveSessions() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       <nav aria-label="Session pages" className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">Page {currentPage} of {pageCount} · {activeRows.length} sessions</span>

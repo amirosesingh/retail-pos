@@ -77,7 +77,7 @@ import type { Product } from "@/core/types/pos-types";
 import { nextSku, peekSku, readSkuSettings } from "@/lib/sku";
 import { localTerminalId } from "@/lib/shift-hours";
 import { cn } from "@/lib/utils";
-import { inventoryMetrics, isLowStock, needsCostReview, productMargin } from "@/lib/inventory-metrics";
+import { inventoryMetrics, inventoryUnitMargin, isLowStock, needsCostReview } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
 import { totalUnitCost } from "@/lib/total-unit-cost";
 import { TotalUnitCostDialog } from "@/platforms/web/components/pos/TotalUnitCostDialog";
@@ -252,7 +252,7 @@ function Inventory() {
       if (showMoney && costReviewOnly && !needsCostReview(p.cost)) return false;
       if (minPrice !== "" && p.price < Number(minPrice)) return false;
       if (maxPrice !== "" && p.price > Number(maxPrice)) return false;
-      const margin = productMargin(p.price, p.cost);
+      const margin = inventoryUnitMargin(p, state.settings.integrations.totalUnitCost);
       if (minMargin !== "" && (margin === null || margin < Number(minMargin))) return false;
       if (!needle) return true;
       // Cheapest fields first — most searches stop on the name.
@@ -1133,7 +1133,7 @@ function Inventory() {
         )}
 
         <div className="rounded-lg border border-border bg-card">
-          <Table className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget}>
+          <Table tableId="routes/inventory#1" className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
@@ -1149,7 +1149,7 @@ function Inventory() {
                 {showMoney && <TableHead className="min-w-24 text-right" title="Supplier purchase cost before freight or overhead">Purchase Cost</TableHead>}
                 {showMoney && <TableHead className="min-w-28 text-right" title="Estimated purchase cost plus allocated charges and overhead">Total Unit Cost</TableHead>}
                 <TableHead className="min-w-24 text-right">Price</TableHead>
-                {showMoney && <TableHead className="min-w-24 text-right">Margin</TableHead>}
+                {showMoney && <TableHead className="min-w-24 text-right" title="Selling price less Total Unit Cost, divided by selling price">Margin</TableHead>}
                 {canEcom && <TableHead className="min-w-24 text-center">On web</TableHead>}
                 <TableHead className="min-w-24 text-center">Stock · {currentStore.code}</TableHead>
                 <TableHead className="min-w-24 text-center">Other stores</TableHead>
@@ -1195,7 +1195,7 @@ function Inventory() {
                   <TableCell className="numeric text-right">{money(p.price)}</TableCell>
                   {showMoney && (
                     <TableCell className="inventory-detail numeric text-right text-accent">
-                      {productMargin(p.price, p.cost) === null ? "—" : `${Math.round(productMargin(p.price, p.cost)!)}%`}
+                      {inventoryUnitMargin(p, state.settings.integrations.totalUnitCost) === null ? "—" : `${Math.round(inventoryUnitMargin(p, state.settings.integrations.totalUnitCost)!)}%`}
                     </TableCell>
                   )}
                   {canEcom && (
@@ -1354,7 +1354,7 @@ function Inventory() {
               barcode, alias, or variant code.
             </p>
           </DialogHeader>
-          <Table>
+          <Table tableId="routes/inventory#2">
             <TableHeader>
               <TableRow>
                 <TableHead>Duplicate code</TableHead>

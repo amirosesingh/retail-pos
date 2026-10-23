@@ -404,7 +404,7 @@ function StockOperationsPage() {
                 </article>)}
               </div>
               <div className="hidden overflow-x-auto rounded-xl border border-border md:block">
-                <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+                <Table tableId="routes/stock-operations#1" managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Reference</TableHead>

@@ -37,7 +37,7 @@ describe("Electron activity preferences", () => {
     const bell = source("src/platforms/web/components/pos/ActivityBell.tsx");
 
     expect(activity).toContain("bridge?.onBusinessChanged");
-    expect(activity).toContain("cleanups.push(bridge.onBusinessChanged(() => onChange()))");
+    expect(activity).toContain('tables.includes("activity_events")');
     expect(activity).toContain("Local SQL notifications still work");
     expect(bell).toContain("toast.dismiss(`activity-${id}`)");
     expect(bell).toContain("toast.dismiss(`activity-${row.id}`)");

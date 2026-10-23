@@ -155,6 +155,7 @@ export function ReportReceiptLink({ sale, receiptNo }: { sale?: Sale; receiptNo?
               </dl>
               <div className="overflow-hidden rounded-xl border border-border">
                 <ReportTable
+                  tableId="platforms/web/components/pos/ReportReceiptLink#1"
                   clientDataControls={false}
                   mobileCards={false}
                   className="[&_td]:py-2 [&_th]:py-2 [&_td]:text-xs"

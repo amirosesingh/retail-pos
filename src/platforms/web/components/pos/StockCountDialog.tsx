@@ -110,7 +110,7 @@ export function ReviewTable({
   }
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
-      <Table managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+      <Table tableId="platforms/web/components/pos/StockCountDialog#1" managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
         <TableHeader>
           <TableRow>
             <TableHead>SKU</TableHead>

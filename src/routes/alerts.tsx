@@ -274,7 +274,7 @@ function AlertsHistory() {
               {busy ? "Updating…" : "Select an alert to see full details"}
             </span>
           </div>
-          <Table clientDataControls={false} className="report-table text-sm">
+          <Table tableId="routes/alerts#1" clientDataControls={false} className="report-table text-sm">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[42%]">Alert</TableHead>

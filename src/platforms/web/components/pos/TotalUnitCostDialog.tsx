@@ -33,7 +33,7 @@ export function TotalUnitCostDialog({ open, onOpenChange, selected, initialTarge
   return <Dialog open={open} onOpenChange={value => { if (!busy) onOpenChange(value); }}>
     <DialogContent className="sm:max-w-lg">
       <DialogHeader><DialogTitle>Total Unit Cost</DialogTitle></DialogHeader>
-      <p className="text-xs text-muted-foreground">Purchase Cost is the supplier cost before charges. Total Unit Cost adds your percentage and per-unit amount. Existing stock valuation and profit stay unchanged.</p>
+      <p className="text-xs text-muted-foreground">Purchase Cost is the supplier cost before charges. Total Unit Cost adds your percentage and per-unit amount, and determines the catalog margin. Existing stock valuation and historical sale profit stay unchanged.</p>
       {productName && <p className="rounded-md bg-muted/40 px-3 py-2 text-sm font-medium">{productName}</p>}
       <div className="space-y-2">
         <Label htmlFor="unit-cost-target">Apply to</Label>

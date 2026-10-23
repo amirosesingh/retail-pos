@@ -31,6 +31,8 @@ import { issueCashierSession } from "@/lib/pos-session.functions";
 import { startDeviceSession, endDeviceSession } from "@/lib/user-sessions-client";
 import { loadSessionToken, saveSessionToken } from "@/lib/pos-credentials";
 import { toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
+import { passwordUsername } from "@/lib/password-username";
+import { supabaseConfig } from "@/lib/external-supabase-config";
 import { activeBranchId, activeBranchName, bindTerminalBranch } from "@/lib/active-branch";
 import { verifyCachedPin } from "@/lib/offline-credentials";
 import { recordSignIn } from "@/lib/shift-attendance";
@@ -623,10 +625,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let data;
       let error;
       try {
-        ({ data, error } = await supabase.auth.signInWithPassword({
-          email: address,
-          password,
-        }));
+        const alias = passwordUsername(email);
+        if (alias) {
+          const { signInWithPasswordUsername } = await import("@/lib/password-username-client");
+          const result = await signInWithPasswordUsername({ data: {
+            username: alias, password, projectUrl: supabaseConfig().url,
+          } });
+          if (!result.ok) return { ok: false, code: result.code, error: loginFailureMessage(result.code) };
+          ({ data, error } = await supabase.auth.setSession({
+            access_token: result.accessToken, refresh_token: result.refreshToken,
+          }));
+        } else {
+          ({ data, error } = await supabase.auth.signInWithPassword({ email: address, password }));
+        }
       } catch (failure) {
         const code = failureFromAuthError(failure as Error);
         return { ok: false, code, error: loginFailureMessage(code) };

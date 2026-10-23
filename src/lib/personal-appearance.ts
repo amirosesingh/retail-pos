@@ -1,6 +1,6 @@
 import { subscribeOwnedPostgresChanges } from "./owned-postgres-subscription";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { useAuth } from "./pos-auth";
+import { useAuthOptional } from "./pos-auth";
 import { readCredentials } from "./pos-credentials";
 import { supabaseConfig } from "./external-supabase-config";
 import { DEFAULT_PERSONAL_APPEARANCE, personalAppearanceSchema, type PersonalAppearance } from "./personal-appearance-schema";
@@ -61,11 +61,11 @@ async function flush(key: string, owner: string, epoch: number): Promise<void> {
 }
 
 export function usePersonalAppearance() {
-  const { user, can } = useAuth();
-  const owner = user?.staffId ?? "";
+  const auth = useAuthOptional();
+  const owner = auth?.user?.staffId ?? "";
   const key = owner ? appearanceCacheKey(supabaseConfig().url, owner) : "";
   const entry = useSyncExternalStore(subscribe, () => read(key), () => empty);
-  const editable = !!owner && can("can_customize_display");
+  const editable = !!owner && !!auth?.can("can_customize_display");
   const update = useCallback((patch: Partial<PersonalAppearance>) => {
     if (!key || !editable) return;
     const current = read(key);

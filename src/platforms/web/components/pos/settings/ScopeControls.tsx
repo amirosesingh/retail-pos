@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { canEditSettingsScope } from "@/lib/settings-edit-policy";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
@@ -226,7 +227,7 @@ export function SectionScope({
             </DialogDescription>
           </DialogHeader>
           <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full min-w-[760px] text-left text-xs">
+            <Table tableId="platforms/web/components/pos/settings/ScopeControls.native#1" clientDataControls={false} className="w-full min-w-[760px] text-left text-xs">
               <thead className="bg-muted/60">
                 <tr>
                   <th className="px-3 py-2 font-medium">Setting</th>
@@ -260,7 +261,7 @@ export function SectionScope({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
           <p className="text-xs text-muted-foreground">
             Next edit target: <strong>{TIER_LABELS[active]}</strong>.{" "}

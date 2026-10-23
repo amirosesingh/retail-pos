@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -106,10 +107,10 @@ export function LocalDatabaseOperations() {
             <span role="status" className="text-muted-foreground">{sync.paused ? "Paused" : sync.running ? label(sync.phase) : sync.pending ? "Waiting to upload" : "Up to date"}</span>
             <span className="text-muted-foreground">{Number(sync.pending ?? 0).toLocaleString()} pending</span>
           </div>
-          <div className="overflow-x-auto rounded-md border"><table className="w-full text-left text-xs"><thead className="bg-muted/40"><tr><th className="px-3 py-2">Table</th><th className="px-3 py-2">Activity</th><th className="px-3 py-2">Rows</th><th className="px-3 py-2">Updated</th></tr></thead><tbody>
+          <div className="overflow-x-auto rounded-md border"><Table tableId="platforms/windows/components/LocalDatabaseOperations.native#1" clientDataControls={false} className="w-full text-left text-xs"><thead className="bg-muted/40"><tr><th className="px-3 py-2">Table</th><th className="px-3 py-2">Activity</th><th className="px-3 py-2">Rows</th><th className="px-3 py-2">Updated</th></tr></thead><tbody>
             {activeTable ? <tr className="border-t"><td className="px-3 py-2 font-medium">{activeTable}</td><td className="px-3 py-2">{direction} now</td><td className="px-3 py-2">—</td><td className="px-3 py-2">{when(sync.lastProgressAt ?? sync.startedAt)}</td></tr> : null}
             {queuedTables.slice(0, 5).map((row) => <tr key={row.table} className="border-t"><td className="px-3 py-2">{row.table}</td><td className="px-3 py-2">{row.failed ? "Needs attention" : "Queued to upload"}</td><td className="px-3 py-2">{row.pending}</td><td className="px-3 py-2">—</td></tr>)}
-          </tbody></table>
+          </tbody></Table>
             {!activeTable && !queuedTables.length ? <p className="px-3 py-2 text-xs text-muted-foreground">No active or pending table transfers.</p> : null}
             {queuedTables.length > 5 ? <p className="border-t px-3 py-2 text-xs text-muted-foreground">+{queuedTables.length - 5} more pending tables in More settings</p> : null}
           </div>

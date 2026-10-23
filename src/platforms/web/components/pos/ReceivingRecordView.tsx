@@ -53,7 +53,7 @@ export function ReceivingRecordView({
               <Meta label="Branch" value={record.storeCode ?? "—"} />
             </dl>
 
-            <Table managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+            <Table tableId="platforms/web/components/pos/ReceivingRecordView#1" managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Item number / SKU</TableHead>

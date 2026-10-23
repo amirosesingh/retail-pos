@@ -109,7 +109,7 @@ function RequestsIndex() {
         </div>
 
         <div className="rounded-lg border border-border">
-          <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
+          <Table tableId="routes/requests.index#1" managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
             <TableHeader>
               <TableRow>
                 <TableHead>Reference</TableHead>

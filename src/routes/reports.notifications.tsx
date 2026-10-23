@@ -247,7 +247,7 @@ function NotificationsReport() {
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table>
+          <Table tableId="routes/reports.notifications#1">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-44">When</TableHead>

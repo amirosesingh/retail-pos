@@ -86,7 +86,7 @@ function ReceivingIndex() {
         </header>
 
         <div className="rounded-lg border border-border">
-          <Table>
+          <Table tableId="routes/receiving.index#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Reference</TableHead>

@@ -28,7 +28,9 @@ describe("operational table controls", () => {
   it("hides both header and body cells while keeping correct empty-state spans", () => {
     const hidden = hideTableColumns([head, body], [1]);
     const html = renderToStaticMarkup(h(Table, null, hidden));
-    expect(html.match(/display:none/g)).toHaveLength(31);
+    expect(html).not.toContain("Quantity");
+    expect(html.match(/<th\b/g)).toHaveLength(1);
+    expect(html.match(/<td\b/g)).toHaveLength(30);
     const empty = h(TableBody, null, h(TableRow, null, h(TableCell, {colSpan:2}, "No items")));
     expect(renderToStaticMarkup(h(Table, null, hideTableColumns(empty, [1])))).toContain('colSpan="1"');
   });

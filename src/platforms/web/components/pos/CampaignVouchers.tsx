@@ -239,7 +239,7 @@ export function CampaignVouchers({
             </p>
           </div>
         ) : (
-          <Table>
+          <Table tableId="platforms/web/components/pos/CampaignVouchers#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Token</TableHead>

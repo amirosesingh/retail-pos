@@ -131,7 +131,7 @@ function Suppliers() {
         />
 
         <div className="overflow-auto rounded-lg border border-border">
-          <Table>
+          <Table tableId="routes/suppliers#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Supplier</TableHead>

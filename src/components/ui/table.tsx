@@ -6,6 +6,10 @@ import { cn } from "@/lib/utils";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { useAuthOptional } from "@/lib/pos-auth";
+import { usePosOptional } from "@/lib/pos-store";
+import { usePersonalAppearance } from "@/lib/personal-appearance";
+import { catalogColumnPositions, tableColumnHidden } from "@/lib/table-column-policy";
 
 type TableSortDirection = "asc" | "desc";
 type TableSortState = { column: number; direction: TableSortDirection } | null;
@@ -290,7 +294,10 @@ function assignHeaderColumns(node: React.ReactNode): React.ReactNode {
 function isTableComponent(node: React.ReactNode, component: unknown, displayName: string): boolean {
   if (!React.isValidElement(node)) return false;
   if (node.type === component) return true;
-  if (typeof node.type === "string") return false;
+  if (typeof node.type === "string") {
+    const intrinsic = { TableHeader: "thead", TableBody: "tbody", TableFooter: "tfoot", TableRow: "tr", TableHead: "th", TableCell: "td" } as Record<string, string>;
+    return node.type === intrinsic[displayName];
+  }
   const named = node.type as { displayName?: string; name?: string };
   return named.displayName === displayName || named.name === displayName;
 }
@@ -548,7 +555,7 @@ export function hideTableColumns(nodes: React.ReactNode, hidden: number[]): Reac
         const span = Number(cell.props.colSpan ?? 1);
         const remaining = Array.from({ length: span }, (_, offset) => column + offset).filter(index => !hidden.includes(index)).length;
         column += span;
-        return React.cloneElement(cell, { colSpan: span > 1 ? Math.max(1, remaining) : undefined, style: { ...cell.props.style, ...(remaining ? {} : { display: "none" }) } });
+        return remaining ? React.cloneElement(cell, { colSpan: span > 1 ? remaining : undefined }) : null;
       }));
     }
     return React.cloneElement(node, undefined, hideTableColumns(node.props.children, hidden));
@@ -568,6 +575,8 @@ function loadingTableBodies(nodes: React.ReactNode, columns: number): React.Reac
 }
 
 type TableProps = React.HTMLAttributes<HTMLTableElement> & {
+  /** Stable key shared by the personal view and administrator column rules. */
+  tableId?: string;
   loading?: boolean;
   loadingLabel?: string;
   /** Opt-in controls for operational tables; all rows must be supplied. */
@@ -584,9 +593,13 @@ type TableProps = React.HTMLAttributes<HTMLTableElement> & {
 };
 
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
-  ({ className, children, loading = false, loadingLabel, mobileCards = true, clientDataControls = true, managed = false, columnControls = false, layoutControls = false, controlsTarget, summaryFormats = {}, ...props }, ref) => {
+  ({ className, children, loading = false, loadingLabel, mobileCards = true, clientDataControls = true, managed = false, columnControls = false, layoutControls = false, controlsTarget, summaryFormats = {}, tableId, ...props }, ref) => {
     const [layout, setLayout] = React.useState<"auto" | "table" | "compact">("auto");
-    const [hiddenColumns, setHiddenColumns] = React.useState<number[]>([]);
+    const { profile, editable, update } = usePersonalAppearance();
+    const auth = useAuthOptional();
+    const user = auth?.user;
+    const isAdmin = auth?.isAdmin ?? false;
+    const pos = usePosOptional();
     const internalRef = React.useRef<HTMLTableElement>(null);
     React.useImperativeHandle(ref, () => internalRef.current as HTMLTableElement, []);
     const [sort, setSort] = React.useState<TableSortState>(null);
@@ -653,6 +666,18 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
       if (labels.length) break;
     }
     const labelSignature = labels.join("\u001f");
+    const columnPositions = tableId ? catalogColumnPositions(tableId, labels) : labels.map((_, index) => index);
+    const personalHidden = tableId ? (profile.tableViews[tableId] ?? []) : [];
+    const role = isAdmin ? "admin" : (user?.metaRole ?? user?.role ?? null);
+    const rules = (pos?.state.settings.visibility?.hidden ?? {}) as Record<string, string[]>;
+    const fixedColumn = (column: number) => column === 0 || /^(actions?|open)$/i.test(labels[column] ?? "");
+    const hiddenColumns = labels.flatMap((_, column) => !fixedColumn(column) && (
+      personalHidden.includes(columnPositions[column]!) || (tableId && tableColumnHidden(rules, tableId, columnPositions[column]!, role, user?.staffId ?? null))
+    ) ? [column] : []);
+    const saveHiddenColumns = (next: number[]) => {
+      if (!tableId || !editable) return;
+      update({ tableViews: { ...profile.tableViews, [tableId]: next } });
+    };
     const previousLabelSignature = React.useRef(labelSignature);
     React.useEffect(() => {
       if (previousLabelSignature.current === labelSignature) return;
@@ -661,7 +686,6 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
       setFilters({});
       setActiveFilter(null);
       setWidths({});
-      setHiddenColumns([]);
       resizeCleanupRef.current?.();
     }, [labelSignature]);
     const labelled = React.Children.map(children, (child) => labelTableBodies(child, labels));
@@ -677,7 +701,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
     const pagedContent = managed ? replaceManagedRows(content, pagination.pageItems) : content;
     const hasRows = getManagedRows(content).length > 0;
     const displayContent = loading && !hasRows ? loadingTableBodies(pagedContent, Math.max(1, labels.length)) : pagedContent;
-    const displayedContent = managed || columnControls ? hideTableColumns(displayContent, hiddenColumns) : displayContent;
+    const displayedContent = tableId || managed || columnControls ? hideTableColumns(displayContent, hiddenColumns) : displayContent;
     const controls = React.useMemo<TableControls>(
       () => ({
         clientDataControls,
@@ -711,11 +735,12 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
                 <DropdownMenuSeparator />
               </>}
               <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
-              {labels.map((label, column) => label && <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} disabled={column === 0 || /^(actions?|open)$/i.test(label)} onSelect={event => event.preventDefault()} onCheckedChange={checked => {
-                setHiddenColumns(current => checked ? current.filter(value => value !== column) : [...current, column]);
+              {labels.map((label, column) => label && <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} disabled={fixedColumn(column) || !editable || (!!tableId && tableColumnHidden(rules, tableId, columnPositions[column]!, role, user?.staffId ?? null))} onSelect={event => event.preventDefault()} onCheckedChange={checked => {
+                const position = columnPositions[column]!;
+                saveHiddenColumns(checked ? personalHidden.filter(value => value !== position) : [...personalHidden, position]);
                 if (!checked) { setFilter(column, ""); if (activeFilter === column) setActiveFilter(null); }
               }}>{label}</DropdownMenuCheckboxItem>)}
-              <DropdownMenuSeparator /><DropdownMenuItem onSelect={() => { setHiddenColumns([]); if (layoutControls) { setLayout("auto"); setWidths({}); } }}>{layoutControls ? "Reset view" : "Show all columns"}</DropdownMenuItem>
+              <DropdownMenuSeparator /><DropdownMenuItem disabled={!editable} onSelect={() => { saveHiddenColumns([]); if (layoutControls) { setLayout("auto"); setWidths({}); } }}>{layoutControls ? "Reset view" : "Show all columns"}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>);
     return (
@@ -731,7 +756,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
           </div>
           {columnMenu}
         </div>}
-        {!managed && columnControls && (controlsTarget ? createPortal(columnMenu, controlsTarget) : <div className="flex justify-end px-3 py-2">{columnMenu}</div>)}
+        {!managed && (columnControls || tableId) && labels.length > 1 && (controlsTarget ? createPortal(columnMenu, controlsTarget) : <div className="flex justify-end px-3 py-2">{columnMenu}</div>)}
         <div className="responsive-table-region relative min-w-0 w-full max-w-full overflow-x-auto overscroll-x-contain">
           <table
             ref={internalRef}
