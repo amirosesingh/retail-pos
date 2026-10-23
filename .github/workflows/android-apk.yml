@@ -201,8 +201,9 @@ jobs:
           aapt=$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name aapt | sort -V | tail -n1)
           if [ -z "$aapt" ]; then echo "Android build tools are missing aapt"; exit 1; fi
           actual_version=$("$aapt" dump badging "$src" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p" | head -n1)
-          if [ "$actual_version" != "$v" ]; then
-            echo "APK versionName '$actual_version' does not match release version '$v'"; exit 1
+          expected_version=$(node -p "require('./scripts/release-version.cjs').displayVersion(require('./package.json').version)")
+          if [ "$actual_version" != "$expected_version" ]; then
+            echo "APK versionName '$actual_version' does not match expected display version '$expected_version' for release '$v'"; exit 1
           fi
           cp "$src" "versioned/android/Retail-$v.apk"
           cp "$src" "latest/android/Retail-$v.apk"
