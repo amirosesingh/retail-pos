@@ -71,7 +71,7 @@ export async function unlockOfflineApprovalToken(pin: string) {
     const terminal = readTerminalConfig();
     const v = await readVault();
     const { validOfflineVault, openOfflineToken } = await import("./approval-offline-vault");
-    if (!terminal?.tokenId || !v || !validOfflineVault(v, terminal.tokenId, supabaseConfig().url)) throw new Error("Connect to the internet to renew the approval token.");
+    if (!terminal?.tokenId || !v || !validOfflineVault(v, terminal.tokenId, supabaseConfig().url)) throw new Error("Connect to the internet to renew the soft token.");
     if (v.retryAfter > Date.now()) throw new Error("Too many attempts. Wait before trying again.");
     // Persist the attempt before decrypting; closing the app cannot reset it.
     v.failures += 1;
@@ -83,7 +83,7 @@ export async function unlockOfflineApprovalToken(pin: string) {
       v.failures = 0; v.retryAfter = 0;
       await saveVault(v);
       return token;
-    } catch { throw new Error("Incorrect token unlock PIN. Wait before trying again."); }
+    } catch { throw new Error("Incorrect soft token unlock PIN. Wait before trying again."); }
   });
 }
 async function store() {
@@ -200,7 +200,7 @@ async function enroll(userId: string) {
   if (!binding) return;
   const result = await approvalCredentialCall("enroll", await getPosCallerAuth());
   if (version !== revision || binding !== (await sessionBinding())) return;
-  if (!result.ok) throw new Error(result.error || "Could not refresh approval token");
+  if (!result.ok) throw new Error(result.error || "Could not refresh soft token");
   if (!result.credential) {
     await clearApprovalToken();
     await withVault(async () => { if ((await readVault())?.userId.toLowerCase() === userId.toLowerCase()) await removeVault(); });

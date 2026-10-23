@@ -144,45 +144,45 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
   if (!visibleToken && !visibleOwner && !visibleUnlocked && !maySetUp) return null;
   return (
     <>
-      <Button variant="outline" size={compact ? "icon" : "sm"} aria-label="Approval token" onClick={() => setOpen(true)}>
-        <ShieldCheck className="size-4" /> {!compact && (visibleToken && !visibleOwner ? "Register offline token" : !displayed && !visibleOwner ? "Set up approval token" : "Approval token")}
+      <Button variant="outline" size={compact ? "icon" : "sm"} aria-label="Soft token" onClick={() => setOpen(true)}>
+        <ShieldCheck className="size-4" /> {!compact && (visibleToken && !visibleOwner ? "Register soft token" : !displayed && !visibleOwner ? "Set up soft token" : "Soft token")}
       </Button>
       <Dialog open={open} onOpenChange={value => { if (value) setOpen(true); else close(); }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Approval token</DialogTitle>
+            <DialogTitle>Soft token</DialogTitle>
           </DialogHeader>
           {(displayed || visibleOwner) && <p className="text-sm">{(displayed || visibleOwner)?.name} · {(displayed || visibleOwner)?.userId}</p>}
           {!displayed && !visibleOwner && maySetUp && <div className="space-y-3">
-            <p className="text-xs text-muted-foreground">Connect once to register your permitted approval token on this device. Then set an unlock PIN to use it from the sign-in screen offline.</p>
+            <p className="text-xs text-muted-foreground">Connect once to register your permitted soft token on this device. Then set an unlock PIN to use it from the sign-in screen offline.</p>
             <Button disabled={busy} onClick={async () => {
               setBusy(true); setError("");
               try {
-                if (!navigator.onLine) throw new Error("Connect once to register this token. An already registered token can still be unlocked offline.");
+                if (!navigator.onLine) throw new Error("Connect once to register this soft token. An already registered soft token can still be unlocked offline.");
                 await enrollOwnApprovalToken(appUser!.user_id);
                 const value = await loadApprovalToken();
-                if (!value) throw new Error("This device or account is not enabled for approval tokens. Ask an administrator to check both settings and the approval rule.");
+                if (!value) throw new Error("This device or account is not enabled for soft tokens. Ask an administrator to check both settings and the approval rule.");
                 setToken(value);
-              } catch (e) { setError(e instanceof Error ? e.message : "Could not register approval token"); }
+              } catch (e) { setError(e instanceof Error ? e.message : "Could not register soft token"); }
               finally { setBusy(false); }
-            }}>Retry token registration</Button>
+            }}>Retry soft token registration</Button>
           </div>}
           {!displayed && visibleOwner && !visibleOwner.expired && <form className="space-y-3" onSubmit={async event => {
             event.preventDefault(); if (busy) return; setBusy(true); setError("");
             try { const ticket = ++unlockGeneration.current; const value = await unlockOfflineApprovalToken(pin); if (!document.hidden && ticket === unlockGeneration.current) setUnlocked(value); setPin(""); }
-            catch (e) { setError(e instanceof Error ? e.message : "Could not unlock token"); }
+            catch (e) { setError(e instanceof Error ? e.message : "Could not unlock soft token"); }
             finally { setBusy(false); }
           }}>
-            <label className="text-sm" htmlFor="token-unlock-pin">Token unlock PIN</label>
+            <label className="text-sm" htmlFor="token-unlock-pin">Soft token unlock PIN</label>
             <input id="token-unlock-pin" className="h-10 w-full rounded-md border bg-background px-3" type="password" inputMode="numeric" autoComplete="off" maxLength={12} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ""))} />
-            <Button disabled={busy || pin.length < 6} type="submit">Unlock token</Button>
-            <p className="text-xs text-muted-foreground">Unlocks only this approval token. You remain signed out of the POS.</p>
+            <Button disabled={busy || pin.length < 6} type="submit">Unlock soft token</Button>
+            <p className="text-xs text-muted-foreground">Unlocks only this soft token. You remain signed out of the POS.</p>
           </form>}
-          {visibleOwner?.expired && <p className="text-xs text-amber-700 dark:text-amber-400">Connect to the internet to renew the approval token.</p>}
+          {visibleOwner?.expired && <p className="text-xs text-amber-700 dark:text-amber-400">Connect to the internet to renew the soft token.</p>}
           {displayed && <>
           <p
             className="numeric text-center text-3xl font-semibold tracking-[0.2em]"
-            aria-label="Your approval token"
+            aria-label="Your soft token"
           >
             {code || "••••••••"}
           </p>
@@ -193,22 +193,22 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
             Choose Soft token and enter this code in the approval field. Your account is identified automatically; your approval permissions and
             limits still apply.
           </p>
-          {renewalNeeded && <p className="text-xs text-amber-700 dark:text-amber-400">Connect to the internet to renew the approval token.</p>}
+          {renewalNeeded && <p className="text-xs text-amber-700 dark:text-amber-400">Connect to the internet to renew the soft token.</p>}
           </>}
-          {visibleToken && visibleOwner && !replacePin && <Button variant="outline" size="sm" onClick={() => { setPin(""); setConfirmation(""); setReplacePin(true); }}>Change token unlock PIN</Button>}
+          {visibleToken && visibleOwner && !replacePin && <Button variant="outline" size="sm" onClick={() => { setPin(""); setConfirmation(""); setReplacePin(true); }}>Change soft token unlock PIN</Button>}
           {visibleToken && (!visibleOwner || replacePin) && <div className="space-y-2 border-t pt-3">
             <p className="text-xs text-muted-foreground">Register this signed-in user’s token on this device with a separate 6–12 digit unlock PIN. You can then open it from the login screen without internet. This replaces any other saved token owner on this device.</p>
-            <label className="text-sm" htmlFor="token-setup-pin">New token unlock PIN</label>
+            <label className="text-sm" htmlFor="token-setup-pin">New soft token unlock PIN</label>
             <input id="token-setup-pin" className="h-10 w-full rounded-md border bg-background px-3" type="password" inputMode="numeric" autoComplete="new-password" maxLength={12} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ""))} />
             <label className="text-sm" htmlFor="token-confirm-pin">Confirm unlock PIN</label>
             <input id="token-confirm-pin" className="h-10 w-full rounded-md border bg-background px-3" type="password" inputMode="numeric" autoComplete="new-password" maxLength={12} value={confirmation} onChange={e => setConfirmation(e.target.value.replace(/\D/g, ""))} />
             <Button disabled={busy || pin.length < 6} onClick={async () => {
               if (pin !== confirmation) { setError("Unlock PINs must match."); return; }
               setBusy(true); setError("");
-              try { await setupOfflineApprovalToken(pin); setPin(""); setConfirmation(""); setReplacePin(false); setError("Offline token access saved."); }
-              catch (e) { setError(e instanceof Error ? e.message : "Could not save token access"); }
+              try { await setupOfflineApprovalToken(pin); setPin(""); setConfirmation(""); setReplacePin(false); setError("Soft token access saved."); }
+              catch (e) { setError(e instanceof Error ? e.message : "Could not save soft token access"); }
               finally { setBusy(false); }
-            }}>Register offline token</Button>
+            }}>Register soft token</Button>
           </div>}
           {error && <p role="status" className="text-sm">{error}</p>}
         </DialogContent>

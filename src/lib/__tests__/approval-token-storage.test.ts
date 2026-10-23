@@ -142,7 +142,7 @@ it("keeps a device-bound token offline for 30 days and then requires online rene
   expect((await unlockOfflineApprovalToken("874392")).userId).toBe("manager");
   vi.spyOn(Date, "now").mockReturnValue(enrolledAt + 31 * 86400000);
   expect(await offlineTokenOwner()).toMatchObject({ userId: "manager", expired: true });
-  await expect(unlockOfflineApprovalToken("874392")).rejects.toThrow("Connect to the internet to renew the approval token");
+  await expect(unlockOfflineApprovalToken("874392")).rejects.toThrow("Connect to the internet to renew the soft token");
 });
 it("renews the saved device token after a successful online permission check", async () => {
   const enrolledAt = Date.now();
