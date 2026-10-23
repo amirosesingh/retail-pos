@@ -4,6 +4,7 @@ import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { setRuntimeEnv, supabaseConfig } from "./lib/external-supabase-config";
 import { withWebSecurityHeaders } from "./lib/web-security-headers";
+import { appleAppAssociation } from "./lib/apple-app-association";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -69,6 +70,8 @@ export default {
       // Cloudflare passes variables and secrets per request, so hand them to
       // the configuration module before anything tries to reach the database.
       setRuntimeEnv(env);
+      const association = appleAppAssociation(request, env);
+      if (association) return secure(association);
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return secure(await normalizeCatastrophicSsrResponse(response));

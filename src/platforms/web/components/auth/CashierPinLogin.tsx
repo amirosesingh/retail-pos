@@ -318,7 +318,7 @@ export function CashierPinLogin({
           <Label htmlFor="pin-username">Or enter a username</Label>
           <Input
             id="pin-username"
-            autoComplete="username"
+            autoComplete="off"
             placeholder="cashier101"
             value={draft}
             onChange={(e) => {
@@ -471,7 +471,7 @@ export function CashierPinLogin({
             id="pin-passcode"
             type="password"
             autoFocus
-            autoComplete="current-password"
+            autoComplete="off"
             {...(passcodeAccount
               ? { maxLength: 64 }
               : { inputMode: "numeric" as const, pattern: "[0-9]*", maxLength: 6 })}

@@ -7,9 +7,18 @@ const HOSTS = new Set([
   "beta-redeem.luckycharmsdnbhd.com",
 ]);
 
-export async function routeBeta(request, fetchUpstream = fetch) {
+export async function routeBeta(request, fetchUpstream = fetch, env = {}) {
   const original = new URL(request.url);
   if (!HOSTS.has(original.hostname)) return new Response("Not found", { status: 404 });
+  if (original.hostname === "beta-pos.luckycharmsdnbhd.com" &&
+      original.pathname === "/.well-known/apple-app-site-association") {
+    // This legacy router serves the same public app identity as src/server.ts.
+    const teamId = String(env.IOS_BETA_TEAM_ID ?? "SMRQRLSBA3").trim();
+    if (!/^[A-Z0-9]{10}$/.test(teamId)) return new Response("Not configured", { status: 404 });
+    return new Response(JSON.stringify({ webcredentials: { apps: [`${teamId}.com.luckycharms.pos.beta`] } }), {
+      headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" },
+    });
+  }
   const target = new URL(original.pathname + original.search, UPSTREAM);
   const headers = new Headers(request.headers);
   headers.delete("host");
@@ -35,4 +44,4 @@ export async function routeBeta(request, fetchUpstream = fetch) {
   return response;
 }
 
-export default { fetch: request => routeBeta(request) };
+export default { fetch: (request, env) => routeBeta(request, fetch, env) };
