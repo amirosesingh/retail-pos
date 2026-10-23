@@ -35,12 +35,13 @@ export type CashierLoginResult =
       error: string;
       code?:
         | "invalid_credentials"
+        | "locked"
         | "session_prepare_failed"
         | "identity_mismatch"
         | "central_unavailable";
     };
 
-export async function cashierLoginServer(input: {
+async function cashierLoginCore(input: {
   username: string;
   pin: string;
   platform?: string | null;
@@ -193,4 +194,23 @@ export async function cashierLoginServer(input: {
     authTokenHash,
     cashier,
   };
+}
+
+/** Share the address throttle with the other public PIN verification paths. */
+export async function cashierLoginServer(input: Parameters<typeof cashierLoginCore>[0] & {
+  request?: Request;
+}): Promise<CashierLoginResult> {
+  const { beginPinRequest, finishPinRequest } = await import("./pin-request-throttle.server");
+  let attempt: Awaited<ReturnType<typeof beginPinRequest>>;
+  try {
+    attempt = await beginPinRequest(input.request);
+  } catch {
+    return { ok: false, code: "central_unavailable", error: "Central PIN protection is unavailable" };
+  }
+  if (attempt.locked)
+    return { ok: false, code: "locked", error: "Too many wrong PINs. Try again later." };
+  const result = await cashierLoginCore(input);
+  if (result.ok || result.code === "invalid_credentials")
+    await finishPinRequest(attempt.key, result.ok);
+  return result;
 }

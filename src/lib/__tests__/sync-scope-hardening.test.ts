@@ -126,7 +126,7 @@ describe("scoped SQL Server synchronization", () => {
     expect(inventory).toContain(
       "!canEditDetails && !canPrice && !canAdjustStock && !canLinkBarcode",
     );
-    expect(inventory).toMatch(/\{showMoney && \(\s*<Field label="Cost">/);
+    expect(inventory).toMatch(/\{showMoney && \(\s*<Field label="Purchase Cost">/);
     expect(inventory).toMatch(/<Field label="Reorder level">\s*<Input\s*disabled=\{!canEditDetails\}/);
     expect(read("src/core/api/relay-policy.server.ts")).toContain(
       'reorder_level: "can_edit_product_details"',

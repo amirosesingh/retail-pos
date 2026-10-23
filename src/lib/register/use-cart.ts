@@ -11,7 +11,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { availableAt, stockAt } from "@/lib/pos-store";
 import { flushTicketDrafts } from "@/lib/session-draft";
-import { blocksOutOfStockSale } from "@/lib/register/stock-guard";
+import { blocksOutOfStockSale, exceedsAvailableStock } from "@/lib/register/stock-guard";
 import { logger } from "@/lib/audit-log";
 import { TICKET_ACTIONS, logTicketEvent } from "@/lib/ticket-audit";
 import type {
@@ -29,6 +29,8 @@ export type CartCoupon = {
   promoId: string;
   scope: "bill" | "item";
   discount: number;
+  /** Recalculate this campaign against the current cart, including quantity edits. */
+  reusable?: boolean;
   productId?: string;
   productName?: string;
   appliedAt: string;
@@ -81,6 +83,11 @@ export function useCart(deps: CartDeps) {
     const product = deps.products.find((p) => p.id === productId);
     if (!product) return;
     const onHand = availableAt(product, deps.currentStore.id, deps.bookings);
+    const requested = lines.filter(line => line.productId === productId && !line.credit).reduce((sum, line) => sum + line.qty, 0) + 1;
+    if (exceedsAvailableStock(onHand, requested, deps.preventNegativeStock)) {
+      toast.error(`${product.name}: only ${onHand} available at ${deps.currentStore.name}`);
+      return;
+    }
     if (onHand <= 0) {
       const reserved = stockAt(product, deps.currentStore.id) > 0;
       const message = reserved
@@ -123,6 +130,14 @@ export function useCart(deps: CartDeps) {
 
   async function setQty(index: number, delta: number) {
     const line = lines[index];
+    if (line && !line.credit && delta > 0) {
+      const product = deps.products.find(p => p.id === line.productId);
+      const requested = lines.filter(l => l.productId === line.productId && !l.credit).reduce((sum, l) => sum + l.qty, 0) + delta;
+      if (product && exceedsAvailableStock(availableAt(product, deps.currentStore.id, deps.bookings), requested, deps.preventNegativeStock)) {
+        toast.error(`${product.name}: quantity exceeds available stock`);
+        return;
+      }
+    }
     const removes = line && !line.credit && line.qty + delta <= 0;
     // Removing a line, or reducing a quantity, needs manager approval unless
     // the cashier holds the right themselves.

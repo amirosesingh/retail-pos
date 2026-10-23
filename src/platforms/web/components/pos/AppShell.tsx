@@ -39,7 +39,6 @@ import { LiveClock } from "@/platforms/web/components/pos/LiveClock";
 import { ThemeToggle } from "@/platforms/web/components/pos/ThemeToggle";
 import { hydrateBillSequence } from "@/lib/bill-number";
 import { DbConnectionModal } from "@/platforms/windows/components/DbConnectionModal";
-import { UpdateHeaderButton } from "@/platforms/web/components/pos/UpdateHeaderButton";
 import { canSeeNavigationItem, routePermissionForPath, type NavItem } from "@/platforms/web/components/pos/nav-config";
 import { setPrintStore, setPrintSettings, setServiceTerms } from "@/lib/pos-print";
 import { bookingRulesOf } from "@/core/types/pos-types";
@@ -123,7 +122,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     ready,
     user,
     isAdmin,
-    isSupervisor,
     canSwitchStores,
     terminalStoreId,
     authUserId,
@@ -370,10 +368,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         <TerminalLogin />
       </>
     );
-  if ((isDesktop() || isNative()) && isManagementDevice() && !isSupervisor)
+  if ((isDesktop() || isNative()) && isManagementDevice() && !(isNative() ? can("can_use_management_mobile") : can("can_access_pos_settings")))
     return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
       <h1 className="text-lg font-semibold">Management device</h1>
-      <p>Sign in with an administrator or supervisor account. This registration does not grant management permissions.</p>
+      <p>Sign in with an account permitted to use this management device. Your page and branch permissions still apply.</p>
       <Button onClick={() => void logout()}>Use another account</Button>
     </div>;
   if (!dataReady && !offlineBypass)
@@ -578,8 +576,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   <LiveClock compact />
                 </span>
                 <MobileStatusSheet />
+                <ApprovalTokenButton compact />
                 {isMobile && <ActivityBell />}
-                {isMobile && <UpdateHeaderButton />}
                 <span className="hidden sm:inline-flex">
                   <ThemeToggle />
                 </span>
@@ -606,7 +604,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                     {terminal.config.locationName || currentStore.name}
                   </Badge>
                 )}
-                {!isMobile && <UpdateHeaderButton />}
                 <ThemeToggle />
                 <ProfileMenu />
               </header>
@@ -614,6 +611,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               <main
                 className={cn(
                   "min-h-0 min-w-0 flex-1",
+                  ["/inventory", "/analytics"].includes(location.pathname) && "no-scrollbar",
                   location.pathname.startsWith("/settings") ? "overflow-hidden" : "overflow-y-auto",
                 )}
               >
@@ -630,7 +628,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   const allowed = terminalManagement
                     ? can("can_manage_terminals")
                     : settingsHome
-                      ? isSupervisor || can("can_access_pos_settings")
+                      ? can("can_access_pos_settings")
                       : reportsHome
                         ? can("can_view_sales_reports") || can("can_view_audit_trail")
                         : required === null

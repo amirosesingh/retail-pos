@@ -1576,6 +1576,19 @@
           "foreignKeyTarget": null,
           "unique": false,
           "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "offline_login_pin_hash",
+          "sqlServerColumn": "offline_login_pin_hash",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": false,
+          "defaultRule": "''",
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
         }
       ]
     },
@@ -7114,6 +7127,45 @@
           "cloudColumn": "tier_rates",
           "sqlServerColumn": "tier_rates",
           "cloudType": "jsonb",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "partner",
+          "sqlServerColumn": "partner",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "code_scope",
+          "sqlServerColumn": "code_scope",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "code_cluster_id",
+          "sqlServerColumn": "code_cluster_id",
+          "cloudType": "text",
           "sqlServerType": "nvarchar(max)",
           "nullable": true,
           "defaultRule": null,

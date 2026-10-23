@@ -5,6 +5,8 @@ import { loadSalesPage } from "@/core/api/pos-db";
 import type { Sale } from "@/core/types/pos-types";
 import { uniqueSales } from "./sale-identity";
 import { canonicalBranchId } from "./branch-id";
+import { useAuth } from "./pos-auth";
+import { sessionEpoch } from "./session-epoch";
 
 import { effectiveTimeZone, inPosDayRange, reportScanStart as dayStart, reportScanEnd as dayEnd } from "./time-zone";
 
@@ -22,7 +24,10 @@ export function useReportSales(
   to: string,
   enabled = true,
 ): { sales: Sale[]; loading: boolean; refreshing: boolean; error: string } {
+  const { ready, user } = useAuth();
+  enabled = enabled && ready && Boolean(user);
   const reportZone = effectiveTimeZone();
+  const storeKey = storeIds.filter(Boolean).map(canonicalBranchId).sort().join("|");
   const seedRows = useMemo(() => {
     const start = dayStart(from);
     const end = dayEnd(to);
@@ -43,26 +48,30 @@ export function useReportSales(
       if (refreshState.current.running) refreshState.current.queued = true;
       else setRevision(value => value + 1);
     };
-    const off = subscribeSalesChange(() => {
+    const scopedStores = new Set(storeKey ? storeKey.split("|") : []);
+    const off = subscribeSalesChange((change) => {
+      // A sale in another branch cannot change this report. Management's
+      // unscoped view (empty storeKey) still accepts every branch hint.
+      if (change?.storeId && scopedStores.size && !scopedStores.has(canonicalBranchId(change.storeId))) return;
       if (timer) return;
       timer = setTimeout(() => {
         timer = undefined;
         refresh();
       }, 100);
     });
-    const offCatchup = subscribeBackgroundRefresh(refresh);
+    // Sales-change hints stay immediate; a full historical reconciliation is
+    // only a fallback for missed events, not a once-per-minute table download.
+    const offCatchup = subscribeBackgroundRefresh(refresh, 300_000);
     return () => {
       off();
       if (timer) clearTimeout(timer);
       offCatchup();
     };
-  }, [enabled]);
+  }, [enabled, storeKey]);
   const [loaded, setLoaded] = useState<{ key: string; rows: Sale[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const storeKey = storeIds.filter(Boolean).sort().join("|");
-
-  const rangeKey = JSON.stringify([storeKey, from, to, reportZone]);
+  const rangeKey = JSON.stringify([user?.staffId, sessionEpoch(), storeKey, from, to, reportZone]);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,7 +92,9 @@ export function useReportSales(
           let cursor: { ts: string; id: string } | null = null;
           for (;;) {
             if (cancelled) return;
-            const page = await loadSalesPage(storeId, cursor, 500);
+            const page = await loadSalesPage(storeId, cursor, 500, {
+              from: new Date(start).toISOString(), to: new Date(end).toISOString(),
+            });
             if (cancelled) return;
             for (const sale of page.rows) {
               const at = Date.parse(sale.createdAt);
@@ -123,5 +134,5 @@ export function useReportSales(
   }, [seedRows, loaded, rangeKey]);
 
   const sameScope = loaded?.key === rangeKey;
-  return { sales, loading: loading && !sameScope, refreshing: loading && sameScope, error };
+  return { sales: enabled ? sales : [], loading: enabled && loading && !sameScope, refreshing: enabled && loading && sameScope, error: enabled ? error : "" };
 }

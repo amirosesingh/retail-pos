@@ -82,19 +82,17 @@ function NumberingPage() {
 
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Branch code</Label>
+            <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Branch code</Label><HelpTip label="About Branch code" text="Leave blank to use the branch's own code." /></div>
             <Input
               value={cfg.branchCode ?? ""}
               placeholder={branchCode}
               onChange={(e) => patch({ branchCode: e.target.value.toUpperCase() })}
             />
-            <p className="text-[11px] text-muted-foreground">
-              {codeError || "Leave blank to use the branch's own code."}
-            </p>
+            {codeError && <p className="text-[11px] text-destructive" role="alert">{codeError}</p>}
           </div>
 
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Till number on this device</Label>
+            <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Till number on this device</Label><HelpTip label="About Till number on this device" text="Use a different number on each till, for example 01 and 02. Applies to new bills; existing receipts keep their numbers." /></div>
             <Input
               inputMode="numeric"
               pattern="[0-9]*"
@@ -102,10 +100,7 @@ function NumberingPage() {
               placeholder={terminalNumber()}
               onChange={(e) => setTill(e.target.value.replace(/\D+/g, "").slice(0, 2))}
             />
-            <p className="text-[11px] text-muted-foreground">
-              {tillError ||
-                "Use a different number on each till, for example 01 and 02. Applies to new bills; existing receipts keep their numbers."}
-            </p>
+            {tillError && <p className="text-[11px] text-destructive" role="alert">{tillError}</p>}
             <Button
               disabled={savingTill || !!tillError}
               onClick={async () => {

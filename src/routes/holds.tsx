@@ -11,7 +11,7 @@ import { TablePagination, usePagination } from "@/platforms/web/components/pos/T
  */
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { PauseCircle, PlayCircle, ShieldCheck, Trash2, User } from "lucide-react";
+import { ChevronLeft, PauseCircle, PlayCircle, ShieldCheck, Trash2, User } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
@@ -152,22 +152,20 @@ function HoldTickets() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
-        <header className="flex flex-wrap items-end justify-between gap-3">
-          <div>
+      <div className="pos-page-container">
+        <header className="flex items-start gap-3">
+          <Button variant="ghost" size="icon" className="shrink-0" aria-label="Back to register" title="Back to register" onClick={() => void navigate({ to: "/" })}><ChevronLeft className="size-4" aria-hidden="true" /></Button>
+          <div className="min-w-0">
             <h1 className="text-2xl font-semibold">Hold tickets</h1>
             <p className="text-sm text-muted-foreground page-description">
               {tickets.length} parked ticket{tickets.length === 1 ? "" : "s"} at {currentStore.name}{" "}
               · signed in as {user?.name}
             </p>
           </div>
-          <Button variant="outline" onClick={() => void navigate({ to: "/" })}>
-            Back to register
-          </Button>
         </header>
 
         <section className="rounded-lg border border-border bg-card">
-          <Table>
+          <Table tableId="routes/holds#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Ticket</TableHead>

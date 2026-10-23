@@ -356,6 +356,8 @@ const rowToPromotion = (r: Row): Promotion => normalizeUuidFields({
   id: r.id,
   name: r.title,
   type: r.promo_type as PromoType,
+  codeScope: r.code_scope === "item" ? "item" : "bill",
+  codeClusterId: r.code_cluster_id || null,
   active: !!r.is_active,
   startDate: r.start_date ?? undefined,
   endDate: r.end_date ?? undefined,
@@ -420,7 +422,8 @@ const promotionToRow = (p: Promotion): Row => ({
   discount_percent: p.valueType === "percent" ? (p.value ?? 0) : 0,
   discount_amount: p.valueType === "amount" ? (p.value ?? 0) : 0,
   tier_rates: p.tierRates ?? null,
-  partner: p.partner?.trim() ? p.partner.trim() : null,
+  partner: p.partner?.trim() || "",
+  ...(p.type === "code" ? { code_scope: p.codeScope ?? "bill", code_cluster_id: p.codeClusterId || null } : {}),
 });
 
 /** Older SQL copies may expose a JSON-encoded scalar rather than text. */
@@ -1735,6 +1738,7 @@ export async function loadSalesPage(
   storeId: string,
   cursor: Cursor = null,
   limit = PAGE_SIZE,
+  range?: { from: string; to: string },
 ): Promise<Page<Sale>> {
   if (localDb()?.query) {
     const heads = (await routedQuery("sales", {
@@ -1768,6 +1772,7 @@ export async function loadSalesPage(
   const query = () => {
     let q = supabase.from("sales").select(saleColumns());
     if (storeId) q = q.eq("store_id", storeId) as typeof q;
+    if (range) q = q.gte("created_at", range.from).lte("created_at", range.to) as typeof q;
     return keyset(q as never, "created_at", cursor, limit);
   };
   let res = await query();

@@ -7,8 +7,8 @@ describe("staff management boundaries", () => {
   it("keeps approval credential actions discoverable without bypassing eligibility", () => {
     const screen = read("src/platforms/web/components/admin/StaffManager.tsx");
     expect(screen).toContain('nativeApprovalCredentials ? "Approval credentials" : "Approval PIN"');
-    expect(screen).toContain('disabled={offline || !row.approval_pin_eligible}');
-    expect(screen).toContain('Assign this user to an enabled PIN or PIN-or-request approval rule');
+    expect(screen).toContain('disabled={offline || !isAdmin || !row.is_active}');
+    expect(screen).toContain('Only administrators can set approval PINs');
     expect(screen).not.toContain('"No PIN-enabled approval rule"');
     expect(screen).not.toMatch(/row\.approval_pin_eligible &&\s*\(\s*<Button/);
   });
@@ -21,7 +21,7 @@ describe("staff management boundaries", () => {
     expect(authorization).toContain(
       'canManageStaff: role === "admin" || scope.permissions.can_manage_staff === true',
     );
-    expect(authorization).toContain('error: "Staff management permission is required"');
+    expect(authorization).toContain('error: "Only administrators can set approval PINs"');
   });
 
   it("wakes local database synchronization for every staff identity table", () => {

@@ -1,3 +1,4 @@
+import { copyText } from "@/platform-config/clipboard";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { useEffect, useState } from "react";
 import { Activity, ClipboardCopy, Copy, Eraser, PlugZap, RefreshCw } from "lucide-react";
@@ -8,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { usePos } from "@/lib/pos-store";
 import { MEMBER_FLAG, REDEEM_FLAG, setPublicFlag, usePublicFlags } from "@/lib/public-flags";
 import { cn } from "@/lib/utils";
@@ -80,6 +81,7 @@ export function SystemStatusPanel() {
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<HealthError[]>([]);
   const [showErrors, setShowErrors] = useState(false);
+  const [domainsOpen, setDomainsOpen] = useState(false);
   const [dnsOpen, setDnsOpen] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
   const [cacheUsage, setCacheUsage] = useState<{ totalBytes: number; cacheBytes: number; diagnosticBytes: number } | null>(null);
@@ -274,8 +276,13 @@ Switching one off keeps its unavailable page at the same address. The POS stays 
         </section>
       )}
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold">Subdomains & API configuration</h2>
+      <Dialog open={domainsOpen} onOpenChange={setDomainsOpen}>
+        <DialogTrigger asChild><Button variant="outline">Subdomains &amp; API configuration</Button></DialogTrigger>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Subdomains &amp; API configuration</DialogTitle>
+            <DialogDescription>Manage public membership and voucher domains independently of the POS.</DialogDescription>
+          </DialogHeader>
         <div className="grid gap-2 sm:grid-cols-2">
           <DomainSwitch
             label="Member signup subdomain"
@@ -314,26 +321,8 @@ Switching one off keeps its unavailable page at the same address. The POS stays 
             ? "valid and accepted"
             : "not confirmed — run diagnostics"}
         </p>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold">Operational rules</h2>
-        <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-          <div>
-            <p className="text-sm font-medium">Stock transfers need approval</p>
-            <p className="text-[11px] text-muted-foreground">
-              Nothing leaves a branch until a supervisor, warehouse user or admin authorises it.
-            </p>
-          </div>
-          <Switch
-            aria-label="Stock transfers need approval"
-            checked={integrations.requireTransferApproval}
-            onCheckedChange={(v) =>
-              updateSettings({ integrations: { ...integrations, requireTransferApproval: v } })
-            }
-          />
-        </div>
-      </section>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dnsOpen} onOpenChange={setDnsOpen}>
         <DialogContent>
@@ -346,8 +335,8 @@ Switching one off keeps its unavailable page at the same address. The POS stays 
           <Button
             size="sm"
             onClick={() => {
-              void navigator.clipboard.writeText(dnsInstructions);
-              toast.success("Instructions copied");
+              void copyText(dnsInstructions).then(() => toast.success("Instructions copied"))
+                .catch(() => toast.error("Could not copy. Please try again."));
             }}
           >
             <Copy className="size-4" /> Copy to clipboard

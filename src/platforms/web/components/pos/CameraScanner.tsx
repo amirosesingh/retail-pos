@@ -58,7 +58,18 @@ export function CameraScanner({
         scanner = instance as unknown as { stop: () => Promise<void> };
         await instance.start(
           { facingMode: "environment" },
-          { fps: 10, qrbox: 240 },
+          {
+            fps: 10,
+            // A square viewfinder cuts off long EAN/UPC and Code 128 labels.
+            // Keep enough height for QR while using the available phone width.
+            qrbox: (viewfinderWidth, viewfinderHeight) => {
+              const width = Math.min(Math.floor(viewfinderWidth * 0.88), 360);
+              return {
+                width,
+                height: Math.min(Math.floor(viewfinderHeight * 0.7), Math.floor(width * 0.7)),
+              };
+            },
+          },
           (text) => {
             if (stopped || handled.current) return;
             void instance

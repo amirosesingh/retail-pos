@@ -43,9 +43,9 @@ export async function throttleStatus(key: string): Promise<ThrottleState> {
 }
 
 /** Record a wrong PIN and return the state after it. */
-export async function throttleFail(key: string): Promise<ThrottleState> {
+export async function throttleFail(key: string, limit = 5): Promise<ThrottleState> {
   return read(
-    await rpc("pin_throttle_fail", { _key: key, _limit: 5, _window_secs: 900, _lock_secs: 300 }),
+    await rpc("pin_throttle_fail", { _key: key, _limit: limit, _window_secs: 900, _lock_secs: 300 }),
   );
 }
 

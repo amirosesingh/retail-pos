@@ -12,6 +12,7 @@ import {
   printBridge,
   rawPulse,
   setSharedPrinterPrefs,
+  setPrinterPrefs,
   type PrinterPrefs,
 } from "@/lib/receipt-printer";
 import { toast } from "sonner";
@@ -22,7 +23,28 @@ import { boundedInputNumber } from "@/lib/number-input";
  *  raw cash-drawer pulse. Only meaningful inside the Windows desktop shell. */
 export function ReceiptPrinterSettings() {
   const { state, updateSettings } = usePos();
-  const shared = state.settings.integrations.receiptPrinter;
+  return <PrinterControls shared={state.settings.integrations.receiptPrinter}
+    onSave={(next) => updateSettings({ integrations: { ...state.settings.integrations, receiptPrinter: next } })}
+    paper={state.settings.receipt.paper}
+    onPaperChange={(paper) => updateSettings({ receipt: { ...state.settings.receipt, paper } })} />;
+}
+
+/** Recovery can repair/test device hardware before business settings are available. */
+export function RecoveryPrinterSettings() {
+  const [shared, setShared] = useState(getPrinterPrefs);
+  return <PrinterControls shared={shared} onSave={(next) => {
+    setPrinterPrefs(next);
+    setShared(next);
+  }} />;
+}
+
+type Paper = "30mm" | "58mm" | "80mm" | "a4" | "letter";
+function PrinterControls({ shared, onSave, paper, onPaperChange }: {
+  shared: PrinterPrefs | undefined;
+  onSave: (prefs: PrinterPrefs) => void;
+  paper?: Paper;
+  onPaperChange?: (paper: Paper) => void;
+}) {
   const [prefs, setPrefs] = useState<PrinterPrefs>({
     deviceName: "",
     share: "",
@@ -49,7 +71,7 @@ export function ReceiptPrinterSettings() {
   const update = (next: PrinterPrefs) => {
     setPrefs(next);
     setSharedPrinterPrefs(next);
-    updateSettings({ integrations: { ...state.settings.integrations, receiptPrinter: next } });
+    onSave(next);
   };
 
   const margins = prefs.margins ?? { top: 4, right: 4, bottom: 4, left: 4 };
@@ -117,14 +139,14 @@ export function ReceiptPrinterSettings() {
         />
       </div>
 
-      <div className="mt-4 space-y-1">
+      {onPaperChange && <div className="mt-4 space-y-1">
         <Label className="text-xs text-muted-foreground">Receipt paper width</Label>
         <ThemedSelect
-          value={state.settings.receipt.paper}
+          value={paper ?? "80mm"}
           ariaLabel="Receipt paper width"
           onChange={(value: string) => {
             if (!["30mm", "58mm", "80mm", "a4", "letter"].includes(value)) return;
-            updateSettings({ receipt: { ...state.settings.receipt, paper: value as typeof state.settings.receipt.paper } });
+            onPaperChange(value as Paper);
           }}
           options={[
             { value: "30mm", label: "30 mm roll" },
@@ -138,7 +160,7 @@ export function ReceiptPrinterSettings() {
           Select the paper installed in the printer. This saved size controls receipt previews,
           Direct, Dialog and Thermal printing. For driver printing, select the same paper in Windows printer preferences.
         </p>
-      </div>
+      </div>}
 
       <div className="mt-4 space-y-1">
         <Label className="text-xs text-muted-foreground">Receipt print mode</Label>

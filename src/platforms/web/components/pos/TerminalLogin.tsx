@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { ApprovalTokenButton } from "@/platform-config/approval-token";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Lock, ReceiptText } from "lucide-react";
 import { useAuth } from "@/lib/pos-auth";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,9 @@ import { isLocalWebCashierTest, isNative, isTerminalApp } from "@/platform-confi
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { CashierPinLogin } from "@/platforms/web/components/auth/CashierPinLogin";
 import { isExternalEmail, usernameFromAddress } from "@/lib/internal-domains";
+import { passwordUsername } from "@/lib/password-username";
 import { isConfigurationFailure, type LoginFailure } from "@/lib/login-failure";
+import { hasNativePasswordManager, offerSaveLogin, requestSavedLogin } from "@/platform-config/password-manager";
 
 export function TerminalLogin() {
   const { login } = useAuth();
@@ -25,8 +28,8 @@ export function TerminalLogin() {
   // screen; only a genuine refusal is presented as a wrong password.
   const [failure, setFailure] = useState<LoginFailure | null>(null);
   const [busy, setBusy] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const usernameField = useRef<HTMLInputElement>(null);
+  const passwordField = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState("admin");
   const [pinIdentifier, setPinIdentifier] = useState("");
   const [routed, setRouted] = useState(false);
@@ -52,6 +55,7 @@ export function TerminalLogin() {
           <Lock className="ml-auto size-4 text-muted-foreground" />
         </div>
 
+        <ApprovalTokenButton />
         <Tabs
           value={tab}
           onValueChange={(v) => {
@@ -89,10 +93,16 @@ export function TerminalLogin() {
               className="space-y-4"
               onSubmit={async (e) => {
                 e.preventDefault();
-                const typed = email.trim().toLowerCase();
-                // Internal accounts (bare usernames and our own hidden
-                // domains) never use a password — hand them to the keypad.
-                if (terminal && typed && !isExternalEmail(typed)) {
+                // Password managers can fill DOM fields without firing React's
+                // change event. Read the submitted form so that autofill works
+                // on both native WebViews as well as in the browser.
+                const fields = new FormData(e.currentTarget);
+                const submittedIdentifier = String(fields.get("username") ?? "").trim();
+                const submittedPassword = String(fields.get("password") ?? "");
+                const typed = submittedIdentifier.toLowerCase();
+                // A cashier with no password goes to the PIN keypad. A staff
+                // member who entered a password may use their login username.
+                if (terminal && typed && !isExternalEmail(typed) && !passwordUsername(typed) && !submittedPassword) {
                   setPinIdentifier(usernameFromAddress(typed));
                   setRouted(true);
                   setError("");
@@ -102,40 +112,57 @@ export function TerminalLogin() {
                 setBusy(true);
                 setError("");
                 setFailure(null);
-                const res = await login(email, password);
+                const res = await login(submittedIdentifier, submittedPassword);
                 if (!res.ok) {
                   setError(res.error ?? "Sign in could not be completed.");
                   setFailure((res as { code?: LoginFailure }).code ?? null);
+                } else if (hasNativePasswordManager) {
+                  // The native OS password manager decides whether to save or
+                  // update this successfully verified login. Never persist it
+                  // in the POS's preferences, local SQL, or cloud tables.
+                  void offerSaveLogin(submittedIdentifier, submittedPassword).catch(() => {});
                 }
                 setBusy(false);
 
               }}
             >
+              {hasNativePasswordManager && (
+                <Button type="button" variant="outline" className="w-full" disabled={busy}
+                  onClick={() => {
+                    void requestSavedLogin().then((saved) => {
+                      if (!saved) return;
+                      if (usernameField.current) usernameField.current.value = saved.username;
+                      if (passwordField.current) passwordField.current.value = saved.password;
+                      setError("");
+                    }).catch(() => setError("No saved login was selected. Enter your username and password to continue."));
+                  }}>
+                  Use saved password
+                </Button>
+              )}
               <div className="space-y-1">
                 <Label htmlFor="email">Email or username</Label>
                 <Input
                   id="email"
+                  ref={usernameField}
+                  name="username"
                   type="text"
-                  autoComplete="email"
-                  placeholder="supervisor@store.com"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setError("");
-                  }}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  placeholder="Email or username"
+                  onChange={() => setError("")}
                 />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="password">Password</Label>
                 <Input
                   id="password"
+                  ref={passwordField}
+                  name="password"
                   type="password"
                   autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    setError("");
-                  }}
+                  onChange={() => setError("")}
                 />
               </div>
               {error && (
@@ -162,7 +189,7 @@ export function TerminalLogin() {
               </Button>
               <p className="text-[11px] leading-relaxed text-muted-foreground">
                 {terminal
-                  ? "Supervisor and admin accounts sign in with email and password; cashiers use the PIN tab."
+                  ? "Password accounts use their username or email; cashiers use the PIN tab."
                   : "Cashier PIN sign-in is only available on the desktop and mobile terminal apps."}
               </p>
             </form>

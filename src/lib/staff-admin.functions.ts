@@ -159,6 +159,9 @@ export const saveStaffAccount = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<{ ok: true; emailWarning?: string } | { ok: false; error: string }> => {
     try {
       const actor = await requireStaffManager(data);
+      if (data.authorizationPin && ((actor.roleSlug !== "admin" && actor.role !== "admin") || !data.active)) {
+        throw new Error("Only administrators can set approval PINs for active accounts");
+      }
       const mod = await import("./staff-admin.server");
       const result = await mod.provisionStaffAccount({
         displayName: data.displayName,
@@ -237,8 +240,14 @@ export const preparePinSignIn = createServerFn({ method: "POST" })
   .handler(
     async ({ data }): Promise<{ ok: true; email: string } | { ok: false; error: string }> => {
       try {
+        const { beginPinRequest, finishPinRequest } = await import("./pin-request-throttle.server");
+        const attempt = await beginPinRequest();
+        if (attempt.locked) return { ok: false, error: "Too many wrong PINs. Try again later." };
         const mod = await import("./staff-admin.server");
-        return await mod.ensurePinAccount(data.username, data.pin);
+        const result = await mod.ensurePinAccount(data.username, data.pin);
+        if (result.ok || result.error === "Invalid username or PIN")
+          await finishPinRequest(attempt.key, result.ok);
+        return result;
       } catch (e) {
         return { ok: false, error: (e as Error).message };
       }

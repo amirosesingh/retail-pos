@@ -113,7 +113,7 @@ function Transfers() {
 
   return (
     <AppShell>
-      <div className="min-w-0 space-y-4 p-3 sm:space-y-6 sm:p-6">
+      <div className="pos-page-container">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Stock movements</h1>
@@ -173,7 +173,7 @@ function Transfers() {
             </div>
           </div>
           <Separator />
-          <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
+          <Table tableId="routes/transfers.index#1" managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
             <TableHeader>
               <TableRow>
                 <TableHead>Reference</TableHead>

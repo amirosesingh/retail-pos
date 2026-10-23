@@ -1,4 +1,5 @@
 import { reconcileLiveRows } from "@/lib/live-state";
+import { createRefreshQueue, subscribeBackgroundRefresh } from "@/lib/background-refresh";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { notifyError } from "@/lib/notify";
 /**
@@ -119,7 +120,8 @@ function StockOperationsPage() {
   }, [refresh]);
 
   useEffect(() => {
-    const wake = () => { void refresh(); };
+    const queue = createRefreshQueue(refresh);
+    const wake = () => { void queue.refresh(); };
     const offData = subscribeDataChange((change) => {
       if (change.table === "stock_count_drafts") wake();
     });
@@ -129,14 +131,13 @@ function StockOperationsPage() {
     const offLocal = localDb()?.onBusinessChanged?.((change) => {
       if (change.kind === "stock") wake();
     });
-    const interval = window.setInterval(wake, 60_000);
-    window.addEventListener("focus", wake);
+    const offCatchup = subscribeBackgroundRefresh(wake, 300_000, Boolean(localDb()));
     return () => {
       offData();
       offSettings();
       offLocal?.();
-      window.clearInterval(interval);
-      window.removeEventListener("focus", wake);
+      offCatchup();
+      queue.stop();
     };
   }, [refresh]);
 
@@ -297,7 +298,7 @@ function StockOperationsPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-6xl space-y-4 p-4">
+      <div className="pos-page-container">
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="h-auto max-w-full flex-wrap">
             <TabsTrigger value="records">
@@ -403,7 +404,7 @@ function StockOperationsPage() {
                 </article>)}
               </div>
               <div className="hidden overflow-x-auto rounded-xl border border-border md:block">
-                <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+                <Table tableId="routes/stock-operations#1" managed summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Reference</TableHead>

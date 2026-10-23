@@ -1,7 +1,9 @@
+import { Table } from "@/components/ui/table";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -80,11 +82,10 @@ function Verifications() {
 
   useEffect(() => {
     const sequence = sequenceRef;
-    void refresh();
-    const wake = () => { void refresh(); };
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") wake(); }, 30_000);
-    window.addEventListener("focus", wake);
-    return () => { ++sequence.current; window.clearInterval(timer); window.removeEventListener("focus", wake); };
+    // Keep the short fallback: membership is a separate backend and may not
+    // publish changes through the POS feed.
+    const stop = subscribePageDataRefresh(refresh, [], { intervalMs: 30_000, initial: true });
+    return () => { ++sequence.current; stop(); };
   }, [refresh]);
 
   const filtered = rows.filter((r) =>
@@ -95,11 +96,11 @@ function Verifications() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="pos-page-container">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="flex items-center gap-2 text-2xl font-semibold">
-              <ShieldCheck className="size-5 text-primary" /> Member verification log
+              Member verification log
             </h1>
             <p className="text-sm text-muted-foreground page-description">
               Every code sent and what happened to it. The codes themselves are never stored in a
@@ -122,7 +123,7 @@ function Verifications() {
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
+          <Table tableId="routes/verifications.native#1" clientDataControls={false} className="w-full text-sm">
             <thead className="bg-surface-2 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2">Sent</th>
@@ -160,7 +161,7 @@ function Verifications() {
                 </tr>
               )}
             </tbody>
-          </table>
+          </Table>
         </div>
       </div>
     </AppShell>

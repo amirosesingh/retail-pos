@@ -58,11 +58,6 @@ import {
 import { type BackendTestResult } from "@/lib/backend-config";
 import { publicSupabaseConfig } from "@/lib/external-supabase-config";
 
-function keyHint(value: string): string {
-  if (!value) return "";
-  return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : "configured";
-}
-
 export function CloudConnectionPanel({
   onConnected,
   presentation = "panel",
@@ -190,7 +185,7 @@ export function CloudConnectionPanel({
             <ShieldAlert className="size-4" />
           )}
           {status?.configured
-            ? `This website is connected to ${status.url}`
+            ? "Central database configured"
             : "Not configured — set the database address and publishable key in this site's hosting variables."}
         </p>
         <p className="text-xs text-muted-foreground">
@@ -206,22 +201,10 @@ export function CloudConnectionPanel({
               deployment settings, not member-login details and not fields on the public join page.
             </p>
           </div>
-          <dl className="grid gap-2 text-xs sm:grid-cols-2">
-            <div className="rounded-md border border-border p-3">
-              <dt className="font-medium">Project URL</dt>
-              <dd className="mt-1 break-all text-muted-foreground">
-                {membership?.url ?? "Missing — MEMBERSHIP_SUPABASE_URL"}
-              </dd>
-            </div>
-            <div className="rounded-md border border-border p-3">
-              <dt className="font-medium">Publishable key</dt>
-              <dd className="mt-1 break-all text-muted-foreground">
-                {membership?.key
-                  ? `Configured (${keyHint(membership.key)})`
-                  : "Missing — MEMBERSHIP_SUPABASE_PUBLISHABLE_KEY"}
-              </dd>
-            </div>
-          </dl>
+          <p className={`flex items-center gap-2 text-sm ${membership?.url && membership?.key ? "text-success" : "text-muted-foreground"}`}>
+            {membership?.url && membership?.key ? <ShieldCheck className="size-4 shrink-0" /> : <ShieldAlert className="size-4 shrink-0" />}
+            {membership?.url && membership?.key ? "Membership database configured" : "Membership database not configured"}
+          </p>
           <p className="text-xs text-muted-foreground">
             The membership backend&apos;s private credential belongs only in encrypted hosting
             secrets. It is intentionally never shown, stored, or accepted in the browser, Windows
@@ -234,7 +217,7 @@ export function CloudConnectionPanel({
       content,
       status?.configured ? "Central database configured" : "Central database not configured",
       Boolean(status?.configured),
-      status?.configured ? `Connected to ${status.url}` : "Hosting configuration is required.",
+      status?.configured ? "Connection settings are managed by hosting." : "Hosting configuration is required.",
     );
   }
 
@@ -390,7 +373,7 @@ export function CloudConnectionPanel({
             disabled={!editable}
             placeholder={
               status?.configured
-                ? `Saved (${status.keyHint}) — leave blank to keep it`
+                ? "Saved securely — leave blank to keep it"
                 : "sb_publishable_…"
             }
             value={key}
@@ -438,14 +421,14 @@ export function CloudConnectionPanel({
         {backendResult && (
           <p
             className={`break-words text-xs [overflow-wrap:anywhere] ${
-              backendResult.ok
-                ? "text-success"
-                : backendResult.warn
-                  ? "text-amber-600"
+              backendResult.warn
+                ? "text-amber-600"
+                : backendResult.ok
+                  ? "text-success"
                   : "text-destructive"
             }`}
           >
-            {backendResult.ok ? "✓" : backendResult.warn ? "!" : "✕"} {backendResult.detail}
+            {backendResult.warn ? "!" : backendResult.ok ? "✓" : "✕"} {backendResult.detail}
           </p>
         )}
       </div>

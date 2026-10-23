@@ -1,6 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHmac, timingSafeEqual } = require("node:crypto");
+// Keep in sync with OFFLINE_APPROVAL_TOKEN_LEASE_MS in approval-credentials.ts.
+const OFFLINE_APPROVAL_TOKEN_LEASE_MS = 30 * 24 * 60 * 60 * 1000;
 function tokenAt(secret, step) {
   const counter = Buffer.alloc(8);
   counter.writeBigUInt64BE(BigInt(step));
@@ -65,7 +67,7 @@ function createApprovalTokenVerifier({
         ...result,
         origin: project,
         refreshedAt: Date.now(),
-        validUntil: Math.min(Number(result.validUntil), Date.now() + 86400000),
+        validUntil: Math.min(Number(result.validUntil), Date.now() + OFFLINE_APPROVAL_TOKEN_LEASE_MS),
       };
       if (!Array.isArray(saved.entries) || !Number.isFinite(saved.validUntil)) return;
       const target = file();
@@ -81,7 +83,7 @@ function createApprovalTokenVerifier({
       });
     return inflight;
   }
-  async function verify(pool, userId, code, branchId) {
+  function currentBundle(branchId) {
     const bundle = read();
     const now = Date.now();
     if (
@@ -89,10 +91,24 @@ function createApprovalTokenVerifier({
       bundle.origin !== origin() ||
       bundle.terminalId !== terminal()?.tokenId ||
       String(bundle.branchId).toLowerCase() !== String(branchId).toLowerCase() ||
+      !Array.isArray(bundle.entries) ||
+      !Number.isFinite(bundle.validUntil) || !Number.isFinite(bundle.refreshedAt) ||
       bundle.validUntil <= now ||
       bundle.refreshedAt > now + 60000
     )
-      return false;
+      return null;
+    return bundle;
+  }
+  function identify(code, branchId) {
+    const bundle = currentBundle(branchId);
+    if (!bundle || !Array.isArray(bundle.entries) || bundle.entries.length > 1000) return null;
+    const matches = bundle.entries.filter(entry => matchingStep(entry.secret, code) !== null);
+    return matches.length === 1 ? String(matches[0].userId) : null;
+  }
+  async function verify(pool, userId, code, branchId) {
+    const bundle = currentBundle(branchId);
+    if (!bundle) return false;
+    const now = Date.now();
     for (const entry of bundle.entries) {
       if (String(entry.userId).toLowerCase() !== String(userId).toLowerCase()) continue;
       const step = matchingStep(entry.secret, code, now);
@@ -113,6 +129,6 @@ function createApprovalTokenVerifier({
     }
     return false;
   }
-  return { refresh, verify };
+  return { refresh, verify, identify };
 }
 module.exports = { tokenAt, matchingStep, createApprovalTokenVerifier };

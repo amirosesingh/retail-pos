@@ -13,7 +13,7 @@ import { transferTableTotals } from "@/lib/stock-table-totals";
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -125,13 +125,11 @@ export function WorkspaceHeader({
   return (
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div className="space-y-1">
-        <Link
-          to={back as "/transfers"}
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-3.5" /> {backLabel}
-        </Link>
         <div className="flex flex-wrap items-center gap-3">
+          <Link to={back as "/transfers"} aria-label={backLabel} title={backLabel}
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <ChevronLeft className="size-4" aria-hidden="true" />
+          </Link>
           <h1 className="numeric text-2xl font-semibold">{title}</h1>
           {status && (
             <Badge status={status} variant="outline" className={statusStyle[status]}>
@@ -203,7 +201,7 @@ export function LineLedger({ transfer }: { transfer: Transfer }) {
   );
 
   return (
-    <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
+    <Table tableId="platforms/web/components/pos/TransferWorkspace#1" managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
       <TableHeader>
         <TableRow>
           <TableHead>Product</TableHead>

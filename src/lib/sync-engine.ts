@@ -3,7 +3,7 @@ import { externalClientSnapshot, supabaseExternal } from "@/integrations/supabas
 import { logSync } from "./sync-log";
 import { hasRequiredPlatformConfig } from "./platform-config-ready";
 import { sessionEpoch, isCurrentEpoch } from "./session-epoch";
-import { hasSignedInIdentity, subscribeCentralAuthSession } from "./session-presence";
+import { hasSignedInIdentity, subscribeCentralAuthSession, centralAuthAccessToken } from "./session-presence";
 import { createSerialChannelReplacer } from "./realtime-channel-replacer";
 import { createSyncWakeChannels } from "./sync-wake-channels";
 import { readTerminalConfig, subscribeTerminalConfig } from "@/core/activation/terminal-tokens";
@@ -62,6 +62,7 @@ import { localDb, type LocalSyncStatus } from "@/core/local-db/local-db";
 import {
   checkHealth,
   subscribeConnectivity,
+  connectivity,
   type Connectivity,
 } from "@/core/activation/connection-health";
 import { subscribeSyncConfig, syncConfig } from "./sync-config";
@@ -972,9 +973,12 @@ export function startSyncEngine() {
   // One heartbeat for the whole app decides whether we are online — the
   // browser's own flag lies on captive networks. A confirmed reconnect forces
   // a catch-up pass at once instead of waiting for the next tick.
+  let previousConnectivity = connectivity();
   const offConnectivity = subscribeConnectivity((state: Connectivity) => {
+    const recovered = state === "online" && previousConnectivity !== "online";
+    previousConnectivity = state;
     if (state === "offline") sleep();
-    else if (state === "online") {
+    else if (recovered) {
       wake();
       // A terminal that was offline while an administrator changed a rule
       // must not wait for a live event it already missed: reconnecting
@@ -998,10 +1002,21 @@ export function startSyncEngine() {
   // Auth can become ready after this engine starts, so rebuild the channel at
   // that boundary instead of permanently choosing anonymous or staff mode.
   let liveHasStaffSession = hasStaffSession();
-  const syncWakeChannels = desktopBridge ? createSyncWakeChannels(supabaseExternal,
-    table => queueLiveChange({reason:`database-trigger:${table}`,table,storeId:activeBranchId()}),
-    wake,
-  ) : null;
+  const syncWakeChannels = createSyncWakeChannels(supabaseExternal,
+    table => {
+      // Online screens need database-originated settings hints too, including
+      // changes made outside this browser. Private channels carry table names only.
+      if (desktopBridge || (LIVE_SETTINGS_TABLES as readonly string[]).includes(table))
+        queueLiveChange({reason:`database-trigger:${table}`,table,storeId:activeBranchId()});
+    },
+    () => { if (desktopBridge) wake(); announceSettingsChange("realtime:subscribed"); },
+    async () => {
+      const token = centralAuthAccessToken();
+      if (!token || !hasStaffSession()) return false;
+      await supabaseExternal.realtime.setAuth(token);
+      return token === centralAuthAccessToken() && hasStaffSession();
+    },
+  );
   const installSyncWake = () => { void syncWakeChannels?.replace(activeBranchId(),readTerminalConfig()?.tokenId ?? null,liveHasStaffSession); };
   const offTerminalWake = subscribeTerminalConfig(installSyncWake);
   installSyncWake();
@@ -1015,7 +1030,12 @@ export function startSyncEngine() {
     },
   });
   const installLiveChannel = (staffPresent: boolean) => {
-    void liveChannels.replace(() => {
+    void liveChannels.replace(async () => {
+      const token = staffPresent ? centralAuthAccessToken() : undefined;
+      if (token) await supabaseExternal.realtime.setAuth(token);
+      // The staff proof can change while Realtime accepts the JWT. Never join
+      // protected tables with a stale proof or the anonymous project key.
+      const canJoinTables = !!token && token === centralAuthAccessToken() && hasStaffSession();
       const next = supabaseExternal.channel("pos-live-settings");
       next.on("broadcast", { event: "settings_changed" }, (message) => {
         const table = String((message as { payload?: { table?: unknown } }).payload?.table ?? "");
@@ -1026,7 +1046,7 @@ export function startSyncEngine() {
       // Electron sessions intentionally have no cloud staff JWT, so they rely on
       // durable local SQL synchronization and polling instead of opening invalid
       // anon subscriptions. Authenticated web users retain scoped live wake-ups.
-      if (staffPresent && !desktopBridge) {
+      if (canJoinTables && !desktopBridge) {
         for (const table of ORGANIZATION_LIVE_TABLES) {
           next.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
             const changed = ((

@@ -20,7 +20,7 @@ export function createSerialChannelReplacer<Channel>({
   let generation = 0;
   let queue: Promise<void> = Promise.resolve();
 
-  const schedule = (create?: () => Channel): Promise<void> => {
+  const schedule = (create?: () => Channel | Promise<Channel>): Promise<void> => {
     const requestedGeneration = ++generation;
     queue = queue
       .catch(onError)
@@ -33,7 +33,11 @@ export function createSerialChannelReplacer<Channel>({
         if (previous) await remove(previous);
 
         if (requestedGeneration !== generation || !create) return;
-        const next = create();
+        const next = await create();
+        if (requestedGeneration !== generation) {
+          await remove(next);
+          return;
+        }
         current = next;
         onCurrentChange(next);
       })
@@ -42,7 +46,7 @@ export function createSerialChannelReplacer<Channel>({
   };
 
   return {
-    replace(create: () => Channel): Promise<void> {
+    replace(create: () => Channel | Promise<Channel>): Promise<void> {
       return schedule(create);
     },
     stop(): Promise<void> {

@@ -2,6 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("offline connection recovery", () => {
+  it("mounts recovery outside POS providers and keeps it reachable after profile restore failure", () => {
+    const root = readFileSync("src/routes/__root.tsx", "utf8");
+    expect(root).toContain("(isCustomerPublicRoute(pathname) || isRecoveryPath(pathname))");
+    expect(root.indexOf("if (recovery) return children;")).toBeLessThan(root.indexOf("if (restoreFailed) return"));
+    const route = readFileSync("src/routes/recovery.tsx", "utf8");
+    expect(route).toContain("<EmergencyPinGate>");
+  });
   it("enables the connection editor only after the emergency PIN gate opens", () => {
     const recovery = readFileSync(
       "src/platforms/web/components/pos/RecoveryHub.tsx",

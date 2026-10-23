@@ -1,3 +1,4 @@
+import { SettingsBackLink } from "@/platforms/web/components/pos/settings/SettingsBackLink";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { Archive, ArchiveRestore, Layers, Plus, ShieldAlert } from "lucide-react";
@@ -60,7 +61,7 @@ function GroupSettings() {
   if (!isAdmin && !can("can_manage_locations")) {
     return (
       <SettingsShell>
-        <div className="mx-auto w-full max-w-7xl p-6">
+        <div className="pos-page-container">
           <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-center">
             <ShieldAlert className="mx-auto size-6 text-destructive" />
             <p className="mt-2 font-semibold">Permission required</p>
@@ -115,13 +116,16 @@ function GroupSettings() {
 
   return (
     <SettingsShell>
-      <div className="mx-auto w-full max-w-7xl space-y-5 p-6">
-        <header>
+      <div className="pos-page-container">
+        <header className="flex items-start gap-3">
+          <SettingsBackLink />
+          <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">Groups &amp; clusters</h1>
           <p className="text-sm text-muted-foreground page-description">
             Branches and warehouses belong to a group. A transfer between two different groups
             always needs approval.
           </p>
+          </div>
         </header>
         <section className="rounded-lg border border-border p-4">
           <Label htmlFor="new-group" className="text-sm font-medium">

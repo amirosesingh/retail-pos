@@ -794,7 +794,12 @@ export function subscribeActivityEvents(onChange: () => void): () => void {
     // Server before cloud synchronization. Refresh from that durable local
     // commit immediately so offline popups and preference changes never wait
     // for the 15-second reconciliation poll or Supabase Realtime.
-    cleanups.push(bridge.onBusinessChanged(() => onChange()));
+    cleanups.push(bridge.onBusinessChanged((change) => {
+      // Sales, product and sync commits do not change the bell. Older bridges
+      // without table metadata retain the safe reconciliation fallback.
+      const tables = change.tables ?? change.changes?.map(row => row.table);
+      if (!tables?.length || tables.includes("activity_events")) onChange();
+    }));
   }
   // A PIN-only Electron session deliberately has no Supabase Auth JWT. The
   // anon role cannot SELECT this protected table, and Realtime reports that

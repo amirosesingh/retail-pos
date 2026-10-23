@@ -1,16 +1,17 @@
+import { OperationalRulesPanel } from "@/platforms/web/components/pos/settings/panels/OperationalRulesPanel";
+import { SettingsBackLink } from "@/platforms/web/components/pos/settings/SettingsBackLink";
+import { HelpTip } from "@/components/ui/help-tip";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { PresetNumber } from "@/components/ui/preset-number";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft,
   CheckCircle2,
   CloudOff,
   Loader2,
   RefreshCw,
   Save,
-  ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -27,7 +28,8 @@ import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/pos-auth";
 import { usePos } from "@/lib/pos-store";
 import { usePosRules } from "@/lib/pos-rules.tsx";
-import { RULE_GROUPS, type PosRules, type PosRuleKey } from "@/lib/pos-rules";
+import { rulesEqual } from "@/lib/pos-rules-pending";
+import { RULE_GROUPS, requiresClosingCashCount, withClosingCashCount, type PosRules, type PosRuleKey } from "@/lib/pos-rules";
 import { savePosRules } from "@/lib/pos-rules-client";
 import { queueRulesSave } from "@/lib/pos-rules-offline";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
@@ -133,12 +135,15 @@ function RulesSettings() {
   // refresh must never erase an unfinished administrator draft.
   useEffect(() => {
     const changedBranch = draftScope.current !== currentStore.id;
+    // React may run the updater after the refs below have advanced.
+    const previous = previouslyConfirmed.current;
+    const force = forceNextRules.current || changedBranch;
     setDraft((current) =>
       reconcileRulesDraft(
         current,
-        previouslyConfirmed.current,
+        previous,
         rules,
-        forceNextRules.current || changedBranch,
+        force,
       ),
     );
     previouslyConfirmed.current = rules;
@@ -146,7 +151,7 @@ function RulesSettings() {
     forceNextRules.current = false;
   }, [currentStore.id, rules]);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(rules);
+  const dirty = !rulesEqual(draft, rules);
   const idleDirty = idleLoaded && savedIdle !== null && idle !== savedIdle;
 
   const statusView =
@@ -201,7 +206,9 @@ function RulesSettings() {
   }
 
   const set = (key: PosRuleKey, value: boolean | number) =>
-    setDraft((d) => ({ ...d, [key]: value }) as PosRules);
+    setDraft((d) => key === "require_counted_cash_on_close"
+      ? withClosingCashCount(d, Boolean(value))
+      : ({ ...d, [key]: value }) as PosRules);
 
   /**
    * Keep the change on this terminal and let the sync worker deliver it.
@@ -290,16 +297,24 @@ function RulesSettings() {
 
   return (
     <SettingsShell>
-      <div className="mx-auto w-full max-w-7xl space-y-5 p-6">
-        <div className="sticky top-0 z-20 -mx-6 -mt-6 border-b border-border bg-background/95 px-4 py-2 backdrop-blur">
-          <Button asChild variant="ghost" size="sm" className="h-8 text-xs">
-            <Link to="/settings">
-              <ArrowLeft className="size-4" /> All settings
-            </Link>
-          </Button>
-        </div>
-
+      <div className="pos-page-container">
         <SettingsTabs current="/settings/rules" />
+        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <SettingsBackLink />
+            <div className="min-w-0">
+              <h1 className="text-2xl font-semibold">POS rules &amp; enforcement</h1>
+              <p className="text-sm text-muted-foreground page-description">
+                Configure the branch policy enforced across every register at {currentStore.name}.
+                Saved values stay in force while newer rules are checked quietly in the background.
+              </p>
+            </div>
+          </div>
+          {loading && (
+            <Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
+          )}
+        </header>
+
         {isAdmin && <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
           <div><h2 className="font-semibold">Allow another authorized user to close the shift</h2>
             <p className="text-sm text-muted-foreground">Company-wide. Any signed-in user with Close shift permission can close a shift in their branch, including one opened by someone else. Both identities are recorded.</p></div>
@@ -310,21 +325,6 @@ function RulesSettings() {
             } catch(error) {notifyError(error,"Saving shift closing policy");} finally {setSavingClosePolicy(false);}})();
           }} />
         </div>}
-
-        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
-          <div className="min-w-0">
-            <h1 className="flex items-center gap-2 text-2xl font-semibold">
-              <ShieldCheck className="size-5 shrink-0 text-primary" /> POS rules &amp; enforcement
-            </h1>
-            <p className="text-sm text-muted-foreground page-description">
-              Configure the branch policy enforced across every register at {currentStore.name}.
-              Saved values stay in force while newer rules are checked quietly in the background.
-            </p>
-          </div>
-          {loading && (
-            <Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
-          )}
-        </header>
 
         {!mayEdit && (
           <p className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
@@ -409,9 +409,10 @@ function RulesSettings() {
               dirtyText="Unsaved rule changes"
             />
           </div>
+          <div className="pt-4"><OperationalRulesPanel canEdit={mayEdit} /></div>
           <SettingsSections
             storageKey="rules"
-            items={RULE_GROUPS.map((group) => ({
+            items={RULE_GROUPS.filter(group => group.id !== "pin-gates").map((group) => ({
               id: group.id,
               title: group.label,
               blurb: group.blurb,
@@ -422,15 +423,15 @@ function RulesSettings() {
                       key={field.key}
                       className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-border/60 pt-3 first:border-0 first:pt-0"
                     >
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex items-center gap-1">
                         <Label className="text-sm">{field.label}</Label>
-                        <p className="text-xs text-muted-foreground">{field.blurb}</p>
+                        <HelpTip text={field.blurb} label={`About ${field.label}`} />
                       </div>
                       {field.kind === "switch" ? (
                         <Switch
                           aria-label={field.label}
                           disabled={!mayEdit}
-                          checked={Boolean(draft[field.key])}
+                          checked={field.key === "require_counted_cash_on_close" ? requiresClosingCashCount(draft) : Boolean(draft[field.key])}
                           onCheckedChange={(v) => set(field.key, v)}
                         />
                       ) : (
@@ -457,6 +458,19 @@ function RulesSettings() {
           mayEdit={mayEdit}
           canEditGlobal={isAdmin}
         />
+
+        <details className="rounded-lg border border-border bg-card p-4">
+          <summary className="cursor-pointer text-sm font-medium">Fallback PIN requirements</summary>
+          <p className="mt-2 text-xs text-muted-foreground">These saved rules are used only when central Authorization Rules are unavailable. Approval PINs are assigned per user in Staff &amp; Permissions.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {RULE_GROUPS.find(group => group.id === "pin-gates")?.fields.map(field =>
+              <label key={field.key} className="flex items-center justify-between gap-3 rounded-md border border-border/60 p-3 text-sm">
+                <span>{field.label}<HelpTip text={field.blurb} label={`About ${field.label}`} /></span>
+                <Switch aria-label={field.label} disabled={!mayEdit} checked={Boolean(draft[field.key])} onCheckedChange={value => set(field.key, value)} />
+              </label>
+            )}
+          </div>
+        </details>
 
         <section className="space-y-4 rounded-lg border border-border bg-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">

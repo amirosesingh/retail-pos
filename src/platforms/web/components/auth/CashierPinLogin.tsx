@@ -1,3 +1,4 @@
+import { connectivity, subscribeConnectivity } from "@/core/activation/connection-health";
 /**
  * Terminal sign-in for anyone who uses a PIN.
  *
@@ -48,6 +49,9 @@ export function CashierPinLogin({
   initialUsername?: string;
 }) {
   const { cashierLogin } = useAuth();
+  const [connection, setConnection] = useState(connectivity);
+  const previousConnection = useRef(connection);
+  useEffect(() => subscribeConnectivity(setConnection), []);
   const [staff, setStaff] = useState<TerminalStaff[]>([]);
   const [reason, setReason] = useState<RosterReason>("ok");
   // Set when the till itself is not connected — that is a setup problem, not
@@ -83,10 +87,15 @@ export function CashierPinLogin({
 
   useEffect(() => {
     let live = true;
+    if (previousConnection.current !== connection) {
+      setPicked(null); setManual(""); setPin("");
+      previousConnection.current = connection;
+    }
     const branch = activeBranchId(null);
     void (async () => {
       const rosterResult: { rows: TerminalStaff[]; why: RosterReason } = await (async () => {
         try {
+        if (window.pos && connection === "offline") return { rows: [], why: "unreachable" as RosterReason };
         const roster = await listTerminalStaff(branch);
           return { rows: roster.staff, why: roster.reason };
         } catch {
@@ -96,7 +105,7 @@ export function CashierPinLogin({
       let { rows, why } = rosterResult;
       // No answer from the server: offer the roster mirrored into this till's
       // own database, so a cut-off branch still sees who can sign in.
-      if (!rows.length) {
+      if (!rows.length && (why === "unreachable" || (window.pos && connection === "offline"))) {
         try {
           const { localStaffRoster } = await import("@/core/local-db/local-staff");
           rows = (await localStaffRoster(branch)).map((r) => ({
@@ -119,7 +128,7 @@ export function CashierPinLogin({
     return () => {
       live = false;
     };
-  }, []);
+  }, [connection]);
 
 
   // A whole internal address is accepted too — it is what the account list
@@ -309,7 +318,7 @@ export function CashierPinLogin({
           <Label htmlFor="pin-username">Or enter a username</Label>
           <Input
             id="pin-username"
-            autoComplete="username"
+            autoComplete="off"
             placeholder="cashier101"
             value={draft}
             onChange={(e) => {
@@ -462,7 +471,7 @@ export function CashierPinLogin({
             id="pin-passcode"
             type="password"
             autoFocus
-            autoComplete="current-password"
+            autoComplete="off"
             {...(passcodeAccount
               ? { maxLength: 64 }
               : { inputMode: "numeric" as const, pattern: "[0-9]*", maxLength: 6 })}

@@ -28,8 +28,9 @@ describe("minimal inventory and native update controls", () => {
     expect(renderToStaticMarkup(h(UpdateHeaderButton))).toBe("");
     mocks.updates.supported = true;
     const shell = readFileSync("src/platforms/web/components/pos/AppShell.tsx", "utf8");
-    expect(shell).toContain("{isMobile && <UpdateHeaderButton />}");
-    expect(shell).toContain("{!isMobile && <UpdateHeaderButton />}");
+    expect(shell).not.toContain("<UpdateHeaderButton />");
+    const root = readFileSync("src/routes/__root.tsx", "utf8");
+    expect(root).toContain("<DesktopUpdateBanner />");
   });
   it("keeps one primary update action and puts notes behind disclosure", () => {
     const html = renderToStaticMarkup(h(MinimalUpdatePanel, { updates: mocks.updates as never }));
@@ -50,7 +51,8 @@ describe("minimal inventory and native update controls", () => {
   it("keeps review/edit permissions and existing export payload intact", () => {
     const source = readFileSync("src/routes/inventory.tsx", "utf8");
     expect(source).toContain("showMoney && (costReviewCount > 0 || costReviewOnly)");
-    expect(source).toContain("exportProductsXlsx(rows, stores");
+    expect(source).toContain("productsForExport(catalogProducts, scope, currentStore.id)");
+    expect(source).toContain("exportProductsXlsx(products, stores, `products-${currentStore.code}-${scope}`, showMoney)");
     expect(source).toContain('stockFilter === "low" && !isLowStock');
     expect(source).toContain('stockFilter === "out" && branchStock !== 0');
     expect(source).toContain('disabled={!canPrice || branchPriceOnly}');

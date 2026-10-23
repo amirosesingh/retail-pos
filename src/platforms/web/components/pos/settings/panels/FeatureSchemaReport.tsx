@@ -1,3 +1,5 @@
+import { Table } from "@/components/ui/table";
+import { copyText } from "@/platform-config/clipboard";
 /**
  * "Schema & Feature Health" — every POS feature checked against the live
  * database with the exact query shapes the screens use. Nothing is written.
@@ -39,7 +41,7 @@ export function FeatureSchemaReport() {
   const copy = async () => {
     if (!report) return;
     try {
-      await navigator.clipboard.writeText(formatFeatureSchemaReport(report));
+      await copyText(formatFeatureSchemaReport(report));
       toast.success("Report copied");
     } catch {
       toast.error("This device would not allow copying");
@@ -80,7 +82,7 @@ export function FeatureSchemaReport() {
 
       {report && (
         <div className="w-full overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-0 text-xs">
+          <Table tableId="platforms/web/components/pos/settings/panels/FeatureSchemaReport.native#1" clientDataControls={false} className="w-full min-w-0 text-xs">
             <thead className="bg-muted/50">
               <tr className="text-left">
                 <th className="px-3 py-2 font-medium">Feature</th>
@@ -146,7 +148,7 @@ export function FeatureSchemaReport() {
                 );
               })}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
     </section>

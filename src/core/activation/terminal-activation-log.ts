@@ -1,10 +1,8 @@
 /**
  * Activation attempts, written where an administrator can see them.
  *
- * A till that fails to activate has no database of its own yet, so the entry
- * is pushed straight to the tenant named inside the activation code, using the
- * same throwaway connection the claim already opened. It is also written to
- * the local activity trail so nothing is lost when the network drops.
+ * The local activity journal retains attempts until an authorized session can
+ * sync them. Registration clients are anonymous and cannot write audit rows.
  */
 import { APP_VERSION } from "@/version";
 import { logger } from "@/lib/audit-log";
@@ -49,18 +47,12 @@ export type ActivationAttempt = {
   reason?: string;
 };
 
-type LooseClient = {
-  from: (table: string) => {
-    insert: (rows: unknown) => PromiseLike<{ error: { message: string } | null }>;
-  };
-};
-
 /**
  * Record one attempt. Never throws: a failed log must not stop, or mask, an
  * activation.
  */
 export async function recordActivationAttempt(
-  tenant: unknown,
+  _tenant: unknown,
   attempt: ActivationAttempt,
 ): Promise<void> {
   const details = {
@@ -81,19 +73,4 @@ export async function recordActivationAttempt(
     /* local trail unavailable (server render) */
   }
 
-  if (!tenant) return;
-  try {
-    await (tenant as LooseClient).from("audit_logs").insert([
-      {
-        user_name: `Terminal ${attempt.terminalId ?? "unknown"}`,
-        action_category: "Security & access",
-        action_name: OUTCOME_LABEL[attempt.outcome],
-        target_module: "Terminal activation",
-        details,
-        created_at: details.at,
-      },
-    ]);
-  } catch {
-    /* the tenant refused the write — the local trail still has it */
-  }
 }

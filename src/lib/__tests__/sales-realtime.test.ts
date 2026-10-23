@@ -25,7 +25,8 @@ describe("sales realtime refresh", () => {
     expect(store).toContain("subscribeSalesChange");
     expect(store).toContain("subscribeSettingsChange");
     expect(store).toContain('"pos_store_settings","settings_scoped","settings_overrides","settings_locks"');
-    expect(store).toContain('change.reason !== "desktop:pull-complete"');
+    expect(store).toContain('subscribeSettingsRefresh(refresh, (change) =>');
+    expect(store).toContain('["desktop:pull-complete", "reconnect", "realtime:subscribed"].includes(change.reason)');
     expect(store).toContain("loadSalesPage(active, null, 500)");
     expect(store).toContain("loadCloudSettings()");
     expect(store).toContain("subscribeDataChange");

@@ -598,6 +598,9 @@ CREATE TABLE IF NOT EXISTS public.promotions (
     foc_product_id uuid,
     points_per_dollar numeric DEFAULT 1 NOT NULL,
     tier_rates jsonb,
+    partner text,
+    code_scope text,
+    code_cluster_id text,
     is_active boolean DEFAULT true NOT NULL,
     start_date date,
     end_date date,
@@ -7900,7 +7903,7 @@ RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
     "require_counted_cash_on_close": true,
     "require_opening_float_count": true,
     "enable_blind_cash_count": true,
-    "max_drawer_cash_limit": 1000,
+    "max_drawer_cash_limit": 0,
     "require_reason_for_payout": true,
     "allow_multiple_shifts_per_terminal": false,
     "enable_cashier_x_report": false,
@@ -13181,7 +13184,7 @@ AS $function$
     "require_counted_cash_on_close": true,
     "require_opening_float_count": true,
     "enable_blind_cash_count": true,
-    "max_drawer_cash_limit": 1000,
+    "max_drawer_cash_limit": 0,
     "require_reason_for_payout": true,
     "allow_multiple_shifts_per_terminal": false,
     "enable_cashier_x_report": false,
@@ -16544,29 +16547,31 @@ LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = ''
 AS $$
   SELECT pg_catalog.to_jsonb(s) || pg_catalog.jsonb_build_object(
-    'opening_float', CASE WHEN public.has_perm('can_shift_expected_cash_view') THEN s.opening_float END,
-    'expected_cash', CASE WHEN public.has_perm('can_shift_expected_cash_view') THEN s.expected_cash END,
-    'expected_card', CASE WHEN public.has_perm('can_shift_expected_cash_view') THEN s.expected_card END,
-    'expected_digital', CASE WHEN public.has_perm('can_shift_expected_cash_view') THEN s.expected_digital END,
-    'counted_cash', CASE WHEN public.has_perm('can_shift_counted_cash_view') THEN s.counted_cash END,
-    'counted_card', CASE WHEN public.has_perm('can_shift_counted_cash_view') THEN s.counted_card END,
-    'counted_digital', CASE WHEN public.has_perm('can_shift_counted_cash_view') THEN s.counted_digital END,
-    'closing_float', CASE WHEN public.has_perm('can_shift_counted_cash_view') THEN s.closing_float END,
-    'final_counted_cash', CASE WHEN public.has_perm('can_shift_counted_cash_view') THEN s.final_counted_cash END,
-    'variance_cash', CASE WHEN public.has_perm('can_shift_variance_view') THEN s.variance_cash END,
-    'variance_card', CASE WHEN public.has_perm('can_shift_variance_view') THEN s.variance_card END,
-    'variance_digital', CASE WHEN public.has_perm('can_shift_variance_view') THEN s.variance_digital END,
-    'variance_total', CASE WHEN public.has_perm('can_shift_variance_view') THEN s.variance_total END,
-    'variance_status', CASE WHEN public.has_perm('can_shift_variance_view') THEN s.variance_status END
+    'opening_float', CASE WHEN (SELECT public.has_perm('can_shift_expected_cash_view')) THEN s.opening_float END,
+    'expected_cash', CASE WHEN (SELECT public.has_perm('can_shift_expected_cash_view')) THEN s.expected_cash END,
+    'expected_card', CASE WHEN (SELECT public.has_perm('can_shift_expected_cash_view')) THEN s.expected_card END,
+    'expected_digital', CASE WHEN (SELECT public.has_perm('can_shift_expected_cash_view')) THEN s.expected_digital END,
+    'counted_cash', CASE WHEN (SELECT public.has_perm('can_shift_counted_cash_view')) THEN s.counted_cash END,
+    'counted_card', CASE WHEN (SELECT public.has_perm('can_shift_counted_cash_view')) THEN s.counted_card END,
+    'counted_digital', CASE WHEN (SELECT public.has_perm('can_shift_counted_cash_view')) THEN s.counted_digital END,
+    'closing_float', CASE WHEN (SELECT public.has_perm('can_shift_counted_cash_view')) THEN s.closing_float END,
+    'final_counted_cash', CASE WHEN (SELECT public.has_perm('can_shift_counted_cash_view')) THEN s.final_counted_cash END,
+    'variance_cash', CASE WHEN (SELECT public.has_perm('can_shift_variance_view')) THEN s.variance_cash END,
+    'variance_card', CASE WHEN (SELECT public.has_perm('can_shift_variance_view')) THEN s.variance_card END,
+    'variance_digital', CASE WHEN (SELECT public.has_perm('can_shift_variance_view')) THEN s.variance_digital END,
+    'variance_total', CASE WHEN (SELECT public.has_perm('can_shift_variance_view')) THEN s.variance_total END,
+    'variance_status', CASE WHEN (SELECT public.has_perm('can_shift_variance_view')) THEN s.variance_status END
   )
   FROM public.shifts s
-  WHERE public.is_staff((SELECT auth.uid()))
-    AND public.is_terminal_active()
+  WHERE (SELECT public.is_staff((SELECT auth.uid())))
+    AND (SELECT public.is_terminal_active())
     AND public.store_visible(s.store_id)
     AND (p_store_id IS NULL OR s.store_id = p_store_id)
   ORDER BY s.opened_at DESC, s.id
   LIMIT LEAST(GREATEST(COALESCE(p_limit, 300), 1), 1000);
 $$;
+
+
 REVOKE ALL ON FUNCTION private.shift_list_secure_impl(text, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION private.shift_list_secure_impl(text, integer) TO authenticated, service_role;
 
@@ -17588,6 +17593,95 @@ REVOKE ALL ON FUNCTION public.stamp_status_history_reporter() FROM PUBLIC, anon,
 DROP TRIGGER IF EXISTS entity_status_history_reporter ON public.entity_status_history;
 CREATE TRIGGER entity_status_history_reporter BEFORE INSERT ON public.entity_status_history
 FOR EACH ROW EXECUTE FUNCTION public.stamp_status_history_reporter();
+
+-- Management PC read replication (20261020134403).
+-- Explicit device capability: NULL caused by a deleted branch must never grant all-branch access.
+ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS management_sync_enabled boolean NOT NULL DEFAULT false;
+ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS management_sync_proof_hash text;
+DO $constraint$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.terminal_tokens'::regclass AND conname='terminal_management_replica_scope') THEN
+  ALTER TABLE public.terminal_tokens ADD CONSTRAINT terminal_management_replica_scope
+   CHECK (NOT management_sync_enabled OR (platform='pc' AND location_id IS NULL AND management_sync_proof_hash IS NOT NULL AND management_sync_proof_hash ~ '^[a-f0-9]{64}$'));
+ END IF;
+END $constraint$;
+
+CREATE OR REPLACE FUNCTION public.pos_sync_validate_read_scope(p_organization_id text,p_branch_id text,p_terminal_id text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+BEGIN
+ IF auth.role()='service_role' AND p_organization_id='default'
+ AND EXISTS(SELECT 1 FROM public.stores WHERE id=p_branch_id)
+ AND EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=p_terminal_id
+   AND platform='pc' AND location_id IS NULL AND management_sync_enabled
+   AND is_claimed AND status IN ('active','used') AND revoked_at IS NULL) THEN RETURN; END IF;
+ PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_sync_validate_read_scope(text,text,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_validate_read_scope(text,text,text) TO service_role;
+
+-- Keep the existing paging, filtering, retention, and write validators intact.
+DO $migration$
+DECLARE fn regprocedure; definition text;
+BEGIN
+ FOREACH fn IN ARRAY ARRAY[
+ 'public.pos_sync_pull(text,text,text,bigint,integer)'::regprocedure,
+ 'public.pos_sync_bootstrap(text,text,text,text,text,integer,integer)'::regprocedure,
+ 'public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)'::regprocedure,
+ 'public.pos_sync_counts(text,text,text,integer)'::regprocedure,
+ 'public.pos_sync_counts_scoped(text,text,text,integer)'::regprocedure
+ ] LOOP
+  definition := pg_get_functiondef(fn);
+  definition := replace(definition,'public.pos_sync_validate_scope(', 'public.pos_sync_validate_read_scope(');
+  EXECUTE definition;
+ END LOOP;
+END $migration$;
+
+CREATE OR REPLACE FUNCTION public.terminal_token_reissue(
+ p_old_id uuid,p_new_id uuid,p_created_at timestamptz,p_expires_at timestamptz
+) RETURNS public.terminal_tokens LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE old_token public.terminal_tokens%ROWTYPE; new_token public.terminal_tokens%ROWTYPE;
+BEGIN
+ IF NOT public.has_perm('can_manage_terminals') THEN RAISE EXCEPTION 'TERMINAL_MANAGEMENT_FORBIDDEN'; END IF;
+ SELECT * INTO old_token FROM public.terminal_tokens WHERE id=p_old_id AND status IN ('active','used') AND revoked_at IS NULL FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'TERMINAL_TOKEN_NOT_ACTIVE'; END IF;
+ INSERT INTO public.terminal_tokens (
+  id,location_id,location_name,device_name,platform,status,created_at,reissued_at,is_claimed,expires_at,management_sync_enabled,management_sync_proof_hash
+ ) VALUES (
+  p_new_id,old_token.location_id,old_token.location_name,old_token.device_name,old_token.platform,
+  'active',p_created_at,p_created_at,false,p_expires_at,old_token.management_sync_enabled,old_token.management_sync_proof_hash
+ ) RETURNING * INTO new_token;
+ UPDATE public.terminal_tokens SET status='revoked',revoked_at=p_created_at,replaced_by=p_new_id WHERE id=p_old_id;
+ RETURN new_token;
+END $fn$;
+
+ALTER TABLE public.app_users ADD COLUMN IF NOT EXISTS offline_login_pin_hash text NOT NULL DEFAULT '';
+
+-- Service-only provisioning. The hosted handler verifies the administrator;
+-- neither the hash nor this routine is exposed through staff-list responses.
+CREATE OR REPLACE FUNCTION public.set_offline_login_pin(p_user_id text, p_pin text)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp' AS $$
+BEGIN
+  IF p_pin !~ '^[0-9]{6}$' THEN RAISE EXCEPTION 'Offline sign-in PIN must be 6 digits'; END IF;
+  UPDATE public.app_users SET offline_login_pin_hash=extensions.crypt(p_pin,extensions.gen_salt('bf',12)),updated_at=now()
+  WHERE lower(user_id)=lower(trim(p_user_id)) AND is_active IS TRUE
+    AND email LIKE '%@%' AND lower(email) NOT LIKE '%@pos-internal.local' AND lower(email) NOT LIKE '%@pos.local';
+  IF NOT FOUND THEN RAISE EXCEPTION 'An active email account is required'; END IF;
+  RETURN true;
+END $$;
+REVOKE ALL ON FUNCTION public.set_offline_login_pin(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.set_offline_login_pin(text,text) TO service_role;
+
+-- Online cashier choices never include email/password accounts or approval-only PINs.
+CREATE OR REPLACE FUNCTION public.terminal_staff_list(p_store_id text DEFAULT NULL::text)
+RETURNS TABLE(user_id text,full_name text,role_slug text,store_id text,kind text,pin_length smallint)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public','pg_temp' AS $$
+ SELECT a.user_id::text,a.full_name::text,coalesce(a.role_slug,'cashier'),a.store_id::text,'account'::text,0::smallint
+ FROM public.app_users a
+ WHERE a.is_active AND (lower(a.email) LIKE '%@pos-internal.local' OR lower(a.email) LIKE '%@pos.local')
+ AND EXISTS(SELECT 1 FROM public.cashiers c WHERE lower(c.username)=lower(a.user_id) AND c.is_active AND coalesce(c.pin_hash,'')<>'')
+ AND (coalesce(trim(p_store_id),'')='' OR coalesce(a.store_id,'') IN ('',trim(p_store_id)))
+ ORDER BY a.full_name
+$$;
 
 -- Final public-schema privilege hardening
 -- This must remain after every routine definition in this canonical installer.
@@ -19724,6 +19818,190 @@ GRANT EXECUTE ON FUNCTION public.verify_cashier_pin(text,text) TO service_role;
 
 NOTIFY pgrst, 'reload schema';
 
+-- Native token and scoped reissue upgrade
+-- Existing enrolled phones retain their device capability; user permissions
+-- and approval rules remain authoritative. New registrations choose explicitly.
+DO $capability$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='terminal_tokens' AND column_name='approval_token_enabled') THEN
+  ALTER TABLE public.terminal_tokens ADD COLUMN approval_token_enabled boolean NOT NULL DEFAULT false;
+  UPDATE public.terminal_tokens SET approval_token_enabled=true WHERE platform IN ('mobile','android','ios');
+ END IF;
+END $capability$;
+
+CREATE OR REPLACE FUNCTION public.terminal_token_reissue_scoped(
+ p_old_id uuid, p_new_id uuid, p_location_id text, p_location_name text,
+ p_approval_token_enabled boolean, p_replica_hash text DEFAULT NULL
+) RETURNS public.terminal_tokens LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE old_token public.terminal_tokens%ROWTYPE; new_token public.terminal_tokens%ROWTYPE;
+ now_at timestamptz := clock_timestamp(); replica boolean;
+BEGIN
+ IF NOT public.has_perm('can_manage_terminals') THEN RAISE EXCEPTION 'TERMINAL_MANAGEMENT_FORBIDDEN'; END IF;
+ SELECT * INTO old_token FROM public.terminal_tokens WHERE id=p_old_id
+  AND status IN ('active','used','revoked') AND replaced_by IS NULL FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'TERMINAL_ALREADY_REPLACED_OR_UNAVAILABLE'; END IF;
+ IF p_location_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.stores WHERE id=p_location_id) THEN
+  RAISE EXCEPTION 'TERMINAL_BRANCH_UNAVAILABLE';
+ END IF;
+ replica := p_location_id IS NULL AND old_token.platform IN ('pc','windows');
+ IF replica AND coalesce(p_replica_hash,'') !~ '^[a-f0-9]{64}$' THEN RAISE EXCEPTION 'INVALID_REPLICA_PROOF'; END IF;
+ INSERT INTO public.terminal_tokens (
+  id,location_id,location_name,device_name,platform,status,created_at,reissued_at,is_claimed,expires_at,
+  management_sync_enabled,management_sync_proof_hash,approval_token_enabled
+ ) VALUES (
+  p_new_id,p_location_id,CASE WHEN p_location_id IS NULL THEN 'All branches — management' ELSE p_location_name END,
+  old_token.device_name,old_token.platform,'active',now_at,now_at,false,now_at + interval '15 minutes',
+  replica,CASE WHEN replica THEN p_replica_hash ELSE NULL END,
+  coalesce(p_approval_token_enabled,false)
+ ) RETURNING * INTO new_token;
+ UPDATE public.terminal_tokens SET status='revoked',revoked_at=coalesce(revoked_at,now_at),replaced_by=p_new_id WHERE id=p_old_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'TERMINAL_REPLACEMENT_FORBIDDEN'; END IF;
+ RETURN new_token;
+END $fn$;
+REVOKE ALL ON FUNCTION public.terminal_token_reissue_scoped(uuid,uuid,text,text,boolean,text) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.terminal_token_reissue_scoped(uuid,uuid,text,text,boolean,text) TO authenticated,service_role;
+
+CREATE OR REPLACE FUNCTION public.approval_token_state(
+  p_op text, p_user_id text, p_terminal_id uuid DEFAULT NULL,
+  p_secret text DEFAULT NULL, p_step bigint DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE answer jsonb;
+BEGIN
+  IF p_op = 'register_verifier' THEN
+    IF p_terminal_id IS NULL OR length(coalesce(p_secret,'')) < 300 THEN RAISE EXCEPTION 'Invalid verifier enrollment'; END IF;
+    INSERT INTO pos_private.approval_verifiers(terminal_id,public_key) VALUES(p_terminal_id,p_secret)
+    ON CONFLICT (terminal_id) DO UPDATE SET public_key=EXCLUDED.public_key;
+    answer := 'true'::jsonb;
+  ELSIF p_op = 'get_verifier' THEN
+    SELECT jsonb_build_object('public_key',v.public_key) INTO answer FROM pos_private.approval_verifiers v WHERE v.terminal_id=p_terminal_id;
+  ELSIF p_op = 'enroll' THEN
+    IF p_terminal_id IS NULL OR length(coalesce(p_secret,'')) < 40 THEN RAISE EXCEPTION 'Invalid enrollment'; END IF;
+    INSERT INTO pos_private.approval_tokens(user_id,terminal_id,secret_ciphertext)
+    VALUES(p_user_id,p_terminal_id,p_secret) ON CONFLICT (user_id,terminal_id) DO NOTHING;
+    SELECT to_jsonb(t) INTO answer FROM pos_private.approval_tokens t WHERE t.user_id=p_user_id AND t.terminal_id=p_terminal_id;
+  ELSIF p_op = 'permissions' THEN
+    UPDATE public.app_users a SET permissions=(p_secret::jsonb - 'approval_pin_enabled' - 'approval_totp_enabled') ||
+      CASE WHEN a.permissions ? 'approval_pin_enabled' THEN jsonb_build_object('approval_pin_enabled',a.permissions->'approval_pin_enabled') ELSE '{}'::jsonb END ||
+      CASE WHEN a.permissions ? 'approval_totp_enabled' THEN jsonb_build_object('approval_totp_enabled',a.permissions->'approval_totp_enabled') ELSE '{}'::jsonb END
+      WHERE a.user_id=p_user_id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Staff account not found'; END IF;
+    answer := 'true'::jsonb;
+  ELSIF p_op = 'set_methods' THEN
+    IF jsonb_typeof((p_secret::jsonb)->'pin') <> 'boolean' OR jsonb_typeof((p_secret::jsonb)->'totp') <> 'boolean' THEN RAISE EXCEPTION 'Invalid credential methods'; END IF;
+    UPDATE public.app_users a SET permissions=coalesce(a.permissions,'{}'::jsonb) || jsonb_build_object(
+      'approval_pin_enabled', (p_secret::jsonb)->'pin', 'approval_totp_enabled', (p_secret::jsonb)->'totp'
+    ) WHERE a.user_id=p_user_id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Staff account not found'; END IF;
+    IF NOT ((p_secret::jsonb)->>'totp')::boolean THEN DELETE FROM pos_private.approval_tokens t WHERE t.user_id=p_user_id; END IF;
+    answer := 'true'::jsonb;
+  ELSIF p_op = 'read_branch' THEN
+    SELECT coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb) INTO answer
+      FROM pos_private.approval_tokens t JOIN public.app_users a ON a.user_id=t.user_id
+      JOIN public.terminal_tokens k ON k.id=t.terminal_id
+      WHERE a.is_active AND a.permissions->>'approval_totp_enabled'='true'
+        AND (a.store_id IS NULL OR lower(a.store_id::text)=lower(p_user_id))
+        AND k.revoked_at IS NULL AND k.status::text IN ('active','used')
+        AND k.approval_token_enabled AND k.platform IN ('mobile','android','ios','pc','windows')
+        AND (a.store_id IS NULL OR k.location_id IS NULL OR lower(k.location_id::text)=lower(p_user_id));
+  ELSIF p_op = 'read' THEN
+    SELECT coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb) INTO answer FROM pos_private.approval_tokens t WHERE t.user_id=p_user_id;
+  ELSIF p_op = 'consume' THEN
+    UPDATE pos_private.approval_tokens t SET last_used_step=p_step
+      WHERE t.user_id=p_user_id AND t.terminal_id=p_terminal_id AND t.last_used_step<p_step;
+    answer := to_jsonb(FOUND);
+  ELSIF p_op = 'revoke' THEN
+    DELETE FROM pos_private.approval_tokens t WHERE t.user_id=p_user_id;
+    answer := 'true'::jsonb;
+  ELSE RAISE EXCEPTION 'Unknown credential operation'; END IF;
+  RETURN answer;
+END $$;
+REVOKE ALL ON FUNCTION public.approval_token_state(text,text,uuid,text,bigint) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.approval_token_state(text,text,uuid,text,bigint) TO service_role;
+
+-- Record deliberate Management issuance; a deleted branch must never become Management.
+BEGIN;
+ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS management_registration boolean NOT NULL DEFAULT false;
+UPDATE public.terminal_tokens SET management_registration = true
+WHERE location_id IS NULL AND management_registration IS FALSE
+  AND ((platform = 'pc' AND management_sync_enabled IS TRUE)
+    OR (platform = 'mobile' AND location_name = 'All branches — management'
+      AND status = 'active' AND claimed_at IS NULL));
+
+-- Existing issuers and scoped reissue use this canonical Management label.
+-- INSERT-only: ON DELETE SET NULL on a branch cannot upgrade its token.
+CREATE OR REPLACE FUNCTION private.terminal_management_registration_on_insert()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $trigger$
+BEGIN
+  NEW.management_registration := coalesce(NEW.location_id IS NULL
+    AND ((NEW.platform = 'pc' AND NEW.management_sync_enabled IS TRUE)
+      OR (NEW.platform = 'mobile' AND NEW.location_name = 'All branches — management')), false);
+  RETURN NEW;
+END
+$trigger$;
+REVOKE ALL ON FUNCTION private.terminal_management_registration_on_insert() FROM PUBLIC;
+DROP TRIGGER IF EXISTS terminal_management_registration_insert ON public.terminal_tokens;
+CREATE TRIGGER terminal_management_registration_insert BEFORE INSERT ON public.terminal_tokens
+FOR EACH ROW EXECUTE FUNCTION private.terminal_management_registration_on_insert();
+
+CREATE OR REPLACE FUNCTION private.terminal_token_claim_impl(
+  p_token_id uuid,
+  p_device text DEFAULT NULL::text,
+  p_proof_hash text DEFAULT NULL::text,
+  p_platform text DEFAULT NULL::text,
+  p_os text DEFAULT NULL::text
+) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  t public.terminal_tokens%ROWTYPE;
+  claimed boolean;
+BEGIN
+  SELECT * INTO t FROM public.terminal_tokens WHERE id = p_token_id FOR UPDATE;
+  IF NOT FOUND THEN RETURN false; END IF;
+  IF t.status = 'revoked' OR t.revoked_at IS NOT NULL THEN RAISE EXCEPTION 'TERMINAL_TOKEN_REVOKED'; END IF;
+  IF pg_catalog.btrim(coalesce(t.location_id, '')) = '' AND t.management_registration IS NOT TRUE THEN RAISE EXCEPTION 'TERMINAL_BRANCH_REQUIRED'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.stores s WHERE s.id = t.location_id
+      AND (s.deleted_at IS NOT NULL OR s.archived_at IS NOT NULL OR s.is_active IS FALSE)
+  ) THEN RAISE EXCEPTION 'TERMINAL_BRANCH_INACTIVE'; END IF;
+  IF nullif(pg_catalog.btrim(coalesce(p_proof_hash, '')), '') IS NULL THEN
+    RAISE EXCEPTION 'TERMINAL_DEVICE_PROOF_REQUIRED';
+  END IF;
+  IF nullif(pg_catalog.btrim(coalesce(t.claim_proof, '')), '') IS NOT NULL
+     AND pg_catalog.lower(t.claim_proof) <> pg_catalog.lower(p_proof_hash) THEN
+    RAISE EXCEPTION 'TERMINAL_DEVICE_PROOF_MISMATCH';
+  END IF;
+  IF ((t.platform = 'mobile' AND p_platform IN ('android', 'ios')) OR (t.platform = 'pc' AND p_platform = 'electron')) IS NOT TRUE THEN
+    RAISE EXCEPTION 'TERMINAL_PLATFORM_MISMATCH';
+  END IF;
+  IF t.status <> 'active' OR t.claimed_at IS NOT NULL THEN
+    IF pg_catalog.lower(coalesce(t.claim_proof, t.claimed_proof_hash)) = pg_catalog.lower(p_proof_hash) THEN
+      UPDATE public.terminal_tokens SET last_seen_at = pg_catalog.now() WHERE id = p_token_id;
+      RETURN true;
+    END IF;
+    RETURN false;
+  END IF;
+  IF t.expires_at IS NOT NULL AND t.expires_at < pg_catalog.now() THEN RAISE EXCEPTION 'TERMINAL_TOKEN_EXPIRED'; END IF;
+  UPDATE public.terminal_tokens
+     SET status = 'used',
+         claimed_by_device = pg_catalog.left(coalesce(p_device, claimed_by_device), 120),
+         claim_proof = pg_catalog.lower(p_proof_hash),
+         claimed_proof_hash = pg_catalog.lower(p_proof_hash),
+         claimed_platform = coalesce(nullif(pg_catalog.btrim(coalesce(p_platform, '')), ''), claimed_platform),
+         claimed_os = coalesce(nullif(pg_catalog.btrim(coalesce(p_os, '')), ''), claimed_os),
+         is_claimed = true,
+         claimed_at = pg_catalog.now(),
+         activated_at = coalesce(activated_at, pg_catalog.now()),
+         last_seen_at = pg_catalog.now()
+   WHERE id = p_token_id AND status = 'active' AND claimed_at IS NULL
+   RETURNING true INTO claimed;
+  RETURN coalesce(claimed, false);
+END
+$function$;
+
+COMMIT;
+
 -- Final public-schema privilege hardening after release 1.4.38 routine definitions.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC,anon,authenticated;
 DO $release_hardening$
@@ -19813,3 +20091,282 @@ GROUP BY f.sale_day,f.sale_month,f.store_id,f.product_id,f.product_name,coalesce
 REVOKE ALL ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales FROM anon;
 GRANT SELECT ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales TO authenticated;
 GRANT ALL ON public.v_sale_line_facts, public.v_daily_store_sales, public.v_daily_item_sales TO service_role;
+
+-- Enforce saved action/page permissions for supervisors as well as other staff.
+-- Administrators retain recovery access; inactive accounts never gain access.
+CREATE OR REPLACE FUNCTION public.has_perm(_flag text) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+  WITH actor AS (
+    SELECT a.role, a.role_slug, coalesce(a.permissions, '{}'::jsonb) AS permissions
+    FROM public.app_users a
+    WHERE (SELECT auth.uid()) IS NOT NULL AND a.is_active
+      AND (a.auth_user_id = (SELECT auth.uid())
+        OR (a.auth_user_id IS NULL AND lower(a.email) = lower(coalesce((SELECT auth.jwt())->>'email', ''))))
+    ORDER BY (a.auth_user_id = (SELECT auth.uid())) DESC NULLS LAST
+    LIMIT 1
+  ), decision AS (
+    SELECT *, CASE
+      WHEN permissions ? _flag THEN permissions->_flag = 'true'::jsonb
+      WHEN _flag = 'can_view_cost_margin' THEN permissions->'can_view_sales_reports' = 'true'::jsonb
+        AND (NOT permissions ? 'page:reports' OR permissions->'page:reports' = 'true'::jsonb)
+      WHEN _flag = ANY (ARRAY['can_edit_product_details','can_link_product_barcode',
+        'can_archive_product','can_restore_product','can_publish_product'])
+        THEN permissions->'can_add_new_product' = 'true'::jsonb
+      ELSE false END AS granted
+    FROM actor
+  )
+  SELECT coalesce((SELECT
+    CASE WHEN role = 'admin' OR role_slug = 'admin' THEN true
+    ELSE coalesce(granted, false) AND (
+      _flag = 'can_use_management_mobile'
+      OR NOT ('{"can_process_sale":["register"],"can_give_discount":["register"],"can_void_item":["register"],"can_process_refund":["register"],"can_process_exchange":["register"],"can_send_whatsapp_bill":["register"],"can_delete_line":["register"],"can_reduce_qty":["register"],"can_discount_bill":["register"],"can_override_price":["register"],"can_void_cart":["register"],"can_no_sale_open":["register"],"can_edit_tenders":["register"],"can_apply_member_discount":["register"],"can_redeem_points":["register"],"can_hold_cart":["holds"],"can_view_held_orders":["holds"],"can_reopen_held_order":["holds"],"can_discard_held_order":["holds"],"can_open_drawer":["shifts"],"can_close_drawer":["shifts"],"can_view_drawer_balance":["shifts"],"can_open_shift":["shifts"],"can_close_shift":["shifts"],"can_bypass_shift_lock":["shifts"],"can_shift_cash_count":["shifts"],"can_shift_expected_cash_view":["shifts"],"can_shift_counted_cash_view":["shifts"],"can_shift_variance_view":["shifts"],"can_shift_financial_summary_view":["shifts"],"can_shift_payment_breakdown_view":["shifts"],"can_shift_closing_history_view":["shifts"],"can_shift_signin_history_view":["shifts"],"can_shift_report_reprint":["shifts"],"can_manage_other_shifts":["shifts"],"can_shift_variance_approve":["shifts"],"can_shift_cash_recount":["shifts"],"can_reprint_bill":["receipts"],"can_manage_bookings":["bookings","pos-general-booking","pos-racket-service"],"can_create_booking":["bookings","pos-general-booking","pos-racket-service"],"can_collect_booking":["bookings","pos-general-booking","pos-racket-service"],"can_cancel_booking":["bookings","pos-general-booking","pos-racket-service"],"can_view_inventory":["inventory"],"can_edit_product_price":["inventory"],"can_add_new_product":["inventory"],"can_edit_product_details":["inventory"],"can_link_product_barcode":["inventory"],"can_archive_product":["inventory"],"can_restore_product":["inventory"],"can_publish_product":["inventory"],"can_manage_categories":["inventory"],"can_bulk_edit_products":["inventory"],"can_merge_products":["inventory"],"can_view_cost_margin":["inventory","all-shops","dashboard","analytics","reports"],"can_adjust_stock":["stock"],"can_receive_purchase_order":["purchasing","receiving","suppliers"],"can_create_transfer":["requests","transfers","approvals","verifications"],"can_receive_transfer":["requests","transfers","approvals","verifications"],"can_approve_transfer":["requests","transfers","approvals","verifications"],"can_add_member":["members"],"can_edit_member_points":["members"],"can_view_member_history":["members"],"can_manage_locations":["locations","all-shops"],"can_view_dashboard":["dashboard","analytics"],"can_view_sales_reports":["reports"],"can_export_reports":["reports"],"can_view_audit_trail":["audit"],"can_manage_promotions":["promotions","coupons"],"can_manage_staff":["staff","admin"],"can_manage_terminals":["terminals","settings-mobile-terminals"],"can_use_management_mobile":["settings-mobile-terminals"],"can_manage_sync_backup":["database"],"can_access_pos_settings":["settings"],"can_customize_display":["settings"]}'::jsonb ? _flag)
+      OR EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text('{"can_process_sale":["register"],"can_give_discount":["register"],"can_void_item":["register"],"can_process_refund":["register"],"can_process_exchange":["register"],"can_send_whatsapp_bill":["register"],"can_delete_line":["register"],"can_reduce_qty":["register"],"can_discount_bill":["register"],"can_override_price":["register"],"can_void_cart":["register"],"can_no_sale_open":["register"],"can_edit_tenders":["register"],"can_apply_member_discount":["register"],"can_redeem_points":["register"],"can_hold_cart":["holds"],"can_view_held_orders":["holds"],"can_reopen_held_order":["holds"],"can_discard_held_order":["holds"],"can_open_drawer":["shifts"],"can_close_drawer":["shifts"],"can_view_drawer_balance":["shifts"],"can_open_shift":["shifts"],"can_close_shift":["shifts"],"can_bypass_shift_lock":["shifts"],"can_shift_cash_count":["shifts"],"can_shift_expected_cash_view":["shifts"],"can_shift_counted_cash_view":["shifts"],"can_shift_variance_view":["shifts"],"can_shift_financial_summary_view":["shifts"],"can_shift_payment_breakdown_view":["shifts"],"can_shift_closing_history_view":["shifts"],"can_shift_signin_history_view":["shifts"],"can_shift_report_reprint":["shifts"],"can_manage_other_shifts":["shifts"],"can_shift_variance_approve":["shifts"],"can_shift_cash_recount":["shifts"],"can_reprint_bill":["receipts"],"can_manage_bookings":["bookings","pos-general-booking","pos-racket-service"],"can_create_booking":["bookings","pos-general-booking","pos-racket-service"],"can_collect_booking":["bookings","pos-general-booking","pos-racket-service"],"can_cancel_booking":["bookings","pos-general-booking","pos-racket-service"],"can_view_inventory":["inventory"],"can_edit_product_price":["inventory"],"can_add_new_product":["inventory"],"can_edit_product_details":["inventory"],"can_link_product_barcode":["inventory"],"can_archive_product":["inventory"],"can_restore_product":["inventory"],"can_publish_product":["inventory"],"can_manage_categories":["inventory"],"can_bulk_edit_products":["inventory"],"can_merge_products":["inventory"],"can_view_cost_margin":["inventory","all-shops","dashboard","analytics","reports"],"can_adjust_stock":["stock"],"can_receive_purchase_order":["purchasing","receiving","suppliers"],"can_create_transfer":["requests","transfers","approvals","verifications"],"can_receive_transfer":["requests","transfers","approvals","verifications"],"can_approve_transfer":["requests","transfers","approvals","verifications"],"can_add_member":["members"],"can_edit_member_points":["members"],"can_view_member_history":["members"],"can_manage_locations":["locations","all-shops"],"can_view_dashboard":["dashboard","analytics"],"can_view_sales_reports":["reports"],"can_export_reports":["reports"],"can_view_audit_trail":["audit"],"can_manage_promotions":["promotions","coupons"],"can_manage_staff":["staff","admin"],"can_manage_terminals":["terminals","settings-mobile-terminals"],"can_use_management_mobile":["settings-mobile-terminals"],"can_manage_sync_backup":["database"],"can_access_pos_settings":["settings"],"can_customize_display":["settings"]}'::jsonb->_flag) AS owner(page)
+        WHERE permissions->('page:' || owner.page) IS DISTINCT FROM 'false'::jsonb
+      )
+    ) END FROM decision), false)
+$$;
+REVOKE ALL ON FUNCTION public.has_perm(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.has_perm(text) TO authenticated, service_role;
+NOTIFY pgrst, 'reload schema';
+
+-- Global denials are materialized into the existing replicated permission matrix.
+-- Requested per-user grants stay private so removing a denial restores prior intent.
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE TABLE IF NOT EXISTS private.global_permission_policy (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  denied text[] NOT NULL DEFAULT '{}'
+);
+INSERT INTO private.global_permission_policy(singleton) VALUES (true) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS private.requested_staff_permissions (
+  account_id uuid PRIMARY KEY REFERENCES public.app_users(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+  permissions jsonb NOT NULL
+);
+INSERT INTO private.requested_staff_permissions(account_id, permissions)
+SELECT id, coalesce(permissions, '{}'::jsonb) FROM public.app_users ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS private.global_permission_audit (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  actor uuid NOT NULL, denied text[] NOT NULL, changed_at timestamptz NOT NULL DEFAULT now()
+);
+REVOKE ALL ON private.global_permission_policy, private.requested_staff_permissions,
+  private.global_permission_audit FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION private.enforce_global_permission_denials() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE requested jsonb; entry record; blocked text;
+BEGIN
+  SELECT permissions INTO requested FROM private.requested_staff_permissions WHERE account_id = NEW.id;
+  IF requested IS NULL OR TG_OP = 'INSERT' THEN
+    requested := coalesce(NEW.permissions, '{}'::jsonb);
+  ELSE
+    -- A normal profile save must not replace a masked grant with a permanent denial.
+    FOR entry IN SELECT key, value FROM jsonb_each(coalesce(NEW.permissions, '{}'::jsonb)) LOOP
+      IF entry.value IS DISTINCT FROM OLD.permissions->entry.key THEN
+        requested := jsonb_set(requested, ARRAY[entry.key], entry.value, true);
+      END IF;
+    END LOOP;
+    FOR blocked IN SELECT jsonb_object_keys(coalesce(OLD.permissions, '{}'::jsonb)) LOOP
+      IF NOT coalesce(NEW.permissions, '{}'::jsonb) ? blocked THEN requested := requested - blocked; END IF;
+    END LOOP;
+  END IF;
+  INSERT INTO private.requested_staff_permissions(account_id, permissions) VALUES (NEW.id, requested)
+  ON CONFLICT(account_id) DO UPDATE SET permissions = EXCLUDED.permissions;
+  NEW.permissions := requested;
+  IF NEW.role <> 'admin' AND coalesce(NEW.role_slug, '') <> 'admin' THEN
+    FOR blocked IN SELECT unnest(denied) FROM private.global_permission_policy WHERE singleton LOOP
+      NEW.permissions := jsonb_set(NEW.permissions, ARRAY[blocked], 'false'::jsonb, true);
+    END LOOP;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION private.enforce_global_permission_denials() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS zz_global_permission_denials ON public.app_users;
+CREATE TRIGGER zz_global_permission_denials BEFORE INSERT OR UPDATE OF permissions, role, role_slug
+ON public.app_users FOR EACH ROW EXECUTE FUNCTION private.enforce_global_permission_denials();
+
+CREATE OR REPLACE FUNCTION public.global_permission_restrictions() RETURNS text[]
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.app_users WHERE auth_user_id = (SELECT auth.uid())
+    AND is_active AND (role = 'admin' OR role_slug = 'admin')) THEN
+    RAISE EXCEPTION 'Administrator access is required' USING ERRCODE = '42501';
+  END IF;
+  RETURN (SELECT denied FROM private.global_permission_policy WHERE singleton);
+END $$;
+CREATE OR REPLACE FUNCTION public.set_global_permission_restrictions(p_denied text[]) RETURNS text[]
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE normalized text[];
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.app_users WHERE auth_user_id = (SELECT auth.uid())
+    AND is_active AND (role = 'admin' OR role_slug = 'admin')) THEN
+    RAISE EXCEPTION 'Administrator access is required' USING ERRCODE = '42501';
+  END IF;
+  IF p_denied IS NULL OR cardinality(p_denied) > 500 OR EXISTS (
+    SELECT 1 FROM unnest(p_denied) k WHERE k IS NULL OR NOT ('["can_access_pos_settings","can_add_member","can_add_new_product","can_adjust_stock","can_apply_member_discount","can_approve_transfer","can_archive_product","can_bulk_edit_products","can_bypass_shift_lock","can_cancel_booking","can_close_drawer","can_close_shift","can_collect_booking","can_create_booking","can_create_transfer","can_customize_display","can_delete_line","can_discard_held_order","can_discount_bill","can_edit_member_points","can_edit_product_details","can_edit_product_price","can_edit_tenders","can_export_reports","can_give_discount","can_hold_cart","can_link_product_barcode","can_manage_bookings","can_manage_categories","can_manage_locations","can_manage_other_shifts","can_manage_promotions","can_manage_staff","can_manage_sync_backup","can_manage_terminals","can_merge_products","can_no_sale_open","can_open_drawer","can_open_shift","can_override_price","can_process_exchange","can_process_refund","can_process_sale","can_publish_product","can_receive_purchase_order","can_receive_transfer","can_redeem_points","can_reduce_qty","can_reopen_held_order","can_reprint_bill","can_restore_product","can_send_whatsapp_bill","can_shift_cash_count","can_shift_cash_recount","can_shift_closing_history_view","can_shift_counted_cash_view","can_shift_expected_cash_view","can_shift_financial_summary_view","can_shift_payment_breakdown_view","can_shift_report_reprint","can_shift_signin_history_view","can_shift_variance_approve","can_shift_variance_view","can_use_management_mobile","can_view_audit_trail","can_view_dashboard","can_view_drawer_balance","can_view_held_orders","can_view_inventory","can_view_cost_margin","can_view_member_history","can_view_sales_reports","can_void_cart","can_void_item","page:admin","page:alerts","page:all-shops","page:analytics","page:approvals","page:audit","page:bookings","page:coupons","page:dashboard","page:database","page:display","page:holds","page:inventory","page:locations","page:members","page:pos-general-booking","page:pos-racket-service","page:promotions","page:purchasing","page:receipts","page:receiving","page:register","page:reports","page:requests","page:settings","page:settings-mobile-terminals","page:shifts","page:staff","page:stock","page:suppliers","page:terminals","page:transfers","page:verifications"]'::jsonb ? k)
+  ) THEN RAISE EXCEPTION 'Invalid restriction keys' USING ERRCODE = '22023'; END IF;
+  SELECT coalesce(array_agg(DISTINCT k ORDER BY k), '{}') INTO normalized FROM unnest(p_denied) k;
+  -- Serialize policy changes with account edits before changing the effective matrices.
+  LOCK TABLE public.app_users IN SHARE ROW EXCLUSIVE MODE;
+  UPDATE private.global_permission_policy SET denied = normalized WHERE singleton;
+  UPDATE public.app_users a SET permissions = r.permissions, updated_at = now()
+    FROM private.requested_staff_permissions r WHERE r.account_id = a.id
+      AND a.role <> 'admin' AND coalesce(a.role_slug, '') <> 'admin';
+  INSERT INTO private.global_permission_audit(actor, denied) VALUES ((SELECT auth.uid()), normalized);
+  RETURN normalized;
+END $$;
+REVOKE ALL ON FUNCTION public.global_permission_restrictions(), public.set_global_permission_restrictions(text[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.global_permission_restrictions(), public.set_global_permission_restrictions(text[]) TO authenticated;
+NOTIFY pgrst, 'reload schema';
+
+-- Additional restrictive policies: existing branch/row policies still apply.
+DO $policy$
+DECLARE item record; predicate text;
+BEGIN
+  FOR item IN SELECT key, value FROM jsonb_each('{"products":["can_process_sale","can_view_inventory","can_add_new_product","can_edit_product_details","can_adjust_stock","can_receive_purchase_order","can_create_transfer","can_receive_transfer","can_approve_transfer","can_view_sales_reports","can_view_dashboard"],"product_barcodes":["can_process_sale","can_view_inventory","can_add_new_product","can_edit_product_details","can_adjust_stock","can_receive_purchase_order","can_create_transfer","can_receive_transfer","can_approve_transfer","can_view_sales_reports","can_view_dashboard"],"product_categories":["can_process_sale","can_view_inventory","can_add_new_product","can_edit_product_details","can_adjust_stock","can_receive_purchase_order","can_create_transfer","can_receive_transfer","can_approve_transfer","can_view_sales_reports","can_view_dashboard"],"uom_units":["can_process_sale","can_view_inventory","can_add_new_product","can_edit_product_details","can_adjust_stock","can_receive_purchase_order","can_create_transfer","can_receive_transfer","can_approve_transfer","can_view_sales_reports","can_view_dashboard"],"sales":["can_process_sale","can_view_sales_reports","can_view_dashboard","can_reprint_bill","can_process_refund","can_process_exchange"],"sale_items":["can_process_sale","can_view_sales_reports","can_view_dashboard","can_reprint_bill","can_process_refund","can_process_exchange"],"payment_transactions":["can_process_sale","can_view_sales_reports","can_view_dashboard","can_reprint_bill","can_process_refund","can_process_exchange"],"bookings":["can_manage_bookings","can_create_booking","can_collect_booking","can_cancel_booking"],"booking_payments":["can_manage_bookings","can_create_booking","can_collect_booking","can_cancel_booking"],"stock_transfers":["can_create_transfer","can_receive_transfer","can_approve_transfer"],"stock_transfer_items":["can_create_transfer","can_receive_transfer","can_approve_transfer"],"purchase_orders":["can_receive_purchase_order"],"purchase_order_items":["can_receive_purchase_order"],"receivings":["can_receive_purchase_order"],"receiving_items":["can_receive_purchase_order"],"suppliers":["can_receive_purchase_order"],"members":["can_process_sale","can_add_member","can_edit_member_points","can_view_member_history"],"stock_adjustments":["can_adjust_stock"],"stock_count_drafts":["can_adjust_stock"],"stock_movements":["can_adjust_stock","can_view_inventory","can_create_transfer","can_receive_transfer","can_approve_transfer"],"expenses":["can_view_sales_reports"],"audit_logs":["can_view_audit_trail"],"item_activity_logs":["can_view_audit_trail"],"held_orders":["can_hold_cart","can_view_held_orders","can_reopen_held_order"],"terminal_commands":["can_manage_terminals"]}'::jsonb) LOOP
+    IF to_regclass('public.' || item.key) IS NULL THEN CONTINUE; END IF;
+    SELECT string_agg(format('public.has_perm(%L)', flag), ' OR ') INTO predicate
+      FROM jsonb_array_elements_text(item.value) AS keys(flag);
+    EXECUTE format('DROP POLICY IF EXISTS staff_feature_read ON public.%I', item.key);
+    EXECUTE format('CREATE POLICY staff_feature_read ON public.%I AS RESTRICTIVE FOR SELECT TO authenticated USING (%s)', item.key, predicate);
+  END LOOP;
+END $policy$;
+NOTIFY pgrst, 'reload schema';
+
+-- PIN verifiers are only for trusted server/native verification, never renderer reads.
+DO $columns$
+DECLARE safe_columns text; secret record;
+BEGIN
+  REVOKE SELECT ON public.app_users FROM authenticated;
+  FOR secret IN SELECT attname FROM pg_attribute WHERE attrelid='public.app_users'::regclass
+    AND attnum > 0 AND NOT attisdropped AND attname IN ('pin_hash','offline_login_pin_hash') LOOP
+    EXECUTE format('REVOKE SELECT (%I) ON public.app_users FROM authenticated', secret.attname);
+  END LOOP;
+  SELECT string_agg(quote_ident(attname), ', ' ORDER BY attnum) INTO safe_columns
+    FROM pg_attribute WHERE attrelid='public.app_users'::regclass AND attnum > 0 AND NOT attisdropped
+      AND attname NOT IN ('pin_hash','offline_login_pin_hash');
+  EXECUTE format('GRANT SELECT (%s) ON public.app_users TO authenticated', safe_columns);
+END $columns$;
+
+-- Reusable campaign code scope and offline sync (20261023160000).
+-- Reusable campaign codes are promotions with no FOC product.
+-- Include such global promotions in Windows bootstrap/counts/delete and the
+-- incremental feed. The partner column is nullable for old application builds.
+ALTER TABLE public.promotions ADD COLUMN IF NOT EXISTS partner text;
+ALTER TABLE public.promotions ADD COLUMN IF NOT EXISTS code_scope text;
+ALTER TABLE public.promotions ADD COLUMN IF NOT EXISTS code_cluster_id text;
+ALTER TABLE public.promotions ADD CONSTRAINT promotions_code_scope_valid
+  CHECK (code_scope IS NULL OR code_scope IN ('bill','item'));
+CREATE UNIQUE INDEX IF NOT EXISTS promotions_reusable_code_unique
+  ON public.promotions (upper(btrim(title))) WHERE promo_type='code' AND deleted_at IS NULL;
+
+CREATE OR REPLACE FUNCTION public.sync_apply_promotions(p_rows jsonb)
+RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE v_count integer;
+BEGIN
+  INSERT INTO public.promotions
+    (id,title,promo_type,min_spend,discount_percent,discount_amount,foc_product_id,
+     points_per_dollar,tier_rates,partner,code_scope,code_cluster_id,is_active,start_date,end_date,created_at,
+     updated_at,row_version,deleted_at)
+  SELECT id,title,promo_type,min_spend,discount_percent,discount_amount,foc_product_id,
+     points_per_dollar,tier_rates,partner,code_scope,code_cluster_id,is_active,start_date,end_date,created_at,
+     updated_at,row_version,deleted_at
+  FROM jsonb_populate_recordset(NULL::public.promotions, COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT (id) DO UPDATE SET
+    title=EXCLUDED.title, promo_type=EXCLUDED.promo_type, min_spend=EXCLUDED.min_spend,
+    discount_percent=EXCLUDED.discount_percent, discount_amount=EXCLUDED.discount_amount,
+    foc_product_id=EXCLUDED.foc_product_id, points_per_dollar=EXCLUDED.points_per_dollar,
+    tier_rates=EXCLUDED.tier_rates,
+    partner=COALESCE(EXCLUDED.partner,public.promotions.partner),
+    code_scope=COALESCE(EXCLUDED.code_scope,public.promotions.code_scope),
+    code_cluster_id=CASE WHEN EXCLUDED.code_scope IS NULL THEN public.promotions.code_cluster_id ELSE EXCLUDED.code_cluster_id END,
+    is_active=EXCLUDED.is_active, start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
+    created_at=EXCLUDED.created_at, updated_at=EXCLUDED.updated_at,
+    row_version=EXCLUDED.row_version, deleted_at=EXCLUDED.deleted_at
+  WHERE EXCLUDED.row_version>public.promotions.row_version;
+  GET DIAGNOSTICS v_count=ROW_COUNT;
+  RETURN v_count;
+END $fn$;
+REVOKE ALL ON FUNCTION public.sync_apply_promotions(jsonb) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.sync_feed_promotions()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $trg$
+DECLARE v_row public.promotions%ROWTYPE; v_branch text;
+BEGIN
+  IF TG_OP='DELETE' THEN v_row:=OLD; ELSE v_row:=NEW; END IF;
+  SELECT COALESCE(NULLIF(p.owner_store_id::text,''),'global') INTO v_branch
+    FROM public.products p WHERE p.id=v_row.foc_product_id;
+  INSERT INTO public.sync_change_feed
+    (organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+  VALUES ('default',COALESCE(v_branch,'global'),NULL,'promotions',
+    jsonb_build_object('id',v_row.id)::text,lower(TG_OP),v_row.row_version,
+    TG_OP='DELETE');
+  RETURN NULL;
+END $trg$;
+REVOKE ALL ON FUNCTION public.sync_feed_promotions() FROM PUBLIC, anon, authenticated;
+
+-- These existing scoped functions have other authorization and pagination
+-- rules. Replace only their promotion product-scope predicate, retaining all
+-- unrelated policy and business logic. Abort if the expected contract changed.
+DO $migration$
+DECLARE
+  v_fn record;
+  v_def text;
+  v_old constant text := 'EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=x."foc_product_id"::text AND (NULLIF(p.owner_store_id::text,'''') IS NULL OR p.owner_store_id::text=p_branch_id))';
+  v_new constant text := '(x.foc_product_id IS NULL OR ' || v_old || ')';
+BEGIN
+  FOR v_fn IN
+    SELECT p.oid, p.proname
+    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname='public' AND p.proname IN
+      ('pos_sync_bootstrap_scoped','pos_sync_counts_scoped','sync_delete_promotions')
+  LOOP
+    v_def:=pg_get_functiondef(v_fn.oid);
+    IF position(v_old IN v_def)>0 THEN
+      IF position(v_old IN substr(v_def,position(v_old IN v_def)+length(v_old)))>0 THEN
+        RAISE EXCEPTION 'Unexpected repeated promotion scope in %',v_fn.proname;
+      END IF;
+      EXECUTE replace(v_def,v_old,v_new);
+    ELSIF v_fn.proname <> 'sync_delete_promotions' THEN
+      RAISE EXCEPTION 'Expected promotion scope not found in %',v_fn.proname;
+    END IF;
+  END LOOP;
+END $migration$;
+
+-- Validate new online sales at the authoritative transaction boundary. Historical
+-- offline uploads use the sync path and are not re-priced against today's rules.
+DO $sale_guard$
+DECLARE v_def text;
+BEGIN
+  SELECT pg_get_functiondef('public.pos_sale_commit(jsonb,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure) INTO v_def;
+  IF position('IF existing_id IS NULL THEN' IN v_def)=0 THEN
+    RAISE EXCEPTION 'Expected sale insertion boundary not found';
+  END IF;
+  EXECUTE replace(v_def, 'IF existing_id IS NULL THEN', $guard$IF existing_id IS NULL THEN
+    IF EXISTS (
+      SELECT 1 FROM public.promotions p
+      WHERE p.id::text=s->>'coupon_promo_id' AND p.promo_type='code'
+        AND (p.is_active IS DISTINCT FROM true OR p.deleted_at IS NOT NULL
+          OR upper(btrim(p.title)) IS DISTINCT FROM upper(btrim(s->>'coupon_code'))
+          OR COALESCE(p.code_scope,'bill') IS DISTINCT FROM s->>'coupon_scope'
+          OR (NULLIF(p.code_cluster_id,'') IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM public.stores st WHERE st.id::text=s->>'store_id' AND st.group_id=p.code_cluster_id
+          )))
+    ) THEN RAISE EXCEPTION 'REUSABLE_CODE_NOT_VALID: refresh the code and check its store coverage'; END IF;
+  $guard$);
+END $sale_guard$;
+
+-- Existing tills must receive previously omitted non-FOC promotions as well.
+INSERT INTO public.sync_change_feed
+  (organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
+SELECT 'default','global',NULL,'promotions',jsonb_build_object('id',id)::text,
+  'update',row_version,false FROM public.promotions WHERE foc_product_id IS NULL;
+
+-- Final public-schema privilege hardening after permission policy definitions.
+DO $permission_hardening$
+DECLARE routine record;
+BEGIN
+  FOR routine IN SELECT p.oid::regprocedure AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef
+  LOOP EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon',routine.signature); END LOOP;
+END $permission_hardening$;

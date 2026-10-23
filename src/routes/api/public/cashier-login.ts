@@ -42,30 +42,23 @@ export async function handleCashierLogin(request: Request): Promise<Response> {
       { status: 503 },
     );
 
-  // Brute-force brake. The keypad limit lives in the browser and proves
-  // nothing; this counts failures centrally, keyed by the account being
-  // guessed and by the caller's address, so a scripted run locks out.
+  // The account bucket supplements the canonical account lockout in SQL.
+  // Address throttling lives inside cashierLoginServer so its other callers
+  // cannot bypass it.
   const { throttleStatus, throttleFail, throttleReset, minutesLeft } =
     await import("@/lib/pin-throttle.server");
-  const ip =
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "unknown";
   const userKey = `cashier:${parsed.data.username.trim().toLowerCase()}`;
-  const ipKey = `cashier-ip:${ip}`;
   try {
-    for (const key of [userKey, ipKey]) {
-      const state = await throttleStatus(key);
-      if (state.locked)
-        return Response.json(
-          {
-            ok: false,
-            code: "locked",
-            error: `Too many wrong PINs. Try again in ${minutesLeft(state)} minutes.`,
-          },
-          { status: 429 },
-        );
-    }
+    const state = await throttleStatus(userKey);
+    if (state.locked)
+      return Response.json(
+        {
+          ok: false,
+          code: "locked",
+          error: `Too many wrong PINs. Try again in ${minutesLeft(state)} minutes.`,
+        },
+        { status: 429 },
+      );
   } catch {
     return Response.json(
       { ok: false, code: "central_unavailable", error: "Central PIN protection is unavailable" },
@@ -75,19 +68,19 @@ export async function handleCashierLogin(request: Request): Promise<Response> {
 
   const { cashierLoginServer } = await import("@/lib/cashier-login.server");
   try {
-    const result = await cashierLoginServer(parsed.data);
+    const result = await cashierLoginServer({ ...parsed.data, request });
     if (result.ok) {
       await throttleReset(userKey);
-      await throttleReset(ipKey);
     } else if (result.code === "invalid_credentials") {
       await throttleFail(userKey);
-      await throttleFail(ipKey);
     }
     // Infrastructure/identity preparation failures are not wrong PINs. Do not
     // consume an attempt; 503 also lets a terminal use its verified local PIN
     // cache while the hosted Auth handoff is temporarily unavailable.
     const status = result.ok
       ? 200
+      : result.code === "locked"
+        ? 429
       : result.code === "session_prepare_failed" || result.code === "central_unavailable"
         ? 503
         : result.code === "identity_mismatch"

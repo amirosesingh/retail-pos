@@ -9,6 +9,8 @@
 import { toast } from "sonner";
 import { guardNotification } from "./notification-guard";
 import { anyDatabaseReachable } from "@/core/activation/connection-health";
+import { hasFeature } from "@/platform-config/features";
+import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 
 export type NotifyKind = "success" | "info" | "warning" | "error";
 
@@ -84,7 +86,7 @@ export function classifyError(error: unknown): ErrorCategory {
   if (status === 503) return "unavailable";
   if (status === 500) return "server";
   if (/failed to fetch|networkerror|load failed|offline|network request|econnrefused|enotfound/.test(lower)) return "network";
-  if (/database.*not connected|enotconnected/.test(lower)) return "database-disconnected";
+  if (/database.*not connected|enotconnected|sql server setup or connection is not complete/.test(lower)) return "database-disconnected";
   if (/database|\bsql\b/.test(lower) && /write|insert|update|save|readonly|constraint/.test(lower)) return "database-write";
   if (/database|\bsql\b/.test(lower) && /read|select|query/.test(lower)) return "database-read";
   if (/already.*(running|progress)|duplicate.*attempt|mutex|busy/.test(lower)) return "already-running";
@@ -196,6 +198,11 @@ export function showNotification(message: string, kind: NotifyKind = "info", des
 
 /** Report a caught failure as a readable popup and return the message shown. */
 export function notifyError(error: unknown, action = "That action"): string {
+  if (hasFeature("localDb") && effectiveDatabaseMode() === "local" && classifyError(error) === "database-disconnected") {
+    const message = "Local SQL Server is disconnected. Local operations are paused; reconnection will retry automatically.";
+    toast.error(message, { id: "pos-local-database-disconnected" });
+    return message;
+  }
   // Neither this terminal nor the central database would take the change:
   // that needs a modal the operator has to acknowledge, not a passing toast.
   if ((error as { name?: string } | null)?.name === "AllTargetsFailed") {

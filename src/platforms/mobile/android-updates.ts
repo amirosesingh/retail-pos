@@ -179,8 +179,10 @@ export function useAndroidUpdates() {
     }
   }, []);
 
-  const install = useCallback(async () => {
-    if (downloadInFlight.current) return;
+  /** Download into Android DownloadManager without opening the package installer. */
+  const download = useCallback(async (): Promise<string | null> => {
+    if (downloadInFlight.current) return null;
+    if (state.readyUri) return state.readyUri;
     downloadInFlight.current = true;
     setState((s) => ({ ...s, downloading: true, percent: 0, error: null }));
     try {
@@ -195,26 +197,40 @@ export function useAndroidUpdates() {
         ...FEEDS.map((f) => `${f}/${encodeURIComponent(file)}`),
       ].filter((u): u is string => Boolean(u));
       const url = (await firstReachableUrl(candidates)) ?? candidates[0]!;
-      const res = await downloadAndInstall(url, file, (percent: number) =>
+      const uri = await waitForUpdateDownload(url, file, (percent: number) =>
         setState((s) => ({ ...s, percent })),
       );
       setState((s) => ({
         ...s,
         downloading: false,
         percent: 100,
-        readyUri: res.opened ? null : res.uri,
-        error: res.opened ? null : (res.error ?? null),
+        readyUri: uri,
+        error: null,
       }));
+      return uri;
     } catch (err) {
       setState((s) => ({
         ...s,
         downloading: false,
         error: describeNetworkError(err),
       }));
+      return null;
     } finally {
       downloadInFlight.current = false;
     }
-  }, [state.file, state.feed, state.url]);
+  }, [state.file, state.feed, state.url, state.readyUri]);
+
+  /** Manual settings action keeps its one-tap download/install behavior. */
+  const install = useCallback(async () => {
+    const uri = state.readyUri ?? await download();
+    if (!uri) return;
+    try {
+      await openInstaller(uri);
+      setState((s) => ({ ...s, readyUri: uri, error: null }));
+    } catch (err) {
+      setState((s) => ({ ...s, readyUri: uri, error: describeNetworkError(err) }));
+    }
+  }, [download, state.readyUri]);
 
   useEffect(() => {
     if (!isNative() || !isAndroid()) return;
@@ -262,14 +278,15 @@ export function useAndroidUpdates() {
     if (!state.readyUri) return;
     try {
       await openInstaller(state.readyUri);
-      setState((s) => ({ ...s, readyUri: null, error: null }));
+      // Keep the verified APK available if the user cancels the OS installer.
+      setState((s) => ({ ...s, error: null }));
     } catch (err) {
       setState((s) => ({ ...s, error: describeNetworkError(err) }));
     }
   }, [state.readyUri]);
 
   const available = Boolean(state.latest && isNewer(state.latest, state.installed));
-  return { state, available, check, install, installDownloaded };
+  return { state, available, check, download, install, installDownloaded };
 }
 
 export function dismissAndroidUpdate(version: string) {

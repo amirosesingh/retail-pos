@@ -30,6 +30,7 @@ import { defaultTradingHours } from "@/lib/pos-seed";
 
 import { applyRounding, roundingOf, roundingPaymentMethod } from "@/core/pricing/rounding";
 import { applyCombo, intakeTotals, newJobTag } from "@/lib/booking-charges";
+import { stockLinesFromCharges } from "@/lib/booking-stock-lines";
 import { bookingRulesOf, paymentsLabel, r2, validateTenders } from "@/core/types/pos-types";
 import type {
   Store,
@@ -57,6 +58,9 @@ export type CheckoutDeps = {
    * bill so a decision and the bill it allowed are always read together.
    */
   getAuthorization?: () => { requestId: string | null; approvedBy?: string | null } | null;
+
+  /** Recheck time-sensitive coupon eligibility immediately before saving. */
+  validateCouponBeforeCommit?: () => boolean;
 
   // Cart / ticket
   getLines: () => CartLine[];
@@ -159,7 +163,8 @@ export function useCheckout(deps: CheckoutDeps) {
     });
   }
 
-  async function bookAndPayLater() {
+  async function bookAndPayLater(timingOverride?: "now") {
+    if (deps.validateCouponBeforeCommit?.() === false) return;
     const activeShift = deps.getActiveShift();
     const currentStore = deps.getCurrentStore();
     const activeCashier = deps.getActiveCashier();
@@ -203,10 +208,11 @@ export function useCheckout(deps: CheckoutDeps) {
       return;
     }
     if (!(await deps.requirePermission("can_create_booking"))) return;
+    const paymentTiming = timingOverride ?? bi.payTiming;
     const paidNow =
-      bi.payTiming === "collection"
+      paymentTiming === "collection"
         ? 0
-        : bi.payTiming === "now"
+        : paymentTiming === "now"
           ? bookingTotal
           : r2(Math.max(0, Number(bi.deposit || 0)));
     if (paidNow > bookingTotal) {
@@ -225,6 +231,10 @@ export function useCheckout(deps: CheckoutDeps) {
       return;
     }
     if (racketMode) {
+      if (!bi.racketCustomerOwned && !bi.racketProductId) {
+        toast.error("Choose the new racket from the catalogue or scan its barcode.");
+        return;
+      }
       if (bi.labourUnlocked && !bi.labourReason.trim()) {
         toast.error("Enter a reason for the labour override");
         return;
@@ -271,10 +281,12 @@ export function useCheckout(deps: CheckoutDeps) {
         (s) => s.active && s.name.trim(),
       );
       const pickedService = serviceTypes.find((s) => s.id === bi.serviceId) ?? null;
+      const jobStockLines = racketMode ? stockLinesFromCharges(combo.charges, state.products) : [];
+      const stockedCharges = r2(jobStockLines.reduce((sum, line) => sum + line.price, 0));
       const newBooking: NewBooking = {
         storeId: currentStore.id,
         shiftId: activeShift.id,
-        lines,
+        lines: [...lines, ...jobStockLines],
         subtotal: r2(totals.subtotal + serviceCharge),
         discount: totals.discount,
         tax: totals.tax,
@@ -283,16 +295,16 @@ export function useCheckout(deps: CheckoutDeps) {
         serviceName: racketMode
           ? serviceLabel(pickedService, bi.customService) || undefined
           : undefined,
-        serviceFee: serviceCharge || undefined,
+        serviceFee: racketMode ? r2(serviceCharge - stockedCharges) || undefined : undefined,
         charges:
-          racketMode && bi.intakeCharges.length
-            ? bi.intakeCharges.map((c) =>
+          racketMode && combo.charges.length
+            ? combo.charges.map((c) =>
                 c.kind === "labor" && bi.labourUnlocked && bi.labourReason.trim()
                   ? { ...c, overrideReason: bi.labourReason.trim() }
                   : c,
               )
             : undefined,
-        paymentTiming: bi.payTiming,
+        paymentTiming,
         deposit: paidNow,
         depositMethod: bi.depositMethod,
         dueDate: bi.dueDate,
@@ -327,6 +339,7 @@ export function useCheckout(deps: CheckoutDeps) {
           : undefined,
       };
       const draftBillNo = await flushTicketDrafts();
+      if (deps.validateCouponBeforeCommit?.() === false) return;
       booking = await createBooking({ ...newBooking, draftBillNo: draftBillNo || deps.getBillNo() });
     } catch (e) {
       toast.error("Booking was not saved", {
@@ -390,6 +403,7 @@ export function useCheckout(deps: CheckoutDeps) {
   }
 
   async function completeSale() {
+    if (deps.validateCouponBeforeCommit?.() === false) return;
     if (inFlight.current) return;
     inFlight.current = true;
     try {
@@ -531,6 +545,7 @@ export function useCheckout(deps: CheckoutDeps) {
       setSaving(true);
       billNo = (await flushTicketDrafts()) || billNo;
       if (!attemptId.current) attemptId.current = crypto.randomUUID();
+      if (deps.validateCouponBeforeCommit?.() === false) return;
       sale = await recordSale(
         {
           storeId: currentStore.id,

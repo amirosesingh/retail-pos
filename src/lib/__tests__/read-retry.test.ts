@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { retryDataRead, isTransientReadError, withReadDeadline } from "../read-retry";
 import { __resetSessionEpoch, bumpSessionEpoch } from "../session-epoch";
-import { businessReadsReady } from "../business-readiness";
+import { businessReadsReady, transferReadsReady } from "../business-readiness";
 
 describe("read-only transient recovery", () => {
   beforeEach(() => { __resetSessionEpoch(); vi.useFakeTimers(); });
@@ -76,6 +76,13 @@ describe("read-only transient recovery", () => {
 });
 
 describe("business read startup ordering", () => {
+  it("waits for the current user's initial snapshot before loading transfers", () => {
+    expect(transferReadsReady(true, "loading", "user-a", null, "store-a")).toBe(false);
+    expect(transferReadsReady(true, "ready", "user-a", "user-b", "store-a")).toBe(false);
+    expect(transferReadsReady(true, "ready", "user-a", "user-a", null)).toBe(false);
+    expect(transferReadsReady(false, "ready", "user-a", "user-a", "store-a")).toBe(false);
+    expect(transferReadsReady(true, "ready", "user-a", "user-a", "store-a")).toBe(true);
+  });
   it("waits for profile and cloud session readiness on Web and Android", () => {
     expect(businessReadsReady(false, true, false, "staff", true)).toBe(false);
     expect(businessReadsReady(true, true, false, null, true)).toBe(false);

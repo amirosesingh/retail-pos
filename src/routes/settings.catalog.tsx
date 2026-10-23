@@ -1,3 +1,4 @@
+import { SettingsBackLink } from "@/platforms/web/components/pos/settings/SettingsBackLink";
 import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
@@ -258,14 +259,17 @@ function CatalogMetaSettings() {
 
   return (
     <SettingsShell>
-      <div className="mx-auto w-full max-w-7xl space-y-6 p-6">
-        <header>
+      <div className="pos-page-container">
+        <header className="flex items-start gap-3">
+          <SettingsBackLink />
+          <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">Categories & Units</h1>
           <p className="text-sm text-muted-foreground page-description">
             Keep three simple lists — categories, groups and sub-categories — and pick from them
             when adding products. Switch an entry off to retire it without losing what old records
             say.
           </p>
+          </div>
         </header>
 
         <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4">

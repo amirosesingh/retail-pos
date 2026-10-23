@@ -1,3 +1,5 @@
+import { toast } from "sonner";
+import { copyText } from "@/platform-config/clipboard";
 import { IosOtaSettings } from "@/platform-config/ios-ota";
 import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { MinimalUpdatePanel } from "./MinimalUpdatePanel";
@@ -283,7 +285,7 @@ function DesktopUpdateCard() {
             variant="outline"
             className="touch-target"
             onClick={() => {
-              void navigator.clipboard?.writeText(failureReport);
+              void copyText(failureReport).catch(() => toast.error("Could not copy. Please try again."));
               setCopied(true);
               window.setTimeout(() => setCopied(false), 2000);
             }}

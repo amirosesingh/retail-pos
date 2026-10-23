@@ -8,7 +8,7 @@ import { Bell, Check, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AnimatedList } from "@/components/ui/animated-list";
-import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/pos-auth";
 import {
@@ -26,8 +26,10 @@ import {
 } from "@/lib/activity-events";
 import { usePosOptional } from "@/lib/pos-store";
 import { humanizeText } from "@/lib/human-readable";
+import { hasStaffSession } from "@/core/api/sync-relay";
 
-const POLL_MS = 15_000;
+const PIN_POLL_MS = 15_000;
+const AUTHENTICATED_POLL_MS = 60_000;
 const activityKey = (row: ActivityEvent) => row.id;
 /** Notifications expire from the live delivery feed after one week. The
  * underlying immutable activity/audit event remains available in Reports. */
@@ -243,7 +245,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         return;
       }
       tick();
-    }, POLL_MS);
+    }, hasStaffSession() ? AUTHENTICATED_POLL_MS : PIN_POLL_MS);
     document.addEventListener("visibilitychange", tick);
     window.addEventListener("pos:activity-cleared-changed", onCleared);
     window.addEventListener("storage", onCleared);
@@ -296,10 +298,9 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
           )}
         </Button>
       </DialogTrigger>
-      <DialogContent showCloseButton={false} className="max-w-lg gap-0 overflow-hidden p-0 sm:p-0">
+      <DialogContent showCloseButton={false} overlayClassName="backdrop-blur-sm bg-black/20" aria-describedby={undefined} className="notification-panel max-w-lg translate-y-0 gap-0 overflow-hidden p-0 sm:p-0">
         <div className="border-b border-border/60 px-4 py-4 pr-12">
           <DialogTitle className="flex items-center gap-2 text-base"><Bell className="size-4 text-primary" /> Notifications</DialogTitle>
-          <DialogDescription className="mt-1 text-xs">Recent activity and updates for your branch.</DialogDescription>
         </div>
 
         {saving && <p role="status" className="px-4 pt-3 text-xs text-muted-foreground">Saving changes…</p>}

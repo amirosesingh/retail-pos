@@ -22,6 +22,16 @@ const OPEN = "open";
 const SUPERVISOR = "supervisor";
 const ADMIN = "admin";
 
+// These operational actions have explicit staff permissions. A role name is
+// not a substitute for the permission granted to the signed-in account.
+const OPERATION_PERMISSIONS = Object.freeze({
+  "pos:housekeep": "can_manage_sync_backup",
+  "local:rollback": "can_manage_sync_backup",
+  "db:set-branch": "can_manage_terminals",
+  "branding:write": "can_access_pos_settings",
+  "health:resume-updates": "can_manage_sync_backup",
+});
+
 // The account's central permission matrix owns local database and sync access.
 // The desktop only enforces the server-verified grant; it does not keep a
 // second database-admin role list.
@@ -110,6 +120,7 @@ const CHANNEL_LEVELS = {
   "staff:cache-roster": OPEN,
   "staff:verify-pin": OPEN,
   "staff:verify-approval-pin": OPEN, // signed-in operator may present an approver credential
+  "approval:own-token-vault": OPEN, // POS main-frame only; fixed encrypted token keys, PIN-locked envelope before sign-in
   "approval:enroll-verifier": OPEN, // permission checked in allowed() and again by the backend
   "staff:sign-in": OPEN,
   "staff:enroll": OPEN,
@@ -132,6 +143,7 @@ const CHANNEL_LEVELS = {
   "cloud:bootstrap": OPEN,
   "server-keys:status": OPEN,
   "app:version": OPEN,
+  "app:name": OPEN,
   "app:ready": OPEN,
   "health:state": OPEN,
   "health:retry": OPEN,
@@ -390,6 +402,12 @@ function levelFor(channel, args = []) {
 let firstRun = () => false;
 
 function refusal(level, channel, args = []) {
+  if (channel === "business:query") return {
+    ok: false, code: "EPRIVILEGE", stage: "authorize",
+    error: adminSession.hasPosAuthority()
+      ? `Your signed-in account does not have permission to view ${String(args[0] ?? "this data")}. Ask an administrator to review its permissions.`
+      : "Your verified POS session is not active on this PC. Sign in again to refresh its permissions.",
+  };
   if (channel === "business:commit-aggregate") return {
     ok: false, code: "EPRIVILEGE", stage: "authorize",
     error: "Your verified POS account does not have permission for this transaction. Sign in again to refresh your permissions, or ask an administrator to review them.",
@@ -411,10 +429,9 @@ function refusal(level, channel, args = []) {
     code: "EPRIVILEGE",
     requiredLevel: level,
     stage: "authorize",
-    error:
-      level === ADMIN
-        ? "This action changes how the terminal is connected or identified. An administrator must unlock it with their username and PIN first."
-        : "This action needs a supervisor. Unlock it with a supervisor username and PIN first.",
+    error: level === ADMIN
+      ? "This action changes terminal configuration and requires authorized database or terminal-management access."
+      : "Your signed-in account does not have permission for this action. Ask an administrator to review its access.",
   };
 }
 
@@ -537,6 +554,12 @@ function allowed(channel, args = []) {
   }
   if (channel === "business:query") {
     const table = String(args[0] ?? "");
+    const readPermissions = require("./read-permissions.json")[table];
+    if (readPermissions) {
+      if (!adminSession.hasPosAuthority() ||
+          (!adminSession.hasLevel(ADMIN) && !readPermissions.some(flag => adminSession.hasPermission(flag)))) return false;
+      adminSession.touch();
+    }
     if (table === "shift_reconciliations") return false;
     if (table === "shift_notifications") return adminSession.hasPosAuthority() && adminSession.identity()?.level === "admin";
     if (table === "shift_sessions" && adminSession.hasPosAuthority() && adminSession.identity()?.level === "admin") return true;
@@ -572,6 +595,16 @@ function allowed(channel, args = []) {
     // /api/v1/pos/ipc-adopt. A separate desktop PIN unlock must not grant it.
     if (adminSession.hasPosAuthority() &&
         (adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_manage_sync_backup"))) {
+      adminSession.touch();
+      return true;
+    }
+    return false;
+  }
+  const operationPermission = OPERATION_PERMISSIONS[channel] ??
+    (channel === "settings:set" && level === SUPERVISOR ? "can_access_pos_settings" : null);
+  if (operationPermission) {
+    if (adminSession.hasPosAuthority() &&
+        (adminSession.hasLevel(ADMIN) || adminSession.hasPermission(operationPermission))) {
       adminSession.touch();
       return true;
     }

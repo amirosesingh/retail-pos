@@ -56,6 +56,9 @@ const bodySchema = z.object({
   cashierToken: z.string().max(2000).optional(),
   terminalToken: z.string().max(200).optional(),
   accessToken: z.string().max(4000).optional(),
+  deviceClaimProof: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  deviceBindingProof: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  managementSyncBranches: z.literal(true).optional(),
   ops: z.array(opSchema).max(50).optional(),
   sqlServerBatch: z
     .object({
@@ -154,6 +157,7 @@ const bodySchema = z.object({
     .discriminatedUnion("kind", [
       z.object({ kind: z.literal("activeShift"), storeId: z.string().min(1).max(64) }),
       z.object({ kind: z.literal("stores") }),
+      z.object({ kind: z.literal("health") }),
     ])
     .optional(),
 });
@@ -182,6 +186,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   }
 
   if (
+    !body.managementSyncBranches &&
     !body.ops?.length &&
     !body.read &&
     !body.sqlServerBatch &&
@@ -216,8 +221,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
   let scope: Awaited<ReturnType<typeof resolveRelayScope>>;
   try {
-    const caller = await verifyRelayCaller(body);
-    if (caller.storeId) {
+    const { managementReplicaScope } = await import("./management-replica.server");
+    const replicaScope = await managementReplicaScope(body);
+    const caller = replicaScope ? null : await verifyRelayCaller(body);
+    if (caller?.storeId) {
       const { branchExists } = await import("./session-verify.server");
       if (!(await branchExists(caller.storeId))) {
         return Response.json(
@@ -230,15 +237,30 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         );
       }
     }
-    scope = await resolveRelayScope(caller);
+    scope = replicaScope ?? await resolveRelayScope(caller!);
     body = alignVerifiedScopeIds(body, scope);
   } catch (e) {
+    if ((e as { status?: number }).status === 503)
+      return Response.json({ ok: false, code: "SERVICE_UNAVAILABLE", error: "Registration verification is temporarily unavailable." }, { status: 503 });
     return Response.json(
       { ok: false, code: "SESSION_INVALID", error: (e as Error).message },
       { status: 401 },
     );
   }
 
+  if (body.managementSyncBranches) {
+    if (!scope.managementReplica) return Response.json({ ok: false, error: "Management registration required" }, { status: 403 });
+    const { serviceRest } = await import("@/core/api/pos-relay.server");
+    const branches: { id: string }[] = [];
+    for (let offset = 0; ; offset += 500) {
+      const response = await serviceRest(`stores?select=id&order=id&limit=500&offset=${offset}`);
+      if (!response.ok) return Response.json({ ok: false, error: "Could not load synchronization branches" }, { status: 503 });
+      const page = await response.json() as { id: string }[];
+      branches.push(...page);
+      if (page.length < 500) break;
+    }
+    return Response.json({ ok: true, branches });
+  }
   if (body.read) {
     // A till may only ask about its own branch.
     if (
@@ -320,7 +342,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       scope.roleSlug === "admin" ||
       scope.permissions.can_manage_sync_backup === true;
     const terminalBound = Boolean(body.terminalToken) || scope.kind === "terminal";
-    if (branchId !== scope.storeId && (terminalBound || !mayManageOtherBranches))
+    if (!scope.managementReplica && branchId !== scope.storeId && (terminalBound || !mayManageOtherBranches))
       return Response.json(
         { ok: false, code: "STORE_FORBIDDEN", error: "You can only synchronize your own branch." },
         { status: 403 },
@@ -559,6 +581,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       method: "POST",
       body: JSON.stringify(rpc[1]),
     });
+    if (response.ok && (body.sqlServerPull || body.sqlServerBootstrap)) {
+      const { redactSyncDownload } = await import("./sync-download-redaction");
+      return Response.json(redactSyncDownload(await response.json(), body.sqlServerBootstrap?.table ?? ""));
+    }
     return new Response(await response.text(), {
       status: response.status,
       headers: { "content-type": "application/json" },

@@ -173,7 +173,7 @@ function ReceivingWorkspace() {
 
   return (
     <AppShell>
-      <div className="space-y-6 p-6">
+      <div className="pos-page-container">
         <WorkspaceHeader
           back="/transfers"
           backLabel="Back to stock movements"
@@ -252,7 +252,7 @@ function ReceivingWorkspace() {
               />
             </div>
           )}
-          <Table>
+          <Table tableId="routes/receiving.$id#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Product</TableHead>

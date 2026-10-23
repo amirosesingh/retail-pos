@@ -4,6 +4,7 @@ import { useLocalStartupReady } from "./use-local-startup";
 import { createSessionTransition } from "./session-transition";
 import { terminalUserPermissions } from "./terminal-user-permissions";
 import { createPermissionRefresh } from "./permission-refresh";
+import { ensureDesktopPosSession } from "./desktop-pos-session";
 import { subscribeDataChange, subscribeSettingsChange } from "./sync-engine";
 import { normalizeUuidFields } from "./uuid-fields";
 import { preserveSessionDrafts } from "./session-draft";
@@ -29,7 +30,8 @@ import { clearStoredCredentials, readCredentials, saveCashierToken } from "@/lib
 import { issueCashierSession } from "@/lib/pos-session.functions";
 import { startDeviceSession, endDeviceSession } from "@/lib/user-sessions-client";
 import { loadSessionToken, saveSessionToken } from "@/lib/pos-credentials";
-import { toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
+import { isBareUsername, toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
+import { passwordUsername } from "@/lib/password-username";
 import { activeBranchId, activeBranchName, bindTerminalBranch } from "@/lib/active-branch";
 import { verifyCachedPin } from "@/lib/offline-credentials";
 import { recordSignIn } from "@/lib/shift-attendance";
@@ -608,10 +610,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Check the account after authentication. A pre-login app_users read
       // sends an old bearer token (or no user token) to a protected table and
       // produces a noisy 401 before the password is even submitted.
-      // One handler for both worlds: a plain username belongs to a terminal
-      // account and is mapped onto its hidden internal address; anything with
-      // an "@" is used exactly as typed.
-      const address = toLoginAddress(email);
+      // Supabase Auth accepts email/password, not a staff login alias. Resolve
+      // bare usernames on the hosted server, where the private staff email is
+      // never sent to an unauthenticated client. Full email login stays direct.
       // Make a same-account interactive sign-in distinguishable from a replayed
       // SIGNED_IN event for an unverified restored token.
       operatorAuthId.current = null;
@@ -619,17 +620,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       centralIdentityRef.current = null;
       centralSessionVerifiedRef.current = false;
       setCentralSessionVerified(false);
-      let data;
-      let error;
+      let authResult: Awaited<ReturnType<typeof supabase.auth.setSession>>;
       try {
-        ({ data, error } = await supabase.auth.signInWithPassword({
-          email: address,
-          password,
-        }));
+        const alias = passwordUsername(email);
+        if (alias || isBareUsername(email)) {
+          const { posFetch } = await import("@/lib/server-origin");
+          const response = await posFetch("/api/public/username-login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: alias ?? email.trim(), password }),
+          });
+          if (!response.ok) {
+            const code = response.status === 401 ? "invalid-credentials" as const : "cloud-unreachable" as const;
+            return { ok: false, code, error: response.status === 429 ? "Too many attempts. Try again later." : loginFailureMessage(code) };
+          }
+          const verified = await response.json() as {
+            ok?: boolean; accessToken?: string; refreshToken?: string; projectUrl?: string;
+          };
+          const { supabaseConfig } = await import("@/lib/external-supabase-config");
+          if (!verified.ok || !verified.accessToken || !verified.refreshToken ||
+              verified.projectUrl?.replace(/\/+$/, "") !== supabaseConfig().url.replace(/\/+$/, "")) {
+            return { ok: false, code: "configuration-invalid" as const, error: loginFailureMessage("configuration-invalid") };
+          }
+          authResult = await supabase.auth.setSession({
+            access_token: verified.accessToken,
+            refresh_token: verified.refreshToken,
+          });
+        } else {
+          authResult = await supabase.auth.signInWithPassword({
+            email: toLoginAddress(email),
+            password,
+          });
+        }
       } catch (failure) {
         const code = failureFromAuthError(failure as Error);
         return { ok: false, code, error: loginFailureMessage(code) };
       }
+      const { data, error } = authResult;
       if (error) {
         const code = failureFromAuthError(error);
         return { ok: false, code, error: loginFailureMessage(code) };
@@ -825,7 +852,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           next = {
             userCode: local.staff.username,
             name: local.staff.full_name,
-            role: offlineAppRole(local.staff.roleSlug),
+            role: offlineAppRole(local.staff.role ?? local.staff.roleSlug),
             roleSlug: local.staff.roleSlug,
             storeId: activeBranchId(null) ?? (local.staff.store_id?.trim() || null),
             email: "",
@@ -834,6 +861,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           };
         } else if (local.reason === "inactive") {
           return { ok: false, error: "Account deactivated" };
+        } else if (window.pos) {
+          return { ok: false, error: local.reason === "locked" ? "Too many attempts. Please wait before trying again." : local.reason === "invalid" ? "Invalid username or PIN" : "Offline sign-in is unavailable. Connect and sync this account’s sign-in PIN to the local SQL database first." };
         } else {
           // Tier 2: the browser-storage verifier kept by earlier builds.
           const cached = await verifyCachedPin(code, pin);
@@ -925,7 +954,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         let cashierToken = verified?.cashierToken ?? "";
         const sessionToken = verified?.sessionToken ?? "";
-        if (!cashierToken) {
+        if (!cashierToken && !signedInOffline) {
           const issued = await issueCashierSession({ data: { username: next.userCode, pin } });
           if (issued.ok) cashierToken = issued.token;
         }
@@ -1312,10 +1341,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Electron independently verifies the same proof in its main process.
         // Never pass a permission matrix from the renderer to native authority.
         const profileSignature = result.status === "ok" ? JSON.stringify(result.profile) : null;
-        if (result.status === "ok" && profileSignature !== nativeProfile && isWindowsShell() && window.sqlAdmin?.adoptSession) {
-          const adopted = await window.sqlAdmin.adoptSession(proof, readTerminalConfig());
-          if (!adopted.ok) return null;
-          nativeProfile = profileSignature;
+        if (result.status === "ok" && isWindowsShell() && window.sqlAdmin?.adoptSession) {
+          // The native grant expires while idle and a settings PIN unlock can
+          // replace it. A matching web profile alone does not prove that the
+          // main process still holds this verified POS session.
+          const native = await window.sqlAdmin.adminStatus?.();
+          if (profileSignature !== nativeProfile || !native?.unlocked || native.source !== "pos") {
+            const adopted = await ensureDesktopPosSession(true, proof);
+            if (!adopted.ok) return null;
+            nativeProfile = profileSignature;
+          }
         }
         return result;
       },

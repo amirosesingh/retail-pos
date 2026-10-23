@@ -1,4 +1,6 @@
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
+import { PAGE_DATA_CACHE, pageDataScope } from "@/lib/page-data-cache";
+import { useAuth } from "@/lib/pos-auth";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -48,6 +50,7 @@ const ALL = "__all__";
 const reasonLabel = (v: string) => STOCK_ADJUSTMENT_REASONS.find((r) => r.value === v)?.label ?? v;
 
 function StockReport() {
+  const { user } = useAuth();
   const { state, stores } = usePos();
   const init = defaultRange();
   const [from, setFrom] = useState(init.from);
@@ -62,10 +65,10 @@ function StockReport() {
     [stores, store],
   );
   const history = useQuery({
-    queryKey: ["stock-adjustment-report", from, to, storeIds.join("|")],
+    queryKey: ["stock-adjustment-report", pageDataScope(user), from, to, storeIds.join("|")],
     meta: { tables: ["stock_adjustments"] },
     queryFn: () => loadStockAdjustmentReport(storeIds, from, to),
-    staleTime: 15_000,
+    ...PAGE_DATA_CACHE,
     refetchOnWindowFocus: true,
   });
   const all = useMemo(() => history.data ?? [], [history.data]);
@@ -89,7 +92,7 @@ function StockReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Stock Adjustments & Calibration"
           subtitle="Every correction to stock on hand, with the reason, the variance and the person responsible."
@@ -215,7 +218,7 @@ function StockReport() {
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table loading={history.isPending}>
+          <Table tableId="routes/reports.stock#1" loading={history.isPending}>
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

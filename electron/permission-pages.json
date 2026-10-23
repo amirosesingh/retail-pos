@@ -129,7 +129,8 @@
       "can_publish_product",
       "can_manage_categories",
       "can_bulk_edit_products",
-      "can_merge_products"
+      "can_merge_products",
+      "can_view_cost_margin"
     ]
   },
   {
@@ -249,7 +250,8 @@
       "/all-shops"
     ],
     "keys": [
-      "can_manage_locations"
+      "can_manage_locations",
+      "can_view_cost_margin"
     ]
   },
   {
@@ -259,7 +261,8 @@
       "/dashboard"
     ],
     "keys": [
-      "can_view_dashboard"
+      "can_view_dashboard",
+      "can_view_cost_margin"
     ]
   },
   {
@@ -269,7 +272,8 @@
       "/analytics"
     ],
     "keys": [
-      "can_view_dashboard"
+      "can_view_dashboard",
+      "can_view_cost_margin"
     ]
   },
   {
@@ -280,7 +284,8 @@
     ],
     "keys": [
       "can_view_sales_reports",
-      "can_export_reports"
+      "can_export_reports",
+      "can_view_cost_margin"
     ]
   },
   {
@@ -350,7 +355,8 @@
       "/settings/mobile-terminals"
     ],
     "keys": [
-      "can_manage_terminals"
+      "can_manage_terminals",
+      "can_use_management_mobile"
     ]
   },
   {

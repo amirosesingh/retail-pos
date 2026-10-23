@@ -177,7 +177,7 @@ function CouponReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Coupon & Discount Usage"
           subtitle="Which coupon was used, on which bill or item, by whom and when."
@@ -314,7 +314,7 @@ function CouponReport() {
             <div className="border-b border-border px-4 py-2 text-sm font-medium">
               Redemptions by coupon code
             </div>
-            <Table loading={history.loading}>
+            <Table tableId="routes/reports.coupons#1" loading={history.loading}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Coupon</TableHead>
@@ -338,7 +338,7 @@ function CouponReport() {
         )}
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table loading={history.loading}>
+          <Table tableId="routes/reports.coupons#2" loading={history.loading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

@@ -1,8 +1,8 @@
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { tenderSales } from "@/lib/shift-close";
 import { sameRecordId } from "@/lib/sale-identity";
-import { subscribeDataChange } from "@/lib/sync-engine";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Pencil, Printer, Users, Vault } from "lucide-react";
@@ -141,15 +141,10 @@ function Shifts() {
         if (alive) setSessions(local);
       }
     };
-    void refresh();
-    const offData = subscribeDataChange((change) => {
-      if (change.table === "shift_sessions") void refresh();
-    });
-    const t = window.setInterval(() => void refresh(), 60_000);
+    const offData = subscribePageDataRefresh(refresh, ["shift_sessions"], { allowOffline: true, initial: true });
     return () => {
       alive = false;
       offData();
-      window.clearInterval(t);
     };
   }, [currentStore.id, activeShift?.id, mayViewSignIns, signHistoryOpen]);
 
@@ -247,7 +242,7 @@ function Shifts() {
 
   return (
     <AppShell>
-      <div className="space-y-6 p-6">
+      <div className="pos-page-container">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Shifts · {currentStore.name}</h1>
@@ -460,7 +455,7 @@ function Shifts() {
                 No sign-ins recorded yet today.
               </p>
             ) : (
-              <Table>
+              <Table tableId="routes/shifts#1">
                 <TableHeader>
                   <TableRow>
                     <TableHead>User</TableHead>
@@ -505,7 +500,7 @@ function Shifts() {
                 No shift sessions recorded for this branch yet.
               </p>
             ) : (
-              <Table>
+              <Table tableId="routes/shifts#2">
                 <TableHeader>
                   <TableRow>
                     <TableHead>User</TableHead>
@@ -589,7 +584,7 @@ function Shifts() {
           <section className="rounded-lg border border-border bg-card">
             <h2 className="px-5 py-3 text-sm font-semibold">Shift history</h2>
             <Separator />
-            <Table>
+            <Table tableId="routes/shifts#3">
               <TableHeader>
                 <TableRow>
                   <TableHead>Cashier</TableHead>

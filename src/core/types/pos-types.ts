@@ -839,7 +839,7 @@ export type WhatsAppSettings = {
   signoff: string;
 };
 
-export type PromoType = "points" | "foc" | "birthday" | "threshold" | "tier";
+export type PromoType = "points" | "foc" | "birthday" | "threshold" | "tier" | "code";
 
 export type MemberTier = Member["tier"];
 
@@ -971,6 +971,8 @@ export type TimeFormat = "12h" | "24h";
 export type SellingLayout = "standard" | "canvas";
 
 export type IntegrationSettings = {
+  /** Optional planning estimates; does not change purchase cost or profit. */
+  totalUnitCost?: import("@/lib/total-unit-cost").TotalUnitCostSettings;
   /** Register presentation only; both options use the same cart and checkout engine. */
   sellingLayout?: SellingLayout;
   displayProfile?: import("@/lib/display-profile").DisplayProfile;
@@ -1245,6 +1247,9 @@ export type Promotion = {
   id: string;
   name: string;
   type: PromoType;
+  /** Saved scope for a reusable campaign code; old codes default to the bill. */
+  codeScope?: "bill" | "item";
+  codeClusterId?: string | null;
   active: boolean;
   /** collaborator / partner the coupon codes of this rule belong to */
   partner?: string;

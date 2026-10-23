@@ -1,7 +1,9 @@
+import { projectReusableCoupon } from "@/lib/reusable-coupon-code";
 import { formatDateTime as posDisplayDateTime, formatDate as posDisplayDate } from "@/lib/time-zone";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { draftTicketId } from "@/lib/session-draft";
 import { LegacyExchangeForm } from "@/platforms/web/components/pos/LegacyExchangeForm";
+import { isNativeApp, scanOnceNative } from "@/platforms/mobile/camera";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
@@ -36,6 +38,7 @@ import {
   Plus,
   Printer,
   Search,
+  ScanBarcode,
   Trash2,
   Gift,
   Vault,
@@ -495,7 +498,7 @@ function Register() {
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
   /** The open ticket: lines, discount, member, coupon and bill number. */
   const {
-    lines,
+    lines: rawCartLines,
     setLines,
     cartDiscount,
     setCartDiscount,
@@ -507,7 +510,7 @@ function Register() {
     setMemberId,
     billNo,
     setBillNo,
-    coupon,
+    coupon: rawCartCoupon,
     setCoupon,
     addLine,
     setQty,
@@ -541,6 +544,10 @@ function Register() {
     // The register settings decide whether an out-of-stock item can be sold.
     preventNegativeStock: rules.prevent_negative_stock_sale,
   });
+  const { lines, coupon } = useMemo(
+    () => projectReusableCoupon(rawCartLines, rawCartCoupon, state.promotions, new Date(), currentStore.groupId),
+    [rawCartLines, rawCartCoupon, state.promotions, currentStore.groupId],
+  );
   revokeApprovalDiscountRef.current = (approval) => {
     // Functional updates cannot overwrite a cart mutation that landed after
     // the invalidation callback was created.
@@ -616,10 +623,22 @@ function Register() {
     getTotal: (paymentMethod) => applyRounding(totals.total, state.settings.integrations.rounding, paymentMethod).total,
   });
 
-  const [discountReviewRequested, setDiscountReviewRequested] = useState(false);
+  // Recheck wall-clock eligibility at checkout, including tickets held overnight.
+  // Never silently charge a different amount: update the cart and require review.
+  const validateCouponBeforeCommit = () => {
+    if (!coupon?.reusable) return true;
+    const fresh = projectReusableCoupon(rawCartLines, coupon, state.promotions, new Date(), currentStore.groupId);
+    if (fresh.coupon) return true;
+    setLines(fresh.lines);
+    setCoupon(null);
+    toast.error("This coupon is no longer available. Review the updated total before charging.");
+    return false;
+  };
+
   const charging = useRef(false);
-  const openPayment = async (preset?: Parameters<typeof openTenderPayment>[0], reviewOnly = false) => {
+  const openPayment = async (preset?: Parameters<typeof openTenderPayment>[0]) => {
     if (charging.current || !lines.length || tillLocked || !can("can_process_sale")) return;
+    if (!validateCouponBeforeCommit()) return;
     charging.current = true;
     try {
       let discounts: TicketDiscount[] = lines.flatMap((line,index) => {
@@ -650,18 +669,11 @@ function Register() {
         });
         if (grant === null) return;
       }
-      if (!reviewOnly) openTenderPayment(preset);
+      if (!validateCouponBeforeCommit()) return;
+      openTenderPayment(preset);
     } catch (error) { notifyError(error,"Opening payment"); }
     finally { charging.current = false; }
   };
-
-  const reviewDiscountsRef = useRef(openPayment);
-  reviewDiscountsRef.current = openPayment;
-  useEffect(() => {
-    if (!discountReviewRequested) return;
-    setDiscountReviewRequested(false);
-    void reviewDiscountsRef.current(undefined, true);
-  }, [discountReviewRequested]);
 
   const [waNumber, setWaNumber] = useState("");
   const [waSending, setWaSending] = useState(false);
@@ -756,6 +768,7 @@ function Register() {
 
   // One pass over the catalogue instead of one per render — the search dialog
   // gets the same array back until the catalogue or the branch actually change.
+  const includeAutoZeroStock = state.settings.integrations.autoArchiveZeroStock !== false && !rules.prevent_negative_stock_sale;
   const visibleProducts = useMemo(
     () => state.products.filter((p) => productVisibleAt(state.settings, p, state.currentStoreId)),
     [state.products, state.settings, state.currentStoreId],
@@ -770,8 +783,8 @@ function Register() {
   const allLookupProducts = useMemo(() => {
     const needle = deferredProductQuery.trim();
     if (!needle) return recommendedProducts;
-    return searchSellingProducts(visibleProducts, needle);
-  }, [deferredProductQuery, recommendedProducts, visibleProducts]);
+    return searchSellingProducts(visibleProducts, needle, "all", includeAutoZeroStock);
+  }, [deferredProductQuery, recommendedProducts, visibleProducts, includeAutoZeroStock]);
   const standardLookupProducts = allLookupProducts.slice(0, lookupLimit);
 
   const member = useMemo(
@@ -961,6 +974,8 @@ function Register() {
     voucherPreview,
     removeCoupon,
   } = usePromotions({
+    clusterId: currentStore.groupId,
+    setLines,
     products: state.products,
     promotions: state.promotions,
     members: state.members,
@@ -971,7 +986,6 @@ function Register() {
     setCoupon,
     memberId,
     setMemberId,
-    patchLine,
     unlockDiscounts,
   });
 
@@ -1158,7 +1172,7 @@ function Register() {
       setOpenShiftOpen(true);
       return;
     }
-    const matches = sellingCodeMatches(visibleProducts, code);
+    const matches = sellingCodeMatches(visibleProducts, code, includeAutoZeroStock);
     if (matches.length > 1) {
       toast.error(`Barcode “${code}” belongs to more than one product. Select the correct item and correct the duplicate code in Inventory.`);
       setQuery(code);
@@ -1237,6 +1251,8 @@ function Register() {
     lines: lines.map((l) => toDisplayLine(l, r2((l.price - lineUnitDiscount(l)) * l.qty))),
     subtotal: totals.subtotal,
     discount: totals.discount,
+    couponCode: coupon?.code,
+    couponDiscount: Math.min(totals.discount, coupon?.discount ?? 0),
     tax: totals.tax,
     taxRate: taxSettings.rate,
     taxEnabled: taxSettings.enabled,
@@ -1264,6 +1280,7 @@ function Register() {
               appliedApprovalRef.current.approvedByName ?? appliedApprovalRef.current.approvedBy,
           }
         : null,
+    validateCouponBeforeCommit,
     getLines: () => lines,
     getTotals: () => totals,
     getMember: () => member,
@@ -1373,6 +1390,7 @@ function Register() {
     rl: roundingOf(state.settings.integrations.rounding).receiptLabel,
     rs: showsRoundingLine(rounding.adjustment, state.settings.integrations.rounding),
     d: totals.discount,
+    coupon: coupon ? [coupon.code, coupon.discount] : null,
     x: totals.tax,
     xr: taxSettings.rate,
     xe: taxSettings.enabled,
@@ -1578,8 +1596,15 @@ function Register() {
 
   function pickRacketProduct(id: string) {
     const p = productsById.get(id);
+    if (p && lines.some(line => line.productId === id)) {
+      toast.error("This racket is already in the ticket. Remove it from the ticket before selecting it here, so it is charged only once.");
+      return;
+    }
     setRacketProductId(id);
-    if (!p) return;
+    if (!p) {
+      setIntakeCharges(rows => rows.filter(row => !(row.kind === "accessory" && /^racket/i.test(row.name))));
+      return;
+    }
     setRacketCustomerOwned(false);
     setRacketModel(p.name);
     setIntakeCharges((rows) => [
@@ -1599,6 +1624,10 @@ function Register() {
 
   async function pickStringProduct(id: string) {
     const p = productsById.get(id);
+    if (p && lines.some(line => line.productId === id)) {
+      toast.error("This string is already in the ticket. Remove it from the ticket before selecting it here, so it is charged only once.");
+      return;
+    }
     if (p) {
       /* Inventory guard — never string from a reel the branch does not hold. */
       const onHand = availableAt(p, currentStore.id, state.bookings);
@@ -1619,7 +1648,10 @@ function Register() {
       }
     }
     setStringProductId(id);
-    if (!p) return;
+    if (!p) {
+      setIntakeCharges(rows => rows.filter(row => row.kind !== "string"));
+      return;
+    }
     setStringCustomerOwned(false);
     setStringType(p.name);
     setChargeOfKind("string", {
@@ -1653,6 +1685,16 @@ function Register() {
         productId: p.id,
       },
     ]);
+  }
+
+  function scanBookingProduct(code: string, kind: "racket" | "string") {
+    const matches = sellingCodeMatches(visibleProducts, code.trim());
+    if (matches.length !== 1) {
+      toast.error(matches.length ? "This barcode matches multiple products. Select the correct catalogue item." : "No active product at this branch matches this barcode.");
+      return;
+    }
+    if (kind === "racket") pickRacketProduct(matches[0].id);
+    else void pickStringProduct(matches[0].id);
   }
 
   /** Unlock the read-only labour fee — supervisor gate or a written reason. */
@@ -2766,6 +2808,7 @@ function Register() {
               query={query}
               onQueryChange={setQuery}
               products={visibleProducts}
+              includeAutoZeroStock={includeAutoZeroStock}
               storeId={currentStore.id}
               unknownCode={unknownCode}
               canCreateProduct={can("can_add_new_product")}
@@ -2854,7 +2897,9 @@ function Register() {
               onChange={(e) => setCouponCode(e.target.value)}
               placeholder="e.g. WEEKEND10"
             />
-            <Label>Apply to</Label>
+            {state.promotions.some((rule) => rule.type === "code" && rule.name.toUpperCase() === couponCode.trim().toUpperCase()) ? (
+              <p className="text-sm text-muted-foreground">The campaign’s saved bill/item scope and store coverage apply automatically.</p>
+            ) : <><Label>Apply to</Label>
             <div className="flex gap-2">
               <Button
                 size="sm"
@@ -2898,6 +2943,7 @@ function Register() {
                   ))}
               </div>
             )}
+            </>}
             <p className="text-[11px] text-muted-foreground">
               Codes match an active promotion by name. Every application, its scope and the item it
               touched are written to the audit trail with a timestamp.
@@ -3307,13 +3353,20 @@ function Register() {
               lookupBill();
             }}
           >
+            <div className="relative min-w-0 flex-1">
             <Input
               autoFocus
               value={billQuery}
               onChange={(e) => setBillQuery(e.target.value)}
               placeholder="Scan or type original bill number…"
-              className="numeric h-11"
+              className={`numeric h-11 ${isNativeApp() ? "pr-12" : ""}`}
             />
+            {isNativeApp() && (
+              <Button type="button" variant="ghost" size="icon" className="absolute inset-y-0 right-1 my-auto size-8" aria-label="Scan original bill barcode" title="Scan original bill barcode" onClick={() => { void scanOnceNative().then((value) => { if (value) setBillQuery(value); }).catch((error) => toast.error(error instanceof Error ? error.message : "The camera is not available.")); }}>
+                <ScanBarcode className="size-4" />
+              </Button>
+            )}
+            </div>
             <Button type="submit" className="h-11">
               <Search className="size-4" /> Find
             </Button>
@@ -3461,7 +3514,7 @@ function Register() {
           className={
             racketMode
               ? "flex h-[92vh] max-h-[92vh] w-[94vw] max-w-[720px] flex-col"
-              : "flex h-[90vh] max-h-[90vh] w-[94vw] max-w-[1040px] flex-col"
+              : "flex max-h-[90dvh] w-[94vw] max-w-[720px] flex-col"
           }
         >
           <DialogHeader>
@@ -3470,11 +3523,7 @@ function Register() {
             </DialogTitle>
           </DialogHeader>
           <div
-            className={`-mr-2 flex-1 overflow-y-auto pr-2 ${
-              racketMode
-                ? "space-y-3"
-                : "space-y-3 lg:grid lg:grid-cols-2 lg:items-start lg:gap-3 lg:space-y-0 [&>*]:mb-3"
-            }`}
+            className="-mr-2 min-h-0 flex-1 space-y-3 overflow-y-auto pr-2"
           >
             <div className="rounded-md border border-border px-3 py-2 text-sm">
               <div className="flex items-center justify-between">
@@ -3503,11 +3552,11 @@ function Register() {
               )}
               <p className="mt-1 text-[11px] text-muted-foreground">
                 {racketMode
-                  ? `Job taken at ${currentStore.name} — no cart items needed.`
+                  ? `Job taken at ${currentStore.name}${lines.length ? " · ticket items are also included below" : ""}.`
                   : `${lines.reduce((a, l) => a + l.qty, 0)} unit(s) are reserved at ${currentStore.name} until the collect-by date.`}
               </p>
             </div>
-            {!racketMode && (
+            {(!racketMode || lines.length > 0) && (
               <BookingCartPanel
                 lines={lines}
                 money={money}
@@ -3518,9 +3567,15 @@ function Register() {
             )}
             {racketMode && (
               <div className="space-y-2 rounded-md border border-border p-2">
+                <div className="grid grid-cols-2 gap-2" role="group" aria-label="Racket service type">
+                  <Button type="button" size="sm" variant={racketCustomerOwned ? "default" : "outline"} onClick={() => setCustomerRacket(true)}>Restringing only</Button>
+                  <Button type="button" size="sm" variant={!racketCustomerOwned ? "default" : "outline"} onClick={() => setCustomerRacket(false)}>New racket + service</Button>
+                </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div className="space-y-1">
-                    <Label>Racket from catalogue</Label>
+                    {racketCustomerOwned ? <p className="py-2 text-xs text-muted-foreground">Customer’s own racket. Enter its model and tension in the job details; no racket price is added.</p> : <>
+                    <Label>New racket</Label>
+                    <ScanBar captureGlobal={false} autoFocus={false} onScan={code => scanBookingProduct(code, "racket")} />
                     <ThemedSelect
                       ariaLabel="Racket from catalogue"
                       value={racketProductId}
@@ -3528,16 +3583,11 @@ function Register() {
                       onChange={(v) => pickRacketProduct(v)}
                       options={racketOptions}
                     />
-                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Checkbox
-                        checked={racketCustomerOwned}
-                        onCheckedChange={(checked) => setCustomerRacket(checked === true)}
-                      />
-                      Customer provided racket (no charge)
-                    </label>
+                    </>}
                   </div>
                   <div className="space-y-1">
                     <Label>String from catalogue</Label>
+                    <ScanBar captureGlobal={false} autoFocus={false} onScan={code => scanBookingProduct(code, "string")} />
                     <ThemedSelect
                       ariaLabel="String from catalogue"
                       value={stringProductId}
@@ -3581,7 +3631,7 @@ function Register() {
                   return (
                     <div
                       key={i}
-                      className="grid grid-cols-[7rem_minmax(0,1fr)_6rem_1.5rem] items-center gap-1.5"
+                      className="grid grid-cols-[minmax(0,1fr)_5rem_1.5rem] items-center gap-1.5 rounded-md border p-2 sm:grid-cols-[7rem_minmax(0,1fr)_6rem_1.5rem]"
                     >
                       <ThemedSelect
                         ariaLabel="Charge type"
@@ -3680,7 +3730,7 @@ function Register() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label>Deposit taken now</Label>
+                <Label>{payTiming === "now" ? "Full payment now" : "Deposit taken now"}</Label>
                 <Input
                   value={
                     payTiming === "now"
@@ -3696,7 +3746,7 @@ function Register() {
                 />
               </div>
               <div className="space-y-1">
-                <Label>Deposit method</Label>
+                <Label>Payment method</Label>
                 <div className="flex overflow-hidden rounded-md border border-border">
                   {(["cash", "card", "wallet"] as const).map((m) => (
                     <button
@@ -3829,6 +3879,7 @@ function Register() {
                       <Label>Racket brand / model</Label>
                       <Input
                         value={racketModel}
+                        readOnly={!racketCustomerOwned && !!racketProductId}
                         list="racket-models"
                         onChange={(e) => setRacketModel(e.target.value)}
                         placeholder="Yonex Astrox 88D"
@@ -3843,6 +3894,7 @@ function Register() {
                       <Label>String type / brand</Label>
                       <Input
                         value={stringType}
+                        readOnly={!stringCustomerOwned && !!stringProductId}
                         list="string-models"
                         onChange={(e) => setStringType(e.target.value)}
                         placeholder="BG65 Ti"
@@ -4002,22 +4054,6 @@ function Register() {
               </div>
             ) : null}
           </div>
-          {racketMode && (
-            <div className="flex items-center justify-between gap-4 border-t border-border pt-2 text-sm">
-              <span className="text-muted-foreground">
-                Charges total{" "}
-                <span className="numeric font-semibold text-foreground">{money(bookingTotal)}</span>
-              </span>
-              <span className="text-muted-foreground">
-                Paying now{" "}
-                <span className="numeric font-semibold text-foreground">
-                  {money(bookingPaidNow)}
-                </span>{" "}
-                · Balance{" "}
-                <span className="numeric font-semibold text-primary">{money(bookingBalance)}</span>
-              </span>
-            </div>
-          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setBookOpen(false)}>
               Cancel
@@ -4028,7 +4064,7 @@ function Register() {
                 disabled={saving}
                 onClick={() => {
                   setPayTiming("now");
-                  void bookAndPayLater();
+                  void bookAndPayLater("now");
                 }}
               >
                 Pay now
@@ -4339,14 +4375,13 @@ function Register() {
               );
               return;
             }
-            // Review the resulting ticket after React has applied the discount.
+            // Keep discounts editable; Charge reviews the complete ticket once.
             if (target === "bill") {
               setCartDiscount(v);
               setCartDiscountType(t);
             } else if (typeof target === "number") {
               patchLine(target, { discount: v, discountType: t });
             }
-            setDiscountReviewRequested(true);
           })();
         }}
       />

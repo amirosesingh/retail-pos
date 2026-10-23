@@ -15,6 +15,7 @@ export const personalAppearanceSchema = z.preprocess((input) => {
       .regex(/^#[0-9a-f]{6}$/i)
       .nullable(),
     language: z.enum(["en", "ms", "zh-Hans", "ta", "hi"]),
+    tableViews: z.record(z.string().max(180), z.array(z.number().int().min(0).max(99)).max(100)).default({}),
     scale: z
       .object({
         mode: z.enum(["auto", "manual"]),
@@ -32,5 +33,6 @@ export const DEFAULT_PERSONAL_APPEARANCE: PersonalAppearance = {
   palette: DEFAULT_THEME_PALETTE,
   accent: null,
   language: "en",
+  tableViews: {},
   scale: { mode: "auto", scale: 1, textScale: 1, density: "comfortable", registerZoom: 0.7 },
 };

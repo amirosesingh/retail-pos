@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 
 export type SettingsCategoryId =
+  | "pos-rules"
   | "business"
   | "people"
   | "products"
@@ -42,7 +43,7 @@ export type SettingsCategoryId =
   | "sales"
   | "payments"
   | "data"
-  | "security"
+  | "notifications"
   | "health";
 
 /** Heading a category sits under on the settings home page. */
@@ -76,9 +77,16 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   {
     id: "business",
     label: "Business & locations",
-    blurb: "Who you are, where you trade and how documents are numbered.",
+    blurb: "Who you are, where you trade and your regional preferences.",
     group: "business",
     icon: Building2,
+  },
+  {
+    id: "pos-rules",
+    label: "POS rules",
+    blurb: "Register policies, tax, bill and product numbering.",
+    group: "sales",
+    icon: ShieldCheck,
   },
   {
     id: "people",
@@ -90,27 +98,27 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   {
     id: "products",
     label: "Products & inventory",
-    blurb: "Categories, units and the codes products are given.",
+    blurb: "Product categories and units of measure.",
     group: "business",
     icon: ScanBarcode,
   },
   {
     id: "payments",
-    label: "Payments & tax",
+    label: "Payments",
     blurb: "What customers can pay with, where the money lands and what you charge.",
     group: "sales",
     icon: Landmark,
   },
   {
     id: "receipts",
-    label: "Printing & receipts",
+    label: "Receipts & printing",
     blurb: "The printer and everything printed on a slip.",
     group: "sales",
     icon: Printer,
   },
   {
     id: "sales",
-    label: "Sales & bookings",
+    label: "Booking rules & services",
     blurb: "Job cards, deposits, turnaround and how bills reach the customer.",
     group: "sales",
     icon: CalendarClock,
@@ -130,11 +138,11 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     icon: RefreshCw,
   },
   {
-    id: "security",
-    label: "Security",
-    blurb: "Enforcement rules and the alerts raised against them.",
+    id: "notifications",
+    label: "Notifications",
+    blurb: "Delivery preferences and shift alerts.",
     group: "admin",
-    icon: ShieldCheck,
+    icon: MessageCircle,
   },
   {
     id: "health",
@@ -216,7 +224,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     scope: "company",
     to: "/settings/mobile-terminals",
     panel: page(() => import("@/routes/settings.mobile-terminals")),
-    keywords: "android tablet qr pairing",
+    keywords: "android ios iphone tablet qr pairing admin management terminals",
   },
   {
     id: "sessions",
@@ -294,6 +302,18 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     panel: page(() => import("@/routes/settings.qr")),
   },
 
+  {
+    id: "locations",
+    label: "Locations & Warehouses",
+    blurb: "Manage storefronts, warehouses and branch details.",
+    icon: Building2,
+    category: "business",
+    scope: "company",
+    to: "/stores",
+    panel: page(() => import("@/routes/stores")),
+    keywords: "locations stores branches warehouses",
+  },
+
   /* ---- Business, products --------------------------------------------- */
   {
     id: "identity",
@@ -322,7 +342,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     label: "Tax & pricing",
     blurb: "Global tax rate and inclusive or exclusive pricing.",
     icon: ReceiptText,
-    category: "payments",
+    category: "pos-rules",
     scope: "company",
     to: "/settings/tax",
     panel: page(() => import("@/routes/settings.tax")),
@@ -333,7 +353,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     label: "POS rules & enforcement",
     blurb: "Shift, discount, refund and terminal security limits.",
     icon: ShieldCheck,
-    category: "security",
+    category: "pos-rules",
     scope: "company",
     to: "/settings/rules",
     panel: page(() => import("@/routes/settings.rules")),
@@ -343,7 +363,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     label: "SKU numbering",
     blurb: "Automatic running-number product codes, or manual entry.",
     icon: ScanBarcode,
-    category: "products",
+    category: "pos-rules",
     scope: "company",
     to: "/settings/sku",
     panel: page(() => import("@/routes/settings.sku")),
@@ -353,7 +373,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     label: "Bill numbering",
     blurb: "Branch, till, date and running number on every receipt.",
     icon: ReceiptText,
-    category: "business",
+    category: "pos-rules",
     scope: "branch",
     to: "/settings/numbering",
     panel: page(() => import("@/routes/settings.numbering")),
@@ -363,7 +383,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     label: "Document numbering",
     blurb: "Reference numbers for stock counts and goods received.",
     icon: ListPlus,
-    category: "business",
+    category: "pos-rules",
     scope: "branch",
     to: "/settings/stock-numbering",
     panel: page(() => import("@/routes/settings.stock-numbering")),
@@ -480,7 +500,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     label: "Shift alerts",
     blurb: "How the day-end summary reaches this device.",
     icon: Activity,
-    category: "health",
+    category: "notifications",
     scope: "branch",
     to: "/settings/shift-alerts",
     panel: page(() => import("@/routes/settings.shift-alerts")),
@@ -490,7 +510,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     label: "Notification delivery",
     blurb: "Which events raise an alert and how they are delivered.",
     icon: MessageCircle,
-    category: "health",
+    category: "notifications",
     scope: "company",
     to: "/settings/notifications",
     panel: page(() => import("@/routes/settings.notifications")),
@@ -540,7 +560,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     label: "Security alerts",
     blurb: "Findings raised by the security scanner, with acknowledgement.",
     icon: ShieldCheck,
-    category: "security",
+    category: "health",
     scope: "company",
     to: "/settings/system?tab=security-alerts",
     raw: true,
@@ -575,7 +595,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     to: "/staff",
     panel: lazy(() => import("@/routes/staff").then(module => ({ default: module.StaffPermissionsPanel }))),
     raw: true,
-    keywords: "people employees users accounts roles permissions pin cashier supervisor warehouse",
+    keywords: "people employees users accounts roles access sensitive settings permissions pin cashier supervisor warehouse",
   },
 
 ];

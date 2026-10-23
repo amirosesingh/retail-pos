@@ -1,3 +1,4 @@
+import { APP_VERSION } from "@/version";
 import { setManagementDevice } from "@/lib/management-device";
 /**
  * Windows terminal activation tokens.
@@ -22,7 +23,7 @@ import { clearDeviceSecret, getDeviceSecret, setDeviceSecret } from "@/lib/devic
 import { recordActivationAttempt } from "@/core/activation/terminal-activation-log";
 import { resetHealthCache } from "@/core/activation/connection-health";
 import { canRelay, relayOp } from "@/core/api/sync-relay";
-import { saveBackendUrl } from "@/lib/backend-config";
+import { backendUrl, saveBackendUrl } from "@/lib/backend-config";
 import { serverOrigin } from "@/lib/server-origin";
 import { posFetch } from "@/lib/server-origin";
 import {
@@ -68,6 +69,7 @@ function claimOs(): string {
 export type { TerminalPlatform } from "@/core/activation/terminal-platform";
 
 export type TerminalToken = {
+  approvalTokenEnabled?: boolean;
   id: string;
   locationId: string | null;
   locationName: string;
@@ -117,6 +119,7 @@ const rpc = (fn: string, args: Record<string, unknown>) =>
   );
 
 import { deviceProofHash } from "@/core/activation/device-proof";
+import { newReplicaSecret, pairingReplicaSecret, replicaSecretHash } from "@/core/activation/replica-proof";
 
 /** Same helper against a throwaway client for a tenant we are not paired to. */
 const rpcOn = (client: unknown, fn: string, args: Record<string, unknown>) =>
@@ -243,7 +246,10 @@ async function insertTokenRow(row: Record<string, unknown>): Promise<void> {
     const { error } = await table().insert([attempt]);
     if (!error) return;
     const missing = optional.find((c) => c in attempt && isMissingColumn(error, c));
-    if (!missing) throw error;
+    if (!missing) {
+      if (isMissingColumn(error, "approval_token_enabled")) throw new Error("Apply the terminal approval-token migration before saving device token options.");
+      throw error;
+    }
     rememberUnsupported(missing);
     delete attempt[missing];
   }
@@ -251,6 +257,7 @@ async function insertTokenRow(row: Record<string, unknown>): Promise<void> {
 }
 
 const rowToToken = (r: Record<string, any>): TerminalToken => ({
+  approvalTokenEnabled: r.approval_token_enabled === true || (r.approval_token_enabled == null && ["mobile", "android", "ios"].includes(String(r.platform))),
   id: r.id,
   locationId: r.location_id ?? null,
   locationName: r.location_name ?? "",
@@ -273,22 +280,24 @@ const rowToToken = (r: Record<string, any>): TerminalToken => ({
 
 /* ----------------------------- admin surface ---------------------------- */
 
-export async function listTerminalTokens(): Promise<TerminalToken[]> {
-  const { data, error } = await table()
-    .select(
-      "id,location_id,location_name,device_name,platform,status,created_at,activated_at,revoked_at,last_seen_at,reissued_at,replaced_by,claimed_by_device,claimed_at,is_claimed,expires_at,app_version,last_sync_at",
-    )
-    .is("revoked_at", null)
-    .in("status", ["active", "used"])
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map(rowToToken);
+export async function listTerminalTokens(includeRevoked = false): Promise<TerminalToken[]> {
+  const columns = "id,location_id,location_name,device_name,platform,status,created_at,activated_at,revoked_at,last_seen_at,reissued_at,replaced_by,claimed_by_device,claimed_at,is_claimed,expires_at,app_version,last_sync_at";
+  const read = (withOptions: boolean) => {
+    let query = table().select(columns + (withOptions ? ",approval_token_enabled" : "")).is("replaced_by", null);
+    if (!includeRevoked) query = query.is("revoked_at", null);
+    return query.in("status", includeRevoked ? ["active", "used", "revoked"] : ["active", "used"]).order("created_at", { ascending: false });
+  };
+  let result = await read(true);
+  if (result.error && isMissingColumn(result.error, "approval_token_enabled")) result = await read(false);
+  if (result.error) throw result.error;
+  return (result.data ?? []).map(rowToToken);
 }
 
 /** Create the token row and return the base64 activation code for the till. */
 export async function issueTerminalToken(input: {
   location: TokenLocation | null;
   management?: boolean;
+  approvalTokenEnabled?: boolean;
   locationName: string;
   deviceName: string;
   /** Defaults to a desktop till. */
@@ -297,6 +306,7 @@ export async function issueTerminalToken(input: {
   tokenId?: string;
   /** sealed device proof captured from a phone-scanned pairing QR */
   claimProof?: string;
+  replicaProofHash?: string;
 }): Promise<{ token: TerminalToken; code: string }> {
   // Self-healing: guarantee the referenced location row exists.
   if (!input.location && !input.management) throw new Error("Operations terminals require a branch.");
@@ -304,9 +314,16 @@ export async function issueTerminalToken(input: {
   if (input.location) await ensureLocations([input.location]);
   const id = input.tokenId || crypto.randomUUID();
   const issuedAt = Date.now();
+  const replica = Boolean(input.management && (input.platform ?? "pc") === "pc");
+  if (replica && input.claimProof && !/^[a-f0-9]{64}$/.test(input.replicaProofHash ?? ""))
+    throw new Error("Update the PC app and scan its new pairing QR before approving management replication.");
+  const replicaSecret = replica && !input.claimProof ? newReplicaSecret() : undefined;
+  const replicaHash = replica ? input.claimProof ? input.replicaProofHash : await replicaSecretHash(replicaSecret!) : null;
   const row = {
     id,
     location_id: input.location?.id ?? null,
+    approval_token_enabled: input.approvalTokenEnabled ?? Boolean(input.management),
+    ...(replica ? { management_sync_enabled: true, management_sync_proof_hash: replicaHash } : {}),
     location_name: input.locationName,
     device_name: input.deviceName,
     platform: input.platform ?? "pc",
@@ -322,6 +339,7 @@ export async function issueTerminalToken(input: {
   return {
     token: rowToToken(row),
     code: await encryptActivationV1({
+      managementSyncSecret: replicaSecret,
       supabaseUrl: supabaseConfig().url,
       supabaseAnonKey: supabaseConfig().key,
       membershipSupabaseUrl: membership?.url,
@@ -345,6 +363,16 @@ export async function revokeTerminalToken(id: string): Promise<void> {
   if (!data) throw new Error("That terminal registration no longer exists.");
 }
 
+/** Device capability is independent of staff permission. No user is granted approval rights here. */
+export async function setTerminalApprovalEnabled(id: string, enabled: boolean): Promise<void> {
+  const { data, error } = await table().update({ approval_token_enabled: enabled }).eq("id", id).select("id").maybeSingle();
+  if (error) {
+    if (isMissingColumn(error, "approval_token_enabled")) throw new Error("Apply the terminal approval-token migration before changing this option.");
+    throw error;
+  }
+  if (!data) throw new Error("Terminal was not found or you cannot change it.");
+}
+
 /**
  * Replace the code of an existing terminal without creating a second entry for
  * the same counter: the old row is retired and a new row inherits the device
@@ -352,18 +380,21 @@ export async function revokeTerminalToken(id: string): Promise<void> {
  */
 export async function reissueTerminalToken(
   token: TerminalToken,
+  scope: { locationId: string | null; locationName: string; approvalTokenEnabled: boolean } = { locationId: token.locationId, locationName: token.locationName, approvalTokenEnabled: token.approvalTokenEnabled !== false },
 ): Promise<{ token: TerminalToken; code: string }> {
   const id = crypto.randomUUID();
   const issuedAt = Date.now();
-  const now = new Date(issuedAt).toISOString();
-  const expiresAt = new Date(issuedAt + ACTIVATION_TTL_MS).toISOString();
-  const { data, error } = await rpc("terminal_token_reissue", {
-    p_old_id: token.id,
-    p_new_id: id,
-    p_created_at: now,
-    p_expires_at: expiresAt,
+  const replicaSecret = token.platform === "pc" && !scope.locationId ? newReplicaSecret() : undefined;
+  const { data, error } = await rpc("terminal_token_reissue_scoped", {
+    p_old_id: token.id, p_new_id: id,
+    p_location_id: scope.locationId, p_location_name: scope.locationName,
+    p_approval_token_enabled: scope.approvalTokenEnabled,
+    p_replica_hash: replicaSecret ? await replicaSecretHash(replicaSecret) : null,
   });
-  if (error) throw error;
+  if (error) {
+    if (/terminal_token_reissue_scoped/.test(error.message || "")) throw new Error("Apply the terminal reissue migration before changing a registration’s branch or device use.");
+    throw error;
+  }
   if (!data) throw new Error("The replacement terminal registration was not returned.");
   const replacement = rowToToken(data as Record<string, unknown>);
   const membership = publicSupabaseConfig("membership");
@@ -371,6 +402,7 @@ export async function reissueTerminalToken(
   return {
     token: replacement,
     code: await encryptActivationV1({
+      managementSyncSecret: replicaSecret,
       supabaseUrl: supabaseConfig().url,
       supabaseAnonKey: supabaseConfig().key,
       membershipSupabaseUrl: membership?.url,
@@ -387,6 +419,8 @@ export async function reissueTerminalToken(
 /* --------------------------- terminal surface --------------------------- */
 
 export type TerminalConfig = {
+  deviceClaimProof?: string | null;
+  deviceBindingProof?: string | null;
   tokenId: string;
   deviceUse?: "operations" | "management";
   /** human-readable name of this physical machine, shown everywhere */
@@ -527,19 +561,23 @@ export function writeTerminalConfig(config: TerminalConfig) {
 }
 
 /** Called when a token is revoked — the till loses its credentials entirely. */
-export function clearTerminalConfig() {
+export async function clearTerminalConfig() {
   if (typeof window === "undefined") return;
+  // Finish an already-started restore before deleting its result.
+  if (hydration) await hydration.catch(() => undefined);
   cachedConfig = null;
   hydrated = true;
-  applyTenantOverride(null);
+  const mobile = ["android", "ios"].includes(terminalRuntimePlatform());
+  if (mobile) setManagementDevice(null);
+  else applyTenantOverride(null);
   clearDeviceSecret(SEALED_NAME);
   window.localStorage.removeItem(CONFIG_KEY);
   // Clearing goes through its own channel: saving an activation is an
   // administrator action, but erasing a dead one is housekeeping the machine
   // must be able to do with a cashier — or nobody — signed in.
   const bridge = desktopBridge();
-  if (bridge?.clearTerminalConfig) void bridge.clearTerminalConfig();
-  else void bridge?.writeTerminalConfig(null);
+  const cleared = bridge?.clearTerminalConfig ? await bridge.clearTerminalConfig() : await bridge?.writeTerminalConfig(null);
+  if (cleared && !cleared.ok) throw new Error("Could not clear the saved terminal registration.");
   window.dispatchEvent(new CustomEvent(EVENT));
 }
 
@@ -571,7 +609,7 @@ export async function mirrorTerminalConfigToDesktop(): Promise<void> {
   if (!config?.tokenId) {
     throw new Error("The POS activation could not be read on this device. Sign out and reopen the POS before retrying.");
   }
-  const result = await bridge.writeTerminalConfig(config);
+  const result = await bridge.writeTerminalConfig({ ...config, deviceBindingProof: await deviceProofHash() });
   if (!result?.ok) {
     throw new Error(
       result?.error ??
@@ -617,14 +655,30 @@ export const TERMINAL_CONFIG_EVENT = EVENT;
  * comes back on the activation screen.
  */
 export async function unpairTerminal(): Promise<void> {
-  clearTerminalConfig();
-  clearPairingRequest();
-  clearDeviceSecret("terminal-account");
-  try {
-    await supabaseExternal.auth.signOut({ scope: "local" });
-  } catch {
-    /* nothing else to clean up */
+  // End Auth while its client still has the configured URL. Clearing first
+  // used to throw during sign-out and strand the root in connection recovery.
+  try { await supabaseExternal.auth.signOut({ scope: "local" }); } catch { /* revoke already confirmed */ }
+  const { clearApprovalToken } = await import("@/platform-config/approval-token-client");
+  await clearApprovalToken(true);
+  const mobile = ["android", "ios"].includes(terminalRuntimePlatform());
+  if (mobile) {
+    const { resetMobileRegistrationIdentity } = await import("./mobile-registration-identity");
+    await resetMobileRegistrationIdentity(false);
+  } else {
+  const { removeCloudCredentials } = await import("@/lib/secure-cloud-config");
+  const removed = await removeCloudCredentials();
+  if (!removed.ok) throw new Error(removed.error || "Could not clear the saved connection.");
+  const backend = await saveBackendUrl("");
+  if (!backend.ok) throw new Error(backend.error || "Could not clear the backend address.");
   }
+  await clearTerminalConfig();
+  clearPairingRequest();
+  const { clearActivationRecord } = await import("./activation-record");
+  clearActivationRecord();
+  clearDeviceSecret("terminal-account");
+  resetHealthCache();
+  const { flushConnectionProfile } = await import("@/lib/connection-profile");
+  await flushConnectionProfile();
 }
 
 /** Look the token up by id. `null` means the network answered "no such token". */
@@ -652,7 +706,7 @@ export async function fetchTokenStatus(
 
 export async function stampHeartbeat(
   tokenId: string,
-  _opts: { version?: string; synced?: boolean } = {},
+  opts: { version?: string; synced?: boolean } = {},
 ): Promise<void> {
   // Current heartbeat functions accept UUIDs. Old desktop profiles can carry
   // an opaque pre-v1 token; sending it to PostgREST produces a noisy 400 on
@@ -665,12 +719,16 @@ export async function stampHeartbeat(
   const { error } = await rpc("terminal_token_heartbeat", {
     p_token_id: tokenId,
     p_activate: false,
+    p_version: opts.version || APP_VERSION,
+    p_synced: opts.synced === true,
     p_proof_hash: proofHash,
   });
   if (error) throw error;
 }
 
-export class ActivationError extends Error {}
+export class ActivationError extends Error {
+  constructor(message: string, readonly retryable = false) { super(message); }
+}
 
 const retryDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -778,6 +836,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     backend_url?: string;
     device_name?: string;
     platform?: TerminalPlatform;
+    management_sync_secret?: string;
   };
   try {
     if (isEncryptedV1(code)) {
@@ -793,6 +852,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
         backend_url: v1.backendUrl,
         device_name: v1.deviceName,
         platform: v1.platform,
+        management_sync_secret: v1.managementSyncSecret,
       };
     } else {
       payload = await decryptActivation(code);
@@ -907,6 +967,8 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
 
   const config: TerminalConfig = {
     tokenId: payload.token_id,
+    deviceClaimProof: payload.management_sync_secret,
+    deviceBindingProof: proofHash,
     deviceName: payload.device_name?.trim() || remote.locationName || "",
     deviceType: tokenPlatformForRuntime(shell) ?? "pc",
     deviceUse: remote.locationId ? "operations" : "management",
@@ -919,8 +981,45 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     backendUrl: payload.backend_url,
     activatedAt: new Date().toISOString(),
   };
-  if (config.backendUrl) await saveBackendUrl(config.backendUrl);
-  writeTerminalConfig(config);
+  const mobile = shell === "android" || shell === "ios";
+  if (mobile) {
+    // The server claim has succeeded. Persist before dropping the old session;
+    // failed validation/claims above never disturb the existing registration.
+    const previous = readTerminalConfig();
+    const previousBackend = await backendUrl();
+    try {
+      await setDeviceSecret(SEALED_NAME, config);
+      if (config.backendUrl) {
+        const saved = await saveBackendUrl(config.backendUrl);
+        if (!saved.ok) throw new ActivationError(saved.error || "Could not save the backend address.");
+      }
+      const { resetMobileRegistrationIdentity } = await import("./mobile-registration-identity");
+      await resetMobileRegistrationIdentity(Boolean(previous?.supabaseUrl && previous.supabaseKey));
+      cachedConfig = config;
+      hydrated = true;
+      window.localStorage.removeItem(CONFIG_KEY);
+      applyTenantOverride(config);
+      const { flushConnectionProfile } = await import("@/lib/connection-profile");
+      await flushConnectionProfile();
+      window.dispatchEvent(new CustomEvent(EVENT));
+    } catch (error) {
+      cachedConfig = previous;
+      applyTenantOverride(previous);
+      if (previous) await setDeviceSecret(SEALED_NAME, previous);
+      else clearDeviceSecret(SEALED_NAME);
+      const restored = await saveBackendUrl(previousBackend);
+      if (!restored.ok) throw new ActivationError("Could not restore the saved backend address. Open connection settings before retrying.");
+      const { flushConnectionProfile } = await import("@/lib/connection-profile");
+      await flushConnectionProfile();
+      throw error;
+    }
+  } else {
+    if (config.backendUrl) {
+      const saved = await saveBackendUrl(config.backendUrl);
+      if (!saved.ok) throw new ActivationError(saved.error || "Could not save the backend address.");
+    }
+    writeTerminalConfig(config);
+  }
   // Electron synchronization reads the OS-vault mirror, not renderer storage.
   // Await the protected mirror before reporting activation success; otherwise
   // a quick reload or smoke-test shutdown can leave the UI activated while
@@ -948,6 +1047,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
 /* ------------------------- phone-assisted pairing ------------------------ */
 
 export type PairingRequest = {
+  replicaProofHash?: string;
   /** the token id the terminal reserved for itself */
   tokenId: string;
   deviceName: string;
@@ -957,6 +1057,7 @@ export type PairingRequest = {
 
 const PAIR_KEY = "pos.terminal.pairing";
 const PAIR_PREFIX = "POSPAIR1:";
+const COMPACT_PAIR_PREFIX = "POSPAIR2:";
 const TERMINAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const validProofHash = (value: unknown): value is string =>
@@ -969,25 +1070,26 @@ export async function getPairingRequest(): Promise<PairingRequest> {
       ? "Windows till"
       : "POS terminal";
   const proofHash = await deviceProofHash();
+  const replicaProofHash = await replicaSecretHash(await pairingReplicaSecret());
   if (!proofHash) {
     throw new ActivationError(
       "Secure device storage is unavailable. Enable local storage for this app, then try again.",
     );
   }
   if (typeof window === "undefined") {
-    return { tokenId: crypto.randomUUID(), deviceName: suggested, proofHash };
+    return { tokenId: crypto.randomUUID(), deviceName: suggested, proofHash, replicaProofHash };
   }
   try {
     const raw = window.localStorage.getItem(PAIR_KEY);
     const parsed = raw ? (JSON.parse(raw) as PairingRequest) : null;
     // Old builds could persist an opaque id which the UUID-only hosted
     // verifier must reject. Replace it with a fresh proof-bound request.
-    if (parsed?.tokenId && TERMINAL_UUID.test(parsed.tokenId) && parsed.proofHash === proofHash)
+    if (parsed?.tokenId && TERMINAL_UUID.test(parsed.tokenId) && parsed.proofHash === proofHash && parsed.replicaProofHash === replicaProofHash)
       return parsed;
   } catch {
     /* fall through and mint a new request */
   }
-  const request: PairingRequest = { tokenId: crypto.randomUUID(), deviceName: suggested, proofHash };
+  const request: PairingRequest = { tokenId: crypto.randomUUID(), deviceName: suggested, proofHash, replicaProofHash };
   try {
     window.localStorage.setItem(PAIR_KEY, JSON.stringify(request));
   } catch {
@@ -1003,7 +1105,14 @@ export function clearPairingRequest() {
 
 /** Text placed in the QR shown on the terminal for the phone to scan. */
 export function encodePairingRequest(request: PairingRequest): string {
-  return `${PAIR_PREFIX}${btoa(JSON.stringify(request))}`;
+  // Keep the proof, but omit JSON property names and base64 expansion so the
+  // on-screen QR has fewer modules and remains scannable by phone cameras.
+  return `${COMPACT_PAIR_PREFIX}${JSON.stringify([
+    request.tokenId,
+    request.proofHash,
+    request.replicaProofHash ?? "",
+    request.deviceName,
+  ])}`;
 }
 
 export function decodePairingRequest(value: string): PairingRequest | null {
@@ -1017,12 +1126,26 @@ export function decodePairingRequest(value: string): PairingRequest | null {
             tokenId: parsed.tokenId,
             deviceName: parsed.deviceName ?? "",
             proofHash: parsed.proofHash.toLowerCase(),
+            ...(validProofHash(parsed.replicaProofHash) ? { replicaProofHash: parsed.replicaProofHash.toLowerCase() } : {}),
           }
         : null;
     } catch {
       return null;
     }
   };
+
+  if (trimmed.startsWith(COMPACT_PAIR_PREFIX)) {
+    try {
+      const parts = JSON.parse(trimmed.slice(COMPACT_PAIR_PREFIX.length));
+      if (!Array.isArray(parts) || parts.length !== 4) return null;
+      const [tokenId, proofHash, replicaProofHash, deviceName] = parts;
+      if (!TERMINAL_UUID.test(tokenId) || !validProofHash(proofHash) ||
+          (replicaProofHash && !validProofHash(replicaProofHash)) ||
+          typeof deviceName !== "string") return null;
+      return { tokenId, proofHash: proofHash.toLowerCase(), deviceName,
+        ...(replicaProofHash ? { replicaProofHash: replicaProofHash.toLowerCase() } : {}) };
+    } catch { return null; }
+  }
 
   // Preferred form: the prefixed base64 payload the till renders.
   if (trimmed.startsWith(PAIR_PREFIX)) {
@@ -1072,14 +1195,14 @@ async function fetchPairingApproval(request: PairingRequest): Promise<PairingApp
     body: JSON.stringify({ tokenId: request.tokenId, proofHash: request.proofHash }),
   });
   const body = (await response.json().catch(() => ({}))) as PairingApproval & { error?: string };
-  if (!response.ok) throw new Error(body.error || `Pairing check failed (${response.status})`);
+  if (!response.ok) throw Object.assign(new Error(body.error || `Pairing check failed (${response.status})`), { status: response.status });
   return body;
 }
 
 export async function activateWithTokenId(request: PairingRequest): Promise<TerminalConfig | null> {
   const shell = terminalRuntimePlatform();
   const approval = await withActivationRetry(() => fetchPairingApproval(request)).catch((e: unknown) => {
-    throw new ActivationError(activationFailureMessage(e));
+    throw new ActivationError(activationFailureMessage(e), isRetryableActivationError(e));
   });
   if (!approval.approved) return null;
   if (approval.status === "revoked") {
@@ -1112,13 +1235,15 @@ export async function activateWithTokenId(request: PairingRequest): Promise<Term
     });
     claimed = result.data;
   } catch (error) {
-    throw new ActivationError(activationFailureMessage(error));
+    throw new ActivationError(activationFailureMessage(error), isRetryableActivationError(error));
   }
   if (claimed !== true) {
     throw new ActivationError("This pairing request was already used on another terminal.");
   }
   const config: TerminalConfig = {
     tokenId: request.tokenId,
+    deviceClaimProof: approval.managementDevice ? await pairingReplicaSecret() : undefined,
+    deviceBindingProof: request.proofHash,
     deviceName: approval.deviceName || request.deviceName,
     deviceType: tokenPlatformForRuntime(shell) ?? "pc",
     deviceUse: approval.managementDevice ? "management" : "operations",

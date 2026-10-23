@@ -1,3 +1,5 @@
+import { GlobalRestrictionPanel } from "./GlobalRestrictionPanel";
+import { TableColumnRulesPanel } from "./TableColumnRulesPanel";
 /**
  * Roles & access — one screen for both halves of the same question.
  *
@@ -66,16 +68,16 @@ export function RoleAccessPanel() {
   const role = useMemo(() => roles.find((r) => r.slug === slug), [roles, slug]);
   const query = term.trim().toLowerCase();
 
-  /** Screen visibility is stored per built-in level; a custom role follows the
-   *  level it was based on. Administrators always see everything. */
+  /** Custom roles inherit their base visibility until explicitly changed.
+   * Changes to a custom role never modify its base role. */
   const visibilityRole: VisibilityRole | null = useMemo(() => {
     const base = role?.baseLevel ?? (isBuiltIn(slug) ? slug : "cashier");
-    return base === "admin" ? null : (base as VisibilityRole);
+    return base === "admin" ? null : slug;
   }, [role, slug]);
 
   if (!allowed) {
     return (
-      <section className="space-y-4"><header><h2 className="text-lg font-semibold">Roles &amp; access</h2><p className="text-sm text-muted-foreground">What each role may do, and what it can see.</p></header>
+      <section className="space-y-4"><header><h2 className="text-lg font-semibold">Roles &amp; access</h2><p className="text-sm text-muted-foreground">Screen visibility for each role.</p></header>
         <p className="text-sm text-muted-foreground">
           Your role does not allow staff permission management.
         </p>
@@ -95,7 +97,9 @@ export function RoleAccessPanel() {
   const adminSelected = (role?.baseLevel ?? slug) === "admin";
 
   return (
-    <section className="space-y-4"><header><h2 className="text-lg font-semibold">Roles &amp; access</h2><p className="text-sm text-muted-foreground">Pick a role, then set what it may do and what it can see. Administrators always keep full access, so nothing here can lock you out.</p></header>
+    <section className="space-y-4"><header><h2 className="text-lg font-semibold">Roles &amp; access</h2><p className="text-sm text-muted-foreground">Pick a role to change screen visibility. Configure action permissions in Roles & permissions, and individual exceptions in Accounts. Administrators always keep full access, so nothing here can lock you out.</p></header>
+      <GlobalRestrictionPanel />
+      {isAdmin && <TableColumnRulesPanel roles={roles} />}
       <div className="space-y-5">
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-56 flex-1 space-y-1">
@@ -137,7 +141,7 @@ export function RoleAccessPanel() {
               <header>
                 <h2 className="text-sm font-semibold">What this role sees</h2>
                 <p className="text-xs text-muted-foreground">
-                  Hiding something only removes it from the screen; the permission above still
+                  Hiding something only removes it from the screen; the action permission still
                   decides what may be done. A few core areas stay with the owner; sensitive areas
                   can be handed over, but stay hidden until you switch them on.
                 </p>

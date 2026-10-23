@@ -1,3 +1,4 @@
+import { claimRestoredConnectionRetry } from "@/lib/restored-connection-retry";
 import { IosOtaBoot, IosUpdateBanner } from "@/platform-config/ios-ota";
 import { ApprovalTokenAgent } from "@/platform-config/approval-token";
 import { VIEWPORT_FIT } from "@/platform-config/viewport";
@@ -16,7 +17,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportAppReady } from "@/lib/app-health";
@@ -38,18 +39,21 @@ import { FirstRunSetup } from "@/platforms/web/components/pos/FirstRunSetup";
 import { LifeBuoy } from "lucide-react";
 import { RECOVERY_PATH, isRecoveryPath } from "@/lib/recovery-route";
 import { ThemeProvider, themeBootScript } from "../lib/theme";
-import { NativeConnectionIndicator } from "@/platform-config/offline-interface";
+import { NativeConnectionIndicator, OfflineLoginInterface, supportsOfflineLogin } from "@/platform-config/offline-interface";
 import { publicConfigScript } from "../lib/public-config-script";
 import { NativeBoot } from "@/platforms/mobile/components/NativeBoot";
 import { NativeWindowFrame } from "@/components/shared/NativeWindowFrame";
+import { zodCspBootScript } from "@/lib/csp-zod-boot";
 import { AndroidPushAgent } from "@/platforms/mobile/components/AndroidPushAgent";
 import { OfflineGate } from "@/platforms/mobile/components/OfflineGate";
 import {
   APP_RESUME_EVENT,
   CONNECTIVITY_RESTORED_EVENT,
   connectivity,
+  cloudVerdict,
   heartbeat,
   startConnectivityMonitor,
+  subscribeConnectivity,
 } from "@/core/activation/connection-health";
 import { subscribeSyncConfig, syncConfig } from "@/lib/sync-config";
 import { DesktopUpdateBanner, DesktopCloseSyncStatus } from "@/platforms/windows/components/DesktopUpdateBanner";
@@ -60,6 +64,7 @@ import { bypassPersistentAppShell, isCustomerPublicRoute } from "@/lib/app-shell
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
 import { hasRequiredPlatformConfig, subscribeConfigReady, type ConfigReadiness } from "@/lib/platform-config-ready";
 import { hydrateConnectionProfile, isConnectionProfileHydrated } from "@/lib/connection-profile";
+import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { staleAssetRecoveryScript } from "@/lib/stale-asset-recovery";
 
@@ -92,23 +97,55 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
   );
   if (import.meta.env.DEV) console.error(normalizedError);
   const router = useRouter();
+  const [connection, setConnection] = useState(connectivity);
+  const [networkOnline, setNetworkOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine !== false);
+  useEffect(() => subscribeConnectivity(setConnection), []);
+  useEffect(() => {
+    if (!supportsOfflineLogin) return;
+    void heartbeat();
+    const refresh = () => {
+      if (navigator.onLine === false) setNetworkOnline(false);
+      void heartbeat().finally(() => setNetworkOnline(navigator.onLine !== false));
+    };
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", refresh);
+    return () => { window.removeEventListener("online", refresh); window.removeEventListener("offline", refresh); };
+  }, []);
+  useEffect(() => {
+    if (!supportsOfflineLogin || (networkOnline && connection !== "offline")) return;
+    void heartbeat();
+    const timer = window.setInterval(() => { if (!document.hidden) void heartbeat(); }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [connection, networkOnline]);
   useEffect(() => {
     // Something on screen beats a blank window: the desktop shell must know the
     // build started, or its 60-second watchdog tears the till down.
     reportAppReady();
   }, [normalizedError]);
 
+  const retryConnection = useCallback(() => { void router.invalidate(); reset(); }, [router, reset]);
   const notConfigured = normalizedError.name === "SupabaseConfigError";
+  const offlineRecovery = supportsOfflineLogin && !notConfigured &&
+    (!networkOnline || (connection === "offline" && cloudVerdict() === "unreachable"));
+  const wasOffline = useRef(false);
+  useEffect(() => {
+    if (offlineRecovery) wasOffline.current = true;
+    else if (wasOffline.current && connection === "online") {
+      wasOffline.current = false;
+      retryConnection();
+    }
+  }, [connection, offlineRecovery, retryConnection]);
+
+  // A native app retains its packaged sign-in UI when connectivity fails.
+  // Approval codes can be unlocked here without restoring an online session.
+  if (offlineRecovery) return <OfflineLoginInterface recovery />;
 
   // Missing device configuration is step one of terminal setup, never a cue
   // to attempt activation. Reset the boundary after a successful save/probe
   // so the shared startup decision can proceed to activation or sign-in.
   if (notConfigured && isTerminalApp()) {
     return (
-      <ConnectionErrorRecovery onRetry={() => {
-        void router.invalidate();
-        reset();
-      }} />
+      <ConnectionErrorRecovery onRetry={retryConnection} />
     );
   }
 
@@ -231,6 +268,10 @@ function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Zod's dependency chunk may initialize before the app's own Zod
+            wrapper. Set its supported interpreter flag before module/preload
+            scripts run, so strict CSP never sees its Function probe. */}
+        <script dangerouslySetInnerHTML={{ __html: zodCspBootScript }} />
         <script dangerouslySetInnerHTML={{ __html: staleAssetRecoveryScript }} />
         <HeadContent />
         {/* The server owns this payload. In browsers and device renderers the
@@ -321,7 +362,7 @@ function RootComponent() {
           for (const table of query.meta.tables) if (typeof table === "string") tables.add(table);
       }
       if (tables.size) void refresh.refresh();
-    });
+    }, 300_000);
     const off = subscribeDataChange((change) => {
       tables.add(change.table);
       if (timer) return;
@@ -346,7 +387,7 @@ function RootComponent() {
             <TerminalConnectionSetup>
             <OfflineGate>
               <PublicHostBoundary pathname={pathname}>
-              {isCustomerPublicRoute(pathname) ? (
+              {(isCustomerPublicRoute(pathname) || isRecoveryPath(pathname)) ? (
                 <>
                   <Outlet />
                 </>
@@ -423,10 +464,15 @@ function ConnectionErrorRecovery({ onRetry }: { onRetry: () => void }) {
     let current = true;
     setStatus(null);
     void hasRequiredPlatformConfig().then(result => {
-      if (current) setStatus(result);
+      if (!current) return;
+      if (claimRestoredConnectionRetry(result.ready)) {
+        onRetry();
+        return;
+      }
+      setStatus(result);
     });
     return () => { current = false; };
-  }, [attempt]);
+  }, [attempt, onRetry]);
   if (!status) return <TillLoader message="Restoring secure connection…" />;
   if (status.state === "missing" || status.state === "incomplete") {
     return <ConnectDatabaseScreen cloudConfigured={status.have.supabaseKey} onRetry={onRetry} />;
@@ -434,11 +480,13 @@ function ConnectionErrorRecovery({ onRetry }: { onRetry: () => void }) {
   return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
     <p>{status.ready ? "Your saved connection is available. Retry opening the app." : "Could not restore your saved connection. Your settings have not been removed."}</p>
     <button className="rounded-lg bg-primary px-5 py-2 text-primary-foreground" onClick={() => status.ready ? onRetry() : setAttempt(value => value + 1)}>Retry connection</button>
+    <EmergencyAccessLink />
   </div>;
 }
 
 /** Do not resolve a cloud client before Electron restores its DPAPI values. */
 function ConnectionProfileBoot({ children }: { children: ReactNode }) {
+  const recovery = useLocation({ select: location => isRecoveryPath(location.pathname) });
   const [ready, setReady] = useState(false);
   const [restoreFailed, setRestoreFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -455,9 +503,11 @@ function ConnectionProfileBoot({ children }: { children: ReactNode }) {
       current = false;
     };
   }, [attempt]);
+  if (recovery) return children;
   if (restoreFailed) return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
     <p>Could not restore your saved connection. Your settings have not been removed.</p>
     <button className="rounded-lg bg-primary px-5 py-2 text-primary-foreground" onClick={() => setAttempt(value => value + 1)}>Retry connection</button>
+    <EmergencyAccessLink />
   </div>;
   if (!ready) return <TillLoader message="Restoring secure connection…" />;
   return children;

@@ -17,9 +17,9 @@ import { pageForRoute, pageEnabled } from "./permission-pages";
 import { useCallback, useMemo } from "react";
 import { usePos } from "./pos-store";
 import { useAuth } from "@/lib/pos-auth";
-import type { StaffRole } from "./permissions";
+import { cachedRoleDefinition } from "./permissions";
 
-export type VisibilityRole = Exclude<StaffRole, "admin">;
+export type VisibilityRole = string;
 
 export const VISIBILITY_ROLES: { id: VisibilityRole; label: string }[] = [
   { id: "cashier", label: "Cashier" },
@@ -309,6 +309,11 @@ export function isVisibleFor(hidden: VisibilityMap, key: string, role: string | 
   if (!role || role === "admin") return true;
   const lock = lockFor(key);
   if (lock === "core") return false;
+  const custom = !["cashier", "warehouse", "supervisor"].includes(role);
+  const override = hidden[`role:${role}:${key}`];
+  if (custom && override) return override.includes("shown");
+  const inheritedRole = custom ? cachedRoleDefinition(role)?.baseLevel : null;
+  if (inheritedRole && inheritedRole !== "admin") return isVisibleFor(hidden, key, inheritedRole);
   if (lock === "sensitive") return (hidden[grantKey(key)] ?? []).includes(role);
   return !(hidden[key] ?? []).includes(role);
 }
@@ -320,6 +325,9 @@ export function withVisibility(
   forRole: VisibilityRole,
   hide: boolean,
 ): VisibilityMap {
+  if (forRole === "admin" || lockFor(key) === "core") return hidden;
+  if (!["cashier", "warehouse", "supervisor"].includes(forRole))
+    return { ...hidden, [`role:${forRole}:${key}`]: [hide ? "hidden" : "shown"] };
   const sensitive = lockFor(key) === "sensitive";
   // Sensitive rows keep an allow-list; everything else keeps a deny-list.
   const storeKey = sensitive ? grantKey(key) : key;

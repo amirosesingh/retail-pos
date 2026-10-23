@@ -1,3 +1,4 @@
+import { readText } from "@/platform-config/clipboard";
 /**
  * Full-screen activation gate for the Windows till, plus the lock screen the
  * kill-switch drops in when management revokes the machine.
@@ -21,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   activateTerminal,
+  readTerminalConfig,
   ActivationError,
   activateWithTokenId,
   clearPairingRequest,
@@ -44,7 +46,7 @@ const qrDataUrl = (value: string) => {
   const qr = qrcode(0, "M");
   qr.addData(value);
   qr.make();
-  return qr.createDataURL(4, 8);
+  return qr.createDataURL(8, 32);
 };
 
 function Frame({ children, bare }: { children: React.ReactNode; bare?: boolean }) {
@@ -82,6 +84,7 @@ export function TerminalActivation({
   useEffect(() => subscribeConnectivity(() => setOnline(isCloudConnected())), []);
   const branding = useBranding();
   const mobile = isNative();
+  const [replacingRegistration] = useState(() => mobile && Boolean(readTerminalConfig()?.tokenId));
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   // React state is not synchronous: camera callbacks can arrive twice before
@@ -165,6 +168,7 @@ export function TerminalActivation({
       onActivationStarted?.();
       try {
         const config = await activateWithTokenId(pairing);
+        if (!stopped) setError("");
         if (config && !stopped) {
           clearRevocation();
           await writeActivationRecord({ tokenId: config.tokenId }).catch(() => {});
@@ -175,7 +179,7 @@ export function TerminalActivation({
           setError(e.message);
           // Network failures recover automatically; token verdicts need a new
           // request and must not hammer the API every three seconds forever.
-          if (!/cannot reach|connection/i.test(e.message)) setPairingStopped(true);
+          if (!e.retryable && !/cannot reach|connection/i.test(e.message)) setPairingStopped(true);
         }
       } finally {
         pending = false;
@@ -218,7 +222,8 @@ export function TerminalActivation({
         <Button className="mt-4 w-full" onClick={() => {
           if (continued.current) return;
           continued.current = true;
-          onActivated(done);
+          if (replacingRegistration) window.location.reload();
+          else onActivated(done);
         }}>
           Continue
         </Button>
@@ -242,10 +247,14 @@ export function TerminalActivation({
 
       <p className="mt-4 text-sm text-muted-foreground">
         Ask a supervisor or administrator for {mobile ? "a mobile terminal" : "a Windows till"} activation code
-        for this location. Scan the QR code or paste the text block below. This code registers the
+        for a branch or Management. Scan the QR code or paste the text block below. This code registers the
         device; each staff member signs in with their own account afterward.
       </p>
 
+      {replacingRegistration && <p className="mt-2 text-sm text-muted-foreground">
+        Scan or enter a new mobile token to change the registered branch or switch to Management.
+        A successful change requires staff to sign in again with their existing permissions.
+      </p>}
       <Tabs defaultValue="scan" className="mt-4">
         <TabsList className="grid w-full grid-cols-2 bg-muted">
           <TabsTrigger value="scan">
@@ -303,7 +312,7 @@ export function TerminalActivation({
             className="w-full text-foreground"
             onClick={async () => {
               try {
-                const text = await navigator.clipboard.readText();
+                const text = await readText();
                 if (text.trim()) setCode(text.trim());
               } catch {
                 setError("Could not read the clipboard. Paste the token by hand.");
@@ -332,12 +341,12 @@ export function TerminalActivation({
               Scan this code from Settings → Terminal activation on the Android app and approve it.
               This till registers itself — nothing to type or copy.
             </p>
-            <div className="mt-3 flex items-center gap-3">
+            <div className="mt-3 flex flex-col items-center gap-3">
               {pairQr ? (
                 <img
                   src={pairQr}
                   alt="Pairing code for this terminal"
-                  className="size-32 rounded-lg bg-white p-1"
+                  className="aspect-square w-full max-w-96 bg-white p-2 [image-rendering:pixelated]"
                 />
               ) : (
                 <div className="grid size-32 place-items-center rounded-lg border border-border bg-card">
@@ -433,6 +442,7 @@ export function TerminalRevokedScreen({
   reason?: "revoked" | "missing";
 }) {
   const missing = reason === "missing";
+  if (isNative()) return <TerminalActivation onActivated={() => window.location.reload()} />;
   return (
     <Frame>
       <div className="text-center">

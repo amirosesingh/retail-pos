@@ -19,20 +19,22 @@ async function listSyncedStaff(pool, branchId) {
     .input("branch", String(branchId))
     .query(`SELECT TOP (500)
       CONVERT(nvarchar(128),id) id,COALESCE(NULLIF(login_username,''),user_id) username,full_name,store_id,
-      role,role_slug,permissions,is_active
+      role,role_slug,permissions,is_active,email
       FROM dbo.app_users
       WHERE is_active=1 AND (store_id IS NULL OR store_id=@branch)
+        AND (LOWER(email) LIKE '%@pos-internal.local' OR LOWER(email) LIKE '%@pos.local' OR COALESCE(offline_login_pin_hash,'')<>'')
       ORDER BY full_name,user_id;`);
   return {
     ok: true,
     rows: (result.recordset ?? []).map((row) => ({
       id: String(row.id ?? row.username),
       username: String(row.username ?? ""),
-      full_name: String(row.full_name ?? row.username ?? ""),
-      store_id: row.store_id == null ? null : String(row.store_id),
-      role_slug: String(row.role_slug ?? row.role ?? "staff").toLowerCase(),
+      fullName: String(row.full_name ?? row.username ?? ""),
+      email: String(row.email ?? ""), pinLength: 0,
+      storeId: row.store_id == null ? null : String(row.store_id),
+      roleSlug: String(row.role_slug ?? row.role ?? "staff").toLowerCase(),
       permissions: permissions(row.permissions),
-      is_active: true,
+      isActive: true,
     })),
   };
 }
@@ -40,13 +42,32 @@ async function listSyncedStaff(pool, branchId) {
 /** Verify the same bcrypt PIN hash Supabase synchronized into local SQL Server. */
 async function verifySyncedPin(pool, username, pin, branchId, purpose, options = {}) {
   if (!pool || !branchId) return { ok: false, reason: "unavailable" };
-  const name = String(username ?? "").trim().toLowerCase();
+  let name = String(username ?? "").trim().toLowerCase();
   const secret = String(pin ?? "");
+  let tokenOnly = false;
+  if (!name && purpose === "approval" && /^\d{8}$/.test(secret) && typeof options.identifyTotp === "function") {
+    // Reserve every code-only attempt atomically, including successes: changing
+    // guessed identities or restarting the renderer cannot reset the budget.
+    const gate = await pool.request().input("key", `approval-lookup:${String(branchId).toLowerCase()}`)
+      .query(`WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544)
+        MERGE dbo.pin_attempts WITH (HOLDLOCK) AS target
+        USING (SELECT @key AS [key]) AS source ON target.[key]=source.[key]
+        WHEN MATCHED AND (target.attempts<5 OR target.window_started_at<DATEADD(minute,-1,SYSDATETIMEOFFSET())) THEN UPDATE SET
+          attempts=CASE WHEN target.window_started_at<DATEADD(minute,-1,SYSDATETIMEOFFSET()) THEN 1 ELSE target.attempts+1 END,
+          window_started_at=CASE WHEN target.window_started_at<DATEADD(minute,-1,SYSDATETIMEOFFSET()) THEN SYSDATETIMEOFFSET() ELSE target.window_started_at END,
+          updated_at=SYSDATETIMEOFFSET()
+        WHEN NOT MATCHED THEN INSERT([key],attempts,window_started_at,created_at,updated_at)
+          VALUES(@key,1,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET())
+        OUTPUT inserted.[key];`);
+    if (!gate.recordset?.length) return { ok: false, reason: "locked", error: "Too many token attempts. Try again in one minute." };
+    name = String(await options.identifyTotp(secret, branchId) ?? "").toLowerCase();
+    tokenOnly = true;
+  }
   if (!name || secret.length < 4 || secret.length > 32) return { ok: false, reason: "invalid" };
   // app_users owns the manager-approval PIN; cashiers owns the independent
   // terminal sign-in PIN. Never swap these or one credential can authorize
   // the other operation again.
-  const hashColumn = purpose === "approval" ? "a.pin_hash" : "c.pin_hash";
+  const hashColumn = purpose === "approval" ? "a.pin_hash" : "CASE WHEN a.email LIKE '%@%' AND LOWER(a.email) NOT LIKE '%@pos-internal.local' AND LOWER(a.email) NOT LIKE '%@pos.local' THEN a.offline_login_pin_hash ELSE c.pin_hash END";
   const result = await pool.request()
     .input("username", name)
     .input("branch", String(branchId))
@@ -60,7 +81,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
         WHERE LOWER(candidate.username)=LOWER(a.user_id) AND candidate.is_active=1
         ORDER BY candidate.updated_at DESC,candidate.id DESC
       ) c
-      WHERE (LOWER(a.user_id)=@username OR LOWER(a.login_username)=@username OR LOWER(CONVERT(nvarchar(128),a.id))=@username)
+      WHERE (LOWER(a.user_id)=@username OR LOWER(a.login_username)=@username OR LOWER(a.email)=@username OR LOWER(CONVERT(nvarchar(128),a.id))=@username)
         AND (a.store_id IS NULL OR a.store_id=@branch)
       ORDER BY CASE WHEN a.store_id=@branch THEN 0 ELSE 1 END,a.updated_at DESC,a.id DESC;`);
   const row = result.recordset?.[0];
@@ -79,7 +100,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
   const hash = String(row.pin_hash ?? "");
   const switches = permissions(row.permissions);
   const pinEnabled = purpose !== "approval" || switches.approval_pin_enabled !== false;
-  const validPin = pinEnabled && hash && await bcrypt.compare(secret, hash);
+  const validPin = !tokenOnly && pinEnabled && hash && await bcrypt.compare(secret, hash);
   const validToken = !validPin && purpose === "approval" && switches.approval_totp_enabled === true &&
     typeof options.verifyTotp === "function" && await options.verifyTotp(pool, String(row.username), secret, branchId);
   if (!validPin && !validToken) {
@@ -114,6 +135,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
       username: String(row.username),
       full_name: String(row.full_name ?? row.username),
       store_id: row.store_id ?? null,
+      role: String(row.role ?? row.role_slug ?? "staff").toLowerCase(),
       role_slug: String(row.role_slug ?? row.role ?? "staff").toLowerCase(),
       permissions: permissions(row.permissions),
       is_active: true,

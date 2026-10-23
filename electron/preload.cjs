@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("sqlAdmin", {
   lockAdmin: () => invoke("admin:lock"),
   adoptSession: (proof, terminalConfig) => invoke("admin:adopt-session", proof, terminalConfig),
   status: () => invoke("admin:status"),
+  adminStatus: () => invoke("admin:status"),
   recoveryUnlock: (username, pin) => invoke("admin:recovery-unlock", username, pin),
   recoveryLock: () => invoke("admin:recovery-lock"),
 });
@@ -110,6 +111,7 @@ contextBridge.exposeInMainWorld("pos", {
   rememberStaffPin: (username, pin) => invoke("staff:enroll", username, pin),
   signInStaffPin: (username, pin) => invoke("staff:sign-in", username, pin),
   verifyStaffPin: (username, pin) => invoke("staff:verify-pin", username, pin),
+  approvalTokenVault: (operation, key, value) => invoke("approval:own-token-vault", operation, key, value),
   enrollApprovalVerifier: (proof) => invoke("approval:enroll-verifier", proof),
   verifyApprovalPin: (username, pin) => invoke("staff:verify-approval-pin", username, pin),
   cashierLogin: (username, pin) => invoke("auth:cashier-login", { username, pin }),
@@ -121,6 +123,7 @@ contextBridge.exposeInMainWorld("pos", {
   openDrawer: (value) => invoke("drawer:open", value),
   listPrinters: () => invoke("print:list"),
   appVersion: () => invoke("app:version"),
+  appName: () => invoke("app:name"),
   netGetJson: (url) => invoke("net:get-json", url),
   netHead: (url) => invoke("net:head", url),
   netGetBinary: (url) => invoke("net:get-binary", url),

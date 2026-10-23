@@ -18,7 +18,8 @@ import {
 import { AlertTriangle } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
-import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
+import { Input } from "@/components/ui/input";
+import { Carousel, CarouselContent, CarouselItem } from "@/components/ui/carousel";
 import { Separator } from "@/components/ui/separator";
 import {
   Table,
@@ -62,15 +63,20 @@ export const Route = createFileRoute("/dashboard")({
   component: Dashboard,
 });
 
+const chartDay = (value: string, fallback: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+
 function Dashboard() {
   const { state, currentStore } = usePos();
   const { can } = useAuth();
   const { visible } = useVisibility();
-  const showStockValue = can("can_view_sales_reports") && visible("inventory.stockValue");
+  const showStockValue = can("can_view_cost_margin") && visible("inventory.stockValue");
   const drawer = useDrawerEvents();
   const thresholds = defaultReviewThresholds;
 
   const [today, setToday] = useState(() => posDayKey());
+  const [revenuePeriod, setRevenuePeriod] = useState<"7" | "14" | "30" | "90" | "month" | "custom">("14");
+  const [customFrom, setCustomFrom] = useState(() => posDayKey(new Date(Date.now() - 13 * 86_400_000)));
+  const [customTo, setCustomTo] = useState(() => posDayKey());
   useEffect(() => {
     const refresh = () => setToday(posDayKey());
     const timer = window.setInterval(refresh, 30_000);
@@ -78,36 +84,62 @@ function Dashboard() {
     return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
   }, []);
   const storeIds = useMemo(() => [currentStore.id], [currentStore.id]);
+  const revenueFrom = useMemo(() => {
+    if (revenuePeriod === "custom") {
+      const from = chartDay(customFrom, today);
+      const to = chartDay(customTo, today);
+      return from <= to ? from : to;
+    }
+    if (revenuePeriod === "month") return `${today.slice(0, 7)}-01`;
+    const start = new Date(`${today}T12:00:00`);
+    start.setDate(start.getDate() - Number(revenuePeriod) + 1);
+    return posDayKey(start);
+  }, [revenuePeriod, customFrom, customTo, today]);
+  const revenueTo = revenuePeriod === "custom"
+    ? (chartDay(customFrom, today) <= chartDay(customTo, today)
+        ? chartDay(customTo, today) : chartDay(customFrom, today))
+    : today;
+  // Today's cards still need today's sales when the selected graph range is
+  // entirely historical. Extend only the read window, not the graph buckets.
+  const readFrom = revenueFrom < today ? revenueFrom : today;
+  const readTo = revenueTo > today ? revenueTo : today;
   // Include a boundary day on both sides: report loading uses device-local
   // midnight, while dashboard buckets use the configured business timezone.
   const { sales, loading: reportLoading, error: reportError } = useReportSales(state.sales, storeIds,
-    posDayKey(new Date(Date.parse(`${today}T12:00:00`) - 14 * 86_400_000)),
-    posDayKey(new Date(Date.parse(`${today}T12:00:00`) + 86_400_000)));
-  const todaySales = sales.filter((s) => posDayKey(s.createdAt) === today);
-  const live = todaySales.filter((s) => !s.refunded);
+    posDayKey(new Date(Date.parse(`${readFrom}T12:00:00`) - 86_400_000)),
+    posDayKey(new Date(Date.parse(`${readTo}T12:00:00`) + 86_400_000)));
+  const todaySales = useMemo(() => sales.filter((s) => posDayKey(s.createdAt) === today), [sales, today]);
+  const live = useMemo(() => todaySales.filter((s) => !s.refunded), [todaySales]);
 
-  const revenue = live.reduce((a, s) => a + s.total, 0);
+  const revenue = useMemo(() => live.reduce((a, s) => a + s.total, 0), [live]);
   // One shared profit helper, so this never drifts from the business report.
   const profit = useMemo(() => profitOf(live, state.products), [live, state.products]);
   const margin = profit.marginPct;
-  const refunds = todaySales.filter((s) => s.refunded);
+  const refunds = useMemo(() => todaySales.filter((s) => s.refunded), [todaySales]);
   const stock = useMemo(
     () => inventoryMetrics(state.products.filter(product => productVisibleAt(state.settings, product, currentStore.id)), currentStore.id),
     [state.products, state.settings, currentStore.id],
   );
 
-  /** Revenue against gross profit, hour by hour. */
+  const chartSales = useMemo(() => sales.filter(sale => {
+    const day = posDayKey(sale.createdAt);
+    return !sale.refunded && day >= revenueFrom && day <= revenueTo;
+  }), [sales, revenueFrom, revenueTo]);
+  const chartProfit = useMemo(() => profitOf(chartSales, state.products), [chartSales, state.products]);
+
+  /** Revenue against gross profit, hour by hour in the selected range. */
   const profitByHour = useMemo(
-    () => hourlyProfit(live, state.products, posHour),
-    [live, state.products],
+    () => hourlyProfit(chartSales, state.products, posHour),
+    [chartSales, state.products],
   );
 
-  /** Revenue for the last 14 calendar days. */
+  /** Revenue for the selected inclusive calendar range. */
   const daily = useMemo(() => {
     const buckets = new Map<string, number>();
-    for (let i = 13; i >= 0; i--) {
-      const day = new Date(`${today}T12:00:00`);
-      day.setDate(day.getDate() - i);
+    const first = new Date(`${revenueFrom}T12:00:00`);
+    const last = new Date(`${revenueTo}T12:00:00`);
+    // A mistaken multi-year custom range must not freeze the dashboard.
+    for (let day = new Date(first), count = 0; day <= last && count < 731; day.setDate(day.getDate() + 1), count++) {
       const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
       buckets.set(key, 0);
     }
@@ -121,24 +153,24 @@ function Dashboard() {
       day: day.slice(5),
       total: Number(total.toFixed(2)),
     }));
-  }, [sales, today]);
+  }, [sales, revenueFrom, revenueTo]);
 
-  /** Transactions per hour today — shows the peak trading window. */
+  /** Transactions per hour across the selected calendar range. */
   const hourly = useMemo(() => {
     const hours = Array.from({ length: 24 }, (_, h) => ({ hour: `${h}:00`, bills: 0, value: 0 }));
-    live.forEach((s) => {
+    chartSales.forEach((s) => {
       const h = posHour(s.createdAt);
       hours[h]!.bills += 1;
       hours[h]!.value = Number((hours[h]!.value + s.total).toFixed(2));
     });
     return hours;
-  }, [live]);
+  }, [chartSales]);
   const peak = hourly.reduce((a, h) => (h.bills > a.bills ? h : a), hourly[0]!);
 
-  const todayDrawer = drawer.filter(
+  const todayDrawer = useMemo(() => drawer.filter(
     (d) => posDayKey(d.at) === today && sameBranchId(d.storeId, currentStore.id),
-  );
-  const splitSales = live.filter(sale => hasSplitPayments(sale.payments));
+  ), [drawer, today, currentStore.id]);
+  const splitSales = useMemo(() => live.filter(sale => hasSplitPayments(sale.payments)), [live]);
 
   /** Per-cashier behaviour with fixed thresholds plus relative outliers. */
   const cashiers = useMemo(() => {
@@ -166,7 +198,7 @@ function Dashboard() {
 
   return (
     <AppShell>
-      <div className="space-y-6 p-6">
+      <div className="pos-page-container">
         <header className="min-w-0 space-y-2">
           <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
             <h1 className="min-w-0 text-2xl font-semibold">Live dashboard · {currentStore.name}</h1>
@@ -223,21 +255,34 @@ function Dashboard() {
           opts={{ align: "start", containScroll: "trimSnaps" }}
           aria-label="Live dashboard graphs"
           // Keep arrow keys inside charts available for Recharts data-point navigation.
-          // Previous/next buttons provide keyboard navigation between graph cards.
+          // Touch/pointer dragging moves between cards without navigation buttons.
           onKeyDownCapture={() => undefined}
           className="min-w-0"
         >
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">Trading graphs</h2>
-            <div className="hidden items-center gap-1 md:flex">
-              <CarouselPrevious className="static translate-y-0" aria-label="Previous graph" />
-              <CarouselNext className="static translate-y-0" aria-label="Next graph" />
-            </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select aria-label="Trading graphs period" value={revenuePeriod}
+                  onChange={(event) => setRevenuePeriod(event.target.value as typeof revenuePeriod)}
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs">
+                  <option value="7">7 days</option>
+                  <option value="14">14 days</option>
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                  <option value="month">This month</option>
+                  <option value="custom">Custom dates</option>
+                </select>
+                {revenuePeriod === "custom" && <>
+                  <Input aria-label="Graphs from date" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} className="h-8 w-36 text-xs" />
+                  <Input aria-label="Graphs to date" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} className="h-8 w-36 text-xs" />
+                </>}
+              </div>
           </div>
+          <p className="mb-3 text-xs text-muted-foreground">{revenueFrom} to {revenueTo} · applies to all trading graphs</p>
           <CarouselContent className="touch-pan-y">
           <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
           <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
-            <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">Revenue · last 14 days</h2>
+            <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">Revenue</h2>
             <div className="min-h-0 min-w-0 flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={daily}>
@@ -285,7 +330,7 @@ function Dashboard() {
         <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
           <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
-            Profit by hour · gross profit {money(profit.profit)} today
+            Profit by hour · gross profit {money(chartProfit.profit)}
           </h2>
           <div className="min-h-0 min-w-0 flex-1">
             <ResponsiveContainer width="100%" height="100%">
@@ -360,7 +405,7 @@ function Dashboard() {
         <section className="rounded-lg border border-border bg-card">
           <h2 className="px-5 py-3 text-sm font-semibold">Cash drawer opens without a sale</h2>
           <Separator />
-          <Table loading={reportLoading}>
+          <Table tableId="routes/dashboard#1" loading={reportLoading}>
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
@@ -398,7 +443,7 @@ function Dashboard() {
           <h2 className="px-5 pt-3 text-sm font-semibold">Split payments today</h2>
           <p className="px-5 pb-3 pt-1 text-xs text-muted-foreground">Bills paid in two or more parts, such as cash and card.</p>
           <Separator />
-          <Table loading={reportLoading}>
+          <Table tableId="routes/dashboard#2" loading={reportLoading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Receipt</TableHead>

@@ -21,6 +21,14 @@ function setup() {
 }
 
 describe("private sync wake channels", () => {
+  it("does not join private topics when the verified identity disappears during preparation", async () => {
+    const test = setup();
+    const prepare = vi.fn(async () => false);
+    const wake = createSyncWakeChannels(test.client, test.change, test.reconnect, prepare);
+    await wake.replace("branch", "terminal", true);
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(test.client.channel).not.toHaveBeenCalled();
+  });
   it("does not subscribe without authentication or branch", async () => {
     const test = setup();
     await test.wake.replace("branch", "terminal", false);

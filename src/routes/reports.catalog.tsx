@@ -65,7 +65,7 @@ function CatalogReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Catalog Change History"
           subtitle="Product creations, price changes and stock movements with who and when."
@@ -105,7 +105,7 @@ function CatalogReport() {
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table>
+          <Table tableId="routes/reports.catalog#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

@@ -182,6 +182,7 @@ export type SqlAdminBridge = {
   adminStatus?: () => Promise<{
     unlocked: boolean;
     name?: string;
+    source?: "pos" | "manual";
     level?: "admin" | "supervisor" | "staff";
     expiresAt?: number;
   }>;

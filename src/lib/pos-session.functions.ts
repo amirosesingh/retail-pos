@@ -16,7 +16,10 @@ export const issueCashierSession = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { signCashierSession } = await import("./pos-session.server");
     const { serviceRest } = await import("@/core/api/pos-relay.server");
+    const { beginPinRequest, finishPinRequest } = await import("./pin-request-throttle.server");
     try {
+      const attempt = await beginPinRequest();
+      if (attempt.locked) return { ok: false as const, error: "Too many wrong PINs. Try again later." };
       const res = await serviceRest("rpc/verify_terminal_pin", {
         method: "POST",
         body: JSON.stringify({
@@ -29,6 +32,7 @@ export const issueCashierSession = createServerFn({ method: "POST" })
       const row = (Array.isArray(rows) ? rows[0] : rows) as
         | { user_id?: string; store_id?: string | null }
         | null;
+      await finishPinRequest(attempt.key, Boolean(row?.user_id));
       if (!row?.user_id || !row.store_id) {
         return { ok: false as const, error: "This cashier is not assigned to a branch" };
       }

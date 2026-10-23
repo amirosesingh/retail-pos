@@ -171,7 +171,7 @@ export function CouponAuditLog({
       </div>
 
       <div className="rounded-xl border border-border bg-card">
-        <Table>
+        <Table tableId="platforms/web/components/pos/CouponAuditLog#1">
           <TableHeader>
             <TableRow>
               <TableHead>When</TableHead>

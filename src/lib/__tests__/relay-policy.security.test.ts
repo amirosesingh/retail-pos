@@ -432,6 +432,21 @@ describe("relay authorisation", () => {
 });
 
 describe("management and branch-bound devices", () => {
+  it("allows explicitly permitted mobile staff without granting cross-branch authority", async () => {
+    restMock.mockImplementation(async () => Response.json([{ user_id: "u", role: "staff", role_slug: "staff", store_id: "STORE-A", is_active: true, permissions: { can_use_management_mobile: true } }]));
+    const scope = await resolveRelayScope({ kind: "staff", label: "User", authUserId: "id", terminalId: "phone", managementDevice: true, managementMobileDevice: true });
+    expect(scope).toMatchObject({ storeId: "STORE-A", isSupervisor: false, branchRestricted: true });
+    expect((await safeAuthorizeRelayOp({ kind: "insert", table: "sales", rows: [{ id: "s", store_id: "STORE-B" }] }, scope)).ok).toBe(false);
+    await expect(resolveRelayScope({ kind: "staff", label: "User", authUserId: "id", managementDevice: true })).rejects.toThrow("administrator or supervisor");
+  });
+  it("honors an explicit mobile permission denial for supervisors", async () => {
+    restMock.mockResolvedValue(Response.json([{ user_id: "u", role: "manager", role_slug: "supervisor", store_id: null, is_active: true, permissions: { can_use_management_mobile: false } }]));
+    await expect(resolveRelayScope({ kind: "staff", label: "User", authUserId: "id", managementDevice: true, managementMobileDevice: true })).rejects.toThrow("not permitted");
+  });
+  it("never allows disabled mobile staff even with the permission", async () => {
+    restMock.mockResolvedValue(Response.json([{ user_id: "u", role: "staff", store_id: "STORE-A", is_active: false, permissions: { can_use_management_mobile: true } }]));
+    await expect(resolveRelayScope({ kind: "staff", label: "User", authUserId: "id", managementDevice: true, managementMobileDevice: true })).rejects.toThrow("not permitted");
+  });
   it.each(["staff", "manager", "admin"])("resolves %s only from the current account", async role => {
     restMock.mockResolvedValue(Response.json([{ user_id: "u", full_name: "User", role, role_slug: role === "manager" ? "supervisor" : role, store_id: "STORE-A", is_active: true, permissions: {} }]));
     const resolving = resolveRelayScope({ kind: "staff", label: "User", authUserId: "auth-id", terminalId: "phone", managementDevice: true });

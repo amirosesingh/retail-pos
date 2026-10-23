@@ -1,3 +1,4 @@
+import { copyText } from "@/platform-config/clipboard";
 /** Backoffice: hand a voucher to a member (existing or brand new) by phone. */
 import { useMemo, useState } from "react";
 import { Copy, Loader2 } from "lucide-react";
@@ -110,8 +111,8 @@ export function IssueVoucherDialog({
             <Button
               variant="outline"
               onClick={() => {
-                void navigator.clipboard.writeText(voucherUrl(token));
-                toast.success("Link copied");
+                void copyText(voucherUrl(token)).then(() => toast.success("Link copied"))
+                  .catch(() => toast.error("Could not copy. Please try again."));
               }}
             >
               <Copy className="mr-2 h-4 w-4" /> Copy link

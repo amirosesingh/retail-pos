@@ -391,7 +391,7 @@ export async function heartbeat(): Promise<Connectivity> {
     if (monitoring && connectivityState === "offline" && !recoveryTimer) {
       recoveryTimer = setTimeout(() => {
         recoveryTimer = undefined;
-        void heartbeat();
+        if (document.visibilityState !== "hidden") void heartbeat();
       }, 5_000);
     }
   });
@@ -410,7 +410,9 @@ export function startConnectivityMonitor(intervalMs = 20_000): () => void {
   let active = true;
   startMinTimer();
   void heartbeat();
-  heartbeatTimer = setInterval(() => void heartbeat(), intervalMs);
+  heartbeatTimer = setInterval(() => {
+    if (document.visibilityState !== "hidden") void heartbeat();
+  }, intervalMs);
   const nudge = () => void heartbeat();
   const resume = () => {
     if (document.visibilityState === "hidden" || resumeWork) return;

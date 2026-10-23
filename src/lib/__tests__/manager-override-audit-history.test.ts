@@ -32,7 +32,7 @@ describe("manager override audit history", () => {
     expect(gate).toContain("selfAuthorizer");
     expect(functions).toContain("selfAuthorization: z.boolean().default(false)");
     expect(functions).toContain("self_authorization: data.selfAuthorization");
-    expect(functions).toContain('["reason", "requested_amount", "self_authorization"]');
+    expect(functions).toContain('["reason", "requested_amount", "self_authorization", "credential_method"]');
     expect(report).toContain("Where / reference");
     expect(report).toContain("display.method");
   });
@@ -46,7 +46,7 @@ describe("manager override audit history", () => {
     expect(screen).toContain("setPinValue(generateAuthorizationPin(6))");
     expect(screen).toContain("Show authorisation PIN");
     expect(screen).not.toContain("form.authorizationPin");
-    expect(screen).toContain("row.approval_pin_eligible");
+    expect(screen).toContain("!isAdmin || !row.is_active");
     expect(screen.match(/setShowPinValue\(false\)/g)?.length).toBeGreaterThanOrEqual(3);
     expect(server).toContain('serviceRpc("staff_account_set_terminal_pin"');
     expect(server).toContain('p_pin: ""');

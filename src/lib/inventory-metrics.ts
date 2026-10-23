@@ -1,5 +1,6 @@
 import type { Product } from "@/core/types/pos-types";
 import { canonicalBranchId, canonicalStockMap } from "./branch-id";
+import { emptyUnitCostSettings, totalUnitCost, type TotalUnitCostSettings } from "./total-unit-cost";
 
 export const isLowStock = (quantity: number, reorderLevel: number): boolean =>
   quantity > 0 && quantity <= reorderLevel;
@@ -9,6 +10,13 @@ export const needsCostReview = (cost: number): boolean => !Number.isFinite(cost)
 
 export const productMargin = (price: number, cost: number): number | null =>
   price > 0 && Number.isFinite(price) && !needsCostReview(cost) ? ((price - cost) / price) * 100 : null;
+
+/** Catalog margin includes the configured per-unit charges and overhead. */
+export const inventoryUnitMargin = (product: Product, settings: TotalUnitCostSettings = emptyUnitCostSettings): number | null => {
+  if (needsCostReview(product.cost)) return null;
+  const cost = totalUnitCost(product.cost, product.id, settings);
+  return cost === null ? null : productMargin(product.price, cost);
+};
 
 export type InventoryMetrics = {
   products: number;

@@ -243,7 +243,7 @@ export async function probeRelay(): Promise<{ ok: boolean; error?: string; code?
       headers: await relayHeaders(),
       body: JSON.stringify({
         ...(await credentials()),
-        ops: [{ kind: "update", table: "shift_sessions", values: {}, match: { id: "probe" } }],
+        read: { kind: "health" },
       }),
     });
     const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;

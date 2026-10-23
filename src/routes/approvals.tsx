@@ -1,3 +1,5 @@
+import { ApprovalHistoryDialog } from "@/platforms/web/components/pos/ApprovalHistoryDialog";
+import { Table } from "@/components/ui/table";
 import { reconcileLiveRows } from "@/lib/live-state";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -143,6 +145,7 @@ function ApprovalsPage() {
   const storeId = pos?.currentStore?.id ?? "";
   const [rows, setRows] = useState<AuthorizationRequest[]>([]);
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [allBranches, setAllBranches] = useState(false);
   const scopeDefaultedFor = useRef<string | null>(null);
   const [status, setStatus] = useState<AuthorizationRequest["status"] | "all">("pending");
@@ -217,8 +220,8 @@ function ApprovalsPage() {
   // The queue is decided from another screen, so it refreshes on its own and
   // whenever this window is looked at again.
   useEffect(() => {
-    return subscribeApprovals(load);
-  }, [load]);
+    return subscribeApprovals(load, { allBranches, branchId: storeId });
+  }, [load, allBranches, storeId]);
 
   const decide = async (row: AuthorizationRequest, approve: boolean) => {
     setBusy(row.id);
@@ -307,7 +310,8 @@ function ApprovalsPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-4xl space-y-4 p-4">
+      <ApprovalHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} storeId={storeId} stores={pos?.state.stores ?? []} allBranches={allBranches && me?.role === "admin"} />
+      <div className="pos-page-container">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold">Approvals</h1>
@@ -315,7 +319,8 @@ function ApprovalsPage() {
               Review pending requests and completed decisions.
             </p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>Approval history</Button>
             <div className="flex items-center gap-2">
               <Switch
                 id="all-branches"
@@ -1002,7 +1007,7 @@ function TicketReview({ row, stores }: { row: AuthorizationRequest; stores: read
         )}
       </div>
       <div className="responsive-table-region overflow-x-auto">
-        <table data-mobile-cards="true" className="responsive-table w-full text-xs">
+        <Table tableId="routes/approvals.native#1" clientDataControls={false} data-mobile-cards="true" className="responsive-table w-full text-xs">
           <thead className="text-muted-foreground">
             <tr>
               <th className="px-3 py-1 text-left font-normal">Item</th>
@@ -1037,7 +1042,7 @@ function TicketReview({ row, stores }: { row: AuthorizationRequest; stores: read
               </tr>
             )}
           </tbody>
-        </table>
+        </Table>
       </div>
       <div className="flex flex-wrap justify-end gap-4 border-t border-border/60 px-3 py-2 text-xs">
         <span className="text-muted-foreground">Subtotal {money(t.subtotal)}</span>

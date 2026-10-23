@@ -79,7 +79,6 @@ function RoundingForm() {
       <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
         <div>
           <p className="text-sm font-medium">Enable total rounding</p>
-          <p className="text-[11px] text-muted-foreground">Round the amount the customer pays</p>
         </div>
         <Switch
           checked={rounding.enabled}
@@ -177,10 +176,7 @@ function TaxForm() {
       </div>
       <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
         <div>
-          <p className="text-sm font-medium">Enable tax</p>
-          <p className="text-[11px] text-muted-foreground">
-            Show and calculate tax throughout the POS
-          </p>
+          <div className="flex items-center gap-1"><p className="text-sm font-medium">Enable tax</p><HelpTip label="About enabling tax" text="Show and calculate tax throughout the POS." /></div>
         </div>
         <Switch
           checked={tax.enabled}

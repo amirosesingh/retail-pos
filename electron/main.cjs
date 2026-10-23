@@ -77,6 +77,7 @@ const syncCoordinator = new SyncCoordinator({
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",state); },
 });
 const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange });
+const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
@@ -94,6 +95,10 @@ const { createApprovalTokenVerifier } = require("./approval-token-verifier.cjs")
 const approvalVerifierKey = require("./approval-token-key.cjs").createApprovalKey({
   safeStorage, directory: () => app.getPath("userData"), terminal: () => terminalStore.read(),
   origin: () => `${authorizationServerUrl()}|${cloudCredentials.read()?.url ?? ""}`,
+});
+const ownApprovalTokenVault = require("./approval-token-vault.cjs").createApprovalTokenVault({
+  safeStorage, directory: () => app.getPath("userData"),
+  binding: () => { const token = terminalStore.read()?.tokenId; const project = cloudCredentials.read()?.url; return token && project ? `${token}|${project}` : null; },
 });
 const approvalTokenVerifier = createApprovalTokenVerifier({
   safeStorage, directory: () => app.getPath("userData"), terminal: () => terminalStore.read(),
@@ -194,7 +199,7 @@ async function observedDatabaseOperation(category, stage, work) {
 }
 let localDataPreparePromise=null;
 function prepareLocalData({force=false}={}){
-  if(isManagementDevice())return Promise.resolve({ok:true,skipped:true});
+  if(isManagementDevice())return managementReplica.run();
   // Startup, the automatic ECHANGEGAP recovery path, and a manual database
   // action can request preparation together. Share one lifecycle run so a
   // periodic push cannot race the scoped checkpoint repairs.
@@ -220,11 +225,14 @@ function prepareLocalData({force=false}={}){
 }
 let localDatabaseRecoveryPromise=null;
 function recoverLocalDatabase({prepare=true}={}){
-  if(isManagementDevice())return Promise.resolve(databaseService.snapshot());
   if(localDatabaseRecoveryPromise)return localDatabaseRecoveryPromise;
   localDatabaseRecoveryPromise=(async()=>{
     const restored=await databaseService.restore({reuseValidation:!prepare});
     if(!restored.connected||!restored.tradingReady)return restored;
+    if(isManagementDevice()){
+      if(prepare){managementReplica.resetRetry();await managementReplica.run();}
+      return databaseService.snapshot();
+    }
     const branchId=localBranchId();
     if(!branchId)return databaseService.snapshot();
     if(prepare){
@@ -266,7 +274,12 @@ function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
   automaticSyncScheduler.schedule(delay);
 }
 async function runAutomaticSync() {
-  if(isManagementDevice())return;
+  if(isManagementDevice()){
+    try { await managementReplica.run(); }
+    catch(error) { diagnostics.logConnection("synchronization.management.failed", { category:"synchronization", message:String(error?.message??error) }); }
+    finally { if(terminalStore.read()?.tokenId && !terminalIdentityPausedSync) scheduleAutomaticSync(AUTO_SYNC_RETRY_MS); }
+    return;
+  }
   const databaseState=databaseService.snapshot();
   if(databaseState.enabled&&databaseState.configured&&!databaseManager.isConnected()){
     const recovered=await recoverLocalDatabase({prepare:false}).catch(error=>{
@@ -1869,7 +1882,7 @@ function registerIpc() {
   ipcMain.handle("business:snapshot", (_e, options) => guard.guarded(async () => {
     if(!databaseManager.isConnected())return{ok:false,code:"EDATABASE_NOT_READY",error:"SQL Server setup or connection is not complete yet."};
     const snapshot = await operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
-    return { ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) };
+    return require("./read-snapshot-policy.cjs").filterSnapshot({ ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) }, adminSession);
   }));
   ipcMain.handle("business:analytics", (_e, from, to, timeZone) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports"))
@@ -1976,7 +1989,7 @@ function registerIpc() {
       const result = await verifySyncedStaffPin(databaseManager.pool, username, pin, localBranchId());
       if (result.ok && result.staff) {
         const staff = result.staff;
-        const role = staff.role_slug;
+        const role = staff.role || staff.role_slug;
         const level = role === "admin" ? "admin" : ["manager", "supervisor"].includes(role) ? "supervisor" : "staff";
         adminSession.grant(level, staff.username, staff.permissions ?? {}, "pos", staff.store_id ?? localBranchId());
       }
@@ -1985,6 +1998,18 @@ function registerIpc() {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
   });
+  ipcMain.handle("approval:own-token-vault", (event, operation, key, value) => guard.guarded(() => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error("Approval storage is limited to the POS window");
+    try {
+      return { ok: true, ...ownApprovalTokenVault(operation, key, value) };
+    } catch (error) {
+      // No enrolled token is a normal first-run state. Return the same
+      // not-found result without flooding Electron's handler error log.
+      if (operation === "get" && error?.message === "not found")
+        return { ok: false, error: "not found" };
+      throw error;
+    }
+  }));
   ipcMain.handle("approval:enroll-verifier", async (_e, proof) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_manage_staff"))
       return { ok: false, error: "Staff management permission is required" };
@@ -2009,7 +2034,7 @@ function registerIpc() {
   ipcMain.handle("staff:verify-approval-pin", async (_e, username, pin) => {
     try {
       if (!adminSession.hasPosAuthority()) return { ok: false, reason: "unavailable", error: "Sign in before authorizing an action" };
-      return await verifySyncedApprovalPin(databaseManager.pool, username, pin, localBranchId(), { verifyTotp: approvalTokenVerifier.verify });
+      return await verifySyncedApprovalPin(databaseManager.pool, username, pin, localBranchId(), { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify });
     } catch (error) {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
@@ -2229,6 +2254,7 @@ function registerIpc() {
   ipcMain.handle("update:diagnose", () => updater.diagnose());
   ipcMain.handle("update:download-page", () => updater.downloadPage());
   ipcMain.handle("app:version", () => app.getVersion());
+  ipcMain.handle("app:name", () => app.isPackaged ? app.getName() : (require("../package.json").build?.productName || app.getName()));
   ipcMain.handle("net:get-json", (_e, url) => netHttp.getJson(String(url)));
   ipcMain.handle("cloud:request", (_e, request) => require("./supabase-http.cjs").supabaseRequest(request, cloudCredentials.read()));
   ipcMain.handle("net:head", (_e, url) => netHttp.head(String(url)));
@@ -2246,7 +2272,7 @@ function registerIpc() {
       const backend=/^https:\/\/.+/i.test(savedBackend)?savedBackend:/^https:\/\/.+/i.test(activationBackend)?activationBackend:"";
       if(backend)configStore.set("backendUrl",backend);
       const saved=terminalStore.write(config?{...config,...(backend?{backendUrl:backend}:{})}:config);
-      if(saved?.ok&&isManagementDevice()){terminalIdentityPausedSync=true;stopAutomaticSync();syncCoordinator.pause();}
+      if(saved?.ok&&isManagementDevice()){managementReplica.resetRetry();terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       else if(saved?.ok&&config&&terminalIdentityPausedSync){terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       return saved;
     }
@@ -2332,7 +2358,7 @@ app.whenReady().then(async () => {
     for (const name of Object.keys(headers)) {
       if (["content-security-policy", "content-security-policy-report-only"].includes(name.toLowerCase())) delete headers[name];
     }
-    headers["Content-Security-Policy"] = [["default-src 'self' data: blob:", "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:", "connect-src 'self' https: wss: http://127.0.0.1:* http://localhost:*", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'"].join("; ")];
+    headers["Content-Security-Policy"] = [["default-src 'self' data: blob:", "script-src 'self' 'unsafe-inline' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:", "connect-src 'self' https: wss: http://127.0.0.1:* http://localhost:*", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'"].join("; ")];
     callback({ responseHeaders: headers });
   });
   try { storageHygiene.runOnLaunch(app.getPath("userData"), app.getVersion()); } catch (error) { if (DEBUG) console.warn("[pos] storage hygiene skipped:", fail(error).error); }

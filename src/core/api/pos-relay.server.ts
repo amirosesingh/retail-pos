@@ -36,6 +36,7 @@ export type RelayRpc = { kind: "rpc"; table: string; fn: string; args: Record<st
 
 /** Read requests the relay may answer for a proven till. */
 export type RelayRead =
+  | { kind: "health" }
   | { kind: "activeShift"; storeId: string }
   | { kind: "stores" }
   | { kind: "cloudSchema" }
@@ -169,6 +170,9 @@ export async function runRelayRead(read: RelayRead): Promise<{
   inventoryMode?: "deep" | "legacy";
   inventoryWarning?: string;
 }> {
+  // The endpoint has already verified the caller and resolved its branch.
+  // A health check must never attempt a write with a fabricated record ID.
+  if (read.kind === "health") return { ok: true };
   if (read.kind === "cloudSchema") {
     // The PostgREST root document lists every exposed table with its columns
     // (including type and nullability), which is exactly what the till needs
@@ -637,6 +641,7 @@ export type RelayCaller = {
   /** Verified physical terminal identity. Never accepted from a request body. */
   terminalId?: string | null;
   managementDevice?: boolean;
+  managementMobileDevice?: boolean;
 };
 
 /**
@@ -659,6 +664,7 @@ export async function verifyRelayCaller(input: {
   let terminalStore: string | null = null;
   let terminalId: string | null = null;
   let managementDevice = false;
+  let managementMobileDevice = false;
   let endedSession = false;
 
   // A cryptographic session record is the strongest proof: it can be revoked
@@ -719,6 +725,7 @@ export async function verifyRelayCaller(input: {
         terminalId = input.terminalToken;
         terminalStore = row.location_id ?? null;
         managementDevice = (row.platform === "mobile" || row.platform === "pc") && !terminalStore;
+        managementMobileDevice = row.platform === "mobile" && !terminalStore;
         identity ??= {
           kind: "terminal",
           label: input.terminalToken,
@@ -775,6 +782,6 @@ export async function verifyRelayCaller(input: {
   // administrator signed into that device may change permissions, but cannot
   // make the till read or write another branch's operational data.
   if (terminalStore) identity = { ...identity, storeId: terminalStore, terminalId };
-  if (managementDevice) identity = { ...identity, terminalId, managementDevice: true };
+  if (managementDevice) identity = { ...identity, terminalId, managementDevice: true, managementMobileDevice };
   return identity;
 }

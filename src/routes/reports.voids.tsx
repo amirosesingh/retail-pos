@@ -152,7 +152,7 @@ function VoidsReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Void & Refund History"
           subtitle="Every void, line removal, cancellation and refund — who did it, when, why and for how much."
@@ -236,7 +236,7 @@ function VoidsReport() {
 
         <div className="rounded-2xl border border-border bg-card">
           <div className="border-b border-border px-4 py-2 text-sm font-medium">Per person</div>
-          <Table>
+          <Table tableId="routes/reports.voids#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Staff</TableHead>
@@ -270,7 +270,7 @@ function VoidsReport() {
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table>
+          <Table tableId="routes/reports.voids#2">
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

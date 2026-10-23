@@ -57,7 +57,7 @@ function fixture() {
     ok: true,
     terminalId: binding.tokenId,
     branchId: binding.branch,
-    validUntil: Date.now() + 86400000,
+    validUntil: Date.now() + 30 * 86400000,
     entries: [{ id: "device-a", userId: "manager", secret, lastUsedStep: -1 }],
   }));
   const options = {
@@ -100,9 +100,17 @@ describe("offline Windows token verifier", () => {
     f.binding.tokenId = "terminal-b";
     expect(await f.verifier.verify(f.pool, "manager", code, "branch-a")).toBe(false);
     f.binding.tokenId = "terminal-a";
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 86401000);
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31 * 86400000);
     expect(await f.verifier.verify(f.pool, "manager", code, "branch-a")).toBe(false);
     expect(f.query).not.toHaveBeenCalled();
+  });
+  it("accepts a registered issuer after 25 offline days on the paired Windows terminal", async () => {
+    const f = fixture();
+    const enrolledAt = Date.now();
+    await f.verifier.refresh();
+    vi.spyOn(Date, "now").mockReturnValue(enrolledAt + 25 * 86400000);
+    const code = tokenAt(f.secret, Math.floor(Date.now() / 30000));
+    expect(await f.verifier.verify(f.pool, "manager", code, "branch-a")).toBe(true);
   });
   it("does not fall back to unencrypted credential storage", async () => {
     const f = fixture();
@@ -153,6 +161,27 @@ describe("approval credential switches", () => {
     expect(result.credentialMethod).toBe("totp");
     expect(verifyTotp).toHaveBeenCalledOnce();
   });
+  it("resolves an ID-less token, preserves account switches, and never treats it as a PIN", async () => {
+    const verifyTotp = vi.fn(async () => true);
+    const identifyTotp = vi.fn(async () => "manager");
+    const result = await verifySyncedApprovalPin(pool({ approval_pin_enabled: true, approval_totp_enabled: true }), "", "12345678", "branch-a", { identifyTotp, verifyTotp });
+    expect(result.ok).toBe(true);
+    expect(result.staff.username).toBe("manager");
+    expect(result.credentialMethod).toBe("totp");
+    expect(identifyTotp).toHaveBeenCalledOnce();
+    expect(verifyTotp).toHaveBeenCalledOnce();
+    verifyTotp.mockClear();
+    expect((await verifySyncedApprovalPin(pool({ approval_totp_enabled: false }), "", "12345678", "branch-a", { identifyTotp, verifyTotp })).ok).toBe(false);
+    expect(verifyTotp).not.toHaveBeenCalled();
+    expect((await verifySyncedStaffPin(pool({ approval_totp_enabled: true }), "", "12345678", "branch-a")).ok).toBe(false);
+  });
+  it("checks the durable lookup budget before searching any identities", async () => {
+    const identifyTotp = vi.fn();
+    const request = { input: () => request, query: async () => ({ recordset: [] }) };
+    const result = await verifySyncedApprovalPin({ request: () => request }, "", "12345678", "branch-a", { identifyTotp });
+    expect(result.reason).toBe("locked");
+    expect(identifyTotp).not.toHaveBeenCalled();
+  });
   it("rejects disabled approval credentials without changing terminal sign-in", async () => {
     const verifyTotp = vi.fn(async () => true);
     const p = pool({ approval_pin_enabled: false, approval_totp_enabled: false });
@@ -170,6 +199,7 @@ describe("native approval IPC boundary", () => {
     const privilege = require("../../../electron/ipc-privilege.cjs");
     session.clear();
     expect(privilege.allowed("staff:verify-approval-pin")).toBe(false);
+    expect(privilege.allowed("approval:own-token-vault")).toBe(true);
     session.grant("staff", "cashier", { can_process_sale: true }, "pos", "branch-a");
     expect(privilege.allowed("staff:verify-approval-pin")).toBe(true);
     expect(privilege.allowed("approval:enroll-verifier")).toBe(false);
@@ -177,4 +207,17 @@ describe("native approval IPC boundary", () => {
     expect(privilege.allowed("approval:enroll-verifier")).toBe(true);
     session.clear();
   });
+});
+
+it("finds the offline code owner without consuming and rejects ambiguous devices", async () => {
+  const f = fixture();
+  await f.verifier.refresh();
+  const code = tokenAt(f.secret, Math.floor(Date.now() / 30000));
+  expect(f.verifier.identify(code, "branch-a")).toBe("manager");
+  expect(f.verifier.identify(code, "branch-b")).toBeNull();
+  expect(f.query).not.toHaveBeenCalled();
+  const original = await f.options.fetchBundle();
+  f.options.fetchBundle.mockResolvedValue({ ...original, entries: [...original.entries, { ...original.entries[0], id: "second", userId: "other" }] });
+  await f.verifier.refresh(true);
+  expect(f.verifier.identify(code, "branch-a")).toBeNull();
 });

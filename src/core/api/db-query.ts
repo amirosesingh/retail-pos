@@ -98,13 +98,20 @@ async function runQuery(
 ): Promise<{ rows: Row[]; source: ReadSource }> {
   const bridge = localDb();
   if (effectiveDatabaseMode() === "local" && bridge?.query) {
+    // The page can mount before PrivilegeGate's effect has handed the signed-in
+    // identity to Main. Await that handoff before the first protected read.
+    if (typeof window !== "undefined" && window.sqlAdmin?.adoptSession) {
+      const { ensureDesktopPosSession } = await import("@/lib/desktop-pos-session");
+      const authority = await ensureDesktopPosSession();
+      if (!authority.ok) throw Object.assign(new Error(authority.error ?? "The signed-in account could not be verified on this PC."), { code: "EPRIVILEGE" });
+    }
     // Never grow renderer memory with the size of a table. Callers page large
     // views explicitly; point lookups and configuration reads remain bounded.
     const result = await bridge.query(table, {
       ...options,
       limit: Math.min(options.limit ?? 1000, 2000),
     });
-    if (!result.ok) throw new Error(result.error ?? "The local SQL Server read failed.");
+    if (!result.ok) throw Object.assign(new Error(result.error ?? "The local SQL Server read failed."), { code: (result as { code?: string }).code });
     const rows = normalizeUuidFields((result.rows ?? []) as Row[]);
     noteVersions(table, rows);
     return { rows, source: "local" };

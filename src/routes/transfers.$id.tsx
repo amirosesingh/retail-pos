@@ -114,7 +114,7 @@ function TransferDetail() {
 
   return (
     <AppShell>
-      <div className="space-y-6 p-6">
+      <div className="pos-page-container">
         <WorkspaceHeader
           back="/transfers"
           backLabel="Back to stock movements"

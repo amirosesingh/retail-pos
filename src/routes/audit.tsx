@@ -286,7 +286,7 @@ function AuditPage() {
 
   return (
     <AppShell>
-      <div className="space-y-5 p-6">
+      <div className="pos-page-container">
         {historyError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Audit history incomplete: {historyError}</p>}
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -511,7 +511,7 @@ function AuditPage() {
           </section>
         ) : (
           <section className="rounded-lg border border-border bg-card">
-            <Table clientDataControls={false}>
+            <Table tableId="routes/audit#1" clientDataControls={false}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Date &amp; time</TableHead>
@@ -587,7 +587,7 @@ function AuditPage() {
             </Badge>
           </div>
           <Separator />
-          <Table>
+          <Table tableId="routes/audit#2">
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>

@@ -8,18 +8,20 @@ export function useAnimatedNumber(value: number, duration = 650): number {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    if (document.hidden || duration <= 0 || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
       previous.current = safeValue;
       setDisplay(safeValue);
       return;
     }
     const from = previous.current;
+    if (from === safeValue) return;
     const started = performance.now();
     let frame = 0;
     const tick = (now: number) => {
       const progress = Math.min((now - started) / duration, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
-      setDisplay(from + (safeValue - from) * eased);
+      previous.current = from + (safeValue - from) * eased;
+      setDisplay(previous.current);
       if (progress < 1) frame = requestAnimationFrame(tick);
       else previous.current = safeValue;
     };

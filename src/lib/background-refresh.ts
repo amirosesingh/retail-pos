@@ -32,20 +32,32 @@ export function subscribeBackgroundRefresh(
   allowOffline = false,
   includeLifecycle = true,
 ): () => void {
+  let lifecycleTimer: ReturnType<typeof setTimeout> | undefined;
   const wake = () => {
     if (document.visibilityState === "hidden" || !hasSignedInIdentity()) return;
     if (!allowOffline && !navigator.onLine) return;
     refresh();
   };
+  // A single return to the app commonly fires focus, visibilitychange and
+  // native resume together. Keep one catch-up read, without delaying actual
+  // data-change hints or the offline SQL path.
+  const lifecycleWake = () => {
+    if (lifecycleTimer !== undefined) return;
+    lifecycleTimer = setTimeout(() => {
+      lifecycleTimer = undefined;
+      wake();
+    }, 150);
+  };
   const timer = window.setInterval(wake, intervalMs);
-  const events = includeLifecycle
-    ? ["focus", "online", APP_RESUME_EVENT, BACKGROUND_REFRESH_EVENT]
-    : [BACKGROUND_REFRESH_EVENT];
-  for (const event of events) window.addEventListener(event, wake);
-  if (includeLifecycle) document.addEventListener("visibilitychange", wake);
+  const events = includeLifecycle ? ["focus", "online", APP_RESUME_EVENT] : [];
+  window.addEventListener(BACKGROUND_REFRESH_EVENT, wake);
+  for (const event of events) window.addEventListener(event, lifecycleWake);
+  if (includeLifecycle) document.addEventListener("visibilitychange", lifecycleWake);
   return () => {
     window.clearInterval(timer);
-    for (const event of events) window.removeEventListener(event, wake);
-    if (includeLifecycle) document.removeEventListener("visibilitychange", wake);
+    if (lifecycleTimer !== undefined) clearTimeout(lifecycleTimer);
+    window.removeEventListener(BACKGROUND_REFRESH_EVENT, wake);
+    for (const event of events) window.removeEventListener(event, lifecycleWake);
+    if (includeLifecycle) document.removeEventListener("visibilitychange", lifecycleWake);
   };
 }

@@ -36,6 +36,21 @@ function configureUpdateDownload(root) {
   fs.mkdirSync(folder, { recursive: true });
   fs.copyFileSync(path.join(__dirname, '../native/android/PosUpdateDownloadPlugin.java'), path.join(folder, 'PosUpdateDownloadPlugin.java'));
   fs.copyFileSync(path.join(__dirname, '../native/android/PosAppearancePlugin.java'), path.join(folder, 'PosAppearancePlugin.java'));
+  const credentialsRegistration = 'registerPlugin(com.luckycharms.pos.PosPasswordAutofillPlugin.class);';
+  if (!source.includes(credentialsRegistration)) {
+    if (!source.includes('super.onCreate(savedInstanceState);')) throw new Error('Unknown MainActivity; cannot register password manager safely.');
+    source = source.replace('super.onCreate(savedInstanceState);', `${credentialsRegistration}\n        super.onCreate(savedInstanceState);`);
+    fs.writeFileSync(activity, source);
+  }
+  fs.copyFileSync(path.join(__dirname, '../native/android/PosPasswordAutofillPlugin.java'), path.join(folder, 'PosPasswordAutofillPlugin.java'));
+  const gradleFile = path.join(root, 'android/app/build.gradle');
+  let gradle = fs.readFileSync(gradleFile, 'utf8');
+  if (!gradle.includes('androidx.credentials:credentials:1.6.0')) {
+    gradle += '\n// System password manager for verified POS logins.\ndependencies {\n' +
+      '    implementation "androidx.credentials:credentials:1.6.0"\n' +
+      '    implementation "androidx.credentials:credentials-play-services-auth:1.6.0"\n}\n';
+    fs.writeFileSync(gradleFile, gradle);
+  }
 }
 module.exports = { configureUpdateDownload };
 if (require.main === module) configureUpdateDownload(path.resolve(__dirname, '..'));

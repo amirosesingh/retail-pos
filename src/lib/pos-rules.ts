@@ -69,6 +69,17 @@ export type PosRules = {
 
 export type PosRuleKey = keyof PosRules;
 
+/** Two historical database flags guard the same closing cash count. Keep both
+ * columns for older terminals, but expose one setting and write them together. */
+export const requiresClosingCashCount = (rules: PosRules): boolean =>
+  rules.require_daily_sales_for_shift_close || rules.require_counted_cash_on_close;
+
+export const withClosingCashCount = (rules: PosRules, required: boolean): PosRules => ({
+  ...rules,
+  require_daily_sales_for_shift_close: required,
+  require_counted_cash_on_close: required,
+});
+
 /** Shipped defaults — also the "most restrictive" set used while loading. */
 export const DEFAULT_POS_RULES: PosRules = {
   block_shift_close_on_hold: true,
@@ -76,7 +87,7 @@ export const DEFAULT_POS_RULES: PosRules = {
   require_counted_cash_on_close: true,
   require_opening_float_count: true,
   enable_blind_cash_count: true,
-  max_drawer_cash_limit: 1000,
+  max_drawer_cash_limit: 0,
   require_reason_for_payout: true,
   allow_multiple_shifts_per_terminal: false,
   enable_cashier_x_report: false,
@@ -166,12 +177,6 @@ export const RULE_GROUPS: RuleGroup[] = [
         blurb: "The shift cannot be closed while tickets are parked.",
       },
       {
-        key: "require_daily_sales_for_shift_close",
-        kind: "switch",
-        label: "Require closing cash count",
-        blurb: "Counted cash must be declared before closing.",
-      },
-      {
         key: "require_counted_cash_on_close",
         kind: "switch",
         label: "Require counted cash before shift close",
@@ -193,7 +198,7 @@ export const RULE_GROUPS: RuleGroup[] = [
         key: "max_drawer_cash_limit",
         kind: "number",
         label: "Max cash in drawer",
-        blurb: "Prompts for a safe drop above this amount.",
+        blurb: "Cash-drawer threshold. 0 means no configured limit.",
       },
       {
         key: "require_reason_for_payout",
@@ -348,9 +353,9 @@ export const RULE_GROUPS: RuleGroup[] = [
   },
   {
     id: "pin-gates",
-    label: "Manager PIN requirements",
+    label: "Fallback PIN requirements",
     blurb:
-      "Switch on the actions that need a manager's authorisation. Admins are never prompted — their approval is recorded automatically.",
+      "Used if central Authorization Rules cannot be loaded. Normal approval methods and eligible users are configured below.",
     fields: [
       {
         key: "require_manager_pin_for_refund",

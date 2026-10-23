@@ -5,14 +5,11 @@
  * build an extra button opens the camera scanner.
  */
 import { useEffect, useRef, useState } from "react";
-import { Camera, ScanBarcode } from "lucide-react";
+import { ScanBarcode } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CameraScanner } from "@/platforms/web/components/pos/CameraScanner";
 import { isNativeApp, scanOnceNative } from "@/platforms/mobile/camera";
-import { isNative } from "@/platform-config/platform";
-import { hasFeature } from "@/platform-config/features";
 
 /** True when the user is typing into a real field, so we must not steal keys. */
 function typingInField(target: EventTarget | null) {
@@ -26,46 +23,36 @@ export function ScanBar({
   onScan,
   disabled,
   className,
+  captureGlobal = true,
+  autoFocus = true,
 }: {
   onScan: (code: string) => void;
   disabled?: boolean;
   className?: string;
+  captureGlobal?: boolean;
+  autoFocus?: boolean;
 }) {
   const [code, setCode] = useState("");
   const [hasCamera, setHasCamera] = useState(false);
-  const [webScan, setWebScan] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Phones always have a camera; a Windows till only offers the button when a
-  // webcam is actually attached. Everything else keeps using the USB or
-  // Bluetooth scanner through this field.
+  // The in-field camera action belongs only to Android and iOS terminals.
+  // Windows continues to use keyboard-wedge, USB or Bluetooth scanners.
   // Rendered after mount so the server and the browser agree on the markup.
   useEffect(() => {
-    let alive = true;
-    if (isNativeApp() || isNative()) {
-      setHasCamera(true);
-      return;
-    }
-    if (!hasFeature("cameraScanner") || !navigator.mediaDevices?.enumerateDevices) return;
-    void navigator.mediaDevices
-      .enumerateDevices()
-      .then((devices) => {
-        if (alive) setHasCamera(devices.some((d) => d.kind === "videoinput"));
-      })
-      .catch(() => {
-        /* the browser refused to list devices — keep the field-only scanner */
-      });
-    return () => {
-      alive = false;
-    };
+    setHasCamera(isNativeApp());
   }, []);
 
   // Keyboard-wedge capture: a burst of characters ending with Enter is a scan.
   useEffect(() => {
+    if (!captureGlobal) return;
     let buffer = "";
     let last = 0;
     const onKey = (e: KeyboardEvent) => {
       if (typingInField(e.target)) return;
+      // A background register scanner must not add products to the ticket
+      // while a booking or another modal owns the keyboard.
+      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
       const now = Date.now();
       if (now - last > 120) buffer = "";
       last = now;
@@ -82,7 +69,7 @@ export function ScanBar({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onScan]);
+  }, [onScan, captureGlobal]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,10 +81,7 @@ export function ScanBar({
   };
 
   const cameraScan = async () => {
-    if (!isNativeApp()) {
-      setWebScan((v) => !v);
-      return;
-    }
+    if (!isNativeApp()) return;
     try {
       const value = await scanOnceNative();
       if (value) onScan(value);
@@ -114,37 +98,20 @@ export function ScanBar({
           <Input
             ref={inputRef}
             value={code}
-            autoFocus
+            autoFocus={autoFocus}
             disabled={disabled}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Scan or enter barcode…"
             aria-label="Scan barcode"
-            className="numeric h-10 pl-9"
+            className={`numeric h-10 pl-9 ${hasCamera ? "pr-12" : ""}`}
           />
+          {hasCamera && (
+            <Button type="button" variant="ghost" size="icon" className="absolute inset-y-0 right-1 my-auto size-8" aria-label="Scan barcode with camera" title="Scan barcode with camera" disabled={disabled} onClick={() => void cameraScan()}>
+              <ScanBarcode className="size-4" />
+            </Button>
+          )}
         </div>
-        {hasCamera && (
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10 shrink-0"
-            onClick={() => void cameraScan()}
-          >
-            <Camera className="size-4" />
-            <span className="hidden sm:inline">{webScan ? "Close" : "Scan"}</span>
-          </Button>
-        )}
       </div>
-      {webScan && (
-        <div className="mt-2">
-          <CameraScanner
-            onScan={(value) => {
-              setWebScan(false);
-              onScan(value);
-            }}
-            onClose={() => setWebScan(false)}
-          />
-        </div>
-      )}
     </form>
   );
 }

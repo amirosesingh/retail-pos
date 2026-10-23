@@ -19,7 +19,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getPosRules } from "./pos-rules.functions";
 import { getPosCallerAuth } from "./pos-caller-auth";
-import { subscribeSettingsChange } from "./sync-engine";
+import { subscribeSettingsRefresh } from "./settings-refresh";
 import { readCachedRules, writeCachedRules, type CachedRules } from "./pos-rules-cache";
 import { rulesEqual, pendingExpired } from "./pos-rules-pending";
 import { logRules } from "./pos-rules-log";
@@ -204,12 +204,13 @@ export function PosRulesProvider({
 
   const query = useQuery<Snapshot>({
     queryKey: key,
-    // Rules are security state: always re-check with the server on mount,
-    // on focus, on reconnect and on a timer.
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
+    // Initial read, explicit refresh, committed changes and reconnect catch-up.
+    // Privileged mutations still revalidate policy on the server.
+    staleTime: Infinity,
+    refetchOnMount: "always",
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     queryFn: async (): Promise<Snapshot> => {
       const auth = await getPosCallerAuth();
       const platform = platformName();
@@ -475,12 +476,14 @@ export function PosRulesProvider({
   // spell offline re-reads it too. No terminal has to be visited by hand.
   useEffect(
     () =>
-      subscribeSettingsChange((change) => {
-        if (change.table !== "pos_store_settings" && change.reason !== "desktop:pull-complete")
-          return;
-        if (change.storeId !== null && change.storeId !== "" && change.storeId !== scope) return;
-        void queryClient.invalidateQueries({ queryKey: key });
-      }),
+      subscribeSettingsRefresh(async () => {
+        // A change arriving during the initial read needs a fresh read after it.
+        if (queryClient.getQueryState(key)?.fetchStatus === "fetching")
+          await queryClient.refetchQueries({ queryKey: key, exact: true }, { cancelRefetch: false });
+        await queryClient.invalidateQueries({ queryKey: key, exact: true }, { cancelRefetch: false });
+      }, change => (change.reason === "reconnect" || change.reason === "realtime:subscribed") ||
+        (change.table === "pos_store_settings" && (!change.storeId || change.storeId === scope)),
+      { eventOnly: true }),
     [key, queryClient, scope],
   );
 

@@ -9,7 +9,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { r2 } from "@/core/types/pos-types";
-import { keyset, nextCursor, PAGE_SIZE, type Cursor, type Page } from "./keyset";
+import { nextCursor, PAGE_SIZE, type Cursor, type Page } from "./keyset";
 import { describeError } from "./notify";
 import { routedQuery } from "@/core/api/db-query";
 import { commitOps } from "@/core/api/pos-db";
@@ -241,8 +241,7 @@ export async function loadVouchers(campaignId?: string): Promise<Voucher[]> {
     const rows = await routedQuery("issued_vouchers", { ...(campaignId ? { match: { campaign_id: campaignId } } : {}), orderBy: { column: "issued_at", ascending: false }, limit: 2000 });
     return rows.map((row) => toVoucher(row as Row));
   } catch (e) {
-    logRead("loadVouchers", e);
-    return [];
+    throw new Error(describeError(e, "Loading issued vouchers"), { cause: e });
   }
 }
 
@@ -349,28 +348,14 @@ export async function loadCouponEvents(
   opts: { campaignId?: string; cursor?: Cursor; limit?: number } = {},
 ): Promise<Page<CouponEvent>> {
   const limit = opts.limit ?? PAGE_SIZE;
-  if (typeof window !== "undefined" && (window as unknown as { pos?: unknown }).pos) {
-    const rows = await routedQuery("coupon_events", {
-      columns: EVENT_COLUMNS,
-      ...(opts.campaignId ? { match: { campaign_id: opts.campaignId } } : {}),
-      orderBy: { column: "created_at", ascending: false },
-      ...(opts.cursor ? { cursor: { column: "created_at", value: opts.cursor.ts, id: opts.cursor.id } } : {}),
-      limit,
-    });
-    return { rows: rows.map((row) => toEvent(row as Row)), cursor: nextCursor(rows, "created_at", limit), hasMore: rows.length >= limit };
-  }
-  let q = sb.from("coupon_events").select(EVENT_COLUMNS);
-  if (opts.campaignId) q = q.eq("campaign_id", opts.campaignId);
-  const res = await keyset(q as never, "created_at", opts.cursor ?? null, limit);
-  if ((res as { error?: { message: string } }).error) {
-    throw new Error((res as { error: { message: string } }).error.message);
-  }
-  const rows = (((res as { data?: Row[] | null }).data ?? []) as Row[]);
-  return {
-    rows: rows.map(toEvent),
-    cursor: nextCursor(rows, "created_at", limit),
-    hasMore: rows.length >= limit,
-  };
+  const rows = await routedQuery("coupon_events", {
+    columns: EVENT_COLUMNS,
+    ...(opts.campaignId ? { match: { campaign_id: opts.campaignId } } : {}),
+    orderBy: { column: "created_at", ascending: false },
+    ...(opts.cursor ? { cursor: { column: "created_at", value: opts.cursor.ts, id: opts.cursor.id } } : {}),
+    limit,
+  });
+  return { rows: rows.map(row => toEvent(row as Row)), cursor: nextCursor(rows, "created_at", limit), hasMore: rows.length >= limit };
 }
 
 /* ------------------------------ analytics -------------------------------- */
@@ -408,27 +393,28 @@ export async function loadCampaignStats(range?: {
   };
 
   const live = vouchers.filter((v) => inRange(v.issuedAt) || inRange(v.redeemedAt));
-  const saleIds = live
+  const saleIds = [...new Set(live
     .map((v) => v.redeemedSaleId)
-    .filter((s): s is string => Boolean(s));
+    .filter((s): s is string => Boolean(s)))];
 
   const bills = new Map<string, { total: number; discount: number }>();
   if (saleIds.length) {
-    const res = await sb
-      .from("sales")
-      .select("bill_number, total_amount, discount_amount, coupon_discount")
-      .in("bill_number", saleIds);
-    for (const r of ((res.data as Row[] | null) ?? [])) {
-      bills.set(r.bill_number, {
-        total: Number(r.total_amount ?? 0),
-        discount: Number(r.coupon_discount ?? r.discount_amount ?? 0),
+    for (let offset = 0; offset < saleIds.length; offset += 100) {
+      const rows = await routedQuery("sales", {
+        columns: "bill_number,total_amount,coupon_discount,is_refunded",
+        in: { column: "bill_number", values: saleIds.slice(offset, offset + 100) },
       });
+      for (const r of rows) {
+        if (r.is_refunded) continue;
+        bills.set(String(r.bill_number), { total: Number(r.total_amount ?? 0), discount: Number(r.coupon_discount ?? 0) });
+      }
     }
   }
 
   return campaigns.map((campaign) => {
     const mine = live.filter((v) => v.campaignId === campaign.id);
-    const redeemed = mine.filter((v) => v.status === "REDEEMED");
+    const issued = mine.filter(v => inRange(v.issuedAt));
+    const redeemed = mine.filter((v) => v.status === "REDEEMED" && inRange(v.redeemedAt));
     let revenue = 0;
     let discount = 0;
     for (const v of redeemed) {
@@ -439,11 +425,11 @@ export async function loadCampaignStats(range?: {
     }
     return {
       campaign,
-      issued: mine.length,
-      claimedPublic: mine.filter((v) => v.issuedSource !== "MANUAL").length,
-      issuedManual: mine.filter((v) => v.issuedSource === "MANUAL").length,
+      issued: issued.length,
+      claimedPublic: issued.filter((v) => v.issuedSource !== "MANUAL").length,
+      issuedManual: issued.filter((v) => v.issuedSource === "MANUAL").length,
       redeemed: redeemed.length,
-      redemptionRate: mine.length ? (redeemed.length / mine.length) * 100 : 0,
+      redemptionRate: issued.length ? (issued.filter(v => v.status === "REDEEMED").length / issued.length) * 100 : 0,
       revenue: r2(revenue),
       discount: r2(discount),
     };

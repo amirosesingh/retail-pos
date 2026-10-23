@@ -926,7 +926,10 @@ function jobCardBlock(booking: Booking) {
 
 /** Itemised intake charges (labour / string / grip / add-ons), when captured. */
 function chargesBlock(booking: Booking) {
-  const charges = booking.charges ?? [];
+  // Stocked materials appear in the booked-item table; show only the
+  // remaining service charges here so the slip never lists them twice.
+  const stockLineIds = new Set(booking.lines.map(line => line.productId));
+  const charges = (booking.charges ?? []).filter(charge => !charge.productId || !stockLineIds.has(charge.productId));
   if (!charges.length) {
     return booking.serviceFee
       ? `<table><tr><td>${esc(booking.serviceName || "Service")}</td><td class="r">${fmt(booking.serviceFee)}</td></tr></table>`

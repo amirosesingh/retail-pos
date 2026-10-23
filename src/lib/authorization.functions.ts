@@ -41,7 +41,7 @@ const saveRuleInput = caller.extend({
 
 const pinInput = caller.extend({
   actionKey: z.string().min(1).max(64),
-  authorizerId: z.string().min(1).max(64),
+  authorizerId: z.string().max(64).default(""),
   selfAuthorization: z.boolean().default(false),
   pin: z.string().regex(/^\d{4,8}$/),
   storeId: z.string().max(64).optional(),
@@ -152,6 +152,7 @@ const mutationInput = caller.extend({
 });
 
 type Caller = {
+  isAdmin: boolean;
   id: string;
   name: string;
   role: string;
@@ -177,6 +178,7 @@ async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
   const scope = await resolveRelayScope(verified);
   const role = scope.roleSlug || scope.role || "staff";
   return {
+    isAdmin: scope.role === "admin" || scope.roleSlug === "admin",
     id: scope.staffUserId || verified.authUserId || scope.label,
     name: scope.actorName || scope.label,
     role,
@@ -375,9 +377,10 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
       await import("./authorization");
     const { throttleStatus, throttleFail, throttleReset, minutesLeft } =
       await import("./pin-throttle.server");
+    const { beginPinRequest, finishPinRequest } = await import("./pin-request-throttle.server");
     const auditContext = Object.fromEntries(
       Object.entries(data.auditContext).filter(
-        ([key]) => !["reason", "requested_amount", "self_authorization"].includes(key),
+        ([key]) => !["reason", "requested_amount", "self_authorization", "credential_method"].includes(key),
       ),
     );
     let who: Caller;
@@ -386,11 +389,15 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     } catch (e) {
       return { ok: false as const, error: (e as Error).message };
     }
+    const sourceAttempt = await beginPinRequest();
+    if (sourceAttempt.locked) {
+      return { ok: false as const, error: "Too many wrong PINs. Try again later." };
+    }
 
     // Guessing is stopped on the server, keyed on the authoriser, so trying
     // from a second till does not reset the count.
     const authorizerId = data.selfAuthorization ? who.id : data.authorizerId;
-    const key = `authz:${authorizerId.toLowerCase()}`;
+    const key = authorizerId ? `authz:${authorizerId.toLowerCase()}` : `authz:token-lookup:${(data.storeId ?? "").toLowerCase()}:${who.id}`;
     const state = await throttleStatus(key);
     if (state.locked) {
       return {
@@ -440,15 +447,20 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     const roles = rule?.allowedRoles ?? ["admin", "manager"];
     const users = rule?.allowedUserIds ?? [];
 
-    const { approvalPerson, verifyApprovalTotp } = await import("./approval-token-server");
+    const { approvalPerson, verifyApprovalTotp, identifyApprovalTotp } = await import("./approval-token-server");
     const { approvalMethods } = await import("./approval-credentials");
-    const credentials = await approvalPerson(authorizerId);
+    const resolvedId = authorizerId || await identifyApprovalTotp(data.pin, storeId, data.terminalToken);
+    if (!authorizerId && resolvedId && (await throttleStatus(`authz:${resolvedId.toLowerCase()}`)).locked) {
+      return { ok: false as const, error: "This approval credential is temporarily locked. Try again later." };
+    }
+    const credentials = resolvedId ? await approvalPerson(resolvedId) : null;
     const methods = approvalMethods(credentials?.permissions);
-    const pinPerson = methods.pin ? await verifyAuthorizationPin(authorizerId, data.pin, roles, users) : null;
-    const tokenPerson = !pinPerson && methods.totp ? await verifyApprovalTotp(authorizerId, data.pin, storeId, data.terminalToken) : null;
+    const pinPerson = authorizerId && methods.pin ? await verifyAuthorizationPin(authorizerId, data.pin, roles, users) : null;
+    const tokenPerson = !pinPerson && resolvedId && methods.totp ? await verifyApprovalTotp(resolvedId, data.pin, storeId, data.terminalToken) : null;
     const person = pinPerson ?? tokenPerson;
     const credentialMethod = tokenPerson ? "totp" : "pin";
     if (!person) {
+      await finishPinRequest(sourceAttempt.key, false);
       const after = await throttleFail(key);
       await writeLog({
         actionKey: data.actionKey,
@@ -467,7 +479,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         ok: false as const,
         error: after.locked
           ? `Too many wrong PINs — try again in ${minutesLeft(after)} minute(s)`
-          : "That ID or PIN is not allowed to authorise this",
+          : "The credential is invalid, expired, ambiguous or not permitted to approve this action",
       };
     }
     const { canAuthorize } = await import("./authorization");
@@ -1082,6 +1094,7 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
             existing.requesterDirectLimit,
           ),
           snapshot_hash: existing.snapshotHash,
+          ticket_reference: existing.snapshot?.billNo || existing.payload["bill_no"] || existing.payload["transaction"] || null,
           held_order_id: existing.heldOrderId,
           approval_route: existing.approvalRoute,
           escalated: usedEscalation,
@@ -1245,18 +1258,21 @@ export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
 /** Staff managers set another person's authorisation PIN; it is never read back. */
 export const setStaffAuthorizationPin = createServerFn({ method: "POST" })
   .validator((data: unknown) =>
-    caller.extend({ userId: z.string().min(1), pin: z.string().regex(/^\d{4,6}$/) }).parse(data),
+    caller.extend({ userId: z.string().min(1), pin: z.string().regex(/^\d{4,6}$/), purpose: z.enum(["approval", "offline_login"]).default("approval") }).parse(data),
   )
   .handler(async ({ data }) => {
     try {
       const who = await assertCaller(data);
-      if (!who.canManageStaff) {
-        return { ok: false as const, error: "Staff management permission is required" };
+      if (!who.isAdmin) {
+        return { ok: false as const, error: "Only administrators can set approval PINs" };
       }
       const { setUserAuthorizationPin, writeLog } = await import("./authorization.server");
-      await setUserAuthorizationPin(data.userId, data.pin, who.id);
+      if (data.purpose === "offline_login") {
+        const { setUserOfflineLoginPin } = await import("./authorization.server");
+        await setUserOfflineLoginPin(data.userId, data.pin);
+      } else await setUserAuthorizationPin(data.userId, data.pin, who.id);
       const logged = await writeLog({
-        actionKey: "staff.set_pin",
+        actionKey: data.purpose === "offline_login" ? "staff.set_offline_pin" : "staff.set_pin",
         modeUsed: "admin_auto",
         outcome: "approved",
         requestedBy: who.id,
@@ -1265,7 +1281,7 @@ export const setStaffAuthorizationPin = createServerFn({ method: "POST" })
         authorizedByName: who.name,
         authorizerRole: who.role,
         purpose: `Set authorisation PIN for ${data.userId}`,
-        detail: { target: data.userId },
+        detail: { target: data.userId, purpose: data.purpose },
       });
       if (!logged.ok) {
         return { ok: false as const, error: "PIN was changed, but its audit entry failed" };

@@ -8,7 +8,7 @@ import {
 } from "node:crypto";
 import { serviceRest, verifyRelayCaller } from "@/core/api/pos-relay.server";
 import { requireCallerScope, type CallerProof } from "./privileged-caller.server";
-import { approvalMethods, APPROVAL_TOKEN_LEASE_MS } from "./approval-credentials";
+import { approvalMethods, APPROVAL_TOKEN_LEASE_MS, OFFLINE_APPROVAL_TOKEN_LEASE_MS } from "./approval-credentials";
 import { matchingTotpStep } from "./approval-totp";
 import type { AuthorizationRule } from "./authorization";
 import { approvalPinEligible } from "./approval-pin-eligibility";
@@ -132,20 +132,31 @@ export async function manageApprovalMethods(
   });
   return { ok: true as const };
 }
+async function issuerOptions(id: string) {
+  const path = `terminal_tokens?id=eq.${encodeURIComponent(id)}&select=`;
+  const response = await serviceRest(path + "platform,approval_token_enabled");
+  const result = await response.json();
+  if (response.ok) return result as { platform: string; approval_token_enabled?: boolean }[];
+  if (["42703", "PGRST204"].includes(result?.code) && /approval_token_enabled/.test(result?.message || ""))
+    return (await rows<{ platform: string }>(path + "platform")).map(row => ({ ...row, approval_token_enabled: ["mobile", "android", "ios"].includes(row.platform) }));
+  throw new Error("Approval credential records could not be read");
+}
 export async function enrollApprovalToken(proof: CallerProof) {
   const actor = await requireCallerScope(proof);
   if (!actor.staffUserId || actor.stale || actor.kind === "terminal" || !proof.terminalToken)
     throw new Error("Sign in on a registered terminal first");
   const terminal = await verifyRelayCaller({ terminalToken: proof.terminalToken });
-  if (!terminal.terminalId || !terminal.storeId)
-    throw new Error("Terminal registration is required");
-  if (actor.storeId && actor.storeId.toLowerCase() !== terminal.storeId.toLowerCase())
+  if (!terminal.terminalId) throw new Error("Terminal registration is required");
+  const deviceOptions = await issuerOptions(terminal.terminalId);
+  if (!["ios", "android", "mobile", "pc", "windows"].includes(deviceOptions[0]?.platform) || deviceOptions[0]?.approval_token_enabled === false)
+    return { ok: true as const, credential: null };
+  if (actor.storeId && terminal.storeId && actor.storeId.toLowerCase() !== terminal.storeId.toLowerCase())
     throw new Error("Terminal branch does not match the user");
   const person = await approvalPerson(actor.staffUserId);
   if (
     !person ||
     !approvalMethods(person.permissions).totp ||
-    !(await eligible(person, terminal.storeId))
+    !(await eligible(person, terminal.storeId || person.store_id || actor.storeId || ""))
   )
     return { ok: true as const, credential: null };
   const proposed = seal(randomBytes(20).toString("base64"));
@@ -157,7 +168,7 @@ export async function enrollApprovalToken(proof: CallerProof) {
       userId: person.user_id,
       name: person.full_name,
       terminalId: terminal.terminalId,
-      branchId: terminal.storeId,
+      branchId: terminal.storeId || person.store_id || "",
       secret: unseal(device.secret_ciphertext),
       validUntil: Date.now() + APPROVAL_TOKEN_LEASE_MS,
     },
@@ -171,7 +182,7 @@ export async function verifyApprovalTotp(
 ) {
   if (!receiverToken) return null;
   const receiver = await verifyRelayCaller({ terminalToken: receiverToken }).catch(() => null);
-  if (!receiver?.terminalId || receiver.storeId?.toLowerCase() !== branch.toLowerCase())
+  if (!receiver?.terminalId || (receiver.storeId && receiver.storeId.toLowerCase() !== branch.toLowerCase()))
     return null;
   const receiverRows = await rows<{ platform: string }>(
     `terminal_tokens?id=eq.${encodeURIComponent(receiverToken)}&select=platform`,
@@ -186,9 +197,11 @@ export async function verifyApprovalTotp(
       const terminal = await verifyRelayCaller({ terminalToken: device.terminal_id });
       if (
         !terminal.terminalId ||
-        (person.store_id && terminal.storeId?.toLowerCase() !== branch.toLowerCase())
+        (person.store_id && terminal.storeId && terminal.storeId.toLowerCase() !== branch.toLowerCase())
       )
         continue;
+      const issuer = await issuerOptions(device.terminal_id);
+      if (!["ios", "android", "mobile", "pc", "windows"].includes(issuer[0]?.platform) || issuer[0]?.approval_token_enabled === false) continue;
       const step = await matchingTotpStep(unseal(device.secret_ciphertext), code);
       if (step === null || step <= Number(device.last_used_step)) continue;
       if (!(await state("consume", person.user_id, device.terminal_id, null, step))) continue;
@@ -202,6 +215,44 @@ export async function verifyApprovalTotp(
     }
   }
   return null;
+}
+/** Resolve an eight-digit token only within the receiver's authorized branch.
+ * Never pick the first match: short codes are not globally unique identities.
+ * This lookup does not consume; the existing verifier performs final validation.
+ */
+export async function identifyApprovalTotp(code: string, branch: string, receiverToken?: string) {
+  if (!/^\d{8}$/.test(code) || !receiverToken) return null;
+  const receiver = await verifyRelayCaller({ terminalToken: receiverToken }).catch(() => null);
+  if (!receiver?.terminalId || (receiver.storeId && receiver.storeId.toLowerCase() !== branch.toLowerCase())) return null;
+  const devices = await state("read_branch", branch) as Device[];
+  if (devices.length > 1000) return null; // fail closed, never partially search a large scope
+  const matches: Device[] = [];
+  for (const device of devices) {
+    // A corrupt record makes identity resolution incomplete; fail closed.
+    const step = await matchingTotpStep(unseal(device.secret_ciphertext), code);
+    if (step !== null) matches.push(device);
+  }
+  return matches.length === 1 ? matches[0].user_id : null;
+}
+/** Revalidate one saved device enrollment without a staff login or exposing its secret. */
+export async function approvalTokenStatus(terminalToken: string, userId: string, credentialId: string) {
+  const terminal = await verifyRelayCaller({ terminalToken });
+  if (!terminal.terminalId || !credentialId) return { ok: true as const, active: false };
+  const issuer = await issuerOptions(terminal.terminalId);
+  if (!["ios", "android", "mobile", "pc", "windows"].includes(issuer[0]?.platform) ||
+      issuer[0]?.approval_token_enabled === false) return { ok: true as const, active: false };
+  const person = await approvalPerson(userId);
+  if (!person?.is_active || !approvalMethods(person.permissions).totp)
+    return { ok: true as const, active: false };
+  // An all-branch management device has no branch at sign-out. Its code is
+  // still checked against the selected branch's rules when it is used.
+  const branch = terminal.storeId || person.store_id;
+  if (branch && !(await eligible(person, branch))) return { ok: true as const, active: false };
+  const devices = await state("read", person.user_id) as Device[];
+  return {
+    ok: true as const,
+    active: devices.some(device => device.id === credentialId && device.terminal_id === terminal.terminalId),
+  };
 }
 export async function registerApprovalVerifier(proof: CallerProof, publicKey: string) {
   const actor = await requireCallerScope(proof, { permission: "can_manage_staff" });
@@ -217,7 +268,7 @@ export async function registerApprovalVerifier(proof: CallerProof, publicKey: st
   const registration = await rows<{ platform: string }>(
     `terminal_tokens?id=eq.${encodeURIComponent(terminal.terminalId)}&select=platform`,
   );
-  if (registration[0]?.platform !== "windows")
+  if (!["windows", "pc"].includes(registration[0]?.platform))
     throw new Error("Windows terminal registration required");
   const parsed = createPublicKey(publicKey);
   if (
@@ -257,7 +308,7 @@ function encryptVerifierBundle(publicKey: string, bundle: unknown) {
     tag: cipher.getAuthTag().toString("base64"),
   };
 }
-/** Main-process only: registered Windows tills receive branch-scoped, short-lived verifier bundles. */
+/** Main-process only: registered Windows tills receive branch-scoped verifier bundles. */
 export async function approvalVerifierBundle(terminalToken: string) {
   const terminal = await verifyRelayCaller({ terminalToken });
   if (terminal.kind !== "terminal" || !terminal.terminalId || !terminal.storeId)
@@ -265,7 +316,7 @@ export async function approvalVerifierBundle(terminalToken: string) {
   const registration = await rows<{ platform: string }>(
     `terminal_tokens?id=eq.${encodeURIComponent(terminalToken)}&select=platform`,
   );
-  if (registration[0]?.platform !== "windows")
+  if (!["windows", "pc"].includes(registration[0]?.platform))
     throw new Error("Only Windows SQL tills may receive offline verifiers");
   const verifier = (await state("get_verifier", "", terminal.terminalId)) as {
     public_key?: string;
@@ -289,7 +340,7 @@ export async function approvalVerifierBundle(terminalToken: string) {
     ok: true,
     terminalId: terminal.terminalId,
     branchId: terminal.storeId,
-    validUntil: Date.now() + APPROVAL_TOKEN_LEASE_MS,
+    validUntil: Date.now() + OFFLINE_APPROVAL_TOKEN_LEASE_MS,
     entries,
   });
 }

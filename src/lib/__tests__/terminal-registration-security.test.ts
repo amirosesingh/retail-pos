@@ -62,6 +62,11 @@ describe("terminal registration trust boundary", () => {
       proofHash: "a".repeat(64),
     };
     expect(decodePairingRequest(encodePairingRequest(request))).toEqual(request);
+    expect(encodePairingRequest(request).length).toBeLessThan(
+      `POSPAIR1:${btoa(JSON.stringify(request))}`.length,
+    );
+    expect(decodePairingRequest(`POSPAIR1:${btoa(JSON.stringify(request))}`)).toEqual(request);
+    expect(decodePairingRequest(`POSPAIR2:${JSON.stringify([request.tokenId, "short", "", request.deviceName])}`)).toBeNull();
     expect(decodePairingRequest(request.tokenId)).toBeNull();
     expect(
       decodePairingRequest(`POSPAIR1:${btoa(JSON.stringify({ ...request, proofHash: "short" }))}`),
@@ -148,7 +153,11 @@ describe("terminal registration trust boundary", () => {
     expect(policies.match(/has_perm\('can_manage_terminals'\)/g)).toHaveLength(5);
     expect(migration).toContain("FOR UPDATE");
     expect(migration).toContain("RETURN new_token");
-    expect(activation).toContain('rpc("terminal_token_reissue"');
+    expect(activation).toContain('rpc("terminal_token_reissue_scoped"');
+    const scoped = source("supabase/migrations/20261021013221_terminal_reissue_and_mobile_tokens.sql");
+    expect(scoped).toContain("SECURITY INVOKER");
+    expect(scoped).toContain("replaced_by IS NULL FOR UPDATE");
+    expect(scoped).toContain("has_perm('can_manage_terminals')");
     const reissue = activation.slice(activation.indexOf("export async function reissueTerminalToken"));
     expect(reissue).not.toContain("await insertTokenRow(row)");
   });

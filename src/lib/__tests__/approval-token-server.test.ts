@@ -12,10 +12,11 @@ const f = vi.hoisted(() => ({
     actorName: "Manager",
     stale: false,
   },
-  manager: true,
+  manager: true, deviceEnabled: true,
   active: true,
   totp: true,
   branch: "branch-a",
+  personBranch: "branch-a" as string | null,
   platform: "android",
   service: vi.fn(),
   rules: vi.fn(),
@@ -40,19 +41,22 @@ vi.mock("../system-audit.server", () => ({ writeSystemAudit: async () => {} }));
 import {
   enrollApprovalToken,
   verifyApprovalTotp,
+  identifyApprovalTotp,
   registerApprovalVerifier,
   approvalVerifierBundle,
+  approvalTokenStatus,
 } from "../approval-token-server";
 import { approvalTotp } from "../approval-totp";
 const terminal = "11111111-1111-4111-8111-111111111111";
 const proof = { sessionToken: "verified-user-session", terminalToken: terminal };
 beforeEach(() => {
   vi.stubEnv("SETTINGS_ENCRYPTION_KEY", "test-approval-encryption-key-only");
-  f.manager = true;
+  f.manager = true; f.deviceEnabled = true;
   f.active = true;
   f.totp = true;
   f.platform = "android";
   f.branch = "branch-a";
+  f.personBranch = "branch-a";
   f.verifier = "";
   f.devices = [];
   f.scope.kind = "staff";
@@ -70,12 +74,12 @@ beforeEach(() => {
           full_name: "Manager",
           role: "manager",
           role_slug: "manager",
-          store_id: "branch-a",
+          store_id: f.personBranch,
           is_active: f.active,
           permissions: { approval_totp_enabled: f.totp },
         },
       ]);
-    if (url.startsWith("terminal_tokens?")) return Response.json([{ platform: f.platform }]);
+    if (url.startsWith("terminal_tokens?")) return Response.json([{ platform: f.platform, approval_token_enabled: f.deviceEnabled }]);
     const args = JSON.parse(options?.body || "{}");
     if (args.p_op === "enroll") {
       if (!f.devices.length)
@@ -106,7 +110,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("approval credential authorization", () => {
-  it.each(["ios", "mobile"])("accepts a registered %s receiver with the same permission and replay checks", async platform => {
+  it.each(["ios", "mobile", "pc", "windows"])("accepts a registered %s receiver with the same permission and replay checks", async platform => {
     f.platform = platform;
     const enrolled = await enrollApprovalToken(proof);
     const code = await approvalTotp(enrolled.credential!.secret);
@@ -144,9 +148,25 @@ describe("approval credential authorization", () => {
     f.totp = false;
     expect(await verifyApprovalTotp("manager", code, "branch-a", terminal)).toBe(null);
   });
-  it("encrypts verifier bundles to the staff-manager-pinned Windows public key", async () => {
+  it("revalidates only this registered device enrollment without returning its secret", async () => {
     const enrolled = await enrollApprovalToken(proof);
-    f.platform = "windows";
+    expect(await approvalTokenStatus(terminal, "manager", enrolled.credential!.id)).toEqual({ ok: true, active: true });
+    expect((await approvalTokenStatus(terminal, "manager", "another-device")).active).toBe(false);
+    f.deviceEnabled = false;
+    expect((await approvalTokenStatus(terminal, "manager", enrolled.credential!.id)).active).toBe(false);
+    f.deviceEnabled = true; f.active = false;
+    expect((await approvalTokenStatus(terminal, "manager", enrolled.credential!.id)).active).toBe(false);
+  });
+  it("keeps an all-branch management token valid while signed out", async () => {
+    f.branch = "";
+    f.personBranch = null;
+    const enrolled = await enrollApprovalToken(proof);
+    f.rules.mockRejectedValue(new Error("No branch selected while signed out"));
+    expect(await approvalTokenStatus(terminal, "manager", enrolled.credential!.id)).toEqual({ ok: true, active: true });
+  });
+  it.each(["windows", "pc"])("encrypts verifier bundles to the staff-manager-pinned %s public key", async platform => {
+    const enrolled = await enrollApprovalToken(proof);
+    f.platform = platform;
     await expect(approvalVerifierBundle(terminal)).rejects.toThrow("manager must sign in");
     const keys = generateKeyPairSync("rsa", {
       modulusLength: 2048,
@@ -171,4 +191,39 @@ describe("approval credential authorization", () => {
     expect(opened.branchId).toBe("branch-a");
     expect(opened.entries[0].secret).toBe(enrolled.credential!.secret);
   });
+});
+
+it("enrolls a permitted branch user on a management phone without widening that user's branch", async () => {
+  f.branch = "";
+  const result = await enrollApprovalToken(proof);
+  expect(result.credential?.branchId).toBe("branch-a");
+  f.deviceEnabled = false;
+  expect((await enrollApprovalToken(proof)).credential).toBeNull();
+  f.deviceEnabled = true; f.totp = false;
+  expect((await enrollApprovalToken(proof)).credential).toBeNull();
+});
+
+it.each(["pc", "windows", "mobile"])("management %s can issue and receive a token without widening user branch access", async platform => {
+ f.platform = platform; f.branch = "";
+ const result = await enrollApprovalToken(proof);
+ expect(result.credential?.branchId).toBe("branch-a");
+ const code = await approvalTotp(result.credential!.secret);
+ expect(await verifyApprovalTotp("manager", code, "branch-b", terminal)).toBeNull();
+ expect((await verifyApprovalTotp("manager", code, "branch-a", terminal))?.userId).toBe("manager");
+ expect(await verifyApprovalTotp("manager", code, "branch-a", terminal)).toBeNull();
+ f.deviceEnabled = false;
+ expect((await enrollApprovalToken(proof)).credential).toBeNull();
+});
+
+it("resolves a code owner without an ID, but rejects collisions before consuming", async () => {
+  const enrolled = await enrollApprovalToken(proof);
+  const code = await approvalTotp(enrolled.credential!.secret);
+  expect(await identifyApprovalTotp(code, "branch-a", terminal)).toBe("manager");
+  expect(f.devices[0].last_used_step).toBe(-1);
+  f.devices.push({ ...f.devices[0], id: "second-device", user_id: "other-person" });
+  expect(await identifyApprovalTotp(code, "branch-a", terminal)).toBeNull();
+  expect(f.devices[0].last_used_step).toBe(-1);
+  expect(await identifyApprovalTotp(code, "branch-b", terminal)).toBeNull();
+  expect(await identifyApprovalTotp(code, "branch-a")).toBeNull();
+  expect(await identifyApprovalTotp("1234", "branch-a", terminal)).toBeNull();
 });

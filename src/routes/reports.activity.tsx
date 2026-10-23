@@ -66,7 +66,7 @@ function ActivityReport() {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <div className="pos-page-container">
         <ReportHeader
           title="Register Activity Trail"
           subtitle="Everything that happened on the till, in plain English, with timestamps."
@@ -107,7 +107,7 @@ function ActivityReport() {
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table>
+          <Table tableId="routes/reports.activity#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

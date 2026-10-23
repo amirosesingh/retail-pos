@@ -42,6 +42,7 @@ export function ProductSearchDialog({
   onCreateProduct,
   canLinkBarcode,
   canCreateProduct,
+  includeAutoZeroStock = false,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -62,6 +63,7 @@ export function ProductSearchDialog({
   }) => Promise<void> | void;
   canLinkBarcode: boolean;
   canCreateProduct: boolean;
+  includeAutoZeroStock?: boolean;
 }) {
   const [field, setField] = useState<Field>("all");
   const [selected, setSelected] = useState<string | null>(null);
@@ -86,8 +88,8 @@ export function ProductSearchDialog({
   const [resultLimit, setResultLimit] = useState(100);
   useEffect(() => { setResultLimit(100); setSelected(null); }, [q, field, storeId, open]);
   const allResults = useMemo(
-    () => searchSellingProducts(products, q, field),
-    [products, q, field],
+    () => searchSellingProducts(products, q, field, includeAutoZeroStock),
+    [products, q, field, includeAutoZeroStock],
   );
   const results = allResults.slice(0, resultLimit);
 

@@ -67,6 +67,7 @@ export const PERMISSION_GROUPS = [
     label: "Inventory & Pricing",
     keys: [
       "can_view_inventory",
+      "can_view_cost_margin",
       "can_edit_product_price",
       "can_add_new_product",
       "can_edit_product_details",
@@ -115,6 +116,7 @@ export const PERMISSION_GROUPS = [
       "can_manage_staff",
       "can_manage_promotions",
       "can_manage_terminals",
+      "can_use_management_mobile",
       "can_manage_sync_backup",
     ],
   },
@@ -162,6 +164,7 @@ export type PermissionKey =
   | "can_collect_booking"
   | "can_cancel_booking"
   | "can_view_inventory"
+  | "can_view_cost_margin"
   | "can_edit_product_price"
   | "can_add_new_product"
   | "can_edit_product_details"
@@ -192,6 +195,7 @@ export type PermissionKey =
   | "can_manage_staff"
   | "can_manage_promotions"
   | "can_manage_terminals"
+  | "can_use_management_mobile"
   | "can_manage_sync_backup";
 
 export const PERMISSION_LABELS: Record<PermissionKey, string> = {
@@ -236,6 +240,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_collect_booking: "Collect bookings & take part payments",
   can_cancel_booking: "Cancel or delete a booking / job",
   can_view_inventory: "View inventory",
+  can_view_cost_margin: "View purchase costs, stock value & profit margins",
   can_edit_product_price: "Edit product pricing",
   can_add_new_product: "Add new products",
   can_edit_product_details: "Edit product details",
@@ -266,6 +271,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_manage_staff: "Manage staff & permissions",
   can_manage_promotions: "Edit promotions & coupon rules",
   can_manage_terminals: "Manage terminal activation tokens",
+  can_use_management_mobile: "Sign in on management phones and tablets",
   can_manage_sync_backup: "Manage database connection",
 };
 
@@ -382,8 +388,11 @@ export function normalizePermissions(
   if (!raw) return rolePermissions(role);
   for (const [key, value] of Object.entries(raw)) {
     const resolved = resolvePermission(key as PermissionFlag);
-    if (resolved in base) base[resolved] = !!value;
+    if (resolved in base) base[resolved] = value === true;
   }
+  // Preserve old report-based visibility until this independent choice is saved.
+  if (!("can_view_cost_margin" in raw)) base.can_view_cost_margin = base.can_view_sales_reports &&
+    (!("page:reports" in raw) || raw["page:reports"] === true);
   if (!("can_customize_display" in raw)) base.can_customize_display = true;
   // Existing cashier matrices predate the split hold controls. Preserve their
   // current workflow once, while every subsequently saved matrix carries the
@@ -476,6 +485,7 @@ type CachedRole = { slug: string; baseLevel: StaffRole; permissions: StaffPermis
 const roleCache = new Map<string, CachedRole>();
 
 export function cacheRoleDefinitions(roles: CachedRole[]) {
+  roleCache.clear();
   for (const r of roles) if (r.slug) roleCache.set(r.slug, r);
 }
 
@@ -505,7 +515,8 @@ export function getEffectivePermissions(
   const merged = { ...preset };
   for (const [key, value] of Object.entries(overrides)) {
     const resolved = resolvePermission(key as PermissionFlag);
-    if (resolved in merged) merged[resolved] = !!value;
+    if (resolved in merged || PERMISSION_PAGES.some(page => pageKey(page.id) === key))
+      merged[resolved] = value === true;
   }
   return merged;
 }
@@ -632,6 +643,7 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
       roles: ["supervisor", "admin"],
       keys: [
         "can_view_sales_reports",
+        "can_view_cost_margin",
         "can_view_dashboard",
         "can_view_audit_trail",
         "can_export_reports",
@@ -639,7 +651,7 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
     },
     "supervisor-only": {
       roles: ["supervisor", "admin"],
-      keys: ["can_edit_member_points", "can_manage_promotions", "can_manage_terminals"],
+      keys: ["can_edit_member_points", "can_manage_promotions", "can_manage_terminals", "can_use_management_mobile"],
     },
     "admin-only": {
       roles: ["admin"],

@@ -19,3 +19,5 @@ export function preserveApprovalMethods(
   return clean;
 }
 export const APPROVAL_TOKEN_LEASE_MS = 24 * 60 * 60 * 1000;
+/** Maximum time a registered device may keep generating/verifying codes offline. */
+export const OFFLINE_APPROVAL_TOKEN_LEASE_MS = 30 * 24 * 60 * 60 * 1000;

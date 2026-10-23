@@ -173,7 +173,9 @@ describe("local SQL Server discovery privilege", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
     const adoptRoute = readFileSync("src/routes/api/v1/pos/ipc-adopt.ts", "utf8");
 
-    expect(gate).toContain("readTerminalConfig(),");
+    expect(gate).toContain("ensureDesktopPosSession(true)");
+    const handoff = readFileSync("src/lib/desktop-pos-session.ts", "utf8");
+    expect(handoff).toContain("bridge.adoptSession!(credentials, readTerminalConfig())");
     expect(gate).toContain('requiredLevel === "admin" && adopted.level !== "admin"');
     expect(main).toContain('ipcMain.handle("admin:adopt-session"');
     expect(main).toContain('configStore.get("backendUrl")');

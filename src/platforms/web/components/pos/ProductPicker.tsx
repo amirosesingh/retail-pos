@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { notifyError } from "@/lib/notify";
 /**
  * Product table for stock paperwork (transfers, requests, receiving).
@@ -13,8 +14,11 @@ import { notifyError } from "@/lib/notify";
  * touching the mouse.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search } from "lucide-react";
+import { Search, ScanBarcode } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { CameraScanner } from "@/platforms/web/components/pos/CameraScanner";
+import { isNativeApp } from "@/platforms/mobile/camera";
 
 import type { Product } from "@/core/types/pos-types";
 import { stockAt } from "@/lib/pos-store";
@@ -41,6 +45,7 @@ export function ProductPicker({
   placeholder?: string;
 }) {
   const [term, setTerm] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [rows, setRows] = useState<Product[]>(() => searchLocal(products, "", limit));
   
   const inputRef = useRef<HTMLInputElement>(null);
@@ -83,6 +88,19 @@ export function ProductPicker({
     inputRef.current?.focus();
   }
 
+  const acceptCameraScan = async (code: string) => {
+    setCameraOpen(false);
+    const match = exactCodeMatch(products, code) ??
+      exactCodeMatch((await searchCatalog(code, products, limit)).products, code);
+    if (match) {
+      add(match, 1);
+      setTerm("");
+    } else {
+      setTerm(code);
+      inputRef.current?.focus();
+    }
+  };
+
   const columns = useMemo(() => (showBranch ? 4 : 3), [showBranch]);
 
   return (
@@ -95,13 +113,25 @@ export function ProductPicker({
           onChange={(e) => setTerm(e.target.value)}
           onKeyDown={onScanKey}
           placeholder={placeholder}
-          className="pl-8"
+          className={isNativeApp() ? "pl-8 pr-12" : "pl-8"}
           aria-label="Scan or search products"
         />
+        {isNativeApp() && (
+          <Button type="button" variant="ghost" size="icon" className="absolute inset-y-0 right-1 my-auto size-8" aria-label="Scan barcode with camera" title="Scan barcode with camera" onClick={() => setCameraOpen(true)}>
+            <ScanBarcode className="size-4" />
+          </Button>
+        )}
       </div>
 
+      {cameraOpen && isNativeApp() && (
+        <div className="space-y-2">
+          <CameraScanner onScan={(code) => { void acceptCameraScan(code).catch((cause) => { setTerm(code); notifyError(cause, "Scanning product"); }); }} onClose={() => setCameraOpen(false)} />
+          <Button type="button" variant="ghost" size="sm" onClick={() => setCameraOpen(false)}>Cancel scan</Button>
+        </div>
+      )}
+
       <div className="max-h-72 overflow-y-auto rounded-md border border-border">
-        <table className="w-full text-xs">
+        <Table tableId="platforms/web/components/pos/ProductPicker.native#1" clientDataControls={false} className="w-full text-xs">
           <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
             <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <th className="px-2 py-1.5 font-medium">Barcode</th>
@@ -154,7 +184,7 @@ export function ProductPicker({
               </tr>
             )}
           </tbody>
-        </table>
+        </Table>
       </div>
       <p className="text-[11px] text-muted-foreground">
         Double-click a row to add it. Set the quantity in the list.
