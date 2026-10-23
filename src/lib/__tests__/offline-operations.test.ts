@@ -64,7 +64,7 @@ describe("offline terminal operations", () => {
     expect(auth).toContain("role: offlineAppRole(local.staff.role ?? local.staff.roleSlug)");
     expect(auth).toContain("roleSlug: local.staff.roleSlug");
     expect(dialog).toContain("await verifyLocalApprovalPin(expectedId, pin)");
-    expect(dialog).toContain("self_authorization: !!prompt.selfAuthorizer");
+    expect(dialog).toContain("self_authorization: identity.selfAuthorization");
     expect(dialog).toContain('mode_used: "offline_pin"');
   });
 
