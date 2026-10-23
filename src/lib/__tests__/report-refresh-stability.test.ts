@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Sale } from "@/core/types/pos-types";
 const harness = vi.hoisted(() => ({
+  auth: { ready: true, user: { staffId: "operator" } as { staffId: string } | null },
   values: [] as unknown[],
   cursor: 0,
   effectCursor: 0,
@@ -8,6 +9,7 @@ const harness = vi.hoisted(() => ({
   pending: [] as (() => void)[],
   focus: null as null | (() => void), salesChange: null as null | (() => void),
 }));
+vi.mock("../pos-auth", () => ({ useAuth: () => harness.auth }));
 vi.mock("react", () => ({
   useState: (initial: unknown) => {
     const index = harness.cursor++;
@@ -64,6 +66,7 @@ function render(branch = "branch-a", from = "2026-10-12", to = from) {
   return result;
 }
 beforeEach(() => {
+  harness.auth = { ready: true, user: { staffId: "operator" } };
   harness.values = [];
   harness.effects = [];
   harness.pending = [];
@@ -105,6 +108,26 @@ describe("report refresh stability", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(load).toHaveBeenCalledTimes(3);
+  });
+  it("waits for sign-in readiness before loading reports", async () => {
+    harness.auth.ready = false;
+    render();
+    expect(load).not.toHaveBeenCalled();
+    harness.auth.ready = true;
+    harness.auth.user = null;
+    render();
+    expect(load).not.toHaveBeenCalled();
+    harness.auth.user = { staffId: "operator" };
+    load.mockResolvedValue(page);
+    render();
+    await Promise.resolve();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+  it("does not expose the previous operator's loaded report after switching users", async () => {
+    await loaded();
+    harness.auth.user = { staffId: "different-operator" };
+    load.mockImplementation(() => new Promise(() => {}));
+    expect(render().sales).toEqual([]);
   });
   it("retains existing rows during a same-range refresh", async () => {
     await loaded();

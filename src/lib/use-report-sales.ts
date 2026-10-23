@@ -5,6 +5,8 @@ import { loadSalesPage } from "@/core/api/pos-db";
 import type { Sale } from "@/core/types/pos-types";
 import { uniqueSales } from "./sale-identity";
 import { canonicalBranchId } from "./branch-id";
+import { useAuth } from "./pos-auth";
+import { sessionEpoch } from "./session-epoch";
 
 import { effectiveTimeZone, inPosDayRange, reportScanStart as dayStart, reportScanEnd as dayEnd } from "./time-zone";
 
@@ -22,6 +24,8 @@ export function useReportSales(
   to: string,
   enabled = true,
 ): { sales: Sale[]; loading: boolean; refreshing: boolean; error: string } {
+  const { ready, user } = useAuth();
+  enabled = enabled && ready && Boolean(user);
   const reportZone = effectiveTimeZone();
   const seedRows = useMemo(() => {
     const start = dayStart(from);
@@ -64,7 +68,7 @@ export function useReportSales(
   const [error, setError] = useState("");
   const storeKey = storeIds.filter(Boolean).sort().join("|");
 
-  const rangeKey = JSON.stringify([storeKey, from, to, reportZone]);
+  const rangeKey = JSON.stringify([user?.staffId, sessionEpoch(), storeKey, from, to, reportZone]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,5 +131,5 @@ export function useReportSales(
   }, [seedRows, loaded, rangeKey]);
 
   const sameScope = loaded?.key === rangeKey;
-  return { sales, loading: loading && !sameScope, refreshing: loading && sameScope, error };
+  return { sales: enabled ? sales : [], loading: enabled && loading && !sameScope, refreshing: enabled && loading && sameScope, error: enabled ? error : "" };
 }

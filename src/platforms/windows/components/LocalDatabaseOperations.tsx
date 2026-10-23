@@ -42,7 +42,7 @@ export function LocalDatabaseOperations() {
   const [health, setHealth] = useState<Result>({});
   const [schema, setSchema] = useState<Result>({});
   const [job, setJob] = useState<DatabaseJob | null>(null);
-  const [sync, setSync] = useState<SyncState>({});
+  const [sync, setSync] = useState<SyncState & { lastProgressAt?: string; startedAt?: string }>({});
   const [failures, setFailures] = useState<Failures>({});
   const [file, setFile] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -92,7 +92,9 @@ export function LocalDatabaseOperations() {
   const hasDatabaseConnectivityError = state.connected === false || (Boolean(sync.lastError) && isDatabaseConnectivityFailure({ error_message: sync.lastError }));
   const conflictCount = Number(failures.conflicts ?? failures.conflictRows?.length ?? sync.conflicts ?? 0);
   const tableDifferences = (sync.tables ?? []).filter((table) => table.status === "DIFFERENT");
-  const queuedTables = (sync.queuedTables ?? []).filter((row) => row.pending > 0 || row.failed > 0);
+  const activeTable = sync.running ? sync.currentTable : null;
+  const queuedTables = (sync.queuedTables ?? []).filter((row) =>
+    (row.pending > 0 || row.failed > 0) && row.table !== activeTable);
   const direction = sync.phase === "pulling" ? "Download" : sync.phase === "pushing" ? "Upload" : "Processing";
   if (state.state === "disabled" || state.enabled === false) return null;
   return (
@@ -104,11 +106,11 @@ export function LocalDatabaseOperations() {
             <span role="status" className="text-muted-foreground">{sync.paused ? "Paused" : sync.running ? label(sync.phase) : sync.pending ? "Waiting to upload" : "Up to date"}</span>
             <span className="text-muted-foreground">{Number(sync.pending ?? 0).toLocaleString()} pending</span>
           </div>
-          <div className="overflow-x-auto rounded-md border"><table className="w-full text-left text-xs"><thead className="bg-muted/40"><tr><th className="px-3 py-2">Table</th><th className="px-3 py-2">Activity</th><th className="px-3 py-2">Rows</th></tr></thead><tbody>
-            {sync.running && sync.currentTable ? <tr className="border-t"><td className="px-3 py-2 font-medium">{sync.currentTable}</td><td className="px-3 py-2">{direction} now</td><td className="px-3 py-2">—</td></tr> : null}
-            {queuedTables.slice(0, 5).map((row) => <tr key={row.table} className="border-t"><td className="px-3 py-2">{row.table}</td><td className="px-3 py-2">{row.failed ? "Needs attention" : "Queued to upload"}</td><td className="px-3 py-2">{row.pending}</td></tr>)}
+          <div className="overflow-x-auto rounded-md border"><table className="w-full text-left text-xs"><thead className="bg-muted/40"><tr><th className="px-3 py-2">Table</th><th className="px-3 py-2">Activity</th><th className="px-3 py-2">Rows</th><th className="px-3 py-2">Updated</th></tr></thead><tbody>
+            {activeTable ? <tr className="border-t"><td className="px-3 py-2 font-medium">{activeTable}</td><td className="px-3 py-2">{direction} now</td><td className="px-3 py-2">—</td><td className="px-3 py-2">{when(sync.lastProgressAt ?? sync.startedAt)}</td></tr> : null}
+            {queuedTables.slice(0, 5).map((row) => <tr key={row.table} className="border-t"><td className="px-3 py-2">{row.table}</td><td className="px-3 py-2">{row.failed ? "Needs attention" : "Queued to upload"}</td><td className="px-3 py-2">{row.pending}</td><td className="px-3 py-2">—</td></tr>)}
           </tbody></table>
-            {!sync.currentTable && !queuedTables.length ? <p className="px-3 py-2 text-xs text-muted-foreground">No active or pending table transfers.</p> : null}
+            {!activeTable && !queuedTables.length ? <p className="px-3 py-2 text-xs text-muted-foreground">No active or pending table transfers.</p> : null}
             {queuedTables.length > 5 ? <p className="border-t px-3 py-2 text-xs text-muted-foreground">+{queuedTables.length - 5} more pending tables in More settings</p> : null}
           </div>
           {sync.lastError ? <p role="alert" className="text-xs text-destructive">{sync.lastError}</p> : null}
@@ -118,14 +120,14 @@ export function LocalDatabaseOperations() {
           <DatabaseJobProgress job={job} />
           {sync.membershipDeferred ? <p role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">Membership directory synchronization is waiting for the membership service. Sales and other POS data continue syncing normally.</p> : null}
           <p className="text-xs text-muted-foreground">Last upload {when(sync.lastPushAt)} · Last download {when(sync.lastPullAt)} · {activeErrorCount} current errors · {conflictCount} conflicts</p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 [&>button]:h-8 [&>button]:px-3 [&>button]:text-xs">
             {failureCount || activeErrorCount ? <Button type="button" variant={activeErrorCount ? "destructive" : "outline"} onClick={() => setFailureDetailsOpen(true)}>{activeErrorCount ? `Errors (${activeErrorCount})` : "Past errors"}</Button> : null}
             {hasDatabaseConnectivityError ? <Button type="button" variant="outline" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_LOCAL_DATABASE_SETTINGS_EVENT))}>Open Database Settings</Button> : null}
             <Button disabled={busy || !state.connected || sync.running} onClick={() => run("Synchronization completed.", async () => { await mirrorTerminalConfigToDesktop(); return shell().sync!.runNow({ batchSize: 500 }); })}>Sync now</Button>
             <Button variant="outline" disabled={busy || !!sync.paused} onClick={() => run("Synchronization paused.", () => shell().sync!.pause())}>Pause</Button>
             <Button variant="outline" disabled={busy || !sync.paused} onClick={() => run("Synchronization resumed.", () => shell().sync!.resume())}>Resume</Button>
-            <Button variant="outline" disabled={busy || !state.connected} onClick={() => run("Count comparison completed.", async () => { await mirrorTerminalConfigToDesktop(); const result = await shell().sync!.reconcile({}); if (result.ok !== false) setComparisonOpen(true); return result; })}>Compare counts</Button>
-            <Button variant="outline" disabled={busy || !state.connected} onClick={() => run("Full data verification completed.", async () => { await mirrorTerminalConfigToDesktop(); const result = await shell().sync!.reconcile({ deep: true }); if (result.ok !== false) setComparisonOpen(true); return result; })}>Verify data</Button>
+            <Button variant="outline" disabled={busy || !state.connected} onClick={() => run("Count comparison completed. Open Results to review.", async () => { await mirrorTerminalConfigToDesktop(); return shell().sync!.reconcile({}); })}>Compare counts</Button>
+            <Button variant="outline" disabled={busy || !state.connected} onClick={() => run("Full data verification completed. Open Results to review.", async () => { await mirrorTerminalConfigToDesktop(); return shell().sync!.reconcile({ deep: true }); })}>Verify data</Button>
             <Button variant="outline" disabled={busy || !state.connected || !tableDifferences.length} onClick={() => run("Targeted repair completed.", async () => { await mirrorTerminalConfigToDesktop(); return shell().sync!.reconcile({ repair: true, tables: tableDifferences.map((table) => table.table) }); })}>Repair differences</Button>
             <Button variant="ghost" disabled={busy} onClick={() => void refresh()}>Refresh</Button>
           </div>
@@ -140,7 +142,7 @@ export function LocalDatabaseOperations() {
                   <span className={table.status === "DIFFERENT" ? "text-destructive" : "text-emerald-700 dark:text-emerald-400"}>{table.status}</span>
                 </div>
               ))}
-              {!sync.tables?.length ? <p className="p-3 text-xs text-muted-foreground">Run Reconcile to compare every synchronized table for this branch. A matching count is SYNCED; only a full signature check may be called VERIFIED.</p> : null}
+              {!sync.tables?.length ? <p className="p-3 text-xs text-muted-foreground">Use Compare counts or Verify data to check synchronized tables.</p> : null}
             </div>
           </details>
           {queuedTables.length > 5 ? <p className="text-xs text-muted-foreground">Pending: {queuedTables.slice(5).map((row) => `${row.table} (${row.pending})`).join(" · ")}</p> : null}
@@ -161,6 +163,8 @@ export function LocalDatabaseOperations() {
           </details>
         </section>
       </DatabaseHealthCard>
+      {message ? <p className="rounded-md bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-400" role="status">{message}</p> : null}
+      {error ? <p className="rounded-md bg-destructive/10 p-3 text-xs text-destructive" role="alert">{error}</p> : null}
       <Card>
         <CardHeader><CardTitle className="text-base">Backup and recovery</CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -170,8 +174,6 @@ export function LocalDatabaseOperations() {
             <Button disabled={busy || !file.trim() || !state.connected} onClick={() => run("Backup created.", () => shell().database!.backup(file.trim()))}>Create backup</Button>
             <Button variant="destructive" disabled={busy || !file.trim()} onClick={() => run("Backup restored and database revalidated.", () => shell().database!.restore(file.trim()))}>Restore backup</Button>
           </div>
-          {message ? <p className="rounded-md bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-400" role="status">{message}</p> : null}
-          {error ? <p className="rounded-md bg-destructive/10 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
         </CardContent>
       </Card>
     </div>

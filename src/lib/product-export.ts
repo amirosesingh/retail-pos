@@ -3,6 +3,7 @@
  * accepts, so an exported sheet can be edited and imported straight back.
  */
 import type { Product, Store } from "@/core/types/pos-types";
+import { canonicalBranchId, canonicalStockMap } from "./branch-id";
 
 export type ProductExportScope = "all" | "active" | "active-in-stock" | "archived";
 
@@ -11,7 +12,7 @@ export function productsForExport(products: Product[], scope: ProductExportScope
     if (scope === "all") return true;
     if (scope === "archived") return product.archived === true;
     if (product.archived === true) return false;
-    return scope === "active" || (product.stockByStore?.[storeId] ?? 0) > 0;
+    return scope === "active" || (canonicalStockMap(product.stockByStore)[canonicalBranchId(storeId)] ?? 0) > 0;
   });
 }
 

@@ -348,8 +348,8 @@ function Inventory() {
               </span>
             </p>
           </div>
-          <div className="flex w-full flex-wrap gap-2 lg:w-auto lg:justify-end">
-            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:flex-wrap lg:w-auto lg:justify-end">
+            <div className="col-span-2 flex w-full min-w-0 items-center gap-2 sm:w-auto">
               <div className="relative min-w-0 flex-1 sm:flex-none">
                 <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -364,7 +364,7 @@ function Inventory() {
             <Button variant="outline" size="sm" onClick={() => { setShowArchived(value => !value); setSelected([]); }}>
               <Archive className="size-4" /> {showArchived ? "Show active" : "Show archived"}
             </Button>
-            <div ref={setColumnControlsTarget} className="flex items-center" />
+            <div ref={setColumnControlsTarget} className="flex items-center [&>button]:w-full sm:[&>button]:w-auto" />
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="outline" size="sm" aria-label="Inventory actions"><MoreHorizontal className="size-4" />Actions</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
@@ -414,7 +414,7 @@ function Inventory() {
               >
                 {canCreate && (
                   <DialogTrigger asChild>
-                    <Button
+                    <Button size="sm"
                       onClick={() => {
                         setBranchPriceOnly(false);
                         setDraft(

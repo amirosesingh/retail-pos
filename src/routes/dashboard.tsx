@@ -121,10 +121,16 @@ function Dashboard() {
     [state.products, state.settings, currentStore.id],
   );
 
-  /** Revenue against gross profit, hour by hour. */
+  const chartSales = useMemo(() => sales.filter(sale => {
+    const day = posDayKey(sale.createdAt);
+    return !sale.refunded && day >= revenueFrom && day <= revenueTo;
+  }), [sales, revenueFrom, revenueTo]);
+  const chartProfit = useMemo(() => profitOf(chartSales, state.products), [chartSales, state.products]);
+
+  /** Revenue against gross profit, hour by hour in the selected range. */
   const profitByHour = useMemo(
-    () => hourlyProfit(live, state.products, posHour),
-    [live, state.products],
+    () => hourlyProfit(chartSales, state.products, posHour),
+    [chartSales, state.products],
   );
 
   /** Revenue for the selected inclusive calendar range. */
@@ -149,16 +155,16 @@ function Dashboard() {
     }));
   }, [sales, revenueFrom, revenueTo]);
 
-  /** Transactions per hour today — shows the peak trading window. */
+  /** Transactions per hour across the selected calendar range. */
   const hourly = useMemo(() => {
     const hours = Array.from({ length: 24 }, (_, h) => ({ hour: `${h}:00`, bills: 0, value: 0 }));
-    live.forEach((s) => {
+    chartSales.forEach((s) => {
       const h = posHour(s.createdAt);
       hours[h]!.bills += 1;
       hours[h]!.value = Number((hours[h]!.value + s.total).toFixed(2));
     });
     return hours;
-  }, [live]);
+  }, [chartSales]);
   const peak = hourly.reduce((a, h) => (h.bills > a.bills ? h : a), hourly[0]!);
 
   const todayDrawer = drawer.filter(
@@ -253,16 +259,10 @@ function Dashboard() {
           onKeyDownCapture={() => undefined}
           className="min-w-0"
         >
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">Trading graphs</h2>
-          </div>
-          <CarouselContent className="touch-pan-y">
-          <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
-          <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
-            <div className="mb-3 shrink-0 space-y-2">
-              <h2 className="text-sm font-semibold">Revenue · {revenueFrom} to {revenueTo}</h2>
               <div className="flex flex-wrap items-center gap-2">
-                <select aria-label="Revenue chart period" value={revenuePeriod}
+                <select aria-label="Trading graphs period" value={revenuePeriod}
                   onChange={(event) => setRevenuePeriod(event.target.value as typeof revenuePeriod)}
                   className="h-8 rounded-md border border-input bg-background px-2 text-xs">
                   <option value="7">7 days</option>
@@ -273,11 +273,16 @@ function Dashboard() {
                   <option value="custom">Custom dates</option>
                 </select>
                 {revenuePeriod === "custom" && <>
-                  <Input aria-label="Revenue from date" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} className="h-8 w-36 text-xs" />
-                  <Input aria-label="Revenue to date" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} className="h-8 w-36 text-xs" />
+                  <Input aria-label="Graphs from date" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} className="h-8 w-36 text-xs" />
+                  <Input aria-label="Graphs to date" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} className="h-8 w-36 text-xs" />
                 </>}
               </div>
-            </div>
+          </div>
+          <p className="mb-3 text-xs text-muted-foreground">{revenueFrom} to {revenueTo} · applies to all trading graphs</p>
+          <CarouselContent className="touch-pan-y">
+          <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
+          <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
+            <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">Revenue</h2>
             <div className="min-h-0 min-w-0 flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={daily}>
@@ -325,7 +330,7 @@ function Dashboard() {
         <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
           <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
-            Profit by hour · gross profit {money(profit.profit)} today
+            Profit by hour · gross profit {money(chartProfit.profit)}
           </h2>
           <div className="min-h-0 min-w-0 flex-1">
             <ResponsiveContainer width="100%" height="100%">

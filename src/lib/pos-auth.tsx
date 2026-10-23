@@ -4,6 +4,7 @@ import { useLocalStartupReady } from "./use-local-startup";
 import { createSessionTransition } from "./session-transition";
 import { terminalUserPermissions } from "./terminal-user-permissions";
 import { createPermissionRefresh } from "./permission-refresh";
+import { ensureDesktopPosSession } from "./desktop-pos-session";
 import { subscribeDataChange, subscribeSettingsChange } from "./sync-engine";
 import { normalizeUuidFields } from "./uuid-fields";
 import { preserveSessionDrafts } from "./session-draft";
@@ -1320,7 +1321,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // main process still holds this verified POS session.
           const native = await window.sqlAdmin.adminStatus?.();
           if (profileSignature !== nativeProfile || !native?.unlocked || native.source !== "pos") {
-            const adopted = await window.sqlAdmin.adoptSession(proof, readTerminalConfig());
+            const adopted = await ensureDesktopPosSession(true, proof);
             if (!adopted.ok) return null;
             nativeProfile = profileSignature;
           }
