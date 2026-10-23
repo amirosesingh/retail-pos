@@ -179,6 +179,11 @@ export const verifyManagerPin = createServerFn({ method: "POST" })
     const { verifyManagerPinInDb, signOverrideGrant } = await import("./pos-rules.server");
     const { throttleStatus, throttleFail, throttleReset, minutesLeft } =
       await import("./pin-throttle.server");
+    const { beginPinRequest, finishPinRequest } = await import("./pin-request-throttle.server");
+    const sourceAttempt = await beginPinRequest();
+    if (sourceAttempt.locked) {
+      return { ok: false as const, error: "Too many wrong PINs. Try again later." };
+    }
     // Guessing is stopped in the server, not the keypad: the count follows the
     // manager ID, so trying from another till does not reset it.
     const throttleKey = `manager:${data.managerId.toLowerCase()}`;
@@ -201,6 +206,7 @@ export const verifyManagerPin = createServerFn({ method: "POST" })
         detail: data.detail ?? null,
       });
       if (!manager) {
+        await finishPinRequest(sourceAttempt.key, false);
         const after = await throttleFail(throttleKey);
         return {
           ok: false as const,
