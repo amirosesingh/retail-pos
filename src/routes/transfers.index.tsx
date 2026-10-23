@@ -173,7 +173,7 @@ function Transfers() {
             </div>
           </div>
           <Separator />
-          <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
+          <Table tableId="routes/transfers.index#1" managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
             <TableHeader>
               <TableRow>
                 <TableHead>Reference</TableHead>

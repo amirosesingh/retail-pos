@@ -30,6 +30,42 @@ describe("restricted Windows data", () => {
     authority.grant("admin","owner",{},"pos",null);
     expect(ipc.allowed("business:query",["sales",{}])).toBe(true);
   });
+  it("lets any signed-in account with transfer permission read transfers and their lines", () => {
+    authority.grant("staff", "stock-clerk", { can_create_transfer: true, "page:stock": true }, "pos", "branch-a");
+    for (const table of ["stock_transfers", "stock_transfer_items"])
+      expect(ipc.allowed("business:query", [table, {}])).toBe(true);
+    expect(ipc.allowed("business:query", ["sales", {}])).toBe(false);
+  });
+  it("does not ask for a supervisor PIN when a signed-in transfer permission is missing", () => {
+    authority.grant("staff", "cashier", { can_process_sale: true }, "pos", "branch-a");
+    expect(ipc.allowed("business:query", ["stock_transfers", {}])).toBe(false);
+    expect(ipc.refusal(ipc.levelFor("business:query"), "business:query", ["stock_transfers"])).toMatchObject({
+      code: "EPRIVILEGE",
+      error: expect.stringContaining("permission to view stock_transfers"),
+    });
+  });
+  it("distinguishes a missing verified session from a missing transfer permission", () => {
+    authority.grant("admin", "owner", {}, "manual", null);
+    expect(ipc.allowed("business:query", ["stock_transfers", {}])).toBe(false);
+    expect(ipc.refusal(ipc.levelFor("business:query"), "business:query", ["stock_transfers"]).error)
+      .toContain("verified POS session is not active");
+    authority.grant("admin", "owner", {}, "pos", null);
+    expect(ipc.allowed("business:query", ["stock_transfers", {}])).toBe(true);
+  });
+  it("uses operational permissions without requiring a supervisor role", () => {
+    authority.grant("staff", "database-operator", {
+      can_manage_sync_backup: true,
+      can_manage_terminals: true,
+      can_access_pos_settings: true,
+    }, "pos", "branch-a");
+    expect(ipc.allowed("pos:housekeep")).toBe(true);
+    expect(ipc.allowed("db:set-branch")).toBe(true);
+    expect(ipc.allowed("branding:write")).toBe(true);
+    expect(ipc.allowed("settings:set", ["receipt_typography"])).toBe(true);
+    authority.grant("supervisor", "unpermitted", {}, "pos", "branch-a");
+    expect(ipc.allowed("pos:housekeep")).toBe(false);
+    expect(ipc.allowed("branding:write")).toBe(false);
+  });
   it("uses real permission keys and matching database policy definitions", () => {
     const sql = readFileSync("supabase/migrations/20261022051000_restrict_business_data_reads.sql","utf8");
     const encoded = sql.match(/jsonb_each\('([^']+)'::jsonb/);

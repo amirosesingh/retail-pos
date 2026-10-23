@@ -304,7 +304,7 @@ function AllShops() {
               <Kpi label="Average basket" value={money(live.basket)} />
             </div>
             <div className="overflow-auto rounded-md border border-border bg-card">
-              <Table>
+              <Table tableId="routes/all-shops#1">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Time</TableHead>

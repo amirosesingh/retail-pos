@@ -297,7 +297,7 @@ function BusinessReport() {
 
         <div className="rounded-2xl border border-border bg-card">
           {view === "products" ? (
-            <Table loading={history.loading}>
+            <Table tableId="routes/reports.business#1" loading={history.loading}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Product</TableHead>
@@ -345,7 +345,7 @@ function BusinessReport() {
               </TableBody>
             </Table>
           ) : (
-            <Table loading={history.loading}>
+            <Table tableId="routes/reports.business#2" loading={history.loading}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Cashier</TableHead>

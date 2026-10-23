@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { notifyError } from "@/lib/notify";
 /**
  * Product table for stock paperwork (transfers, requests, receiving).
@@ -130,7 +131,7 @@ export function ProductPicker({
       )}
 
       <div className="max-h-72 overflow-y-auto rounded-md border border-border">
-        <table className="w-full text-xs">
+        <Table tableId="platforms/web/components/pos/ProductPicker.native#1" clientDataControls={false} className="w-full text-xs">
           <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
             <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <th className="px-2 py-1.5 font-medium">Barcode</th>
@@ -183,7 +184,7 @@ export function ProductPicker({
               </tr>
             )}
           </tbody>
-        </table>
+        </Table>
       </div>
       <p className="text-[11px] text-muted-foreground">
         Double-click a row to add it. Set the quantity in the list.

@@ -67,7 +67,7 @@ describe("administrator corrections and shared table controls", () => {
     expect(source).toContain("clientDataControls");
     expect(source).toContain("Array.isArray(node)");
     expect(source).toContain("node.props.onClick !== undefined");
-    expect(read("src/routes/audit.tsx")).toContain("<Table clientDataControls={false}>");
+    expect(read("src/routes/audit.tsx")).toMatch(/<Table tableId="routes\/audit#1" clientDataControls=\{false\}>/);
     expect(read("src/routes/audit.tsx")).toContain(
       'toast.error("Could not load correction history"',
     );

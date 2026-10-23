@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { createFileRoute } from "@tanstack/react-router";
@@ -122,7 +123,7 @@ function Verifications() {
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
+          <Table tableId="routes/verifications.native#1" clientDataControls={false} className="w-full text-sm">
             <thead className="bg-surface-2 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2">Sent</th>
@@ -160,7 +161,7 @@ function Verifications() {
                 </tr>
               )}
             </tbody>
-          </table>
+          </Table>
         </div>
       </div>
     </AppShell>

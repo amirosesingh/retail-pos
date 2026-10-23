@@ -379,13 +379,14 @@ function BookingsPage() {
           ))}
         </div>
 
-        {(
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap items-center gap-3 rounded-lg bg-muted/30 p-2">
+        <div className="flex min-w-0 flex-wrap gap-1" role="group" aria-label="Booking status">
           {(["all", "active", "collected", "cancelled"] as const).map((t) => (
             <button
               key={t}
-              onClick={() => setTab(t)}
-              className={`rounded-md border px-3 py-1.5 text-xs capitalize ${
+              onClick={() => { setTab(t); setJobFilter("all"); }}
+              aria-pressed={tab === t}
+              className={`rounded-full px-3 py-1.5 text-xs capitalize transition-colors ${
                 tab === t
                   ? "border-primary/40 bg-primary/10 text-primary"
                   : "border-border text-muted-foreground hover:text-foreground"
@@ -395,28 +396,15 @@ function BookingsPage() {
             </button>
           ))}
         </div>
-        )}
-
-        {kind === "racket" && (
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="mr-1 flex items-center gap-1 text-xs text-muted-foreground">
-            <Wrench className="size-3.5" /> Job cards
-          </span>
-          {(["all", "jobs", ...JOB_STATUS_FLOW] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setJobFilter(f)}
-              className={`rounded-md border px-3 py-1.5 text-xs ${
-                jobFilter === f
-                  ? "border-primary/40 bg-primary/10 text-primary"
-                  : "border-border text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {f === "all" ? "Everything" : f === "jobs" ? "String jobs" : JOB_STATUS_LABELS[f]}
-            </button>
-          ))}
+        {kind === "racket" && (tab === "all" || tab === "active") && <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          Job stage
+          <select className="h-8 rounded-md border bg-background px-2 text-foreground" value={jobFilter} onChange={e => { setJobFilter(e.target.value as JobStatus | "all"); if (e.target.value !== "all") setTab("active"); }}>
+            <option value="all">All stages</option>
+            {JOB_STATUS_FLOW.filter(stage => stage !== "collected").map(stage => <option key={stage} value={stage}>{JOB_STATUS_LABELS[stage]}</option>)}
+            <option value="damaged">{JOB_STATUS_LABELS.damaged}</option>
+          </select>
+        </label>}
         </div>
-        )}
 
         {bookings.length === 0 ? (
           <p className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">

@@ -280,7 +280,7 @@ function CouponsPage() {
               </p>
             </div>
           ) : (
-            <Table>
+            <Table tableId="routes/coupons#1">
               <TableHeader>
                 <TableRow>
                   <TableHead>Campaign</TableHead>

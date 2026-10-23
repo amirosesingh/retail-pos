@@ -23,10 +23,14 @@ export function ScanBar({
   onScan,
   disabled,
   className,
+  captureGlobal = true,
+  autoFocus = true,
 }: {
   onScan: (code: string) => void;
   disabled?: boolean;
   className?: string;
+  captureGlobal?: boolean;
+  autoFocus?: boolean;
 }) {
   const [code, setCode] = useState("");
   const [hasCamera, setHasCamera] = useState(false);
@@ -41,10 +45,14 @@ export function ScanBar({
 
   // Keyboard-wedge capture: a burst of characters ending with Enter is a scan.
   useEffect(() => {
+    if (!captureGlobal) return;
     let buffer = "";
     let last = 0;
     const onKey = (e: KeyboardEvent) => {
       if (typingInField(e.target)) return;
+      // A background register scanner must not add products to the ticket
+      // while a booking or another modal owns the keyboard.
+      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
       const now = Date.now();
       if (now - last > 120) buffer = "";
       last = now;
@@ -61,7 +69,7 @@ export function ScanBar({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onScan]);
+  }, [onScan, captureGlobal]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,7 +98,7 @@ export function ScanBar({
           <Input
             ref={inputRef}
             value={code}
-            autoFocus
+            autoFocus={autoFocus}
             disabled={disabled}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Scan or enter barcode…"

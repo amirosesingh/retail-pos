@@ -10,6 +10,21 @@ const { readPage } = require("../../../electron/sync/page-policy.cjs");
 const { aggregatePolicy } = require("../../../electron/db/write-policy.cjs");
 
 describe("shared database reliability", () => {
+  it("records a bounded local table-transfer history without extra cloud reads", async () => {
+    const push = vi.fn(async ({ onProgress }) => {
+      for (let index = 0; index < 55; index++) onProgress({ direction: "push", table: `table_${index}`, completed: 1 });
+      return { pushed: 55 };
+    });
+    const pull = vi.fn(async ({ onProgress }) => {
+      onProgress({ direction: "pull", table: "payment_types", completed: 2 });
+      return { merged: 2 };
+    });
+    const coordinator = new SyncCoordinator({ pushWorker: { run: push }, pullWorker: { run: pull } });
+    expect((await coordinator.runNow({ branchId: "B1" })).ok).toBe(true);
+    expect(coordinator.snapshot().recentTables).toHaveLength(50);
+    expect(coordinator.snapshot().recentTables[0]).toMatchObject({ table: "payment_types", direction: "pull", rows: 2 });
+    expect(coordinator.snapshot().recentTables.at(-1)).toMatchObject({ table: "table_6", direction: "push", rows: 1 });
+  });
   it("serializes lifecycle uploads and automatic synchronization", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {

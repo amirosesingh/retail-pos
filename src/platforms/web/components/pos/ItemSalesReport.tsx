@@ -167,7 +167,7 @@ export function ItemSalesReport() {
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table loading={history.loading}>
+          <Table tableId="platforms/web/components/pos/ItemSalesReport#1" loading={history.loading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Date &amp; time</TableHead>

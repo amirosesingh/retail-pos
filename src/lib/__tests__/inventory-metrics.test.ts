@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Product } from "@/core/types/pos-types";
-import { inventoryMetrics, isLowStock, needsCostReview, productMargin } from "../inventory-metrics";
+import { inventoryMetrics, inventoryUnitMargin, isLowStock, needsCostReview, productMargin } from "../inventory-metrics";
+import { emptyUnitCostSettings, updateUnitCostRules } from "../total-unit-cost";
 
 const branch = "15a19c3f-1805-428b-8606-e82e474f0db3";
 const product = (overrides: Partial<Product>): Product => ({
@@ -43,6 +44,16 @@ describe("inventory metrics", () => {
 
 
 describe("inventory stock categories and cost review", () => {
+  it("uses Total Unit Cost for catalog margin and keeps purchase cost unchanged", () => {
+    const item = product({ id: "item-a", price: 20, cost: 10 });
+    const settings = updateUnitCostRules(emptyUnitCostSettings, "default", [], { percent: 20, amount: 3 });
+    expect(inventoryUnitMargin(item, settings)).toBe(25);
+    expect(item.cost).toBe(10);
+    const custom = updateUnitCostRules(settings, "selected", ["item-a"], { percent: 50, amount: 1 });
+    expect(inventoryUnitMargin(item, custom)).toBe(20);
+    expect(inventoryUnitMargin(product({ id: "item-b", price: 20, cost: 10 }), custom)).toBe(25);
+    expect(inventoryUnitMargin(product({ id: "item-c", price: 20, cost: 0 }), custom)).toBeNull();
+  });
   it("keeps low, zero and negative totals disjoint at reorder boundaries", () => {
     const quantities = [-2, 0, 0.5, 1, 2];
     const metrics = inventoryMetrics(quantities.map(quantity => product({ stockByStore: { [branch]: quantity } })), branch);

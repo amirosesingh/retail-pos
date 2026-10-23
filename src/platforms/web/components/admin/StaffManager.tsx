@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { copyText } from "@/platform-config/clipboard";
 import { resendStaffConfirmation } from "@/lib/staff-admin-client";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -521,7 +522,7 @@ export function StaffManager() {
         />
       </div>
       <div className="overflow-x-auto">
-        <table className="block w-full text-sm sm:table">
+        <Table tableId="platforms/web/components/admin/StaffManager.native#1" clientDataControls={false} className="block w-full text-sm sm:table">
           <thead className="hidden sm:table-header-group">
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
               <th className="py-2">Staff</th>
@@ -638,7 +639,7 @@ export function StaffManager() {
               </tr>
             )}
           </tbody>
-        </table>
+        </Table>
       </div>
 
 

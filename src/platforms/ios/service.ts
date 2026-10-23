@@ -32,6 +32,8 @@ type Saved = {
   previous?: { id: string; version: string };
   device: string;
   silentDownload: boolean;
+  /** Set when the user explicitly changes automatic download in Settings. */
+  downloadPreferenceSet?: boolean;
   autoInstall: boolean;
   healthMonitor?: boolean;
 };
@@ -93,13 +95,17 @@ export class IosOtaService {
       current.bundle.id === "builtin"
         ? this.d.builtinVersion ?? this.trust.nativeVersion
         : current.bundle.version;
-    this.saved = (await this.d.load()) ?? {
+    const loaded = await this.d.load();
+    this.saved = loaded ?? {
       highest: installed,
       failed: [],
       device: crypto.randomUUID(),
-      silentDownload: false,
+      silentDownload: true,
       autoInstall: false,
     };
+    // Earlier app builds defaulted to no background download. Adopt the new
+    // default once; preserve an explicit opt-out made after this release.
+    if (loaded && loaded.downloadPreferenceSet !== true) this.saved.silentDownload = true;
     const failed = await this.d.updater.getFailedUpdate();
     if (failed?.bundle.version) this.saved.failed.push(failed.bundle.version);
     if (this.saved.pending && this.saved.pending !== installed)
@@ -127,13 +133,14 @@ export class IosOtaService {
   async preferences(silentDownload: boolean, autoInstall: boolean, healthMonitor = false) {
     await this.boot();
     this.saved.silentDownload = silentDownload;
+    this.saved.downloadPreferenceSet = true;
     this.saved.autoInstall = autoInstall;
     this.saved.healthMonitor = healthMonitor;
     await this.d.save(this.saved);
   }
   settings() {
     return {
-      silentDownload: this.saved?.silentDownload ?? false,
+      silentDownload: this.saved?.silentDownload ?? true,
       autoInstall: this.saved?.autoInstall ?? false,
       healthMonitor: this.saved?.healthMonitor ?? false,
     };

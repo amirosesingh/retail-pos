@@ -90,8 +90,8 @@ function Row({ c }: { c: SettingsCard }) {
 }
 
 function SettingsHome() {
-  const { isAdmin, isSupervisor, can } = useAuth();
-  const allowed = isAdmin || can("can_access_pos_settings") || isSupervisor;
+  const { can } = useAuth();
+  const allowed = can("can_access_pos_settings");
   const navigate = useNavigate({ from: "/settings/" });
   const { cat } = Route.useSearch();
   const { cards, categories } = useSettingsNav();

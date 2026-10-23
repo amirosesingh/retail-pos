@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { reconcileHealthScan } from "@/lib/reconcile-health-scan";
 import { copyText } from "@/platform-config/clipboard";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
@@ -214,7 +215,7 @@ export function LogicHealthPanel() {
       </section>
 
       <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full text-xs">
+        <Table tableId="platforms/web/components/pos/settings/panels/LogicHealthPanel.native#1" clientDataControls={false} className="w-full text-xs">
           <thead className="bg-muted/50">
             <tr className="text-left">
               <th className="px-3 py-2 font-medium">Severity</th>
@@ -254,7 +255,7 @@ export function LogicHealthPanel() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       {rows.length > 400 && (
         <p className="text-xs text-muted-foreground">

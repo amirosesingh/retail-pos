@@ -73,7 +73,9 @@ export async function handleUsernameLogin(request: Request): Promise<Response> {
     const { staffUsernameLogin } = await import("@/lib/staff-username-login.server");
     const result = await staffUsernameLogin(parsed.data.username, parsed.data.password);
     if (result.ok) {
-      await Promise.all([throttleReset(userKey), throttleReset(ipKey)]);
+      // A successful password for one account must not clear address-wide
+      // failures accumulated while guessing other accounts.
+      await throttleReset(userKey);
       return Response.json(result, { headers: noStore });
     }
     if (result.code === "invalid_credentials") {

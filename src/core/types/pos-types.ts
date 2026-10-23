@@ -971,6 +971,8 @@ export type TimeFormat = "12h" | "24h";
 export type SellingLayout = "standard" | "canvas";
 
 export type IntegrationSettings = {
+  /** Optional planning estimates; does not change purchase cost or profit. */
+  totalUnitCost?: import("@/lib/total-unit-cost").TotalUnitCostSettings;
   /** Register presentation only; both options use the same cart and checkout engine. */
   sellingLayout?: SellingLayout;
   displayProfile?: import("@/lib/display-profile").DisplayProfile;

@@ -151,7 +151,7 @@ function Purchasing() {
     void myServerId().then(setMeId);
   }, []);
   const { state, currentStore, allStores, upsertProduct, moveStock, syncProducts } = usePos();
-  const { can, user, isAdmin, isSupervisor } = useAuth();
+  const { can, user, isAdmin } = useAuth();
   const [invoiceNo, setInvoiceNo] = useState("");
   const [supplier, setSupplier] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(today());
@@ -829,8 +829,8 @@ function Purchasing() {
   }
 
   /** Save corrections to an already-received invoice, applying stock deltas. */
-  // Line-level corrections are a supervisor action; anyone may fix the header.
-  const mayEditLines = isAdmin || isSupervisor;
+  // Line-level corrections require the same receiving permission as the save.
+  const mayEditLines = can("can_receive_purchase_order");
 
   function patchEditLine(index: number, patch: Partial<ReceivingInvoice["lines"][number]>) {
     setEditing((inv) =>
@@ -1126,7 +1126,7 @@ function Purchasing() {
                 }}
               />
 
-              <Table managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+              <Table tableId="routes/purchasing#1" managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Barcode</TableHead>
@@ -1383,7 +1383,7 @@ function Purchasing() {
             </div>
           </div>
           <Separator />
-          <Table managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+          <Table tableId="routes/purchasing#2" managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
             <TableHeader>
               <TableRow>
                 <TableHead>Reference</TableHead>
@@ -1580,7 +1580,7 @@ function Purchasing() {
                 </p>
               )}
 
-              <Table managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
+              <Table tableId="routes/purchasing#3" managed mobileCards={false} className="min-w-[60rem]" summaryFormats={{ Amount: money, "Net impact": money, "Estimated cost": money }}>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Item number / SKU</TableHead>

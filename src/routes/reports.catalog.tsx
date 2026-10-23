@@ -105,7 +105,7 @@ function CatalogReport() {
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table>
+          <Table tableId="routes/reports.catalog#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

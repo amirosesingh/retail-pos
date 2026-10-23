@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { copyText } from "@/platform-config/clipboard";
 /**
  * "Schema & Feature Health" — every POS feature checked against the live
@@ -81,7 +82,7 @@ export function FeatureSchemaReport() {
 
       {report && (
         <div className="w-full overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-0 text-xs">
+          <Table tableId="platforms/web/components/pos/settings/panels/FeatureSchemaReport.native#1" clientDataControls={false} className="w-full min-w-0 text-xs">
             <thead className="bg-muted/50">
               <tr className="text-left">
                 <th className="px-3 py-2 font-medium">Feature</th>
@@ -147,7 +148,7 @@ export function FeatureSchemaReport() {
                 );
               })}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
     </section>

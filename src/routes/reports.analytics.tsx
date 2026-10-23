@@ -484,7 +484,7 @@ function AnalyticsBoard() {
 
           <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">Profit by shop</h2>
-            <Table loading={history.loading}>
+            <Table tableId="routes/reports.analytics#1" loading={history.loading}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Shop</TableHead>

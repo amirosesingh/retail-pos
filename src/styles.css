@@ -1384,6 +1384,17 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
   -webkit-app-region: drag;
   app-region: drag;
 }
+.native-caption-title {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  padding: 0 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
 .native-caption-controls { display: flex; -webkit-app-region: no-drag; app-region: no-drag; }
 .native-caption-controls button { display: grid; place-items: center; width: 46px; height: 32px; background: transparent; border: 0; cursor: pointer; }
 .native-caption-controls button:hover { background: var(--muted); }

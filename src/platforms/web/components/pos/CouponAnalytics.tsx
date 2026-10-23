@@ -77,7 +77,7 @@ export function CouponAnalytics() {
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <Table>
+          <Table tableId="platforms/web/components/pos/CouponAnalytics#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Campaign</TableHead>

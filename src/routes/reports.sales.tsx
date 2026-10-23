@@ -147,7 +147,7 @@ export function BillsReport() {
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table loading={history.loading}>
+          <Table tableId="routes/reports.sales#1" loading={history.loading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

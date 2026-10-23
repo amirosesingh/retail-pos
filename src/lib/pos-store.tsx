@@ -149,7 +149,7 @@ import {
   type SettingsSectionId,
 } from "./settings-sections";
 import { localDb } from "@/core/local-db/local-db";
-import { businessReadsReady } from "./business-readiness";
+import { businessReadsReady, transferReadsReady } from "./business-readiness";
 import { hasCentralAuthSession, subscribeCentralAuthSession } from "./session-presence";
 import { retryDataRead } from "./read-retry";
 import {
@@ -584,6 +584,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   // Loading, ready, stalled or failed — never "the clock ran out, call it ready".
   const [loadPhase, setLoadPhase] = useState<LoadPhase>("loading");
+  const [snapshotIdentity, setSnapshotIdentity] = useState<string | null>(null);
   const [settingsSnapshotLoaded, setSettingsSnapshotLoaded] = useState(false);
   // Whether the location list has actually been answered for, so an empty list
   // can be told apart from a list that has not arrived yet.
@@ -675,6 +676,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // Anonymous visitors get nothing: no products, members or sales.
       if (!signedIn) {
         if (authReady && !cancelled) {
+          setSnapshotIdentity(null);
           setReady(true);
           setLoadPhase("ready");
         }
@@ -765,6 +767,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const cloud = directory?.ok ? { ...loaded, stores: directory.stores } : loaded;
         fullSnapshotApplied = true;
         setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
+        setSnapshotIdentity(readIdentity ?? null);
         setSettingsSnapshotLoaded(true);
         markStartupStage("remaining-data-ready");
         // The locations question now has a real answer, empty or not.
@@ -779,10 +782,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
             if (cancelled || !cloudBookings.length) return;
             setState((s: PosState) => {
               const seen = new Set(cloudBookings.map((b) => b.id));
-              return {
-                ...s,
-                bookings: [...cloudBookings, ...s.bookings.filter((b) => !seen.has(b.id))],
-              };
+              const bookings = [...cloudBookings, ...s.bookings.filter((b) => !seen.has(b.id))];
+              return hasSameValue(s.bookings, bookings) ? s : { ...s, bookings };
             });
           })
           .catch(() => {
@@ -821,11 +822,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // their persisted headers and lines separately so a reload does not turn a
   // dispatched delivery into an empty receiving page or a read-only deep link.
   useEffect(() => {
-    if (!readsReady || !state.currentStoreId) return;
+    // A remembered branch can exist before the Electron SQL pool finishes
+    // connecting. Let the primary snapshot prove the selected backend is ready
+    // before this secondary read; otherwise startup shows a false transfer
+    // failure that disappears as soon as the connection completes.
+    if (!transferReadsReady(readsReady, loadPhase, readIdentity, snapshotIdentity, state.currentStoreId)) return;
     let cancelled = false;
     let running = false;
     let queued = false;
     let warned = false;
+    let eventTimer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
       if (running) {
         queued = true;
@@ -862,8 +868,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
         }
       }
     };
-    const wake = () => { void refresh(); };
-    wake();
+    const wake = () => {
+      // One transfer commonly commits its header and several lines together.
+      // Collapse those hints into one scoped read without delaying startup.
+      if (eventTimer) clearTimeout(eventTimer);
+      eventTimer = setTimeout(() => { eventTimer = undefined; void refresh(); }, 150);
+    };
+    void refresh();
     const offData = subscribeDataChange((change) => {
       if (change.table === "stock_transfers" || change.table === "stock_transfer_items") wake();
     });
@@ -873,15 +884,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const offLocal = localDb()?.onBusinessChanged?.((change) => {
       if (change.kind === "transfer") wake();
     });
-    const offCatchup = subscribeBackgroundRefresh(wake, 60_000, effectiveDatabaseMode() !== "online");
+    const local = effectiveDatabaseMode() !== "online";
+    const offCatchup = subscribeBackgroundRefresh(wake, local ? 60_000 : 300_000, local);
     return () => {
       cancelled = true;
+      if (eventTimer) clearTimeout(eventTimer);
       offCatchup();
       offData();
       offSettings();
       offLocal?.();
     };
-  }, [readsReady, readIdentity, state.currentStoreId]);
+  }, [readsReady, loadPhase, snapshotIdentity, readIdentity, state.currentStoreId]);
 
   useEffect(() => {
     if (!ready) return;
@@ -1089,6 +1102,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     let loading = false;
     let resumeTimer: number | undefined;
+    let lastResumeStarted = 0;
     const resume = () => {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
       // Focus, visibility and the native app-state event often arrive together.
@@ -1096,7 +1110,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (resumeTimer) window.clearTimeout(resumeTimer);
       resumeTimer = window.setTimeout(() => {
         resumeTimer = undefined;
-        if (loading || cancelled) return;
+        // Focus, visibility and native resume can arrive in separate bursts.
+        // A recent or running snapshot already covers that foreground return.
+        if (loading || cancelled || Date.now() - lastResumeStarted < 5_000) return;
+        lastResumeStarted = Date.now();
         loading = true;
         void loadCloudState()
           .then((cloud) => {
@@ -1217,16 +1234,18 @@ export function PosProvider({ children }: { children: ReactNode }) {
           setState(current => {
             const byId = new Map(rows.map(row => [row.id,row]));
             const known = new Set(current.bookings.map(row=>row.id));
-            return {...current,bookings:[
+            const bookings = [
               ...current.bookings.filter(row => !changed.has(row.id) || byId.has(row.id)).map(row => byId.get(row.id) ?? row),
               ...rows.filter(row => !known.has(row.id)),
-            ]};
+            ];
+            return hasSameValue(current.bookings, bookings) ? current : { ...current, bookings };
           });
         }).catch(cause => { if (active) dbError("Refreshing bookings",cause); });
       },200);
     };
     const off = subscribeDataChange(changedBooking);
-    const offCatchup = subscribeBackgroundRefresh(() => changedBooking({ table: "bookings" }), 60_000, effectiveDatabaseMode() !== "online");
+    const local = effectiveDatabaseMode() !== "online";
+    const offCatchup = subscribeBackgroundRefresh(() => changedBooking({ table: "bookings" }), local ? 60_000 : 300_000, local);
     return () => { active = false; off(); offCatchup(); if (timer) clearTimeout(timer); };
   }, [readsReady, readIdentity, state.currentStoreId]);
 

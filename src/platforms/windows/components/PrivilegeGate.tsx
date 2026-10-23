@@ -20,8 +20,7 @@ import {
 import { wrapBridge, registerDesktopBridge } from "@/platforms/windows/privilege-bridge";
 import { onRecoveryScreen } from "@/lib/recovery-route";
 import { useAuth } from "@/lib/pos-auth";
-import { readCredentials } from "@/lib/pos-credentials";
-import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { ensureDesktopPosSession } from "@/lib/desktop-pos-session";
 import { toast } from "sonner";
 import { canPromptForUnlock } from "../unlock-prompt-policy";
 
@@ -60,9 +59,8 @@ export function PrivilegeGate({ children }: { children: React.ReactNode }) {
         await bridge.lockAdmin?.();
         return;
       }
-      const proof = await readCredentials();
       if (!active) return;
-      await bridge.adoptSession?.(proof, readTerminalConfig());
+      await ensureDesktopPosSession();
     };
     void sync().catch(() => { /* Offline startup must not open a PIN dialog or reject globally. */ });
     return () => {
@@ -81,10 +79,7 @@ export function PrivilegeGate({ children }: { children: React.ReactNode }) {
       // may be carrying older cached permissions; the server re-reads
       // public.app_users before granting desktop database access.
       if (user) {
-        const adopted = await Promise.resolve().then(async () => window.sqlAdmin?.adoptSession?.(
-          await readCredentials(),
-          readTerminalConfig(),
-        )).catch(() => null);
+        const adopted = await ensureDesktopPosSession(true).catch(() => null);
         if (adopted?.ok) {
           if (requiredLevel === "admin" && adopted.level !== "admin") {
             if (allowPrompt) toast.error("Administrator access required", {

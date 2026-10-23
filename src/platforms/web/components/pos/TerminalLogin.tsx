@@ -11,6 +11,7 @@ import { isLocalWebCashierTest, isNative, isTerminalApp } from "@/platform-confi
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { CashierPinLogin } from "@/platforms/web/components/auth/CashierPinLogin";
 import { isExternalEmail, usernameFromAddress } from "@/lib/internal-domains";
+import { passwordUsername } from "@/lib/password-username";
 import { isConfigurationFailure, type LoginFailure } from "@/lib/login-failure";
 
 export function TerminalLogin() {
@@ -100,7 +101,7 @@ export function TerminalLogin() {
                 const typed = submittedIdentifier.toLowerCase();
                 // A cashier with no password goes to the PIN keypad. A staff
                 // member who entered a password may use their login username.
-                if (terminal && typed && !isExternalEmail(typed) && !submittedPassword) {
+                if (terminal && typed && !isExternalEmail(typed) && !passwordUsername(typed) && !submittedPassword) {
                   setPinIdentifier(usernameFromAddress(typed));
                   setRouted(true);
                   setError("");
@@ -126,7 +127,7 @@ export function TerminalLogin() {
                   name="username"
                   type="text"
                   autoComplete="username"
-                  placeholder="supervisor@store.com"
+                  placeholder="Email or @username"
                   value={email}
                   onChange={(e) => {
                     setEmail(e.target.value);
@@ -172,7 +173,7 @@ export function TerminalLogin() {
               </Button>
               <p className="text-[11px] leading-relaxed text-muted-foreground">
                 {terminal
-                  ? "Supervisor and admin accounts sign in with username or email and password; cashiers use the PIN tab."
+                  ? "Password accounts use username, @username, or email; cashiers use the PIN tab."
                   : "Cashier PIN sign-in is only available on the desktop and mobile terminal apps."}
               </p>
             </form>

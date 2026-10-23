@@ -4,6 +4,7 @@ import { useLocalStartupReady } from "./use-local-startup";
 import { createSessionTransition } from "./session-transition";
 import { terminalUserPermissions } from "./terminal-user-permissions";
 import { createPermissionRefresh } from "./permission-refresh";
+import { ensureDesktopPosSession } from "./desktop-pos-session";
 import { subscribeDataChange, subscribeSettingsChange } from "./sync-engine";
 import { normalizeUuidFields } from "./uuid-fields";
 import { preserveSessionDrafts } from "./session-draft";
@@ -30,6 +31,7 @@ import { issueCashierSession } from "@/lib/pos-session.functions";
 import { startDeviceSession, endDeviceSession } from "@/lib/user-sessions-client";
 import { loadSessionToken, saveSessionToken } from "@/lib/pos-credentials";
 import { isBareUsername, toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
+import { passwordUsername } from "@/lib/password-username";
 import { activeBranchId, activeBranchName, bindTerminalBranch } from "@/lib/active-branch";
 import { verifyCachedPin } from "@/lib/offline-credentials";
 import { recordSignIn } from "@/lib/shift-attendance";
@@ -620,12 +622,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setCentralSessionVerified(false);
       let authResult: Awaited<ReturnType<typeof supabase.auth.setSession>>;
       try {
-        if (isBareUsername(email)) {
+        const alias = passwordUsername(email);
+        if (alias || isBareUsername(email)) {
           const { posFetch } = await import("@/lib/server-origin");
           const response = await posFetch("/api/public/username-login", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username: email.trim(), password }),
+            body: JSON.stringify({ username: alias ?? email.trim(), password }),
           });
           if (!response.ok) {
             const code = response.status === 401 ? "invalid-credentials" as const : "cloud-unreachable" as const;
@@ -1338,10 +1341,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Electron independently verifies the same proof in its main process.
         // Never pass a permission matrix from the renderer to native authority.
         const profileSignature = result.status === "ok" ? JSON.stringify(result.profile) : null;
-        if (result.status === "ok" && profileSignature !== nativeProfile && isWindowsShell() && window.sqlAdmin?.adoptSession) {
-          const adopted = await window.sqlAdmin.adoptSession(proof, readTerminalConfig());
-          if (!adopted.ok) return null;
-          nativeProfile = profileSignature;
+        if (result.status === "ok" && isWindowsShell() && window.sqlAdmin?.adoptSession) {
+          // The native grant expires while idle and a settings PIN unlock can
+          // replace it. A matching web profile alone does not prove that the
+          // main process still holds this verified POS session.
+          const native = await window.sqlAdmin.adminStatus?.();
+          if (profileSignature !== nativeProfile || !native?.unlocked || native.source !== "pos") {
+            const adopted = await ensureDesktopPosSession(true, proof);
+            if (!adopted.ok) return null;
+            nativeProfile = profileSignature;
+          }
         }
         return result;
       },

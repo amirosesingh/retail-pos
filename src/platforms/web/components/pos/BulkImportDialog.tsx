@@ -521,7 +521,7 @@ export function BulkImportDialog({
               </div>
 
               <div className="max-h-[48vh] overflow-auto rounded-lg border border-border">
-                <Table>
+                <Table tableId="platforms/web/components/pos/BulkImportDialog#1">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-9">

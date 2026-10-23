@@ -252,7 +252,7 @@ function ReceivingWorkspace() {
               />
             </div>
           )}
-          <Table>
+          <Table tableId="routes/receiving.$id#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Product</TableHead>

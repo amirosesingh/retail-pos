@@ -29,7 +29,7 @@ import { useAuth } from "@/lib/pos-auth";
 import { usePos } from "@/lib/pos-store";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { rulesEqual } from "@/lib/pos-rules-pending";
-import { RULE_GROUPS, type PosRules, type PosRuleKey } from "@/lib/pos-rules";
+import { RULE_GROUPS, requiresClosingCashCount, withClosingCashCount, type PosRules, type PosRuleKey } from "@/lib/pos-rules";
 import { savePosRules } from "@/lib/pos-rules-client";
 import { queueRulesSave } from "@/lib/pos-rules-offline";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
@@ -206,7 +206,9 @@ function RulesSettings() {
   }
 
   const set = (key: PosRuleKey, value: boolean | number) =>
-    setDraft((d) => ({ ...d, [key]: value }) as PosRules);
+    setDraft((d) => key === "require_counted_cash_on_close"
+      ? withClosingCashCount(d, Boolean(value))
+      : ({ ...d, [key]: value }) as PosRules);
 
   /**
    * Keep the change on this terminal and let the sync worker deliver it.
@@ -324,8 +326,6 @@ function RulesSettings() {
           }} />
         </div>}
 
-        <OperationalRulesPanel canEdit={mayEdit} />
-
         {!mayEdit && (
           <p className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
             You can see what is enforced, but changing rules requires the POS settings permission.
@@ -409,9 +409,10 @@ function RulesSettings() {
               dirtyText="Unsaved rule changes"
             />
           </div>
+          <div className="pt-4"><OperationalRulesPanel canEdit={mayEdit} /></div>
           <SettingsSections
             storageKey="rules"
-            items={RULE_GROUPS.map((group) => ({
+            items={RULE_GROUPS.filter(group => group.id !== "pin-gates").map((group) => ({
               id: group.id,
               title: group.label,
               blurb: group.blurb,
@@ -430,7 +431,7 @@ function RulesSettings() {
                         <Switch
                           aria-label={field.label}
                           disabled={!mayEdit}
-                          checked={Boolean(draft[field.key])}
+                          checked={field.key === "require_counted_cash_on_close" ? requiresClosingCashCount(draft) : Boolean(draft[field.key])}
                           onCheckedChange={(v) => set(field.key, v)}
                         />
                       ) : (
@@ -457,6 +458,19 @@ function RulesSettings() {
           mayEdit={mayEdit}
           canEditGlobal={isAdmin}
         />
+
+        <details className="rounded-lg border border-border bg-card p-4">
+          <summary className="cursor-pointer text-sm font-medium">Fallback PIN requirements</summary>
+          <p className="mt-2 text-xs text-muted-foreground">These saved rules are used only when central Authorization Rules are unavailable. Approval PINs are assigned per user in Staff &amp; Permissions.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {RULE_GROUPS.find(group => group.id === "pin-gates")?.fields.map(field =>
+              <label key={field.key} className="flex items-center justify-between gap-3 rounded-md border border-border/60 p-3 text-sm">
+                <span>{field.label}<HelpTip text={field.blurb} label={`About ${field.label}`} /></span>
+                <Switch aria-label={field.label} disabled={!mayEdit} checked={Boolean(draft[field.key])} onCheckedChange={value => set(field.key, value)} />
+              </label>
+            )}
+          </div>
+        </details>
 
         <section className="space-y-4 rounded-lg border border-border bg-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">

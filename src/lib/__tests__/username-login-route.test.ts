@@ -29,7 +29,7 @@ describe("public username login", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).toMatchObject({ ok: true, accessToken: "access" });
-    expect(mocks.reset).toHaveBeenCalledTimes(2);
+    expect(mocks.reset).toHaveBeenCalledExactlyOnceWith("staff-password:manager");
   });
 
   it("throttles wrong passwords without identifying the account", async () => {

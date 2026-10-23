@@ -455,7 +455,7 @@ function Shifts() {
                 No sign-ins recorded yet today.
               </p>
             ) : (
-              <Table>
+              <Table tableId="routes/shifts#1">
                 <TableHeader>
                   <TableRow>
                     <TableHead>User</TableHead>
@@ -500,7 +500,7 @@ function Shifts() {
                 No shift sessions recorded for this branch yet.
               </p>
             ) : (
-              <Table>
+              <Table tableId="routes/shifts#2">
                 <TableHeader>
                   <TableRow>
                     <TableHead>User</TableHead>
@@ -584,7 +584,7 @@ function Shifts() {
           <section className="rounded-lg border border-border bg-card">
             <h2 className="px-5 py-3 text-sm font-semibold">Shift history</h2>
             <Separator />
-            <Table>
+            <Table tableId="routes/shifts#3">
               <TableHeader>
                 <TableRow>
                   <TableHead>Cashier</TableHead>

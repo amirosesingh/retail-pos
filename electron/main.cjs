@@ -2000,7 +2000,15 @@ function registerIpc() {
   });
   ipcMain.handle("approval:own-token-vault", (event, operation, key, value) => guard.guarded(() => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error("Approval storage is limited to the POS window");
-    return { ok: true, ...ownApprovalTokenVault(operation, key, value) };
+    try {
+      return { ok: true, ...ownApprovalTokenVault(operation, key, value) };
+    } catch (error) {
+      // No enrolled token is a normal first-run state. Return the same
+      // not-found result without flooding Electron's handler error log.
+      if (operation === "get" && error?.message === "not found")
+        return { ok: false, error: "not found" };
+      throw error;
+    }
   }));
   ipcMain.handle("approval:enroll-verifier", async (_e, proof) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_manage_staff"))
@@ -2246,6 +2254,7 @@ function registerIpc() {
   ipcMain.handle("update:diagnose", () => updater.diagnose());
   ipcMain.handle("update:download-page", () => updater.downloadPage());
   ipcMain.handle("app:version", () => app.getVersion());
+  ipcMain.handle("app:name", () => app.isPackaged ? app.getName() : (require("../package.json").build?.productName || app.getName()));
   ipcMain.handle("net:get-json", (_e, url) => netHttp.getJson(String(url)));
   ipcMain.handle("cloud:request", (_e, request) => require("./supabase-http.cjs").supabaseRequest(request, cloudCredentials.read()));
   ipcMain.handle("net:head", (_e, url) => netHttp.head(String(url)));
@@ -2349,7 +2358,7 @@ app.whenReady().then(async () => {
     for (const name of Object.keys(headers)) {
       if (["content-security-policy", "content-security-policy-report-only"].includes(name.toLowerCase())) delete headers[name];
     }
-    headers["Content-Security-Policy"] = [["default-src 'self' data: blob:", "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:", "connect-src 'self' https: wss: http://127.0.0.1:* http://localhost:*", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'"].join("; ")];
+    headers["Content-Security-Policy"] = [["default-src 'self' data: blob:", "script-src 'self' 'unsafe-inline' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:", "connect-src 'self' https: wss: http://127.0.0.1:* http://localhost:*", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'"].join("; ")];
     callback({ responseHeaders: headers });
   });
   try { storageHygiene.runOnLaunch(app.getPath("userData"), app.getVersion()); } catch (error) { if (DEBUG) console.warn("[pos] storage hygiene skipped:", fail(error).error); }

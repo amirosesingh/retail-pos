@@ -218,7 +218,7 @@ function StockReport() {
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table loading={history.isPending}>
+          <Table tableId="routes/reports.stock#1" loading={history.isPending}>
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

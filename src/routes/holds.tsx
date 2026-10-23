@@ -165,7 +165,7 @@ function HoldTickets() {
         </header>
 
         <section className="rounded-lg border border-border bg-card">
-          <Table>
+          <Table tableId="routes/holds#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Ticket</TableHead>

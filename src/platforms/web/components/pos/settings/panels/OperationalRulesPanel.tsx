@@ -8,8 +8,7 @@ import { notifyError } from "@/lib/notify";
 export function OperationalRulesPanel({ canEdit }: { canEdit: boolean }) {
   const { state, updateSettings, saveConfiguredSettings, settingsScopeLoading } = usePos();
   const [saving, setSaving] = useState(false);
-  return <section className="space-y-3">
-    <h2 className="text-sm font-semibold">Operational rules</h2>
+  return <div>
     <div className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
       <div className="min-w-0">
         <p className="text-sm font-medium">Stock transfers need approval</p>
@@ -28,5 +27,5 @@ export function OperationalRulesPanel({ canEdit }: { canEdit: boolean }) {
           })();
         }} />
     </div>
-  </section>;
+  </div>;
 }

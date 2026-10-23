@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { reconcileLiveRows } from "@/lib/live-state";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1002,7 +1003,7 @@ function TicketReview({ row, stores }: { row: AuthorizationRequest; stores: read
         )}
       </div>
       <div className="responsive-table-region overflow-x-auto">
-        <table data-mobile-cards="true" className="responsive-table w-full text-xs">
+        <Table tableId="routes/approvals.native#1" clientDataControls={false} data-mobile-cards="true" className="responsive-table w-full text-xs">
           <thead className="text-muted-foreground">
             <tr>
               <th className="px-3 py-1 text-left font-normal">Item</th>
@@ -1037,7 +1038,7 @@ function TicketReview({ row, stores }: { row: AuthorizationRequest; stores: read
               </tr>
             )}
           </tbody>
-        </table>
+        </Table>
       </div>
       <div className="flex flex-wrap justify-end gap-4 border-t border-border/60 px-3 py-2 text-xs">
         <span className="text-muted-foreground">Subtotal {money(t.subtotal)}</span>

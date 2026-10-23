@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { Crown, Gift, Percent, Plus, Sparkles, Trash2, Trophy } from "lucide-react";
@@ -128,7 +129,7 @@ function Promotions() {
         </header>
 
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
+          <Table tableId="routes/promotions.native#1" clientDataControls={false} className="w-full text-sm">
             <thead className="bg-surface-2 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2">Rule</th>
@@ -212,7 +213,7 @@ function Promotions() {
                 </tr>
               )}
             </tbody>
-          </table>
+          </Table>
         </div>
       </div>
 

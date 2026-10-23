@@ -692,7 +692,7 @@ export function TerminalTokens({
               : "No terminals registered yet."}
           </p>
         ) : (
-          <Table>
+          <Table tableId="platforms/web/components/pos/TerminalTokens#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Device name</TableHead>

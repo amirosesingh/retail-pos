@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   Inbox,
   History,
+  Pencil,
   Plus,
   Search,
   SlidersHorizontal,
@@ -53,7 +54,7 @@ import { notifyError } from "@/lib/notify";
 import { ProductDeleteBlockedDialog } from "@/platforms/web/components/pos/ProductDeleteBlockedDialog";
 import type { BlockedDelete } from "@/lib/product-delete";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import { exportProductsXlsx } from "@/lib/product-export";
+import { exportProductsXlsx, productsForExport, type ProductExportScope } from "@/lib/product-export";
 import {
   groupList,
   isActive,
@@ -76,8 +77,10 @@ import type { Product } from "@/core/types/pos-types";
 import { nextSku, peekSku, readSkuSettings } from "@/lib/sku";
 import { localTerminalId } from "@/lib/shift-hours";
 import { cn } from "@/lib/utils";
-import { inventoryMetrics, isLowStock, needsCostReview, productMargin } from "@/lib/inventory-metrics";
+import { inventoryMetrics, inventoryUnitMargin, isLowStock, needsCostReview } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
+import { totalUnitCost } from "@/lib/total-unit-cost";
+import { TotalUnitCostDialog } from "@/platforms/web/components/pos/TotalUnitCostDialog";
 
 export const Route = createFileRoute("/inventory")({
   head: () => ({
@@ -133,7 +136,7 @@ function Inventory() {
     restoreProducts,
   } = usePos();
   const [branchPriceOnly, setBranchPriceOnly] = useState(false);
-  const { can } = useAuth();
+  const { can, isAdmin } = useAuth();
   const { visible } = useVisibility();
   // Money columns need the reporting permission *and* the administrator's
   // "show cost & margin" switch for this role.
@@ -164,6 +167,8 @@ function Inventory() {
   const [expandedProducts, setExpandedProducts] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [unitCostEdit, setUnitCostEdit] = useState<{ ids: string[]; initialTarget: "default" | "selected"; productName?: string } | null>(null);
   const [blocked, setBlocked] = useState<BlockedDelete[]>([]);
   const [deleting, setDeleting] = useState<string[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -247,7 +252,7 @@ function Inventory() {
       if (showMoney && costReviewOnly && !needsCostReview(p.cost)) return false;
       if (minPrice !== "" && p.price < Number(minPrice)) return false;
       if (maxPrice !== "" && p.price > Number(maxPrice)) return false;
-      const margin = productMargin(p.price, p.cost);
+      const margin = inventoryUnitMargin(p, state.settings.integrations.totalUnitCost);
       if (minMargin !== "" && (margin === null || margin < Number(minMargin))) return false;
       if (!needle) return true;
       // Cheapest fields first — most searches stop on the name.
@@ -317,6 +322,18 @@ function Inventory() {
     [catalogProducts, currentStore.id],
   );
 
+  function exportCatalogue(scope: ProductExportScope) {
+    const products = productsForExport(catalogProducts, scope, currentStore.id);
+    if (!products.length) {
+      toast.info("No products match this export choice");
+      return;
+    }
+    setExportOpen(false);
+    void exportProductsXlsx(products, stores, `products-${currentStore.code}-${scope}`, showMoney)
+      .then(() => toast.success(`Exported ${products.length} products to Excel`))
+      .catch(error => notifyError(error, "Exporting products"));
+  }
+
   return (
     <AppShell>
       <div className="pos-page-container">
@@ -327,7 +344,7 @@ function Inventory() {
               <AnimatedMetric value={metrics.products} /> active products ·{" "}
               {showStockValue && (
                 <>
-                  cost value <span className="numeric">{money(metrics.costValue)}</span> ·{" "}
+                  purchase cost value <span className="numeric">{money(metrics.costValue)}</span> ·{" "}
                 </>
               )}
               <span className="text-warning">
@@ -335,8 +352,8 @@ function Inventory() {
               </span>
             </p>
           </div>
-          <div className="flex w-full flex-wrap gap-2 lg:w-auto lg:justify-end">
-            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:flex-wrap lg:w-auto lg:justify-end">
+            <div className="col-span-2 flex w-full min-w-0 items-center gap-2 sm:w-auto">
               <div className="relative min-w-0 flex-1 sm:flex-none">
                 <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -347,30 +364,43 @@ function Inventory() {
                 />
                 <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2" aria-label="Advanced product filters" title="Advanced filters" onClick={() => setAdvanced(true)}><SlidersHorizontal className="size-4" /></Button>
               </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild><Button variant="outline" className="size-9 shrink-0 px-0 lg:w-auto lg:px-4" aria-label="Inventory actions" title="Inventory actions"><MoreHorizontal className="size-4" /><span className="hidden lg:inline">Actions</span></Button></DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
-                  <DropdownMenuItem onSelect={() => { setShowArchived(value => !value); setSelected([]); }}><Archive className="size-4" />{showArchived ? "Show active products" : "Show archived products"}</DropdownMenuItem>
-                  {canBulk && <DropdownMenuItem onSelect={() => setImportOpen(true)}>Import from Excel</DropdownMenuItem>}
-                  <DropdownMenuItem onSelect={() => {
-                    const duplicates = findDuplicateProductCodes(state.products);
-                    setDuplicateRows(duplicates);
-                    if (!duplicates.length) toast.success("No duplicate SKU or barcode values found");
-                    else setDuplicateOpen(true);
-                  }}>Check duplicate codes</DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => {
-                    void exportProductsXlsx(rows, stores, `products-${currentStore.code}`)
-                      .then(() => toast.success(`Exported ${rows.length} products to Excel`))
-                      .catch(error => notifyError(error, "Exporting products"));
-                  }}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
-            <div ref={setColumnControlsTarget} className="flex items-center" />
-            {showMoney && (costReviewCount > 0 || costReviewOnly) && <Button variant={costReviewOnly ? "default" : "outline"} onClick={() => { setCostReviewOnly(value => !value); setSelected([]); }}>
-              {costReviewOnly ? "Clear cost review" : `Review costs · ${costReviewCount}`}
-            </Button>}
+            <Button variant="outline" size="sm" onClick={() => { setShowArchived(value => !value); setSelected([]); }}>
+              <Archive className="size-4" /> {showArchived ? "Show active" : "Show archived"}
+            </Button>
+            <div ref={setColumnControlsTarget} className="flex items-center [&>button]:w-full sm:[&>button]:w-auto" />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button variant="outline" size="sm" aria-label="Inventory actions"><MoreHorizontal className="size-4" />Actions</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
+                {showMoney && (costReviewCount > 0 || costReviewOnly) && <DropdownMenuItem onSelect={() => { setCostReviewOnly(value => !value); setSelected([]); }}>
+                  {costReviewOnly ? "Clear cost review" : `Review costs · ${costReviewCount}`}
+                </DropdownMenuItem>}
+                {canBulk && <DropdownMenuItem onSelect={() => setImportOpen(true)}>Import from Excel</DropdownMenuItem>}
+                <DropdownMenuItem onSelect={() => {
+                  const duplicates = findDuplicateProductCodes(state.products);
+                  setDuplicateRows(duplicates);
+                  if (!duplicates.length) toast.success("No duplicate SKU or barcode values found");
+                  else setDuplicateOpen(true);
+                }}>Check duplicate codes</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {isAdmin && showMoney && <DropdownMenuItem onSelect={() => setUnitCostEdit({ ids: selected, initialTarget: selected.length ? "selected" : "default" })}><SlidersHorizontal className="size-4" />Total Unit Cost rules</DropdownMenuItem>}
+                <DropdownMenuItem onSelect={() => setExportOpen(true)}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {unitCostEdit && <TotalUnitCostDialog open onOpenChange={open => { if (!open) setUnitCostEdit(null); }} selected={unitCostEdit.ids} initialTarget={unitCostEdit.initialTarget} productName={unitCostEdit.productName} />}
+            <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+              <DialogContent className="max-w-sm">
+                <DialogHeader><DialogTitle>Export products to Excel</DialogTitle></DialogHeader>
+                <p className="text-sm text-muted-foreground">Choose which products to include from this branch's catalogue.</p>
+                <div className="grid gap-2">
+                  <Button variant="outline" onClick={() => exportCatalogue("all")}>All active and archived</Button>
+                  <Button variant="outline" onClick={() => exportCatalogue("active")}>Active products</Button>
+                  <Button variant="outline" onClick={() => exportCatalogue("active-in-stock")}>Active with stock at this branch</Button>
+                  <Button variant="outline" onClick={() => exportCatalogue("archived")}>Archived products only</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
 
             {canOpenEditor && (
               <Dialog
@@ -390,7 +420,7 @@ function Inventory() {
               >
                 {canCreate && (
                   <DialogTrigger asChild>
-                    <Button
+                    <Button size="sm"
                       onClick={() => {
                         setBranchPriceOnly(false);
                         setDraft(
@@ -499,7 +529,7 @@ function Inventory() {
                             >
                               <span>Barcode</span>
                               <span>Label / variation</span>
-                              {showMoney && <span>Cost</span>}
+                              {showMoney && <span>Purchase Cost</span>}
                               <span>Selling price</span>
                               <span className="sr-only">Remove</span>
                             </div>
@@ -770,7 +800,7 @@ function Inventory() {
                         </Field>
                       )}
                       {showMoney && (
-                        <Field label="Cost">
+                        <Field label="Purchase Cost">
                           <Input
                             disabled={!canPrice || branchPriceOnly}
                             className="numeric"
@@ -1103,7 +1133,7 @@ function Inventory() {
         )}
 
         <div className="rounded-lg border border-border bg-card">
-          <Table className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget}>
+          <Table tableId="routes/inventory#1" className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
@@ -1116,9 +1146,10 @@ function Inventory() {
                 <TableHead className="min-w-24">Product</TableHead>
                 <TableHead className="min-w-24">Category</TableHead>
                 <TableHead className="min-w-24">Sub-category</TableHead>
-                {showMoney && <TableHead className="min-w-24 text-right">Cost</TableHead>}
+                {showMoney && <TableHead className="min-w-24 text-right" title="Supplier purchase cost before freight or overhead">Purchase Cost</TableHead>}
+                {showMoney && <TableHead className="min-w-28 text-right" title="Estimated purchase cost plus allocated charges and overhead">Total Unit Cost</TableHead>}
                 <TableHead className="min-w-24 text-right">Price</TableHead>
-                {showMoney && <TableHead className="min-w-24 text-right">Margin</TableHead>}
+                {showMoney && <TableHead className="min-w-24 text-right" title="Selling price less Total Unit Cost, divided by selling price">Margin</TableHead>}
                 {canEcom && <TableHead className="min-w-24 text-center">On web</TableHead>}
                 <TableHead className="min-w-24 text-center">Stock · {currentStore.code}</TableHead>
                 <TableHead className="min-w-24 text-center">Other stores</TableHead>
@@ -1157,10 +1188,14 @@ function Inventory() {
                   {showMoney && (
                     <TableCell className="inventory-detail numeric text-right">{Number.isFinite(p.cost) ? money(p.cost) : "—"}{needsCostReview(p.cost) && <span className="ml-1 text-xs text-warning" title="Cost is missing, zero or invalid. Zero may be intentional.">Review</span>}</TableCell>
                   )}
+                  {showMoney && <TableCell className="inventory-detail numeric text-right">
+                    {totalUnitCost(p.cost, p.id, state.settings.integrations.totalUnitCost) === null ? "—" : money(totalUnitCost(p.cost, p.id, state.settings.integrations.totalUnitCost)!)}
+                    <span className="block text-[10px] text-muted-foreground">{state.settings.integrations.totalUnitCost?.overrides?.[p.id] ? "Custom" : "Default"}</span>
+                  </TableCell>}
                   <TableCell className="numeric text-right">{money(p.price)}</TableCell>
                   {showMoney && (
                     <TableCell className="inventory-detail numeric text-right text-accent">
-                      {productMargin(p.price, p.cost) === null ? "—" : `${Math.round(productMargin(p.price, p.cost)!)}%`}
+                      {inventoryUnitMargin(p, state.settings.integrations.totalUnitCost) === null ? "—" : `${Math.round(inventoryUnitMargin(p, state.settings.integrations.totalUnitCost)!)}%`}
                     </TableCell>
                   )}
                   {canEcom && (
@@ -1213,6 +1248,13 @@ function Inventory() {
                     >
                       {expandedProducts.includes(p.id) ? "Less details" : "More details"}
                     </Button>
+                    {isAdmin && showMoney && <Button
+                      size="icon"
+                      variant="ghost"
+                      title={`Edit Total Unit Cost for ${p.name}`}
+                      aria-label={`Edit Total Unit Cost for ${p.name}`}
+                      onClick={() => setUnitCostEdit({ ids: [p.id], initialTarget: "selected", productName: p.name })}
+                    ><Pencil className="size-4" /></Button>}
                     <Button
                       size="icon"
                       variant="ghost"
@@ -1312,7 +1354,7 @@ function Inventory() {
               barcode, alias, or variant code.
             </p>
           </DialogHeader>
-          <Table>
+          <Table tableId="routes/inventory#2">
             <TableHeader>
               <TableRow>
                 <TableHead>Duplicate code</TableHead>

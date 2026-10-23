@@ -1,70 +1,24 @@
-/**
- * Quiet "new version ready" strip for the Android till, fed by the same
- * update bucket the Windows app uses.
- */
-import { useState } from "react";
-import { Download, Loader2, X } from "lucide-react";
-
+import { useEffect, useRef } from "react";
+import { NativeUpdateOrb } from "@/components/ui/native-update-orb";
 import { RELEASE_CHANNEL } from "@/lib/release-channel";
-import { Button } from "@/components/ui/button";
-import {
-  dismissAndroidUpdate,
-  isAndroidUpdateDismissed,
-  useAndroidUpdates,
-} from "@/platforms/mobile/android-updates";
+import { useAndroidUpdates } from "@/platforms/mobile/android-updates";
 
+/** Available before terminal registration and login; the OS owns the APK transfer. */
 export function AndroidUpdateBanner() {
-  const { state, available, install, installDownloaded } = useAndroidUpdates();
-  const [dismissed, setDismissed] = useState<string | null>(null);
+  const { state, available, download, installDownloaded } = useAndroidUpdates();
+  const attempted = useRef<string | null>(null);
 
-  if (!state.supported) return null;
+  useEffect(() => {
+    if (!state.supported || !available || !state.latest || state.readyUri || state.downloading || state.error || attempted.current === state.latest) return;
+    attempted.current = state.latest;
+    void download();
+  }, [state.supported, state.latest, state.readyUri, state.downloading, state.error, available, download]);
 
-  // The APK is on the phone but Android did not open its installer — offer it
-  // again rather than leaving the counter with a downloaded file and no way in.
-  if (state.readyUri) {
-    return (
-      <div role="status" aria-live="polite" className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+1.75rem)] z-50 flex items-center gap-3 border-t border-border bg-card px-4 py-3 shadow-lg">
-        <Download className="h-4 w-4 shrink-0 text-primary" />
-        <div className="min-w-0 flex-1 text-sm">
-          <p className="font-medium text-foreground">Update downloaded</p>
-          <p className="truncate text-xs text-muted-foreground">
-            {state.error ?? "Tap to install the new version."}
-          </p>
-        </div>
-        <Button size="sm" onClick={() => void installDownloaded()}>
-          Tap to install
-        </Button>
-      </div>
-    );
-  }
-
-  if (!available || !state.latest) return null;
-  if (dismissed === state.latest || isAndroidUpdateDismissed(state.latest)) return null;
-
-  return (
-    <div role="status" aria-live="polite" className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+1.75rem)] z-50 flex items-center gap-3 border-t border-border bg-card px-4 py-3 shadow-lg">
-      <Download className="h-4 w-4 shrink-0 text-primary" />
-      <div className="min-w-0 flex-1 text-sm">
-        <p className="font-medium text-foreground">{RELEASE_CHANNEL === "beta" ? "Beta update" : "Update"} {state.latest} is available</p>
-        <p className="truncate text-xs text-muted-foreground">
-          {state.downloading
-            ? `Downloading… ${state.percent}%`
-            : (state.error ?? `You are on ${state.installed}`)}
-        </p>
-      </div>
-      <Button size="sm" onClick={() => void install()} disabled={state.downloading}>
-        {state.downloading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Download className="size-4" aria-hidden />}
-        {state.downloading ? `${state.percent}%` : "Download"}
-      </Button>
-      <Button
-        size="icon"
-        variant="ghost"
-        disabled={state.downloading}
-        aria-label="Dismiss update"
-        onClick={() => { dismissAndroidUpdate(state.latest!); setDismissed(state.latest); }}
-      >
-        <X className="h-4 w-4" />
-      </Button>
-    </div>
-  );
+  if (!state.supported || !available || !state.latest) return null;
+  const label = `${RELEASE_CHANNEL === "beta" ? "Beta update" : "Update"} ${state.latest}`;
+  const detail = state.readyUri ? (state.error ?? "Downloaded. Tap to install.")
+    : state.downloading ? `Downloading ${state.percent}%`
+      : state.error ?? "Preparing download";
+  return <NativeUpdateOrb label={label} detail={detail} progress={state.percent} busy={state.downloading} error={!!state.error}
+    onClick={() => void (state.readyUri ? installDownloaded() : download())} />;
 }

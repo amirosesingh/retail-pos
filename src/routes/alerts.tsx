@@ -60,7 +60,8 @@ const dateBound = (value: string, end = false) =>
   value ? new Date(`${value}T${end ? "23:59:59.999" : "00:00:00"}`).toISOString() : undefined;
 
 function AlertsHistory() {
-  const { isSupervisor, user } = useAuth();
+  const { can, user } = useAuth();
+  const mayViewAudit = can("can_view_audit_trail");
   const { stores, state } = usePos();
   const [rows, setRows] = useState<ActivityEvent[]>([]);
   const [total, setTotal] = useState(0);
@@ -130,11 +131,11 @@ function AlertsHistory() {
   ]);
 
   useEffect(() => {
-    if (isSupervisor) void load();
-  }, [isSupervisor, load]);
+    if (mayViewAudit) void load();
+  }, [mayViewAudit, load]);
 
   useEffect(() => {
-    if (!isSupervisor) return;
+    if (!mayViewAudit) return;
     const recover = () => {
       if (connectivity() === "online") void load();
     };
@@ -144,7 +145,7 @@ function AlertsHistory() {
       window.removeEventListener(APP_RESUME_EVENT, recover);
       window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
     };
-  }, [isSupervisor, load]);
+  }, [mayViewAudit, load]);
 
   const storeNames = useMemo(
     () => new Map(stores.map((store) => [store.id, store.name])),
@@ -156,11 +157,11 @@ function AlertsHistory() {
   );
   const branchName = (id: string) => storeNames.get(id) ?? "Unknown branch";
   const eventText = (value: string) => humanizeText(value, refs);
-  if (!isSupervisor)
+  if (!mayViewAudit)
     return (
       <AppShell>
         <p className="p-6 text-sm text-muted-foreground">
-          Alerts history is available to supervisors and admins.
+          Your account needs audit trail permission to view alerts history.
         </p>
       </AppShell>
     );
@@ -273,7 +274,7 @@ function AlertsHistory() {
               {busy ? "Updating…" : "Select an alert to see full details"}
             </span>
           </div>
-          <Table clientDataControls={false} className="report-table text-sm">
+          <Table tableId="routes/alerts#1" clientDataControls={false} className="report-table text-sm">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[42%]">Alert</TableHead>

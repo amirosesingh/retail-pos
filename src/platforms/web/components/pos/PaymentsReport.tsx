@@ -215,7 +215,7 @@ export function PaymentsReport() {
 
         <div className="rounded-2xl border border-border bg-card">
           <div className="border-b border-border px-4 py-2 text-sm font-medium">Per cashier</div>
-          <Table loading={history.loading}>
+          <Table tableId="platforms/web/components/pos/PaymentsReport#1" loading={history.loading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Cashier</TableHead>
@@ -253,7 +253,7 @@ export function PaymentsReport() {
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
-          <Table loading={history.loading}>
+          <Table tableId="platforms/web/components/pos/PaymentsReport#2" loading={history.loading}>
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>

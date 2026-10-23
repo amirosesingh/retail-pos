@@ -159,7 +159,7 @@ export function TelemetryPanel() {
         </div>
 
         <div className="mt-4 overflow-x-auto">
-          <Table>
+          <Table tableId="platforms/web/components/pos/settings/panels/TelemetryPanel#1">
             <TableHeader>
               <TableRow>
                 <TableHead>Device</TableHead>
@@ -275,7 +275,7 @@ export function TelemetryPanel() {
           )}
         </div>
         <div className="mt-4 overflow-x-auto">
-          <Table>
+          <Table tableId="platforms/web/components/pos/settings/panels/TelemetryPanel#2">
             <TableHeader>
               <TableRow>
                 <TableHead>Time</TableHead>
@@ -331,7 +331,7 @@ export function TelemetryPanel() {
           own and runs as soon as the queue is empty.
         </p>
         <div className="mt-4 overflow-x-auto">
-          <Table>
+          <Table tableId="platforms/web/components/pos/settings/panels/TelemetryPanel#3">
             <TableHeader>
               <TableRow>
                 <TableHead>Sent</TableHead>

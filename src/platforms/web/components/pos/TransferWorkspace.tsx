@@ -201,7 +201,7 @@ export function LineLedger({ transfer }: { transfer: Transfer }) {
   );
 
   return (
-    <Table managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
+    <Table tableId="platforms/web/components/pos/TransferWorkspace#1" managed summaryFormats={{ Amount: money, "Net impact": money, "Requested estimate": money, "Sent estimate": money }}>
       <TableHeader>
         <TableRow>
           <TableHead>Product</TableHead>

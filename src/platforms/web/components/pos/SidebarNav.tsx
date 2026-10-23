@@ -148,9 +148,9 @@ export function SidebarNav({
   footer,
 }: Props) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
-  const { isAdmin, isSupervisor, can } = useAuth();
+  const { isAdmin, can } = useAuth();
 
-  const settingsAllowed = isSupervisor || can("can_access_pos_settings");
+  const settingsAllowed = can("can_access_pos_settings");
 
   /** The seven top-level destinations. */
   const sections: Entry[] = useMemo(() => {
