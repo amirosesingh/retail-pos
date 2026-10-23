@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   Inbox,
   History,
+  Pencil,
   Plus,
   Search,
   SlidersHorizontal,
@@ -167,7 +168,7 @@ function Inventory() {
   const [importOpen, setImportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [unitCostOpen, setUnitCostOpen] = useState(false);
+  const [unitCostEdit, setUnitCostEdit] = useState<{ ids: string[]; initialTarget: "default" | "selected"; productName?: string } | null>(null);
   const [blocked, setBlocked] = useState<BlockedDelete[]>([]);
   const [deleting, setDeleting] = useState<string[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -343,7 +344,7 @@ function Inventory() {
               <AnimatedMetric value={metrics.products} /> active products ·{" "}
               {showStockValue && (
                 <>
-                  cost value <span className="numeric">{money(metrics.costValue)}</span> ·{" "}
+                  purchase cost value <span className="numeric">{money(metrics.costValue)}</span> ·{" "}
                 </>
               )}
               <span className="text-warning">
@@ -382,12 +383,12 @@ function Inventory() {
                   else setDuplicateOpen(true);
                 }}>Check duplicate codes</DropdownMenuItem>
                 <DropdownMenuSeparator />
-                {isAdmin && showMoney && <DropdownMenuItem onSelect={() => setUnitCostOpen(true)}><SlidersHorizontal className="size-4" />Total Unit Cost</DropdownMenuItem>}
+                {isAdmin && showMoney && <DropdownMenuItem onSelect={() => setUnitCostEdit({ ids: selected, initialTarget: selected.length ? "selected" : "default" })}><SlidersHorizontal className="size-4" />Total Unit Cost rules</DropdownMenuItem>}
                 <DropdownMenuItem onSelect={() => setExportOpen(true)}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {unitCostOpen && <TotalUnitCostDialog open onOpenChange={setUnitCostOpen} selected={selected} />}
+            {unitCostEdit && <TotalUnitCostDialog open onOpenChange={open => { if (!open) setUnitCostEdit(null); }} selected={unitCostEdit.ids} initialTarget={unitCostEdit.initialTarget} productName={unitCostEdit.productName} />}
             <Dialog open={exportOpen} onOpenChange={setExportOpen}>
               <DialogContent className="max-w-sm">
                 <DialogHeader><DialogTitle>Export products to Excel</DialogTitle></DialogHeader>
@@ -528,7 +529,7 @@ function Inventory() {
                             >
                               <span>Barcode</span>
                               <span>Label / variation</span>
-                              {showMoney && <span>Cost</span>}
+                              {showMoney && <span>Purchase Cost</span>}
                               <span>Selling price</span>
                               <span className="sr-only">Remove</span>
                             </div>
@@ -799,7 +800,7 @@ function Inventory() {
                         </Field>
                       )}
                       {showMoney && (
-                        <Field label="Cost">
+                        <Field label="Purchase Cost">
                           <Input
                             disabled={!canPrice || branchPriceOnly}
                             className="numeric"
@@ -1145,7 +1146,7 @@ function Inventory() {
                 <TableHead className="min-w-24">Product</TableHead>
                 <TableHead className="min-w-24">Category</TableHead>
                 <TableHead className="min-w-24">Sub-category</TableHead>
-                {showMoney && <TableHead className="min-w-24 text-right">Cost</TableHead>}
+                {showMoney && <TableHead className="min-w-24 text-right" title="Supplier purchase cost before freight or overhead">Purchase Cost</TableHead>}
                 {showMoney && <TableHead className="min-w-28 text-right" title="Estimated purchase cost plus allocated charges and overhead">Total Unit Cost</TableHead>}
                 <TableHead className="min-w-24 text-right">Price</TableHead>
                 {showMoney && <TableHead className="min-w-24 text-right">Margin</TableHead>}
@@ -1247,6 +1248,13 @@ function Inventory() {
                     >
                       {expandedProducts.includes(p.id) ? "Less details" : "More details"}
                     </Button>
+                    {isAdmin && showMoney && <Button
+                      size="icon"
+                      variant="ghost"
+                      title={`Edit Total Unit Cost for ${p.name}`}
+                      aria-label={`Edit Total Unit Cost for ${p.name}`}
+                      onClick={() => setUnitCostEdit({ ids: [p.id], initialTarget: "selected", productName: p.name })}
+                    ><Pencil className="size-4" /></Button>}
                     <Button
                       size="icon"
                       variant="ghost"

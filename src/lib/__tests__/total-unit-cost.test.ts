@@ -23,4 +23,12 @@ describe("Total Unit Cost planning estimate", () => {
     expect(totalUnitCost(Number.NaN, "item-a")).toBeNull();
     expect(totalUnitCost(-1, "item-a")).toBeNull();
   });
+
+  it("rehydrates the rules from the existing backend settings JSON", async () => {
+    const { rowToSettings } = await import("@/core/api/pos-db");
+    const saved = updateUnitCostRules(emptyUnitCostSettings, "selected", ["item-a"], { percent: 35, amount: 2 });
+    const loaded = rowToSettings({ integration_settings: { totalUnitCost: saved } });
+    expect(loaded.integrations.totalUnitCost).toEqual(saved);
+    expect(totalUnitCost(100, "item-a", loaded.integrations.totalUnitCost)).toBe(137);
+  });
 });

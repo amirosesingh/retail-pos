@@ -9,24 +9,36 @@ import { usePos } from "@/lib/pos-store";
 import { emptyUnitCostSettings, updateUnitCostRules, validUnitCostRule } from "@/lib/total-unit-cost";
 import { notifyError } from "@/lib/notify";
 
-export function TotalUnitCostDialog({ open, onOpenChange, selected }: { open: boolean; onOpenChange: (open: boolean) => void; selected: string[] }) {
+export function TotalUnitCostDialog({ open, onOpenChange, selected, initialTarget = "default", productName }: { open: boolean; onOpenChange: (open: boolean) => void; selected: string[]; initialTarget?: "default" | "selected"; productName?: string }) {
   const { state, updateGlobalSettings, saveConfiguredSettings } = usePos();
   const { isAdmin, can } = useAuth();
   const settings = state.settings.integrations.totalUnitCost ?? emptyUnitCostSettings;
-  const [target, setTarget] = useState<"default" | "selected" | "reset">("default");
-  const [percent, setPercent] = useState(String(settings.defaultRule.percent));
-  const [amount, setAmount] = useState(String(settings.defaultRule.amount));
+  const [target, setTarget] = useState<"default" | "selected" | "reset">(initialTarget);
+  const startingRule = initialTarget === "selected" && selected.length === 1
+    ? settings.overrides?.[selected[0]] ?? settings.defaultRule
+    : settings.defaultRule;
+  const [percent, setPercent] = useState(String(startingRule.percent));
+  const [amount, setAmount] = useState(String(startingRule.amount));
   const [busy, setBusy] = useState(false);
   const rule = { percent: Number(percent), amount: Number(amount) };
   const allowed = isAdmin && can("can_view_cost_margin");
+  const changeTarget = (next: "default" | "selected" | "reset") => {
+    setTarget(next);
+    const nextRule = next === "selected" && selected.length === 1
+      ? settings.overrides?.[selected[0]] ?? settings.defaultRule
+      : settings.defaultRule;
+    setPercent(String(nextRule.percent));
+    setAmount(String(nextRule.amount));
+  };
   return <Dialog open={open} onOpenChange={value => { if (!busy) onOpenChange(value); }}>
     <DialogContent className="sm:max-w-lg">
       <DialogHeader><DialogTitle>Total Unit Cost</DialogTitle></DialogHeader>
-      <p className="text-xs text-muted-foreground">Estimate purchase cost plus charges and overhead. Existing costs, stock valuation and profit stay unchanged.</p>
+      <p className="text-xs text-muted-foreground">Purchase Cost is the supplier cost before charges. Total Unit Cost adds your percentage and per-unit amount. Existing stock valuation and profit stay unchanged.</p>
+      {productName && <p className="rounded-md bg-muted/40 px-3 py-2 text-sm font-medium">{productName}</p>}
       <div className="space-y-2">
         <Label htmlFor="unit-cost-target">Apply to</Label>
-        <select id="unit-cost-target" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={target} disabled={busy} onChange={e => setTarget(e.target.value as typeof target)}>
-          <option value="default">All items using the default</option>
+        <select id="unit-cost-target" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={target} disabled={busy} onChange={e => changeTarget(e.target.value as typeof target)}>
+          {!productName && <option value="default">All items using the default</option>}
           <option value="selected" disabled={!selected.length}>Selected items ({selected.length}) — custom override</option>
           <option value="reset" disabled={!selected.length}>Selected items ({selected.length}) — reset to default</option>
         </select>
@@ -35,7 +47,8 @@ export function TotalUnitCostDialog({ open, onOpenChange, selected }: { open: bo
         <div className="space-y-2"><Label htmlFor="unit-cost-percent">Additional %</Label><Input id="unit-cost-percent" type="number" min="0" max="10000" step="0.01" value={percent} disabled={busy} onChange={e => setPercent(e.target.value)} /></div>
         <div className="space-y-2"><Label htmlFor="unit-cost-amount">Amount per unit</Label><Input id="unit-cost-amount" type="number" min="0" max="100000000" step="0.01" value={amount} disabled={busy} onChange={e => setAmount(e.target.value)} /></div>
       </div>}
-      <p className="text-xs text-muted-foreground">{target === "default" ? "Individual overrides are preserved. New products follow this default automatically." : target === "reset" ? "Only selected items will return to the current default." : "Only selected items change. Their overrides will be preserved when the default changes."}</p>
+      <p className="text-xs text-muted-foreground">{target === "default" ? "New products and products without custom overrides use this default. Individual overrides are preserved." : target === "reset" ? "Only selected products return to the current default." : "Only selected products change; their custom rules stay fixed when the default changes."}</p>
+      {!selected.length && <p className="text-xs text-muted-foreground">To edit particular products, select their row checkboxes before opening Actions, or use the pencil icon on a product row.</p>}
       <DialogFooter><Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!allowed || busy || (target !== "default" && !selected.length) || (target !== "reset" && (!percent.trim() || !amount.trim() || !validUnitCostRule(rule)))} onClick={async () => {
         if (!allowed || busy) return;
         setBusy(true);

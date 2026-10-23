@@ -3494,7 +3494,7 @@ function Register() {
           className={
             racketMode
               ? "flex h-[92vh] max-h-[92vh] w-[94vw] max-w-[720px] flex-col"
-              : "flex h-[90vh] max-h-[90vh] w-[94vw] max-w-[1040px] flex-col"
+              : "flex max-h-[90dvh] w-[94vw] max-w-[720px] flex-col"
           }
         >
           <DialogHeader>
@@ -3503,11 +3503,7 @@ function Register() {
             </DialogTitle>
           </DialogHeader>
           <div
-            className={`-mr-2 flex-1 overflow-y-auto pr-2 ${
-              racketMode
-                ? "space-y-3"
-                : "space-y-3 lg:grid lg:grid-cols-2 lg:items-start lg:gap-3 lg:space-y-0 [&>*]:mb-3"
-            }`}
+            className="-mr-2 min-h-0 flex-1 space-y-3 overflow-y-auto pr-2"
           >
             <div className="rounded-md border border-border px-3 py-2 text-sm">
               <div className="flex items-center justify-between">
