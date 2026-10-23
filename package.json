@@ -11,8 +11,8 @@
   "allowScripts": {
     "electron-winstaller@5.4.0": true,
     "esbuild@0.28.1": true,
-    "msnodesqlv8@5.5.0": true,
-    "workerd@1.20260917.1": true
+    "msnodesqlv8@5.6.0": true,
+    "workerd@1.20261001.1": true
   },
   "sideEffects": false,
   "type": "module",
