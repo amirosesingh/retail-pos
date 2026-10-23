@@ -347,30 +347,32 @@ function Inventory() {
                 />
                 <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2" aria-label="Advanced product filters" title="Advanced filters" onClick={() => setAdvanced(true)}><SlidersHorizontal className="size-4" /></Button>
               </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild><Button variant="outline" className="size-9 shrink-0 px-0 lg:w-auto lg:px-4" aria-label="Inventory actions" title="Inventory actions"><MoreHorizontal className="size-4" /><span className="hidden lg:inline">Actions</span></Button></DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
-                  <DropdownMenuItem onSelect={() => { setShowArchived(value => !value); setSelected([]); }}><Archive className="size-4" />{showArchived ? "Show active products" : "Show archived products"}</DropdownMenuItem>
-                  {canBulk && <DropdownMenuItem onSelect={() => setImportOpen(true)}>Import from Excel</DropdownMenuItem>}
-                  <DropdownMenuItem onSelect={() => {
-                    const duplicates = findDuplicateProductCodes(state.products);
-                    setDuplicateRows(duplicates);
-                    if (!duplicates.length) toast.success("No duplicate SKU or barcode values found");
-                    else setDuplicateOpen(true);
-                  }}>Check duplicate codes</DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => {
-                    void exportProductsXlsx(rows, stores, `products-${currentStore.code}`)
-                      .then(() => toast.success(`Exported ${rows.length} products to Excel`))
-                      .catch(error => notifyError(error, "Exporting products"));
-                  }}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
+            <Button variant="outline" size="sm" onClick={() => { setShowArchived(value => !value); setSelected([]); }}>
+              <Archive className="size-4" /> {showArchived ? "Show active" : "Show archived"}
+            </Button>
             <div ref={setColumnControlsTarget} className="flex items-center" />
-            {showMoney && (costReviewCount > 0 || costReviewOnly) && <Button variant={costReviewOnly ? "default" : "outline"} onClick={() => { setCostReviewOnly(value => !value); setSelected([]); }}>
-              {costReviewOnly ? "Clear cost review" : `Review costs · ${costReviewCount}`}
-            </Button>}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button variant="outline" size="sm" aria-label="Inventory actions"><MoreHorizontal className="size-4" />Actions</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
+                {showMoney && (costReviewCount > 0 || costReviewOnly) && <DropdownMenuItem onSelect={() => { setCostReviewOnly(value => !value); setSelected([]); }}>
+                  {costReviewOnly ? "Clear cost review" : `Review costs · ${costReviewCount}`}
+                </DropdownMenuItem>}
+                {canBulk && <DropdownMenuItem onSelect={() => setImportOpen(true)}>Import from Excel</DropdownMenuItem>}
+                <DropdownMenuItem onSelect={() => {
+                  const duplicates = findDuplicateProductCodes(state.products);
+                  setDuplicateRows(duplicates);
+                  if (!duplicates.length) toast.success("No duplicate SKU or barcode values found");
+                  else setDuplicateOpen(true);
+                }}>Check duplicate codes</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => {
+                  void exportProductsXlsx(rows, stores, `products-${currentStore.code}`)
+                    .then(() => toast.success(`Exported ${rows.length} products to Excel`))
+                    .catch(error => notifyError(error, "Exporting products"));
+                }}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             {canOpenEditor && (
               <Dialog

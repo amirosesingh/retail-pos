@@ -2000,7 +2000,15 @@ function registerIpc() {
   });
   ipcMain.handle("approval:own-token-vault", (event, operation, key, value) => guard.guarded(() => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error("Approval storage is limited to the POS window");
-    return { ok: true, ...ownApprovalTokenVault(operation, key, value) };
+    try {
+      return { ok: true, ...ownApprovalTokenVault(operation, key, value) };
+    } catch (error) {
+      // No enrolled token is a normal first-run state. Return the same
+      // not-found result without flooding Electron's handler error log.
+      if (operation === "get" && error?.message === "not found")
+        return { ok: false, error: "not found" };
+      throw error;
+    }
   }));
   ipcMain.handle("approval:enroll-verifier", async (_e, proof) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_manage_staff"))

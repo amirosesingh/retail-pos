@@ -58,7 +58,8 @@ const when = (iso: string) => {
 };
 
 function NotificationsReport() {
-  const { can, isSupervisor, user } = useAuth();
+  const { can, user } = useAuth();
+  const mayViewAudit = can("can_view_audit_trail");
   const { stores, state } = usePos();
   const refs = useMemo(
     () => ({ stores, products: state.products, members: state.members, sales: state.sales }),
@@ -89,8 +90,8 @@ function NotificationsReport() {
   }, [type, severity, meKey]);
 
   useEffect(() => {
-    if (isSupervisor) void load();
-  }, [isSupervisor, load]);
+    if (mayViewAudit) void load();
+  }, [mayViewAudit, load]);
 
   const filtered = useMemo(() => {
     const needle = actor.trim().toLowerCase();
@@ -134,11 +135,11 @@ function NotificationsReport() {
     URL.revokeObjectURL(url);
   };
 
-  if (!isSupervisor) {
+  if (!mayViewAudit) {
     return (
       <AppShell>
         <p className="p-6 text-sm text-muted-foreground">
-          The activity log is available to supervisors and admins.
+          Your account needs audit trail permission to view the activity log.
         </p>
       </AppShell>
     );

@@ -44,7 +44,7 @@ function recoveryTouch() {
 }
 function status() {
   const current = active();
-  return current ? { ok: true, unlocked: true, level: current.level, subject: current.subject } : { ok: true, unlocked: false };
+  return current ? { ok: true, unlocked: true, level: current.level, subject: current.subject, source: current.source } : { ok: true, unlocked: false };
 }
 
 /** Trusted identity details for main-process audit records. Never exposed to the renderer. */

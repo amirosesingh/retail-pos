@@ -44,8 +44,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isTerminalApp } from "@/platform-config/platform";
-import { isWindowsShell } from "@/platform-config/features";
-import { useSystemStatus } from "@/lib/system-status";
 import { useAuthOptional } from "@/lib/pos-auth";
 import {
   cloudKeyStatus,
@@ -71,7 +69,6 @@ export function CloudConnectionPanel({
   recoveryUnlocked?: boolean;
 } = {}) {
   const auth = useAuthOptional();
-  const system = useSystemStatus();
   const [status, setStatus] = useState<CloudKeyStatus | null>(null);
   const [url, setUrl] = useState("");
   const [key, setKey] = useState("");
@@ -336,11 +333,6 @@ export function CloudConnectionPanel({
           ? "Database configured"
           : "Database not configured"}
       </p>
-
-      {isWindowsShell() ? <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
-        <span className="font-medium">Saving to central database</span>
-        <span className="ml-2 text-muted-foreground">Writes save to local SQL Server first; {system.pending ? `${system.pending} record${system.pending === 1 ? "" : "s"} waiting to upload` : system.syncing ? "synchronizing now" : "no uploads pending"}.</span>
-      </div> : null}
 
       {!editable && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">

@@ -1314,10 +1314,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Electron independently verifies the same proof in its main process.
         // Never pass a permission matrix from the renderer to native authority.
         const profileSignature = result.status === "ok" ? JSON.stringify(result.profile) : null;
-        if (result.status === "ok" && profileSignature !== nativeProfile && isWindowsShell() && window.sqlAdmin?.adoptSession) {
-          const adopted = await window.sqlAdmin.adoptSession(proof, readTerminalConfig());
-          if (!adopted.ok) return null;
-          nativeProfile = profileSignature;
+        if (result.status === "ok" && isWindowsShell() && window.sqlAdmin?.adoptSession) {
+          // The native grant expires while idle and a settings PIN unlock can
+          // replace it. A matching web profile alone does not prove that the
+          // main process still holds this verified POS session.
+          const native = await window.sqlAdmin.adminStatus?.();
+          if (profileSignature !== nativeProfile || !native?.unlocked || native.source !== "pos") {
+            const adopted = await window.sqlAdmin.adoptSession(proof, readTerminalConfig());
+            if (!adopted.ok) return null;
+            nativeProfile = profileSignature;
+          }
         }
         return result;
       },

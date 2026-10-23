@@ -18,6 +18,7 @@ import {
 import { AlertTriangle } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Carousel, CarouselContent, CarouselItem } from "@/components/ui/carousel";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -62,6 +63,8 @@ export const Route = createFileRoute("/dashboard")({
   component: Dashboard,
 });
 
+const chartDay = (value: string, fallback: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+
 function Dashboard() {
   const { state, currentStore } = usePos();
   const { can } = useAuth();
@@ -71,6 +74,9 @@ function Dashboard() {
   const thresholds = defaultReviewThresholds;
 
   const [today, setToday] = useState(() => posDayKey());
+  const [revenuePeriod, setRevenuePeriod] = useState<"7" | "14" | "30" | "90" | "month" | "custom">("14");
+  const [customFrom, setCustomFrom] = useState(() => posDayKey(new Date(Date.now() - 13 * 86_400_000)));
+  const [customTo, setCustomTo] = useState(() => posDayKey());
   useEffect(() => {
     const refresh = () => setToday(posDayKey());
     const timer = window.setInterval(refresh, 30_000);
@@ -78,11 +84,30 @@ function Dashboard() {
     return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
   }, []);
   const storeIds = useMemo(() => [currentStore.id], [currentStore.id]);
+  const revenueFrom = useMemo(() => {
+    if (revenuePeriod === "custom") {
+      const from = chartDay(customFrom, today);
+      const to = chartDay(customTo, today);
+      return from <= to ? from : to;
+    }
+    if (revenuePeriod === "month") return `${today.slice(0, 7)}-01`;
+    const start = new Date(`${today}T12:00:00`);
+    start.setDate(start.getDate() - Number(revenuePeriod) + 1);
+    return posDayKey(start);
+  }, [revenuePeriod, customFrom, customTo, today]);
+  const revenueTo = revenuePeriod === "custom"
+    ? (chartDay(customFrom, today) <= chartDay(customTo, today)
+        ? chartDay(customTo, today) : chartDay(customFrom, today))
+    : today;
+  // Today's cards still need today's sales when the selected graph range is
+  // entirely historical. Extend only the read window, not the graph buckets.
+  const readFrom = revenueFrom < today ? revenueFrom : today;
+  const readTo = revenueTo > today ? revenueTo : today;
   // Include a boundary day on both sides: report loading uses device-local
   // midnight, while dashboard buckets use the configured business timezone.
   const { sales, loading: reportLoading, error: reportError } = useReportSales(state.sales, storeIds,
-    posDayKey(new Date(Date.parse(`${today}T12:00:00`) - 14 * 86_400_000)),
-    posDayKey(new Date(Date.parse(`${today}T12:00:00`) + 86_400_000)));
+    posDayKey(new Date(Date.parse(`${readFrom}T12:00:00`) - 86_400_000)),
+    posDayKey(new Date(Date.parse(`${readTo}T12:00:00`) + 86_400_000)));
   const todaySales = sales.filter((s) => posDayKey(s.createdAt) === today);
   const live = todaySales.filter((s) => !s.refunded);
 
@@ -102,12 +127,13 @@ function Dashboard() {
     [live, state.products],
   );
 
-  /** Revenue for the last 14 calendar days. */
+  /** Revenue for the selected inclusive calendar range. */
   const daily = useMemo(() => {
     const buckets = new Map<string, number>();
-    for (let i = 13; i >= 0; i--) {
-      const day = new Date(`${today}T12:00:00`);
-      day.setDate(day.getDate() - i);
+    const first = new Date(`${revenueFrom}T12:00:00`);
+    const last = new Date(`${revenueTo}T12:00:00`);
+    // A mistaken multi-year custom range must not freeze the dashboard.
+    for (let day = new Date(first), count = 0; day <= last && count < 731; day.setDate(day.getDate() + 1), count++) {
       const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
       buckets.set(key, 0);
     }
@@ -121,7 +147,7 @@ function Dashboard() {
       day: day.slice(5),
       total: Number(total.toFixed(2)),
     }));
-  }, [sales, today]);
+  }, [sales, revenueFrom, revenueTo]);
 
   /** Transactions per hour today — shows the peak trading window. */
   const hourly = useMemo(() => {
@@ -233,7 +259,25 @@ function Dashboard() {
           <CarouselContent className="touch-pan-y">
           <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
           <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
-            <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">Revenue · last 14 days</h2>
+            <div className="mb-3 shrink-0 space-y-2">
+              <h2 className="text-sm font-semibold">Revenue · {revenueFrom} to {revenueTo}</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <select aria-label="Revenue chart period" value={revenuePeriod}
+                  onChange={(event) => setRevenuePeriod(event.target.value as typeof revenuePeriod)}
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs">
+                  <option value="7">7 days</option>
+                  <option value="14">14 days</option>
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                  <option value="month">This month</option>
+                  <option value="custom">Custom dates</option>
+                </select>
+                {revenuePeriod === "custom" && <>
+                  <Input aria-label="Revenue from date" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} className="h-8 w-36 text-xs" />
+                  <Input aria-label="Revenue to date" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} className="h-8 w-36 text-xs" />
+                </>}
+              </div>
+            </div>
             <div className="min-h-0 min-w-0 flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={daily}>
