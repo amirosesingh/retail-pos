@@ -26,7 +26,7 @@ describe("Android local interface with online-only business access", () => {
     expect(indicator).not.toContain("local-db");
   });
   it("keeps full-load emergency repair available only in error-boundary recovery", () => {
-    const html = renderToStaticMarkup(createElement(OfflineLoginInterface, { recovery: true }));
+    const html = renderToStaticMarkup(createElement<{ recovery?: boolean }>(OfflineLoginInterface, { recovery: true }));
     expect(html).toContain("Emergency access");
     const source = readFileSync("src/platforms/mobile/components/OfflineInterface.tsx", "utf8");
     expect(source).toContain("window.location.assign(RECOVERY_PATH)");
