@@ -31,6 +31,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CouponAuditLog } from "@/platforms/web/components/pos/CouponAuditLog";
 import { CampaignVouchers } from "@/platforms/web/components/pos/CampaignVouchers";
 import { ReusableCampaignCodes } from "@/platforms/web/components/pos/ReusableCampaignCodes";
+import { ReusableCodeActivity } from "@/platforms/web/components/pos/ReusableCodeActivity";
 import { CouponAnalytics } from "@/platforms/web/components/pos/CouponAnalytics";
 import { IssueVoucherDialog } from "@/platforms/web/components/pos/IssueVoucherDialog";
 import { useAuth } from "@/lib/pos-auth";
@@ -99,6 +100,7 @@ const toCountOrNull = (v: string): number | null => {
 function CouponsPage() {
   const { can, user } = useAuth();
   const { state } = usePos();
+  const mayManage = can("can_manage_promotions");
   const [tab, setTab] = useState("campaigns");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
@@ -118,7 +120,7 @@ function CouponsPage() {
       const [cs, vs, es] = await Promise.all([
         loadCampaigns(),
         loadVouchers(),
-        loadCouponEvents().catch(() => ({ rows: [] as CouponEvent[], cursor: null, hasMore: false })),
+        loadCouponEvents(),
       ]);
       setCampaigns(cs);
       setVouchers(vs);
@@ -138,8 +140,8 @@ function CouponsPage() {
   }, []);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (mayManage) void refresh();
+  }, [refresh, mayManage]);
 
   /** Pull the next page of the event trail without re-reading the ones on screen. */
   const loadMoreEvents = useCallback(async () => {
@@ -150,6 +152,8 @@ function CouponsPage() {
       setEvents((prev) => [...prev, ...page.rows]);
       setEventCursor(page.cursor);
       setMoreEvents(page.hasMore);
+    } catch (error) {
+      notifyError(error, "Loading older coupon events");
     } finally {
       setLoadingMore(false);
     }
@@ -260,12 +264,12 @@ function CouponsPage() {
           <TabsList>
             <TabsTrigger value="campaigns">Voucher campaigns</TabsTrigger>
             <TabsTrigger value="reusable">Reusable codes</TabsTrigger>
-            <TabsTrigger value="vouchers">Issued vouchers</TabsTrigger>
-            <TabsTrigger value="performance">Voucher performance</TabsTrigger>
+            <TabsTrigger value="vouchers">Issued vouchers & codes</TabsTrigger>
+            <TabsTrigger value="performance">Performance</TabsTrigger>
             <TabsTrigger value="audit">Audit log</TabsTrigger>
           </TabsList>
 
-          <p className="mt-3 text-xs text-muted-foreground">{tab === "reusable" ? "Share a reusable code for store sales, without enrollment." : tab === "vouchers" ? "Individual vouchers issued from campaigns. Use a campaign’s Issue action to create one." : tab === "performance" ? "Issuance and redemption results for voucher campaigns." : tab === "audit" ? "Voucher campaign activity and redemption history." : "Create voucher campaigns, then issue individual vouchers or share the claim link. Automatic discounts and points rules are managed in Promotions & discounts."}</p>
+          <p className="mt-3 text-xs text-muted-foreground">{tab === "reusable" ? "Share a reusable code for store sales, without enrollment." : tab === "vouchers" ? "Issued campaign vouchers and reusable codes. Reusable codes do not require individual issuance." : tab === "performance" ? "Voucher performance and reusable-code sales." : tab === "audit" ? "Voucher events and reusable-code sales history." : "Create voucher campaigns, then issue individual vouchers or share the claim link. Automatic discounts and points rules are managed in Promotions & discounts."}</p>
           <TabsContent value="campaigns" className="mt-4">
         <div className="rounded-xl border border-border bg-card">
           {loading ? (
@@ -376,9 +380,11 @@ function CouponsPage() {
 
           <TabsContent value="performance" className="mt-4">
             <CouponAnalytics />
+            <ReusableCodeActivity view="performance" />
           </TabsContent>
 
           <TabsContent value="vouchers" className="mt-4">
+            <ReusableCodeActivity view="issued" />
             <CampaignVouchers
               campaigns={campaigns}
               vouchers={vouchers}
@@ -391,6 +397,7 @@ function CouponsPage() {
           </TabsContent>
 
           <TabsContent value="audit" className="mt-4">
+            <ReusableCodeActivity view="audit" />
             <CouponAuditLog
               events={events}
               campaigns={campaigns}

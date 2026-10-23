@@ -41,7 +41,7 @@ const saveRuleInput = caller.extend({
 
 const pinInput = caller.extend({
   actionKey: z.string().min(1).max(64),
-  authorizerId: z.string().min(1).max(64),
+  authorizerId: z.string().max(64).default(""),
   selfAuthorization: z.boolean().default(false),
   pin: z.string().regex(/^\d{4,8}$/),
   storeId: z.string().max(64).optional(),
@@ -380,7 +380,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     const { beginPinRequest, finishPinRequest } = await import("./pin-request-throttle.server");
     const auditContext = Object.fromEntries(
       Object.entries(data.auditContext).filter(
-        ([key]) => !["reason", "requested_amount", "self_authorization"].includes(key),
+        ([key]) => !["reason", "requested_amount", "self_authorization", "credential_method"].includes(key),
       ),
     );
     let who: Caller;
@@ -397,7 +397,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     // Guessing is stopped on the server, keyed on the authoriser, so trying
     // from a second till does not reset the count.
     const authorizerId = data.selfAuthorization ? who.id : data.authorizerId;
-    const key = `authz:${authorizerId.toLowerCase()}`;
+    const key = authorizerId ? `authz:${authorizerId.toLowerCase()}` : `authz:token-lookup:${(data.storeId ?? "").toLowerCase()}:${who.id}`;
     const state = await throttleStatus(key);
     if (state.locked) {
       return {
@@ -447,12 +447,16 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     const roles = rule?.allowedRoles ?? ["admin", "manager"];
     const users = rule?.allowedUserIds ?? [];
 
-    const { approvalPerson, verifyApprovalTotp } = await import("./approval-token-server");
+    const { approvalPerson, verifyApprovalTotp, identifyApprovalTotp } = await import("./approval-token-server");
     const { approvalMethods } = await import("./approval-credentials");
-    const credentials = await approvalPerson(authorizerId);
+    const resolvedId = authorizerId || await identifyApprovalTotp(data.pin, storeId, data.terminalToken);
+    if (!authorizerId && resolvedId && (await throttleStatus(`authz:${resolvedId.toLowerCase()}`)).locked) {
+      return { ok: false as const, error: "This approval credential is temporarily locked. Try again later." };
+    }
+    const credentials = resolvedId ? await approvalPerson(resolvedId) : null;
     const methods = approvalMethods(credentials?.permissions);
-    const pinPerson = methods.pin ? await verifyAuthorizationPin(authorizerId, data.pin, roles, users) : null;
-    const tokenPerson = !pinPerson && methods.totp ? await verifyApprovalTotp(authorizerId, data.pin, storeId, data.terminalToken) : null;
+    const pinPerson = authorizerId && methods.pin ? await verifyAuthorizationPin(authorizerId, data.pin, roles, users) : null;
+    const tokenPerson = !pinPerson && resolvedId && methods.totp ? await verifyApprovalTotp(resolvedId, data.pin, storeId, data.terminalToken) : null;
     const person = pinPerson ?? tokenPerson;
     const credentialMethod = tokenPerson ? "totp" : "pin";
     if (!person) {
@@ -475,7 +479,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         ok: false as const,
         error: after.locked
           ? `Too many wrong PINs — try again in ${minutesLeft(after)} minute(s)`
-          : "That ID or PIN is not allowed to authorise this",
+          : "The credential is invalid, expired, ambiguous or not permitted to approve this action",
       };
     }
     const { canAuthorize } = await import("./authorization");

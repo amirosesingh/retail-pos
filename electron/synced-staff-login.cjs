@@ -42,8 +42,27 @@ async function listSyncedStaff(pool, branchId) {
 /** Verify the same bcrypt PIN hash Supabase synchronized into local SQL Server. */
 async function verifySyncedPin(pool, username, pin, branchId, purpose, options = {}) {
   if (!pool || !branchId) return { ok: false, reason: "unavailable" };
-  const name = String(username ?? "").trim().toLowerCase();
+  let name = String(username ?? "").trim().toLowerCase();
   const secret = String(pin ?? "");
+  let tokenOnly = false;
+  if (!name && purpose === "approval" && /^\d{8}$/.test(secret) && typeof options.identifyTotp === "function") {
+    // Reserve every code-only attempt atomically, including successes: changing
+    // guessed identities or restarting the renderer cannot reset the budget.
+    const gate = await pool.request().input("key", `approval-lookup:${String(branchId).toLowerCase()}`)
+      .query(`WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544)
+        MERGE dbo.pin_attempts WITH (HOLDLOCK) AS target
+        USING (SELECT @key AS [key]) AS source ON target.[key]=source.[key]
+        WHEN MATCHED AND (target.attempts<5 OR target.window_started_at<DATEADD(minute,-1,SYSDATETIMEOFFSET())) THEN UPDATE SET
+          attempts=CASE WHEN target.window_started_at<DATEADD(minute,-1,SYSDATETIMEOFFSET()) THEN 1 ELSE target.attempts+1 END,
+          window_started_at=CASE WHEN target.window_started_at<DATEADD(minute,-1,SYSDATETIMEOFFSET()) THEN SYSDATETIMEOFFSET() ELSE target.window_started_at END,
+          updated_at=SYSDATETIMEOFFSET()
+        WHEN NOT MATCHED THEN INSERT([key],attempts,window_started_at,created_at,updated_at)
+          VALUES(@key,1,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET())
+        OUTPUT inserted.[key];`);
+    if (!gate.recordset?.length) return { ok: false, reason: "locked", error: "Too many token attempts. Try again in one minute." };
+    name = String(await options.identifyTotp(secret, branchId) ?? "").toLowerCase();
+    tokenOnly = true;
+  }
   if (!name || secret.length < 4 || secret.length > 32) return { ok: false, reason: "invalid" };
   // app_users owns the manager-approval PIN; cashiers owns the independent
   // terminal sign-in PIN. Never swap these or one credential can authorize
@@ -81,7 +100,7 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
   const hash = String(row.pin_hash ?? "");
   const switches = permissions(row.permissions);
   const pinEnabled = purpose !== "approval" || switches.approval_pin_enabled !== false;
-  const validPin = pinEnabled && hash && await bcrypt.compare(secret, hash);
+  const validPin = !tokenOnly && pinEnabled && hash && await bcrypt.compare(secret, hash);
   const validToken = !validPin && purpose === "approval" && switches.approval_totp_enabled === true &&
     typeof options.verifyTotp === "function" && await options.verifyTotp(pool, String(row.username), secret, branchId);
   if (!validPin && !validToken) {

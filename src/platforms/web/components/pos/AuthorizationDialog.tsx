@@ -93,6 +93,7 @@ export function AuthorizationDialog({
   const fieldId = useId();
   const [tab, setTab] = useState<"pin" | "request">("pin");
   const [authorizerId, setAuthorizerId] = useState("");
+  const [tokenOnly, setTokenOnly] = useState(false);
   const [pin, setPin] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -101,7 +102,7 @@ export function AuthorizationDialog({
 
   async function authorizeLocalPin() {
     if (!prompt) return false;
-    const expectedId = prompt.selfAuthorizer?.id ?? authorizerId.trim();
+    const expectedId = prompt.selfAuthorizer?.id ?? (tokenOnly ? "" : authorizerId.trim());
     const result = await verifyLocalApprovalPin(expectedId, pin);
     if (!result.ok) {
       toast.error(result.error);
@@ -140,7 +141,7 @@ export function AuthorizationDialog({
     if (
       !canAuthorizeAmount(
         rule,
-        { userId: result.staff.id, role: result.staff.roleSlug },
+        { userId: result.staff.username, role: result.staff.roleSlug },
         prompt.requestedAmount,
         prompt.requesterDirectLimit,
       )
@@ -153,7 +154,7 @@ export function AuthorizationDialog({
       action_key: prompt.actionKey,
       mode_used: "offline_pin",
       requested_by: me?.staffId ?? null,
-      authorized_by: result.staff.id,
+      authorized_by: result.staff.username,
       authorizer_role: result.staff.roleSlug,
       store_id: prompt.storeId ?? "",
       terminal_id: prompt.terminalId ?? "",
@@ -162,6 +163,9 @@ export function AuthorizationDialog({
         reason: note.trim(),
         offline: true,
         credential_method: result.credentialMethod ?? "pin",
+        approved_by_name: result.staff.full_name || result.staff.username,
+        requested_by_name: me?.name ?? "",
+        ticket_reference: prompt.snapshot?.billNo || prompt.payload?.["bill_no"] || prompt.payload?.["transaction"] || null,
         self_authorization: !!prompt.selfAuthorizer,
         requested_amount: prompt.requestedAmount ?? null,
         approval_location: prompt.payload?.["approval_location"] ?? null,
@@ -179,7 +183,7 @@ export function AuthorizationDialog({
       grantToken: "",
       by: result.staff.full_name || result.staff.username,
       authorizer: {
-        id: result.staff.id,
+        id: result.staff.username,
         name: result.staff.full_name || result.staff.username,
         role: result.staff.roleSlug,
       },
@@ -236,6 +240,7 @@ export function AuthorizationDialog({
     setTab(prompt.mode === "request" ? "request" : "pin");
     setAuthorizerId(prompt.selfAuthorizer?.id ?? "");
     setPin("");
+    setTokenOnly(nativeApprovalCredentials && !prompt.selfAuthorizer);
     setNote("");
   }, [prompt]);
 
@@ -252,11 +257,11 @@ export function AuthorizationDialog({
         data: {
           ...auth,
           actionKey: prompt.actionKey,
-          authorizerId: prompt.selfAuthorizer?.id ?? authorizerId.trim(),
+          authorizerId: prompt.selfAuthorizer?.id ?? (tokenOnly ? "" : authorizerId.trim()),
           selfAuthorization: !!prompt.selfAuthorizer,
           pin,
           binding: prompt.binding,
-          auditContext: prompt.payload ?? {},
+          auditContext: { ...prompt.payload, ticket_reference: prompt.snapshot?.billNo || prompt.payload?.["bill_no"] || prompt.payload?.["transaction"] || null },
           ...(prompt.storeId ? { storeId: prompt.storeId } : {}),
           ...(prompt.terminalId ? { terminalId: prompt.terminalId } : {}),
           ...(note.trim() ? { reason: note.trim() } : {}),
@@ -341,6 +346,10 @@ export function AuthorizationDialog({
 
   const pinPane = (
     <div className="grid gap-4 sm:grid-cols-2">
+      {nativeApprovalCredentials && !prompt?.selfAuthorizer && <div className="flex gap-2 sm:col-span-2">
+        <Button variant={tokenOnly ? "default" : "outline"} size="sm" onClick={() => { setTokenOnly(true); setPin(""); }}>Soft token</Button>
+        <Button variant={!tokenOnly ? "default" : "outline"} size="sm" onClick={() => { setTokenOnly(false); setPin(""); }}>Approval PIN</Button>
+      </div>}
       {prompt?.selfAuthorizer ? (
         <div className="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm sm:col-span-2">
           <div className="font-medium">Confirm as {prompt.selfAuthorizer.name}</div>
@@ -348,7 +357,7 @@ export function AuthorizationDialog({
             {nativeApprovalCredentials ? "Enter your own authorization PIN or soft token." : "Enter your own PIN."} This approval will be recorded under your account.
           </div>
         </div>
-      ) : (
+      ) : !tokenOnly ? (
         <div className="space-y-1">
           <Label htmlFor={`${fieldId}-authorizer`} className="text-sm">Authoriser ID</Label>
           <Input
@@ -362,9 +371,9 @@ export function AuthorizationDialog({
             placeholder="e.g. manager1"
           />
         </div>
-      )}
+      ) : null}
       <div className={prompt?.selfAuthorizer ? "space-y-1 sm:col-span-2" : "space-y-1"}>
-        <Label htmlFor={`${fieldId}-pin`} className="text-sm">{nativeApprovalCredentials ? "Authorization PIN or soft token" : "Approval PIN"}</Label>
+        <Label htmlFor={`${fieldId}-pin`} className="text-sm">{tokenOnly ? "Eight-digit soft token" : nativeApprovalCredentials ? "Authorization PIN or soft token" : "Approval PIN"}</Label>
         <Input
           id={`${fieldId}-pin`}
           name="authorizer-pin"
@@ -459,7 +468,7 @@ export function AuthorizationDialog({
           ) : (
             <Button
               onClick={() => void submitPin()}
-              disabled={busy || pin.length < 4 || !authorizerId.trim() || !!reasonMissing}
+              disabled={busy || (tokenOnly ? pin.length !== 8 : pin.length < 4 || !authorizerId.trim()) || !!reasonMissing}
             >
               {busy ? "Checking…" : "Authorise"}
             </Button>

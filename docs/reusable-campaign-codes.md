@@ -22,3 +22,11 @@ This implementation provides **unlimited reusable codes without membership linka
 ## Checks
 
 Unit tests cover bill/item calculations, quantity changes, expired/disabled rules, duplicates, unknown/mismatched clusters and legacy voucher preservation. PostgreSQL/PGlite tests execute the migration, sync apply/feed/bootstrap/count/delete paths and the sale-boundary cluster check. Electron's aggregate test checks rollback before sale writes for a mismatched cluster. Physical disconnected Windows/phone checkout remains a device validation step.
+
+## Token approval and history
+
+Registered native terminals can accept an eight-digit soft token without an approver ID. The server or Windows main process resolves exactly one eligible device in the authorized branch, then checks the account, approval permissions, lease and replay protection. Ambiguous codes are rejected; ordinary approval PINs still require an ID. Code lookup is rate limited. Windows must have downloaded its encrypted verifier bundle while online before offline approval is available.
+
+Approvals → Approval history shows the saved ticket reference, approver name and credential method. Both cloud approvals and queued Windows approvals use the existing authorization_log detail fields. No token code or secret is written to history. Older records without names use their saved user identifier. This history addition needs no new database columns.
+
+Issued vouchers & codes, Performance and Audit log include reusable codes. Reusable performance explicitly totals the loaded newest sale records; Load older extends that range. Refunds are excluded and coupon savings are separate from other discounts. The audit also shows successfully saved code creation, edits and deletion. Reports load on demand, without background polling.

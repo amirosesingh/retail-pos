@@ -32,7 +32,7 @@ describe("manager override audit history", () => {
     expect(gate).toContain("selfAuthorizer");
     expect(functions).toContain("selfAuthorization: z.boolean().default(false)");
     expect(functions).toContain("self_authorization: data.selfAuthorization");
-    expect(functions).toContain('["reason", "requested_amount", "self_authorization"]');
+    expect(functions).toContain('["reason", "requested_amount", "self_authorization", "credential_method"]');
     expect(report).toContain("Where / reference");
     expect(report).toContain("display.method");
   });

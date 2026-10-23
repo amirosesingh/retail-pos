@@ -40,6 +40,7 @@ vi.mock("../system-audit.server", () => ({ writeSystemAudit: async () => {} }));
 import {
   enrollApprovalToken,
   verifyApprovalTotp,
+  identifyApprovalTotp,
   registerApprovalVerifier,
   approvalVerifierBundle,
 } from "../approval-token-server";
@@ -193,4 +194,17 @@ it.each(["pc", "windows", "mobile"])("management %s can issue and receive a toke
  expect(await verifyApprovalTotp("manager", code, "branch-a", terminal)).toBeNull();
  f.deviceEnabled = false;
  expect((await enrollApprovalToken(proof)).credential).toBeNull();
+});
+
+it("resolves a code owner without an ID, but rejects collisions before consuming", async () => {
+  const enrolled = await enrollApprovalToken(proof);
+  const code = await approvalTotp(enrolled.credential!.secret);
+  expect(await identifyApprovalTotp(code, "branch-a", terminal)).toBe("manager");
+  expect(f.devices[0].last_used_step).toBe(-1);
+  f.devices.push({ ...f.devices[0], id: "second-device", user_id: "other-person" });
+  expect(await identifyApprovalTotp(code, "branch-a", terminal)).toBeNull();
+  expect(f.devices[0].last_used_step).toBe(-1);
+  expect(await identifyApprovalTotp(code, "branch-b", terminal)).toBeNull();
+  expect(await identifyApprovalTotp(code, "branch-a")).toBeNull();
+  expect(await identifyApprovalTotp("1234", "branch-a", terminal)).toBeNull();
 });

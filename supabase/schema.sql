@@ -20247,14 +20247,6 @@ BEGIN
   EXECUTE format('GRANT SELECT (%s) ON public.app_users TO authenticated', safe_columns);
 END $columns$;
 
--- Final public-schema privilege hardening after permission policy definitions.
-DO $permission_hardening$
-DECLARE routine record;
-BEGIN
-  FOR routine IN SELECT p.oid::regprocedure AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef
-  LOOP EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon',routine.signature); END LOOP;
-END $permission_hardening$;
-
 -- Reusable campaign code scope and offline sync (20261023160000).
 -- Reusable campaign codes are promotions with no FOC product.
 -- Include such global promotions in Windows bootstrap/counts/delete and the
@@ -20368,3 +20360,12 @@ INSERT INTO public.sync_change_feed
   (organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
 SELECT 'default','global',NULL,'promotions',jsonb_build_object('id',id)::text,
   'update',row_version,false FROM public.promotions WHERE foc_product_id IS NULL;
+
+-- Final public-schema privilege hardening after permission policy definitions.
+DO $permission_hardening$
+DECLARE routine record;
+BEGIN
+  FOR routine IN SELECT p.oid::regprocedure AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef
+  LOOP EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon',routine.signature); END LOOP;
+END $permission_hardening$;
+

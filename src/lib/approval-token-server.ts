@@ -216,6 +216,24 @@ export async function verifyApprovalTotp(
   }
   return null;
 }
+/** Resolve an eight-digit token only within the receiver's authorized branch.
+ * Never pick the first match: short codes are not globally unique identities.
+ * This lookup does not consume; the existing verifier performs final validation.
+ */
+export async function identifyApprovalTotp(code: string, branch: string, receiverToken?: string) {
+  if (!/^\d{8}$/.test(code) || !receiverToken) return null;
+  const receiver = await verifyRelayCaller({ terminalToken: receiverToken }).catch(() => null);
+  if (!receiver?.terminalId || (receiver.storeId && receiver.storeId.toLowerCase() !== branch.toLowerCase())) return null;
+  const devices = await state("read_branch", branch) as Device[];
+  if (devices.length > 1000) return null; // fail closed, never partially search a large scope
+  const matches: Device[] = [];
+  for (const device of devices) {
+    // A corrupt record makes identity resolution incomplete; fail closed.
+    const step = await matchingTotpStep(unseal(device.secret_ciphertext), code);
+    if (step !== null) matches.push(device);
+  }
+  return matches.length === 1 ? matches[0].user_id : null;
+}
 export async function registerApprovalVerifier(proof: CallerProof, publicKey: string) {
   const actor = await requireCallerScope(proof, { permission: "can_manage_staff" });
   if (!actor.staffUserId || actor.kind === "terminal" || !proof.terminalToken)
