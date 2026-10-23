@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Smartphone, MessageCircle, Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { Bell, Smartphone, MessageCircle, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -27,6 +27,7 @@ type Settings = {
   quietFrom: string;
   quietTo: string;
   channels: Record<string, Channel>;
+  inApp?: Record<string, boolean>;
   androidPush?: AndroidPushRules;
 };
 
@@ -39,7 +40,7 @@ const CHANNEL_OPTIONS = [
 function NotificationSettingsPage() {
   const [cfg, setCfg] = useState<Settings | null>(null);
   const [busy, setBusy] = useState(false);
-  const [dialog, setDialog] = useState<"android" | "whatsapp" | null>(null);
+  const [dialog, setDialog] = useState<"android" | "whatsapp" | "app" | null>(null);
   const [savedCfg, setSavedCfg] = useState<Settings | null>(null);
   const [newNumber, setNewNumber] = useState("");
   const [pushReady, setPushReady] = useState(false);
@@ -70,12 +71,12 @@ function NotificationSettingsPage() {
   const toggle = (values: string[], value: string) =>
     values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
 
-  const openDialog = (section: "android" | "whatsapp") => {
+  const openDialog = (section: "android" | "whatsapp" | "app") => {
     if (savedCfg) setCfg(savedCfg);
     setNewNumber("");
     setDialog(section);
   };
-  const save = async (section: "android" | "whatsapp") => {
+  const save = async (section: "android" | "whatsapp" | "app") => {
     if (!cfg || busy) return;
     setBusy(true);
     try {
@@ -85,7 +86,7 @@ function NotificationSettingsPage() {
       if (!res.ok) throw new Error(res.error ?? "Could not save alert settings");
       setSavedCfg(res.settings as Settings);
       setCfg(res.settings as Settings);
-      toast.success(section === "android" ? "Android alert settings saved" : "WhatsApp alert settings saved");
+      toast.success(section === "app" ? "In-app notification settings saved" : section === "android" ? "Android alert settings saved" : "WhatsApp alert settings saved");
       setDialog(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not save alert settings");
@@ -105,6 +106,12 @@ function NotificationSettingsPage() {
       ) : (
         <div className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-2">
+            <section className="rounded-2xl border border-border p-5">
+              <Bell className="mb-3 size-6 text-primary" />
+              <h2 className="font-semibold">In-app notifications</h2>
+              <p className="my-3 text-sm text-muted-foreground">Choose which new events appear in the app bell. Approval and security audit records are retained.</p>
+              <Button onClick={() => openDialog("app")}>Configure in-app notifications</Button>
+            </section>
             <section className="rounded-2xl border border-primary/20 bg-primary/5 p-5">
               <Smartphone className="mb-3 size-6 text-primary" />
               <h2 className="font-semibold">Android phone alerts</h2>
@@ -123,11 +130,22 @@ function NotificationSettingsPage() {
           <Dialog open={dialog !== null} onOpenChange={(open) => { if (!open && !busy) setDialog(null); }}>
             <DialogContent className="flex max-h-[90dvh] max-w-3xl flex-col overflow-hidden">
               <DialogHeader>
-                <DialogTitle>{dialog === "android" ? "Android phone alerts" : "WhatsApp delivery"}</DialogTitle>
-                <DialogDescription>{dialog === "android" ? "Choose phone notifications. Saving here changes only Android settings." : "Choose WhatsApp delivery. Saving here preserves Android settings."}</DialogDescription>
+                <DialogTitle>{dialog === "app" ? "In-app notifications" : dialog === "android" ? "Android phone alerts" : "WhatsApp delivery"}</DialogTitle>
+                <DialogDescription>{dialog === "app" ? "Applies to new notifications on all platforms. Recipients still need the appropriate access. Soft-token approvals notify the verified token owner." : dialog === "android" ? "Choose phone notifications. Saving here changes only Android settings." : "Choose WhatsApp delivery. Saving here preserves Android settings."}</DialogDescription>
               </DialogHeader>
               <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-2">
-                {dialog === "android" ? (
+                {dialog === "app" ? (
+                  <table className="w-full text-sm">
+                    <thead><tr className="border-b"><th className="py-2 text-left">Notification type</th><th className="py-2 text-right">Enabled</th></tr></thead>
+                    <tbody>{EVENT_CATALOG.flatMap(group => group.types).map(event => (
+                      <tr key={event.type} className="border-b border-border/50">
+                        <td className="py-3 pr-3">{event.label}</td>
+                        <td className="py-3 text-right"><Switch aria-label={event.label} checked={cfg.inApp?.[event.type] !== false}
+                          onCheckedChange={enabled => patch({ inApp: { ...cfg.inApp, [event.type]: enabled } })} /></td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                ) : dialog === "android" ? (
           <section className="space-y-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -338,7 +356,7 @@ function NotificationSettingsPage() {
                 <Button variant="outline" disabled={busy} onClick={() => setDialog(null)}>Cancel</Button>
                 <Button disabled={busy} onClick={() => dialog && void save(dialog)}>
                   {busy ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                  {dialog === "android" ? "Save Android alert settings" : "Save WhatsApp alert settings"}
+                  {dialog === "app" ? "Save in-app notifications" : dialog === "android" ? "Save Android alert settings" : "Save WhatsApp alert settings"}
                 </Button>
               </DialogFooter>
             </DialogContent>

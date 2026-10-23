@@ -110,6 +110,25 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("approval credential authorization", () => {
+  it.each(["ios", "android"])("identifies a %s phone code on a separate Windows receiver and rejects reuse", async platform => {
+    f.platform = platform;
+    const enrolled = await enrollApprovalToken(proof);
+    const code = await approvalTotp(enrolled.credential!.secret);
+    const receiver = "22222222-2222-4222-8222-222222222222";
+    const service = f.service.getMockImplementation()!;
+    f.service.mockImplementation(async (url: string, options?: { body?: string }) => {
+      if (url.startsWith(`terminal_tokens?id=eq.${receiver}`))
+        return Response.json([{ platform: "pc", approval_token_enabled: false }]);
+      return service(url, options);
+    });
+    // The receiving till need not generate its own tokens to accept a phone's.
+    const owner = await identifyApprovalTotp(code, "branch-a", receiver);
+    expect(owner).toBe("manager");
+    expect(await verifyApprovalTotp(owner!, code, "branch-a", receiver)).toEqual({
+      userId: "manager", name: "Manager", role: "manager",
+    });
+    expect(await verifyApprovalTotp(owner!, code, "branch-a", receiver)).toBeNull();
+  });
   it.each(["ios", "mobile", "pc", "windows"])("accepts a registered %s receiver with the same permission and replay checks", async platform => {
     f.platform = platform;
     const enrolled = await enrollApprovalToken(proof);
@@ -226,4 +245,21 @@ it("resolves a code owner without an ID, but rejects collisions before consuming
   expect(await identifyApprovalTotp(code, "branch-b", terminal)).toBeNull();
   expect(await identifyApprovalTotp(code, "branch-a")).toBeNull();
   expect(await identifyApprovalTotp("1234", "branch-a", terminal)).toBeNull();
+});
+
+it("resolves each distinct code to its own user when multiple people are registered", async () => {
+  const first = await enrollApprovalToken(proof);
+  const firstDevice = f.devices[0];
+  const firstCode = await approvalTotp(first.credential!.secret);
+  f.devices = [];
+  const second = await enrollApprovalToken(proof);
+  const secondCode = await approvalTotp(second.credential!.secret);
+  f.devices[0] = { ...f.devices[0], id: "other-device", user_id: "second-manager" };
+  f.devices.unshift(firstDevice);
+  // Even a rare random TOTP collision must reject both identities, not pick one.
+  expect(await identifyApprovalTotp(firstCode, "branch-a", terminal))
+    .toBe(firstCode === secondCode ? null : "manager");
+  expect(await identifyApprovalTotp(secondCode, "branch-a", terminal))
+    .toBe(firstCode === secondCode ? null : "second-manager");
+  expect(f.devices.every(device => device.last_used_step === -1)).toBe(true);
 });

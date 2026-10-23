@@ -44,14 +44,14 @@ beforeEach(() => {
   state.totpEnabled = false;
 });
 
-describe("approval token setup visibility", () => {
+describe("soft token setup visibility", () => {
   it("does not expose the token control before this user has permission", () => {
     expect(renderToStaticMarkup(createElement(ApprovalTokenButton))).toBe("");
   });
 
   it("shows setup immediately after permission is enabled, before enrollment completes", () => {
     state.totpEnabled = true;
-    expect(renderToStaticMarkup(createElement(ApprovalTokenButton))).toContain("Set up approval token");
+    expect(renderToStaticMarkup(createElement(ApprovalTokenButton))).toContain("Set up soft token");
   });
 
   it("does not offer setup without a registered device or signed-in user", () => {

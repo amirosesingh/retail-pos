@@ -1,10 +1,10 @@
 import { reserveDocument } from "./document-lock";
-import { documentOrigin } from "./document-origin";
+import { billPrefix, dayStamp } from "./bill-number";
 /**
  * Stock Operations reference numbers.
  *
- *   [PREFIX]-[BRANCH]-[PLATFORM]-[DEVICE]-[PERIOD]-[SEQUENCE]
- *   SC-B101-202608-0007
+ *   [PREFIX]-[BRANCH]-[PLATFORM][TILL]-[PERIOD]-[SEQUENCE]
+ *   SC-B101-WIN01-20260811-0007
  *
  * Styled after the bill numbering module, but with its own counter so a
  * physical count never borrows a receipt number. The reference is minted once,
@@ -12,7 +12,7 @@ import { documentOrigin } from "./document-origin";
  */
 import { localDb } from "@/core/local-db/local-db";
 
-export type StockNumberReset = "never" | "yearly" | "monthly";
+export type StockNumberReset = "never" | "yearly" | "monthly" | "daily";
 
 /**
  * Which run of numbers a reference comes from. Each series keeps its own
@@ -71,6 +71,7 @@ const readAll = (): SeqStore => {
 
 /** The period segment for a reference, empty when numbering never resets. */
 export function periodStamp(at: Date, reset: StockNumberReset): string {
+  if (reset === "daily") return dayStamp(at);
   if (reset === "yearly") return String(at.getFullYear());
   if (reset === "monthly") return `${at.getFullYear()}${`${at.getMonth() + 1}`.padStart(2, "0")}`;
   return "";
@@ -87,8 +88,11 @@ const build = (
   series: RefSeries,
 ) => {
   const parts = [clean(cfg.prefix, SERIES_PREFIX[series])];
-  parts.push(documentOrigin(branchCode));
-  const period = periodStamp(at, cfg.reset ?? "monthly");
+  // Use the same operator-configured till identity as bills, without changing
+  // the activation ID used by draft storage or authentication. Offline tills
+  // must have distinct till numbers, just as they do for receipt numbering.
+  parts.push(billPrefix(branchCode, at).replace(/-\d{8}$/, ""));
+  const period = periodStamp(at, cfg.reset ?? "daily");
   if (period) parts.push(period);
   parts.push(String(seq).padStart(padOf(cfg), "0"));
   return parts.join("-");
@@ -110,7 +114,7 @@ export function previewStockRef(
 const counterKey = (cfg: StockNumberingSettings, branchCode: string, at: Date, series: RefSeries) =>
   `${series}|${clean(cfg.prefix, SERIES_PREFIX[series])}|${clean(branchCode, "BR")}|${periodStamp(
     at,
-    cfg.reset ?? "monthly",
+    cfg.reset ?? "daily",
   )}`;
 
 /** Counter used before stock-count references changed their display prefix from SO to SC. */
@@ -121,7 +125,7 @@ const legacyStockCounterKey = (
   series: RefSeries,
 ) =>
   series === "stock" && !clean(cfg.prefix, "")
-    ? `stock|SO|${clean(branchCode, "BR")}|${periodStamp(at, cfg.reset ?? "monthly")}`
+    ? `stock|SO|${clean(branchCode, "BR")}|${periodStamp(at, cfg.reset ?? "daily")}`
     : null;
 
 const sequenceFor = (

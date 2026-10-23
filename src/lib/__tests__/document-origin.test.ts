@@ -63,7 +63,7 @@ describe("branch and platform document identity", () => {
   it("keeps new stock documents distinct during concurrent reservations", async () => {
     const numbers = await Promise.all(Array.from({ length: 20 }, () => nextStockRef({}, "B1")));
     expect(new Set(numbers).size).toBe(20);
-    expect(numbers.every((number) => number.includes("B1-WEB-"))).toBe(true);
+    expect(numbers.every((number) => /B1-WEB\d{2}-\d{8}-\d+/.test(number))).toBe(true);
   });
   it("reserves distinct Electron bills while browser business storage is disabled", async () => {
     device.platform = "electron";

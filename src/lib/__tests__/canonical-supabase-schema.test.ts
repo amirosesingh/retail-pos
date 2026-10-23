@@ -195,6 +195,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261022050000_global_permission_restrictions.sql",
       "supabase/migrations/20261022051000_restrict_business_data_reads.sql",
       "supabase/migrations/20261023110839_optimize_shift_permission_checks.sql",
+      "supabase/migrations/20261023141539_soft_token_approval_notifications.sql",
       "supabase/migrations/20261023160000_reusable_campaign_codes.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",

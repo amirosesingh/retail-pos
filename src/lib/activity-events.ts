@@ -69,6 +69,7 @@ export type ActivityEvent = {
 
 /** Every event the till can raise, grouped for the settings matrix. */
 export const EVENT_CATALOG: { group: string; types: { type: string; label: string }[] }[] = [
+  { group: "Approvals", types: [{ type: "soft_token_approval", label: "Soft token used to approve an action" }] },
   {
     group: "Sign in & security",
     types: [

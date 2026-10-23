@@ -23,10 +23,12 @@ const strings = (value: unknown): string[] =>
 export function activityVisibleTo(
   row: { store_id?: unknown; terminal_id?: unknown; event_type?: unknown; meta?: unknown },
   identity: ActivityAudienceIdentity,
+  channel: "app" | "push" = "app",
 ): boolean {
   const meta =
     row.meta && typeof row.meta === "object" ? (row.meta as Record<string, unknown>) : {};
   const audience = String(meta["audience"] ?? "").toLowerCase();
+  if (channel === "app" && meta["in_app_disabled"] === true) return false;
   const targeted =
     audience === "configured_approvers" ||
     Boolean(audience) ||

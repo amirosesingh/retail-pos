@@ -28,6 +28,8 @@ const eventInput = z.object({
 export const pushActivityEvent = createServerFn({ method: "POST" })
   .validator((input: unknown) => eventInput.parse(input))
   .handler(async ({ data }) => {
+    if (data.type === "soft_token_approval")
+      return { ok: false as const, error: "Approval notifications are generated from verified approval records" };
     // The feed is an audit trail: an unattested caller must not be able to
     // invent sign-ins, refunds or branch activity in it.
     const { verifyRelayCaller } = await import("@/core/api/pos-relay.server");
@@ -80,6 +82,7 @@ const settingsInput = z.object({
   quietFrom: z.string().max(5),
   quietTo: z.string().max(5),
   channels: z.record(z.string(), z.enum(["off", "app", "whatsapp"])),
+  inApp: z.record(z.string().min(1).max(60), z.boolean()).optional(),
   androidPush: z
     .object({
       enabled: z.boolean(),
@@ -134,7 +137,7 @@ export const loadNotificationSettings = createServerFn({ method: "POST" })
 export const saveNotificationSettings = createServerFn({ method: "POST" })
   .validator((input: unknown) =>
     callerProof
-      .extend({ settings: settingsInput, section: z.enum(["android", "whatsapp"]).optional() })
+      .extend({ settings: settingsInput, section: z.enum(["android", "whatsapp", "app"]).optional() })
       .parse(input),
   )
   .handler(async ({ data }) => {
