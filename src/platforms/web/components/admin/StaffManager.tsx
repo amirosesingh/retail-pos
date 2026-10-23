@@ -655,9 +655,9 @@ export function StaffManager() {
       >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>{pinPurpose === "offline_login" ? "Windows offline sign-in PIN" : "Approval PIN"}</DialogTitle>
+            <DialogTitle>{pinPurpose === "offline_login" ? "Windows offline sign-in PIN" : nativeApprovalCredentials ? "Approval methods" : "Approval PIN"}</DialogTitle>
             <DialogDescription>
-              {pinPurpose === "offline_login" ? "A separate 6-digit Windows sign-in PIN. Connect and sync the PC before using it offline. Their email password and approval PIN stay unchanged." : "A separate 4–6 digit approval PIN. It does not change sign-in. Approval still requires the appropriate rule, permission and branch access."}
+              {pinPurpose === "offline_login" ? "A separate 6-digit Windows sign-in PIN. Connect and sync the PC before using it offline. Their email password and approval PIN stay unchanged." : nativeApprovalCredentials ? "Enable this user's soft token here, then have them sign in on their registered device and set a token unlock PIN. Approval still requires the appropriate rule and branch access." : "A separate 4–6 digit approval PIN. It does not change sign-in. Approval still requires the appropriate rule, permission and branch access."}
             </DialogDescription>
           </DialogHeader>
           {pinFor && isExternalEmail(pinFor.email) && <label className="space-y-1 text-xs">PIN purpose<select className="h-9 w-full rounded-md border bg-background px-2" aria-label="PIN purpose" value={pinPurpose} onChange={event => { setPinPurpose(event.target.value as "approval" | "offline_login"); setPinValue(""); setConfirmPin(""); }}><option value="approval">Approval PIN</option><option value="offline_login">Windows offline sign-in PIN</option></select></label>}

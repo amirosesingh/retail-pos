@@ -13,10 +13,13 @@ import {
 } from "@/lib/approval-token-client";
 import { approvalTotp } from "@/lib/approval-totp";
 import { subscribeBackgroundRefresh } from "@/lib/background-refresh";
+import { approvalMethods } from "@/lib/approval-credentials";
+import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 
 export function ApprovalTokenAgent() {
-  const { user } = useAuth();
+  const { user, appUser } = useAuth();
   const id = user?.staffId;
+  const methodEnabled = approvalMethods(appUser?.permissions as Record<string, unknown> | null).totp;
   useEffect(() => {
     if (!id) return;
     const refresh = () => {
@@ -26,11 +29,14 @@ export function ApprovalTokenAgent() {
     };
     refresh();
     return subscribeBackgroundRefresh(refresh, 60_000);
-  }, [id, user?.permissions.can_manage_staff]);
+  }, [id, methodEnabled]);
   return null;
 }
 /** Only an OS-vault enrollment bound to the retained sign-in and registered device is shown. */
 export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) {
+  const { user, appUser } = useAuth();
+  const maySetUp = Boolean(user && appUser && readTerminalConfig()?.tokenId &&
+    approvalMethods(appUser.permissions as Record<string, unknown> | null).totp);
   const [token, setToken] = useState<ApprovalToken | null>(null);
   const [open, setOpen] = useState(false);
   const [owner, setOwner] = useState<{ name: string; userId: string } | null>(null);
@@ -40,7 +46,13 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const unlockGeneration = useRef(0);
-  const displayed = token || unlocked;
+  const visibleToken = token && user?.staffId.toLowerCase() === token.userId.toLowerCase() ? token : null;
+  const visibleUnlocked = unlocked && (!user || user.staffId.toLowerCase() === unlocked.userId.toLowerCase()) ? unlocked : null;
+  const displayed = visibleToken || visibleUnlocked;
+  // A different signed-in operator may set up their own token without being
+  // shown the previous operator's offline enrollment.
+  const visibleOwner = owner && (!user || owner.userId.toLowerCase() === user.staffId.toLowerCase())
+    ? owner : null;
   const close = () => { unlockGeneration.current++; setOpen(false); setUnlocked(null); setPin(""); setConfirmation(""); setError(""); setCode(""); };
   useEffect(() => {
     const lock = () => { if (document.hidden) close(); };
@@ -102,19 +114,33 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
       clearInterval(timer);
     };
   }, [open, displayed]);
-  if (!token && !owner && !unlocked) return null;
+  if (!visibleToken && !visibleOwner && !visibleUnlocked && !maySetUp) return null;
   return (
     <>
       <Button variant="outline" size={compact ? "icon" : "sm"} aria-label="Approval token" onClick={() => setOpen(true)}>
-        <ShieldCheck className="size-4" /> {!compact && (token && !owner ? "Register offline token" : "Approval token")}
+        <ShieldCheck className="size-4" /> {!compact && (visibleToken && !visibleOwner ? "Register offline token" : !displayed && !visibleOwner ? "Set up approval token" : "Approval token")}
       </Button>
       <Dialog open={open} onOpenChange={value => { if (value) setOpen(true); else close(); }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Approval token</DialogTitle>
           </DialogHeader>
-          <p className="text-sm">{(displayed || owner)?.name} · {(displayed || owner)?.userId}</p>
-          {!displayed && <form className="space-y-3" onSubmit={async event => {
+          {(displayed || visibleOwner) && <p className="text-sm">{(displayed || visibleOwner)?.name} · {(displayed || visibleOwner)?.userId}</p>}
+          {!displayed && !visibleOwner && maySetUp && <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">Connect once to register your permitted approval token on this device. Then set an unlock PIN to use it from the sign-in screen offline.</p>
+            <Button disabled={busy} onClick={async () => {
+              setBusy(true); setError("");
+              try {
+                if (!navigator.onLine) throw new Error("Connect once to register this token. An already registered token can still be unlocked offline.");
+                await enrollOwnApprovalToken(appUser!.user_id);
+                const value = await loadApprovalToken();
+                if (!value) throw new Error("This device or account is not enabled for approval tokens. Ask an administrator to check both settings and the approval rule.");
+                setToken(value);
+              } catch (e) { setError(e instanceof Error ? e.message : "Could not register approval token"); }
+              finally { setBusy(false); }
+            }}>Retry token registration</Button>
+          </div>}
+          {!displayed && visibleOwner && <form className="space-y-3" onSubmit={async event => {
             event.preventDefault(); if (busy) return; setBusy(true); setError("");
             try { const ticket = ++unlockGeneration.current; const value = await unlockOfflineApprovalToken(pin); if (!document.hidden && ticket === unlockGeneration.current) setUnlocked(value); setPin(""); }
             catch (e) { setError(e instanceof Error ? e.message : "Could not unlock token"); }
@@ -144,7 +170,7 @@ export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) 
             to renew.
           </p>
           </>}
-          {token && <div className="space-y-2 border-t pt-3">
+          {visibleToken && <div className="space-y-2 border-t pt-3">
             <p className="text-xs text-muted-foreground">Register this signed-in user’s token on this device with a separate 6–12 digit unlock PIN. You can then open it from the login screen without internet. This replaces any other saved token owner on this device.</p>
             <label className="text-sm" htmlFor="token-setup-pin">New token unlock PIN</label>
             <input id="token-setup-pin" className="h-10 w-full rounded-md border bg-background px-3" type="password" inputMode="numeric" autoComplete="new-password" maxLength={12} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ""))} />
