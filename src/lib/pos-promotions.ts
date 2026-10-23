@@ -1,10 +1,11 @@
 import type { CartLine, Member, Product, Promotion } from "@/core/types/pos-types";
 import { r2 } from "@/core/types/pos-types";
+import { posDayKey } from "@/lib/time-zone";
 
 /** A promotion counts as live when it is active and today sits inside its window. */
 export function isLive(p: Promotion, now = new Date()) {
   if (!p.active) return false;
-  const today = now.toISOString().slice(0, 10);
+  const today = posDayKey(now);
   if (p.startDate && today < p.startDate) return false;
   if (p.endDate && today > p.endDate) return false;
   return true;

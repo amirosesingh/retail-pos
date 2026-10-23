@@ -1,7 +1,7 @@
 import { Table } from "@/components/ui/table";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { Crown, Gift, Percent, Plus, Sparkles, Trash2, Trophy } from "lucide-react";
+import { Crown, Gift, Pencil, Percent, Plus, Sparkles, Trash2, Trophy } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
@@ -188,8 +188,19 @@ function Promotions() {
                     </td>
                     <td className="px-3 py-2 text-right">
                       <Button
-                        size="sm"
+                        size="icon"
                         variant="ghost"
+                        aria-label={`Edit ${p.name || "promotion"}`}
+                        title="Edit promotion"
+                        onClick={() => setDraft(p)}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Delete ${p.name || "promotion"}`}
+                        title="Delete promotion"
                         onClick={async () => {
                           try {
                             await removePromotion(p.id);

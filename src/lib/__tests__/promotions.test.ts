@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { Member, Product, Promotion } from "@/core/types/pos-types";
 import { evaluatePromotions, focLine, isLive, pointsPolicy } from "@/lib/pos-promotions";
+import { setPosTimeZone } from "@/lib/time-zone";
+
+afterEach(() => setPosTimeZone(""));
 
 const now = new Date("2026-10-01T12:00:00.000Z");
 const promotion = (patch: Partial<Promotion>): Promotion => ({
@@ -13,6 +16,13 @@ const promotion = (patch: Partial<Promotion>): Promotion => ({
 });
 
 describe("promotions, discounts and points", () => {
+  it("uses the configured trading day for date-only promotion windows", () => {
+    setPosTimeZone("Asia/Singapore");
+    const opening = new Date("2026-10-22T16:30:00.000Z");
+    expect(isLive(promotion({ startDate: "2026-10-23" }), opening)).toBe(true);
+    expect(isLive(promotion({ endDate: "2026-10-22" }), opening)).toBe(false);
+  });
+
   it("uses only an active point rule inside its date window", () => {
     const expired = promotion({
       id: "expired",

@@ -2,7 +2,7 @@ import { copyText } from "@/platform-config/clipboard";
 import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Copy, Link2, Loader2, Plus, Send, TicketPercent, Trash2 } from "lucide-react";
+import { Copy, Loader2, Pencil, Plus, Send, TicketPercent, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -35,6 +35,8 @@ import { IssueVoucherDialog } from "@/platforms/web/components/pos/IssueVoucherD
 import { useAuth } from "@/lib/pos-auth";
 import { usePos } from "@/lib/pos-store";
 import { claimUrl } from "@/lib/coupon-hosts";
+import { fromCouponLocalInput, toCouponLocalInput } from "@/lib/coupon-date-input";
+import { validateCouponCampaign } from "@/lib/coupon-campaign-validation";
 import {
   blankCampaign,
   campaignStatus,
@@ -80,11 +82,6 @@ const statusTone: Record<string, "default" | "secondary" | "destructive" | "outl
   Scheduled: "outline",
   "Fully claimed": "secondary",
 };
-
-/** ISO timestamp <-> value for a datetime-local input. */
-const toLocalInput = (iso?: string | null) =>
-  iso ? new Date(iso).toISOString().slice(0, 16) : "";
-const fromLocalInput = (v: string) => (v ? new Date(v).toISOString() : null);
 
 /**
  * A blank or half-typed limit ("", "-", "1e") must never reach the draft as
@@ -175,8 +172,8 @@ function CouponsPage() {
   async function save() {
     if (!draft) return;
     const slug = slugify(draft.slug || draft.name);
-    if (!draft.name.trim()) return toast.error("Give the campaign a name");
-    if (!slug) return toast.error("Give the campaign a link slug");
+    const validationError = validateCouponCampaign({ ...draft, slug });
+    if (validationError) return toast.error(validationError);
     setSaving(true);
     try {
       const res = await saveCampaign({ ...draft, slug });
@@ -345,9 +342,10 @@ function CouponsPage() {
                             size="icon"
                             variant="ghost"
                             title="Edit campaign"
+                            aria-label={`Edit ${c.name}`}
                             onClick={() => setDraft(c)}
                           >
-                            <Link2 className="h-4 w-4" />
+                            <Pencil className="h-4 w-4" />
                           </Button>
                           <Button
                             size="icon"
@@ -520,9 +518,9 @@ function CouponsPage() {
                   <Input
                     id="c-start"
                     type="datetime-local"
-                    value={toLocalInput(draft.startsAt)}
+                    value={toCouponLocalInput(draft.startsAt)}
                     onChange={(e) =>
-                      setDraft({ ...draft, startsAt: fromLocalInput(e.target.value) })
+                      setDraft({ ...draft, startsAt: fromCouponLocalInput(e.target.value) })
                     }
                   />
                 </div>
@@ -531,9 +529,9 @@ function CouponsPage() {
                   <Input
                     id="c-end"
                     type="datetime-local"
-                    value={toLocalInput(draft.expiresAt)}
+                    value={toCouponLocalInput(draft.expiresAt)}
                     onChange={(e) =>
-                      setDraft({ ...draft, expiresAt: fromLocalInput(e.target.value) })
+                      setDraft({ ...draft, expiresAt: fromCouponLocalInput(e.target.value) })
                     }
                   />
                 </div>
@@ -593,7 +591,8 @@ function CouponsPage() {
                 <div>
                   <p className="text-sm font-medium">Welcome coupon</p>
                   <p className="text-xs text-muted-foreground">
-                    Issued automatically to everyone who registers on the member signup page.
+                    Marks this campaign for welcome vouchers. Until signup issuance is enabled,
+                    issue vouchers from the campaign actions.
                   </p>
                 </div>
                 <Switch
