@@ -166,7 +166,10 @@ export function normalizeSnapshot(input: unknown): TicketSnapshot | null {
  * member and the value being asked for. Presentation-only fields (labels,
  * capture time, terminal) are deliberately left out.
  */
-export function snapshotFingerprint(snapshot: TicketSnapshot | null | undefined): string {
+export function snapshotFingerprint(input: TicketSnapshot | null | undefined): string {
+  // The request endpoint normalizes before storing. Hash the same canonical
+  // representation on the till, including bounded text and numeric precision.
+  const snapshot = normalizeSnapshot(input);
   if (!snapshot) return "";
   const material = [
     snapshot.ticketId,

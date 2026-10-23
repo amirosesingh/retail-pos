@@ -623,9 +623,8 @@ function Register() {
     getTotal: (paymentMethod) => applyRounding(totals.total, state.settings.integrations.rounding, paymentMethod).total,
   });
 
-  const [discountReviewRequested, setDiscountReviewRequested] = useState(false);
   const charging = useRef(false);
-  const openPayment = async (preset?: Parameters<typeof openTenderPayment>[0], reviewOnly = false) => {
+  const openPayment = async (preset?: Parameters<typeof openTenderPayment>[0]) => {
     if (charging.current || !lines.length || tillLocked || !can("can_process_sale")) return;
     charging.current = true;
     try {
@@ -657,18 +656,10 @@ function Register() {
         });
         if (grant === null) return;
       }
-      if (!reviewOnly) openTenderPayment(preset);
+      openTenderPayment(preset);
     } catch (error) { notifyError(error,"Opening payment"); }
     finally { charging.current = false; }
   };
-
-  const reviewDiscountsRef = useRef(openPayment);
-  reviewDiscountsRef.current = openPayment;
-  useEffect(() => {
-    if (!discountReviewRequested) return;
-    setDiscountReviewRequested(false);
-    void reviewDiscountsRef.current(undefined, true);
-  }, [discountReviewRequested]);
 
   const [waNumber, setWaNumber] = useState("");
   const [waSending, setWaSending] = useState(false);
@@ -4369,14 +4360,13 @@ function Register() {
               );
               return;
             }
-            // Review the resulting ticket after React has applied the discount.
+            // Keep discounts editable; Charge reviews the complete ticket once.
             if (target === "bill") {
               setCartDiscount(v);
               setCartDiscountType(t);
             } else if (typeof target === "number") {
               patchLine(target, { discount: v, discountType: t });
             }
-            setDiscountReviewRequested(true);
           })();
         }}
       />
