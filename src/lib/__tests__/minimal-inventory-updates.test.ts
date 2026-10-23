@@ -50,7 +50,8 @@ describe("minimal inventory and native update controls", () => {
   it("keeps review/edit permissions and existing export payload intact", () => {
     const source = readFileSync("src/routes/inventory.tsx", "utf8");
     expect(source).toContain("showMoney && (costReviewCount > 0 || costReviewOnly)");
-    expect(source).toContain("exportProductsXlsx(rows, stores");
+    expect(source).toContain("productsForExport(catalogProducts, scope, currentStore.id)");
+    expect(source).toContain("exportProductsXlsx(products, stores, `products-${currentStore.code}-${scope}`, showMoney)");
     expect(source).toContain('stockFilter === "low" && !isLowStock');
     expect(source).toContain('stockFilter === "out" && branchStock !== 0');
     expect(source).toContain('disabled={!canPrice || branchPriceOnly}');

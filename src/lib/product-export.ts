@@ -4,10 +4,22 @@
  */
 import type { Product, Store } from "@/core/types/pos-types";
 
+export type ProductExportScope = "all" | "active" | "active-in-stock" | "archived";
+
+export function productsForExport(products: Product[], scope: ProductExportScope, storeId: string): Product[] {
+  return products.filter((product) => {
+    if (scope === "all") return true;
+    if (scope === "archived") return product.archived === true;
+    if (product.archived === true) return false;
+    return scope === "active" || (product.stockByStore?.[storeId] ?? 0) > 0;
+  });
+}
+
 export async function exportProductsXlsx(
   products: Product[],
   stores: Store[],
   fileName = "products",
+  includeCost = true,
 ) {
   const XLSX = await import("xlsx");
   const rows = products.map((p) => {
@@ -19,13 +31,13 @@ export async function exportProductsXlsx(
       category: p.category,
       sub_category: p.subCategory ?? "",
       unit: p.unit ?? "",
-      cost: p.cost,
       price: p.price,
       ecom_price: p.ecomPrice ?? "",
       tax_rate: p.taxRate,
       reorder_level: p.reorderLevel,
       custom_points: p.customPoints ?? "",
     };
+    if (includeCost) row.cost = p.cost;
     for (const s of stores) row[`stock_${s.code}`] = p.stockByStore?.[s.id] ?? 0;
     return row;
   });

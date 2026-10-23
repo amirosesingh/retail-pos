@@ -53,7 +53,7 @@ import { notifyError } from "@/lib/notify";
 import { ProductDeleteBlockedDialog } from "@/platforms/web/components/pos/ProductDeleteBlockedDialog";
 import type { BlockedDelete } from "@/lib/product-delete";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import { exportProductsXlsx } from "@/lib/product-export";
+import { exportProductsXlsx, productsForExport, type ProductExportScope } from "@/lib/product-export";
 import {
   groupList,
   isActive,
@@ -164,6 +164,7 @@ function Inventory() {
   const [expandedProducts, setExpandedProducts] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [blocked, setBlocked] = useState<BlockedDelete[]>([]);
   const [deleting, setDeleting] = useState<string[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -317,6 +318,18 @@ function Inventory() {
     [catalogProducts, currentStore.id],
   );
 
+  function exportCatalogue(scope: ProductExportScope) {
+    const products = productsForExport(catalogProducts, scope, currentStore.id);
+    if (!products.length) {
+      toast.info("No products match this export choice");
+      return;
+    }
+    setExportOpen(false);
+    void exportProductsXlsx(products, stores, `products-${currentStore.code}-${scope}`, showMoney)
+      .then(() => toast.success(`Exported ${products.length} products to Excel`))
+      .catch(error => notifyError(error, "Exporting products"));
+  }
+
   return (
     <AppShell>
       <div className="pos-page-container">
@@ -366,13 +379,22 @@ function Inventory() {
                   else setDuplicateOpen(true);
                 }}>Check duplicate codes</DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => {
-                  void exportProductsXlsx(rows, stores, `products-${currentStore.code}`)
-                    .then(() => toast.success(`Exported ${rows.length} products to Excel`))
-                    .catch(error => notifyError(error, "Exporting products"));
-                }}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setExportOpen(true)}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+              <DialogContent className="max-w-sm">
+                <DialogHeader><DialogTitle>Export products to Excel</DialogTitle></DialogHeader>
+                <p className="text-sm text-muted-foreground">Choose which products to include from this branch's catalogue.</p>
+                <div className="grid gap-2">
+                  <Button variant="outline" onClick={() => exportCatalogue("all")}>All active and archived</Button>
+                  <Button variant="outline" onClick={() => exportCatalogue("active")}>Active products</Button>
+                  <Button variant="outline" onClick={() => exportCatalogue("active-in-stock")}>Active with stock at this branch</Button>
+                  <Button variant="outline" onClick={() => exportCatalogue("archived")}>Archived products only</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
 
             {canOpenEditor && (
               <Dialog

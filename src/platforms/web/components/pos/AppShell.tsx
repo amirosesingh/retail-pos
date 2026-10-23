@@ -123,7 +123,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     ready,
     user,
     isAdmin,
-    isSupervisor,
     canSwitchStores,
     terminalStoreId,
     authUserId,
@@ -370,7 +369,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         <TerminalLogin />
       </>
     );
-  if ((isDesktop() || isNative()) && isManagementDevice() && !(isNative() ? can("can_use_management_mobile") : isSupervisor))
+  if ((isDesktop() || isNative()) && isManagementDevice() && !(isNative() ? can("can_use_management_mobile") : can("can_access_pos_settings")))
     return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
       <h1 className="text-lg font-semibold">Management device</h1>
       <p>Sign in with an account permitted to use this management device. Your page and branch permissions still apply.</p>
@@ -630,7 +629,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   const allowed = terminalManagement
                     ? can("can_manage_terminals")
                     : settingsHome
-                      ? isSupervisor || can("can_access_pos_settings")
+                      ? can("can_access_pos_settings")
                       : reportsHome
                         ? can("can_view_sales_reports") || can("can_view_audit_trail")
                         : required === null
