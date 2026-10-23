@@ -12,9 +12,8 @@ export async function routeBeta(request, fetchUpstream = fetch, env = {}) {
   if (!HOSTS.has(original.hostname)) return new Response("Not found", { status: 404 });
   if (original.hostname === "beta-pos.luckycharmsdnbhd.com" &&
       original.pathname === "/.well-known/apple-app-site-association") {
-    // Sideloadly signs with the owner's Apple Team ID, which is not known to
-    // this source tree. Never publish a guessed app identifier to Apple.
-    const teamId = String(env.IOS_BETA_TEAM_ID ?? "").trim();
+    // This legacy router serves the same public app identity as src/server.ts.
+    const teamId = String(env.IOS_BETA_TEAM_ID ?? "SMRQRLSBA3").trim();
     if (!/^[A-Z0-9]{10}$/.test(teamId)) return new Response("Not configured", { status: 404 });
     return new Response(JSON.stringify({ webcredentials: { apps: [`${teamId}.com.luckycharms.pos.beta`] } }), {
       headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" },

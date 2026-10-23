@@ -8,7 +8,7 @@ The generated Android app registers `PosPasswordAutofillPlugin` and includes And
 
 ## Sideloaded iPhone beta
 
-The iOS app's signed entitlement must include `webcredentials:beta-pos.luckycharmsdnbhd.com`. That HTTPS host must serve `/.well-known/apple-app-site-association` with `webcredentials.apps` containing the **actual signing Team ID** followed by `.com.luckycharms.pos.beta`. The beta domain Worker has this endpoint, but returns 404 until its `IOS_BETA_TEAM_ID` variable is set to the signing Team ID. A guessed ID would associate a different app and must never be used. The login fields carry Apple's HTML `username`/`current-password` hints. The native bridge calls Apple's shared-web-credential API after a verified login and can request an existing saved login.
+The iOS app's signed entitlement must include `webcredentials:beta-pos.luckycharmsdnbhd.com`. That HTTPS host must serve `/.well-known/apple-app-site-association` with `webcredentials.apps` containing the **actual signing Team ID** followed by `.com.luckycharms.pos.beta`. The local Sideloadly certificate's Team ID is `SMRQRLSBA3`; both the current app Worker and the older beta router serve this public association on the beta POS host. `IOS_BETA_TEAM_ID` can override it when the signing account changes. The login fields carry Apple's HTML `username`/`current-password` hints. The native bridge calls Apple's shared-web-credential API after a verified login and can request an existing saved login.
 
 The GitHub Actions IPA is unsigned. Sideloadly signs it later, so the build cannot know the final Team ID or verify that Sideloadly kept the bundle ID and Associated Domains entitlement. To obtain them, inspect the **signed** IPA on a Mac:
 
@@ -18,7 +18,7 @@ codesign -dv --verbose=4 signed-ipa/Payload/App.app 2>&1 | grep -E 'TeamIdentifi
 codesign -d --entitlements :- signed-ipa/Payload/App.app
 ```
 
-The signing Team ID is a public 10-character identifier, not an Apple password. Set `IOS_BETA_TEAM_ID` on the `retail-pos-beta-domains` Cloudflare Worker, deploy that Worker, then verify the URL returns the exact signed `TeamIdentifier.bundleID` with HTTP 200, `application/json`, and no redirect. Install a **new IPA** bearing that entitlement. Apple may cache the association; installation or a wait for its CDN to refresh can be necessary. If Sideloadly changed the bundle ID or removed the entitlement, use a signing method/profile that preserves both. Web-bundle OTA cannot add a native entitlement or plugin to an IPA already installed.
+The signing Team ID is a public 10-character identifier, not an Apple password. Confirm the signed IPA uses `SMRQRLSBA3` and retains the bundle ID and entitlement before merging this association. If the Team ID differs, set `IOS_BETA_TEAM_ID` on `retail-pos-beta-domains`. After deploying the beta Worker, verify the URL returns the exact signed `TeamIdentifier.bundleID` with HTTP 200, `application/json`, and no redirect. Install a **new IPA** bearing that entitlement. Apple may cache the association; installation or a wait for its CDN to refresh can be necessary. If Sideloadly changed the bundle ID or removed the entitlement, use a signing method/profile that preserves both. Web-bundle OTA cannot add a native entitlement or plugin to an IPA already installed.
 
 The stable iOS app uses the separate `webcredentials:pos.luckycharmsdnbhd.com` entitlement and needs its own association endpoint for its signed Team ID before Passwords saving is enabled there. The beta endpoint never asserts a stable app association.
 
