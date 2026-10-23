@@ -31,7 +31,7 @@ describe("PIN request address throttle", () => {
     const attempt = await beginPinRequest();
     expect(attempt).toEqual({ key: "cashier-ip:203.0.113.7", locked: false });
     await finishPinRequest(attempt.key, false);
-    expect(mocks.fail).toHaveBeenCalledWith(attempt.key);
+    expect(mocks.fail).toHaveBeenCalledWith(attempt.key, 20);
     await finishPinRequest(attempt.key, true);
     expect(mocks.reset).not.toHaveBeenCalled();
     expect(mocks.fail).toHaveBeenCalledTimes(1);

@@ -29,5 +29,7 @@ export async function beginPinRequest(request?: Request): Promise<{
 
 export async function finishPinRequest(key: string | null, valid: boolean): Promise<void> {
   // A valid PIN on another account must not erase this address's failed guesses.
-  if (key && !valid) await throttleFail(key);
+  // The address bucket tolerates normal shared-shop mistakes; each account
+  // still has its own five-attempt lockout.
+  if (key && !valid) await throttleFail(key, 20);
 }
