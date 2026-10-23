@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,8 @@ import { routedQuery } from "@/core/api/db-query";
 import { nextCursor, type Cursor } from "@/lib/keyset";
 import { approvalHistorySummary } from "@/lib/approval-history";
 import { formatDateTime } from "@/lib/time-zone";
+import { AUTH_ACTION_LABEL } from "@/lib/authorization";
+import { branchDisplayName } from "@/lib/human-readable";
 const SIZE = 25;
 type Row = Record<string, unknown>;
 export function ApprovalHistoryDialog({
@@ -21,12 +23,15 @@ export function ApprovalHistoryDialog({
   onOpenChange,
   storeId,
   allBranches,
+  stores,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   storeId: string;
   allBranches: boolean;
+  stores: readonly { id: string; name: string }[];
 }) {
+  const generation = useRef(0);
   const [rows, setRows] = useState<Row[]>([]);
   const [cursor, setCursor] = useState<Cursor>(null);
   const [more, setMore] = useState(false);
@@ -47,6 +52,7 @@ export function ApprovalHistoryDialog({
     });
   }
   useEffect(() => {
+    generation.current++;
     if (!open) return;
     let live = true;
     setBusy(true);
@@ -69,15 +75,18 @@ export function ApprovalHistoryDialog({
       });
     return () => {
       live = false;
+      generation.current++;
     };
     // read is intentionally captured for this exact branch/open revision.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, storeId, allBranches, revision]);
   async function older() {
     if (busy || !cursor) return;
+    const current = generation.current;
     setBusy(true);
     try {
       const page = await read(cursor);
+      if (current !== generation.current) return;
       setRows((previous) => [
         ...new Map([...previous, ...page].map((row) => [String(row.id), row])).values(),
       ]);
@@ -85,9 +94,10 @@ export function ApprovalHistoryDialog({
       setMore(page.length === SIZE);
       setError("");
     } catch (e) {
+      if (current !== generation.current) return;
       setError(e instanceof Error ? e.message : "Could not load older approvals");
     } finally {
-      setBusy(false);
+      if (current === generation.current) setBusy(false);
     }
   }
   return (
@@ -141,9 +151,12 @@ export function ApprovalHistoryDialog({
                     )}
                   </TableCell>
                   <TableCell>
-                    {String(row.action_key).replaceAll("_", " ")}
+                    {AUTH_ACTION_LABEL[String(row.action_key)] ??
+                      String(row.action_key).replaceAll("_", " ")}
                     <div className="text-xs text-muted-foreground">
-                      {String(row.store_id ?? "")}
+                      {row.store_id
+                        ? branchDisplayName(stores, String(row.store_id))
+                        : "All branches"}
                     </div>
                   </TableCell>
                 </TableRow>

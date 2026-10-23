@@ -310,7 +310,7 @@ function ApprovalsPage() {
 
   return (
     <AppShell>
-      <ApprovalHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} storeId={storeId} allBranches={allBranches && me?.role === "admin"} />
+      <ApprovalHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} storeId={storeId} stores={pos?.state.stores ?? []} allBranches={allBranches && me?.role === "admin"} />
       <div className="pos-page-container">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>

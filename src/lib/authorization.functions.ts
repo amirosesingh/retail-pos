@@ -1094,6 +1094,7 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
             existing.requesterDirectLimit,
           ),
           snapshot_hash: existing.snapshotHash,
+          ticket_reference: existing.snapshot?.billNo || existing.payload["bill_no"] || existing.payload["transaction"] || null,
           held_order_id: existing.heldOrderId,
           approval_route: existing.approvalRoute,
           escalated: usedEscalation,
