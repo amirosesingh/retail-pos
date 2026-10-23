@@ -181,7 +181,7 @@ function SeriesCard({
           <p className="text-xs text-muted-foreground">Next reference on this branch</p>
           <p className="font-mono text-lg font-semibold">{sample}</p>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Branch {branchCode} · running number restarts {cfg.reset ?? "monthly"}.
+            Uses the bill till number. Assign a different till number to each offline device. Branch {branchCode} · running number restarts {cfg.reset ?? "daily"}.
           </p>
         </div>
 
@@ -230,12 +230,13 @@ function SeriesCard({
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Start again</Label>
             <ThemedSelect
-              value={cfg.reset ?? "monthly"}
+              value={cfg.reset ?? "daily"}
               onChange={(v) => onPatch({ reset: v as StockNumberReset })}
               options={[
                 { value: "never", label: "Never — one continuous run" },
                 { value: "yearly", label: "Every year" },
                 { value: "monthly", label: "Every month" },
+                { value: "daily", label: "Every day (like bills)" },
               ]}
               ariaLabel="Reset rule"
             />

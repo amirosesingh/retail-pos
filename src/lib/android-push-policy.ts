@@ -51,5 +51,5 @@ export function maySendAndroidPush(
       user.permissions?.can_view_audit_trail === true ||
       user.role === "admin" ||
       user.role_slug === "admin",
-  });
+  }, "push");
 }

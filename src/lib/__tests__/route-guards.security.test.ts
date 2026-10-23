@@ -206,3 +206,15 @@ describe("secret hygiene", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+
+describe("approval page access", () => {
+ it("recognizes approvals without requiring an unrelated transfer permission", () => {
+  expect(APP_SHELL).toContain('if (pathname.replace(/\\/+$/, "") === "/approvals") return null;');
+  expect(APP_SHELL).toContain('if (allowed && visibleRoute(location.pathname))');
+  const backend = readFileSync(join(process.cwd(), "src/lib/authorization.functions.ts"), "utf8");
+  expect(backend).toContain('const who = await assertCaller(data)');
+  expect(backend).toContain('canViewAuthorizationRequest(');
+  expect(backend).toContain('canAuthorize(');
+ });
+});

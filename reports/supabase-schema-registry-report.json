@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-19T11:05:58.766Z",
+  "generatedAt": "2026-10-23T23:33:17.228Z",
   "tableCount": 70,
-  "columnCount": 1190,
+  "columnCount": 1194,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -755,16 +755,16 @@
           "hasDefault": false
         },
         {
+          "name": "offline_login_pin_hash",
+          "declaration": "text NOT NULL DEFAULT ''",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
           "name": "login_username",
           "declaration": "text",
           "nullable": true,
           "hasDefault": false
-        },
-        {
-          "name": "offline_login_pin_hash",
-          "declaration": "text DEFAULT ''::text NOT NULL",
-          "nullable": false,
-          "hasDefault": true
         }
       ],
       "primaryKey": [
@@ -5863,6 +5863,30 @@
           "declaration": "text",
           "nullable": true,
           "hasDefault": false
+        },
+        {
+          "name": "management_sync_enabled",
+          "declaration": "boolean NOT NULL DEFAULT false",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "management_sync_proof_hash",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "approval_token_enabled",
+          "declaration": "boolean NOT NULL DEFAULT false",
+          "nullable": false,
+          "hasDefault": true
+        },
+        {
+          "name": "management_registration",
+          "declaration": "boolean NOT NULL DEFAULT false",
+          "nullable": false,
+          "hasDefault": true
         }
       ],
       "primaryKey": [

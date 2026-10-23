@@ -25,3 +25,8 @@ test('platform release workflows cannot recursively delete shared recovery folde
   assert.ok(!publisher.includes("'--recursive'"));
   for (const workflow of [android,windows]) assert.match(workflow,/group: pos-release/);
 });
+
+test('history keeps stable revisions in numeric order', () => {
+  const versions = ['1.4.77', '1.4.77+revision.2', '1.4.78', '1.4.77+revision.10'];
+  assert.deepEqual(parseHistory(JSON.stringify({releases:versions.map(version=>({version,status:'successful'}))})).map(r=>r.version), ['1.4.78','1.4.77+revision.10','1.4.77+revision.2','1.4.77']);
+});

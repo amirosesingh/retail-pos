@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PERMISSION_SECTIONS, PERMISSION_EDITOR_IDS, sectionVisibility, setSectionVisibility, permissionSubpages, permissionPageMatches, permissionRelatedKeys } from "../permission-editor";
+import { PERMISSION_SECTIONS, PERMISSION_EDITOR_IDS, sectionVisibility, setSectionVisibility, permissionSubpages, permissionPageMatches, permissionRelatedKeys, permissionEditableKeys, permissionReferenceKeys, permissionControlOwner, setEditablePageFeatures } from "../permission-editor";
 import { PERMISSION_PAGES, pageEnabled } from "../permission-pages";
 import { NO_PERMISSIONS, PERMISSION_KEYS, type StaffPermissions } from "../permissions";
 import { SETTINGS_CARDS } from "../settings-catalog";
@@ -88,5 +88,30 @@ describe("collapsed permission hierarchy", () => {
   expect(html).not.toContain('aria-expanded="true"');
   expect(html).not.toContain("Visible information");
   expect(html).not.toContain("Related shared controls");
+ });
+});
+
+
+describe("unique editable permission controls", () => {
+ it("renders every saved permission key in exactly one editable home", () => {
+  const keys = PERMISSION_PAGES.flatMap(page => permissionEditableKeys(page.id));
+  expect(keys.length).toBe(new Set(keys).size);
+  expect([...keys].sort()).toEqual([...PERMISSION_KEYS].sort());
+  for (const page of PERMISSION_PAGES) {
+   for (const key of permissionReferenceKeys(page.id)) {
+    expect(permissionEditableKeys(page.id)).not.toContain(key);
+    expect(permissionEditableKeys(permissionControlOwner(key).id)).toContain(key);
+   }
+  }
+ });
+ it("bulk edits only its editable controls and retains other grants and unknown flags", () => {
+  const original = {...NO_PERMISSIONS, can_manage_promotions:true, 'page:future':false};
+  const changed = setEditablePageFeatures(original, 'coupons', false);
+  expect(changed).toEqual(original);
+  expect(setEditablePageFeatures(original, 'promotions', false).can_manage_promotions).toBe(false);
+  const hiddenOwner = {...original, 'page:promotions':false};
+  const edited = setEditablePageFeatures(hiddenOwner, 'promotions', false);
+  expect(edited.can_manage_promotions).toBe(false);
+  expect(edited['page:promotions']).toBe(false);
  });
 });

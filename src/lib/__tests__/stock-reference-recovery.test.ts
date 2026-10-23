@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const bridge = vi.hoisted(() => ({reserveStockCounter:vi.fn()}));
 vi.mock("@/core/local-db/local-db", () => ({ localDb: () => bridge, readLocalSetting:vi.fn(async () => { throw new Error("Electron settings must not be read"); }), writeLocalSetting:vi.fn(async () => { throw new Error("Electron settings must not be written"); }) }));
-vi.mock("../document-origin", () => ({documentOrigin: (branch:string) => `${branch}-WIN-DEVICE`}));
+vi.mock("../bill-number", () => ({billPrefix: (branch:string) => `${branch}-WIN01-20261015`, dayStamp: () => "20261015"}));
 import {nextStockRef, saveStockDraftReference} from "../stock-ref";
 beforeEach(() => vi.clearAllMocks());
 const duplicate = {sqlNumber:2601,table:"stock_count_drafts",sqlDetail:"Cannot insert duplicate key row with unique index 'UX_stock_count_drafts_reference'."};
@@ -10,12 +10,12 @@ describe("stock reference reservation and recovery", () => {
     bridge.reserveStockCounter.mockImplementation(async () => ({ok:true,sequence:82}));
     const at = new Date(2026,9,15);
     for (const [series,prefix] of [["stock","SC"],["receiving","GRN"],["request","SR"],["transfer","ST"]] as const) {
-      expect(await nextStockRef({},"B1",series,at)).toBe(`${prefix}-B1-WIN-DEVICE-202610-0082`);
-      expect(bridge.reserveStockCounter).toHaveBeenLastCalledWith(`${prefix}-B1-WIN-DEVICE-202610`,expect.any(Number));
+      expect(await nextStockRef({},"B1",series,at)).toBe(`${prefix}-B1-WIN01-20261015-0082`);
+      expect(bridge.reserveStockCounter).toHaveBeenLastCalledWith(`${prefix}-B1-WIN01-20261015`,expect.any(Number));
     }
     bridge.reserveStockCounter.mockResolvedValue({ok:true,sequence:500});
-    expect(await nextStockRef({startNumber:500},"B2","stock",at)).toBe("SC-B2-WIN-DEVICE-202610-0500");
-    expect(bridge.reserveStockCounter).toHaveBeenLastCalledWith("SC-B2-WIN-DEVICE-202610",500);
+    expect(await nextStockRef({startNumber:500},"B2","stock",at)).toBe("SC-B2-WIN01-20261015-0500");
+    expect(bridge.reserveStockCounter).toHaveBeenLastCalledWith("SC-B2-WIN01-20261015",500);
     bridge.reserveStockCounter.mockResolvedValue({ok:false,error:"Counter disk failure"});
     await expect(nextStockRef({},"B1","stock",at)).rejects.toThrow("Counter disk failure");
   });

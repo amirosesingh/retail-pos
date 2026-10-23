@@ -1,3 +1,4 @@
+import { displayReleaseVersion } from "@/lib/release-version";
 import { toast } from "sonner";
 import { copyText } from "@/platform-config/clipboard";
 import { IosOtaSettings } from "@/platform-config/ios-ota";
@@ -138,7 +139,7 @@ function DesktopUpdateCard() {
     return () => { active = false; };
   }, [supported]);
 
-  const version = state.version || APP_VERSION;
+  const version = displayReleaseVersion(state.version || APP_VERSION);
   const busy = installing || manifestChecking || state.status === "checking" || state.status === "downloading";
 
   const status = manifestChecking
@@ -160,9 +161,9 @@ function DesktopUpdateCard() {
       {supported && history && <TileGroup title="Retained Windows releases">
         {!history.ok && <TileRow label="History unavailable" hint={history.error} />}
         {history.ok && history.releases.length === 0 && <TileRow label="No retained releases listed yet" />}
-        {history.releases.map(release => <TileRow key={release.version} label={`v${release.version}`}
+        {history.releases.map(release => <TileRow key={release.version} label={`v${displayReleaseVersion(release.version)}`}
           hint={[release.released ? posDisplayDate(new Date(release.released)) : "", release.notes].filter(Boolean).join(" · ")}
-          value={release.version === version ? "Installed" : "Retained"} />)}
+          value={release.version === (state.version || APP_VERSION) ? "Installed" : "Retained"} />)}
       </TileGroup>}
       <TileGroup title="Version">
         <TileRow
@@ -198,7 +199,7 @@ function DesktopUpdateCard() {
           hint={lastChecked ? `Last checked ${posDisplayDateTime(lastChecked)}` : "Not checked yet"}
           value={
             state.available && state.status !== "current" ? (
-              <span className="numeric text-primary">→ v{state.available}</span>
+              <span className="numeric text-primary">→ v{displayReleaseVersion(state.available)}</span>
             ) : undefined
           }
         />

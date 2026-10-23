@@ -37,6 +37,7 @@ import {
 import { verifyLocalApprovalPin } from "@/core/local-db/local-staff";
 import { normalizeSnapshot, snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
 import { syncNow } from "@/lib/sync-engine";
+import { approvalIdentity } from "@/lib/approval-identity";
 
 const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -102,14 +103,15 @@ export function AuthorizationDialog({
 
   async function authorizeLocalPin() {
     if (!prompt) return false;
-    const expectedId = prompt.selfAuthorizer?.id ?? (tokenOnly ? "" : authorizerId.trim());
+    const identity = approvalIdentity(tokenOnly, authorizerId, prompt.selfAuthorizer?.id);
+    const expectedId = identity.authorizerId;
     const result = await verifyLocalApprovalPin(expectedId, pin);
     if (!result.ok) {
       toast.error(result.error);
       return false;
     }
     if (
-      prompt.selfAuthorizer &&
+      identity.selfAuthorization && prompt.selfAuthorizer &&
       result.staff.username.toLowerCase() !== prompt.selfAuthorizer.id.toLowerCase()
     ) {
       toast.error("Enter the PIN for the signed-in account.");
@@ -166,7 +168,7 @@ export function AuthorizationDialog({
         approved_by_name: result.staff.full_name || result.staff.username,
         requested_by_name: me?.name ?? "",
         ticket_reference: prompt.snapshot?.billNo || prompt.payload?.["bill_no"] || prompt.payload?.["transaction"] || null,
-        self_authorization: !!prompt.selfAuthorizer,
+        self_authorization: identity.selfAuthorization,
         requested_amount: prompt.requestedAmount ?? null,
         approval_location: prompt.payload?.["approval_location"] ?? null,
         reference: prompt.payload?.["bill_no"] ?? prompt.payload?.["transaction"] ?? null,
@@ -257,8 +259,7 @@ export function AuthorizationDialog({
         data: {
           ...auth,
           actionKey: prompt.actionKey,
-          authorizerId: prompt.selfAuthorizer?.id ?? (tokenOnly ? "" : authorizerId.trim()),
-          selfAuthorization: !!prompt.selfAuthorizer,
+          ...approvalIdentity(tokenOnly, authorizerId, prompt.selfAuthorizer?.id),
           pin,
           binding: prompt.binding,
           auditContext: { ...prompt.payload, ticket_reference: prompt.snapshot?.billNo || prompt.payload?.["bill_no"] || prompt.payload?.["transaction"] || null },
@@ -346,11 +347,11 @@ export function AuthorizationDialog({
 
   const pinPane = (
     <div className="grid gap-4 sm:grid-cols-2">
-      {nativeApprovalCredentials && !prompt?.selfAuthorizer && <div className="flex gap-2 sm:col-span-2">
+      {nativeApprovalCredentials && <div className="flex gap-2 sm:col-span-2">
         <Button variant={tokenOnly ? "default" : "outline"} size="sm" onClick={() => { setTokenOnly(true); setPin(""); }}>Soft token</Button>
         <Button variant={!tokenOnly ? "default" : "outline"} size="sm" onClick={() => { setTokenOnly(false); setPin(""); }}>Approval PIN</Button>
       </div>}
-      {prompt?.selfAuthorizer ? (
+      {prompt?.selfAuthorizer && !tokenOnly ? (
         <div className="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm sm:col-span-2">
           <div className="font-medium">Confirm as {prompt.selfAuthorizer.name}</div>
           <div className="text-xs text-muted-foreground">

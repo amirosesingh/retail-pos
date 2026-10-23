@@ -2,7 +2,7 @@
   Retail POS local Microsoft SQL Server schema
   Generated from the migrations loaded by the POS application.
 
-  Application version: 1.4.77
+  Application version: 1.4.77+revision.1
   Latest local migration: 018_sql_document_counters.sql
   Target database: POS_Local
 
@@ -801,8 +801,8 @@ IF OBJECT_ID(N'dbo.app_users', N'U') IS NULL BEGIN CREATE TABLE dbo.[app_users] 
   [pin_updated_by] nvarchar(max) NULL,
   [auth_secret] nvarchar(max) NOT NULL CONSTRAINT [DF_app_users_auth_secret] DEFAULT (''),
   [idle_timeout_minutes] int NULL,
-  [login_username] nvarchar(max) NULL,
   [offline_login_pin_hash] nvarchar(max) NOT NULL CONSTRAINT [DF_app_users_offline_login_pin_hash] DEFAULT (''),
+  [login_username] nvarchar(max) NULL,
   CONSTRAINT [PK_app_users] PRIMARY KEY ([id])
 
 ); END;
@@ -947,8 +947,6 @@ END;
 
 IF COL_LENGTH(N'dbo.app_users', N'idle_timeout_minutes') IS NULL ALTER TABLE dbo.[app_users] ADD [idle_timeout_minutes] int NULL;
 
-IF COL_LENGTH(N'dbo.app_users', N'login_username') IS NULL ALTER TABLE dbo.[app_users] ADD [login_username] nvarchar(max) NULL;
-
 IF COL_LENGTH(N'dbo.app_users', N'offline_login_pin_hash') IS NULL ALTER TABLE dbo.[app_users] ADD [offline_login_pin_hash] nvarchar(max) NULL;
 
 IF OBJECT_ID(N'dbo.app_users', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.app_users', N'offline_login_pin_hash') IS NOT NULL AND NOT EXISTS (
@@ -961,6 +959,8 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.app_users')
   EXEC sys.sp_executesql N'UPDATE dbo.[app_users] SET [offline_login_pin_hash]='''' WHERE [offline_login_pin_hash] IS NULL;';
   ALTER TABLE dbo.[app_users] ALTER COLUMN [offline_login_pin_hash] nvarchar(max) NOT NULL;
 END;
+
+IF COL_LENGTH(N'dbo.app_users', N'login_username') IS NULL ALTER TABLE dbo.[app_users] ADD [login_username] nvarchar(max) NULL;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.app_users') AND name=N'UX_app_users_user_id') CREATE UNIQUE INDEX [UX_app_users_user_id] ON dbo.[app_users]([user_id]);
 
@@ -7343,6 +7343,10 @@ IF OBJECT_ID(N'dbo.terminal_tokens', N'U') IS NULL BEGIN CREATE TABLE dbo.[termi
   [is_claimed] bit NOT NULL CONSTRAINT [DF_terminal_tokens_is_claimed] DEFAULT (0),
   [expires_at] datetimeoffset(7) NULL,
   [claim_proof] nvarchar(max) NULL,
+  [management_sync_enabled] bit NOT NULL CONSTRAINT [DF_terminal_tokens_management_sync_enabled] DEFAULT (0),
+  [management_sync_proof_hash] nvarchar(max) NULL,
+  [approval_token_enabled] bit NOT NULL CONSTRAINT [DF_terminal_tokens_approval_token_enabled] DEFAULT (0),
+  [management_registration] bit NOT NULL CONSTRAINT [DF_terminal_tokens_management_registration] DEFAULT (0),
   CONSTRAINT [PK_terminal_tokens] PRIMARY KEY ([id])
 
 ); END;
@@ -7474,6 +7478,47 @@ END;
 IF COL_LENGTH(N'dbo.terminal_tokens', N'expires_at') IS NULL ALTER TABLE dbo.[terminal_tokens] ADD [expires_at] datetimeoffset(7) NULL;
 
 IF COL_LENGTH(N'dbo.terminal_tokens', N'claim_proof') IS NULL ALTER TABLE dbo.[terminal_tokens] ADD [claim_proof] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.terminal_tokens', N'management_sync_enabled') IS NULL ALTER TABLE dbo.[terminal_tokens] ADD [management_sync_enabled] bit NULL;
+
+IF OBJECT_ID(N'dbo.terminal_tokens', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.terminal_tokens', N'management_sync_enabled') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.terminal_tokens') AND c.name=N'management_sync_enabled'
+) ALTER TABLE dbo.[terminal_tokens] ADD CONSTRAINT [DF_terminal_tokens_management_sync_enabled] DEFAULT (0) FOR [management_sync_enabled];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.terminal_tokens') AND name=N'management_sync_enabled' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[terminal_tokens] SET [management_sync_enabled]=0 WHERE [management_sync_enabled] IS NULL;';
+  ALTER TABLE dbo.[terminal_tokens] ALTER COLUMN [management_sync_enabled] bit NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.terminal_tokens', N'management_sync_proof_hash') IS NULL ALTER TABLE dbo.[terminal_tokens] ADD [management_sync_proof_hash] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.terminal_tokens', N'approval_token_enabled') IS NULL ALTER TABLE dbo.[terminal_tokens] ADD [approval_token_enabled] bit NULL;
+
+IF OBJECT_ID(N'dbo.terminal_tokens', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.terminal_tokens', N'approval_token_enabled') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.terminal_tokens') AND c.name=N'approval_token_enabled'
+) ALTER TABLE dbo.[terminal_tokens] ADD CONSTRAINT [DF_terminal_tokens_approval_token_enabled] DEFAULT (0) FOR [approval_token_enabled];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.terminal_tokens') AND name=N'approval_token_enabled' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[terminal_tokens] SET [approval_token_enabled]=0 WHERE [approval_token_enabled] IS NULL;';
+  ALTER TABLE dbo.[terminal_tokens] ALTER COLUMN [approval_token_enabled] bit NOT NULL;
+END;
+
+IF COL_LENGTH(N'dbo.terminal_tokens', N'management_registration') IS NULL ALTER TABLE dbo.[terminal_tokens] ADD [management_registration] bit NULL;
+
+IF OBJECT_ID(N'dbo.terminal_tokens', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.terminal_tokens', N'management_registration') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N'dbo.terminal_tokens') AND c.name=N'management_registration'
+) ALTER TABLE dbo.[terminal_tokens] ADD CONSTRAINT [DF_terminal_tokens_management_registration] DEFAULT (0) FOR [management_registration];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.terminal_tokens') AND name=N'management_registration' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N'UPDATE dbo.[terminal_tokens] SET [management_registration]=0 WHERE [management_registration] IS NULL;';
+  ALTER TABLE dbo.[terminal_tokens] ALTER COLUMN [management_registration] bit NOT NULL;
+END;
 
 IF OBJECT_ID(N'dbo.uom_units', N'U') IS NULL BEGIN CREATE TABLE dbo.[uom_units] (
 
@@ -11960,7 +12005,7 @@ DECLARE @Missing int = @Required - @Present;
 
 SELECT
   DB_NAME() AS database_name,
-  N'1.4.77' AS application_version,
+  N'1.4.77+revision.1' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -12094,8 +12139,8 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'app_users', N'pin_updated_by'),
   (N'app_users', N'auth_secret'),
   (N'app_users', N'idle_timeout_minutes'),
-  (N'app_users', N'login_username'),
   (N'app_users', N'offline_login_pin_hash'),
+  (N'app_users', N'login_username'),
   (N'audit_logs', N'id'),
   (N'audit_logs', N'user_name'),
   (N'audit_logs', N'action_category'),
@@ -12835,6 +12880,10 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'terminal_tokens', N'is_claimed'),
   (N'terminal_tokens', N'expires_at'),
   (N'terminal_tokens', N'claim_proof'),
+  (N'terminal_tokens', N'management_sync_enabled'),
+  (N'terminal_tokens', N'management_sync_proof_hash'),
+  (N'terminal_tokens', N'approval_token_enabled'),
+  (N'terminal_tokens', N'management_registration'),
   (N'uom_units', N'id'),
   (N'uom_units', N'code'),
   (N'uom_units', N'name'),
@@ -12975,12 +13024,12 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_actions', N'row_version'),
   (N'authorization_actions', N'updated_by'),
   (N'authorization_actions', N'created_at'),
-  (N'authorization_actions', N'updated_at'),
+  (N'authorization_actions', N'updated_at');
+INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_action_history', N'id'),
   (N'authorization_action_history', N'action_id'),
   (N'authorization_action_history', N'action_key'),
-  (N'authorization_action_history', N'scope_type');
-INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N'authorization_action_history', N'scope_type'),
   (N'authorization_action_history', N'scope_id'),
   (N'authorization_action_history', N'row_version'),
   (N'authorization_action_history', N'changed_by'),
@@ -13207,5 +13256,5 @@ EXEC(N'SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;');
 
-PRINT N'Retail POS 1.4.77: POS_Local installation and validation completed successfully.';
+PRINT N'Retail POS 1.4.77+revision.1: POS_Local installation and validation completed successfully.';
 GO

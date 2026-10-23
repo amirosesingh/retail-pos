@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { RecoveryHub } from "@/platforms/web/components/pos/RecoveryHub";
 import { EmergencyPinGate } from "@/platforms/web/components/pos/EmergencyPinGate";
 import { heartbeat } from "@/core/activation/connection-health";
-import { APP_VERSION } from "@/version";
+import { APP_DISPLAY_VERSION as APP_VERSION } from "@/version";
 import { isTerminalApp } from "@/platform-config/platform";
 
 

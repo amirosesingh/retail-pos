@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const yaml = require('js-yaml');
 const semver = require('semver');
+const { compareRelease } = require('./release-version.cjs');
 const BUCKET = 'updatelccms';
 const PREFIX = 'pos-app';
 const PUBLIC = 'https://updatecms.luckycharmsdnbhd.com/pos-app';
@@ -53,7 +54,7 @@ function validateRelease(directory, version, { beta = false } = {}) {
   });
 }
 function retention(releases, now = Date.now()) {
-  const sorted = [...releases].sort((a,b) => semver.rcompare(stable(a.version), stable(b.version)));
+  const sorted = [...releases].sort((a,b) => compareRelease(stable(b.version), stable(a.version)));
   const retain = [], remove = [];
   sorted.forEach((release, index) => {
     // Downloads and manually pinned recovery versions outlive a metadata switch.
@@ -105,7 +106,7 @@ async function preflight(version) {
       else throw new Error('Could not read the published version through authenticated R2 access. Check release credentials and bucket access.');
     }
   } else body = await remote(`${PUBLIC}/latest/latest.yml`, { optional: true });
-  if (body && !semver.gt(version, stable(yaml.load(body.toString()).version))) throw new Error('Release version must be newer than the published stable version.');
+  if (body && compareRelease(version, stable(yaml.load(body.toString()).version)) <= 0) throw new Error('Release version must be newer than the published stable version.');
 }
 function aws(args) {
   if (!process.env.R2_ENDPOINT || !process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) throw new Error('R2 release credentials are required.');
@@ -119,11 +120,11 @@ async function publish(directory, version, releaseId) {
   if (process.env.RELEASE_VERSION && process.env.RELEASE_VERSION !== version)
     throw new Error('Workflow release number does not match the application version.');
   const artifacts = validateRelease(directory, version);
-  if (!new RegExp(`^v${version.replaceAll('.', '\\.')}-[a-f0-9]{7,40}$`).test(releaseId)) throw new Error('Invalid release identity.');
+  if (!releaseId.startsWith(`v${version}-`) || !/^[a-f0-9]{7,40}$/.test(releaseId.slice(version.length + 2))) throw new Error('Invalid release identity.');
   const published = await remote(`${PUBLIC}/latest/latest.yml`, { optional: true });
   if (published) {
     const current = yaml.load(published.toString());
-    if (semver.gt(stable(current.version), version) || (current.version === version && current.sha512 !== artifacts[0].sha512))
+    if (compareRelease(stable(current.version), version) > 0 || (current.version === version && current.sha512 !== artifacts[0].sha512))
       throw new Error('Refusing to replace the current release with older or different binaries.');
   }
   let historyBody = await remote(`${PUBLIC}/releases.json`, { optional: true });
@@ -140,7 +141,7 @@ async function publish(directory, version, releaseId) {
       history.releases.push({ ...legacy, status: 'legacy-published', releaseId: object.Key.split('/')[2], artifacts: [] });
     }
   }
-  if (history.releases.some(r => semver.gt(stable(r.version), version) || (r.version === version && r.releaseId !== releaseId))) throw new Error('Version already exists or is older than release history.');
+  if (history.releases.some(r => compareRelease(stable(r.version), version) > 0 || (r.version === version && r.releaseId !== releaseId))) throw new Error('Version already exists or is older than release history.');
   const archived = await remote(`${PUBLIC}/releases/${releaseId}/release.json`, { optional: true });
   const release = archived ? JSON.parse(archived.toString()) : { version, releaseId, released: new Date().toISOString(), status: 'successful', notes: `Release ${version}`, artifacts };
   if (release.version !== version || release.releaseId !== releaseId || JSON.stringify(release.artifacts) !== JSON.stringify(artifacts)) throw new Error('Historical release differs from this build.');
