@@ -29,3 +29,13 @@ describe("selling product lookup", () => {
     expect(searchSellingProducts([archived, a, b], "")).toEqual([a, b]);
   });
 });
+
+it("includes zero-stock automatic archives only when explicitly enabled for selling", () => {
+  const zero = product("zero", { archived: true, stockByStore: { branch: 0 } });
+  const stocked = product("manual", { archived: true, stockByStore: { branch: 2 } });
+  expect(searchSellingProducts([zero, stocked], "", "all", true)).toEqual([zero]);
+  expect(searchSellingProducts([zero], "", "all", false)).toEqual([]);
+  expect(sellingCodeMatches([zero], zero.barcode, true)).toEqual([zero]);
+  expect(sellingCodeMatches([zero], zero.barcode, false)).toEqual([]);
+  expect(zero.archived).toBe(true);
+});

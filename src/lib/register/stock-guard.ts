@@ -8,3 +8,7 @@
 export function blocksOutOfStockSale(onHand: number, preventNegativeStock: boolean): boolean {
   return onHand <= 0 && preventNegativeStock;
 }
+
+export function exceedsAvailableStock(onHand: number, requested: number, preventNegativeStock: boolean): boolean {
+  return preventNegativeStock && requested > onHand;
+}

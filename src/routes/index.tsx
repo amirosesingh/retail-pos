@@ -758,6 +758,7 @@ function Register() {
 
   // One pass over the catalogue instead of one per render — the search dialog
   // gets the same array back until the catalogue or the branch actually change.
+  const includeAutoZeroStock = state.settings.integrations.autoArchiveZeroStock !== false && !rules.prevent_negative_stock_sale;
   const visibleProducts = useMemo(
     () => state.products.filter((p) => productVisibleAt(state.settings, p, state.currentStoreId)),
     [state.products, state.settings, state.currentStoreId],
@@ -772,8 +773,8 @@ function Register() {
   const allLookupProducts = useMemo(() => {
     const needle = deferredProductQuery.trim();
     if (!needle) return recommendedProducts;
-    return searchSellingProducts(visibleProducts, needle);
-  }, [deferredProductQuery, recommendedProducts, visibleProducts]);
+    return searchSellingProducts(visibleProducts, needle, "all", includeAutoZeroStock);
+  }, [deferredProductQuery, recommendedProducts, visibleProducts, includeAutoZeroStock]);
   const standardLookupProducts = allLookupProducts.slice(0, lookupLimit);
 
   const member = useMemo(
@@ -1160,7 +1161,7 @@ function Register() {
       setOpenShiftOpen(true);
       return;
     }
-    const matches = sellingCodeMatches(visibleProducts, code);
+    const matches = sellingCodeMatches(visibleProducts, code, includeAutoZeroStock);
     if (matches.length > 1) {
       toast.error(`Barcode “${code}” belongs to more than one product. Select the correct item and correct the duplicate code in Inventory.`);
       setQuery(code);
@@ -2768,6 +2769,7 @@ function Register() {
               query={query}
               onQueryChange={setQuery}
               products={visibleProducts}
+              includeAutoZeroStock={includeAutoZeroStock}
               storeId={currentStore.id}
               unknownCode={unknownCode}
               canCreateProduct={can("can_add_new_product")}

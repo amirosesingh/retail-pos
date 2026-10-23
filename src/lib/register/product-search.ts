@@ -1,14 +1,15 @@
+import { hasCompanyStock } from "@/lib/product-lifecycle";
 import type { Product } from "@/core/types/pos-types";
 import { normaliseCode, productCodes } from "@/lib/product-lookup";
 
 export type ProductSearchField = "all" | "barcode" | "name" | "category" | "code";
 
 /** Search the entire supplied branch catalogue before the UI paginates it. */
-export function searchSellingProducts(products: Product[], query: string, field: ProductSearchField = "all"): Product[] {
+export function searchSellingProducts(products: Product[], query: string, field: ProductSearchField = "all", includeAutoZeroStock = false): Product[] {
   const needle = normaliseCode(query);
   const ranked: { product: Product; rank: number }[] = [];
   for (const product of products) {
-    if (product.archived) continue;
+    if (!sellingProductEligible(product, includeAutoZeroStock)) continue;
     const codes = productCodes(product);
     const name = normaliseCode(product.name);
     const category = [product.category, product.subCategory, product.group].filter(Boolean).join(" ").toLowerCase();
@@ -25,8 +26,12 @@ export function searchSellingProducts(products: Product[], query: string, field:
 }
 
 /** Never choose an arbitrary item when a barcode/SKU has multiple owners. */
-export function sellingCodeMatches(products: Product[], code: string): Product[] {
+export function sellingCodeMatches(products: Product[], code: string, includeAutoZeroStock = false): Product[] {
   const needle = normaliseCode(code);
   if (!needle) return [];
-  return products.filter(product => !product.archived && productCodes(product).includes(needle));
+  return products.filter(product => sellingProductEligible(product, includeAutoZeroStock) && productCodes(product).includes(needle));
+}
+
+export function sellingProductEligible(product: Product, includeAutoZeroStock = false): boolean {
+  return !product.archived || (includeAutoZeroStock && !hasCompanyStock(product));
 }
