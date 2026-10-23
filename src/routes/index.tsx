@@ -1580,8 +1580,15 @@ function Register() {
 
   function pickRacketProduct(id: string) {
     const p = productsById.get(id);
+    if (p && lines.some(line => line.productId === id)) {
+      toast.error("This racket is already in the ticket. Remove it from the ticket before selecting it here, so it is charged only once.");
+      return;
+    }
     setRacketProductId(id);
-    if (!p) return;
+    if (!p) {
+      setIntakeCharges(rows => rows.filter(row => !(row.kind === "accessory" && /^racket/i.test(row.name))));
+      return;
+    }
     setRacketCustomerOwned(false);
     setRacketModel(p.name);
     setIntakeCharges((rows) => [
@@ -1601,6 +1608,10 @@ function Register() {
 
   async function pickStringProduct(id: string) {
     const p = productsById.get(id);
+    if (p && lines.some(line => line.productId === id)) {
+      toast.error("This string is already in the ticket. Remove it from the ticket before selecting it here, so it is charged only once.");
+      return;
+    }
     if (p) {
       /* Inventory guard — never string from a reel the branch does not hold. */
       const onHand = availableAt(p, currentStore.id, state.bookings);
@@ -1621,7 +1632,10 @@ function Register() {
       }
     }
     setStringProductId(id);
-    if (!p) return;
+    if (!p) {
+      setIntakeCharges(rows => rows.filter(row => row.kind !== "string"));
+      return;
+    }
     setStringCustomerOwned(false);
     setStringType(p.name);
     setChargeOfKind("string", {
@@ -1655,6 +1669,16 @@ function Register() {
         productId: p.id,
       },
     ]);
+  }
+
+  function scanBookingProduct(code: string, kind: "racket" | "string") {
+    const matches = sellingCodeMatches(visibleProducts, code.trim());
+    if (matches.length !== 1) {
+      toast.error(matches.length ? "This barcode matches multiple products. Select the correct catalogue item." : "No active product at this branch matches this barcode.");
+      return;
+    }
+    if (kind === "racket") pickRacketProduct(matches[0].id);
+    else void pickStringProduct(matches[0].id);
   }
 
   /** Unlock the read-only labour fee — supervisor gate or a written reason. */
@@ -3512,11 +3536,11 @@ function Register() {
               )}
               <p className="mt-1 text-[11px] text-muted-foreground">
                 {racketMode
-                  ? `Job taken at ${currentStore.name} — no cart items needed.`
+                  ? `Job taken at ${currentStore.name}${lines.length ? " · ticket items are also included below" : ""}.`
                   : `${lines.reduce((a, l) => a + l.qty, 0)} unit(s) are reserved at ${currentStore.name} until the collect-by date.`}
               </p>
             </div>
-            {!racketMode && (
+            {(!racketMode || lines.length > 0) && (
               <BookingCartPanel
                 lines={lines}
                 money={money}
@@ -3527,9 +3551,15 @@ function Register() {
             )}
             {racketMode && (
               <div className="space-y-2 rounded-md border border-border p-2">
+                <div className="grid grid-cols-2 gap-2" role="group" aria-label="Racket service type">
+                  <Button type="button" size="sm" variant={racketCustomerOwned ? "default" : "outline"} onClick={() => setCustomerRacket(true)}>Restringing only</Button>
+                  <Button type="button" size="sm" variant={!racketCustomerOwned ? "default" : "outline"} onClick={() => setCustomerRacket(false)}>New racket + service</Button>
+                </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div className="space-y-1">
-                    <Label>Racket from catalogue</Label>
+                    {racketCustomerOwned ? <p className="py-2 text-xs text-muted-foreground">Customer’s own racket. Enter its model and tension in the job details; no racket price is added.</p> : <>
+                    <Label>New racket</Label>
+                    <ScanBar captureGlobal={false} autoFocus={false} onScan={code => scanBookingProduct(code, "racket")} />
                     <ThemedSelect
                       ariaLabel="Racket from catalogue"
                       value={racketProductId}
@@ -3537,16 +3567,11 @@ function Register() {
                       onChange={(v) => pickRacketProduct(v)}
                       options={racketOptions}
                     />
-                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Checkbox
-                        checked={racketCustomerOwned}
-                        onCheckedChange={(checked) => setCustomerRacket(checked === true)}
-                      />
-                      Customer provided racket (no charge)
-                    </label>
+                    </>}
                   </div>
                   <div className="space-y-1">
                     <Label>String from catalogue</Label>
+                    <ScanBar captureGlobal={false} autoFocus={false} onScan={code => scanBookingProduct(code, "string")} />
                     <ThemedSelect
                       ariaLabel="String from catalogue"
                       value={stringProductId}
@@ -3590,7 +3615,7 @@ function Register() {
                   return (
                     <div
                       key={i}
-                      className="grid grid-cols-[7rem_minmax(0,1fr)_6rem_1.5rem] items-center gap-1.5"
+                      className="grid grid-cols-[minmax(0,1fr)_5rem_1.5rem] items-center gap-1.5 rounded-md border p-2 sm:grid-cols-[7rem_minmax(0,1fr)_6rem_1.5rem]"
                     >
                       <ThemedSelect
                         ariaLabel="Charge type"
@@ -3689,7 +3714,7 @@ function Register() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label>Deposit taken now</Label>
+                <Label>{payTiming === "now" ? "Full payment now" : "Deposit taken now"}</Label>
                 <Input
                   value={
                     payTiming === "now"
@@ -3705,7 +3730,7 @@ function Register() {
                 />
               </div>
               <div className="space-y-1">
-                <Label>Deposit method</Label>
+                <Label>Payment method</Label>
                 <div className="flex overflow-hidden rounded-md border border-border">
                   {(["cash", "card", "wallet"] as const).map((m) => (
                     <button
@@ -3838,6 +3863,7 @@ function Register() {
                       <Label>Racket brand / model</Label>
                       <Input
                         value={racketModel}
+                        readOnly={!racketCustomerOwned && !!racketProductId}
                         list="racket-models"
                         onChange={(e) => setRacketModel(e.target.value)}
                         placeholder="Yonex Astrox 88D"
@@ -3852,6 +3878,7 @@ function Register() {
                       <Label>String type / brand</Label>
                       <Input
                         value={stringType}
+                        readOnly={!stringCustomerOwned && !!stringProductId}
                         list="string-models"
                         onChange={(e) => setStringType(e.target.value)}
                         placeholder="BG65 Ti"
@@ -4011,22 +4038,6 @@ function Register() {
               </div>
             ) : null}
           </div>
-          {racketMode && (
-            <div className="flex items-center justify-between gap-4 border-t border-border pt-2 text-sm">
-              <span className="text-muted-foreground">
-                Charges total{" "}
-                <span className="numeric font-semibold text-foreground">{money(bookingTotal)}</span>
-              </span>
-              <span className="text-muted-foreground">
-                Paying now{" "}
-                <span className="numeric font-semibold text-foreground">
-                  {money(bookingPaidNow)}
-                </span>{" "}
-                · Balance{" "}
-                <span className="numeric font-semibold text-primary">{money(bookingBalance)}</span>
-              </span>
-            </div>
-          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setBookOpen(false)}>
               Cancel
@@ -4037,7 +4048,7 @@ function Register() {
                 disabled={saving}
                 onClick={() => {
                   setPayTiming("now");
-                  void bookAndPayLater();
+                  void bookAndPayLater("now");
                 }}
               >
                 Pay now

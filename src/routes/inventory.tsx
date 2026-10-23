@@ -78,6 +78,8 @@ import { localTerminalId } from "@/lib/shift-hours";
 import { cn } from "@/lib/utils";
 import { inventoryMetrics, isLowStock, needsCostReview, productMargin } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
+import { totalUnitCost } from "@/lib/total-unit-cost";
+import { TotalUnitCostDialog } from "@/platforms/web/components/pos/TotalUnitCostDialog";
 
 export const Route = createFileRoute("/inventory")({
   head: () => ({
@@ -133,7 +135,7 @@ function Inventory() {
     restoreProducts,
   } = usePos();
   const [branchPriceOnly, setBranchPriceOnly] = useState(false);
-  const { can } = useAuth();
+  const { can, isAdmin } = useAuth();
   const { visible } = useVisibility();
   // Money columns need the reporting permission *and* the administrator's
   // "show cost & margin" switch for this role.
@@ -165,6 +167,7 @@ function Inventory() {
   const [importOpen, setImportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [unitCostOpen, setUnitCostOpen] = useState(false);
   const [blocked, setBlocked] = useState<BlockedDelete[]>([]);
   const [deleting, setDeleting] = useState<string[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -379,10 +382,12 @@ function Inventory() {
                   else setDuplicateOpen(true);
                 }}>Check duplicate codes</DropdownMenuItem>
                 <DropdownMenuSeparator />
+                {isAdmin && showMoney && <DropdownMenuItem onSelect={() => setUnitCostOpen(true)}><SlidersHorizontal className="size-4" />Total Unit Cost</DropdownMenuItem>}
                 <DropdownMenuItem onSelect={() => setExportOpen(true)}><FileSpreadsheet className="size-4" />Export to Excel</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
 
+            {unitCostOpen && <TotalUnitCostDialog open onOpenChange={setUnitCostOpen} selected={selected} />}
             <Dialog open={exportOpen} onOpenChange={setExportOpen}>
               <DialogContent className="max-w-sm">
                 <DialogHeader><DialogTitle>Export products to Excel</DialogTitle></DialogHeader>
@@ -1141,6 +1146,7 @@ function Inventory() {
                 <TableHead className="min-w-24">Category</TableHead>
                 <TableHead className="min-w-24">Sub-category</TableHead>
                 {showMoney && <TableHead className="min-w-24 text-right">Cost</TableHead>}
+                {showMoney && <TableHead className="min-w-28 text-right" title="Estimated purchase cost plus allocated charges and overhead">Total Unit Cost</TableHead>}
                 <TableHead className="min-w-24 text-right">Price</TableHead>
                 {showMoney && <TableHead className="min-w-24 text-right">Margin</TableHead>}
                 {canEcom && <TableHead className="min-w-24 text-center">On web</TableHead>}
@@ -1181,6 +1187,10 @@ function Inventory() {
                   {showMoney && (
                     <TableCell className="inventory-detail numeric text-right">{Number.isFinite(p.cost) ? money(p.cost) : "—"}{needsCostReview(p.cost) && <span className="ml-1 text-xs text-warning" title="Cost is missing, zero or invalid. Zero may be intentional.">Review</span>}</TableCell>
                   )}
+                  {showMoney && <TableCell className="inventory-detail numeric text-right">
+                    {totalUnitCost(p.cost, p.id, state.settings.integrations.totalUnitCost) === null ? "—" : money(totalUnitCost(p.cost, p.id, state.settings.integrations.totalUnitCost)!)}
+                    <span className="block text-[10px] text-muted-foreground">{state.settings.integrations.totalUnitCost?.overrides?.[p.id] ? "Custom" : "Default"}</span>
+                  </TableCell>}
                   <TableCell className="numeric text-right">{money(p.price)}</TableCell>
                   {showMoney && (
                     <TableCell className="inventory-detail numeric text-right text-accent">
