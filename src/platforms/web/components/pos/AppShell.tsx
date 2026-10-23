@@ -93,6 +93,9 @@ const SECTION_HUBS = new Set(["/sales", "/inventory-hub", "/customers", "/admin"
 function requiredPermission(pathname: string): PermissionFlag | null | "unknown" {
   if (PUBLIC_ROUTES.has(pathname)) return null;
   if (SECTION_HUBS.has(pathname)) return null;
+  // Approvals is scoped by the authenticated backend per request/action.
+  // Its page visibility flag still applies; absence of an action flag is intentional.
+  if (pathname.replace(/\/+$/, "") === "/approvals") return null;
   return routePermissionForPath(pathname) ?? "unknown";
 }
 

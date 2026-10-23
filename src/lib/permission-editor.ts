@@ -64,3 +64,20 @@ export function permissionPageMatches(id: string, query: string): boolean {
   const page = PERMISSION_PAGES.find(item => item.id === id);
   return !!page && `${page.label} ${permissionPageLabel(page)} ${page.routes.join(" ")} ${permissionSubpages(id).map(item => item.label).join(" ")} ${[...page.keys, ...permissionRelatedKeys(id)].map(key => PERMISSION_LABELS[key]).join(" ")}`.toLowerCase().includes(query.trim().toLowerCase());
 }
+
+/** One editable home per persisted key; this does not alter backend ownership. */
+export function permissionControlOwner(key: PermissionKey) {
+  return PERMISSION_PAGES.find(page => page.keys.includes(key))!;
+}
+export function permissionEditableKeys(id: string): PermissionKey[] {
+  return (PERMISSION_PAGES.find(page => page.id === id)?.keys ?? [])
+    .filter(key => permissionControlOwner(key)?.id === id);
+}
+export function permissionReferenceKeys(id: string): PermissionKey[] {
+  const page = PERMISSION_PAGES.find(page => page.id === id);
+  return [...new Set([...(page?.keys ?? []), ...permissionRelatedKeys(id)])]
+    .filter(key => permissionControlOwner(key)?.id !== id);
+}
+export function setEditablePageFeatures(matrix: StaffPermissions, id: string, enabled: boolean): StaffPermissions {
+  return { ...matrix, ...Object.fromEntries(permissionEditableKeys(id).map(key => [key, enabled])) };
+}
