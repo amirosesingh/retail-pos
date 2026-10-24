@@ -57,6 +57,7 @@ export function useReportSales(
     });
   }, [seed, storeIds, from, to, reportZone]);
   const [revision, setRevision] = useState(0);
+  const completedRevision = useRef(0);
   const refreshState = useRef({ running: false, queued: false });
   useEffect(() => {
     if (!enabled) return;
@@ -112,7 +113,7 @@ export function useReportSales(
           retry: false,
           // A change hint or reconciliation must recheck authority-backed rows;
           // navigating back to a fresh unchanged range can reuse its snapshot.
-          staleTime: revision > 0 ? 0 : PAGE_DATA_CACHE.staleTime,
+          staleTime: revision > completedRevision.current ? 0 : PAGE_DATA_CACHE.staleTime,
           queryFn: async ({ signal }) => {
             const found: Sale[] = [];
             for (const storeId of ids) {
@@ -138,7 +139,12 @@ export function useReportSales(
             return found;
           },
         });
-        if (!cancelled) setLoaded({ key: rangeKey, rows: found });
+        if (!cancelled) {
+          // Consume this refresh only after success. Keeping revision > 0 as a
+          // permanent force flag made every later range revisit bypass cache.
+          completedRevision.current = revision;
+          setLoaded({ key: rangeKey, rows: found });
+        }
       } catch (reason) {
         if (!cancelled)
           setError((reason as Error).message || "Could not load the full report history");

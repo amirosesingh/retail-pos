@@ -95,6 +95,29 @@ async function loaded() {
   expect(render().sales).toHaveLength(1);
 }
 describe("report refresh stability", () => {
+  it("reuses a fresh range after a completed refresh and a range switch in the same mounted page", async () => {
+    await loaded();
+    load.mockResolvedValue(page);
+    harness.focus?.();
+    render();
+    await vi.waitFor(() => {
+      expect(render().refreshing).toBe(false);
+      expect(load).toHaveBeenCalledTimes(2);
+    });
+    const other = { ...sale, id: "sale-b", storeId: "branch-b" };
+    load.mockResolvedValue({ ...page, rows: [other] });
+    render("branch-b");
+    await vi.waitFor(() => expect(render("branch-b").sales).toEqual([other]));
+    expect(load).toHaveBeenCalledTimes(3);
+    load.mockResolvedValue(page);
+    render();
+    await vi.waitFor(() => expect(render().sales).toEqual([sale]));
+    expect(load).toHaveBeenCalledTimes(3);
+    // A later reconciliation must still force a read of the active range.
+    harness.focus?.(); render();
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(4));
+  });
+
   it("shares a pending read and lets the remaining page finish after one reader leaves", async () => {
     let finish!: (value: typeof page) => void;
     load.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));

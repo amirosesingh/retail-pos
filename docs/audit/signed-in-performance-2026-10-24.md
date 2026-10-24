@@ -64,6 +64,23 @@ configuration backends.
 
 ## Limits and remaining acceptance
 
+Follow-up: the PR checks for `0326c27e` all passed (permission regressions,
+Cloudflare beta build, Android compilation, iOS and Windows renderer).
+CodeRabbit skipped its review because this is a draft PR.
+
+A further cache regression was reproduced: once a mounted report completed a
+refresh, its nonzero revision forced every later range revisit to bypass the
+fresh cache. The hook now consumes a refresh revision only after a successful
+read. Failed or cancelled reads do not consume it, and a later change or
+reconciliation still forces a read. The new test failed with four database calls
+instead of three before the fix and passes afterward, including a subsequent
+forced refresh. The full suite now passes 2,752 tests across 453 files;
+TypeScript, ESLint and beta build also pass. Repeated Bills/Items/Payments tab
+switches and filter dismissal remained responsive with no captured errors.
+
+No Android device bridge was found at the standard local SDK path during this
+follow-up; physical phone reproduction remains unavailable in this session.
+
 The reported complete freeze was not reproduced in this browser session. No
 captured browser errors were observed during these checks. That does not prove
 the symptom is resolved on physical phones or packaged Electron installations.
