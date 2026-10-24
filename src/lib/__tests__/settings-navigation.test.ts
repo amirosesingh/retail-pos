@@ -9,6 +9,7 @@ import {
   SETTINGS_CATEGORIES,
   SETTINGS_GROUPS,
   settingsCatalogDuplicates,
+  settingsCardForStaffAccess,
 } from "@/lib/settings-catalog";
 import {
   initialOpenCategories,
@@ -18,6 +19,13 @@ import { settingsCoverage } from "@/lib/settings-groups";
 import { matchSettings } from "@/platforms/web/components/pos/settings/use-settings-nav";
 
 describe("settings categories", () => {
+  it("preserves policy access without granting staff management", () => {
+    const card = SETTINGS_CARDS.find(card => card.id === "rules")!;
+    expect(settingsCardForStaffAccess(card, false).to).toBe("/settings/rules");
+    expect(settingsCardForStaffAccess(card, true).to).toBe("/staff?tab=policies");
+    const accounts = SETTINGS_CARDS.find(card => card.id === "staff")!;
+    expect(settingsCardForStaffAccess(accounts, false)).toBe(accounts);
+  });
   it("gives every page a live category", () => {
     const live = new Set(SETTINGS_CATEGORIES.map((c) => c.id));
     for (const card of SETTINGS_CARDS) {

@@ -607,6 +607,14 @@ export function settingsCard(id: string | undefined | null): SettingsCard | null
   return SETTINGS_CARDS.find((c) => c.id === id) ?? null;
 }
 
+const legacyPoliciesPanel = page(() => import("@/routes/settings.rules"));
+/** Moving the workspace must not require policy operators to receive staff access. */
+export function settingsCardForStaffAccess(card: SettingsCard, managesStaff: boolean): SettingsCard {
+  return card.id === "rules" && !managesStaff
+    ? { ...card, to: "/settings/rules", panel: legacyPoliciesPanel, raw: false }
+    : card;
+}
+
 /** Same option in two categories would be a navigation bug — surfaced in Logic health. */
 export function settingsCatalogDuplicates(): string[] {
   const seen = new Map<string, number>();
