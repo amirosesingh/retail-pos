@@ -356,7 +356,8 @@
     ],
     "keys": [
       "can_manage_terminals",
-      "can_use_management_mobile"
+      "can_use_management_mobile",
+      "can_use_management_pc"
     ]
   },
   {

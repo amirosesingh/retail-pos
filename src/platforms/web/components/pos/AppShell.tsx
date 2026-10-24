@@ -371,7 +371,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         <TerminalLogin />
       </>
     );
-  if ((isDesktop() || isNative()) && isManagementDevice() && !(isNative() ? can("can_use_management_mobile") : can("can_access_pos_settings")))
+  if ((isDesktop() || isNative()) && isManagementDevice() && !can(isNative() ? "can_use_management_mobile" : "can_use_management_pc"))
     return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
       <h1 className="text-lg font-semibold">Management device</h1>
       <p>Sign in with an account permitted to use this management device. Your page and branch permissions still apply.</p>

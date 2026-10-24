@@ -113,7 +113,8 @@ export const roleSlug = (name: string): string =>
 /** True when the two permission sets differ on any single toggle. */
 export const permissionsDiffer = (a: StaffPermissions, b: StaffPermissions): boolean =>
   PERMISSION_KEYS.some((k) => a[k] !== b[k]) ||
-  PERMISSION_PAGES.some(page => pageEnabled(a, page.id) !== pageEnabled(b, page.id));
+  PERMISSION_PAGES.some(page => pageEnabled(a, page.id) !== pageEnabled(b, page.id)) ||
+  [...new Set([...Object.keys(a), ...Object.keys(b)])].some(key => key.startsWith("display:") && a[key as `display:${string}`] !== b[key as `display:${string}`]);
 
 /**
  * What to show next to a person's role: the role name, or "Custom

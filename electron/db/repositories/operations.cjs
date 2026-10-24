@@ -30,6 +30,10 @@ const SAFE_RENDERER_TABLES = new Set([
   "staff_roles", "stock_transfer_items", "stock_transfers", "stores", "suppliers", "terminal_commands", "uom_units",
 ]);
 
+const { normalizeProductLifecycle, productLifecyclePermission } = require("../../product-lifecycle.cjs");
+const writeRows = op => op.kind === "update" ? [op.values ?? {}]
+  : op.kind === "delete" ? [] : op.rows ?? (op.values ? [op.values] : []);
+
 function valueForSql(value) {
   if (value === undefined) return null;
   if (value !== null && typeof value === "object") return JSON.stringify(value);
@@ -102,10 +106,11 @@ class OperationsRepository {
       if (table.updateRule === "append_only" && ["update", "delete"].includes(op.kind) && !notificationClear)
         throw new Error(`${op.table} is append-only and cannot be changed after insertion.`);
       const allowed = new Set(table.columns.map((column) => column.sqlServerColumn));
-      const rows = op.rows ?? (op.values ? [op.values] : []);
+      const rows = writeRows(op);
       if (rows.length > MAX_BATCH_ROWS) throw Object.assign(new Error("A batch cannot exceed 2,000 rows."), { code: "EBATCH_SIZE", table: op.table });
       for (const row of rows) {
         if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("Business rows must be objects.");
+        if (op.table === "products") normalizeProductLifecycle(row);
         for (const key of Object.keys(row)) if (!allowed.has(key)) throw new Error(`Unsupported column for ${op.table}.`);
       }
       for (const key of Object.keys(op.match ?? {})) if (!allowed.has(key)) throw new Error(`Unsupported match column for ${op.table}.`);
@@ -190,7 +195,8 @@ class OperationsRepository {
       if (type === "uuid") return recordId(left) === recordId(right);
       return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
     };
-    for (const values of op.rows ?? [op.values ?? {}]) {
+    for (const values of writeRows(op)) {
+      normalizeProductLifecycle(values);
       const match = ["insert", "upsert"].includes(op.kind) ? { id: values.id } : op.match ?? {};
       if (!Object.keys(match).length || Object.values(match).some(value => value === undefined)) refuse();
       const request = new (this.connectionManager.sql().Request)(transaction);
@@ -211,9 +217,7 @@ class OperationsRepository {
           const permitted = prices.has(field)
             ? permissions.can_edit_product_price === true ||
               (field === "cost_price" && scope.productWriteKind === "receiving" && permissions.can_receive_purchase_order === true)
-            : field === "is_archived" ? permissions[value ? "can_archive_product" : "can_restore_product"] === true
-            : ["archived_at", "deleted_at", "is_active"].includes(field) ?
-              permissions[(values.is_archived === false || (field === "archived_at" && value == null)) ? "can_restore_product" : "can_archive_product"] === true
+            : productLifecyclePermission(field, value) ? permissions[productLifecyclePermission(field, value)] === true
             : ["ecom_visible", "ecom_enabled", "is_published"].includes(field) ? permissions.can_publish_product === true
             : ["barcode_aliases", "barcode_variants"].includes(field) ? permissions.can_link_product_barcode === true
             : permissions.can_edit_product_details === true;
@@ -225,7 +229,7 @@ class OperationsRepository {
   async assertMemberPermissions(transaction, op, scope = {}) {
     if (op.table !== "members" || scope.enforcePermissions !== true) return;
     const permissions = scope.permissions ?? {};
-    const rows = op.rows ?? (op.values ? [{ ...(op.match ?? {}), ...op.values }] : []);
+    const rows = writeRows(op).map(row => ({ ...(op.match ?? {}), ...row }));
     if (scope.memberAccrual?.size && ['insert','upsert'].includes(op.kind)) {
       for (const row of rows) {
         const accrual = scope.memberAccrual.get(String(row.id).toLowerCase());
@@ -307,7 +311,7 @@ class OperationsRepository {
     if (["pos_settings", "settings_locks", "public_flags", "payment_types"].includes(op.table) && !admin)
       throw Object.assign(new Error("Global settings require an administrator."), {code:"PERMISSION_DENIED"});
     if (!["settings_overrides", "settings_scoped"].includes(op.table)) return;
-    const records = op.rows ?? [{...(op.match ?? {}), ...(op.values ?? {})}];
+    const records = ["insert", "upsert"].includes(op.kind) ? writeRows(op) : [{...(op.match ?? {}), ...(op.values ?? {})}];
     for (const row of records) {
       const tier = String(row.scope ?? "").toLowerCase();
       if (!admin && op.table === "settings_scoped" && tier === "global")
@@ -330,7 +334,7 @@ class OperationsRepository {
       throw Object.assign(new Error("Opening a shift requires permission."), { code: "PERMISSION_DENIED" });
     if (!["insert", "upsert"].includes(op.kind))
       throw Object.assign(new Error("Shift closing must use the protected cash-count workflow."), { code: "PERMISSION_DENIED" });
-    for (const row of op.rows ?? []) {
+    for (const row of writeRows(op)) {
       if (row.closed_at != null || row.counted_cash != null || row.closing_float != null ||
           (row.status != null && row.status !== "OPEN") || (row.state != null && row.state !== "ACTIVE"))
         throw Object.assign(new Error("Shift closing must use the protected cash-count workflow."), { code: "PERMISSION_DENIED" });
@@ -345,7 +349,7 @@ class OperationsRepository {
   }
   async assertLegacyExchange(transaction, op, scope = {}) {
     if (op.table !== "sales") return;
-    for (const row of op.rows ?? [op.values ?? {}]) {
+    for (const row of writeRows(op)) {
       const reference = String(row.original_bill_number ?? "");
       if (!reference.startsWith("OLDPOS:")) continue;
       if (scope.enforcePermissions === true && scope.isSettingsAdmin !== true)

@@ -10,6 +10,9 @@ import { nativeApprovalCredentials } from "@/platform-config/approval-token";
 import { approvalMethods } from "@/lib/approval-credentials";
 import { PERMISSION_EDITOR_IDS } from "@/lib/permission-editor";
 import { PermissionHierarchy } from "./PermissionHierarchy";
+import { useVisibility } from "@/lib/ui-visibility";
+import { UserDisplayPermissions } from "./UserDisplayPermissions";
+import { AuthorizationRulesPanel } from "@/platforms/web/components/pos/settings/AuthorizationRulesPanel";
 import { StaffIdleTimeout } from "./StaffIdleTimeout";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -166,8 +169,10 @@ async function propagateStaffChange(reason: string, tables: string[]) {
 }
 
 export function StaffManager() {
-  const { stores } = usePos();
-  const { authUserId, isAdmin } = useAuth();
+  const { hidden } = useVisibility();
+  const { stores, currentStore } = usePos();
+  const { authUserId, isAdmin, can } = useAuth();
+  const [approvalRulesOpen, setApprovalRulesOpen] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [roles, setRoles] = useState<RoleDef[]>([]);
   const [query, setQuery] = useState("");
@@ -872,14 +877,14 @@ export function StaffManager() {
       <Dialog
         open={!!permissionsFor}
         onOpenChange={(open) => {
-          if (!open && busy !== "permissions") setPermissionsFor(null);
+          if (!open && busy !== "permissions") { setPermissionsFor(null); setApprovalRulesOpen(false); }
         }}
       >
         <DialogContent className="max-h-[92dvh] w-[calc(100vw-1rem)] overflow-y-auto sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>Permissions · {permissionsFor?.full_name}</DialogTitle>
             <DialogDescription>
-              Changes stay pending until Save. Copying changes permissions only; branch assignments remain unchanged. Administrators retain full access.
+              Manage this person's pages, actions, device access and visible information here, then Save. Branch assignments remain unchanged. Approval rules below have their own Save for each shared rule. Administrators retain full access.
             </DialogDescription>
           </DialogHeader>
           {permissionsFor && (
@@ -952,6 +957,8 @@ export function StaffManager() {
             <Button variant="outline" disabled={permissionsFor.role === "admin" || busy === "permissions"} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: { ...(roles.find(role => role.slug === permissionsFor.role_slug)?.permissions ?? rolePermissions(permissionsFor.role)) } })}>Reset to role defaults</Button>
           </div>}
           {permissionsFor && <PermissionHierarchy
+            hidden={hidden}
+            displayRole={permissionsFor.role_slug}
             permissions={permissionsFor.permissions}
             onChange={permissions => setPermissionsFor({ ...permissionsFor, permissions })}
             admin={permissionsFor.role === "admin"}
@@ -960,6 +967,17 @@ export function StaffManager() {
             expanded={permissionGroupsOpen}
             onExpandedChange={setPermissionGroupsOpen}
           />}
+          {permissionsFor && <UserDisplayPermissions permissions={permissionsFor.permissions}
+            onChange={permissions => setPermissionsFor({ ...permissionsFor, permissions })}
+            hidden={hidden} role={permissionsFor.role_slug} userId={permissionsFor.user_id}
+            admin={permissionsFor.role === "admin"} busy={busy === "permissions"} search={permissionSearch} />}
+          {permissionsFor && <details className="rounded-xl border p-4" onToggle={event => setApprovalRulesOpen(event.currentTarget.open)}>
+            <summary className="cursor-pointer font-semibold">Approval eligibility &amp; limits</summary>
+            <p className="my-3 text-xs text-muted-foreground">Review {permissionsFor.full_name} ({permissionsFor.user_id}) or their role in each action's approvers. These shared rules retain branch restrictions and named exclusions. Save each rule separately; cancelling this account editor does not undo a saved rule.</p>
+            {approvalRulesOpen && (isAdmin || can("can_access_pos_settings")) && (permissionsFor.store_id || currentStore?.id) ? <AuthorizationRulesPanel
+              storeId={permissionsFor.store_id || currentStore!.id} storeName={stores.find(store => store.id === (permissionsFor.store_id || currentStore?.id))?.name ?? "Selected branch"}
+              mayEdit={isAdmin || can("can_access_pos_settings")} canEditGlobal={isAdmin} /> : <p className="text-xs text-muted-foreground">Approval rule editing requires POS settings authority and a selected branch.</p>}
+          </details>}
           <DialogFooter>
             <Button variant="outline" onClick={() => setPermissionsFor(null)}>
               Cancel

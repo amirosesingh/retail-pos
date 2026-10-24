@@ -1,4 +1,6 @@
 import { PermissionHierarchy } from "./PermissionHierarchy";
+import { useVisibility } from "@/lib/ui-visibility";
+import { UserDisplayPermissions } from "./UserDisplayPermissions";
 import { PERMISSION_EDITOR_IDS } from "@/lib/permission-editor";
 import { roleStartingPermissions } from "@/lib/role-defaults";
 /**
@@ -64,6 +66,7 @@ async function propagateRoleChange(reason: string) {
 }
 
 export function RoleManager() {
+  const { hidden } = useVisibility();
   const [roles, setRoles] = useState<RoleDef[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
@@ -147,9 +150,9 @@ export function RoleManager() {
     <section className="space-y-4 rounded-lg border border-border bg-card p-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold">Roles &amp; permissions</h2>
+          <h2 className="text-sm font-semibold">Role defaults</h2>
           <p className="text-xs text-muted-foreground">
-            Configure the default permissions assigned when a person receives a role. Individual staff permissions and branch assignments remain separate. Changes save as you edit.
+            Presets copied when a role is assigned. Editing a preset does not overwrite existing people's saved choices. Change an existing person's access in People & permissions, or use Reset to role defaults in their editor. Changes save as you edit.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -187,7 +190,8 @@ export function RoleManager() {
               <div className="flex items-center gap-2"><Input aria-label={`Search ${role.name} permissions`} placeholder="Search pages or permissions…" value={permissionSearch} onChange={event => setPermissionSearch(event.target.value)} />
                 <Button variant="ghost" size="icon" aria-label={openGroups.size === PERMISSION_EDITOR_IDS.length ? "Collapse all permission groups" : "Expand all permission groups"} onClick={() => setOpenGroups(current => current.size === PERMISSION_EDITOR_IDS.length ? new Set() : new Set(PERMISSION_EDITOR_IDS))}>{openGroups.size === PERMISSION_EDITOR_IDS.length ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}</Button>
               </div>
-              <PermissionHierarchy permissions={role.permissions} onChange={permissions => void changePermissions(role, permissions)} admin={role.baseLevel === "admin"} busy={saving !== null} search={permissionSearch} expanded={openGroups} onExpandedChange={setOpenGroups} />
+              <PermissionHierarchy hidden={hidden} displayRole={role.slug} permissions={role.permissions} onChange={permissions => void changePermissions(role, permissions)} admin={role.baseLevel === "admin"} busy={saving !== null} search={permissionSearch} expanded={openGroups} onExpandedChange={setOpenGroups} />
+              <UserDisplayPermissions permissions={role.permissions} onChange={permissions => void changePermissions(role, permissions)} hidden={hidden} role={role.slug} userId="" admin={role.baseLevel === "admin"} busy={saving !== null} search={permissionSearch} />
             </div>}
           </section>;
         })}

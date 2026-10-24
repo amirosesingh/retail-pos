@@ -20,7 +20,7 @@ export function normalisePermissions(raw: unknown): Record<string, boolean> {
   if (!raw || typeof raw !== "object") return {};
   const out: Record<string, boolean> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    out[key] = value === true || value === "true";
+    out[key] = value === true;
   }
   return effectivePagePermissions(out);
 }

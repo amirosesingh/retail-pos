@@ -1,6 +1,6 @@
 import { PERMISSION_PAGES, pageEnabled, pageForRoute, setPageVisibility } from "./permission-pages";
 import { PERMISSION_LABELS, type PermissionKey, type StaffPermissions } from "./permissions";
-import { navGroups } from "@/platforms/web/components/pos/nav-config";
+import { navGroups, routePermissionForPath } from "@/platforms/web/components/pos/nav-config";
 import { SETTINGS_CARDS } from "./settings-catalog";
 
 /** Presentation only. Persisted page IDs, action keys and execution gates stay unchanged. */
@@ -74,10 +74,27 @@ export function permissionEditableKeys(id: string): PermissionKey[] {
     .filter(key => permissionControlOwner(key)?.id === id);
 }
 export function permissionReferenceKeys(id: string): PermissionKey[] {
+  // Transfer actions share backend ownership with this queue, but do not grant
+  // authority to decide its requests. Show approval rules instead.
+  if (id === "approvals") return [];
   const page = PERMISSION_PAGES.find(page => page.id === id);
   return [...new Set([...(page?.keys ?? []), ...permissionRelatedKeys(id)])]
     .filter(key => permissionControlOwner(key)?.id !== id);
 }
 export function setEditablePageFeatures(matrix: StaffPermissions, id: string, enabled: boolean): StaffPermissions {
-  return { ...matrix, ...Object.fromEntries(permissionEditableKeys(id).map(key => [key, enabled])) };
+  return { ...matrix, ...Object.fromEntries(permissionEditableKeys(id).filter(key => !["can_use_management_pc", "can_use_management_mobile"].includes(key)).map(key => [key, enabled])) };
+}
+
+/** Entry requirements use the same registry as the route guard. Approval decisions
+ * remain request/rule scoped; opening that queue grants no approval authority. */
+export function permissionPageEntryKeys(id: string): PermissionKey[] {
+  const page = PERMISSION_PAGES.find(page => page.id === id);
+  if (!page || id === "approvals" || id === "register" || id === "display") return [];
+  if (id === "reports") return ["can_view_sales_reports"];
+  return [...new Set(page.routes.map(routePermissionForPath).filter(Boolean))] as PermissionKey[];
+}
+
+export function grantPageEntry(matrix: StaffPermissions, id: string): StaffPermissions {
+  return { ...setPageVisibility(matrix, id, true),
+    ...Object.fromEntries(permissionPageEntryKeys(id).map(key => [key, true])) };
 }

@@ -318,6 +318,34 @@ export function isVisibleFor(hidden: VisibilityMap, key: string, role: string | 
   return !(hidden[key] ?? []).includes(role);
 }
 
+export function userElementVisible(hidden: VisibilityMap, key: string, role: string | null,
+  permissions: Record<string, unknown> = {}) {
+  if (role === "admin") return true;
+  if (lockFor(key) === "core") return false;
+  const own = permissions[`display:${key}`];
+  return typeof own === "boolean" ? own : isVisibleFor(hidden, key, role);
+}
+
+export function userRouteVisible(hidden: VisibilityMap, path: string, role: string | null,
+  permissions: Record<string, unknown> = {}) {
+  if (role === "admin") return true;
+  const page = pageForRoute(path);
+  if (page && !pageEnabled(permissions, page.id)) return false;
+  const element = routeElementFor(path);
+  return !element || userElementVisible(hidden, element.key, role, permissions);
+}
+
+/** An explicit page choice must also replace its inherited display restriction.
+ * Existing records remain unchanged until an administrator edits that page. */
+export function withPageDisplayAccess<T extends Record<string, boolean>>(matrix: T, routes: string[], shown: boolean): T {
+  const next = { ...matrix };
+  for (const element of ROUTE_ELEMENTS) {
+    if (element.route && routes.includes(element.route) && element.lock !== "core")
+      (next as Record<string, boolean>)[`display:${element.key}`] = shown;
+  }
+  return next;
+}
+
 /** The stored map after showing / hiding `key` for `forRole`. */
 export function withVisibility(
   hidden: VisibilityMap,
@@ -355,12 +383,11 @@ export function useVisibility() {
   // even though the till treats them as elevated. Only true admins see all.
   const role = (isAdmin ? "admin" : user?.metaRole ?? user?.role ?? "cashier") as string;
 
-  const visible = useCallback((key: string) => isVisibleFor(hidden, key, role), [hidden, role]);
+  const visible = useCallback((key: string) => userElementVisible(hidden, key, role, user?.permissions), [hidden, role, user?.permissions]);
 
   const visibleRoute = useCallback(
     (path: string) => {
-      const page = pageForRoute(path);
-      return (isAdmin || !page || pageEnabled(user?.permissions ?? {}, page.id)) && isRouteVisibleFor(hidden, path, role);
+      return isAdmin || userRouteVisible(hidden, path, role, user?.permissions);
     },
     [hidden, role, user?.permissions, isAdmin],
   );

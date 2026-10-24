@@ -13,7 +13,7 @@ export function pageForRoute(path: string) {
 }
 export function pageAllowsAction(matrix: Record<string, unknown>, key: string) {
   // Device sign-in authority is independent of permission to open device settings.
-  if (key === "can_use_management_mobile") return true;
+  if (key === "can_use_management_mobile" || key === "can_use_management_pc") return true;
   const owners = PERMISSION_PAGES.filter(page => page.keys.includes(key as PermissionKey));
   return !owners.length || owners.some(page => pageEnabled(matrix, page.id));
 }

@@ -675,7 +675,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
     const rules = (pos?.state.settings.visibility?.hidden ?? {}) as Record<string, string[]>;
     const fixedColumn = (column: number) => column === 0 || /^(actions?|open)$/i.test(labels[column] ?? "");
     const hiddenColumns = labels.flatMap((_, column) => !fixedColumn(column) && (
-      personalHidden.includes(columnPositions[column]!) || (tableId && tableColumnHidden(rules, tableId, columnPositions[column]!, role, user?.staffId ?? null))
+      personalHidden.includes(columnPositions[column]!) || (tableId && tableColumnHidden(rules, tableId, columnPositions[column]!, role, user?.staffId ?? null, user?.permissions))
     ) ? [column] : []);
     const saveHiddenColumns = (next: number[]) => {
       if (!tableId || !editable) return;
@@ -740,7 +740,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
                 <DropdownMenuSeparator />
               </>}
               <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
-              {labels.map((label, column) => label && <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} disabled={fixedColumn(column) || !editable || (!!tableId && tableColumnHidden(rules, tableId, columnPositions[column]!, role, user?.staffId ?? null))} onSelect={event => event.preventDefault()} onCheckedChange={checked => {
+              {labels.map((label, column) => label && <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} disabled={fixedColumn(column) || !editable || (!!tableId && tableColumnHidden(rules, tableId, columnPositions[column]!, role, user?.staffId ?? null, user?.permissions))} onSelect={event => event.preventDefault()} onCheckedChange={checked => {
                 const position = columnPositions[column]!;
                 saveHiddenColumns(checked ? personalHidden.filter(value => value !== position) : [...personalHidden, position]);
                 if (!checked) { setFilter(column, ""); if (activeFilter === column) setActiveFilter(null); }

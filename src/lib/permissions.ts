@@ -117,6 +117,7 @@ export const PERMISSION_GROUPS = [
       "can_manage_promotions",
       "can_manage_terminals",
       "can_use_management_mobile",
+      "can_use_management_pc",
       "can_manage_sync_backup",
     ],
   },
@@ -196,6 +197,7 @@ export type PermissionKey =
   | "can_manage_promotions"
   | "can_manage_terminals"
   | "can_use_management_mobile"
+  | "can_use_management_pc"
   | "can_manage_sync_backup";
 
 export const PERMISSION_LABELS: Record<PermissionKey, string> = {
@@ -272,12 +274,13 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_manage_promotions: "Edit promotions & coupon rules",
   can_manage_terminals: "Manage terminal activation tokens",
   can_use_management_mobile: "Sign in on management phones and tablets",
+  can_use_management_pc: "Sign in on management computers",
   can_manage_sync_backup: "Manage database connection",
 };
 
 export const PERMISSION_KEYS = Object.keys(PERMISSION_LABELS) as PermissionKey[];
 
-export type StaffPermissions = Record<PermissionKey, boolean> & Record<PagePermissionKey, boolean>;
+export type StaffPermissions = Record<PermissionKey, boolean> & Record<PagePermissionKey, boolean> & Record<`display:${string}`, boolean>;
 
 const build = (on: PermissionKey[]): StaffPermissions =>
   PERMISSION_KEYS.reduce((acc, k) => {
@@ -421,6 +424,9 @@ export function normalizePermissions(
     const key = pageKey(page.id);
     if (typeof raw[key] === "boolean") base[key] = raw[key];
   }
+  for (const [key, value] of Object.entries(raw)) {
+    if (key.startsWith("display:") && typeof value === "boolean") base[key as `display:${string}`] = value;
+  }
   return base;
 }
 
@@ -515,7 +521,7 @@ export function getEffectivePermissions(
   const merged = { ...preset };
   for (const [key, value] of Object.entries(overrides)) {
     const resolved = resolvePermission(key as PermissionFlag);
-    if (resolved in merged || PERMISSION_PAGES.some(page => pageKey(page.id) === key))
+    if (resolved in merged || key.startsWith("display:") || PERMISSION_PAGES.some(page => pageKey(page.id) === key))
       merged[resolved] = value === true;
   }
   return merged;
@@ -651,7 +657,7 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
     },
     "supervisor-only": {
       roles: ["supervisor", "admin"],
-      keys: ["can_edit_member_points", "can_manage_promotions", "can_manage_terminals", "can_use_management_mobile"],
+      keys: ["can_edit_member_points", "can_manage_promotions", "can_manage_terminals", "can_use_management_mobile", "can_use_management_pc"],
     },
     "admin-only": {
       roles: ["admin"],

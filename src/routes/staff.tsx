@@ -1,8 +1,10 @@
 import { useVisibility } from "@/lib/ui-visibility";
 import { Button } from "@/components/ui/button";
-import { RoleAccessPanel } from "@/platforms/web/components/admin/RoleAccessPanel";
+import { GlobalPermissionPolicies } from "@/platforms/web/components/admin/GlobalPermissionPolicies";
 import { createFileRoute, useSearch, Link } from "@tanstack/react-router";
 import { ShieldAlert, Users, ShieldCheck, Eye, ChevronLeft } from "lucide-react";
+import { usePos } from "@/lib/pos-store";
+import { AuthorizationRulesPanel } from "@/platforms/web/components/pos/settings/AuthorizationRulesPanel";
 
 import { RoleManager } from "@/platforms/web/components/admin/RoleManager";
 import { StaffManager } from "@/platforms/web/components/admin/StaffManager";
@@ -11,8 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/pos-auth";
 
 export const Route = createFileRoute("/staff")({
-  validateSearch: (search: Record<string, unknown>): { tab?: "accounts" | "roles" | "access" } => ({
-    tab: search.tab === "access" || search.tab === "roles" ? search.tab : undefined,
+  validateSearch: (search: Record<string, unknown>): { tab?: "accounts" | "roles" | "access" | "approvals" } => ({
+    tab: search.tab === "access" || search.tab === "roles" || search.tab === "approvals" ? search.tab : undefined,
   }),
   head: () => ({
     meta: [
@@ -32,6 +34,7 @@ export const Route = createFileRoute("/staff")({
 
 export function StaffPermissionsPanel() {
   const { can, isAdmin } = useAuth();
+  const { currentStore } = usePos();
   const { visibleRoute } = useVisibility();
   const accessAllowed = (isAdmin || can("can_access_pos_settings")) && visibleRoute("/settings/access");
   const search = useSearch({ strict: false });
@@ -57,15 +60,16 @@ export function StaffPermissionsPanel() {
           <div>
           <h1 className="text-2xl font-semibold">Staff &amp; Permissions</h1>
           <p className="text-sm text-muted-foreground page-description">
-            Accounts, access status, roles and feature permissions in one place.
+            Edit permissions on a person's account to manage pages, actions, device access, settings visibility and table columns. Role defaults are starting presets; Approval rules choose who may approve sensitive actions.
           </p>
           </div>
         </header>
         <Tabs key={search.tab ?? "accounts"} defaultValue={search.tab ?? "accounts"}>
           <TabsList className="h-auto min-h-9 max-w-full justify-start overflow-x-auto overflow-y-hidden scrollbar-none">
-            <TabsTrigger value="accounts"><Users className="mr-1.5 size-4" aria-hidden />Accounts</TabsTrigger>
-            <TabsTrigger value="roles"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Roles &amp; permissions</TabsTrigger>
-            {accessAllowed && <TabsTrigger value="access"><Eye className="mr-1.5 size-4" aria-hidden />Role &amp; access</TabsTrigger>}
+            <TabsTrigger value="accounts"><Users className="mr-1.5 size-4" aria-hidden />People &amp; permissions</TabsTrigger>
+            <TabsTrigger value="roles"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Role defaults</TabsTrigger>
+            {accessAllowed && <TabsTrigger value="approvals"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Approval rules</TabsTrigger>}
+            {isAdmin && <TabsTrigger value="access"><Eye className="mr-1.5 size-4" aria-hidden />Global policies</TabsTrigger>}
           </TabsList>
           <TabsContent value="accounts" className="pt-4">
             <StaffManager />
@@ -73,7 +77,10 @@ export function StaffPermissionsPanel() {
           <TabsContent value="roles" className="pt-4">
             <RoleManager />
           </TabsContent>
-          <TabsContent value="access" className="pt-4"><RoleAccessPanel /></TabsContent>
+          {isAdmin && <TabsContent value="access" className="pt-4"><GlobalPermissionPolicies /></TabsContent>}
+          {accessAllowed && <TabsContent value="approvals" className="pt-4">
+            {currentStore ? <AuthorizationRulesPanel storeId={currentStore.id} storeName={currentStore.name} mayEdit={isAdmin || can("can_access_pos_settings")} canEditGlobal={isAdmin} /> : <p>Select a branch to manage approval rules.</p>}
+          </TabsContent>}
         </Tabs>
       </main>
   );

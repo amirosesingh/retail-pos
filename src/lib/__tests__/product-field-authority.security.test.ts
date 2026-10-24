@@ -11,6 +11,20 @@ const repository = new OperationsRepository({ sql: () => ({ Request }) }, { tabl
 const scope = { enforcePermissions: true, permissions: { can_adjust_stock: true } };
 beforeEach(() => query.mockReset().mockResolvedValue({ recordset: [current] }));
 describe("product field permission at shared local SQL writer", () => {
+  it.each([{ rows: [] }, { rows: [{ id: "product", selling_price: 10 }] }])("checks the UPDATE values even with decoy rows $rows", async ({ rows }) => {
+    await expect(repository.assertProductPermissions({}, { table: "products", kind: "update", rows, match: { id: "product" }, values: { selling_price: 99 } }, scope)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+  it.each([false, 0, "0", "false"])("requires restore authority for false encoding %j", async value => {
+    query.mockResolvedValue({ recordset: [{ ...current, is_archived: true }] });
+    const op = { table: "products", kind: "update", match: { id: "product" }, values: { is_archived: value } };
+    await expect(repository.assertProductPermissions({}, op, { ...scope, permissions: { can_archive_product: true } })).rejects.toThrow("permission");
+    await expect(repository.assertProductPermissions({}, op, { ...scope, permissions: { can_restore_product: true } })).resolves.toBeUndefined();
+    expect(op.values.is_archived).toBe(false);
+  });
+  it.each([["deleted_at", null], ["is_active", true]])("requires restore for lifecycle sibling %s", async (field, value) => {
+    query.mockResolvedValue({ recordset: [{ ...current, [field]: field === "is_active" ? false : "2026-01-01" }] });
+    await expect(repository.assertProductPermissions({}, { table: "products", kind: "update", match: { id: "product" }, values: { [field as string]: value } }, { ...scope, permissions: { can_archive_product: true } })).rejects.toThrow("permission");
+  });
   it.each(["selling_price", "ecom_price", "cost_price", "name"])("rejects stock-authorized %s changes", async field => {
     await expect(repository.assertProductPermissions({}, { table: "products", kind: "update", match: { id: "product" }, values: { [field]: field === "name" ? "Changed" : 99 } }, scope)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
   });

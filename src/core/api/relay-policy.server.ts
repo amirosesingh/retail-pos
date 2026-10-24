@@ -16,6 +16,8 @@ import { alignVerifiedScopeIds } from "@/lib/verified-scope-ids";
 import { serviceRest } from "@/core/api/pos-relay.server";
 import type { RelayOp } from "@/core/api/pos-relay.server";
 import { claimsFromPayload, normalisePermissions } from "@/core/api/relay-claims.server";
+import { normalizeProductLifecycle } from "@/lib/product-status-permissions";
+import { managementDeviceAllowed } from "@/lib/management-device-access";
 import type { CallerClaims } from "@/core/api/relay-claims.server";
 
 export type RelayScope = {
@@ -270,12 +272,10 @@ export async function resolveRelayScope(caller: {
   const role = row?.role ?? null;
   const roleSlug = row?.role_slug ?? null;
   const permissions = row ? normalisePermissions(row.permissions) : {};
-  const mobileAllowed = role === "admin" || roleSlug === "admin" ||
-    (typeof permissions.can_use_management_mobile === "boolean" ? permissions.can_use_management_mobile : supervisorRole(role, roleSlug));
-  if (caller.managementDevice && (!row || !(caller.managementMobileDevice ? mobileAllowed : supervisorRole(role, roleSlug))))
+  if (caller.managementDevice && (!row || !managementDeviceAllowed({ role, roleSlug, permissions }, caller.managementMobileDevice === true)))
     throw new Error(caller.managementMobileDevice
       ? "This account is not permitted to sign in on management phones or tablets"
-      : "This management device requires an administrator or supervisor account");
+      : "This account is not permitted to sign in on management computers; ask an administrator or supervisor to review device access");
   const branchMismatch = !!(
     row?.store_id &&
     caller.storeId &&
@@ -399,6 +399,8 @@ async function authorizeProductOp(
   }
 
   const payloads = op.kind === "update" ? [op.values] : op.rows;
+  try { payloads.forEach(normalizeProductLifecycle); }
+  catch { return deny("PERMISSION_DENIED", "Product status must be a boolean."); }
   const ids = [
     ...new Set(
       (op.kind === "update" ? [op.match["id"]] : payloads.map((row) => row["id"]))
@@ -950,7 +952,7 @@ async function authorizeChild(
       const response = await serviceRest(`${op.table}?id=eq.${encodeURIComponent(String(op.match.id))}&select=${parent.fk}&limit=1`);
       if (!response.ok) return deny("STORE_FORBIDDEN", "The existing record could not be checked.");
       const rows = await response.json() as Record<string, unknown>[];
-      if (!rows.length) return { ok: true, op };
+      if (!rows.length) return deny("STORE_FORBIDDEN", "That record no longer exists. Refresh before changing it.");
       currentParent = rows[0][parent.fk];
     }
     ids.push(currentParent);

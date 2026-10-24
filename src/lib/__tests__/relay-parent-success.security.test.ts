@@ -23,6 +23,11 @@ async function push(ops: unknown[]) {
   return response.json();
 }
 describe("same-batch parent ownership after execution", () => {
+  it.each(["update", "delete"])("never authorizes an absent child for a later raced %s", async kind => {
+    const op = { kind, table: "booking_payments", match: { id: "fresh-child" }, values: { booking_id: "foreign-parent", amount: 0 } };
+    const result = await push([op]);
+    expect(result.results[0].ok).toBe(false);
+  });
   it("does not trust a parent whose branch authorization failed", async () => {
     const result = await push([parent("B"), child]);
     expect(result.results.map((r: { ok: boolean }) => r.ok)).toEqual([false, false]);
