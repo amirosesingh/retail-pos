@@ -9,7 +9,7 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import { Plus, Trash2 } from "lucide-react";
-import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -137,7 +137,8 @@ function MasterList({
 }
 
 function BookingRulesForm() {
-  const { state, updateSettings } = usePos();
+  const { state } = usePos();
+  const { updateSettings } = useSettingsCtx();
   const integrations = state.settings.integrations;
   const rules = bookingRulesOf(integrations.bookingRules);
 

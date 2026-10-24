@@ -54,7 +54,8 @@ function TaxSettingsPage() {
 
 /** Billing & totals — cash rounding of the final bill total. */
 function RoundingForm() {
-  const { state, updateSettings } = usePos();
+  const { state } = usePos();
+  const { updateSettings } = useSettingsCtx();
   const integrations = state.settings.integrations;
   const rounding = roundingOf(integrations.rounding);
   const patch = (p: Partial<typeof rounding>) =>

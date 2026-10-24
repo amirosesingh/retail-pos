@@ -3,10 +3,13 @@ import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { usePos } from "@/lib/pos-store";
 import { notifyError } from "@/lib/notify";
+import { useAuth } from "@/lib/pos-auth";
 
 /** Existing branch-scoped operational policy, alongside the other POS rules. */
 export function OperationalRulesPanel({ canEdit }: { canEdit: boolean }) {
-  const { state, updateSettings, saveConfiguredSettings, settingsScopeLoading } = usePos();
+  const { state, updateSettings, saveConfiguredSettings, settingsScopeLoading, settingsScope, scopeIds } = usePos();
+  const { isAdmin } = useAuth();
+  const editable = canEdit && (isAdmin || (!!scopeIds.BRANCH && !settingsScope.locks.transferApproval));
   const [saving, setSaving] = useState(false);
   return <div>
     <div className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
@@ -15,7 +18,8 @@ export function OperationalRulesPanel({ canEdit }: { canEdit: boolean }) {
         <p className="text-xs text-muted-foreground">Nothing leaves a branch until an authorized user approves it.</p>
       </div>
       <Switch aria-label="Stock transfers need approval" checked={state.settings.integrations.requireTransferApproval}
-        disabled={!canEdit || saving || settingsScopeLoading} onCheckedChange={enabled => {
+        disabled={!editable || saving || settingsScopeLoading} onCheckedChange={enabled => {
+          if (!editable || saving || settingsScopeLoading) return;
           setSaving(true);
           void (async () => {
             try {

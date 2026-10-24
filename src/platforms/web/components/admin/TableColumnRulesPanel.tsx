@@ -16,7 +16,7 @@ type StaffChoice = { user_id: string; full_name: string };
 /** Admin-controlled presentation rules; action permissions remain authoritative. */
 export function TableColumnRulesPanel({ roles }: { roles: RoleChoice[] }) {
   const { isAdmin } = useAuth();
-  const { state, updateGlobalSettings } = usePos();
+  const { configuredGlobalSettings, updateGlobalSettings } = usePos();
   const [open, setOpen] = useState(false);
   const [tableId, setTableId] = useState<string>(TABLE_CATALOG[0]?.id ?? "");
   const [scopeKind, setScopeKind] = useState<"all" | "role" | "user">("all");
@@ -25,7 +25,7 @@ export function TableColumnRulesPanel({ roles }: { roles: RoleChoice[] }) {
   const [staffError, setStaffError] = useState("");
   const table = useMemo(() => TABLE_CATALOG.find(row => row.id === tableId), [tableId]);
   const scope = scopeKind === "all" ? "all" : scopeId ? `${scopeKind}:${scopeId}` : "";
-  const rules = (state.settings.visibility?.hidden ?? {}) as Record<string, string[]>;
+  const rules = (configuredGlobalSettings.visibility?.hidden ?? {}) as Record<string, string[]>;
 
   useEffect(() => {
     if (!open || scopeKind !== "user" || staff.length || staffError) return;
