@@ -17,7 +17,7 @@ export function AndroidUpdateBanner() {
   if (!state.supported || !available || !state.latest) return null;
   const label = `${RELEASE_CHANNEL === "beta" ? "Beta update" : "Update"} ${state.latest}`;
   const detail = state.readyUri ? (state.error ?? "Downloaded. Tap to install.")
-    : state.downloading ? `Downloading ${state.percent}%`
+    : state.downloading ? "Downloading update"
       : state.error ?? "Preparing download";
   return <NativeUpdateOrb label={label} detail={detail} progress={state.percent} busy={state.downloading} error={!!state.error}
     onClick={() => void (state.readyUri ? installDownloaded() : download())} />;

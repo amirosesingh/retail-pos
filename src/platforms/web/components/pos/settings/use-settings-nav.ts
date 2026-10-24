@@ -11,6 +11,7 @@ import { routePermissionForPath } from "@/platforms/web/components/pos/nav-confi
 import {
   SETTINGS_CARDS,
   SETTINGS_CATEGORIES,
+  settingsCardForStaffAccess,
   type SettingsCard,
   type SettingsCategory,
 } from "@/lib/settings-catalog";
@@ -37,9 +38,10 @@ export function useSettingsNav(): SettingsNav {
   const { isAdmin, can } = useAuth();
   const cards = useMemo(
     () =>
-      SETTINGS_CARDS.filter(
+      SETTINGS_CARDS.map(card => settingsCardForStaffAccess(card, isAdmin || can("can_manage_staff"))).filter(
         (c) =>
           visibleRoute(routeOf(c)) &&
+          (c.id !== "rules" || ((isAdmin || can("can_access_pos_settings")) && visibleRoute("/settings/rules"))) &&
           (!["/settings/notifications", "/settings/shift-alerts"].includes(routeOf(c)) || isAdmin) &&
           (isAdmin ||
             ((routeOf(c) === "/settings/terminals" || routeOf(c) === "/settings/mobile-terminals")

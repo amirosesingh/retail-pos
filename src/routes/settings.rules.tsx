@@ -1,18 +1,16 @@
 import { OperationalRulesPanel } from "@/platforms/web/components/pos/settings/panels/OperationalRulesPanel";
+import { ShiftClosingPolicy } from "@/platforms/web/components/admin/ShiftClosingPolicy";
+import { OperationalTablePolicies } from "@/platforms/web/components/admin/OperationalTablePolicies";
 import { SettingsBackLink } from "@/platforms/web/components/pos/settings/SettingsBackLink";
 import { HelpTip } from "@/components/ui/help-tip";
-import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { PresetNumber } from "@/components/ui/preset-number";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
-  CheckCircle2,
-  CloudOff,
   Loader2,
   RefreshCw,
   Save,
-  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
@@ -20,7 +18,6 @@ import { notifyError } from "@/lib/notify";
 import { SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
 import { SaveIndicator } from "@/platforms/web/components/pos/settings/SaveIndicator";
 import { SettingsSections } from "@/platforms/web/components/pos/settings/SettingsSection";
-import { AuthorizationRulesPanel } from "@/platforms/web/components/pos/settings/AuthorizationRulesPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,13 +39,13 @@ import { reconcileRulesDraft } from "@/lib/pos-rules-draft";
 export const Route = createFileRoute("/settings/rules")({
   head: () => ({
     meta: [
-      { title: "POS Rules & Enforcement · Register Settings" },
+      { title: "Operational policies · Register Settings" },
       {
         name: "description",
         content:
           "Configure shift, discount, refund and terminal security rules enforced across every register.",
       },
-      { property: "og:title", content: "POS Rules & Enforcement" },
+      { property: "og:title", content: "Operational policies" },
       {
         property: "og:description",
         content: "Shift, discount, refund and terminal security rules for every till.",
@@ -60,26 +57,20 @@ export const Route = createFileRoute("/settings/rules")({
   component: RulesSettings,
 });
 
-function RulesSettings() {
+export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   const {
     rules,
     loading,
     failureText,
-    backendError,
-    lastSyncedAt,
     refresh,
     confirmSaved,
     status,
-    statusText,
-    source,
-    revision,
     branchId,
     terminalId: terminal,
     rowVersion,
   } = usePosRules();
 
-  const { currentStore, configuredGlobalSettings, updateGlobalSettings, saveConfiguredSettings, settingsScopeLoading } = usePos();
-  const [savingClosePolicy, setSavingClosePolicy] = useState(false);
+  const { currentStore } = usePos();
   const { isAdmin, can } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
 
@@ -154,47 +145,10 @@ function RulesSettings() {
   const dirty = !rulesEqual(draft, rules);
   const idleDirty = idleLoaded && savedIdle !== null && idle !== savedIdle;
 
-  const statusView =
-    status === "LIVE"
-      ? {
-          title: "Rules active",
-          detail: "Verified with the central database.",
-          icon: CheckCircle2,
-          tone: "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-        }
-      : status === "PENDING_UPLOAD"
-        ? {
-            title: "Rules active · Pending sync",
-            detail:
-              "This terminal is enforcing the saved change while it waits to reach head office.",
-            icon: RefreshCw,
-            tone: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",
-          }
-        : status === "DEGRADED"
-          ? {
-              title: "Rules active · Offline",
-              detail:
-                "The last verified rules remain in force. This page will catch up automatically.",
-              icon: CloudOff,
-              tone: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",
-            }
-          : status === "SYNCING"
-            ? {
-                title: "Checking rules",
-                detail: "Checking the central database for this branch's enforced rules.",
-                icon: RefreshCw,
-                tone: "border-primary/30 bg-primary/5 text-foreground",
-              }
-            : {
-                title:
-                  status === "IDENTITY_UNAVAILABLE" ? "Branch required" : "Rules need attention",
-                detail:
-                  failureText ||
-                  "This terminal has not received verified branch rules. Restrictive safety rules apply.",
-                icon: TriangleAlert,
-                tone: "border-destructive/40 bg-destructive/10 text-destructive",
-              };
-  const StatusIcon = statusView.icon;
+  const saveStatus = dirty ? "Unsaved changes" : status === "LIVE" ? "Saved"
+    : status === "PENDING_UPLOAD" ? "Saved on this terminal — upload pending"
+    : status === "DEGRADED" ? "Offline — showing last saved settings"
+    : loading ? "Loading settings" : "Saved settings unavailable";
 
   async function checkRulesNow() {
     setChecking(true);
@@ -295,18 +249,18 @@ function RulesSettings() {
     }
   }
 
+  const Shell = embedded ? Fragment : SettingsShell;
   return (
-    <SettingsShell>
-      <div className="pos-page-container">
-        <SettingsTabs current="/settings/rules" />
+    <Shell>
+      <div className={embedded ? "space-y-4" : "pos-page-container"}>
+        {!embedded && <SettingsTabs current="/settings/rules" />}
         <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
           <div className="flex min-w-0 items-start gap-3">
-            <SettingsBackLink />
+            {!embedded && <SettingsBackLink />}
             <div className="min-w-0">
-              <h1 className="text-2xl font-semibold">POS rules &amp; enforcement</h1>
+              <h1 className="text-2xl font-semibold">Operational policies</h1>
               <p className="text-sm text-muted-foreground page-description">
-                Configure the branch policy enforced across every register at {currentStore.name}.
-                Saved values stay in force while newer rules are checked quietly in the background.
+                Set trading and shift policies for {currentStore.name}. Individual access is managed in Edit permissions.
               </p>
             </div>
           </div>
@@ -315,101 +269,38 @@ function RulesSettings() {
           )}
         </header>
 
-        {isAdmin && <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
-          <div><h2 className="font-semibold">Allow another authorized user to close the shift</h2>
-            <p className="text-sm text-muted-foreground">Company-wide. Any signed-in user with Close shift permission can close a shift in their branch, including one opened by someone else. Both identities are recorded.</p></div>
-          <Switch aria-label="Allow another authorized user to close the shift" checked={configuredGlobalSettings.integrations.allowAnyStaffCloseShift === true} disabled={savingClosePolicy || settingsScopeLoading} onCheckedChange={enabled => {
-            void (async () => {setSavingClosePolicy(true);try {
-              updateGlobalSettings({integrations:{...configuredGlobalSettings.integrations,allowAnyStaffCloseShift:enabled}});
-              await saveConfiguredSettings();toast.success("Shift closing policy saved");
-            } catch(error) {notifyError(error,"Saving shift closing policy");} finally {setSavingClosePolicy(false);}})();
-          }} />
-        </div>}
-
         {!mayEdit && (
           <p className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
             You can see what is enforced, but changing rules requires the POS settings permission.
           </p>
         )}
 
-        <section className={`rounded-lg border p-4 text-sm ${statusView.tone}`}>
-          <div className="flex flex-wrap items-start gap-3 sm:flex-nowrap">
-            <StatusIcon
-              className={`mt-0.5 size-5 shrink-0 ${status === "SYNCING" ? "animate-spin" : ""}`}
-            />
-            <div className="min-w-0 flex-1">
-              <h2 className="font-semibold">{statusView.title}</h2>
-              <p className="mt-0.5 text-xs opacity-90">{statusView.detail}</p>
-              <p className="mt-2 text-xs opacity-80">
-                {lastSyncedAt
-                  ? `Last verified ${posDisplayDateTime(new Date(lastSyncedAt))}`
-                  : "Not yet verified on this terminal"}
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={checking}
-              onClick={() => void checkRulesNow()}
-            >
-              {checking ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RefreshCw className="size-4" />
-              )}
-              Check now
-            </Button>
-          </div>
-          <details className="mt-3 border-t border-current/15 pt-2 text-xs opacity-85">
-            <summary className="cursor-pointer select-none font-medium">Technical details</summary>
-            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-              <div>
-                <dt className="opacity-70">Branch</dt>
-                <dd>{currentStore.name}</dd>
-              </div>
-              <div>
-                <dt className="opacity-70">Branch ID</dt>
-                <dd className="break-all">{branchId || currentStore.id || "—"}</dd>
-              </div>
-              <div>
-                <dt className="opacity-70">Terminal</dt>
-                <dd className="break-all">{terminal || "—"}</dd>
-              </div>
-              <div>
-                <dt className="opacity-70">Source</dt>
-                <dd>{source}</dd>
-              </div>
-              <div>
-                <dt className="opacity-70">Revision</dt>
-                <dd className="break-all">{revision || "—"}</dd>
-              </div>
-              <div>
-                <dt className="opacity-70">Engine status</dt>
-                <dd>{status}</dd>
-              </div>
-            </dl>
-            <p className="mt-2">{statusText}</p>
-            {backendError ? <p className="mt-1 break-words opacity-75">{backendError}</p> : null}
-          </details>
-        </section>
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <p className="text-muted-foreground">Refresh reads the latest saved branch rules. It does not save your edits.</p>
+          <Button variant="outline" size="sm" disabled={checking || saving} onClick={() => void checkRulesNow()}><RefreshCw className={`size-4 ${checking ? "animate-spin" : ""}`} />{checking ? "Refreshing…" : "Refresh"}</Button>
+        </div>
+        {failureText && status !== "LIVE" && <p role="alert" className="text-sm text-destructive">Could not load current saved settings. Check the connection and reload.</p>}
 
         <section className="rounded-lg border border-border bg-card px-5">
           <div className="flex items-center justify-between gap-3 border-b border-border/60 py-4">
             <div>
               <h2 className="text-sm font-semibold">Operational rules</h2>
               <p className="text-xs text-muted-foreground">
-                Shift, pricing, refund and manager-approval controls.
+                Branch limits for trading, stock and shift reconciliation. User permissions and Approver rules are managed separately.
               </p>
             </div>
             <SaveIndicator
               dirty={dirty}
               saving={saving}
-              savedText="Rules saved"
+              savedText={saveStatus}
               dirtyText="Unsaved rule changes"
             />
           </div>
-          <div className="pt-4"><OperationalRulesPanel canEdit={mayEdit} /></div>
+          <div className="space-y-3 pt-4">
+            <ShiftClosingPolicy />
+            <OperationalRulesPanel canEdit={mayEdit} />
+            <OperationalTablePolicies />
+          </div>
           <SettingsSections
             storageKey="rules"
             items={RULE_GROUPS.filter(group => group.id !== "pin-gates").map((group) => ({
@@ -418,7 +309,7 @@ function RulesSettings() {
               blurb: group.blurb,
               content: (
                 <div className="space-y-3 pb-2">
-                  {group.fields.map((field) => (
+                  {group.fields.filter(field => !["enable_cashier_x_report", "show_opening_float_at_close", "show_expected_totals_at_close", "show_live_variance_at_close", "show_itemized_tender_breakdown"].includes(field.key)).map((field) => (
                     <div
                       key={field.key}
                       className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-border/60 pt-3 first:border-0 first:pt-0"
@@ -451,26 +342,6 @@ function RulesSettings() {
             }))}
           />
         </section>
-
-        <AuthorizationRulesPanel
-          storeId={currentStore.id}
-          storeName={currentStore.name}
-          mayEdit={mayEdit}
-          canEditGlobal={isAdmin}
-        />
-
-        <details className="rounded-lg border border-border bg-card p-4">
-          <summary className="cursor-pointer text-sm font-medium">Fallback PIN requirements</summary>
-          <p className="mt-2 text-xs text-muted-foreground">These saved rules are used only when central Authorization Rules are unavailable. Approval PINs are assigned per user in Staff &amp; Permissions.</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            {RULE_GROUPS.find(group => group.id === "pin-gates")?.fields.map(field =>
-              <label key={field.key} className="flex items-center justify-between gap-3 rounded-md border border-border/60 p-3 text-sm">
-                <span>{field.label}<HelpTip text={field.blurb} label={`About ${field.label}`} /></span>
-                <Switch aria-label={field.label} disabled={!mayEdit} checked={Boolean(draft[field.key])} onCheckedChange={value => set(field.key, value)} />
-              </label>
-            )}
-          </div>
-        </details>
 
         <section className="space-y-4 rounded-lg border border-border bg-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -539,7 +410,7 @@ function RulesSettings() {
             <SaveIndicator
               dirty={dirty}
               saving={saving}
-              savedText="Operational rules saved"
+              savedText={saveStatus}
               dirtyText="Unsaved operational-rule changes"
             />
             <Button
@@ -554,6 +425,6 @@ function RulesSettings() {
           </div>
         )}
       </div>
-    </SettingsShell>
+    </Shell>
   );
 }

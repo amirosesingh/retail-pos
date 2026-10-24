@@ -3,13 +3,10 @@
  * that power it. Shared by the settings page and the settings drawer.
  */
 import { SecureCredentials } from "@/platforms/web/components/pos/SecureCredentials";
-import { PanelSaveBar } from "@/platforms/web/components/pos/settings/PanelSaveBar";
 import { VerificationGatewayPanel } from "@/platforms/web/components/pos/settings/panels/VerificationGatewayPanel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { usePos } from "@/lib/pos-store";
-import { defaultWhatsApp } from "@/lib/pos-seed";
 import type { WhatsAppSettings } from "@/core/types/pos-types";
 
 type Fields = {
@@ -104,20 +101,5 @@ export function WhatsAppFields({ whatsapp, setWhatsApp }: Fields) {
       <VerificationGatewayPanel />
       <SecureCredentials />
     </div>
-  );
-}
-
-/** Drawer version: owns its own settings binding and save bar. */
-export function IntegrationsPanel() {
-  const { state, updateSettings } = usePos();
-  const whatsapp = state.settings.whatsapp ?? defaultWhatsApp;
-  return (
-    <>
-      <WhatsAppFields
-        whatsapp={whatsapp}
-        setWhatsApp={(patch) => updateSettings({ whatsapp: { ...whatsapp, ...patch } })}
-      />
-      <PanelSaveBar />
-    </>
   );
 }

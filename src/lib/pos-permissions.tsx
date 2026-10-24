@@ -23,11 +23,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAuth, useAuthOptional } from "@/lib/pos-auth";
-import { verifyLocalPin } from "@/core/local-db/local-staff";
+import { verifyLocalApprovalPin as verifyLocalPin } from "@/core/local-db/local-staff";
 import { verifyManagerPin } from "@/lib/pos-rules-client";
+import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import {
   PERMISSION_LABELS,
   resolvePermission,
+  hasPermission as permitted,
   type PermissionFlag,
   type StaffPermissions,
 } from "@/lib/permissions";
@@ -40,7 +42,7 @@ type Ctx = {
   hasPermission: (flag: PermissionFlag | string) => boolean;
   /**
    * Resolves true when the user already holds the permission, or after a
-   * supervisor authorises the action with their User ID + PIN.
+   * permitted user authorises the action with their User ID + PIN.
    */
   requirePermission: (flag: PermissionFlag | string) => Promise<boolean>;
 };
@@ -157,16 +159,16 @@ function PermissionsInner({ children }: { children: ReactNode }) {
   );
 
   const verify = async () => {
-    if (!/^\d{4}$/.test(pin)) {
-      setError("Enter the supervisor 4-digit PIN");
+    if (!/^\d{4,6}$/.test(pin)) {
+      setError("Enter the authorised user's 4–6 digit PIN");
       return;
     }
     setBusy(true);
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       const local = await verifyLocalPin(userId.trim(), pin);
       setBusy(false);
-      if (!local.ok || !["admin", "manager"].includes(local.staff.roleSlug)) {
-        setError("Invalid supervisor User ID or PIN");
+      if (!local.ok || !pending || !permitted({ roleSlug: local.staff.roleSlug, permissions: local.staff.permissions }, pending)) {
+        setError("Invalid User ID, PIN or permission");
         return;
       }
       close(true);
@@ -176,21 +178,23 @@ function PermissionsInner({ children }: { children: ReactNode }) {
     try {
       result = await verifyManagerPin({
         data: {
+          ...(await getPosCallerAuth()),
           managerId: userId.trim(),
           pin,
           action: "permission_override",
+          permission: pending ? resolvePermission(pending) : undefined,
           detail: pending ? `Permission override: ${pending}` : "Permission override",
         },
       });
     } catch {
       // The hosted server is unreachable; the sealed local roster is the
-      // outage fallback and still restricts the override to supervisors.
+      // outage fallback and still requires the assigned action permission.
     }
     if (!result || (!result.ok && /reach|network|offline|fetch/i.test(result.error ?? ""))) {
       const local = await verifyLocalPin(userId.trim(), pin);
       setBusy(false);
-      if (!local.ok || !["admin", "manager"].includes(local.staff.roleSlug)) {
-        setError("Invalid supervisor User ID or PIN");
+      if (!local.ok || !pending || !permitted({ roleSlug: local.staff.roleSlug, permissions: local.staff.permissions }, pending)) {
+        setError("Invalid User ID, PIN or permission");
         return;
       }
       close(true);
@@ -198,11 +202,7 @@ function PermissionsInner({ children }: { children: ReactNode }) {
     }
     setBusy(false);
     if (!result.ok) {
-      setError(result.error ?? "Invalid supervisor User ID or PIN");
-      return;
-    }
-    if (result.manager.role !== "admin" && result.manager.role !== "manager") {
-      setError("That account is not a supervisor");
+      setError(result.error ?? "Invalid User ID, PIN or permission");
       return;
     }
     close(true);
@@ -226,19 +226,19 @@ function PermissionsInner({ children }: { children: ReactNode }) {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ShieldAlert className="size-4 text-destructive" /> Supervisor override
+              <ShieldAlert className="size-4 text-destructive" /> Permission authorisation
             </DialogTitle>
             <DialogDescription>
               Your account cannot{" "}
               {pending
                 ? PERMISSION_LABELS[resolvePermission(pending)].toLowerCase()
                 : "perform this action"}
-              . A supervisor can authorise it now.
+              . A user with this permission can authorise it now.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
-              <Label htmlFor="ov-id">Supervisor User ID</Label>
+              <Label htmlFor="ov-id">Authorising User ID</Label>
               <Input id="ov-id" value={userId} onChange={(e) => setUserId(e.target.value)} />
             </div>
             <div className="space-y-1">
@@ -247,10 +247,10 @@ function PermissionsInner({ children }: { children: ReactNode }) {
                 id="ov-pin"
                 type="password"
                 inputMode="numeric"
-                maxLength={4}
+                maxLength={6}
                 autoComplete="off"
                 value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 onKeyDown={(e) => e.key === "Enter" && void verify()}
               />
             </div>

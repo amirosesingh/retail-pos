@@ -187,7 +187,7 @@ describe("offline terminal operations", () => {
     expect(outbox).not.toContain(".getAll()");
     expect(outbox).not.toContain("localStorage");
     expect(commits.indexOf("persistBrowserBatch(context, ops")).toBeLessThan(
-      commits.indexOf("await runBatchLive(context, cloudOps)"),
+      commits.indexOf("await runBatchLive(context, cloudOps, report)"),
     );
     expect(commits).toContain("await acknowledgeBrowserBatch(pendingId)");
     expect(sync).toContain("await pendingBrowserBatches(25)");

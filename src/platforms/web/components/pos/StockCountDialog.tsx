@@ -10,6 +10,8 @@
  * the change is auto-saved after a pause or saved by hand from the button.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DataProgress } from "@/components/shared/DataProgress";
+import { yieldToUi } from "@/lib/commit-progress";
 import { ScanBarcode, Trash2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -259,8 +261,10 @@ export function StockCountDialog({
     if (draft) {
       const saved = parseLines(draft.lines);
       let moved = 0;
+      const productsById = new Map<string,(typeof products)[number]>();
+      for (const product of products) if (!productsById.has(product.id)) productsById.set(product.id,product);
       const restored = saved.map((line) => {
-        const product = products.find((p: (typeof products)[number]) => p.id === line.productId);
+        const product = productsById.get(line.productId);
         const system = product ? stockAt(product, targetStore.id) : line.system;
         if (system !== line.system) moved += 1;
         return { ...line, system, cost: product?.cost ?? line.cost };
@@ -390,6 +394,7 @@ export function StockCountDialog({
 
   /** A close waits for the newest draft snapshot instead of cancelling it. */
   const changeOpen = (nextOpen: boolean) => {
+    if (!nextOpen && postingRef.current) return;
     if (nextOpen || postingRef.current || draft?.status === "posted" || !dirty) {
       onOpenChange(nextOpen);
       return;
@@ -487,6 +492,7 @@ export function StockCountDialog({
     postingRef.current = true;
     setPosting(true);
     try {
+      await yieldToUi();
       if (timerRef.current) clearTimeout(timerRef.current);
       // What the record looked like before this posting, kept for the audit
       // trail whenever an already-posted count is being corrected.
@@ -583,7 +589,7 @@ export function StockCountDialog({
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogContent className="max-h-[92vh] w-[min(96vw,90rem)] max-w-none overflow-y-auto">
+      <DialogContent showCloseButton={!posting} className="max-h-[92vh] w-[min(96vw,90rem)] max-w-none overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {draft?.status === "posted"
@@ -599,7 +605,8 @@ export function StockCountDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+        {posting && <div className="space-y-2 rounded-lg border p-3"><p role="status">Posting {rows.length.toLocaleString()} counted lines. Waiting for the database to confirm the stock movements…</p><DataProgress variant="panel" labels={["Saving stock adjustment","Saving stock count draft"]} /></div>}
+        <Tabs value={tab} onValueChange={value => {if (!posting) setTab(value);}} className="space-y-4">
           <TabsList>
             <TabsTrigger value="count">
               <ScanBarcode className="mr-2 size-4" /> Physical count

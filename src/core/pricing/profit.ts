@@ -21,10 +21,23 @@ export type ProfitTotals = {
   marginPct: number;
 };
 
+export type ProductLookup = ReadonlyMap<string, Product>;
+
+/** Build once per calculation, keeping the same first-match semantics as find. */
+export function indexProducts(products: readonly Product[]): ProductLookup {
+  const byId = new Map<string, Product>();
+  for (const product of products) {
+    if (!byId.has(product.id)) byId.set(product.id, product);
+  }
+  return byId;
+}
+
 /** Wholesale cost for one line: the captured cost, else today's cost price. */
-export function lineCost(line: CartLine, products: Product[] = []): number {
+export function lineCost(line: CartLine, products: Product[] | ProductLookup = []): number {
   const captured = typeof line.cost === "number" ? line.cost : undefined;
-  const unit = captured ?? products.find((p) => p.id === line.productId)?.cost ?? 0;
+  const unit = captured ?? (Array.isArray(products)
+    ? products.find((p) => p.id === line.productId)
+    : products.get(line.productId))?.cost ?? 0;
   return r2(unit * line.qty);
 }
 
@@ -92,12 +105,13 @@ export function lineProfit(line: CartLine, products: Product[] = []): number {
 
 /** Roll a set of bills up into revenue, COGS, profit and margin. */
 export function profitOf(sales: Sale[], products: Product[] = []): ProfitTotals {
+  const byId = indexProducts(products);
   let revenue = 0;
   let cogs = 0;
   for (const sale of sales) {
     if (sale.refunded) continue;
     revenue += saleNetRevenue(sale);
-    for (const line of sale.lines) cogs += lineCost(line, products);
+    for (const line of sale.lines) cogs += lineCost(line, byId);
   }
   revenue = r2(revenue);
   cogs = r2(cogs);
@@ -113,6 +127,7 @@ export function hourlyProfit(
   products: Product[] = [],
   hourOf: (value: string) => number = (value) => new Date(value).getHours(),
 ): HourlyProfit[] {
+  const byId = indexProducts(products);
   const hours: HourlyProfit[] = Array.from({ length: 24 }, (_, h) => ({
     hour: `${h}:00`,
     revenue: 0,
@@ -124,7 +139,7 @@ export function hourlyProfit(
     const bucket = hours[hourOf(sale.createdAt)];
     if (!bucket) continue;
     bucket.revenue += saleNetRevenue(sale);
-    for (const line of sale.lines) bucket.cogs += lineCost(line, products);
+    for (const line of sale.lines) bucket.cogs += lineCost(line, byId);
   }
   return hours.map((h) => ({
     hour: h.hour,

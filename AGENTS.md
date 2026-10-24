@@ -32,3 +32,8 @@ Legacy generated clients (`client.ts`, `client.server.ts`,
 registered in `src/start.ts`. They bypass the runtime operator configuration
 that device builds require. The guard lives in
 `src/lib/__tests__/own-database.security.test.ts`.
+
+## iOS signing key preservation
+
+- Preserve the existing iOS signing/OTA private key in `.ota-private/manifest-ed25519.pem` and any operator-supplied signing credentials. Never delete or rotate them during checkout, build, installer, or version cleanup.
+- Keep private keys ignored by Git and out of commits, logs, PRs, and published artifacts. Verify an existing key matches `ios-ota.public.json` before using it; do not generate a replacement without an explicit owner request.

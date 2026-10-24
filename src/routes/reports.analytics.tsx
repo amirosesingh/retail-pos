@@ -1,3 +1,4 @@
+import { useAuth } from "@/lib/pos-auth";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
@@ -64,6 +65,8 @@ const tooltipStyle = {
 };
 
 function AnalyticsBoard() {
+  const { can } = useAuth();
+  const showCostMargin = can('can_view_cost_margin');
   const { state, stores } = usePos();
   const init = defaultRange(30);
   const [from, setFrom] = useState(init.from);
@@ -183,9 +186,9 @@ function AnalyticsBoard() {
           />
           <StatCard
             label="Gross profit"
-            tone={totals.profit < 0 ? "loss" : "profit"}
-            value={money(totals.profit)}
-            hint={`${totals.marginPct.toFixed(1)}% margin`}
+            tone={showCostMargin && totals.profit < 0 ? "loss" : "profit"}
+            value={showCostMargin ? money(totals.profit) : "Restricted"}
+            hint={showCostMargin ? `${totals.marginPct.toFixed(1)}% margin` : "Cost-view permission required"}
           />
           <StatCard
             label="Given away"
@@ -501,16 +504,16 @@ function AnalyticsBoard() {
                     <TableCell className="font-medium">{s.name}</TableCell>
                     <TableCell className="numeric text-right">{money(s.revenue)}</TableCell>
                     <TableCell className="numeric text-right">{s.sharePct.toFixed(1)}%</TableCell>
-                    <TableCell className="numeric text-right">{money(s.cost)}</TableCell>
+                    <TableCell className="numeric text-right">{showCostMargin ? money(s.cost) : "Restricted"}</TableCell>
                     <TableCell
                       className={
                         "numeric text-right font-semibold " +
-                        (s.profit < 0 ? "text-destructive" : "text-success")
+                        (showCostMargin ? (s.profit < 0 ? "text-destructive" : "text-success") : "text-muted-foreground")
                       }
                     >
-                      {money(s.profit)}
+                      {showCostMargin ? money(s.profit) : "Restricted"}
                     </TableCell>
-                    <TableCell className="numeric text-right">{s.marginPct.toFixed(1)}%</TableCell>
+                    <TableCell className="numeric text-right">{showCostMargin ? `${s.marginPct.toFixed(1)}%` : "Restricted"}</TableCell>
                   </TableRow>
                 ))}
                 {!byStore.length && (

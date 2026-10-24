@@ -1,6 +1,6 @@
 import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
-import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -53,16 +53,18 @@ export const Route = createFileRoute("/settings/region")({
 });
 
 function RegionPage() {
-  const { state, updateSettings } = usePos();
+  return <SettingsFrame title="Region & time" description="Terminal clocks drift and travel. Pick the region here and every displayed and printed time follows it, whatever the PC thinks."><RegionForm /></SettingsFrame>;
+}
+
+function RegionForm() {
+  const { state } = usePos();
+  const { updateSettings } = useSettingsCtx();
   const it = state.settings.integrations;
 
   const patch = (next: Partial<typeof it>) => updateSettings({ integrations: { ...it, ...next } });
 
   return (
-    <SettingsFrame
-      title="Region & time"
-      description="Terminal clocks drift and travel. Pick the region here and every displayed and printed time follows it, whatever the PC thinks."
-    >
+    <>
       <div className="space-y-5">
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1">
@@ -144,6 +146,6 @@ function RegionPage() {
           <p className="text-[11px] text-muted-foreground">Zone in force: {effectiveTimeZone()}</p>
         </div>
       </div>
-    </SettingsFrame>
+    </>
   );
 }

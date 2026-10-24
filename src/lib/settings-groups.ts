@@ -185,6 +185,9 @@ const ROUTE_FILES = Object.keys(import.meta.glob("/src/routes/*.tsx"));
  * areas needing a card, so they are not expected to appear in the workspace.
  */
 const LEGACY_REDIRECTS = new Set([
+  "/settings/shift-alerts",
+  // Compatibility URL for operators who have policy access but not staff access.
+  "/settings/rules",
   "/settings/access",
   "/settings/admin-terminals",
   "/settings/workspace",

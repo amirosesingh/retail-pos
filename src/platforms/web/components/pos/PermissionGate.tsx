@@ -15,7 +15,7 @@ export const permissionLabel = (flag: PermissionFlag): string =>
   PERMISSION_LABELS[resolvePermission(flag)] ?? String(flag);
 
 export const permissionMessage = (flag: PermissionFlag): string =>
-  `You need the “${permissionLabel(flag)}” permission. Ask a supervisor to switch it on in Staff Management.`;
+  `You need the “${permissionLabel(flag)}” permission. Ask an administrator to open Staff & Permissions → People & permissions → your account → Edit permissions.`;
 
 /** Toast helper for a blocked button or action. */
 export function denyPermission(flag: PermissionFlag) {

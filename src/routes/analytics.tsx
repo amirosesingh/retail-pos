@@ -72,6 +72,7 @@ function LiveBoard() {
   const { can, isAdmin, user } = useAuth();
   const allowed = isAdmin || can("can_view_sales_reports");
   const canExport = can("can_export_reports");
+  const showCostMargin = isAdmin || can("can_view_cost_margin");
 
   const [from, setFrom] = useState(shift(29));
   const [to, setTo] = useState(isoDay(new Date()));
@@ -81,6 +82,7 @@ function LiveBoard() {
   const [financialView, setFinancialView] = useState<
     "compare" | "revenue" | "cost" | "profit" | "marginPct"
   >("compare");
+  const effectiveFinancialView = showCostMargin ? financialView : "revenue";
   const [picked, setPicked] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
@@ -183,9 +185,7 @@ function LiveBoard() {
         "Shop",
         "Bills",
         "Revenue",
-        "Cost",
-        "Profit",
-        "Margin %",
+        ...(showCostMargin ? ["Cost", "Profit", "Margin %"] : []),
         "Share %",
         "Item discount",
         "Bill discount",
@@ -196,9 +196,7 @@ function LiveBoard() {
         s.name,
         s.bills,
         s.revenue,
-        s.cost,
-        s.profit,
-        s.marginPct.toFixed(1),
+        ...(showCostMargin ? [s.cost, s.profit, s.marginPct.toFixed(1)] : []),
         s.sharePct.toFixed(1),
         s.itemDiscount,
         s.billDiscount,
@@ -233,7 +231,7 @@ function LiveBoard() {
             <p className="text-sm text-muted-foreground page-description">
               {data?.localOnly
                 ? "This terminal’s branch — reports calculated from local SQL Server. Group-wide reports are available on the web."
-                : "Every shop combined — categories, item drilldown, revenue share and margin. Refreshes every minute."}
+                : "Every shop combined — categories, item drilldown and revenue share. Updates when trading data changes."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
@@ -319,11 +317,11 @@ function LiveBoard() {
 
         <div aria-label="Business totals" className="summary-grid grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
           <StatCard label="Revenue" value={money(totals.revenue)} hint={`${totals.bills} bills`} />
-          <StatCard
+          {showCostMargin && <StatCard
             label="Gross profit"
             value={money(totals.profit)}
             hint={`${totals.marginPct.toFixed(1)}% margin`}
-          />
+          />}
           <StatCard
             label="Given away"
             value={money(totals.given)}
@@ -391,11 +389,11 @@ function LiveBoard() {
                         ["profit", "Profit"],
                         ["marginPct", "Margin %"],
                       ] as const
-                    ).map(([value, label]) => (
+                    ).filter(([value]) => showCostMargin || value === "revenue").map(([value, label]) => (
                       <Button
                         key={value}
                         size="sm"
-                        variant={financialView === value ? "default" : "outline"}
+                        variant={effectiveFinancialView === value ? "default" : "outline"}
                         onClick={() => setFinancialView(value)}
                       >
                         {label}
@@ -404,7 +402,7 @@ function LiveBoard() {
                   </div>
                 </div>
                 <ResponsiveContainer width="100%" height={270}>
-                  {financialView === "compare" ? (
+                  {effectiveFinancialView === "compare" ? (
                     <ComposedChart data={shops} barCategoryGap="28%">
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="name" fontSize={11} interval={0} />
@@ -459,7 +457,7 @@ function LiveBoard() {
                         dot={{ r: 3 }}
                       />
                     </ComposedChart>
-                  ) : financialView === "marginPct" ? (
+                  ) : effectiveFinancialView === "marginPct" ? (
                     <LineChart data={shops} margin={{ left: 8, right: 18 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="name" fontSize={11} interval={0} />
@@ -481,12 +479,12 @@ function LiveBoard() {
                       <YAxis fontSize={11} width={70} />
                       <Tooltip formatter={(value) => money(Number(value ?? 0))} />
                       <Bar
-                        dataKey={financialView}
-                        name={financialView[0].toUpperCase() + financialView.slice(1)}
+                        dataKey={effectiveFinancialView}
+                        name={effectiveFinancialView[0].toUpperCase() + effectiveFinancialView.slice(1)}
                         fill={
-                          financialView === "revenue"
+                          effectiveFinancialView === "revenue"
                             ? "var(--primary)"
-                            : financialView === "cost"
+                            : effectiveFinancialView === "cost"
                               ? "var(--muted-foreground)"
                               : "var(--success)"
                         }
@@ -507,7 +505,7 @@ function LiveBoard() {
                     <YAxis fontSize={11} width={64} />
                     <Tooltip formatter={(v) => money(Number(v ?? 0))} />
                     <Legend />
-                    <Bar dataKey="profit" stackId="m" name="Kept as profit" fill={ANALYTICS_COLORS.profit} />
+                    {showCostMargin && <Bar dataKey="profit" stackId="m" name="Kept as profit" fill={ANALYTICS_COLORS.profit} />}
                     <Bar
                       dataKey="itemDiscount"
                       stackId="m"
@@ -535,7 +533,7 @@ function LiveBoard() {
 
             <section className="rounded-lg border border-border p-4">
               <div className="mb-3 flex min-h-36 flex-wrap content-start items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold">Revenue and profit trend</h2>
+                <h2 className="text-sm font-semibold">{showCostMargin ? "Revenue and profit trend" : "Revenue trend"}</h2>
                 <div className="flex gap-1">
                   <Button
                     size="sm"
@@ -568,14 +566,14 @@ function LiveBoard() {
                     strokeWidth={2}
                     dot={false}
                   />
-                  <Line
+                  {showCostMargin && <Line
                     type="monotone"
                     dataKey="profit"
                     name="Profit"
                     stroke={ANALYTICS_COLORS.profit}
                     strokeWidth={2}
                     dot={false}
-                  />
+                  />}
                 </LineChart>
               </ResponsiveContainer>
             </section>

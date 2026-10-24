@@ -144,7 +144,7 @@ function ApprovalsPage() {
   const pos = usePosOptional();
   const storeId = pos?.currentStore?.id ?? "";
   const [rows, setRows] = useState<AuthorizationRequest[]>([]);
-  const [me, setMe] = useState<{ id: string; role: string } | null>(null);
+  const [me, setMe] = useState<{ id: string; role: string; canAccessAllBranches?: boolean; branchId?: string } | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [allBranches, setAllBranches] = useState(false);
   const scopeDefaultedFor = useRef<string | null>(null);
@@ -181,6 +181,7 @@ function ApprovalsPage() {
         },
       });
       if (sequence !== loadSequence.current) return;
+      if (!res.ok && "branchScopeLimited" in res && res.branchScopeLimited) setAllBranches(false);
       setError(res.ok ? "" : (res.error ?? ""));
       // A refused reply may carry no list at all; never hand undefined on.
       if (res.ok) {
@@ -194,10 +195,10 @@ function ApprovalsPage() {
       // Apply the default once for each verified person/role. Refreshes must
       // preserve an admin's deliberate switch back to the current branch.
       if (nextMe) {
-        const identity = `${nextMe.id}:${nextMe.role}`;
+        const identity = `${nextMe.id}:${nextMe.role}:${nextMe.canAccessAllBranches === true}`;
         if (scopeDefaultedFor.current !== identity) {
           scopeDefaultedFor.current = identity;
-          setAllBranches(nextMe.role === "admin");
+          setAllBranches(nextMe.canAccessAllBranches === true);
         }
       }
     } catch (e) {
@@ -220,8 +221,8 @@ function ApprovalsPage() {
   // The queue is decided from another screen, so it refreshes on its own and
   // whenever this window is looked at again.
   useEffect(() => {
-    return subscribeApprovals(load, { allBranches, branchId: storeId });
-  }, [load, allBranches, storeId]);
+    return subscribeApprovals(load, { allBranches, branchId: me?.branchId || storeId });
+  }, [load, allBranches, storeId, me?.branchId]);
 
   const decide = async (row: AuthorizationRequest, approve: boolean) => {
     setBusy(row.id);
@@ -326,7 +327,7 @@ function ApprovalsPage() {
                 id="all-branches"
                 checked={allBranches}
                 onCheckedChange={value => { setAllBranches(value); setPage(1); }}
-                disabled={me?.role !== "admin"}
+                disabled={!me?.canAccessAllBranches}
               />
               <Label htmlFor="all-branches" className="text-xs">
                 All branches

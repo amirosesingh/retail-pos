@@ -67,6 +67,22 @@ const opts = (extra: Intl.DateTimeFormatOptions): Intl.DateTimeFormatOptions => 
 const asDate = (value: string | number | Date) =>
   value instanceof Date ? value : new Date(value);
 
+// Charts bucket thousands of records during a render. Reuse the expensive ICU
+// formatter for explicit trading zones; keep the cache bounded across branches.
+const bucketFormatters = new Map<string, Intl.DateTimeFormat>();
+function bucketFormatter(kind: "day" | "hour", timeZone: string) {
+  const key = `${kind}:${timeZone}`;
+  let formatter = bucketFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", kind === "day"
+      ? { year: "numeric", month: "2-digit", day: "2-digit", timeZone }
+      : { hour: "2-digit", hourCycle: "h23", timeZone });
+    if (bucketFormatters.size >= 32) bucketFormatters.delete(bucketFormatters.keys().next().value!);
+    bucketFormatters.set(key, formatter);
+  }
+  return formatter;
+}
+
 export function formatDateTime(value: string | number | Date, extra: Intl.DateTimeFormatOptions = {}) {
   const d = asDate(value);
   if (Number.isNaN(d.getTime())) return "—";
@@ -95,12 +111,10 @@ export function formatDate(value: string | number | Date, extra: Intl.DateTimeFo
 export function posDayKey(value: string | number | Date = new Date(), timeZone = zone): string {
   const d = asDate(value);
   if (Number.isNaN(d.getTime())) return "";
-  const parts = new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    ...(timeZone ? { timeZone } : {}),
-  }).formatToParts(d);
+  // Native getters follow a changed operating-system zone immediately, without
+  // keeping an old implicit zone captured in a cached formatter.
+  if (!timeZone) return `${String(d.getFullYear()).padStart(4, "0")}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const parts = bucketFormatter("day", timeZone).formatToParts(d);
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((entry) => entry.type === type)?.value ?? "";
   return `${part("year")}-${part("month")}-${part("day")}`;
@@ -110,11 +124,8 @@ export function posDayKey(value: string | number | Date = new Date(), timeZone =
 export function posHour(value: string | number | Date): number {
   const d = asDate(value);
   if (Number.isNaN(d.getTime())) return 0;
-  const hour = new Intl.DateTimeFormat("en-US", {
-    hour: "2-digit",
-    hourCycle: "h23",
-    ...(zone ? { timeZone: zone } : {}),
-  })
+  if (!zone) return d.getHours();
+  const hour = bucketFormatter("hour", zone)
     .formatToParts(d)
     .find((entry) => entry.type === "hour")?.value;
   return Math.min(23, Math.max(0, Number(hour) || 0));

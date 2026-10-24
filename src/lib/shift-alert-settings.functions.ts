@@ -13,6 +13,8 @@ export const saveGlobalShiftAlerts = createServerFn({ method: "POST" })
     if (scope.kind === "terminal" || (scope.role !== "admin" && scope.roleSlug !== "admin"))
       throw new Error("Only administrators may change global shift notifications.");
     const { serviceRest } = await import("@/core/api/pos-relay.server");
+    const {readNotificationSettings} = await import("./activity-events.server");
+    if (Array.isArray((await readNotificationSettings()).rules)) throw new Error("Shift notification delivery is managed in the notification rules table.");
     const result = await serviceRest("rpc/save_global_shift_alerts", { method: "POST", body: JSON.stringify({ p_settings: data.settings }) });
     if (!result.ok) throw new Error("Global shift notification settings could not be saved.");
     return { ok: true };

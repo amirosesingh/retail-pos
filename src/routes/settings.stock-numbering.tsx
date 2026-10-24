@@ -4,7 +4,7 @@
  */
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
-import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -49,17 +49,19 @@ export const Route = createFileRoute("/settings/stock-numbering")({
 });
 
 function NumberingPage() {
-  const { state, updateSettings } = usePos();
+  return <SettingsFrame title="Document numbering" description="Every stock count, receiving entry, stock request and transfer gets a separate reference series when it is created."><NumberingForm /></SettingsFrame>;
+}
+
+function NumberingForm() {
+  const { state } = usePos();
+  const { updateSettings } = useSettingsCtx();
   const it = state.settings.integrations;
   const branchId = activeBranchId();
   const store = state.stores.find((s) => s.id === branchId) ?? state.stores[0];
   const branchCode = store?.code || "BR";
 
   return (
-    <SettingsFrame
-      title="Document numbering"
-      description="Every stock count, receiving entry, stock request and transfer gets a separate reference series when it is created."
-    >
+    <>
       <SettingsTabs current="/settings/stock-numbering" />
 
       <div className="space-y-6">
@@ -128,7 +130,7 @@ function NumberingPage() {
           }
         />
       </div>
-    </SettingsFrame>
+    </>
   );
 }
 

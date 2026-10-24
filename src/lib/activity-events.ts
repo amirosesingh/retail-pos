@@ -274,12 +274,15 @@ function map(row: Row): ActivityEvent {
       return [];
     }
   };
+  const meta = jsonObject(row["meta"]);
+  const messages = jsonObject(meta.notification_messages);
+  const customized = activityAudienceIdentity()?.userIds.map(id => messages[id]).find(value => typeof value === "string");
   return {
     id: String(row["id"] ?? ""),
     type: String(row["event_type"] ?? ""),
     severity: (row["severity"] as EventSeverity) ?? "info",
     title: String(row["title"] ?? ""),
-    message: String(row["message"] ?? ""),
+    message: typeof customized === "string" ? customized : String(row["message"] ?? ""),
     actorName: String(row["actor_name"] ?? ""),
     actorRole: String(row["actor_role"] ?? ""),
     terminalName: String(row["terminal_name"] ?? row["terminal_id"] ?? ""),
@@ -287,7 +290,7 @@ function map(row: Row): ActivityEvent {
     entityType: String(row["entity_type"] ?? ""),
     entityId: String(row["entity_id"] ?? ""),
     amount: row["amount"] === null || row["amount"] === undefined ? null : Number(row["amount"]),
-    meta: jsonObject(row["meta"]),
+    meta,
     whatsappStatus: String(row["whatsapp_status"] ?? "skipped"),
     createdAt: String(row["created_at"] ?? ""),
     clearedBy: stringArray(row["cleared_by"]),

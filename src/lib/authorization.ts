@@ -463,6 +463,13 @@ export function rulesFromLegacy(rules: PosRules): RuleMap {
   return out;
 }
 
+/** The staff editor calls the built-in manager level Supervisor. Both stored
+ * names identify that same level; custom role slugs remain exact matches. */
+export const authorizationRole = (role: string | null | undefined) => {
+  const value = (role ?? "").trim().toLowerCase();
+  return value === "supervisor" ? "manager" : value;
+};
+
 /** Can this person decide requests for the action, or authorise it by PIN? */
 export function canAuthorize(
   rule: AuthorizationRule | undefined,
@@ -471,8 +478,8 @@ export function canAuthorize(
   if (!rule) return false;
   const id = (who.userId ?? "").toLowerCase();
   if (id && userIsExcluded(rule.allowedUserIds, id)) return false;
-  const role = (who.role ?? "").toLowerCase();
-  if (role && rule.allowedRoles.map((r) => r.toLowerCase()).includes(role)) return true;
+  const role = authorizationRole(who.role);
+  if (role && rule.allowedRoles.map(authorizationRole).includes(role)) return true;
   return (
     !!id && includedAuthorizationUserIds(rule.allowedUserIds).some((u) => u.toLowerCase() === id)
   );
@@ -484,11 +491,11 @@ export function canRequestApproval(
   who: { userId?: string | null; role?: string | null },
 ): boolean {
   if (!rule || !rule.isEnabled || (rule.mode !== "request" && rule.mode !== "either")) return false;
-  const role = (who.role ?? "").toLowerCase();
+  const role = authorizationRole(who.role);
   const id = (who.userId ?? "").toLowerCase();
   if (id && userIsExcluded(rule.requesterUserIds, id)) return false;
   return (
-    rule.requesterRoles.some((r) => r.toLowerCase() === role) ||
+    rule.requesterRoles.some((r) => authorizationRole(r) === role) ||
     (!!id &&
       includedAuthorizationUserIds(rule.requesterUserIds).some((u) => u.toLowerCase() === id))
   );
@@ -500,8 +507,14 @@ function authorityValue(
   who: { userId?: string | null; role?: string | null },
 ) {
   const userKey = `user:${(who.userId ?? "").toLowerCase()}`;
-  const roleKey = `role:${(who.role ?? "").toLowerCase()}`;
-  return map[userKey] ?? map[roleKey] ?? null;
+  if (map[userKey] != null) return map[userKey];
+  const exactKey = `role:${(who.role ?? "").trim().toLowerCase()}`;
+  if (map[exactKey] != null) return map[exactKey];
+  const role = authorizationRole(who.role);
+  const limits = Object.entries(map).filter(([key]) => key.startsWith("role:") &&
+    authorizationRole(key.slice(5)) === role).map(([, value]) => value);
+  // Preserve an explicit saved role limit; only fill a missing alias.
+  return limits.length ? Math.min(...limits) : null;
 }
 
 /** Legacy absolute authority. Kept unchanged for already-deployed rules. */
@@ -607,10 +620,10 @@ export function canAuthorizeEscalated(
   if (!rule?.escalationAfterMinutes || !rule.escalationRoles.length) return false;
   const created = Date.parse(createdAt);
   if (!Number.isFinite(created)) return false;
-  const role = (who.role ?? "").toLowerCase();
+  const role = authorizationRole(who.role);
   return (
     now - created >= rule.escalationAfterMinutes * 60_000 &&
-    rule.escalationRoles.some((candidate) => candidate.toLowerCase() === role)
+    rule.escalationRoles.some((candidate) => authorizationRole(candidate) === role)
   );
 }
 
