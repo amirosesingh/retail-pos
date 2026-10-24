@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { sameBranchId } from "./branch-id";
 const permissions = {
+  sponsorship:"can_create_sponsorship",
   stock: "can_adjust_stock",
   receiving: "can_receive_purchase_order",
   request: "can_create_transfer",
@@ -22,7 +23,7 @@ export const reserveCloudStockReference = createServerFn({ method: "POST" })
           .min(1)
           .max(Number.MAX_SAFE_INTEGER - 1),
         storeId: z.string().min(1).max(128),
-        series: z.enum(["stock", "receiving", "request", "transfer"]),
+        series: z.enum(["stock", "receiving", "request", "transfer", "sponsorship"]),
       })
       .parse(value),
   )

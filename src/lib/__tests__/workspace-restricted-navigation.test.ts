@@ -1,3 +1,4 @@
+vi.mock("@/lib/use-sponsorship-totals",()=>({useSponsorshipTotals:()=>({total:0,rows:[],loading:false,error:false})}));
 import { createElement as h, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";

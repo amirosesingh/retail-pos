@@ -1,5 +1,7 @@
 import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { receiptBarcode } from "./receipt-barcode";
+import { sponsorshipReceiptDetails } from "./sponsorship-receipt";
+import type { SponsorshipRecord } from "./sponsorship";
 import { tenderTotals, shiftSalesOf } from "./shift-close";
 import type {
   RoundingSettings,
@@ -1070,6 +1072,9 @@ function transferBody(transfer: Transfer, products: Product[], from: Store, to: 
 
 export function printTransferNote(transfer: Transfer, products: Product[], from: Store, to: Store) {
   printHtml(transfer.ref, transferBody(transfer, products, from, to), false);
+}
+export function printSponsorshipReceipt(record:SponsorshipRecord){
+  return printHtml(record.reference,header()+sponsorshipReceiptDetails(record,posDisplayDateTime(new Date(record.given_at??""))),true);
 }
 
 /**

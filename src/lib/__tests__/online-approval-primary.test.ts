@@ -166,7 +166,7 @@ describe("online approval primary database", () => {
     expect(panel).not.toContain("Status / configuration summary");
     expect(panel).toContain("Additional people (");
     expect(panel).toContain("Excluded people (");
-    expect(panel).toContain("options={AUTH_MODES.map");
+    expect(panel).toContain("options={AUTH_MODES.filter");
     expect(panel).toContain("mode: mode ?? existing.mode");
     expect(panel).not.toContain('mode.value !== "either"');
     expect(panel).toContain("Complete the highlighted settings before saving");

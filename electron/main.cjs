@@ -2254,7 +2254,7 @@ function registerIpc() {
   ipcMain.handle("update:diagnose", () => updater.diagnose());
   ipcMain.handle("update:download-page", () => updater.downloadPage());
   ipcMain.handle("app:version", () => app.getVersion());
-  ipcMain.handle("app:name", () => app.isPackaged ? app.getName() : (require("../package.json").build?.productName || app.getName()));
+  ipcMain.handle("app:name", () => require("../package.json").build?.productName || "Retail");
   ipcMain.handle("net:get-json", (_e, url) => netHttp.getJson(String(url)));
   ipcMain.handle("cloud:request", (_e, request) => require("./supabase-http.cjs").supabaseRequest(request, cloudCredentials.read()));
   ipcMain.handle("net:head", (_e, url) => netHttp.head(String(url)));

@@ -8,7 +8,7 @@ export const PERMISSION_SECTIONS = [
   { id: "selling", label: "Selling", pageIds: ["register", "holds", "shifts", "receipts", "display"] },
   { id: "business", label: "Business overview", pageIds: ["dashboard", "analytics", "all-shops", "locations", "audit"] },
   { id: "approvals", label: "Approvals", pageIds: ["approvals"] },
-  { id: "inventory", label: "Inventory", pageIds: ["inventory", "stock", "purchasing", "receiving", "suppliers", "requests", "transfers"] },
+  { id: "inventory", label: "Inventory", pageIds: ["inventory", "stock", "purchasing", "receiving", "suppliers", "requests", "transfers", "sponsorship"] },
   { id: "membership", label: "Membership", pageIds: ["members", "verifications"] },
   { id: "bookings", label: "Booking & services", pageIds: ["bookings", "pos-general-booking", "pos-racket-service"] },
   { id: "marketing", label: "Marketing", pageIds: ["promotions", "coupons"] },

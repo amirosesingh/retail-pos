@@ -1,3 +1,4 @@
+import {SponsorshipDirectIssuePolicy} from "@/platforms/web/components/admin/SponsorshipDirectIssuePolicy";
 /**
  * Which sensitive actions need authorising, and who may give it.
  *
@@ -473,6 +474,7 @@ function RuleConfigurationDialog({
             </DialogHeader>
 
             <div className="space-y-5 overflow-y-auto px-6 py-5">
+              {action.key==="sponsorship"&&<SponsorshipDirectIssuePolicy/>}
               <section className="rounded-lg border bg-muted/30 p-4">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   <span className="inline-flex items-center gap-1.5">
@@ -801,7 +803,7 @@ function RuleConfigurationDialog({
                       </Label>
                       <Switch
                         id={`reason-${action.key}`}
-                        disabled={!mayEdit}
+                        disabled={!mayEdit || action.key === "sponsorship"}
                         checked={rule.requireReason}
                         onCheckedChange={(requireReason) => onChange({ requireReason })}
                       />
@@ -1058,7 +1060,7 @@ export function AuthorizationRulesPanel({
                           className="h-9 w-full"
                           value={rule.mode}
                           onChange={(value) => openConfiguration(action, value as AuthMode)}
-                          options={AUTH_MODES.map((mode) => ({
+                          options={AUTH_MODES.filter(mode => action.key !== "sponsorship" || mode.value === "request").map((mode) => ({
                             value: mode.value,
                             label: mode.label,
                           }))}

@@ -1,4 +1,5 @@
 import { OperationalRulesPanel } from "@/platforms/web/components/pos/settings/panels/OperationalRulesPanel";
+import { SponsorshipSalesPolicy } from "@/platforms/web/components/admin/SponsorshipSalesPolicy";
 import { ShiftClosingPolicy } from "@/platforms/web/components/admin/ShiftClosingPolicy";
 import { OperationalTablePolicies } from "@/platforms/web/components/admin/OperationalTablePolicies";
 import { SettingsBackLink } from "@/platforms/web/components/pos/settings/SettingsBackLink";
@@ -298,6 +299,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
           </div>
           <div className="space-y-3 pt-4">
             <ShiftClosingPolicy />
+            <SponsorshipSalesPolicy />
             <OperationalRulesPanel canEdit={mayEdit} />
             <OperationalTablePolicies />
           </div>

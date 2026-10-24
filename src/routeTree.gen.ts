@@ -35,6 +35,7 @@ import { Route as ReceiptsRouteImport } from './routes/receipts'
 import { Route as RecoveryRouteImport } from './routes/recovery'
 import { Route as SalesRouteImport } from './routes/sales'
 import { Route as ShiftsRouteImport } from './routes/shifts'
+import { Route as SponsorshipRouteImport } from './routes/sponsorship'
 import { Route as StaffRouteImport } from './routes/staff'
 import { Route as StockOperationsRouteImport } from './routes/stock-operations'
 import { Route as StoresRouteImport } from './routes/stores'
@@ -259,6 +260,11 @@ const SalesRoute = SalesRouteImport.update({
 const ShiftsRoute = ShiftsRouteImport.update({
   id: '/shifts',
   path: '/shifts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SponsorshipRoute = SponsorshipRouteImport.update({
+  id: '/sponsorship',
+  path: '/sponsorship',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StaffRoute = StaffRouteImport.update({
@@ -768,6 +774,7 @@ export interface FileRoutesByFullPath {
   '/recovery': typeof RecoveryRoute
   '/sales': typeof SalesRoute
   '/shifts': typeof ShiftsRoute
+  '/sponsorship': typeof SponsorshipRoute
   '/staff': typeof StaffRoute
   '/stock-operations': typeof StockOperationsRoute
   '/stores': typeof StoresRoute
@@ -891,6 +898,7 @@ export interface FileRoutesByTo {
   '/recovery': typeof RecoveryRoute
   '/sales': typeof SalesRoute
   '/shifts': typeof ShiftsRoute
+  '/sponsorship': typeof SponsorshipRoute
   '/staff': typeof StaffRoute
   '/stock-operations': typeof StockOperationsRoute
   '/stores': typeof StoresRoute
@@ -1015,6 +1023,7 @@ export interface FileRoutesById {
   '/recovery': typeof RecoveryRoute
   '/sales': typeof SalesRoute
   '/shifts': typeof ShiftsRoute
+  '/sponsorship': typeof SponsorshipRoute
   '/staff': typeof StaffRoute
   '/stock-operations': typeof StockOperationsRoute
   '/stores': typeof StoresRoute
@@ -1140,6 +1149,7 @@ export interface FileRouteTypes {
     | '/recovery'
     | '/sales'
     | '/shifts'
+    | '/sponsorship'
     | '/staff'
     | '/stock-operations'
     | '/stores'
@@ -1263,6 +1273,7 @@ export interface FileRouteTypes {
     | '/recovery'
     | '/sales'
     | '/shifts'
+    | '/sponsorship'
     | '/staff'
     | '/stock-operations'
     | '/stores'
@@ -1386,6 +1397,7 @@ export interface FileRouteTypes {
     | '/recovery'
     | '/sales'
     | '/shifts'
+    | '/sponsorship'
     | '/staff'
     | '/stock-operations'
     | '/stores'
@@ -1510,6 +1522,7 @@ export interface RootRouteChildren {
   RecoveryRoute: typeof RecoveryRoute
   SalesRoute: typeof SalesRoute
   ShiftsRoute: typeof ShiftsRoute
+  SponsorshipRoute: typeof SponsorshipRoute
   StaffRoute: typeof StaffRoute
   StockOperationsRoute: typeof StockOperationsRoute
   StoresRoute: typeof StoresRoute
@@ -1788,6 +1801,13 @@ declare module '@tanstack/react-router' {
       path: '/shifts'
       fullPath: '/shifts'
       preLoaderRoute: typeof ShiftsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sponsorship': {
+      id: '/sponsorship'
+      path: '/sponsorship'
+      fullPath: '/sponsorship'
+      preLoaderRoute: typeof SponsorshipRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/staff': {
@@ -2496,6 +2516,7 @@ const rootRouteChildren: RootRouteChildren = {
   RecoveryRoute: RecoveryRoute,
   SalesRoute: SalesRoute,
   ShiftsRoute: ShiftsRoute,
+  SponsorshipRoute: SponsorshipRoute,
   StaffRoute: StaffRoute,
   StockOperationsRoute: StockOperationsRoute,
   StoresRoute: StoresRoute,

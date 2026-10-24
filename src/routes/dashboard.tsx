@@ -1,3 +1,4 @@
+import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { CashierBillList } from "@/platforms/web/components/pos/CashierBillList";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { productVisibleAt } from "@/lib/branch-policy";
@@ -110,6 +111,8 @@ function Dashboard() {
   const { sales, loading: reportLoading, error: reportError } = useReportSales(state.sales, storeIds,
     posDayKey(new Date(Date.parse(`${readFrom}T12:00:00`) - 86_400_000)),
     posDayKey(new Date(Date.parse(`${readTo}T12:00:00`) + 86_400_000)));
+  const includeSponsorship=state.settings.integrations.includeSponsorshipInDailySales===true;
+  const sponsorship=useSponsorshipTotals(storeIds,today,today,includeSponsorship);
   const todaySales = useMemo(() => sales.filter((s) => posDayKey(s.createdAt) === today), [sales, today]);
   const live = useMemo(() => todaySales.filter((s) => !s.refunded), [todaySales]);
 
@@ -214,6 +217,7 @@ function Dashboard() {
 
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
         <DisplayElement name="dashboard.revenueSummary"><div role="region" aria-label="Revenue summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(10rem,72%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-7">
+          {includeSponsorship&&<><Kpi label="Daily sales summary" value={sponsorship.loading?"Loading…":sponsorship.error?"Unavailable":money(revenue+sponsorship.total)} highlight/><Kpi label="Sponsorship value included" value={sponsorship.error?"Unavailable":money(sponsorship.total)}/></>}
           <Kpi label="Revenue today" value={money(revenue)} highlight />
           <Kpi label="Gross revenue" value={money(profit.revenue)} />
           {showCostMargin && <Kpi label="Total COGS" value={money(profit.cogs)} />}

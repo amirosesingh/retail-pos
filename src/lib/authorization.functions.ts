@@ -303,6 +303,7 @@ export const listAuthorizationPeople = createServerFn({ method: "POST" })
   });
 
 function ruleConfigurationError(data: z.infer<typeof saveRuleInput>): string | null {
+  if (data.actionKey === "sponsorship" && (data.mode !== "request" || !data.requireReason || data.threshold !== null)) return "Sponsorship always requires an approval request and a reason, with no bypass threshold.";
   if (data.mode === "none") return null;
   if (!data.allowedRoles.length && !data.allowedUserIds.length) {
     return "Select at least one role or named person who may authorise this action";
@@ -377,6 +378,7 @@ export const saveAuthorizationRule = createServerFn({ method: "POST" })
 export const authorizeWithPin = createServerFn({ method: "POST" })
   .validator((data: unknown) => pinInput.parse(data))
   .handler(async ({ data }) => {
+    if (data.actionKey === "sponsorship") return {ok:false as const,error:"Sponsorship requires another user's recorded approval request, at every value."};
     const { loadRuleRows, verifyAuthorizationPin, writeLog } =
       await import("./authorization.server");
     const { signOverrideGrant } = await import("./pos-rules.server");
@@ -607,7 +609,15 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
         hasRequestAudit,
       } = await import("./authorization.server");
       const { resolveRules, canRequestApproval } = await import("./authorization");
-      const storeId = callerStore(who, data.storeId);
+      let storeId: string;
+      if (data.actionKey === "sponsorship") {
+        if (!who.isAdmin && who.permissions.can_create_sponsorship !== true) throw new Error("Sponsorship creation permission is required");
+        if (!data.storeId || (who.branchRestricted && !who.storeId) || (who.storeId && who.storeId.toLowerCase() !== data.storeId.toLowerCase())) throw new Error("Sponsorship source is outside your branch");
+        storeId = data.storeId;
+        const {verifiedSponsorshipRequest}=await import("./sponsorship.server");
+        const verified=await verifiedSponsorshipRequest(data.requestId,who.id,storeId,data.payload);
+        data.payload=verified.payload;data.snapshot=verified.snapshot;data.reason=verified.record.purpose;data.requestedAmount=verified.record.total_value;data.valueUnit="currency";
+      } else storeId = callerStore(who, data.storeId);
       const rule = resolveRules(await loadRuleRows(storeId), storeId)[data.actionKey];
       if (!canRequestApproval(rule, { userId: who.id, role: who.role })) {
         return {
@@ -675,6 +685,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
         (person) =>
           person.id.toLowerCase() !== requesterId &&
           approvalPersonBranchAllowed(person,storeId) &&
+          (data.actionKey !== "sponsorship" || approverActionAllowed("sponsorship",person)) &&
           !excludedIds.has(person.id.toLowerCase()) &&
           (namedIds.has(person.id.toLowerCase()) ||
             (branchIds.has(person.id.toLowerCase()) &&
@@ -689,6 +700,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       const escalationApprovers = branchPeople.filter(
         (person) =>
           person.id.toLowerCase() !== requesterId &&
+          (data.actionKey !== "sponsorship" || approverActionAllowed("sponsorship",person)) &&
           rule.escalationRoles.some((role) => role.toLowerCase() === person.role.toLowerCase()),
       );
       const approvalRoute = {
@@ -1023,6 +1035,7 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
         : data.approve
         ? (data.approvedAmount ?? existing.requestedAmount ?? null)
         : existing.requestedAmount;
+      if(data.approve&&existing.actionKey==="sponsorship"&&requestedDecisionAmount!==existing.requestedAmount) return {ok:false as const,error:"Sponsorship approval must cover the complete requested document value"};
       if (!routed) {
         return { ok: false as const, error: "This request was not routed to you" };
       }

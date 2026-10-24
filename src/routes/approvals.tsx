@@ -86,6 +86,7 @@ const approvalValue = (value: number | null, unit: AuthorizationRequest["valueUn
 };
 
 function requestBillNumber(row: AuthorizationRequest): string {
+  if(row.actionKey==="sponsorship")return String(row.payload["sponsorship_reference"]??row.snapshot?.ticketId??"Sponsorship");
   return (
     row.snapshot?.billNo ||
     String(row.approvedPayload["bill_no"] ?? row.payload["bill_no"] ?? "") ||

@@ -1,3 +1,4 @@
+import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { useViewedBranchShift } from "@/lib/use-viewed-branch-shift";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { inventoryMetrics } from "@/lib/inventory-metrics";
@@ -93,6 +94,8 @@ export function TerminalWorkspaceHome() {
     loading,
     error,
   } = useReportSales(state.sales, storeIds, todayKey, todayKey);
+  const includeSponsorship=state.settings.integrations.includeSponsorshipInDailySales===true;
+  const sponsorship=useSponsorshipTotals(storeIds,todayKey,todayKey,includeSponsorship);
   const completedSales = todaySales.filter((sale) => !sale.refunded);
   const todayRevenue = completedSales.reduce((sum, sale) => sum + sale.total, 0);
   const paymentSummary = dailyPaymentSummary(completedSales);
@@ -127,13 +130,13 @@ export function TerminalWorkspaceHome() {
     revenue: can("can_view_sales_reports") && visible("workspace.todayRevenue") && (
               <Metric
                 key="revenue"
-                label="Today's revenue"
+                label={includeSponsorship?"Today's sales summary":"Today's revenue"}
                 payments={paymentSummary}
                 icon={BarChart3}
                 tone="text-category-2 bg-category-2/10"
                 value={
                   <AnimatedMetric
-                    value={todayRevenue}
+                    value={todayRevenue+sponsorship.total}
                     format={(value) =>
                       value.toLocaleString(undefined, {
                         minimumFractionDigits: 2,
@@ -143,7 +146,7 @@ export function TerminalWorkspaceHome() {
                   />
                 }
                 hint={
-                  error ? "Could not refresh totals" : loading ? "Updating…" : "Completed sales"
+                  error||sponsorship.error ? "Could not refresh totals" : loading||sponsorship.loading ? "Updating…" : includeSponsorship?`Includes ${sponsorship.total.toFixed(2)} sponsorship value`:"Completed sales"
                 }
               />
             ),

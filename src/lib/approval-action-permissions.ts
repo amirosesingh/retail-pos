@@ -2,6 +2,7 @@ import { hasPermission, type PermissionKey } from "./permissions";
 
 /** Rule eligibility and action authority are independent requirements. */
 export const APPROVAL_ACTION_PERMISSIONS: Record<string, PermissionKey> = {
+  sponsorship: "can_approve_sponsorship",
   refund: "can_process_refund", void_cart: "can_void_cart", void_line: "can_delete_line",
   reduce_qty: "can_reduce_qty", manual_discount: "can_give_discount", discount_over_limit: "can_give_discount",
   price_override: "can_override_price", below_cost_sale: "can_process_sale", tax_exemption: "can_process_sale",

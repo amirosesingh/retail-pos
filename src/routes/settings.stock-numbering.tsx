@@ -49,7 +49,7 @@ export const Route = createFileRoute("/settings/stock-numbering")({
 });
 
 function NumberingPage() {
-  return <SettingsFrame title="Document numbering" description="Every stock count, receiving entry, stock request and transfer gets a separate reference series when it is created."><NumberingForm /></SettingsFrame>;
+  return <SettingsFrame title="Document numbering" description="Every sponsorship, stock count, receiving entry, stock request and transfer gets a separate reference series when it is created."><NumberingForm /></SettingsFrame>;
 }
 
 function NumberingForm() {
@@ -65,6 +65,8 @@ function NumberingForm() {
       <SettingsTabs current="/settings/stock-numbering" />
 
       <div className="space-y-6">
+        <SeriesCard title="Sponsorship references" hint="The request, handover record and printed sponsorship receipt share one number, reserved in the central database." series="sponsorship" defaultPrefix="SP" cfg={it.sponsorshipNumbering??{}} branchCode={branchCode} onPatch={next=>updateSettings({integrations:{...it,sponsorshipNumbering:{...(it.sponsorshipNumbering??{}),...next}}})}/>
+
         <SeriesCard
           title="Stock count references"
           hint="Used by every physical count in Stock Operations."

@@ -50,6 +50,7 @@ export type AuthActionKey =
   | "discard_draft"
   | "delete_product"
   | "stock_transfer"
+  | "sponsorship"
   | "member_points_adjust";
 
 export type AuthActionDef = {
@@ -176,6 +177,7 @@ export const AUTH_ACTIONS: AuthActionDef[] = [
     blurb: "Recounting or writing off stock.",
     deferrable: true,
   },
+  {key:"sponsorship",group:"inventory",label:"Sponsorship stock issue",blurb:"Administrators and selected direct issuers may hand over directly. Other users require approval at every value, including zero.",deferrable:true},
   {
     key: "stock_transfer",
     group: "inventory",
@@ -287,10 +289,10 @@ export const defaultRule = (actionKey: AuthActionKey): AuthorizationRule => ({
   actionKey,
   scopeType: "global",
   scopeId: "",
-  mode: "none",
-  allowedRoles: ["admin", "manager"],
+  mode: actionKey === "sponsorship" ? "request" : "none",
+  allowedRoles: actionKey === "sponsorship" ? ["admin"] : ["admin", "manager"],
   allowedUserIds: [],
-  requesterRoles: ["cashier", "staff", "manager", "admin"],
+  requesterRoles: actionKey === "sponsorship" ? ["cashier", "staff", "manager", "admin", "warehouse"] : ["cashier", "staff", "manager", "admin"],
   requesterUserIds: [],
   authorityLimits: {},
   extraAuthority: {},
@@ -298,7 +300,7 @@ export const defaultRule = (actionKey: AuthActionKey): AuthorizationRule => ({
   approvalTimeoutMinutes: 15,
   escalationAfterMinutes: null,
   escalationRoles: [],
-  requireReason: false,
+  requireReason: actionKey === "sponsorship",
   threshold: null,
   isEnabled: true,
   rowVersion: 0,
@@ -405,6 +407,7 @@ export function resolveRules(rows: AuthorizationRule[], storeId: string): RuleMa
         out[r.actionKey] = r;
       });
   }
+  if (out.sponsorship) out.sponsorship = {...out.sponsorship,mode:"request",isEnabled:true,requireReason:true,threshold:null};
   return out;
 }
 
@@ -458,7 +461,7 @@ export function rulesFromLegacy(rules: PosRules): RuleMap {
   AUTH_ACTIONS.forEach((a) => {
     const legacyKey = (GATE_RULE_KEY as Record<string, keyof PosRules>)[a.key];
     const gated = legacyKey ? Boolean(rules[legacyKey]) : true;
-    out[a.key] = { ...defaultRule(a.key), mode: gated ? "pin" : "none" };
+    out[a.key] = a.key === "sponsorship" ? defaultRule(a.key) : { ...defaultRule(a.key), mode: gated ? "pin" : "none" };
   });
   return out;
 }
@@ -604,6 +607,7 @@ export function canBypassAuthorization(
   amount: number | null | undefined,
   directLimit?: number | null,
 ): boolean {
+  if (rule?.actionKey === "sponsorship") return false;
   return (
     (who.role ?? "").toLowerCase() === "admin" &&
     canAuthorizeAmount(rule, who, amount, directLimit)

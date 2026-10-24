@@ -1,5 +1,6 @@
 /** Stable settings keys for POS tables; update entries when adding a table. */
 export const TABLE_CATALOG = [
+  {id:"routes/sponsorship#1",title:"Sponsorship",columns:["Reference / requested","Recipient","Products / value","Discount","Approval / handover","Actions"]},
   {
     "id": "platforms/web/components/pos/BulkImportDialog#1",
     "title": "Bulk Import Dialog",

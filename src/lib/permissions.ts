@@ -4,6 +4,7 @@ import { PERMISSION_PAGES, pageKey, pageAllowsAction, type PagePermissionKey } f
 // ============================================================================
 
 export const PERMISSION_GROUPS = [
+  {id:"sponsorship",label:"Sponsorship",keys:["can_view_sponsorship","can_create_sponsorship","can_approve_sponsorship","can_issue_sponsorship"]},
   {
     id: "drawer",
     label: "Cash Drawer",
@@ -198,9 +199,17 @@ export type PermissionKey =
   | "can_manage_terminals"
   | "can_use_management_mobile"
   | "can_use_management_pc"
-  | "can_manage_sync_backup";
+  | "can_manage_sync_backup"
+  | "can_create_sponsorship"
+  | "can_view_sponsorship"
+  | "can_approve_sponsorship"
+  | "can_issue_sponsorship";
 
 export const PERMISSION_LABELS: Record<PermissionKey, string> = {
+  can_view_sponsorship: "View sponsorship records and receipts",
+  can_create_sponsorship: "Create sponsorship requests",
+  can_approve_sponsorship: "Approve sponsorship stock issues",
+  can_issue_sponsorship: "Hand over approved sponsorship products",
   can_open_drawer: "Open cash drawer",
   can_close_drawer: "Close / count drawer",
   can_view_drawer_balance: "View drawer balance",
@@ -393,6 +402,7 @@ export function normalizePermissions(
     const resolved = resolvePermission(key as PermissionFlag);
     if (resolved in base) base[resolved] = value === true;
   }
+  for (const key of ["can_view_sponsorship","can_create_sponsorship","can_approve_sponsorship","can_issue_sponsorship"] as const) if (!(key in raw)) base[key] = role === "admin";
   // Preserve old report-based visibility until this independent choice is saved.
   if (!("can_view_cost_margin" in raw)) base.can_view_cost_margin = base.can_view_sales_reports &&
     (!("page:reports" in raw) || raw["page:reports"] === true);
@@ -541,7 +551,7 @@ export function getEffectivePermissions(
 export const SUPERVISOR_PERMISSIONS: StaffPermissions = build(
   PERMISSION_KEYS.filter(
     (k) =>
-      k !== "can_manage_staff" && k !== "can_manage_sync_backup" && k !== "can_access_pos_settings",
+      k !== "can_manage_staff" && k !== "can_manage_sync_backup" && k !== "can_access_pos_settings" && !k.endsWith("sponsorship"),
   ),
 );
 
@@ -627,6 +637,7 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
     "inventory-access": {
       roles: ["warehouse", "supervisor", "admin"],
       keys: [
+        "can_view_sponsorship", "can_create_sponsorship", "can_approve_sponsorship", "can_issue_sponsorship",
         "can_view_inventory",
         "can_edit_product_price",
         "can_add_new_product",
